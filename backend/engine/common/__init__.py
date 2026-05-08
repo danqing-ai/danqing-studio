@@ -25,7 +25,7 @@ from .cache import ModelCache
 from backend.core.contracts import CancelToken
 
 from .pipeline import DenoisingPipeline, GenerationCancelled
-from .text_encoders import T5Encoder, CLIPEncoder, Qwen3Encoder
+from .text_encoders import T5Encoder, CLIPEncoder, Qwen3TextEncoder
 
 __all__ = [
     # Schedulers
@@ -49,5 +49,5 @@ __all__ = [
     # Pipeline
     "DenoisingPipeline", "CancelToken", "GenerationCancelled",
     # Text Encoders
-    "T5Encoder", "CLIPEncoder", "Qwen3Encoder",
+    "T5Encoder", "CLIPEncoder", "Qwen3TextEncoder",
 ]

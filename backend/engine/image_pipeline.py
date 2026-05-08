@@ -18,7 +18,7 @@ from backend.core.contracts import (
 )
 from backend.engine.common.cache import ModelCache
 from backend.engine.common.schedulers import get_scheduler
-from backend.engine.common.text_encoders import T5Encoder, Qwen3Encoder
+from backend.engine.common.text_encoders import T5Encoder, Qwen3TextEncoder
 from backend.engine.common.weights import remap_zimage_weights, remap_flux2_weights
 from backend.engine.config.model_configs import get_config_class
 from backend.engine.runtime._base import RuntimeContext
@@ -155,7 +155,7 @@ class ImagePipeline:
             if encoder_type == "qwen2.5_vl":
                 txt_embeds = self._qwen25vl_encode(request.prompt, bundle_root=bundle_root)
             else:
-                txt_embeds = self._qwen3_encode(request.prompt, entry, bundle_root=bundle_root)
+                txt_embeds = self._qwen3_encode(request.prompt, family=family, bundle_root=bundle_root)
             use_cfg = (
                 family in ("z_image", "longcat")
                 and getattr(config, "supports_guidance", True)
@@ -166,7 +166,7 @@ class ImagePipeline:
                 if encoder_type == "qwen2.5_vl":
                     neg_embeds = self._qwen25vl_encode(neg_txt, bundle_root=bundle_root)
                 else:
-                    neg_embeds = self._qwen3_encode(neg_txt, entry, bundle_root=bundle_root)
+                    neg_embeds = self._qwen3_encode(neg_txt, family=family, bundle_root=bundle_root)
         elif request.prompt and config.text_dim > 0:
             enc = T5Encoder(self.ctx, "google/t5-v1_1-xxl")
             txt_embeds = enc.encode([request.prompt])
@@ -251,12 +251,12 @@ class ImagePipeline:
     # 内部
     # ------------------------------------------------------------------
 
-    def _qwen3_encode(self, text: str, entry, *, bundle_root: Path) -> Any:
-        """文本编码。z_image/flux2/qwen_image/longcat 使用 mflux 模型内置编码器。"""
-        family = getattr(entry, "family", "")
-        if family in ("z_image", "flux2", "qwen_image", "longcat"):
-            return self._mflux_encode(text, bundle_root)
+    def _qwen3_encode(self, text: str, *, family: str = "", bundle_root: Path) -> Any:
+        """Qwen3 文本编码 — z_image / flux2 系列。
 
+        z_image 使用倒数第二层输出（与 mflux TextEncoder 一致）。
+        flux2 使用最后一层输出（与 mflux Qwen3TextEncoder 一致）。
+        """
         enc_dir = bundle_root / "text_encoder"
         tok_dir = bundle_root / "tokenizer"
         if not tok_dir.exists():
@@ -265,35 +265,17 @@ class ImagePipeline:
             enc_dir = bundle_root
             tok_dir = bundle_root
 
-        enc = Qwen3Encoder(self.ctx, str(enc_dir), tokenizer_path=str(tok_dir))
+        enc = Qwen3TextEncoder(self.ctx, str(enc_dir), tokenizer_path=str(tok_dir))
+        # z_image 兼容：使用倒数第二层
+        if family == "z_image":
+            enc.use_second_to_last = True
         return enc.encode([text])
 
     def _qwen25vl_encode(self, text: str, *, bundle_root: Path) -> Any:
-        """Qwen2.5-VL 文本编码。"""
+        """Qwen2.5-VL 文本编码 — longcat 系列。"""
         from backend.engine.common.text_encoders_qwen25vl import Qwen25VLEncoder
         enc = Qwen25VLEncoder(str(bundle_root))
         return enc.encode([text])
-
-    def _mflux_encode(self, text: str, bundle_root: Path) -> Any:
-        """使用 mflux 模型内置文本编码器（确保与参考实现数值一致）。"""
-        import mlx.core as mx
-        import sys
-        mflux_path = str(Path(__file__).resolve().parent.parent.parent / "tests" / "benchmark" / "venv" / "lib" / "python3.11" / "site-packages")
-        if mflux_path not in sys.path:
-            sys.path.insert(0, mflux_path)
-
-        from mflux.models.z_image.variants.z_image import ZImage
-        from mflux.models.common.config.model_config import ModelConfig
-        mflux_model = ZImage(
-            model_path=str(bundle_root),
-            model_config=ModelConfig.z_image(),
-        )
-        encodings, _ = mflux_model._encode_prompts(
-            prompt=text,
-            negative_prompt=None,
-            guidance=0.0,
-        )
-        return encodings
 
     def _load_model(self, family: str, config, entry, version_key: str | None):
         import mlx.core as mx
@@ -342,41 +324,66 @@ class ImagePipeline:
                             w = {}
                             for sf in sorted(tpath.glob("*.safetensors")):
                                 w.update(dict(mx.load(str(sf))))
-        if family in ("z_image", "longcat"):
-            for i, t in enumerate(timesteps):
-                if ctx_exec.cancel_token.is_cancelled():
-                    return None
-                kwargs = {"txt_embeds": txt_embeds} if txt_embeds is not None else {}
-                if family == "z_image":
-                    kwargs["sigmas"] = sigmas
-                noise_pred = model(latents, t, **kwargs)
-                if neg_embeds is not None:
-                    kwargs_neg = {"txt_embeds": neg_embeds}
-                    if family == "z_image":
-                        kwargs_neg["sigmas"] = sigmas
-                    noise_neg = model(latents, t, **kwargs_neg)
-                    noise_pred = noise_pred + guidance * (noise_pred - noise_neg)
-                latents = scheduler.step(noise_pred, t, latents)
+                            if family == "z_image":
+                                w = remap_zimage_weights(w)
+                            elif family == "flux2":
+                                w = remap_flux2_weights(w)
+                            model.load_weights(list(w.items()), strict=False)
+                            mx.eval([p for _, p in model.parameters()])
+                            loaded = True
 
-                if on_progress:
-                    on_progress((i + 1) / len(timesteps), i + 1, len(timesteps), None)
-                if on_log:
-                    on_log("info", f"Step {i+1}/{len(timesteps)}")
-        else:
-            fam = getattr(entry, "family", "")
-            if fam in ("z_image", "flux1", "flux2", "fibo"):
-                raise RuntimeError(
-                    f"No VAE weights for model {entry.id!r} (family={fam}, "
-                    f"version={version_key or 'default'}): expected "
-                    "registry local_path/vae/*.safetensors."
-                )
-            # 回退：raw latent 转灰度（仅未声明为上述族且未知架构时）
-            lat = latents
-            if isinstance(lat, mx.array): lat = np.array(lat)
-            if lat.ndim == 5: lat = lat[0, :, 0]
-            elif lat.ndim == 4: lat = lat[0]
-            if lat.shape[0] >= 3: lat = lat[:3]
-            else: lat = np.stack([lat[0]] * 3, axis=0)
-            lat = (lat - lat.min()) / (lat.max() - lat.min() + 1e-8) * 255
-            lat = lat.clip(0, 255).astype(np.uint8)
-            return Image.fromarray(np.transpose(lat, (1, 2, 0)))
+        return model if loaded else None
+
+    def _vae_decode(self, latents, entry, version_key):
+        """VAE 解码 latent → PIL Image。"""
+        import mlx.core as mx
+        import numpy as np
+        from PIL import Image
+        from backend.engine.vae.image_vae import VAEDecoder
+
+        bundle_root = self._local_bundle_root(entry, version_key)
+        vae_dir = (bundle_root / "vae") if bundle_root else None
+
+        # 加载 VAE 配置
+        scaling_factor = 1.0
+        shift_factor = 0.0
+        if vae_dir and (vae_dir / "config.json").exists():
+            import json
+            with open(vae_dir / "config.json") as f:
+                vae_cfg = json.load(f)
+            scaling_factor = vae_cfg.get("scaling_factor", 1.0)
+            shift_factor = vae_cfg.get("shift_factor", 0.0)
+
+        # 创建 VAE decoder
+        C = latents.shape[1] if latents.ndim >= 4 else 16
+        vae = VAEDecoder(
+            latent_channels=C,
+            ctx=self.ctx,
+            scaling_factor=scaling_factor,
+            shift_factor=shift_factor,
+        )
+
+        # 加载 VAE 权重
+        if vae_dir and vae_dir.exists():
+            w = {}
+            for sf in sorted(vae_dir.glob("*.safetensors")):
+                w.update(dict(mx.load(str(sf))))
+            from backend.engine.common.weights import remap_vae_weights
+            w = remap_vae_weights(w)
+            vae.load_weights(list(w.items()), strict=False)
+
+        # 解码
+        image = vae.forward(latents)
+
+        # 转 numpy + PIL
+        if isinstance(image, mx.array):
+            image = np.array(image)
+        # NCHW → NHWC
+        if image.ndim == 4:
+            image = image[0]  # 去掉 batch
+        if image.shape[0] <= 4:  # CHW format
+            image = np.transpose(image, (1, 2, 0))
+        # 归一化到 0-255
+        image = (image - image.min()) / (image.max() - image.min() + 1e-8) * 255
+        image = image.clip(0, 255).astype(np.uint8)
+        return Image.fromarray(image)
