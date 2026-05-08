@@ -1,0 +1,33 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.idea/
+.cursor/
+.vscode/
+.metadata/
+
+# macOS
+.DS_Store
+
+# Environment
+.env
+
+# Data & outputs (large files)
+models/
+loras/
+outputs/
+db/*.db
+
+# Node
+node_modules/
+
+# Logs
+*.log
+/tests/
+/config/.download_tasks.json
+/db/
+/ts.md
