@@ -53,7 +53,7 @@ V3TaskStore + SQLiteAssetStore (持久化，WAL 模式并发读写)
 - **RuntimeContext**：`MLXContext` / `CudaContext`，封装硬件操作
 - **Scheduler**：`FlowMatchEulerScheduler` / `LinearScheduler`，去噪时间步策略
 - **VAEDecoder**：参数化 `scaling_factor` / `shift_factor` / `pytorch_compatible`
-- **TextEncoder**：`T5Encoder` / `Qwen3Encoder` / mflux 内置编码器
+- **TextEncoder**：`T5Encoder` / `Qwen3TextEncoder` / `CLIPEncoder`
 - **ModelCache**：LRU 模型缓存，自动内存管理
 
 #### 模型插件化（Model as Plugin）
