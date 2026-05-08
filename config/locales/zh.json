@@ -1,0 +1,43 @@
+{
+  "error": {
+    "task_not_found": "任务不存在",
+    "task_store_disabled": "任务存储未启用",
+    "model_not_support_img2img": "模型 '{name}' 不支持图像输入（img2img）。该模型的能力: {capabilities}",
+    "model_not_support_inpainting": "模型 '{name}' 不支持局部重绘（inpainting）或图片编辑。该模型的能力: {capabilities}",
+    "inpainting_need_image": "局部重绘模式需要提供 image_path（原始图片路径）",
+    "inpainting_need_mask": "局部重绘模式需要提供 mask_path（遮罩图片路径）",
+    "registry_not_found": "模型注册表不存在",
+    "model_not_found": "模型 '{name}' 不存在",
+    "download_task_not_found": "任务不存在",
+    "model_not_ready": "模型 '{name}'{version} 未就绪。请先在'下载'页面下载该模型。",
+    "model_not_in_registry": "模型 '{name}' 未在注册表中找到",
+    "model_no_download_source": "模型 '{name}' 没有配置有效的下载源",
+    "download_not_paused": "下载任务 {id} 不存在或未暂停",
+    "download_missing_metadata": "下载任务 {id} 缺少恢复所需的元数据",
+    "source_version_not_found": "源版本 '{version}' 不存在",
+    "target_version_not_found": "目标版本 '{version}' 不存在",
+    "source_version_not_ready": "源版本 '{version}' 未就绪，请先下载",
+    "cannot_determine_quantization": "无法确定量化位数: {version}",
+    "version_not_found": "版本 '{version}' 不存在",
+    "missing_dependencies": "缺少依赖: {deps}",
+    "load_history_failed": "加载历史任务失败: {error}",
+    "invalid_path": "非法路径",
+    "image_not_found": "图片不存在",
+    "mask_not_found": "遮罩图片不存在: {path}",
+    "size_mismatch": "遮罩与原图尺寸不匹配。原图: {img_w}x{img_h}, 遮罩: {mask_w}x{mask_h}",
+    "image_read_failed": "读取图片失败: {error}",
+    "unsupported_width": "不支持的宽度: {width}。支持的宽度: {allowed}",
+    "unsupported_height": "不支持的高度: {height}。支持的高度: {allowed}",
+    "mlx_video_python_api_required": "视频生成需要 mlx-video 的 Python API 已正确安装（不再静默降级到 CLI，避免画质/行为不一致）。请升级 mlx-video 或检查虚拟环境。导入错误: {detail}",
+    "mflux_model_profile_required": "图像引擎缺少模型「{name}」的专用 mflux 配置（已禁止套用其他模型的默认配置）。请在 backend/engine/image/mflux_generation_backend.py 的 config_map 中补全该模型。"
+  },
+  "log": {
+    "generating_step": "生成中... 步骤 {step}/{total}",
+    "generation_complete": "生成完成",
+    "generation_failed": "生成失败: {error}",
+    "cancel_generation": "取消图像生成 at step {step}/{total}",
+    "loading_model": "正在加载模型...",
+    "preprocessing_image": "正在预处理图像...",
+    "postprocessing_image": "正在后处理图像..."
+  }
+}

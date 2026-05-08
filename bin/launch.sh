@@ -1,0 +1,84 @@
+#!/bin/bash
+# DanQing Studio v2.0 Launcher
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+cd "$PROJECT_ROOT"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m'
+
+echo -e "${BLUE}╔══════════════════════════════════════╗${NC}"
+echo -e "${BLUE}║    DanQing Studio v2.0 Launcher     ║${NC}"
+echo -e "${BLUE}╚══════════════════════════════════════╝${NC}"
+echo ""
+
+if [[ "$(uname)" != "Darwin" ]]; then
+    echo -e "${RED}Error: This application only supports macOS${NC}"
+    exit 1
+fi
+
+if [[ "$(uname -m)" != "arm64" ]]; then
+    echo -e "${YELLOW}Warning: Non-Apple Silicon detected, MLX acceleration may not be available${NC}"
+fi
+
+PYTHON311="/opt/homebrew/bin/python3.11"
+if [ ! -f "$PYTHON311" ]; then
+    PYTHON311="$(command -v python3.11 || true)"
+fi
+
+if [ -z "$PYTHON311" ] || [ ! -f "$PYTHON311" ]; then
+    echo -e "${RED}Error: Python 3.11 not found${NC}"
+    echo -e "${YELLOW}Please run: brew install python@3.11${NC}"
+    exit 1
+fi
+
+PYTHON_VERSION=$("$PYTHON311" -c 'import sys; print(".".join(map(str, sys.version_info[:2])))')
+echo -e "${GREEN}✓ Python ${PYTHON_VERSION}${NC}"
+
+VENV_DIR="$PROJECT_ROOT/.venv"
+VENV_PYTHON="$VENV_DIR/bin/python3"
+VENV_PIP="$VENV_DIR/bin/pip3"
+
+NEED_CREATE=0
+if [ ! -f "$VENV_PYTHON" ] || [ ! -f "$VENV_PIP" ]; then
+    NEED_CREATE=1
+else
+    VENV_PY_VERSION=$("$VENV_PYTHON" -c 'import sys; print(".".join(map(str, sys.version_info[:2])))')
+    if [ "$VENV_PY_VERSION" != "3.11" ]; then
+        echo -e "${YELLOW}Virtual env Python version (${VENV_PY_VERSION}) mismatch, need 3.11${NC}"
+        NEED_CREATE=1
+    fi
+fi
+
+if [ "$NEED_CREATE" -eq 1 ]; then
+    echo -e "${YELLOW}Creating virtual environment (Python 3.11)...${NC}"
+    rm -rf "$VENV_DIR"
+    "$PYTHON311" -m venv "$VENV_DIR"
+    "$VENV_PYTHON" -m ensurepip --upgrade
+    "$VENV_PIP" install -i https://pypi.tuna.tsinghua.edu.cn/simple --upgrade pip -q
+    echo -e "${GREEN}✓ Virtual environment created${NC}"
+fi
+
+echo -e "${BLUE}Checking dependencies...${NC}"
+if ! "$VENV_PYTHON" -c "import fastapi, uvicorn, mlx, mflux, pydantic" 2>/dev/null; then
+    echo -e "${YELLOW}Installing dependencies to virtual environment...${NC}"
+    "$VENV_PIP" install -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt -q
+    echo -e "${GREEN}✓ Dependencies installed${NC}"
+else
+    echo -e "${GREEN}✓ Dependencies ready${NC}"
+fi
+
+mkdir -p models outputs config db
+
+echo ""
+echo -e "${GREEN}Starting DanQing Studio API...${NC}"
+echo -e "${BLUE}Access at: http://localhost:7860${NC}"
+echo ""
+
+exec "$VENV_PYTHON" -m uvicorn backend.main:app --host 0.0.0.0 --port 7860 --reload

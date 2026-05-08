@@ -1,0 +1,50 @@
+#!/usr/bin/env python3
+"""
+danqing-generate — 文生图 CLI。
+
+对应 REST API: POST /api/images/generations → IImageEngine.generate()
+
+用法:
+    danqing-generate --model z-image --prompt "a mountain" --seed 42 --steps 4 --output out.png
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from backend.cli.image_cli import generate
+
+
+def main():
+    parser = argparse.ArgumentParser(description="DanQing CLI: text-to-image generation")
+    parser.add_argument("--model", required=True, help="Model ID (e.g. z-image, z-image-turbo)")
+    parser.add_argument("--prompt", required=True)
+    parser.add_argument("--negative-prompt", default="")
+    parser.add_argument("--size", default="1024x1024")
+    parser.add_argument("--steps", type=int, default=None)
+    parser.add_argument("--guidance", type=float, default=None)
+    parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--output", required=True, help="Output image path")
+    parser.add_argument("--project-root", default=str(PROJECT_ROOT))
+    args = parser.parse_args()
+
+    print(f"[cli] model={args.model} prompt={args.prompt!r} seed={args.seed} steps={args.steps}")
+    generate(
+        model=args.model,
+        prompt=args.prompt,
+        negative_prompt=args.negative_prompt,
+        size=args.size,
+        steps=args.steps,
+        guidance=args.guidance,
+        seed=args.seed,
+        output=args.output,
+        project_root=Path(args.project_root).resolve(),
+    )
+
+
+if __name__ == "__main__":
+    main()

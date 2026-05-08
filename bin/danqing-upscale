@@ -1,0 +1,42 @@
+#!/usr/bin/env python3
+"""
+danqing-upscale — 图像放大 CLI。
+
+对应 REST API: POST /api/images/upscales → IImageEngine.upscale()
+
+用法:
+    danqing-upscale --model seedvr2-7b --source-asset-id ast_xxx --output out.png
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from backend.cli.image_cli import upscale
+
+
+def main():
+    parser = argparse.ArgumentParser(description="DanQing CLI: image upscaling")
+    parser.add_argument("--model", required=True)
+    parser.add_argument("--source-asset-id", required=True)
+    parser.add_argument("--scale-factor", type=float, default=2.0)
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--project-root", default=str(PROJECT_ROOT))
+    args = parser.parse_args()
+
+    print(f"[cli] model={args.model} scale={args.scale_factor}")
+    upscale(
+        model=args.model,
+        source_asset_id=args.source_asset_id,
+        scale_factor=args.scale_factor,
+        output=args.output,
+        project_root=Path(args.project_root).resolve(),
+    )
+
+
+if __name__ == "__main__":
+    main()

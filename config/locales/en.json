@@ -1,0 +1,43 @@
+{
+  "error": {
+    "task_not_found": "Task not found",
+    "task_store_disabled": "Task store is not enabled",
+    "model_not_support_img2img": "Model '{name}' does not support image input (img2img). Capabilities: {capabilities}",
+    "model_not_support_inpainting": "Model '{name}' does not support inpainting or image editing. Capabilities: {capabilities}",
+    "inpainting_need_image": "Inpainting mode requires image_path",
+    "inpainting_need_mask": "Inpainting mode requires mask_path",
+    "registry_not_found": "Model registry not found",
+    "model_not_found": "Model '{name}' not found",
+    "download_task_not_found": "Task not found",
+    "model_not_ready": "Model '{name}'{version} is not ready. Please download it from the Download page first.",
+    "model_not_in_registry": "Model '{name}' not found in registry",
+    "model_no_download_source": "Model '{name}' has no valid download source",
+    "download_not_paused": "Download task {id} not found or not paused",
+    "download_missing_metadata": "Download task {id} is missing metadata required for resume",
+    "source_version_not_found": "Source version '{version}' not found",
+    "target_version_not_found": "Target version '{version}' not found",
+    "source_version_not_ready": "Source version '{version}' is not ready, please download first",
+    "cannot_determine_quantization": "Cannot determine quantization bits: {version}",
+    "version_not_found": "Version '{version}' not found",
+    "missing_dependencies": "Missing dependencies: {deps}",
+    "load_history_failed": "Failed to load history tasks: {error}",
+    "invalid_path": "Invalid path",
+    "image_not_found": "Image not found",
+    "mask_not_found": "Mask image not found: {path}",
+    "size_mismatch": "Mask and image size mismatch. Image: {img_w}x{img_h}, Mask: {mask_w}x{mask_h}",
+    "image_read_failed": "Failed to read image: {error}",
+    "unsupported_width": "Unsupported width: {width}. Allowed: {allowed}",
+    "unsupported_height": "Unsupported height: {height}. Allowed: {allowed}",
+    "mlx_video_python_api_required": "Video generation requires the mlx-video Python API to be importable (CLI fallback removed to avoid silent quality/behavior differences). Upgrade mlx-video or fix the venv. Import error: {detail}",
+    "mflux_model_profile_required": "No dedicated mflux ModelConfig for model '{name}' (generic defaults are disabled). Add it to config_map in backend/engine/image/mflux_generation_backend.py."
+  },
+  "log": {
+    "generating_step": "Generating... step {step}/{total}",
+    "generation_complete": "Generation complete",
+    "generation_failed": "Generation failed: {error}",
+    "cancel_generation": "Cancelling image generation at step {step}/{total}",
+    "loading_model": "Loading model...",
+    "preprocessing_image": "Preprocessing image...",
+    "postprocessing_image": "Post-processing image..."
+  }
+}

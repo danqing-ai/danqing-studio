@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DanQing Studio v3</title>
+    
+    <!-- Vue 3 -->
+    <script src="https://cdn.jsdelivr.net/npm/vue@3.4.27/dist/vue.global.min.js"></script>
+    
+    <!-- Vue I18n -->
+    <script src="https://cdn.jsdelivr.net/npm/vue-i18n@9.13.1/dist/vue-i18n.global.prod.min.js"></script>
+    
+    <!-- Element Plus -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/element-plus@2.7.6/dist/index.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/element-plus@2.7.6/dist/index.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@element-plus/icons-vue@2.3.1/dist/index.iife.min.js"></script>
+    
+    <!-- Axios -->
+    <script src="https://cdn.jsdelivr.net/npm/axios@1.7.2/dist/axios.min.js"></script>
+    
+    <!-- 主题样式 -->
+    <link rel="stylesheet" href="css/theme.css?v=21">
+</head>
+<body>
+    <div id="app">
+        <el-container class="main-container">
+            <!-- 顶部导航（el-header 必须是 el-container 的直接子节点，TopNav 只提供内容） -->
+            <el-header class="app-header" height="60">
+                <top-nav
+                    :active-page="activePage"
+                    :queue-count="globalQueueCount"
+                    @navigate="handleNavSelect"
+                    @open-queue="openTaskQueue"
+                />
+            </el-header>
+
+            <!-- 主内容区 -->
+            <el-main class="app-main">
+                <template v-if="activePage === 'image_create'"><image-create-page /></template>
+                <template v-else-if="activePage === 'video_create'"><video-create-page /></template>
+                <template v-else-if="activePage === 'audio_create'"><audio-placeholder-page /></template>
+                <template v-else-if="activePage === 'gallery'"><gallery-page /></template>
+                <template v-else-if="activePage === 'models'"><models-page /></template>
+                <template v-else-if="activePage === 'settings'"><settings-page /></template>
+                <template v-else>
+                    <div style="text-align:center;padding:60px;color:var(--text-muted);">
+                        <p>Unknown page: {{ activePage }}</p>
+                    </div>
+                </template>
+            </el-main>
+        </el-container>
+
+        <!-- 全局任务队列抽屉（el-drawer 走 Teleport 到 body，内联避免跨组件 emits 问题） -->
+        <el-drawer
+            v-model="showGlobalQueueDrawer"
+            class="dq-task-queue-drawer"
+            :title="$t('studio.queueDialogTitle')"
+            direction="rtl"
+            size="420px"
+        >
+            <div v-if="globalTaskQueue.running.length === 0 && globalTaskQueue.queued.length === 0" style="text-align: center; padding: 40px; color: var(--text-muted);">
+                {{ $t('studio.queueEmpty') }}
+            </div>
+            <div v-else>
+                <div v-if="globalTaskQueue.running.length > 0" style="margin-bottom: 20px;">
+                    <div style="font-weight: 600; margin-bottom: 12px; color: var(--primary-color);">{{ $t('studio.running') }}</div>
+                    <div v-for="task in globalTaskQueue.running" :key="task.id" class="queue-dialog-item running">
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+                            <div style="flex: 1; overflow: hidden; min-width: 0;">
+                                <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 4px;">{{ taskKindLabel(task.kind) }}</div>
+                                <div style="font-size: 13px; color: var(--text-muted); margin-bottom: 4px;">{{ task.params?.model || $t('queue.unspecifiedModel') }}</div>
+                                <div class="dq-queue-prompt-line">{{ queueTruncate(task.params?.prompt || '', 40) }}</div>
+                            </div>
+                            <el-button
+                                size="small"
+                                circle
+                                type="danger"
+                                @click="cancelGlobalTask(task.id)"
+                                style="margin-left: 8px; flex-shrink: 0;"
+                                :title="$t('studio.cancelTask')"
+                            >
+                                <el-icon><delete /></el-icon>
+                            </el-button>
+                        </div>
+                        <el-progress class="dq-queue-progress" :percentage="Math.round(task.progress * 100)" :stroke-width="4" />
+                    </div>
+                </div>
+                <div v-if="globalTaskQueue.queued.length > 0">
+                    <div style="font-weight: 600; margin-bottom: 12px; color: var(--text-muted);">{{ $t('studio.queued') }} ({{ globalTaskQueue.queued.length }})</div>
+                    <div v-for="(task, index) in globalTaskQueue.queued" :key="task.id" class="queue-dialog-item queued">
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;">
+                            <div style="flex: 1; display: flex; align-items: center; gap: 8px; overflow: hidden; min-width: 0;">
+                                <span style="font-size: 12px; color: var(--text-muted); min-width: 24px;">#{{ index + 1 }}</span>
+                                <div style="flex: 1; overflow: hidden;">
+                                    <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 2px;">
+                                        <span>{{ taskKindLabel(task.kind) }}</span>
+                                        <el-tag v-if="(task.priority ?? 100) <= 50" size="small" type="warning" effect="plain" style="margin-left: 6px;">{{ $t('studio.queuePriorityHigh') }}</el-tag>
+                                    </div>
+                                    <div style="font-size: 13px; color: var(--text-muted); margin-bottom: 2px;">{{ task.params?.model || $t('queue.unspecifiedModel') }}</div>
+                                    <div class="dq-queue-prompt-line">{{ queueTruncate(task.params?.prompt || '', 40) }}</div>
+                                    <div v-if="task.estimated_wait_seconds != null" style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">
+                                        {{ $tt('queue.estimatedWait', { s: task.estimated_wait_seconds }) }}
+                                    </div>
+                                </div>
+                            </div>
+                            <div style="display: flex; flex-direction: column; align-items: stretch; gap: 6px; flex-shrink: 0;">
+                                <el-button size="small" @click="setQueuedPriority(task.id, 'high')" :disabled="(task.priority ?? 100) <= 50">{{ $t('studio.queueSetHigh') }}</el-button>
+                                <el-button size="small" @click="setQueuedPriority(task.id, 'normal')" :disabled="(task.priority ?? 100) > 50">{{ $t('studio.queueSetNormal') }}</el-button>
+                                <el-button
+                                    size="small"
+                                    circle
+                                    type="danger"
+                                    @click="cancelGlobalTask(task.id)"
+                                    style="align-self: flex-end;"
+                                    :title="$t('studio.cancelTask')"
+                                >
+                                    <el-icon><delete /></el-icon>
+                                </el-button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </el-drawer>
+    </div>
+    
+    <!-- 国际化 -->
+    <script src="js/i18n.js?v=45"></script>
+
+    <script src="js/storage_keys.js?v=2"></script>
+
+    <!-- Router (hash-based) -->
+    <script src="js/router.js?v=1"></script>
+    
+    <!-- API 客户端 -->
+    <script src="js/api.js?v=29"></script>
+    <script src="js/stores/tasks_store.js?v=4"></script>
+    <script src="js/composables/media_queue.js?v=3"></script>
+    <script src="js/composables/memory_hint.js?v=1"></script>
+    <script src="js/composables/task_status_ui.js?v=1"></script>
+    <script src="js/composables/model_version_value.js?v=1"></script>
+    <script src="js/composables/studio_nav.js?v=1"></script>
+
+    <script src="js/registry_actions.js?v=2"></script>
+    <script src="js/task_kinds.js?v=1"></script>
+    <script src="js/stores/registry.js?v=2"></script>
+    <script src="js/registry_param_schema.js?v=1"></script>
+    
+    <!-- Shell 组件 -->
+    <script src="js/components/shell/TopNav.js?v=4"></script>
+
+    <!-- 页面组件 -->
+    <script src="js/components/AdapterPicker.js?v=2"></script>
+    <script src="js/components/AssetPicker.js?v=3"></script>
+    <script src="js/components/ImageEditor.js?v=15"></script>
+    <script src="js/components/RegistryParamsForm.js?v=4"></script>
+    <script src="js/components/ImageCreatePage.js?v=49"></script>
+    <script src="js/components/VideoCreatePage.js?v=34"></script>
+    <script src="js/components/AudioPlaceholderPage.js?v=3"></script>
+    <script src="js/components/GalleryPage.js?v=23"></script>
+    <script src="js/components/ModelsPage.js?v=3"></script>
+    <script src="js/components/SettingsPage.js?v=27"></script>
+    
+    <!-- 全局 JS 错误拦截（必须在 Vue 初始化前注册） -->
+    <script>
+        var _showError = function(title, msg) {
+            try {
+                if (typeof ElementPlus !== 'undefined' && ElementPlus.ElNotification) {
+                    ElementPlus.ElNotification({
+                        title: title,
+                        message: String(msg).substring(0, 200),
+                        type: 'error',
+                        duration: 6000,
+                        position: 'bottom-right'
+                    });
+                } else {
+                    console.error('[' + title + ']', msg);
+                }
+            } catch(e) {
+                console.error('Error handler failed:', e);
+            }
+        };
+        window.onerror = function(msg, source, line, col, error) {
+            var message = (error && error.message) || String(msg);
+            // ResizeObserver 良性警告，后续帧会自动补齐，不影响功能
+            if (message.indexOf('ResizeObserver loop') !== -1) return true;
+            _showError('JS Error', message);
+            return false;
+        };
+        window.addEventListener('unhandledrejection', function(event) {
+            var reason = (event.reason && event.reason.message) || event.reason || 'Unknown Promise error';
+            _showError('Unhandled Promise', reason);
+        });
+    </script>
+
+    <!-- 应用入口 -->
+    <script src="js/app.js?v=26"></script>
+    
+    <!-- 调试：检查关键变量 -->
+    <script>
+        window.addEventListener('load', function() {
+            var _sk = (typeof window !== 'undefined' && window.DQ_STORAGE) || {};
+            var lang = (_sk.LANG && localStorage.getItem(_sk.LANG)) || 'zh';
+            document.documentElement.lang = lang;
+            var errors = [];
+            if (typeof Vue === 'undefined') errors.push('Vue not loaded');
+            if (typeof VueI18n === 'undefined') errors.push('VueI18n not loaded');
+            if (typeof ElementPlus === 'undefined') errors.push('ElementPlus not loaded');
+            if (typeof axios === 'undefined') errors.push('axios not loaded');
+            if (typeof messages === 'undefined') errors.push('messages undefined');
+            if (typeof api === 'undefined') errors.push('api undefined');
+            
+            if (errors.length > 0) {
+                console.error('Load errors:', errors);
+                var div = document.createElement('div');
+                div.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#f56c6c;color:white;padding:10px;z-index:9999;font-family:monospace;';
+                div.innerHTML = '<strong>JavaScript Load Errors:</strong><br>' + errors.join('<br>');
+                document.body.appendChild(div);
+            }
+        });
+    </script>
+</body>
+</html>

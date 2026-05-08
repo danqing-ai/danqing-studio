@@ -1,0 +1,49 @@
+#!/usr/bin/env python3
+"""
+danqing-video-edit — 视频编辑 CLI。
+
+对应 REST API: POST /api/videos/edits → IVideoEngine.edit()
+
+用法:
+    danqing-video-edit --model cogvideox-5b --source-asset-id ast_xxx \
+                       --prompt "add rain" --output out.mp4
+"""
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+from backend.cli.video_cli import edit
+
+
+def main():
+    parser = argparse.ArgumentParser(description="DanQing CLI: video editing")
+    parser.add_argument("--model", required=True)
+    parser.add_argument("--source-asset-id", required=True)
+    parser.add_argument("--prompt", required=True)
+    parser.add_argument("--negative-prompt", default="")
+    parser.add_argument("--steps", type=int, default=None)
+    parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument("--output", required=True)
+    parser.add_argument("--project-root", default=str(PROJECT_ROOT))
+    args = parser.parse_args()
+
+    print(f"[cli] model={args.model} prompt={args.prompt!r}")
+    edit(
+        model=args.model,
+        source_asset_id=args.source_asset_id,
+        prompt=args.prompt,
+        negative_prompt=args.negative_prompt,
+        steps=args.steps,
+        seed=args.seed,
+        output=args.output,
+        project_root=Path(args.project_root).resolve(),
+    )
+
+
+if __name__ == "__main__":
+    main()
