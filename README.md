@@ -70,7 +70,7 @@ mflux-studio/
 ├── bin/                        # 脚本目录
 │   ├── launch.sh              # 启动脚本
 │   └── stop.sh                # 停止脚本
-├── scripts/                    # 运维与 CI（一致性检查、注册表/预设迁移）
+├── scripts/                    # 运维与 CI（一致性检查、配置格式转换）
 ├── config/                     # 配置文件目录
 │   ├── models_registry.json   # 模型注册表（v2，schema_version: 2）
 │   ├── .app_config.json       # 应用配置
@@ -220,7 +220,7 @@ python3 -m uvicorn backend.main:app --reload --port 7860
 python3 scripts/check_consistency.py
 ```
 
-若本地仍有带 legacy **`mode`** 的 `config/presets.json`，可先备份再执行：
+预设文件格式转换：
 
 ```bash
 python3 scripts/migrate_presets_mode_to_applies.py --write
@@ -249,12 +249,6 @@ HF_HUB_ENABLE_HF_TRANSFER=1
 MLX_METAL_DEVICE_ONLY=1
 MLX_METAL_MEMORY_LIMIT=120
 ```
-
-## 从旧版本迁移
-
-- v1.x 基于 tkinter 的单文件 GUI 已移除
-- v2.0 是完全重构的版本，使用全新的前后端分离架构
-- v3 → v4：引擎层从 `MFluxImageEngine` / `MlxVideoEngine` 迁移至 `DanQingImageEngine` / `DanQingVideoEngine`，引入 Pipeline 组装化和模型插件化。v3 SQLite schema (`studio.db`) 仍兼容，无需迁移。
 
 ## 许可证
 

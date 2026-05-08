@@ -185,22 +185,18 @@ tests/benchmark/runner.py → subprocess(danqing-generate)
 
 ## Configuration
 
-### Plan 完全落地路线
-- 分阶段任务、依赖与验收：`docs/PLAN_COMPLETION_ROADMAP.md`
-- Plan §7.5 DDL 与 v3 SQLite 实现对照（H1）：`docs/PLAN_7_5_SCHEMA_REVIEW.md`（`V3TaskStore` + `SQLiteAssetStore`；与「删 `studio.db` 重建」策略一致）
-
 ### 模型注册表（v2）
 `config/models_registry.json` — `schema_version: 2`：
 - 顶层 `engines`（danqing-image / danqing-video）
 - 每个模型：`name` / `description` 为 `{ "zh", "en" }`；`media`：`image` | `video`
 - **`actions`** 替代 `capabilities`：图像用 `create` / `rewrite` / `retouch` / `extend` / `upscale`；视频用 `create` / `animate`
 - `parameters`：条目带 `type`（`int` | `float` | `enum` | `bool` | `object`）
-- 注册表 v1→v2 一次性转换：`scripts/migrate_models_registry.py`（**手动**执行；写回前在同目录生成 `.pre_v2.*.json` 备份；仓库不提交该备份）
+- 格式转换脚本：`scripts/migrate_models_registry.py`（写回前在同目录生成 `.pre_v2.*.json` 备份；仓库不提交该备份）
 
 ### 设置文件
 - `config/.app_config.json` — 应用设置
-- `db/studio.db` — SQLite（`tasks` / `task_logs` + `assets` 表；v3 专用库，不迁移旧 `danqing.db`）
-- `config/presets.json` — 提示词预设（必填 **`applies_to`** 与 **`media_scope`**：`image` \| `video` 二选一；**无** legacy `mode`）；创作页按动作 Tab + `media_scope` 过滤；缺/非法字段时运行 `scripts/migrate_presets_mode_to_applies.py --write`（默认 dry-run；写回前生成 `*.pre_applies_migrate.*.json` 备份，勿提交备份）
+- `db/studio.db` — SQLite（`tasks` / `task_logs` + `assets` 表；WAL 模式）
+- `config/presets.json` — 提示词预设（必填 **`applies_to`** 与 **`media_scope`**：`image` \| `video` 二选一）；创作页按动作 Tab + `media_scope` 过滤；格式异常时运行 `scripts/migrate_presets_mode_to_applies.py --write`（默认 dry-run；写回前生成 `*.pre_applies_migrate.*.json` 备份，勿提交备份）
 
 ## Hardcoded paths
 - Models: `./models/`
@@ -208,7 +204,7 @@ tests/benchmark/runner.py → subprocess(danqing-generate)
 - Outputs: `./outputs/`
 - Configs: `./config/.app_config.json`, `./config/presets.json`, `./config/models_registry.json`
 
-## API Endpoints（仅 v3，无旧版 `/api/image` `/api/video`）
+## API Endpoints
 
 ### 图像
 - `POST /api/images/generations` — 文生图
@@ -220,8 +216,8 @@ tests/benchmark/runner.py → subprocess(danqing-generate)
 - `POST /api/videos/edits`
 
 ### 任务与队列（全局单队列）
-- `GET /api/tasks` — 任务列表（plan §6.2；与 **`/api/tasks/list`** 等价；`limit`/`offset`；`kind`/`status`/`since`）
-- `GET /api/tasks/{id}` — 任务详情（含 **`queue_position`** / **`estimated_*`** / **`model`** / **`error`** 等 plan 视图字段）
+- `GET /api/tasks` — 任务列表（与 **`/api/tasks/list`** 等价；`limit`/`offset`；`kind`/`status`/`since`）
+- `GET /api/tasks/{id}` — 任务详情（含 **`queue_position`** / **`estimated_*`** / **`model`** / **`error`** 等字段）
 - `GET /api/tasks/{id}/logs` — 历史日志分页（`offset`/`limit`）
 - `PATCH /api/tasks/{id}` — 仅 **`queued`** 可改 `{ "priority": "normal" | "high" }`（与提交时语义一致；调度器重建堆 + 进程重启后从 DB 恢复排队）
 - `DELETE /api/tasks/{id}` — 取消
@@ -234,21 +230,21 @@ tests/benchmark/runner.py → subprocess(danqing-generate)
 - `POST /api/assets` — 上传资产
 - `POST /api/assets/reconcile` — **磁盘对账**：比对 `assets.file_path` 与磁盘；默认 `{"dry_run": true}` 仅报告 `missing_asset_ids`；`dry_run: false` 时删除库中主文件已不存在的行（设置页 / CLI 调用后续可接）
 - `GET /api/assets` — 列表（可选 **`kind`**、**`source_task_id`**、**`created_after`** ISO 下界）；`GET /api/assets/{id}/file` — 主文件
-- `GET /api/assets/{id}/thumbnail` — 缩略图（图像 WebP 派生；视频依赖本机 **ffmpeg/ffprobe** 生成 poster）；任务产出的 `assets.metadata` 由管线写入 **steps / guidance / seed / mime_type** 及 **width/height**（Plan B2）；视频 **`duration_seconds`**：ffprobe 优先，失败时用 **`num_frames/fps`** 写入列与 metadata
+- `GET /api/assets/{id}/thumbnail` — 缩略图（图像 WebP 派生；视频依赖本机 **ffmpeg/ffprobe** 生成 poster）；任务产出的 `assets.metadata` 由管线写入 **steps / guidance / seed / mime_type** 及 **width/height**；视频 **`duration_seconds`**：ffprobe 优先，失败时用 **`num_frames/fps`** 写入列与 metadata
 
-### 注册表与发现（plan 7.10）
+### 注册表与发现
 - `GET /api/registry` — 完整 `models_registry.json` + `_index`（family/media/actions）
 - `GET /api/models` — 轻量索引（可选 **`media`** / **`action`** / **`installed`**）；响应项含 **`installed`**；`GET /api/models/{id}` — 单模型；`POST /api/models/{id}/install` — 安装权重（进度 SSE 仍为 `GET /api/download/progress/{task_id}/stream`）；`POST /api/models/install-batch` — 批量启动安装（body: `{ "model_ids": [...] }`）；`DELETE /api/models/{id}/versions/{version_key}` — 删除该版本本地权重目录
 - `GET /api/presets` — 预设只读列表（写入仍用 `/api/settings/presets`）
 - `GET /api/adapters` — 适配器索引（当前为已安装 LoRA；可选 `for_model` 查询参数与兼容 LoRA 规则一致；`registry_slots` 预留给注册表扩展）
 - `GET /api/system/health` — 存活 + 后端探测（**`mlx`** / **`cuda`**）+ **`gpu.memory_total`/`free`**；`GET /api/system/metrics` — CPU/内存轻量快照
-- `GET /api/settings/system` — 系统信息（`memory_gb`、`mlx_memory_limit`、`env_ready` 等）；前端 **Plan E4** 用 `mlx_memory_limit` 与注册表版本 **`size`** 做提交前 OOM 软提示（`DQMemoryHint`）
+- `GET /api/settings/system` — 系统信息（`memory_gb`、`mlx_memory_limit`、`env_ready` 等）；前端用 `mlx_memory_limit` 与注册表版本 **`size`** 做提交前 OOM 软提示（`DQMemoryHint`）
 
 ### 音频（占位）
 - `GET|POST /api/audios/generations`、`POST /api/audios/edits`、`POST /api/audios/dubs` — 501；前端 **`api.audios.*`**（`api.js`）与上述路径对齐
 
 ### 其他
-- `GET /api/gallery/images` — 后端图库列表（**仅** `list_assets`）；项含 **`duration_seconds`**（视频，Plan B2）；前端 **`api.gallery.listImages`** 走 **`api.gen.listAssets`** + **`assetRowToGalleryItem`** 映射为同一卡片字段（Plan C5，少一次 HTTP）；`POST /api/gallery/upload` 入库；媒体 **`GET /api/assets/{id}/file`**；缩略图 **`GET /api/assets/{id}/thumbnail`**；删除 **`DELETE /api/gallery/image?path=asset:{id}`**
+- `GET /api/gallery/images` — 后端图库列表（**仅** `list_assets`）；项含 **`duration_seconds`**（视频）；前端 **`api.gallery.listImages`** 走 **`api.gen.listAssets`** + **`assetRowToGalleryItem`** 映射为同一卡片字段；`POST /api/gallery/upload` 入库；媒体 **`GET /api/assets/{id}/file`**；缩略图 **`GET /api/assets/{id}/thumbnail`**；删除 **`DELETE /api/gallery/image?path=asset:{id}`**
 - `GET /api/settings/registry` — 与设置页兼容的注册表视图
 - 路由源码：`backend/api/routes/{images,videos,tasks,queue,assets,registry,...}.py`
 - 完整文档: http://localhost:7860/docs
@@ -271,14 +267,14 @@ python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 7860
 
 ## i18n Architecture
 ### Frontend
-- `frontend/js/i18n.js` — All translation keys (zh + en)；**Plan D** 顶层 `action.image.*` / `action.video.*`（与注册表 `actions` 键对齐）及 **`studio.*`**（模型下拉、队列、任务状态、提示词/步数、生成与日志文案、模型切换、高级参数/ControlNet/LoRA、蒙版工具栏、上传失败等跨页共用文案）；**`video.runtime*`** — 视频创作页成片时长 / 耗时与磁盘占用提示（Plan §3.2）
+- `frontend/js/i18n.js` — All translation keys (zh + en)；顶层 `action.image.*` / `action.video.*`（与注册表 `actions` 键对齐）及 **`studio.*`**（模型下拉、队列、任务状态、提示词/步数、生成与日志文案、模型切换、高级参数/ControlNet/LoRA、蒙版工具栏、上传失败等跨页共用文案）；**`video.runtime*`** — 视频创作页成片时长 / 耗时与磁盘占用提示
 - Vue I18n 9 (Composition API, `legacy: false`)
 - `$t('section.key')` for template strings
 - `$tt('section.key', {params})` for JS code strings
 - `$mn(model)` / `$md(model)` for bilingual model names/descriptions
 - `$pn(preset, chineseName)` for bilingual preset names
 - Language / 导航 / 设置页等持久化键：`frontend/js/storage_keys.js` → `window.DQ_STORAGE`（`dq-studio.*.v3`，不读旧 `danqing-*` 键）
-- Plan 前端缓存：`frontend/js/api.js` 末尾挂载 **`window.api`**（与 `const api` 同源）；`frontend/js/stores/registry.js`（`RegistryStore`，优先 `api.registry.getFull`）、`frontend/js/stores/tasks_store.js`（`api.gen.getQueue` 轮询 + `api.tasks.logStreamUrl` SSE）；`frontend/js/components/AdapterPicker.js`（LoRA / 适配器选择，由 `RegistryParamsForm` 使用）；`frontend/js/components/AssetPicker.js`（参考图 / 编辑图 / 视频起始图 / 蒙版编辑器空态：上传 + 最近条 + `/api/assets` 资产库）；创作页产出预览 **`api.gallery.getImageUrl('asset:{id}')`**；编辑/参考/视频首帧字节 **`api.gen.urlToBlob`**（`blob:`/`data:` 走 `fetch`，同源走 `axios`）；**Plan C6** `ImageEditor.js` 蒙版快捷键绑在组件根 `tabindex` + `@keydown`（非 `window`）；**Plan C9** `frontend/js/composables/media_queue.js` 挂载 **`window.DQMediaQueue`**（`normalizeTaskRow`、`snapshotFullQueue` 顶栏全队列；`tasksForMedia` 按 `kind` 前缀过滤，供顶栏等消费）；**Plan E4** `frontend/js/composables/memory_hint.js` 挂载 **`window.DQMemoryHint`**（`warnIfRisky` 提交前软警告）；**`task_status_ui.js`**（`DQTaskStatusUi`）、**`model_version_value.js`**（`DQModelVersionValue`）、**`studio_nav.js`**（`DQStudioNav.goSettings` / `goModels`，`navigate` 事件）
+- 前端缓存：`frontend/js/api.js` 末尾挂载 **`window.api`**（与 `const api` 同源）；`frontend/js/stores/registry.js`（`RegistryStore`，优先 `api.registry.getFull`）、`frontend/js/stores/tasks_store.js`（`api.gen.getQueue` 轮询 + `api.tasks.logStreamUrl` SSE）；`frontend/js/components/AdapterPicker.js`（LoRA / 适配器选择，由 `RegistryParamsForm` 使用）；`frontend/js/components/AssetPicker.js`（参考图 / 编辑图 / 视频起始图 / 蒙版编辑器空态：上传 + 最近条 + `/api/assets` 资产库）；创作页产出预览 **`api.gallery.getImageUrl('asset:{id}')`**；编辑/参考/视频首帧字节 **`api.gen.urlToBlob`**（`blob:`/`data:` 走 `fetch`，同源走 `axios`）；`ImageEditor.js` 蒙版快捷键绑在组件根 `tabindex` + `@keydown`（非 `window`）；`frontend/js/composables/media_queue.js` 挂载 **`window.DQMediaQueue`**（`normalizeTaskRow`、`snapshotFullQueue` 顶栏全队列；`tasksForMedia` 按 `kind` 前缀过滤，供顶栏等消费）；`frontend/js/composables/memory_hint.js` 挂载 **`window.DQMemoryHint`**（`warnIfRisky` 提交前软警告）；**`task_status_ui.js`**（`DQTaskStatusUi`）、**`model_version_value.js`**（`DQModelVersionValue`）、**`studio_nav.js`**（`DQStudioNav.goSettings` / `goModels`，`navigate` 事件）
 - Components in `frontend/js/components/` use `$t()` and `$tt()` universally
 
 ### Backend
@@ -297,11 +293,11 @@ python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 7860
 
 ### Fail loud：禁止静默降级 / 静默兼容回退（与引擎实现一致）
 - **默认**：影响成片质量、耗时、行为语义的路径（图像 / 视频管线、模型加载、解析注册表等）**不得**在失败或缺能力时 **静默降级**、**静默兼容回退**（例如换一条更弱的 CLI、套用无关模型的默认配置、`except: pass` 吞错后继续当成功路径）。
-- **必须显式失败**：应 **`RuntimeError` / 明确 HTTP 错误**，并尽量走 **`config/locales/zh.json` + `en.json`**（`t(...)`）与 **任务日志 / SSE**，让使用者从 UI 与日志能直接看到原因（与当前 `MLXVideoGenerationBackend` 无 CLI 回退、`MFluxGenerationBackend` 无未知模型 `ModelConfig.dev()` 兜底等实现一致）。
+- **必须显式失败**：应 **`RuntimeError` / 明确 HTTP 错误**，并尽量走 **`config/locales/zh.json` + `en.json`**（`t(...)`）与 **任务日志 / SSE**，让使用者从 UI 与日志能直接看到原因。
 - **确有必要例外**（极少数：例如仅运维、仅诊断、或上游 API 短期不可用）：**必须先经用户同意**——在 **设置页显式开关** 或 **提交前确认对话框**（默认关闭 / 默认不降级），并在 **AGENTS.md 或 PR 说明** 写清：开关含义、降级行为、风险；任务开始时 **日志中记录** 已启用降级及具体路径。
 - **禁止**：为「省事」在代码里写未文档化、无开关、无用户提示的回退分支。
 
-- **v3 DB 不兼容旧列演进**：`assets` / `tasks` 表以当前 `CREATE TABLE` 为准，**不做**运行时 `ALTER` 迁移；本地 schema 异常时删除 `db/studio.db` 与 `outputs/`（或至少 `outputs/assets/`）后重启即可重建。
+- **数据库 schema**：`assets` / `tasks` 表以当前 `CREATE TABLE` 为准，**不做**运行时 `ALTER` 迁移；本地 schema 异常时删除 `db/studio.db` 与 `outputs/`（或至少 `outputs/assets/`）后重启即可重建。
 - **macOS + Apple Silicon only** — MLX 加速依赖 Metal
 - **First generation is slow** — 模型加载到内存
 - **No build step** — 前端纯 CDN，无需打包
