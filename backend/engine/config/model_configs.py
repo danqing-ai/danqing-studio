@@ -288,7 +288,7 @@ class LongCatConfig:
     rope_dim: int = 64
     mlp_ratio: float = 4.0
     qk_norm: bool = True
-    supports_guidance: bool = False   # guidance_embeds=false
+    supports_guidance: bool = True    # CFG 在 pipeline 层实现
     supports_img2img: bool = True
     encoder_type: str = "qwen25vl"
     vae_scale: int = 8

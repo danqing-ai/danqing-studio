@@ -47,7 +47,12 @@ class BenchmarkCase:
         if "flux2" in m: return "models/Base/flux2-klein-9b-fp16"
         if "z-image-turbo" in m: return "models/Base/z-image-turbo-fp16"
         if "qwen" in m: return "models/Base/qwen-image-fp16"
-        if "z-image" in m: return "models/Base/z-image-fp16"
+        if "z-image" in m:
+            # 支持量化版本 :int8 / :int4 / :fp16
+            if ":int8" in m: return "models/Base/z-image-int8"
+            if ":int4" in m: return "models/Base/z-image-int4"
+            if ":fp16" in m: return "models/Base/z-image-fp16"
+            return "models/Base/z-image-fp16"
         return "models/Base/z-image-turbo-fp16"
 
 
@@ -141,6 +146,19 @@ ALL_CASES: list[BenchmarkCase] = [
         _mflux_cli="mflux-generate-z-image",
         source_image=SRC_IMAGE,
         description="Z-Image 图生图",
+    ),
+    # ============ z-image-int8 (create) ============
+    # mflux 使用本地 fp16 + --quantize 8 作为 int8 参考
+    # (mflux 对预量化 int8 模型有兼容性问题，故采用现场量化)
+    BenchmarkCase(
+        id="z-image-int8-create",
+        model="z-image:int8", action="create",
+        prompt="a mountain landscape, oil painting",
+        seed=42, steps=4,
+        _mflux_cli="mflux-generate-z-image",
+        _mflux_model_flag="models/Base/z-image-fp16",
+        _mflux_extra_args=["--quantize", "8"],
+        description="Z-Image INT8 文生图",
     ),
 ]
 

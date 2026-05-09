@@ -185,6 +185,33 @@ class MLXContext(RuntimeContext):
     def silu(self, x: Any) -> Any:
         return nn.silu(x)
 
+    def tanh(self, x: Any) -> Any:
+        return mx.tanh(x)
+
+    def split(self, x: Any, indices: list, axis: int = -1) -> list[Any]:
+        return mx.split(x, indices, axis=axis)
+
+    def broadcast_to(self, x: Any, shape: tuple) -> Any:
+        return mx.broadcast_to(x, shape)
+
+    def outer(self, a: Any, b: Any) -> Any:
+        return mx.outer(a, b)
+
+    def max(self, x: Any) -> Any:
+        return mx.max(x)
+
+    def sum(self, x: Any, axis: Any = None) -> Any:
+        return mx.sum(x, axis=axis) if axis is not None else mx.sum(x)
+
+    def square(self, x: Any) -> Any:
+        return mx.square(x)
+
+    def rsqrt(self, x: Any) -> Any:
+        return mx.rsqrt(x)
+
+    def mean(self, x: Any, axis: Any = None, keepdims: bool = False) -> Any:
+        return mx.mean(x, axis=axis, keepdims=keepdims)
+
     def gelu(self, x: Any, approximate: str = "none") -> Any:
         return nn.gelu(x)
 

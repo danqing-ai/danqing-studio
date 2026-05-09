@@ -12,13 +12,14 @@ _TRANSFORMER = {
 _WEIGHT_REMAP = {
     "z_image":  ("backend.engine.z_image.weights",  "remap_zimage_weights"),
     "flux2":    ("backend.engine.flux2.weights",     "remap_flux2_weights"),
+    "longcat":  ("backend.engine.longcat.weights",   "remap_longcat_weights"),
 }
 
 # encoder_type → (模块路径, 类名)
 _TEXT_ENCODER = {
     "flux2":    ("backend.engine.flux2.text_encoder",     "Flux2TextEncoder"),
     "z_image":  ("backend.engine.z_image.text_encoder",   "ZImageTextEncoder"),
-    "qwen25vl": ("backend.engine.common.text_encoders._qwen25vl", "Qwen25VLEncoder"),
+    "qwen25vl": ("backend.engine.longcat.text_encoder", "LongCatTextEncoder"),
 }
 
 

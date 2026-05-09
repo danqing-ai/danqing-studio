@@ -7,7 +7,7 @@ const SettingsPage = {
         <div class="settings-page">
             <el-tabs type="border-card" v-model="activeTab">
                 
-                <!-- 模型配置 -->
+                <!-- 模型配置（增强版） -->
                 <el-tab-pane :label="$t('settings.modelConfig')" name="models">
                     <div class="card" style="margin-bottom: 24px;">
                         <div class="card-title">
@@ -17,89 +17,399 @@ const SettingsPage = {
                                 {{ $t('settings.modelConfigDesc') }}
                             </span>
                         </div>
-                        
-                        <!-- 模型选择 -->
-                        <el-select v-model="selectedModel" style="width: 100%; margin-bottom: 20px;" size="large"
+
+                        <!-- 模型选择器（增强：带版本状态、分类、大小） -->
+                        <el-select
+                            v-model="selectedModel"
+                            style="width: 100%; margin-bottom: 20px;"
+                            size="large"
                             @change="onModelSelect"
+                            filterable
                         >
                             <el-option
-                                v-for="(config, key) in modelRegistry"
+                                v-for="(config, key) in sortedModelRegistry"
                                 :key="key"
                                 :label="$mn(config)"
                                 :value="key"
                             >
                                 <div style="display: flex; align-items: center; gap: 8px;">
-                                    <span>{{ $mn(config) }}</span>
-                                    <el-tag v-if="config.recommended" size="small" type="success">{{ $t('studio.recommended') }}</el-tag>
+                                    <span style="font-weight: 500;">{{ $mn(config) }}</span>
+                                    <el-tag v-if="config.recommended" size="small" type="success" effect="dark">{{ $t('studio.recommended') }}</el-tag>
                                     <el-tag size="small" type="info">{{ config.engine }}</el-tag>
+                                    <el-tag v-if="config.category" size="small" type="warning">{{ categoryLabel(config.category) }}</el-tag>
+                                    <span style="margin-left: auto; font-size: 12px; color: var(--text-muted);">
+                                        {{ installedVersionCount(key) }}/{{ versionCount(config) }} {{ $t('settings.versionsInstalled') }}
+                                    </span>
                                 </div>
                             </el-option>
                         </el-select>
-                        
-                        <!-- 当前模型配置 -->
+
+                        <!-- 当前模型配置（增强版） -->
                         <div v-if="currentModelConfig">
-                            <!-- 模型信息卡片 -->
-                            <div class="model-info-card">
-                                <div class="model-info-grid">
-                                    <div class="model-info-item">
-                                        <div class="model-info-label">
-                                            <el-icon><cpu /></el-icon>
-                                            {{ $t('settings.engine') }}
-                                        </div>
-                                        <div class="model-info-value">{{ currentModelConfig.engine }}</div>
+                            <!-- 模型概览头部 -->
+                            <div class="model-overview-header" style="display: flex; align-items: flex-start; gap: 16px; margin-bottom: 24px; padding: 16px; background: var(--bg-card); border-radius: 12px; border: 1px solid var(--border-color);">
+                                <div style="width: 56px; height: 56px; border-radius: 12px; background: rgba(233, 69, 96, 0.1); border: 1px solid rgba(233, 69, 96, 0.2); display: flex; align-items: center; justify-content: center; flex-shrink: 0; color: var(--primary); font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 4px; box-sizing: border-box;">
+                                    {{ modelInitials(currentModelConfig) }}
+                                </div>
+                                <div style="flex: 1; min-width: 0;">
+                                    <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+                                        <span style="font-size: 18px; font-weight: 600; color: var(--text-primary);">{{ $mn(currentModelConfig) }}</span>
+                                        <el-tag v-if="currentModelConfig.recommended" size="small" type="success" effect="dark">{{ $t('studio.recommended') }}</el-tag>
                                     </div>
-                                    <div class="model-info-item">
-                                        <div class="model-info-label">
-                                            <el-icon><document /></el-icon>
-                                            {{ $t('settings.modelType') }}
-                                        </div>
-                                        <div class="model-info-value">{{ currentModelConfig.type }}</div>
+                                    <div style="font-size: 13px; color: var(--text-muted); line-height: 1.5;">{{ $md(currentModelConfig) }}</div>
+                                    <div style="display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap;">
+                                        <el-tag size="small" type="info">{{ currentModelConfig.engine }}</el-tag>
+                                        <el-tag v-if="currentModelConfig.category" size="small" type="warning">{{ categoryLabel(currentModelConfig.category) }}</el-tag>
+                                        <el-tag size="small" type="primary">{{ currentModelConfig.type }}</el-tag>
+                                        <el-tag
+                                            v-for="key in modelActionKeyList"
+                                            :key="key"
+                                            size="small"
+                                            effect="plain"
+                                        >
+                                            {{ actionTagLabel(key) }}
+                                        </el-tag>
                                     </div>
-                                    <div class="model-info-item full-width">
-                                        <div class="model-info-label">
-                                            <el-icon><star /></el-icon>
-                                            {{ $t('settings.modelActions') }}
+                                </div>
+                            </div>
+
+                            <!-- 两栏布局：参数配置 + 模型信息 -->
+                            <el-row :gutter="24">
+                                <!-- 左栏：参数配置 -->
+                                <el-col :xs="24" :md="16">
+                                    <!-- 默认版本选择 -->
+                                    <div v-if="currentModelConfig.versions" style="margin-bottom: 20px;">
+                                        <div style="font-weight: 600; font-size: 14px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
+                                            <el-icon><collection /></el-icon>
+                                            {{ $t('settings.defaultVersion') }}
                                         </div>
-                                        <div class="model-info-tags">
-                                            <el-tag 
-                                                v-for="key in modelActionKeyList" 
-                                                :key="key" 
-                                                size="small" 
-                                                effect="dark"
-                                                class="action-tag"
+                                        <el-select v-model="selectedDefaultVersion" style="width: 100%;" @change="onDefaultVersionChange">
+                                            <el-option
+                                                v-for="(ver, verKey) in currentModelConfig.versions"
+                                                :key="verKey"
+                                                :value="verKey"
                                             >
-                                                {{ actionTagLabel(key) }}
+                                                <div style="display: flex; align-items: center; gap: 8px;">
+                                                    <span>{{ ver.name }}</span>
+                                                    <el-tag size="small" type="info">{{ ver.size }}</el-tag>
+                                                    <el-tag
+                                                        v-if="versionStatus(selectedModel, verKey) === 'ready'"
+                                                        size="small"
+                                                        type="success"
+                                                    >{{ $t('settings.installed') }}</el-tag>
+                                                    <el-tag
+                                                        v-else-if="versionStatus(selectedModel, verKey) === 'generatable'"
+                                                        size="small"
+                                                        type="warning"
+                                                    >{{ $t('settings.canGenerate') }}</el-tag>
+                                                    <el-tag
+                                                        v-else
+                                                        size="small"
+                                                        type="info"
+                                                    >{{ $t('settings.notInstalled') }}</el-tag>
+                                                    <span
+                                                        v-if="isRecommendedVersion(verKey)"
+                                                        style="margin-left: auto; font-size: 12px; color: var(--primary);"
+                                                    >{{ $t('settings.recommendedForYourHardware') }}</span>
+                                                </div>
+                                            </el-option>
+                                        </el-select>
+                                        <div v-if="hardwareAdvice" style="margin-top: 8px; padding: 10px 14px; border-radius: 8px; font-size: 13px;" :style="hardwareAdviceStyle">
+                                            <div style="display: flex; align-items: center; gap: 8px;">
+                                                <el-icon :size="16"><component :is="hardwareAdvice.icon" /></el-icon>
+                                                <span>{{ hardwareAdvice.message }}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- 参数预设管理 -->
+                                    <div style="margin-bottom: 20px;">
+                                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                                            <div style="font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 8px;">
+                                                <el-icon><magic-stick /></el-icon>
+                                                {{ $t('settings.paramPresets') }}
+                                            </div>
+                                            <el-button type="primary" size="small" @click="openParamPresetDialog">
+                                                <el-icon><plus /></el-icon>
+                                                {{ $t('settings.saveAsPreset') }}
+                                            </el-button>
+                                        </div>
+                                        <div v-if="paramPresetsForModel.length === 0" style="font-size: 13px; color: var(--text-muted); padding: 12px; background: var(--bg-card); border-radius: 8px; border: 1px dashed var(--border-color);">
+                                            {{ $t('settings.noParamPresets') }}
+                                        </div>
+                                        <div v-else style="display: flex; flex-wrap: wrap; gap: 8px;">
+                                            <el-tag
+                                                v-for="preset in paramPresetsForModel"
+                                                :key="preset.id"
+                                                size="small"
+                                                effect="plain"
+                                                closable
+                                                @close="deleteParamPreset(preset.id)"
+                                                @click="loadParamPreset(preset)"
+                                                style="cursor: pointer;"
+                                                :type="preset.isDefault ? 'success' : ''"
+                                            >
+                                                {{ preset.name }}
+                                                <span v-if="preset.isDefault" style="margin-left: 4px; font-size: 10px;">({{ $t('settings.default') }})</span>
                                             </el-tag>
                                         </div>
                                     </div>
-                                </div>
-                            </div>
-                            
-                            <!-- 模型参数配置（Plan C3：与创作页共用 RegistryParamsForm + 注册表 schema） -->
-                            <div class="model-params-section">
-                                <h4 class="section-title">
-                                    <el-icon><sliders /></el-icon>
-                                    {{ $t('settings.parameters') }}
-                                </h4>
-                                <registry-params-form
-                                    v-if="currentModelConfig"
-                                    :model-config="currentModelConfig"
-                                    :params="modelParams"
-                                    :loras="settingsLorasForForm"
-                                    :controlnets="null"
-                                    control-image-src=""
-                                    :control-recent-gallery="[]"
-                                    @restore-defaults="onSettingsModelRestoreDefaults"
-                                />
-                                <div class="save-button-wrapper">
-                                    <el-button type="primary" @click="saveModelConfig" class="save-button">
-                                        <el-icon><check /></el-icon>
-                                        {{ $t('common.save') }}
-                                    </el-button>
-                                </div>
-                            </div>
+
+                                    <!-- 参数配置表单（增强：带 note、类型图标、重置按钮） -->
+                                    <div class="model-params-section">
+                                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                                            <h4 class="section-title" style="margin: 0;">
+                                                <el-icon><sliders /></el-icon>
+                                                {{ $t('settings.parameters') }}
+                                            </h4>
+                                            <el-button text type="primary" size="small" @click="onSettingsModelRestoreDefaults">
+                                                <el-icon><refresh /></el-icon>
+                                                {{ $t('studio.restoreDefaults') }}
+                                            </el-button>
+                                        </div>
+
+                                        <!-- 自定义参数表单（替代 RegistryParamsForm，增加 note 展示和重置按钮） -->
+                                        <el-form label-position="top" size="small" v-if="currentModelConfig">
+                                            <!-- 分辨率 -->
+                                            <el-form-item v-if="resPair" :label="$t('studio.resolution')">
+                                                <div style="display: flex; align-items: center; gap: 8px;">
+                                                    <el-select v-model="modelParams.width" style="width: 120px;">
+                                                        <el-option v-for="w in resPair.width.options" :key="w" :label="String(w)" :value="w" />
+                                                    </el-select>
+                                                    <span style="color: var(--text-muted);">x</span>
+                                                    <el-select v-model="modelParams.height" style="width: 120px;">
+                                                        <el-option v-for="h in resPair.height.options" :key="h" :label="String(h)" :value="h" />
+                                                    </el-select>
+                                                </div>
+                                            </el-form-item>
+
+                                            <!-- 标量参数 -->
+                                            <template v-for="key in scalarKeys" :key="key">
+                                                <el-form-item v-if="specOf(key)">
+                                                    <template #label>
+                                                        <div style="display: flex; align-items: center; gap: 6px;">
+                                                            <span>{{ paramLabel(key, specOf(key)) }}</span>
+                                                            <el-tooltip v-if="specOf(key).note" :content="specOf(key).note" placement="top">
+                                                                <el-icon style="color: var(--text-muted); cursor: help;"><question-filled /></el-icon>
+                                                            </el-tooltip>
+                                                            <el-tag v-if="isParamChanged(key)" size="small" type="warning" effect="plain" style="margin-left: auto;">{{ $t('settings.modified') }}</el-tag>
+                                                        </div>
+                                                    </template>
+                                                    <!-- int / float slider -->
+                                                    <template v-if="specOf(key).type === 'int' || specOf(key).type === 'float'">
+                                                        <div class="param-control-row">
+                                                            <div class="param-slider">
+                                                                <el-slider
+                                                                    v-model="modelParams[key]"
+                                                                    :min="specOf(key).min"
+                                                                    :max="specOf(key).max"
+                                                                    :step="numStep(key, specOf(key))"
+                                                                />
+                                                            </div>
+                                                            <el-input-number
+                                                                v-model="modelParams[key]"
+                                                                :min="specOf(key).min"
+                                                                :max="specOf(key).max"
+                                                                :step="numStep(key, specOf(key))"
+                                                                class="param-input-number"
+                                                            />
+                                                            <el-button
+                                                                v-if="isParamChanged(key)"
+                                                                size="small"
+                                                                text
+                                                                @click="resetParam(key)"
+                                                                :title="$t('settings.resetToDefault')"
+                                                            >
+                                                                <el-icon><refresh-left /></el-icon>
+                                                            </el-button>
+                                                        </div>
+                                                    </template>
+                                                    <!-- enum -->
+                                                    <div v-else-if="specOf(key).type === 'enum'" style="display: flex; align-items: center; gap: 8px;">
+                                                        <el-select v-model="modelParams[key]" style="flex: 1;">
+                                                            <el-option v-for="opt in specOf(key).options" :key="String(opt)" :label="String(opt)" :value="opt" />
+                                                        </el-select>
+                                                        <el-button
+                                                            v-if="isParamChanged(key)"
+                                                            size="small"
+                                                            text
+                                                            @click="resetParam(key)"
+                                                            :title="$t('settings.resetToDefault')"
+                                                        >
+                                                            <el-icon><refresh-left /></el-icon>
+                                                        </el-button>
+                                                    </div>
+                                                    <!-- bool -->
+                                                    <div v-else-if="specOf(key).type === 'bool'" style="display: flex; align-items: center; gap: 8px;">
+                                                        <el-switch v-model="modelParams[key]" />
+                                                        <el-button
+                                                            v-if="isParamChanged(key)"
+                                                            size="small"
+                                                            text
+                                                            @click="resetParam(key)"
+                                                            :title="$t('settings.resetToDefault')"
+                                                        >
+                                                            <el-icon><refresh-left /></el-icon>
+                                                        </el-button>
+                                                    </div>
+                                                </el-form-item>
+                                            </template>
+
+                                            <!-- LoRA -->
+                                            <adapter-picker
+                                                v-if="showLoraBlock"
+                                                :items="adapterItems"
+                                                :adapter-id="modelParams.lora"
+                                                @update:adapter-id="modelParams.lora = $event"
+                                                :weight="modelParams.lora_scale"
+                                                @update:weight="modelParams.lora_scale = $event"
+                                                :weight-spec="loraScaleSpec"
+                                            />
+
+                                            <!-- 种子 -->
+                                            <el-form-item v-if="seedSupport" :label="$t('studio.seed')">
+                                                <div style="display: flex; gap: 8px;">
+                                                    <el-input v-model="modelParams.seed" :placeholder="$t('studio.seedPlaceholder')" style="flex: 1;" />
+                                                    <el-button @click="modelParams.seed = String(Math.floor(Math.random() * 1_000_000))">
+                                                        <el-icon><refresh /></el-icon>
+                                                    </el-button>
+                                                </div>
+                                            </el-form-item>
+                                        </el-form>
+
+                                        <div class="save-button-wrapper" style="margin-top: 20px;">
+                                            <el-button type="primary" @click="saveModelConfig" class="save-button">
+                                                <el-icon><check /></el-icon>
+                                                {{ $t('common.save') }}
+                                            </el-button>
+                                        </div>
+                                    </div>
+                                </el-col>
+
+                                <!-- 右栏：模型信息参考 -->
+                                <el-col :xs="24" :md="8">
+                                    <!-- 版本状态矩阵 -->
+                                    <div class="card" style="margin-bottom: 20px; background: var(--bg-card);">
+                                        <div style="font-weight: 600; font-size: 14px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
+                                            <el-icon><collection /></el-icon>
+                                            {{ $t('settings.versionStatus') }}
+                                        </div>
+                                        <div v-if="!currentModelConfig.versions" style="font-size: 13px; color: var(--text-muted);">
+                                            {{ $t('settings.noVersions') }}
+                                        </div>
+                                        <div v-else style="display: flex; flex-direction: column; gap: 8px;">
+                                            <div
+                                                v-for="(ver, verKey) in currentModelConfig.versions"
+                                                :key="verKey"
+                                                style="padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border-color);"
+                                                :style="versionItemStyle(verKey)"
+                                            >
+                                                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                                                    <span style="font-weight: 500; font-size: 13px;">{{ ver.name }}</span>
+                                                    <el-tag size="small" type="info">{{ ver.size }}</el-tag>
+                                                </div>
+                                                <div style="display: flex; align-items: center; gap: 6px;">
+                                                    <el-tag
+                                                        :type="versionStatusType(selectedModel, verKey)"
+                                                        size="small"
+                                                        effect="dark"
+                                                    >
+                                                        {{ versionStatusLabel(selectedModel, verKey) }}
+                                                    </el-tag>
+                                                    <span v-if="ver.source_type === 'derived'" style="font-size: 11px; color: var(--text-muted);">
+                                                        {{ $t('settings.from') }} {{ currentModelConfig.versions[ver.from_version]?.name || ver.from_version }}
+                                                    </span>
+                                                </div>
+                                                <div v-if="isRecommendedVersion(verKey)" style="margin-top: 6px; font-size: 12px; color: var(--primary);">
+                                                    <el-icon style="vertical-align: middle; margin-right: 4px;"><star-filled /></el-icon>
+                                                    {{ $t('settings.recommendedForYourHardware') }}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- 能力矩阵 -->
+                                    <div class="card" style="margin-bottom: 20px; background: var(--bg-card);">
+                                        <div style="font-weight: 600; font-size: 14px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
+                                            <el-icon><check /></el-icon>
+                                            {{ $t('settings.capabilities') }}
+                                        </div>
+                                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                                            <div
+                                                v-for="cap in capabilityList"
+                                                :key="cap.key"
+                                                style="display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 6px;"
+                                                :style="cap.value ? 'background: rgba(103, 194, 58, 0.1);' : 'background: rgba(144, 147, 153, 0.1);'"
+                                            >
+                                                <el-icon :size="14" :color="cap.value ? '#67c23a' : '#909399'">
+                                                    <component :is="cap.value ? 'check' : 'close'" />
+                                                </el-icon>
+                                                <span style="font-size: 12px;" :style="cap.value ? 'color: #67c23a;' : 'color: #909399;'">{{ cap.label }}</span>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- 硬件适配 -->
+                                    <div class="card" style="margin-bottom: 20px; background: var(--bg-card);">
+                                        <div style="font-weight: 600; font-size: 14px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
+                                            <el-icon><cpu /></el-icon>
+                                            {{ $t('settings.hardwareCompatibility') }}
+                                        </div>
+                                        <div v-if="systemInfo.memory_gb" style="margin-bottom: 12px;">
+                                            <div style="display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px;">
+                                                <span>{{ $t('settings.systemMemory') }}</span>
+                                                <span style="font-weight: 500;">{{ systemInfo.memory_gb.toFixed(1) }} GB</span>
+                                            </div>
+                                            <el-progress :percentage="Math.min(100, (minVersionSizeGB / systemInfo.memory_gb * 100))" :show-text="false" :stroke-width="6" :color="memoryProgressColor" />
+                                        </div>
+                                        <div v-if="recommendedVersion" style="padding: 10px; border-radius: 8px; background: rgba(103, 194, 58, 0.1); border: 1px solid rgba(103, 194, 58, 0.3);">
+                                            <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 4px;">{{ $t('settings.recommendedVersion') }}</div>
+                                            <div style="font-weight: 600; color: #67c23a;">{{ recommendedVersion.name }} ({{ recommendedVersion.size }})</div>
+                                        </div>
+                                        <div v-else-if="currentModelConfig.versions" style="padding: 10px; border-radius: 8px; background: rgba(245, 108, 108, 0.1); border: 1px solid rgba(245, 108, 108, 0.3);">
+                                            <div style="font-size: 13px; color: var(--danger);">
+                                                <el-icon style="vertical-align: middle; margin-right: 4px;"><warning /></el-icon>
+                                                {{ $t('settings.memoryInsufficient') }}
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- 参数说明 -->
+                                    <div class="card" style="background: var(--bg-card);">
+                                        <div style="font-weight: 600; font-size: 14px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
+                                            <el-icon><info-filled /></el-icon>
+                                            {{ $t('settings.paramNotes') }}
+                                        </div>
+                                        <div v-if="!hasParamNotes" style="font-size: 13px; color: var(--text-muted);">
+                                            {{ $t('settings.noParamNotes') }}
+                                        </div>
+                                        <div v-else style="display: flex; flex-direction: column; gap: 10px;">
+                                            <div v-for="note in paramNotesList" :key="note.key" style="padding: 8px 10px; background: var(--bg-body); border-radius: 6px;">
+                                                <div style="font-weight: 500; font-size: 12px; margin-bottom: 4px; color: var(--text-primary);">{{ note.label }}</div>
+                                                <div style="font-size: 12px; color: var(--text-muted); line-height: 1.5;">{{ note.note }}</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </el-col>
+                            </el-row>
                         </div>
                     </div>
+
+                    <!-- 参数预设保存对话框 -->
+                    <el-dialog v-model="paramPresetDialogVisible" :title="$t('settings.saveParamPreset')" width="400px">
+                        <el-form label-position="top">
+                            <el-form-item :label="$t('settings.presetName')" required>
+                                <el-input v-model="paramPresetForm.name" :placeholder="$t('settings.presetNamePlaceholder')" />
+                            </el-form-item>
+                            <el-form-item>
+                                <el-checkbox v-model="paramPresetForm.isDefault">{{ $t('settings.setAsDefaultPreset') }}</el-checkbox>
+                            </el-form-item>
+                        </el-form>
+                        <template #footer>
+                            <el-button @click="paramPresetDialogVisible = false">{{ $t('common.cancel') }}</el-button>
+                            <el-button type="primary" @click="saveParamPreset">{{ $t('common.save') }}</el-button>
+                        </template>
+                    </el-dialog>
                 </el-tab-pane>
                 
                 <!-- 提示词模板 -->
@@ -556,6 +866,18 @@ const SettingsPage = {
         // 模型配置
         const modelRegistry = ref({});
         const selectedModel = ref('');
+        // 模型安装状态（从后端加载）
+        const modelsStatus = ref({});
+        const modelsDetailedStatus = ref({});
+        // 默认版本选择
+        const selectedDefaultVersion = ref('');
+        // 参数预设（localStorage 持久化）
+        const paramPresets = ref([]);
+        const paramPresetDialogVisible = ref(false);
+        const paramPresetForm = reactive({ name: '', isDefault: false });
+        // 记录参数默认值（用于检测变更）
+        const paramDefaults = reactive({});
+
         const modelParams = reactive({
             steps: 4,
             guidance: 3.5,
@@ -722,6 +1044,391 @@ const SettingsPage = {
             }
         };
 
+        // ===== 增强：模型选择器 & 概览 =====
+
+        const sortedModelRegistry = computed(() => {
+            const entries = Object.entries(modelRegistry.value);
+            entries.sort((a, b) => {
+                if (a[1].recommended !== b[1].recommended) return a[1].recommended ? -1 : 1;
+                const nameA = typeof window.$mn === 'function' ? window.$mn(a[1], a[0]) : a[0];
+                const nameB = typeof window.$mn === 'function' ? window.$mn(b[1], b[0]) : b[0];
+                return nameA.localeCompare(nameB);
+            });
+            return Object.fromEntries(entries);
+        });
+
+        const categoryLabel = (cat) => {
+            const map = {
+                'base_models': $tt('download.baseModels'),
+                'controlnets': $tt('download.controlNet'),
+                'upscalers': $tt('download.upscalers'),
+                'loras': $tt('download.loraModels'),
+                'tools': $tt('download.tools'),
+                'video_models': $tt('download.videoModels'),
+            };
+            return map[cat] || cat;
+        };
+
+        const modelInitials = (config) => {
+            const name = typeof window.$mn === 'function' ? window.$mn(config, '') : (config.id || '');
+            if (!name) return 'M';
+            const dashIndex = name.indexOf('-');
+            const spaceIndex = name.indexOf(' ');
+            let endIndex = -1;
+            if (dashIndex !== -1 && spaceIndex !== -1) {
+                endIndex = Math.min(dashIndex, spaceIndex);
+            } else if (dashIndex !== -1) {
+                endIndex = dashIndex;
+            } else if (spaceIndex !== -1) {
+                endIndex = spaceIndex;
+            }
+            if (endIndex !== -1) return name.slice(0, endIndex);
+            return name.slice(0, 3);
+        };
+
+        const versionCount = (config) => {
+            return config.versions ? Object.keys(config.versions).length : 0;
+        };
+
+        const installedVersionCount = (modelId) => {
+            const detail = modelsDetailedStatus.value[modelId];
+            if (!detail || !detail.versions) return 0;
+            return Object.values(detail.versions).filter((v) => v.ready).length;
+        };
+
+        const versionStatus = (modelId, verKey) => {
+            const detail = modelsDetailedStatus.value[modelId];
+            if (!detail || !detail.versions) return 'missing';
+            const verStatus = detail.versions[verKey];
+            if (!verStatus) return 'missing';
+            if (verStatus.ready) return 'ready';
+            const model = modelRegistry.value[modelId];
+            if (model && model.versions && model.versions[verKey]) {
+                const ver = model.versions[verKey];
+                if (ver.source_type === 'derived') {
+                    const parentVer = ver.from_version;
+                    if (parentVer && detail.versions[parentVer] && detail.versions[parentVer].ready) {
+                        return 'generatable';
+                    }
+                    return 'parent_missing';
+                }
+            }
+            return 'missing';
+        };
+
+        const versionStatusType = (modelId, verKey) => {
+            const s = versionStatus(modelId, verKey);
+            const map = { ready: 'success', generatable: 'warning', parent_missing: 'info', missing: 'info' };
+            return map[s] || 'info';
+        };
+
+        const versionStatusLabel = (modelId, verKey) => {
+            const s = versionStatus(modelId, verKey);
+            const map = {
+                ready: $tt('settings.installed'),
+                generatable: $tt('settings.canGenerate'),
+                parent_missing: $tt('settings.waitingParent'),
+                missing: $tt('settings.notInstalled'),
+            };
+            return map[s] || s;
+        };
+
+        const versionItemStyle = (verKey) => {
+            if (selectedDefaultVersion.value === verKey) {
+                return 'border-color: var(--primary); background: rgba(233, 69, 96, 0.05);';
+            }
+            return '';
+        };
+
+        // 解析版本大小字符串为 GB 数字
+        const parseSizeGB = (sizeStr) => {
+            if (!sizeStr) return 0;
+            const match = String(sizeStr).match(/([\d.]+)\s*(GB|MB|KB|TB)/i);
+            if (!match) return 0;
+            const val = parseFloat(match[1]);
+            const unit = match[2].toUpperCase();
+            if (unit === 'TB') return val * 1024;
+            if (unit === 'GB') return val;
+            if (unit === 'MB') return val / 1024;
+            if (unit === 'KB') return val / (1024 * 1024);
+            return val;
+        };
+
+        const minVersionSizeGB = computed(() => {
+            const cfg = currentModelConfig.value;
+            if (!cfg || !cfg.versions) return 0;
+            const sizes = Object.values(cfg.versions).map((v) => parseSizeGB(v.size));
+            return Math.min(...sizes);
+        });
+
+        const memoryProgressColor = computed(() => {
+            const ratio = systemInfo.memory_gb ? minVersionSizeGB.value / systemInfo.memory_gb : 0;
+            if (ratio < 0.5) return '#67c23a';
+            if (ratio < 0.8) return '#e6a23c';
+            return '#f56c6c';
+        });
+
+        const isRecommendedVersion = (verKey) => {
+            const cfg = currentModelConfig.value;
+            if (!cfg || !cfg.versions || !systemInfo.memory_gb) return false;
+            const ver = cfg.versions[verKey];
+            if (!ver) return false;
+            const sizeGB = parseSizeGB(ver.size);
+            // 推荐：已安装且内存充足，或未安装但内存充足的最小版本
+            const memoryGB = systemInfo.memory_gb;
+            if (sizeGB > memoryGB * 1.2) return false;
+            const status = versionStatus(selectedModel.value, verKey);
+            if (status === 'ready') return true;
+            // 如果没有任何已安装版本，推荐内存范围内最小的
+            const allReady = Object.keys(cfg.versions).filter((k) => versionStatus(selectedModel.value, k) === 'ready');
+            if (allReady.length === 0) {
+                const installable = Object.entries(cfg.versions)
+                    .filter(([k, v]) => {
+                        const s = parseSizeGB(v.size);
+                        return s <= memoryGB * 1.2;
+                    })
+                    .sort((a, b) => parseSizeGB(a[1].size) - parseSizeGB(b[1].size));
+                return installable.length > 0 && installable[0][0] === verKey;
+            }
+            return false;
+        };
+
+        const recommendedVersion = computed(() => {
+            const cfg = currentModelConfig.value;
+            if (!cfg || !cfg.versions) return null;
+            const candidates = Object.entries(cfg.versions).filter(([k]) => isRecommendedVersion(k));
+            if (candidates.length === 0) return null;
+            // 优先选择已安装的
+            const ready = candidates.find(([k]) => versionStatus(selectedModel.value, k) === 'ready');
+            if (ready) return { key: ready[0], ...ready[1] };
+            return { key: candidates[0][0], ...candidates[0][1] };
+        });
+
+        const hardwareAdvice = computed(() => {
+            const cfg = currentModelConfig.value;
+            if (!cfg || !cfg.versions || !systemInfo.memory_gb) return null;
+            const memoryGB = systemInfo.memory_gb;
+            const readyCount = installedVersionCount(selectedModel.value);
+            if (readyCount > 0) {
+                const readyVersions = Object.entries(cfg.versions).filter(([k]) => versionStatus(selectedModel.value, k) === 'ready');
+                const largestReady = readyVersions.reduce((a, b) => (parseSizeGB(a[1].size) > parseSizeGB(b[1].size) ? a : b));
+                const largestSize = parseSizeGB(largestReady[1].size);
+                if (largestSize > memoryGB * 1.2) {
+                    return { icon: 'warning', message: $tt('settings.memoryWarningLargeModel', { size: largestReady[1].size }) };
+                }
+                return { icon: 'check', message: $tt('settings.modelReadyToUse') };
+            }
+            const smallest = Object.values(cfg.versions).reduce((a, b) => (parseSizeGB(a.size) < parseSizeGB(b.size) ? a : b));
+            if (parseSizeGB(smallest.size) > memoryGB * 1.2) {
+                return { icon: 'warning', message: $tt('settings.memoryInsufficientForAllVersions', { memory: memoryGB.toFixed(1) }) };
+            }
+            return { icon: 'info', message: $tt('settings.modelNotInstalled') };
+        });
+
+        const hardwareAdviceStyle = computed(() => {
+            if (!hardwareAdvice.value) return {};
+            const icon = hardwareAdvice.value.icon;
+            if (icon === 'warning') return { background: 'rgba(245, 108, 108, 0.1)', border: '1px solid rgba(245, 108, 108, 0.3)', color: 'var(--danger)' };
+            if (icon === 'check') return { background: 'rgba(103, 194, 58, 0.1)', border: '1px solid rgba(103, 194, 58, 0.3)', color: '#67c23a' };
+            return { background: 'rgba(144, 147, 153, 0.1)', border: '1px solid rgba(144, 147, 153, 0.3)', color: 'var(--text-muted)' };
+        });
+
+        const capabilityList = computed(() => {
+            const cfg = currentModelConfig.value;
+            if (!cfg || !cfg.parameters) return [];
+            const caps = [];
+            const params = cfg.parameters;
+            const labels = {
+                lora_support: $tt('settings.loraSupport'),
+                seed_support: $tt('settings.seedSupport'),
+                negative_prompt_support: $tt('settings.negativePromptSupport'),
+            };
+            for (const [key, val] of Object.entries(params)) {
+                if (key.endsWith('_support') && typeof val === 'boolean') {
+                    caps.push({ key, label: labels[key] || key.replace('_support', '').replace(/_/g, ' '), value: val });
+                }
+            }
+            return caps;
+        });
+
+        // ===== 参数预设 =====
+
+        const loadParamPresets = () => {
+            try {
+                const raw = localStorage.getItem('dq_param_presets_v1');
+                paramPresets.value = raw ? JSON.parse(raw) : [];
+            } catch (e) {
+                paramPresets.value = [];
+            }
+        };
+
+        const saveParamPresetsToStorage = () => {
+            localStorage.setItem('dq_param_presets_v1', JSON.stringify(paramPresets.value));
+        };
+
+        const paramPresetsForModel = computed(() => {
+            const mk = selectedModel.value;
+            if (!mk) return [];
+            return paramPresets.value.filter((p) => p.modelKey === mk);
+        });
+
+        const openParamPresetDialog = () => {
+            paramPresetForm.name = '';
+            paramPresetForm.isDefault = false;
+            paramPresetDialogVisible.value = true;
+        };
+
+        const saveParamPreset = () => {
+            if (!paramPresetForm.name.trim()) {
+                ElementPlus.ElMessage.warning($tt('settings.enterPresetName'));
+                return;
+            }
+            const mk = selectedModel.value;
+            if (!mk) return;
+            const presetParams = {};
+            const cfg = currentModelConfig.value;
+            if (cfg && cfg.parameters) {
+                for (const [key, spec] of Object.entries(cfg.parameters)) {
+                    if (typeof spec !== 'object' || !Object.prototype.hasOwnProperty.call(spec, 'default')) continue;
+                    if (spec.type === 'bool' && String(key).endsWith('_support')) continue;
+                    if (!Object.prototype.hasOwnProperty.call(modelParams, key)) continue;
+                    presetParams[key] = modelParams[key];
+                }
+            }
+            // 如果设为默认，取消其他默认
+            if (paramPresetForm.isDefault) {
+                paramPresets.value.forEach((p) => {
+                    if (p.modelKey === mk) p.isDefault = false;
+                });
+            }
+            paramPresets.value.push({
+                id: Date.now().toString(36) + Math.random().toString(36).substr(2),
+                modelKey: mk,
+                name: paramPresetForm.name.trim(),
+                params: presetParams,
+                isDefault: paramPresetForm.isDefault,
+                createdAt: new Date().toISOString(),
+            });
+            saveParamPresetsToStorage();
+            paramPresetDialogVisible.value = false;
+            ElementPlus.ElMessage.success($tt('settings.presetSaved'));
+        };
+
+        const loadParamPreset = (preset) => {
+            if (!preset || !preset.params) return;
+            Object.assign(modelParams, preset.params);
+            ElementPlus.ElMessage.success($tt('settings.presetLoaded', { name: preset.name }));
+        };
+
+        const deleteParamPreset = (id) => {
+            const idx = paramPresets.value.findIndex((p) => p.id === id);
+            if (idx !== -1) {
+                paramPresets.value.splice(idx, 1);
+                saveParamPresetsToStorage();
+            }
+        };
+
+        // ===== 参数表单增强 =====
+
+        const normalizedParams = computed(() => {
+            const R = window.RegistryParamSchema;
+            const cfg = currentModelConfig.value;
+            if (!R || !cfg || !cfg.parameters) return {};
+            return R.normalizeParamsDef(cfg.parameters);
+        });
+
+        const resPair = computed(() => {
+            const R = window.RegistryParamSchema;
+            return R ? R.resolutionPair(normalizedParams.value) : null;
+        });
+
+        const scalarKeys = computed(() => {
+            const R = window.RegistryParamSchema;
+            return R ? R.scalarKeysForForm(normalizedParams.value) : [];
+        });
+
+        const seedSupport = computed(() => {
+            const cfg = currentModelConfig.value;
+            return !!(cfg && cfg.parameters && cfg.parameters.seed_support);
+        });
+
+        const showLoraBlock = computed(() => {
+            const p = currentModelConfig.value && currentModelConfig.value.parameters;
+            if (!p || !p.lora_support) return false;
+            return Array.isArray(settingsCompatibleLoras.value);
+        });
+
+        const adapterItems = computed(() => {
+            if (!Array.isArray(settingsCompatibleLoras.value)) return [];
+            return settingsCompatibleLoras.value.map((l) => ({ kind: 'lora', id: l.path, name: l.name }));
+        });
+
+        const loraScaleSpec = computed(() => {
+            const s = normalizedParams.value.lora_scale;
+            if (s && (s.type === 'int' || s.type === 'float')) {
+                return { min: s.min ?? 0, max: s.max ?? 2, step: s.step ?? 0.1 };
+            }
+            return { min: 0, max: 2, step: 0.1 };
+        });
+
+        const specOf = (key) => normalizedParams.value[key];
+
+        const numStep = (key, spec) => {
+            if (typeof spec.step === 'number') return spec.step;
+            return spec.type === 'int' ? 1 : 0.1;
+        };
+
+        const paramLabel = (key, spec) => {
+            const map = {
+                steps: 'create.stepsLabel',
+                guidance: 'create.guidanceLabel',
+                scheduler: 'create.schedulerLabel',
+                strength: 'create.strengthLabel',
+                controlnet_strength: 'create.controlNetStrengthLabel',
+                redux_strength: 'create.reduxStrengthLabel',
+            };
+            const i18nKey = map[key];
+            if (i18nKey) {
+                try {
+                    return i18n.global.t(i18nKey);
+                } catch (e) {
+                    /* fall through */
+                }
+            }
+            if (spec && spec.label) return spec.label;
+            return key;
+        };
+
+        const isParamChanged = (key) => {
+            const spec = specOf(key);
+            if (!spec || !('default' in spec)) return false;
+            return modelParams[key] !== spec.default;
+        };
+
+        const resetParam = (key) => {
+            const spec = specOf(key);
+            if (spec && 'default' in spec) {
+                modelParams[key] = spec.default;
+            }
+        };
+
+        const paramNotesList = computed(() => {
+            const cfg = currentModelConfig.value;
+            if (!cfg || !cfg.parameters) return [];
+            const list = [];
+            for (const [key, spec] of Object.entries(cfg.parameters)) {
+                if (typeof spec !== 'object') continue;
+                if (!spec.note) continue;
+                if (spec.type === 'bool' && String(key).endsWith('_support')) continue;
+                list.push({ key, label: paramLabel(key, spec), note: spec.note });
+            }
+            return list;
+        });
+
+        const hasParamNotes = computed(() => paramNotesList.value.length > 0);
+
+        // ===== 原有 computed =====
+
         const currentModelConfig = computed(() => {
             return modelRegistry.value[selectedModel.value] || null;
         });
@@ -781,11 +1488,17 @@ const SettingsPage = {
             },
         );
 
-        // 加载模型注册表
+        // 加载模型注册表（增强：同时加载状态）
         const loadModelRegistry = async () => {
             try {
-                const data = await api.settings.getModelRegistry();
-                modelRegistry.value = data.models || {};
+                const [registryData, statusData, detailedStatusData] = await Promise.all([
+                    api.settings.getModelRegistry(),
+                    api.settings.getModelsStatus(),
+                    api.settings.getModelsDetailedStatus(),
+                ]);
+                modelRegistry.value = registryData.models || {};
+                modelsStatus.value = statusData || {};
+                modelsDetailedStatus.value = detailedStatusData || {};
 
                 // 设置默认选中模型
                 if (!selectedModel.value || !modelRegistry.value[selectedModel.value]) {
@@ -820,13 +1533,51 @@ const SettingsPage = {
             }
         };
 
-        // 模型选择变化：注册表 defaults → modelParams（与创作页 RegistryParamSchema 一致）
+        // 模型选择变化：注册表 defaults → modelParams + 默认版本 + 参数预设
         const onModelSelect = () => {
             const config = currentModelConfig.value;
             if (!config || !config.parameters) return;
+
+            // 1. 应用注册表默认值
             const R = window.RegistryParamSchema;
             if (R) R.applyDefaults(config.parameters, modelParams);
+
+            // 2. 记录默认值（用于检测变更）
+            Object.keys(paramDefaults).forEach((k) => delete paramDefaults[k]);
+            for (const [key, spec] of Object.entries(config.parameters || {})) {
+                if (typeof spec === 'object' && 'default' in spec) {
+                    paramDefaults[key] = spec.default;
+                }
+            }
+
+            // 3. 设置默认版本
+            if (config.versions) {
+                const defaultVer = Object.entries(config.versions).find(([_, v]) => v.default);
+                if (defaultVer) {
+                    selectedDefaultVersion.value = defaultVer[0];
+                } else {
+                    selectedDefaultVersion.value = Object.keys(config.versions)[0] || '';
+                }
+                // 如果有推荐的硬件适配版本，优先选择
+                if (recommendedVersion.value) {
+                    selectedDefaultVersion.value = recommendedVersion.value.key;
+                }
+            } else {
+                selectedDefaultVersion.value = '';
+            }
+
+            // 4. 加载该模型的默认参数预设
+            const defaultPreset = paramPresetsForModel.value.find((p) => p.isDefault);
+            if (defaultPreset) {
+                loadParamPreset(defaultPreset);
+            }
+
             loadSettingsCompatibleLoras();
+        };
+
+        const onDefaultVersionChange = () => {
+            // 版本切换时可以在这里添加额外逻辑
+            console.log('Default version changed to:', selectedDefaultVersion.value);
         };
 
         const onSettingsModelRestoreDefaults = () => {
@@ -972,6 +1723,7 @@ const SettingsPage = {
             loadSettings();
             loadInstalledModels();
             loadPresets();
+            loadParamPresets();
             startMonitor();
             refreshCacheStatus();
         });
@@ -982,6 +1734,7 @@ const SettingsPage = {
 
         return {
             $mn: window.$mn,
+            $md: window.$md,
             activeTab,
             settings,
             modelRegistry,
@@ -1014,7 +1767,50 @@ const SettingsPage = {
             confirmDeletePreset,
             deletePreset,
             presetAppliesSummary,
-            presetMediaLabel
+            presetMediaLabel,
+            // 增强版新增
+            sortedModelRegistry,
+            categoryLabel,
+            modelInitials,
+            versionCount,
+            installedVersionCount,
+            versionStatus,
+            versionStatusType,
+            versionStatusLabel,
+            versionItemStyle,
+            isRecommendedVersion,
+            recommendedVersion,
+            hardwareAdvice,
+            hardwareAdviceStyle,
+            capabilityList,
+            memoryProgressColor,
+            minVersionSizeGB,
+            // 参数预设
+            paramPresets,
+            paramPresetsForModel,
+            paramPresetDialogVisible,
+            paramPresetForm,
+            openParamPresetDialog,
+            saveParamPreset,
+            loadParamPreset,
+            deleteParamPreset,
+            // 参数表单增强
+            resPair,
+            scalarKeys,
+            seedSupport,
+            showLoraBlock,
+            adapterItems,
+            loraScaleSpec,
+            specOf,
+            numStep,
+            paramLabel,
+            isParamChanged,
+            resetParam,
+            paramNotesList,
+            hasParamNotes,
+            // 默认版本
+            selectedDefaultVersion,
+            onDefaultVersionChange,
         };
     }
 };

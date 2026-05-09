@@ -53,13 +53,66 @@ class TransformerBase:
             self._build_param_map()
         return list(self._param_map.items())
 
-    def load_weights(self, weights: list[tuple[str, Any]], strict: bool = False):
-        """默认权重加载（通过 _param_map）。"""
+    def load_weights(self, weights: list[tuple[str, Any]], strict: bool = False,
+                     fallback_weights: list[tuple[str, Any]] | None = None):
+        """默认权重加载（通过 _param_map）。
+
+        自动处理 mlx QuantizedLinear 量化权重（uint32 weight + scales + biases）。
+        """
+        import mlx.core as mx
+
         if not hasattr(self, '_param_map'):
             self._build_param_map()
+
+        # ── 预处理：检测并反量化 mlx QuantizedLinear 权重 ──
+        weight_dict = dict(weights)
+        scales_map: dict[str, dict] = {}
+
+        for key in list(weight_dict.keys()):
+            if key.endswith(".scales"):
+                base = key[:-7]
+                weight_key = base + ".weight"
+                if weight_key in weight_dict:
+                    scales_map[base] = {
+                        "scales": weight_dict[key],
+                        "biases": weight_dict.get(base + ".biases"),
+                        "weight": weight_dict[weight_key],
+                    }
+
+        dequantized: dict[str, Any] = {}
+        for key, tensor in weight_dict.items():
+            if key.endswith(".scales") or key.endswith(".biases"):
+                continue
+
+            base = key[:-7] if key.endswith(".weight") else None
+            if base and base in scales_map:
+                group = scales_map[base]
+                qw = group["weight"]       # uint32
+                qs = group["scales"]       # float/bfloat16
+                qb = group.get("biases")   # float/bfloat16
+
+                # 推断量化参数：原始 in_dim = packed_dim * (32/bits)
+                in_dim = qw.shape[-1] * 4  # bits=8 → 32/8=4
+                num_groups = qs.shape[-1]
+                group_size = in_dim // num_groups
+
+                deq = mx.dequantize(
+                    qw,
+                    scales=qs,
+                    biases=qb,
+                    group_size=group_size,
+                    bits=8,
+                    mode="affine",
+                    dtype=mx.float32,
+                )
+                dequantized[key] = deq
+            else:
+                dequantized[key] = tensor
+
+        # ── 加载权重 ──
         loaded = []
         skipped = []
-        for key, tensor in weights:
+        for key, tensor in dequantized.items():
             if key in self._param_map:
                 param = self._param_map[key]
                 if param.shape == tensor.shape:
@@ -69,6 +122,21 @@ class TransformerBase:
                     skipped.append(f"{key} shape_mismatch: {param.shape} vs {tensor.shape}")
             else:
                 skipped.append(key)
+
+        # ── 补充缺失的 bias（从 fallback fp16）──
+        if fallback_weights:
+            fallback_dict = dict(fallback_weights)
+            loaded_set = set(loaded)
+            for key, param in self._param_map.items():
+                if key.endswith(".bias") and key not in loaded_set:
+                    if key in fallback_dict:
+                        fb_tensor = fallback_dict[key]
+                        if param.shape == fb_tensor.shape:
+                            param[:] = fb_tensor.astype(param.dtype)
+                            loaded.append(key)
+                        else:
+                            skipped.append(f"{key} fallback_shape_mismatch")
+
         if strict and skipped:
             raise ValueError(f"Unloaded keys: {skipped[:10]}...")
         return loaded, skipped

@@ -42,12 +42,9 @@ const api = {
         async listImages(limit = 40, offset = 0, options = {}) {
             const lim = Number(limit) || 40;
             const off = Number(offset) || 0;
-            const params = { limit: lim, offset: off, ...options };
+            const params = { limit: lim, offset: off, exclude_upload_refs: true, ...options };
             const data = await api.gen.listAssets(null, lim, off, params);
-            const items = (data.items || []).filter(
-                (a) => !((a.source_task_id || '') === '' && (a.source_action || '') === 'upload')
-            );
-            const rows = items.map(assetRowToGalleryItem);
+            const rows = (data.items || []).map(assetRowToGalleryItem);
             return rows;
         },
 

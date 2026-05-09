@@ -58,12 +58,8 @@ def list_images(limit: int = 50, offset: int = 0):
     store = get_container().try_resolve(SQLiteAssetStore)
     if not store:
         raise HTTPException(status_code=503, detail="asset store unavailable")
-    cap = min(500, max((limit + offset) * 2, 80))
     rows: list[GalleryItemResponse] = []
-    for a in store.list_assets(kind=None, limit=cap, offset=0):
-        # 跳过创作页面上传的参考图/蒙版（source_task_id 为空且 source_action 为 upload）
-        if (a.get("source_task_id") or "") == "" and (a.get("source_action") or "") == "upload":
-            continue
+    for a in store.list_assets(kind=None, exclude_upload_refs=True, limit=limit, offset=offset):
         aid = a["id"]
         meta = dict(a.get("metadata") or {})
         p = Path(str(a.get("path", "")))
@@ -94,8 +90,7 @@ def list_images(limit: int = 50, offset: int = 0):
                 },
             )
         )
-    rows.sort(key=lambda r: r.created_at or "", reverse=True)
-    return rows[offset : offset + limit]
+    return rows
 
 
 @router.delete("/image")

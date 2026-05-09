@@ -273,6 +273,9 @@ const ImageCreatePage = {
                                     :status="currentTask.status === 'failed' ? 'exception' : ''"
                                 />
                                 <div style="margin-top: 8px; text-align: center; color: var(--text-muted); font-size: 13px;">
+                                    <template v-if="currentTask.total > 0 && currentTask.status === 'running'">
+                                        Step {{ currentTask.step }}/{{ currentTask.total }} &nbsp;
+                                    </template>
                                     <el-tag :type="getStatusType(currentTask.status)" size="small">
                                         {{ getStatusText(currentTask.status) }}
                                     </el-tag>
@@ -636,9 +639,9 @@ const ImageCreatePage = {
             return filteredAllVersions.value.filter(v => v.recommended);
         });
 
-        /** 模型下拉：单层列表，推荐版本排在前面 */
+        /** 模型下拉：单层列表，仅展示已就绪的模型，推荐版本排在前面 */
         const filteredModelPickerVersions = computed(() => {
-            const rows = [...filteredAllVersions.value];
+            const rows = filteredAllVersions.value.filter((v) => v.ready);
             rows.sort((a, b) => {
                 const ar = a.recommended ? 1 : 0;
                 const br = b.recommended ? 1 : 0;
@@ -982,6 +985,8 @@ const ImageCreatePage = {
                 currentTask.value = {
                     id: tid,
                     progress: 0,
+                    step: 0,
+                    total: 0,
                     status: 'queued',
                     params: {
                         model: modelStr,
@@ -1014,7 +1019,13 @@ const ImageCreatePage = {
                             addLog($tt('studio.genFailed', { msg: updated.error_message || '' }), 'error');
                         }
                     },
-                    () => addLog($tt('studio.connectionLost'), 'warning')
+                    () => addLog($tt('studio.connectionLost'), 'warning'),
+                    (progressData) => {
+                        if (currentTask.value) {
+                            currentTask.value.step = progressData.step ?? currentTask.value.step;
+                            currentTask.value.total = progressData.total ?? currentTask.value.total;
+                        }
+                    }
                 );
             };
 

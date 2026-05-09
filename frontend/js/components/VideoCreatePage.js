@@ -418,6 +418,9 @@ const VideoCreatePage = {
                                     :status="currentTask.status === 'failed' ? 'exception' : ''"
                                 />
                                 <div style="margin-top: 8px; text-align: center; color: var(--text-muted); font-size: 13px;">
+                                    <template v-if="currentTask.total > 0 && currentTask.status === 'running'">
+                                        Step {{ currentTask.step }}/{{ currentTask.total }} &nbsp;
+                                    </template>
                                     <el-tag :type="getStatusType(currentTask.status)" size="small">
                                         {{ getStatusText(currentTask.status) }}
                                     </el-tag>
@@ -673,7 +676,7 @@ const VideoCreatePage = {
         });
 
         const videoModelPickerVersions = computed(() => {
-            const rows = [...videoVersionsForMode.value];
+            const rows = videoVersionsForMode.value.filter((v) => v.ready);
             rows.sort((a, b) => {
                 const ar = a.recommended ? 1 : 0;
                 const br = b.recommended ? 1 : 0;
@@ -1040,7 +1043,7 @@ const VideoCreatePage = {
                     });
                 }
                 const tid = submitRes.task.id;
-                currentTask.value = { id: tid, progress: 0, status: 'queued', params: { model: modelStr } };
+                currentTask.value = { id: tid, progress: 0, step: 0, total: 0, status: 'queued', params: { model: modelStr } };
                 api.gen.streamMediaTask(
                     tid,
                     (logData) => addLog(logData.message, logData.level),
@@ -1067,7 +1070,13 @@ const VideoCreatePage = {
                             addLog($tt('studio.genFailed', { msg: updated.error_message || '' }), 'error');
                         }
                     },
-                    () => addLog($tt('studio.connectionLost'), 'warning')
+                    () => addLog($tt('studio.connectionLost'), 'warning'),
+                    (progressData) => {
+                        if (currentTask.value) {
+                            currentTask.value.step = progressData.step ?? currentTask.value.step;
+                            currentTask.value.total = progressData.total ?? currentTask.value.total;
+                        }
+                    }
                 );
             } catch (e) {
                 addLog($tt('studio.error', { msg: e.message }), 'error');

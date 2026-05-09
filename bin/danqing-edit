@@ -24,7 +24,8 @@ def main():
     parser = argparse.ArgumentParser(description="DanQing CLI: image editing")
     parser.add_argument("--model", required=True)
     parser.add_argument("--operation", required=True, choices=["rewrite", "retouch", "extend"])
-    parser.add_argument("--source-asset-id", required=True)
+    parser.add_argument("--source-asset-id", default="")
+    parser.add_argument("--source-image", default="", help="Local image file path (alternative to --source-asset-id)")
     parser.add_argument("--prompt", required=True)
     parser.add_argument("--source-fidelity", type=float, default=0.6)
     parser.add_argument("--negative-prompt", default="")
@@ -38,8 +39,9 @@ def main():
     edit(
         model=args.model,
         operation=args.operation,
-        source_asset_id=args.source_asset_id,
         prompt=args.prompt,
+        source_asset_id=args.source_asset_id,
+        source_image=args.source_image,
         source_fidelity=args.source_fidelity,
         negative_prompt=args.negative_prompt,
         steps=args.steps,

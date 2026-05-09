@@ -81,6 +81,7 @@ class FlowMatchEulerScheduler(Scheduler):
             sigmas = mx.concatenate([sigmas, mx.zeros((1,), dtype=sigmas.dtype)], axis=0)
         else:
             # 参考 mflux _compute_timesteps_and_sigmas (默认初始化)
+            mu_val = kwargs.get('mu', 1.0)
             sigma_min = 1.0 / self._num_train_timesteps
             sigma_max = 1.0
             timesteps_linear = [
@@ -89,7 +90,7 @@ class FlowMatchEulerScheduler(Scheduler):
                 for i in range(num_inference_steps)
             ]
             sigmas_linear = [t / self._num_train_timesteps for t in timesteps_linear]
-            sigmas_shifted = [self._time_shift_exponential(1.0, 1.0, s) for s in sigmas_linear]
+            sigmas_shifted = [self._time_shift_exponential(mu_val, 1.0, s) for s in sigmas_linear]
             sigmas_final = self._stretch_to_terminal(sigmas_shifted)
             timesteps = [s * self._num_train_timesteps for s in sigmas_final]
             sigmas_with_zero = sigmas_final + [0.0]

@@ -757,7 +757,14 @@ class DownloadService(IDownloadService):
 
     async def convert_model(self, model_name: str, from_version: str, to_version: str,
                            progress_callback: Optional[Callable[[ConversionTask], None]] = None) -> str:
-        """通过 mflux Python API 生成量化版本"""
+        """通过 MLX 原生 API 生成量化版本（不依赖 mflux）。
+
+        流程：
+        1. 加载源目录（fp16）的 safetensors 权重字典
+        2. 对每个 2D weight 创建 nn.Linear 并用 to_quantized() 量化
+        3. 将量化后的参数（weight/scales/biases）分片保存到目标目录
+        4. 复制 VAE / text_encoder / tokenizer 等未量化组件
+        """
         config = self.get_model_download_config(model_name)
         if not config:
             loc = get_locale()
@@ -779,10 +786,8 @@ class DownloadService(IDownloadService):
             loc = get_locale()
             raise ValueError(tt("error.source_version_not_ready", loc, version=from_version))
 
-        # 解析输出路径
         to_path = self._resolve_version_path(to_ver_config)
         if to_path.exists():
-            # 已存在则返回
             return str(to_path)
 
         task_id = str(uuid.uuid4())
@@ -805,77 +810,131 @@ class DownloadService(IDownloadService):
             if progress_callback:
                 await self._async_callback(progress_callback, task)
 
-        # 立即发送初始进度，让 API 层立刻返回 task_id，不阻塞前端
         if progress_callback:
             await self._async_callback(progress_callback, task)
 
         try:
-            # 获取量化位数
             quantize_bits = 4 if "int4" in to_version else (8 if "int8" in to_version else None)
             if not quantize_bits:
                 raise ValueError(tt("error.cannot_determine_quantization", get_locale(), version=to_version))
 
             await update_progress("loading", 0.1)
 
-            # 在后台线程中执行（避免阻塞事件循环）
-            from mflux.flux.flux import Flux1
-            from mflux.config.model_config import ModelConfig
+            def _do_conversion():
+                """在线程中执行量化（阻塞 MLX 计算）。"""
+                import mlx.core as mx
+                import mlx.nn as nn
+                from mlx.utils import tree_flatten
 
-            model_alias = model_name.replace("flux1-", "").replace("flux2-", "").replace("-", "_")
+                # 1. 加载源权重
+                weights = {}
+                transformer_dir = from_path / "transformer"
+                if transformer_dir.exists():
+                    for sf in sorted(transformer_dir.glob("*.safetensors")):
+                        weights.update(dict(mx.load(str(sf))))
+                else:
+                    # 兜底：直接在根目录找
+                    for sf in sorted(from_path.glob("*.safetensors")):
+                        weights.update(dict(mx.load(str(sf))))
 
-            # 映射模型别名
-            alias_map = {
-                "schnell": "schnell",
-                "dev": "dev",
-                "krea_dev": "dev",
-                "klein_4b": "dev",
-                "klein_9b": "dev",
-                "klein_base_4b": "dev",
-                "klein_base_9b": "dev",
-                "z_image": "dev",
-                "z_image_turbo": "dev",
-                "fibo": "dev",
-                "fibo_lite": "dev",
-                "fibo_edit": "dev",
-                "fibo_edit_rmbg": "dev",
-                "qwen_image": "dev",
-                "kontext": "dev",
-            }
+                if not weights:
+                    raise RuntimeError(f"No safetensors weights found in {from_path}")
 
-            model_alias = alias_map.get(model_alias, "dev")
+                # 2. 量化 — 参考 mflux ModelSaver 思路：
+                #    对每个 2D Linear weight 创建 nn.Linear → to_quantized()
+                #    跳过 Embedding / 1D bias / norm 等
+                quantized = {}
+                processed_bias_keys = set()
+                total = len([k for k in weights if k.endswith(".weight")])
+                done = 0
 
-            await update_progress("loading", 0.2)
+                for key, tensor in weights.items():
+                    if not key.endswith(".weight"):
+                        continue
+                    if tensor.ndim != 2 or tensor.shape[0] <= 1 or tensor.shape[1] <= 1:
+                        continue
+                    # 跳过 Embedding（key 含 embed / vocab / token）
+                    if any(x in key.lower() for x in ("embed", "vocab", "token")):
+                        quantized[key] = tensor
+                        continue
 
-            # 在线程中加载模型（阻塞操作）
-            def load_model():
-                return Flux1(
-                    model_config=ModelConfig.from_alias(model_alias),
-                    quantize=quantize_bits,
-                    local_path=str(from_path)
-                )
+                    in_features = int(tensor.shape[1])
+                    out_features = int(tensor.shape[0])
+                    bias_key = key.replace(".weight", ".bias")
+                    has_bias = bias_key in weights
 
-            flux = await asyncio.to_thread(load_model)
+                    linear = nn.Linear(in_features, out_features, bias=has_bias)
+                    linear.weight = tensor
+                    if has_bias:
+                        linear.bias = weights[bias_key]
+                        processed_bias_keys.add(bias_key)
 
-            # 检查是否已取消
+                    q_linear = linear.to_quantized(bits=quantize_bits)
+                    base = key[:-7]  # strip ".weight"
+                    quantized[f"{base}.weight"] = q_linear.weight
+                    quantized[f"{base}.scales"] = q_linear.scales
+                    quantized[f"{base}.biases"] = q_linear.biases
+                    done += 1
+
+                # 保留未量化参数（norm / conv / 未处理的 bias 等）
+                for key, tensor in weights.items():
+                    if key in processed_bias_keys or key in quantized:
+                        continue
+                    quantized[key] = tensor
+
+                # 3. 分片保存（同 mflux：最大 2GB/片）
+                max_shard_bytes = 2 << 30
+                shards = []
+                current_shard = {}
+                current_size = 0
+
+                for key, value in quantized.items():
+                    if current_size + value.nbytes > max_shard_bytes and current_shard:
+                        shards.append(current_shard)
+                        current_shard = {}
+                        current_size = 0
+                    current_shard[key] = value
+                    current_size += value.nbytes
+                if current_shard:
+                    shards.append(current_shard)
+
+                # 确保输出目录
+                to_path.mkdir(parents=True, exist_ok=True)
+                transformer_out = to_path / "transformer"
+                transformer_out.mkdir(parents=True, exist_ok=True)
+
+                weight_map = {}
+                for i, shard in enumerate(shards):
+                    shard_name = f"model_{i:05d}.safetensors"
+                    mx.save_safetensors(
+                        str(transformer_out / shard_name),
+                        shard,
+                        metadata={"quantization_level": str(quantize_bits)},
+                    )
+                    for k in shard.keys():
+                        weight_map[k] = shard_name
+
+                # 写 model.safetensors.index.json（兼容 HF 格式）
+                index_data = {
+                    "metadata": {"quantization_level": str(quantize_bits)},
+                    "weight_map": weight_map,
+                }
+                with open(transformer_out / "model.safetensors.index.json", "w") as f:
+                    json.dump(index_data, f, indent=2)
+
+                # 4. 复制未量化组件（VAE / text_encoder / tokenizer 等）
+                for subdir in ("vae", "text_encoder", "tokenizer", "text_encoder_2", "tokenizer_2"):
+                    src = from_path / subdir
+                    if src.exists():
+                        dst = to_path / subdir
+                        if not dst.exists():
+                            shutil.copytree(src, dst)
+
+                return done, total
+
+            done, total = await asyncio.to_thread(_do_conversion)
+
             if self._conversion_events[task_id].is_set():
-                raise asyncio.CancelledError("转换已取消")
-
-            await update_progress("quantizing", 0.4)
-
-            # 确保输出目录存在
-            to_path.parent.mkdir(parents=True, exist_ok=True)
-
-            await update_progress("saving", 0.7)
-
-            # 在线程中保存模型（阻塞操作）
-            def save_model():
-                flux.save_model(str(to_path))
-
-            await asyncio.to_thread(save_model)
-
-            # 再次检查取消
-            if self._conversion_events[task_id].is_set():
-                # 清理已生成的文件
                 if to_path.exists():
                     shutil.rmtree(to_path)
                 raise asyncio.CancelledError("转换已取消")
@@ -890,7 +949,6 @@ class DownloadService(IDownloadService):
         except asyncio.CancelledError:
             task.status = TaskStatus.CANCELLED
             task.stage = "cancelled"
-            # 清理输出目录
             if to_path.exists():
                 shutil.rmtree(to_path)
             raise
@@ -898,7 +956,6 @@ class DownloadService(IDownloadService):
             task.status = TaskStatus.FAILED
             task.stage = "error"
             task.error_message = str(e)
-            # 清理不完整的输出
             if to_path.exists():
                 shutil.rmtree(to_path)
             raise

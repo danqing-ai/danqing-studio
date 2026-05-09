@@ -101,7 +101,22 @@ class DanQingImageEngine(IImageEngine):
         return EngineResult(primary_asset_id=aid, asset_ids=[aid], output_paths=[output_path])
 
     async def edit(self, request: ImageEditRequest, ctx: ExecutionContext) -> EngineResult:
-        raise NotImplementedError("edit not implemented")
+        import asyncio
+        runtime = self._resolve_runtime(request.model)
+        from .image_pipeline import ImagePipeline
+        pipeline = ImagePipeline(
+            runtime, self._registry, ctx.asset_store,
+            model_cache=self._cache,
+            project_root=self._paths.get_project_root(),
+        )
+        result = await asyncio.to_thread(
+            pipeline.run_edit, request, ctx, on_progress=None, on_log=None,
+        )
+        if result is None:
+            return EngineResult(primary_asset_id="")
+        output_path, _ = result
+        from backend.core.contracts import new_asset_id
+        return EngineResult(primary_asset_id=new_asset_id(), output_paths=[output_path or ""])
 
     async def upscale(self, request: ImageUpscaleRequest, ctx: ExecutionContext) -> EngineResult:
         raise NotImplementedError("upscale not implemented")

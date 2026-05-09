@@ -51,6 +51,7 @@ class TaskScheduler:
         self._shutdown = False
         self._durations: dict[str, deque[float]] = defaultdict(lambda: deque(maxlen=24))
         self._progress_meta: dict[str, dict[str, Any]] = {}
+        self._realtime_queues: dict[str, asyncio.Queue] = {}
 
     async def start(self) -> None:
         if self._worker is None or self._worker.done():
@@ -68,6 +69,7 @@ class TaskScheduler:
             self._tasks.append_log(tid, "Task was interrupted by process restart and marked as failed", "error")
             self._progress_meta.pop(tid, None)
             self._tokens.pop(tid, None)
+            self._realtime_queues.pop(tid, None)
 
     async def shutdown(self) -> None:
         self._shutdown = True
@@ -185,6 +187,9 @@ class TaskScheduler:
 
     def get_progress_meta(self, task_id: str) -> dict[str, Any]:
         return dict(self._progress_meta.get(task_id) or {})
+
+    def get_realtime_queue(self, task_id: str) -> asyncio.Queue | None:
+        return self._realtime_queues.get(task_id)
 
     def queue_index_maps(self) -> tuple[dict[str, int], dict[str, Optional[int]]]:
         snap = self.queue_snapshot()
@@ -335,6 +340,18 @@ class TaskScheduler:
         kind = row["kind"]
         params = row["params"]
         model_id = row["model_id"]
+        loop = asyncio.get_running_loop()
+        rt_queue: asyncio.Queue = asyncio.Queue(maxsize=200)
+        self._realtime_queues[tid] = rt_queue
+
+        def _put_rt(event_type: str, data: Any) -> None:
+            q = self._realtime_queues.get(tid)
+            if not q:
+                return
+            try:
+                q.put_nowait((event_type, data))
+            except asyncio.QueueFull:
+                pass
 
         def on_progress(ev: ProgressEvent) -> None:
             self._tasks.update_progress(tid, ev.progress)
@@ -343,9 +360,11 @@ class TaskScheduler:
                 "total": ev.total,
                 "eta_seconds": ev.eta_seconds,
             }
+            loop.call_soon_threadsafe(_put_rt, "progress", ev)
 
         def on_log(ev: LogEvent) -> None:
             self._tasks.append_log(tid, ev.message, ev.level)
+            loop.call_soon_threadsafe(_put_rt, "log", ev)
 
         ctx = ExecutionContext(
             task_id=tid,
@@ -397,3 +416,4 @@ class TaskScheduler:
         finally:
             self._progress_meta.pop(tid, None)
             self._tokens.pop(tid, None)
+            self._realtime_queues.pop(tid, None)

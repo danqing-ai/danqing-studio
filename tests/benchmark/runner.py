@@ -48,20 +48,25 @@ class BenchmarkRunner:
         our_path = self.output_dir / f"{case.id}_danqing.png"
         ref_path = self.output_dir / f"{case.id}_mflux.png"
 
-        t0 = time.time()
         ours_ok = False
         ref_ok = False
+        ours_time = None
+        ref_time = None
 
         if run_ours:
+            t0 = time.time()
             ours_ok = self._run_danqing(case, our_path)
+            ours_time = time.time() - t0
+
         if run_ref:
+            t0 = time.time()
             ref_ok = self._run_mflux(case, ref_path)
-        elapsed = time.time() - t0
+            ref_time = time.time() - t0
 
         if not ref_ok:
             print(f"  [SKIP] {case.id}: 参考输出 (mflux) 生成失败")
             result = CompareResult()
-            result.ours_time_sec = elapsed if ours_ok else None
+            result.ours_time_sec = ours_time
             result.ref_time_sec = None
             self.results.append((case, result))
             return result
@@ -69,13 +74,13 @@ class BenchmarkRunner:
         if not ours_ok:
             print(f"  [SKIP] {case.id}: 丹青引擎输出生成失败或未实现")
             result = CompareResult(ref_hash=hash_image(ref_path))
-            result.ref_time_sec = elapsed
+            result.ref_time_sec = ref_time
             self.results.append((case, result))
             return result
 
         result = compare_images(our_path, ref_path)
-        result.ours_time_sec = elapsed
-        result.ref_time_sec = elapsed  # 粗略值，可后续细化
+        result.ours_time_sec = ours_time
+        result.ref_time_sec = ref_time
         self.results.append((case, result))
         return result
 
@@ -109,8 +114,7 @@ class BenchmarkRunner:
         if case.action == "create":
             return self._run_danqing_generate(case, output_path)
         elif case.action in ("rewrite", "retouch", "extend"):
-            print(f"    [danqing] edit/rewrite 暂未实现（需资产上传）")
-            return False
+            return self._run_danqing_edit(case, output_path)
         elif case.action == "upscale":
             print(f"    [danqing] upscale 暂未实现（需资产上传）")
             return False
@@ -169,6 +173,44 @@ class BenchmarkRunner:
             print(f"    [danqing] 未找到 CLI: {cli}")
             return False
 
+    def _run_danqing_edit(self, case: BenchmarkCase, output_path: Path) -> bool:
+        """调用 danqing-edit CLI（对应 POST /api/images/edits）。"""
+        cli = PROJECT_ROOT / "bin" / "danqing-edit"
+        cmd = [
+            sys.executable, str(cli),
+            "--model", case.model,
+            "--operation", "rewrite",
+            "--source-image", str(case.source_image),
+            "--prompt", case.prompt,
+            "--seed", str(case.seed),
+            "--source-fidelity", str(case.image_strength),
+            "--output", str(output_path),
+        ]
+        if case.steps > 1:
+            cmd += ["--steps", str(case.steps)]
+        try:
+            t0 = time.time()
+            env = os.environ.copy()
+            env.setdefault("MLX_METAL_DEVICE_ONLY", "1")
+            env.setdefault("MLX_METAL_MEMORY_LIMIT", "120")
+            env["PYTHONUNBUFFERED"] = "1"
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600, env=env, cwd=str(PROJECT_ROOT))
+            if proc.returncode != 0:
+                print(f"    [danqing] 失败 (exit={proc.returncode})")
+                if proc.stderr:
+                    print(f"    [danqing] stderr: {proc.stderr[:500]}")
+                return False
+            elapsed = time.time() - t0
+            print(f"    [danqing] 生成完成 ({elapsed:.1f}s)")
+            print(f"    [danqing] 输出: {output_path}")
+            return True
+        except subprocess.TimeoutExpired:
+            print(f"    [danqing] 超时 (600s)")
+            return False
+        except FileNotFoundError:
+            print(f"    [danqing] 未找到 CLI: {cli}")
+            return False
+
     # ------------------------------------------------------------------
     # mflux CLI 参考生成
     # ------------------------------------------------------------------
@@ -205,6 +247,8 @@ class BenchmarkRunner:
             cmd += ["--steps", str(case.steps)]
         if case.negative_prompt:
             cmd += ["--negative-prompt", case.negative_prompt]
+        if case._mflux_extra_args:
+            cmd += case._mflux_extra_args
 
         try:
             t0 = time.time()
@@ -253,14 +297,23 @@ class BenchmarkRunner:
     # ------------------------------------------------------------------
 
     def _print_result(self, result: CompareResult) -> None:
+        time_info = ""
+        if result.ours_time_sec is not None or result.ref_time_sec is not None:
+            parts = []
+            if result.ours_time_sec is not None:
+                parts.append(f"ours={result.ours_time_sec:.1f}s")
+            if result.ref_time_sec is not None:
+                parts.append(f"ref={result.ref_time_sec:.1f}s")
+            time_info = " (" + ", ".join(parts) + ")"
+
         if result.psnr is not None:
             status = "PASS" if result.psnr >= 30 else ("WARN" if result.psnr >= 20 else "FAIL")
             print(f"  {status}: PSNR={result.psnr:.2f}dB SSIM={result.ssim:.4f} "
-                  f"max_diff={result.pixel_max_diff:.4f} mean_diff={result.pixel_mean_diff:.4f}")
+                  f"max_diff={result.pixel_max_diff:.4f} mean_diff={result.pixel_mean_diff:.4f}{time_info}")
         elif result.ref_hash:
-            print(f"  SKIP: ref_hash={result.ref_hash} (丹青引擎输出不可用)")
+            print(f"  SKIP: ref_hash={result.ref_hash} (丹青引擎输出不可用){time_info}")
         else:
-            print(f"  SKIP: 无可用的参考输出")
+            print(f"  SKIP: 无可用的参考输出{time_info}")
 
     def _print_summary(self) -> None:
         passed = sum(1 for _, r in self.results if r.psnr is not None and r.psnr >= 30)
@@ -275,10 +328,19 @@ class BenchmarkRunner:
         print(f"{'='*60}")
 
         for case, r in self.results:
+            time_str = ""
+            if r.ours_time_sec is not None or r.ref_time_sec is not None:
+                parts = []
+                if r.ours_time_sec is not None:
+                    parts.append(f"ours={r.ours_time_sec:.1f}s")
+                if r.ref_time_sec is not None:
+                    parts.append(f"ref={r.ref_time_sec:.1f}s")
+                time_str = " (" + ", ".join(parts) + ")"
+
             if r.psnr is not None:
-                print(f"  [{case.id}] PSNR={r.psnr:.1f}dB SSIM={r.ssim:.4f}")
+                print(f"  [{case.id}] PSNR={r.psnr:.1f}dB SSIM={r.ssim:.4f}{time_str}")
             else:
-                print(f"  [{case.id}] SKIP")
+                print(f"  [{case.id}] SKIP{time_str}")
 
 
 def run_benchmark(

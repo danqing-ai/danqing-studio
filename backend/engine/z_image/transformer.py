@@ -381,28 +381,6 @@ class ZImageTransformer(TransformerBase):
         self._param_map.clear()
         _collect_nn_params(self, "", self._param_map)
 
-    def load_weights(self, weights: list[tuple[str, Any]], strict: bool = False):
-        """加载权重到模型（keep float32 与 mflux 一致）。"""
-        loaded = []
-        skipped = []
-        missing_in_model = []
-
-        for key, tensor in weights:
-            if key in self._param_map:
-                param = self._param_map[key]
-                if param.shape == tensor.shape:
-                    param[:] = tensor.astype(param.dtype)
-                    loaded.append(key)
-                else:
-                    skipped.append(f"{key} shape_mismatch: {param.shape} vs {tensor.shape}")
-            else:
-                missing_in_model.append(key)
-
-        skipped.extend(missing_in_model)
-        if strict and skipped:
-            raise ValueError(f"Unloaded keys: {skipped}")
-        return loaded, skipped
-
     def parameters(self):
         return list(self._param_map.items())
 

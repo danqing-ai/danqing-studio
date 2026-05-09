@@ -2907,7 +2907,13 @@
             "1024x1024"
           ],
           "default": "1024x1024"
-        }
+        },
+        "scheduler": {
+          "type": "str",
+          "default": "flow_match_euler"
+        },
+        "use_empirical_mu": false,
+        "scheduler_mu": 3.0
       },
       "versions": {
         "fp16": {

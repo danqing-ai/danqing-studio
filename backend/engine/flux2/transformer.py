@@ -504,10 +504,12 @@ class Flux2Transformer(TransformerBase):
         ids = mx.expand_dims(ids, axis=0)
         return mx.broadcast_to(ids, (B, ids.shape[1], ids.shape[2]))
 
-    def load_weights(self, weights, strict=False):
+    def load_weights(self, weights, strict=False,
+                     fallback_weights=None):
         """加载权重并自动转换为 bfloat16（与 mflux ModelConfig.precision 一致）。"""
         import mlx.core as mx
-        loaded, skipped = super().load_weights(weights, strict=strict)
+        loaded, skipped = super().load_weights(weights, strict=strict,
+                                               fallback_weights=fallback_weights)
         # Convert all parameters to bfloat16 for numerical consistency with mflux
         for key, param in list(self._param_map.items()):
             if param.dtype != mx.bfloat16:

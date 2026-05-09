@@ -207,6 +207,33 @@ class CudaContext(RuntimeContext):
     def silu(self, x: Any) -> Any:
         return torch.nn.functional.silu(x)
 
+    def tanh(self, x: Any) -> Any:
+        return torch.tanh(x)
+
+    def split(self, x: Any, indices: list, axis: int = -1) -> list[Any]:
+        return list(torch.split(x, indices, dim=axis)) if len(indices) > 1 else [x[:, :indices[0]]] if axis == -1 else list(torch.split(x, indices, dim=axis))
+
+    def broadcast_to(self, x: Any, shape: tuple) -> Any:
+        return x.expand(*shape)
+
+    def outer(self, a: Any, b: Any) -> Any:
+        return torch.outer(a.flatten(), b.flatten()).reshape(*a.shape, *b.shape)
+
+    def max(self, x: Any) -> Any:
+        return torch.max(x)
+
+    def sum(self, x: Any, axis: Any = None) -> Any:
+        return torch.sum(x, dim=axis) if axis is not None else torch.sum(x)
+
+    def square(self, x: Any) -> Any:
+        return torch.square(x)
+
+    def rsqrt(self, x: Any) -> Any:
+        return torch.rsqrt(x)
+
+    def mean(self, x: Any, axis: Any = None, keepdims: bool = False) -> Any:
+        return torch.mean(x, dim=axis, keepdim=keepdims)
+
     def gelu(self, x: Any, approximate: str = "none") -> Any:
         return torch.nn.functional.gelu(x, approximate=approximate)
 

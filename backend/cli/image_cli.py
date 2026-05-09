@@ -74,9 +74,10 @@ def generate(
 def edit(
     model: str,
     operation: str,
-    source_asset_id: str,
     prompt: str,
     *,
+    source_asset_id: str = "",
+    source_image: str = "",
     source_fidelity: float = 0.6,
     negative_prompt: str = "",
     steps: int | None = None,
@@ -84,7 +85,11 @@ def edit(
     output: str = "",
     project_root: Path | None = None,
 ) -> str:
-    """图像编辑。对应 POST /api/images/edits。"""
+    """图像编辑。对应 POST /api/images/edits。
+    
+    source_asset_id 或 source_image 二选一。
+    source_image 为本地文件路径，内部自动上传为 asset。
+    """
     ctx = build_engine_context(project_root)
     exec_ctx = build_exec_context(
         work_dir=ctx.path_resolver.get_outputs_dir() / "cli_tmp",
@@ -92,6 +97,19 @@ def edit(
         on_progress=lambda ev: None,
         on_log=lambda ev: print(f"  [{ev.level}] {ev.message}"),
     )
+
+    # 本地文件 → 上传为 asset
+    if source_image and not source_asset_id:
+        from pathlib import Path
+        aid = ctx.asset_store.create_from_file(
+            Path(source_image), kind="image", mime_type="image/png",
+            source_task_id="",
+        )
+        source_asset_id = aid
+        print(f"[cli] uploaded {source_image} → asset {aid}")
+
+    if not source_asset_id:
+        raise ValueError("source_asset_id or source_image is required")
 
     request = ImageEditRequest(
         model=model,

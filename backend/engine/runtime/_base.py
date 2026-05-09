@@ -187,7 +187,39 @@ class RuntimeContext(ABC):
         ...
 
     @abstractmethod
-    def gelu(self, x: Any, approximate: str = "none") -> Any:
+    def tanh(self, x: Any) -> Any:
+        ...
+
+    @abstractmethod
+    def split(self, x: Any, indices: list, axis: int = -1) -> list[Any]:
+        ...
+
+    @abstractmethod
+    def broadcast_to(self, x: Any, shape: tuple) -> Any:
+        ...
+
+    @abstractmethod
+    def outer(self, a: Any, b: Any) -> Any:
+        ...
+
+    @abstractmethod
+    def max(self, x: Any) -> Any:
+        ...
+
+    @abstractmethod
+    def sum(self, x: Any, axis: Any = None) -> Any:
+        ...
+
+    @abstractmethod
+    def square(self, x: Any) -> Any:
+        ...
+
+    @abstractmethod
+    def rsqrt(self, x: Any) -> Any:
+        ...
+
+    @abstractmethod
+    def mean(self, x: Any, axis: Any = None, keepdims: bool = False) -> Any:
         ...
 
     @abstractmethod

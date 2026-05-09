@@ -116,6 +116,7 @@ async def stream_task(task_id: str, sched: TaskScheduler = Depends(get_task_sche
                 yield f"event: done\ndata: {json.dumps({'status': 'not_found'})}\n\n"
                 break
             st = row["status"]
+            # 1. flush DB logs
             for log in sched.get_task_logs(task_id, offset=last_log, limit=200):
                 last_log += 1
                 payload = {
@@ -124,6 +125,39 @@ async def stream_task(task_id: str, sched: TaskScheduler = Depends(get_task_sche
                     "ts": log.get("time"),
                 }
                 yield f"event: log\ndata: {json.dumps(payload)}\n\n"
+            # 2. flush realtime queue events (progress + logs emitted from worker thread)
+            rt_queue = sched.get_realtime_queue(task_id)
+            if rt_queue:
+                try:
+                    while True:
+                        ev_type, ev_data = rt_queue.get_nowait()
+                        if ev_type == "log" and hasattr(ev_data, "message"):
+                            payload = {
+                                "message": ev_data.message,
+                                "level": ev_data.level,
+                                "ts": None,
+                            }
+                            yield f"event: log\ndata: {json.dumps(payload)}\n\n"
+                        elif ev_type == "progress" and hasattr(ev_data, "progress"):
+                            prog = float(ev_data.progress or 0.0)
+                            pkey = (prog, ev_data.step, ev_data.total, ev_data.eta_seconds)
+                            if pkey != last_progress_key:
+                                last_progress_key = pkey
+                                yield (
+                                    "event: progress\ndata: "
+                                    + json.dumps(
+                                        {
+                                            "progress": prog,
+                                            "step": ev_data.step,
+                                            "total": ev_data.total,
+                                            "eta_seconds": ev_data.eta_seconds,
+                                        }
+                                    )
+                                    + "\n\n"
+                                )
+                except asyncio.QueueEmpty:
+                    pass
+            # 3. status
             meta = sched.get_progress_meta(task_id)
             prog = float(row.get("progress") or 0.0)
             pkey = (prog, meta.get("step"), meta.get("total"), meta.get("eta_seconds"))
@@ -152,6 +186,15 @@ async def stream_task(task_id: str, sched: TaskScheduler = Depends(get_task_sche
                     yield f"event: result\ndata: {json.dumps(row['result'])}\n\n"
                 yield f"event: done\ndata: {json.dumps({'status': st})}\n\n"
                 break
-            await asyncio.sleep(0.8)
+            # 4. wait: event-driven when realtime queue exists, else short poll
+            if rt_queue:
+                try:
+                    ev_type, ev_data = await asyncio.wait_for(rt_queue.get(), timeout=0.3)
+                    # put back so next loop processes it
+                    await rt_queue.put((ev_type, ev_data))
+                except asyncio.TimeoutError:
+                    pass
+            else:
+                await asyncio.sleep(0.1)
 
     return StreamingResponse(gen(), media_type="text/event-stream")

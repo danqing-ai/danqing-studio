@@ -175,6 +175,8 @@ class ImagePipeline:
         image_seq_len = (h // 16) * (w // 16)
         timesteps = scheduler.set_timesteps(steps, image_seq_len=image_seq_len,
                                              image_width=int(w), image_height=int(h),
+                                             use_empirical_mu=self._registry_scalar_default(entry, "use_empirical_mu", True),
+                                             mu=self._registry_scalar_default(entry, "scheduler_mu", None),
                                              requires_sigma_shift=self._registry_scalar_default(entry, "requires_sigma_shift", False))
         sigmas = getattr(scheduler, 'sigmas', None)
 
@@ -283,9 +285,37 @@ class ImagePipeline:
             w.update(self.ctx.load_weights(str(sf)))
         if remap_fn:
             w = remap_fn(w)
-        model.load_weights(list(w.items()), strict=False)
+
+        # 检测量化权重（如 int8/int4）→ 从 fp16 加载缺失的 bias
+        fallback_weights = None
+        if any(k.endswith(".scales") for k in w.keys()):
+            fp16_root = self._resolve_fallback_fp16(bundle_root)
+            if fp16_root:
+                fb = {}
+                fb_tp = fp16_root / "transformer"
+                if fb_tp.exists():
+                    for sf in sorted(fb_tp.glob("*.safetensors")):
+                        fb.update(self.ctx.load_weights(str(sf)))
+                    if remap_fn:
+                        fb = remap_fn(fb)
+                    fallback_weights = list(fb.items())
+
+        model.load_weights(list(w.items()), strict=False,
+                           fallback_weights=fallback_weights)
         self.ctx.eval(*[p for _, p in model.parameters()])
         return model
+
+    def _resolve_fallback_fp16(self, bundle_root: Path) -> Path | None:
+        """从量化路径（如 z-image-int8）推断 fp16 路径（z-image-fp16）。"""
+        # 模式: .../z-image-int8 → .../z-image-fp16
+        name = bundle_root.name
+        parent = bundle_root.parent
+        if "-int8" in name or "-int4" in name or "-4bit" in name:
+            fp16_name = name.replace("-int8", "-fp16").replace("-int4", "-fp16").replace("-4bit", "-fp16")
+            fp16_path = parent / fp16_name
+            if fp16_path.exists():
+                return fp16_path
+        return None
 
     def _vae_preprocess_special(self, latents, vae_weights, scaling_factor, shift_factor):
         """特殊 VAE 预处理 — flux2 风格（通过权重检测触发，非 family 硬编码）。"""
