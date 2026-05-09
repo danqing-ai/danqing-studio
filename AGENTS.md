@@ -57,24 +57,58 @@ V3TaskStore + SQLiteAssetStore (持久化，WAL 模式并发读写)
 - **ModelCache**：LRU 模型缓存，自动内存管理
 
 #### 模型插件化（Model as Plugin）
-新增模型 = 注册表 JSON + Config 数据类 + Transformer 类 + 权重 Remap：
+新增模型 = 注册表 JSON + Config 数据类 + Transformer 类 + 权重 Remap + Pipeline 注册表声明（零 `family` 分支）：
 - 注册表声明：`config/models_registry.json`（family / engine / actions / parameters / versions）
-- 配置数据类：`backend/engine/config/model_configs.py`（in_channels / hidden_dim / encoder_type 等）
+- 配置数据类：`backend/engine/config/model_configs.py`（含 `vae_scale`, `encoder_type`, `text_encoder_out_layers` 等）
 - Transformer 实现：`backend/engine/models/image/{family}.py`
 - 权重映射：`backend/engine/common/weights.py`（diffusers → DanQing 键名转换）
-- Pipeline 路由：`backend/engine/image_pipeline.py` 中 `family == "xxx"` 分支
+- Pipeline 注册：`_get_transformer_class()` / `_get_weight_remap()`（零 `family` if-elif 分支）
 
 #### Pipeline 组装化（Pipeline as Assembly Line）
-`ImagePipeline.run_mlx()` 是装配线，由 `entry.family` 和 `config.*` 驱动：
+`ImagePipeline.run_mlx()` 是装配线，**完全由注册表 `parameters` + Config 数据类驱动，零 `family` 硬编码**：
 1. 解析 model → 查注册表 → 获取 family / config
 2. 按 `config.encoder_type` 选择文本编码器
-3. 按 `family` 选择调度器（`_scheduler_name_for_family`）
-4. 创建初始 latent（seed 确定性）
-5. 跑通用去噪循环（`DenoisingPipeline` 或 inline loop）
-6. VAE 解码（读取 `vae/config.json` 参数）
+3. 按注册表 `parameters.scheduler.default` 选择调度器
+4. 按 `config.vae_scale` 创建初始 latent
+5. 跑通用去噪循环（全模型统一接口 `model(latents, t, txt_embeds=..., sigmas=...)`）
+6. VAE 解码（通过权重键名检测触发特殊预处理，非 family 硬编码）
 7. 资产落盘（`asset_store.create_from_file`）
 
-**核心不变量**：新增模型不触碰 API / CLI / Engine / Scheduler / Persistence / 通用组件代码。
+**核心不变量**：新增模型不触碰 API / CLI / Engine / Scheduler / Persistence / Pipeline 代码。
+
+#### 模型生命周期 Hook（拦截器模式）
+
+`TransformerBase` 定义 Hook 接口（默认空实现），Pipeline 在关键节点调用。模型选择性覆盖以实现 LoRA/ControlNet 等扩展：
+
+```
+Pipeline.run_mlx()
+│
+├─ _load_model() → model.load_weights()
+├─ Hook ①: after_load_weights(bundle_root)          ← LoRA/Adapter 权重合并
+│
+├─ 文本编码 (txt_embeds)
+├─ Hook ②: prepare_conditioning(request, bundle)     ← ControlNet 编码控制图，返回 cond dict
+│
+├─ 调度器 (timesteps, sigmas)
+├─ Hook ③: before_denoise(latents, timesteps, sigmas, **cond)  ← 注入 ControlNet 信号，修改 latents
+│
+├─ for step in timesteps:
+│     noise_pred = model(latents, t, ...)
+│     latents = scheduler.step(noise_pred, t, latents)
+│     Hook ④: step_callback(step_idx, latents, noise_pred)  ← 动态条件/日志
+│
+└─ VAE 解码
+```
+
+| Hook | 调用时机 | LoRA 用法 | ControlNet 用法 |
+|------|----------|-----------|-----------------|
+| ① `after_load_weights(bundle_root)` | load_weights 后 | 加载并合并 LoRA 权重到模型 | — |
+| ② `prepare_conditioning(request, bundle)` | 文本编码后 | — | 加载 ControlNet 模型，编码控制图 → cond dict |
+| ③ `before_denoise(latents, timesteps, sigmas, **cond)` | 去噪循环前 | — | 注入 ControlNet 信号到 latents，返回修改后的 (latents, cond) |
+| ④ `step_callback(step_idx, latents, noise_pred)` | 每步去噪后 | — | 动态调整注入强度 |
+
+**Hook 基类定义**：`backend/engine/models/_base.py` → `TransformerBase`。
+新增模型覆盖需要的 Hook 即可，Pipeline 零修改。
 
 ### 后端分层实现
 ```
@@ -123,7 +157,12 @@ V3TaskStore + SQLiteAssetStore (SQLite WAL 模式持久化)
   "engine": "danqing-image",
   "media": "image",
   "actions": { "create": {}, "rewrite": {} },
-  "parameters": { "steps": { "type": "int", "default": 4 }, ... },
+  "parameters": {
+    "steps": { "type": "int", "default": 4 },
+    "vae_scale": 8,
+    "text_encoder_out_layers": null,
+    ...
+  },
   "versions": { "fp16": { "default": true, "local_path": "models/Base/longcat-image-fp16" } }
 }
 ```
@@ -134,8 +173,9 @@ V3TaskStore + SQLiteAssetStore (SQLite WAL 模式持久化)
 class LongCatConfig:
     in_channels: int = 64
     hidden_dim: int = 3072
-    encoder_type: str = "qwen2.5_vl"  # 或 "t5"
-    # ... 其他架构参数
+    encoder_type: str = "qwen2.5_vl"
+    vae_scale: int = 8              # 注册表可覆盖
+    text_encoder_out_layers: Optional[tuple] = None
 ```
 `get_config_class("longcat")` 返回 `LongCatConfig`。
 
@@ -155,19 +195,22 @@ def remap_longcat_weights(weights: dict) -> dict:
     return remapped
 ```
 
-**Step 5: Pipeline 路由** — `backend/engine/image_pipeline.py`
-在 `run_mlx()` 中：
-- 移除 `family == "longcat"` 的 `raise RuntimeError`
-- 按 `config.encoder_type` 选择文本编码器
-- 按 `family` 选择调度器（`_scheduler_name_for_family`）
-- 处理模型特有的 conditioning 格式
+**Step 5: Pipeline 注册** — `backend/engine/image_pipeline.py`
+在 `_get_transformer_class()` / `_get_weight_remap()` 中添加条目：
+```python
+if family == "longcat":
+    from backend.engine.models.image.longcat import LongCatTransformer
+    return LongCatTransformer
+```
+**Pipeline 装配逻辑零修改**，所有模型差异化参数（`vae_scale`, `encoder_type`, `scheduler`, `text_encoder_out_layers`）均通过注册表 + Config 注入。
 
 **复用 vs 扩展：**
 | 类别 | 内容 | 是否修改 |
 |------|------|----------|
 | 直接复用 | `DanQingImageEngine`、`ImagePipeline` 装配逻辑、`DenoisingPipeline` 去噪循环、`RuntimeContext`、`Scheduler` 基类+实现、`VAEDecoder`、CLI/REST API 接入层、`ModelCache`、进度回调/SSE | 零修改 |
 | 配置扩展 | `models_registry.json` 条目、`LongCatConfig` 数据类 | 仅改声明 |
-| 新增实现 | `LongCatTransformer`（注意力/MLP/RoPE/条件注入）、`remap_longcat_weights`、文本/视觉编码器适配、Pipeline 路由分支 | 模型特有逻辑 |
+| 新增实现 | `LongCatTransformer`（注意力/MLP/RoPE/条件注入）、`remap_longcat_weights`、文本/视觉编码器适配 | 模型特有逻辑 |
+| Pipeline 注册 | `_get_transformer_class()` / `_get_weight_remap()` 添加条目 | 一行注册 |
 
 **验证路径：**
 ```
@@ -182,6 +225,13 @@ Benchmark 测试：
 tests/benchmark/runner.py → subprocess(danqing-generate)
   → 与 mflux CLI 输出对比（PSNR ≥ 30 dB）
 ```
+
+当前基准测试结果（2026-05）：
+| 模型 | Action | PSNR | 状态 |
+|------|--------|------|------|
+| flux2-klein-9b | create | 31.9 dB | ✅ PASS |
+| z-image | create | 28.6 dB | ⚠️ WARN |
+| z-image-turbo | create | 16.7 dB | ❌ FAIL |
 
 ## Configuration
 

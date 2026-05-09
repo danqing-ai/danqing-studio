@@ -174,7 +174,7 @@ class MLXContext(RuntimeContext):
         return nn.silu(x)
 
     def gelu(self, x: Any, approximate: str = "none") -> Any:
-        return nn.gelu(x, approx=approximate)
+        return nn.gelu(x)
 
     def meshgrid(self, *arrays, indexing: str = "ij") -> Any:
         return mx.meshgrid(*arrays, indexing=indexing)

@@ -184,15 +184,15 @@ assets = get_container().resolve(SQLiteAssetStore)
 
 ### 模型插件化
 
-新增模型仅需 5 步，零改动核心代码：
+新增模型仅需 5 步，**Pipeline 装配逻辑零修改**：
 
-1. **注册表声明** — `config/models_registry.json` 添加条目
-2. **配置数据类** — `backend/engine/config/model_configs.py` 添加 Config
+1. **注册表声明** — `config/models_registry.json` 添加条目（含 `vae_scale`, `scheduler`, `text_encoder_out_layers`, `requires_sigma_shift` 等参数）
+2. **配置数据类** — `backend/engine/config/model_configs.py` 添加 Config（含 `vae_scale`, `encoder_type` 等架构字段）
 3. **Transformer 实现** — `backend/engine/models/image/{family}.py`
 4. **权重映射** — `backend/engine/common/weights.py` 添加 remap 函数
-5. **Pipeline 路由** — `backend/engine/image_pipeline.py` 添加 family 分支
+5. **Pipeline 注册** — `backend/engine/image_pipeline.py` 的 `_get_transformer_class()` / `_get_weight_remap()` 中添加一行
 
-详见 `AGENTS.md` 中的「新模型接入流程」。
+> **核心不变量**：新增模型不触碰 API / CLI / Engine / Scheduler / Persistence / Pipeline 代码。
 
 ## API 文档
 

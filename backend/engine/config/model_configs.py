@@ -36,6 +36,7 @@ class Flux1Config:
     supports_img2img: bool = True
     supports_mask: bool = False       # Fill / Depth 需要
     supports_controlnet: bool = False
+    vae_scale: int = 8               # VAE latent 下采样倍数
 
     def __post_init__(self):
         pass
@@ -62,6 +63,9 @@ class Flux2Config:
     supports_img2img: bool = True
     supports_edit: bool = False
     encoder_type: str = "qwen3"
+    text_encoder_out_layers: tuple = (9, 18, 27)  # Flux2 Qwen3 取 3 层拼接
+    enable_thinking: bool = False     # mflux Flux2KleinWeightDefinition 显式禁用
+    vae_scale: int = 16              # Flux2 用 16x tile，非 8x
 
 
 @dataclass
@@ -83,6 +87,9 @@ class QwenImageConfig:
     qk_norm: bool = True
     supports_guidance: bool = True
     supports_img2img: bool = True
+    vae_scale: int = 8
+
+
 
 
 @dataclass
@@ -105,6 +112,7 @@ class FIBOConfig:
     supports_img2img: bool = True
     # FIBO 特有: JSON 结构化 prompt
     structured_prompt: bool = True
+    vae_scale: int = 8
 
 
 @dataclass
@@ -134,6 +142,9 @@ class ZImageConfig:
     supports_guidance: bool = True    # Z-Image=True, Z-Image-Turbo=False
     supports_img2img: bool = False
     encoder_type: str = "qwen3"       # Qwen3Tokenizer + Qwen3Model
+    text_encoder_out_layers: Optional[tuple] = None  # flux2=(9,18,27), z_image=None
+    enable_thinking: bool = True       # z_image uses True, flux2 uses False
+    vae_scale: int = 8
 
 
 @dataclass
@@ -154,6 +165,7 @@ class SeedVR2Config:
     supports_guidance: bool = False  # 无条件模型
     supports_img2img: bool = False
     # 超分特有
+    vae_scale: int = 8
     scale_factor: int = 2            # 放大倍数
     tile_size: int = 1024            # 分块超分
     denoise_strength: float = 0.3    # 默认去噪强度
@@ -260,9 +272,11 @@ class LongCatConfig:
     
     参考: meituan-longcat/LongCat-Image transformer/config.json
     dim = num_heads * head_dim = 24 * 128 = 3072
+    
+    in_channels=16: VAE latent channels (transformer 内部做 2x2 patchify 成 64-dim)
     """
-    in_channels: int = 64
-    out_channels: int = 64
+    in_channels: int = 16
+    out_channels: int = 16
     hidden_dim: int = 3072            # 24*128
     num_heads: int = 24
     attn_head_dim: int = 128
@@ -277,6 +291,7 @@ class LongCatConfig:
     supports_guidance: bool = False   # guidance_embeds=false
     supports_img2img: bool = True
     encoder_type: str = "qwen2.5_vl"
+    vae_scale: int = 8
 
 
 # =========================================================================

@@ -55,8 +55,19 @@ class TaskScheduler:
     async def start(self) -> None:
         if self._worker is None or self._worker.done():
             self._shutdown = False
+            await self._recover_orphaned_running()
             await self._rebuild_queued_heap()
             self._worker = asyncio.create_task(self._worker_loop())
+
+    async def _recover_orphaned_running(self) -> None:
+        """重启时：将上次遗留的 running 任务标记为 failed（上下文已丢失，无法恢复）。"""
+        rows = self._tasks.list_tasks(limit=500, offset=0, status=TaskStatus.RUNNING.value)
+        for row in rows:
+            tid = row["id"]
+            self._tasks.mark_failed(tid, "Process restarted while task was running")
+            self._tasks.append_log(tid, "Task was interrupted by process restart and marked as failed", "error")
+            self._progress_meta.pop(tid, None)
+            self._tokens.pop(tid, None)
 
     async def shutdown(self) -> None:
         self._shutdown = True

@@ -19,9 +19,42 @@ from backend.core.contracts import (
 from backend.engine.common.cache import ModelCache
 from backend.engine.common.schedulers import get_scheduler
 from backend.engine.common.text_encoders import T5Encoder, Qwen3TextEncoder
-from backend.engine.common.weights import remap_zimage_weights, remap_flux2_weights
 from backend.engine.config.model_configs import get_config_class
 from backend.engine.runtime._base import RuntimeContext
+
+
+# ---------------------------------------------------------------------------
+# Transformer 类注册表（family → class）
+# 新增模型仅需在此注册，run_mlx()零修改
+# ---------------------------------------------------------------------------
+def _get_transformer_class(family: str):
+    if family == "z_image":
+        from backend.engine.models.image.z_image import ZImageTransformer  # noqa: F811
+        return ZImageTransformer
+    if family == "flux2":
+        from backend.engine.models.image.flux2 import Flux2Transformer  # noqa: F811
+        return Flux2Transformer
+    if family == "fibo":
+        from backend.engine.models.image.fibo import FIBOTransformer  # noqa: F811
+        return FIBOTransformer
+    if family == "longcat":
+        from backend.engine.models.image.longcat import LongCatTransformer  # noqa: F811
+        return LongCatTransformer
+    if family == "flux1":
+        from backend.engine.models.image.flux1 import Flux1Transformer  # noqa: F811
+        return Flux1Transformer
+    raise RuntimeError(f"Unknown image model family: {family}")
+
+
+def _get_weight_remap(family: str):
+    """权重映射函数注册表（family → remap_func），返回 None 表示无需映射。"""
+    if family == "z_image":
+        from backend.engine.common.weights import remap_zimage_weights  # noqa: F811
+        return remap_zimage_weights
+    if family == "flux2":
+        from backend.engine.common.weights import remap_flux2_weights  # noqa: F811
+        return remap_flux2_weights
+    return None
 
 
 class ImagePipeline:
@@ -50,9 +83,11 @@ class ImagePipeline:
     @staticmethod
     def _registry_scalar_default(entry, key: str, fallback):
         spec = (entry.parameters or {}).get(key)
-        if isinstance(spec, dict) and "default" in spec:
-            return spec["default"]
-        return fallback
+        if spec is None:
+            return fallback
+        if isinstance(spec, dict):
+            return spec.get("default", fallback)
+        return spec  # 直接值（list / int / str 等），非 dict 包裹
 
     def _resolve_version_block(self, entry, version_key: str | None) -> dict | None:
         raw = getattr(entry, "raw", {}) or {}
@@ -73,16 +108,6 @@ class ImagePipeline:
             return None
         path = self._resolve_path(lp)
         return path if path.exists() else None
-
-    def _scheduler_name_for_family(self, family: str) -> str:
-        """调度器与 Transformer 的时间嵌入约定一致（见 mflux 各 CLI 默认值）。
-
-        ``Flux2Transformer`` / ``ZImageTransformer``：timestep 为 [0,1]，模型内再缩放。
-        ``FIBOTransformer`` / ``Flux1Transformer``：``TimestepEmbedding`` 配合 **linear** 的 0–1000 标度。
-        """
-        if family in ("z_image", "flux2", "longcat"):
-            return "flow_match_euler"
-        return "linear"
 
     def run_mlx(
         self,
@@ -108,65 +133,58 @@ class ImagePipeline:
         family = getattr(entry, "family", "flux1")
 
         if family == "seedvr2":
-            raise RuntimeError(
-                "SeedVR2 is an upscaling model in this registry; "
-                "standard ImagePipeline txt2img does not apply. Use an upscale workflow when implemented."
-            )
+            raise RuntimeError("SeedVR2 is an upscaling model; not for txt2img.")
         if family == "qwen_image":
-            raise RuntimeError(
-                "Qwen-Image requires Qwen-VL text/image conditioning; only T5/Qwen3 paths are wired here. "
-                "Use flux1, flux2, z_image, fibo, or longcat."
-            )
+            raise RuntimeError("Qwen-Image requires Qwen-VL conditioning; not wired.")
 
-        # mflux: Z-Image-Turbo 不用 CFG；基础 Z-Image 用 flow_match_euler_discrete + CFG
-        if family == "z_image" and model_key == "z-image-turbo":
-            config.supports_guidance = False
+        # ── 注册表驱动的参数注入 ──
+        for param_key in ("text_encoder_out_layers", "vae_scale", "enable_thinking"):
+            val = self._registry_scalar_default(entry, param_key, None)
+            if val is not None:
+                setattr(config, param_key, val)
+
+        # 注册表驱动的 supports_guidance 覆盖（如 z-image-turbo）
+        sg = self._registry_scalar_default(entry, "supports_guidance", None)
+        if sg is not None:
+            config.supports_guidance = bool(sg)
 
         if ctx_exec.cancel_token.is_cancelled():
             return None
 
         bundle_root = self._local_bundle_root(entry, version_key or None)
 
-        steps_default = self._registry_scalar_default(entry, "steps", None)
-        guidance_default = self._registry_scalar_default(entry, "guidance", None)
-        if steps_default is None:
-            steps_default = 50 if family in ("z_image", "longcat") else 4
-        if guidance_default is None:
-            guidance_default = 0.0 if not getattr(config, "supports_guidance", True) else (
-                4.0 if family == "z_image" else 3.5
-            )
+        steps_default = self._registry_scalar_default(entry, "steps", 4)
+        guidance_default = self._registry_scalar_default(entry, "guidance", 0.0)
+        scheduler_registry = self._registry_scalar_default(entry, "scheduler", None)
+        scheduler_request = request.scheduler or request.metadata.get("scheduler") if request.metadata else None
+        scheduler_default = scheduler_request or scheduler_registry or "flow_match_euler"
 
         steps = int(request.steps) if request.steps is not None else int(steps_default)
         steps = max(1, steps)
         guidance = float(request.guidance) if request.guidance is not None else float(guidance_default)
-        if family == "z_image" and not getattr(config, "supports_guidance", True):
+        if not getattr(config, "supports_guidance", True):
             guidance = 0.0
 
-        # 1. 文本编码
+        # 1. 文本编码（由 config.encoder_type 驱动，零 family 分支）
         txt_embeds = None
         neg_embeds = None
         encoder_type = getattr(config, "encoder_type", "t5")
         if request.prompt and encoder_type in ("qwen3", "qwen2.5_vl"):
             if bundle_root is None:
                 raise RuntimeError(
-                    f"Model {model_key!r} has no installed bundle at registry local_path "
+                    f"Model {model_key!r} has no installed bundle at local_path "
                     f"(version={version_key or 'default'}); cannot load text encoder."
                 )
             if encoder_type == "qwen2.5_vl":
                 txt_embeds = self._qwen25vl_encode(request.prompt, bundle_root=bundle_root)
             else:
-                txt_embeds = self._qwen3_encode(request.prompt, family=family, bundle_root=bundle_root)
-            use_cfg = (
-                family in ("z_image", "longcat")
-                and getattr(config, "supports_guidance", True)
-                and guidance > 1.0
-            )
-            if use_cfg:
+                txt_embeds = self._qwen3_encode(request.prompt, bundle_root=bundle_root, config=config)
+            if getattr(config, "supports_guidance", False) and guidance > 1.0:
                 neg_txt = request.negative_prompt.strip() if request.negative_prompt else " "
                 if encoder_type == "qwen2.5_vl":
                     neg_embeds = self._qwen25vl_encode(neg_txt, bundle_root=bundle_root)
                 else:
-                    neg_embeds = self._qwen3_encode(neg_txt, family=family, bundle_root=bundle_root)
+                    neg_embeds = self._qwen3_encode(neg_txt, bundle_root=bundle_root, config=config)
         elif request.prompt and config.text_dim > 0:
             enc = T5Encoder(self.ctx, "google/t5-v1_1-xxl")
             txt_embeds = enc.encode([request.prompt])
@@ -179,49 +197,63 @@ class ImagePipeline:
         if model is None:
             raise RuntimeError(f"Failed to load model: {model_key}")
 
-        # 3. 调度器（见 _scheduler_name_for_family）
-        scheduler = get_scheduler(self._scheduler_name_for_family(family), ctx=self.ctx)
-        timesteps = scheduler.set_timesteps(steps)
+        # ── Hook ①: 权重加载后（LoRA / Adapter 合并）──
+        model.after_load_weights(bundle_root=str(bundle_root) if bundle_root else None)
+
+        # ── Hook ②: 条件准备（ControlNet 编码控制图）──
+        extra_cond = model.prepare_conditioning(request, bundle_root=str(bundle_root) if bundle_root else None)
+
+        # 3. 调度器（注册表默认 + 请求参数，零 family 分支）
+        scheduler = get_scheduler(scheduler_default, ctx=self.ctx)
+        vae_scale = getattr(config, "vae_scale", 8)
+        # image_seq_len 用于 sigma shift，与 mflux Config 一致：固定 //16
+        image_seq_len = (h // 16) * (w // 16)
+        timesteps = scheduler.set_timesteps(steps, image_seq_len=image_seq_len,
+                                             image_width=int(w), image_height=int(h),
+                                             requires_sigma_shift=self._registry_scalar_default(entry, "requires_sigma_shift", False))
         sigmas = getattr(scheduler, 'sigmas', None)
 
         # 使用 seed 创建确定性 latent
         import mlx.core as mx
-        latent_shape = (1, config.in_channels, h // 8, w // 8)
+        latent_shape = (1, config.in_channels, h // vae_scale, w // vae_scale)
         if seed is not None:
             key = mx.random.key(seed)
             latents = mx.random.normal(latent_shape, dtype=mx.float32, key=key)
         else:
             latents = self.ctx.randn(latent_shape, dtype=self.ctx.float32())
 
-        if family == "z_image":
-            for i, t in enumerate(timesteps):
-                if ctx_exec.cancel_token.is_cancelled():
-                    return None
-                noise_pred = model(latents, t, txt_embeds=txt_embeds, sigmas=sigmas)
-                if neg_embeds is not None:
-                    noise_neg = model(latents, t, txt_embeds=neg_embeds, sigmas=sigmas)
-                    noise_pred = noise_pred + guidance * (noise_pred - noise_neg)
-                latents = scheduler.step(noise_pred, t, latents)
+        # ── Hook ③: 去噪前（ControlNet 信号注入 / latent 修改）──
+        latents, extra_cond = model.before_denoise(latents, timesteps, sigmas, **extra_cond)
 
-                if on_progress:
-                    on_progress((i + 1) / len(timesteps), i + 1, len(timesteps), None)
-                if on_log:
-                    on_log("info", f"Step {i+1}/{len(timesteps)}")
-        else:
-            for i, t in enumerate(timesteps):
-                if ctx_exec.cancel_token.is_cancelled():
-                    return None
-                noise_pred = model(
-                    latents,
-                    t,
-                    **({"txt_embeds": txt_embeds} if txt_embeds is not None else {}),
-                )
-                latents = scheduler.step(noise_pred, t, latents)
+        # ------------------------------------------------------------------
+        # 4. 去噪循环 — 完全通用，模型自己处理 timestep 转换和特殊参数
+        # ------------------------------------------------------------------
+        for i, t in enumerate(timesteps):
+            if ctx_exec.cancel_token.is_cancelled():
+                return None
 
-                if on_progress:
-                    on_progress((i + 1) / len(timesteps), i + 1, len(timesteps), None)
-                if on_log:
-                    on_log("info", f"Step {i+1}/{len(timesteps)}")
+            # 统一的模型调用接口：传入原始 timestep 索引 + sigmas，由模型自己转换
+            model_kwargs = {"txt_embeds": txt_embeds} if txt_embeds is not None else {}
+            model_kwargs.update(extra_cond)
+            if sigmas is not None:
+                model_kwargs["sigmas"] = sigmas
+
+            noise_pred = model(latents, t, **model_kwargs)
+
+            # CFG — 模型族自己决定是否支持
+            if neg_embeds is not None and getattr(config, "supports_guidance", False):
+                noise_neg = model(latents, t, txt_embeds=neg_embeds, **({"sigmas": sigmas} if sigmas is not None else {}))
+                noise_pred = noise_pred + guidance * (noise_pred - noise_neg)
+
+            latents = scheduler.step(noise_pred, t, latents)
+
+            # ── Hook ④: 每步回调（动态条件 / 日志）──
+            model.step_callback(i, latents, noise_pred)
+
+            if on_progress:
+                on_progress((i + 1) / len(timesteps), i + 1, len(timesteps), None)
+            if on_log:
+                on_log("info", f"Step {i+1}/{len(timesteps)}")
 
         if ctx_exec.cancel_token.is_cancelled():
             return None
@@ -251,12 +283,8 @@ class ImagePipeline:
     # 内部
     # ------------------------------------------------------------------
 
-    def _qwen3_encode(self, text: str, *, family: str = "", bundle_root: Path) -> Any:
-        """Qwen3 文本编码 — z_image / flux2 系列。
-
-        z_image 使用倒数第二层输出（与 mflux TextEncoder 一致）。
-        flux2 使用最后一层输出（与 mflux Qwen3TextEncoder 一致）。
-        """
+    def _qwen3_encode(self, text: str, *, bundle_root: Path, config: Any) -> Any:
+        """Qwen3 文本编码 — 通过 config.encoder_type 路由，从注册表读取 text_encoder_out_layers。"""
         enc_dir = bundle_root / "text_encoder"
         tok_dir = bundle_root / "tokenizer"
         if not tok_dir.exists():
@@ -265,10 +293,15 @@ class ImagePipeline:
             enc_dir = bundle_root
             tok_dir = bundle_root
 
-        enc = Qwen3TextEncoder(self.ctx, str(enc_dir), tokenizer_path=str(tok_dir))
-        # z_image 兼容：使用倒数第二层
-        if family == "z_image":
-            enc.use_second_to_last = True
+        out_layers = getattr(config, "text_encoder_out_layers", None)
+        if out_layers is not None:
+            out_layers = tuple(out_layers)
+        enable_thinking = getattr(config, "enable_thinking", False)
+        enc = Qwen3TextEncoder(
+            self.ctx, str(enc_dir), tokenizer_path=str(tok_dir),
+            hidden_state_layers=out_layers,
+            enable_thinking=enable_thinking,
+        )
         return enc.encode([text])
 
     def _qwen25vl_encode(self, text: str, *, bundle_root: Path) -> Any:
@@ -280,59 +313,53 @@ class ImagePipeline:
     def _load_model(self, family: str, config, entry, version_key: str | None):
         import mlx.core as mx
 
-        loaded = False
-        if family == "z_image":
-            from backend.engine.models.image.z_image import ZImageTransformer
-            model = ZImageTransformer(config, self.ctx)
-        elif family == "flux2":
-            from backend.engine.models.image.flux2 import Flux2Transformer
-            model = Flux2Transformer(config, self.ctx)
-        elif family == "fibo":
-            from backend.engine.models.image.fibo import FIBOTransformer
-            model = FIBOTransformer(config, self.ctx)
-        elif family == "longcat":
-            from backend.engine.models.image.longcat import LongCatTransformer
-            model = LongCatTransformer(config, self.ctx)
-        else:
-            from backend.engine.models.image.flux1 import Flux1Transformer
-            model = Flux1Transformer(config, self.ctx)
+        trans_cls = _get_transformer_class(family)
+        model = trans_cls(config, self.ctx)
+        remap_fn = _get_weight_remap(family)
 
         bundle_root = self._local_bundle_root(entry, version_key)
         tp = (bundle_root / "transformer") if bundle_root else None
-        if tp is not None and tp.exists():
-            w = {}
-            for sf in sorted(tp.glob("*.safetensors")):
-                w.update(dict(mx.load(str(sf))))
-            if family == "z_image":
-                w = remap_zimage_weights(w)
-            elif family == "flux2":
-                w = remap_flux2_weights(w)
-            model.load_weights(list(w.items()), strict=False)
-            mx.eval([p for _, p in model.parameters()])
-            loaded = True
+        if tp is None or not tp.exists():
+            return None
 
-        if not loaded:
-            raw = getattr(entry, "raw", {})
-            versions = raw.get("versions", {})
-            for vkey, vinfo in versions.items():
-                if isinstance(vinfo, dict) and vinfo.get("default"):
-                    lp = vinfo.get("local_path", "")
-                    if lp:
-                        root = self._resolve_path(lp)
-                        tpath = root / "transformer"
-                        if tpath.exists():
-                            w = {}
-                            for sf in sorted(tpath.glob("*.safetensors")):
-                                w.update(dict(mx.load(str(sf))))
-                            if family == "z_image":
-                                w = remap_zimage_weights(w)
-                            elif family == "flux2":
-                                w = remap_flux2_weights(w)
-                            model.load_weights(list(w.items()), strict=False)
-                            mx.eval([p for _, p in model.parameters()])
-                            loaded = True
+        w = {}
+        for sf in sorted(tp.glob("*.safetensors")):
+            w.update(dict(mx.load(str(sf))))
+        if remap_fn:
+            w = remap_fn(w)
+        model.load_weights(list(w.items()), strict=False)
+        mx.eval([p for _, p in model.parameters()])
+        return model
 
-        return model if loaded else None
+    @staticmethod
+    def _vae_preprocess_special(latents, vae_weights, scaling_factor, shift_factor):
+        """特殊 VAE 预处理 — flux2 风格（通过权重检测触发，非 family 硬编码）。
+
+        步骤: BN 归一化 → unpatchify(2x2) → post_quant_conv → scaling/shift
+        """
+        import mlx.core as mx
+
+        bn_mean = vae_weights.get("bn.running_mean", mx.zeros(128)).reshape(1, -1, 1, 1)
+        bn_var = vae_weights.get("bn.running_var", mx.ones(128)).reshape(1, -1, 1, 1)
+        bn_eps = 1e-4
+        latents = latents * mx.sqrt(bn_var + bn_eps) + bn_mean
+
+        B, C_, H_, W_ = latents.shape
+        latents = latents.reshape(B, C_ // 4, 2, 2, H_, W_)
+        latents = mx.transpose(latents, (0, 1, 4, 2, 5, 3))
+        latents = latents.reshape(B, C_ // 4, H_ * 2, W_ * 2)
+
+        latents = (latents / scaling_factor) + shift_factor
+        latents = mx.transpose(latents, (0, 2, 3, 1))
+
+        pw = vae_weights.get("post_quant_conv.weight")
+        pb = vae_weights.get("post_quant_conv.bias")
+        if pw is not None and pb is not None:
+            latents = mx.conv2d(latents, mx.transpose(pw, (0, 2, 3, 1)), stride=1, padding=0)
+            latents = latents + pb.reshape(1, 1, 1, -1)
+
+        latents = mx.transpose(latents, (0, 3, 1, 2))
+        return latents
 
     def _vae_decode(self, latents, entry, version_key):
         """VAE 解码 latent → PIL Image。"""
@@ -347,32 +374,43 @@ class ImagePipeline:
         # 加载 VAE 配置
         scaling_factor = 1.0
         shift_factor = 0.0
+        latent_cfg = 16
         if vae_dir and (vae_dir / "config.json").exists():
             import json
             with open(vae_dir / "config.json") as f:
                 vae_cfg = json.load(f)
             scaling_factor = vae_cfg.get("scaling_factor", 1.0)
             shift_factor = vae_cfg.get("shift_factor", 0.0)
+            latent_cfg = vae_cfg.get("latent_channels", 16)
 
-        # 创建 VAE decoder
-        C = latents.shape[1] if latents.ndim >= 4 else 16
-        vae = VAEDecoder(
-            latent_channels=C,
-            ctx=self.ctx,
-            scaling_factor=scaling_factor,
-            shift_factor=shift_factor,
-        )
+        # 通用 VAE 解码 — 自动处理 packed latents [B, S, C] → [B, C, H, W]
+        if latents.ndim == 3:
+            B, seq_len, channels = latents.shape
+            latent_h = int(seq_len ** 0.5)
+            latent_w = seq_len // latent_h
+            latents = latents.reshape(B, latent_h, latent_w, channels).transpose(0, 3, 1, 2)
 
-        # 加载 VAE 权重
+        # 加载 VAE 权重（所有模型共用）
+        vae_weights = {}
         if vae_dir and vae_dir.exists():
-            w = {}
             for sf in sorted(vae_dir.glob("*.safetensors")):
-                w.update(dict(mx.load(str(sf))))
-            from backend.engine.common.weights import remap_vae_weights
-            w = remap_vae_weights(w)
-            vae.load_weights(list(w.items()), strict=False)
+                vae_weights.update(dict(mx.load(str(sf))))
 
-        # 解码
+        # 检测是否需要特殊 VAE 预处理（如 flux2: BN + post_quant_conv + unpatchify）
+        # 通过检测权重键名，而非 family 硬编码
+        if "bn.running_mean" in vae_weights or "post_quant_conv.weight" in vae_weights:
+            # 特殊 VAE 预处理路径（flux2 风格）
+            latents = self._vae_preprocess_special(latents, vae_weights, scaling_factor, shift_factor)
+            scaling_factor = 1.0
+            shift_factor = 0.0
+            latent_cfg = vae_weights.get("decoder.conv_in.weight", mx.zeros((1,))).shape[0] if "decoder.conv_in.weight" in vae_weights else 16
+
+        C = latents.shape[1] if latents.ndim >= 4 else 16
+        vae = VAEDecoder(latent_channels=C, ctx=self.ctx, scaling_factor=scaling_factor, shift_factor=shift_factor)
+        if vae_weights:
+            from backend.engine.common.weights import remap_vae_weights
+            decoder_w = remap_vae_weights(vae_weights)
+            vae.load_weights(list(decoder_w.items()), strict=False)
         image = vae.forward(latents)
 
         # 转 numpy + PIL
@@ -383,7 +421,7 @@ class ImagePipeline:
             image = image[0]  # 去掉 batch
         if image.shape[0] <= 4:  # CHW format
             image = np.transpose(image, (1, 2, 0))
-        # 归一化到 0-255
-        image = (image - image.min()) / (image.max() - image.min() + 1e-8) * 255
+        # 归一化到 0-255（VAE 输出 [-1, 1] → [0, 255]）
+        image = (image + 1) / 2 * 255
         image = image.clip(0, 255).astype(np.uint8)
         return Image.fromarray(image)

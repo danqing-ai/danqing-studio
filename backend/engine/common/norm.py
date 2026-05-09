@@ -38,3 +38,27 @@ class AdaLayerNorm:
         scale = self.scale(condition)
         shift = self.shift(condition)
         return x * (1 + scale[:, None, :]) + shift[:, None, :]
+
+
+class AdaLayerNormContinuous:
+    """连续自适应 LayerNorm — 与 mflux AdaLayerNormContinuous 一致。
+
+    使用单个 linear 层输出 scale + shift。
+    """
+
+    def __init__(self, embedding_dim: int, conditioning_embedding_dim: int, ctx: Any):
+        self.ctx = ctx
+        nn = ctx
+        self.embedding_dim = embedding_dim
+        self.linear = nn.Linear(conditioning_embedding_dim, embedding_dim * 2, bias=False)
+        self.norm = nn.LayerNorm(embedding_dim, eps=1e-6, affine=False)
+
+    def forward(self, x: Any, text_embeddings: Any) -> Any:
+        import mlx.core as mx
+        import mlx.nn as nn
+        text_embeddings = self.linear(nn.silu(text_embeddings))
+        chunk_size = self.embedding_dim
+        scale = text_embeddings[:, 0 * chunk_size: 1 * chunk_size]
+        shift = text_embeddings[:, 1 * chunk_size: 2 * chunk_size]
+        x = self.norm(x) * (1 + scale)[:, None, :] + shift[:, None, :]
+        return x

@@ -115,6 +115,15 @@ ALL_CASES: list[BenchmarkCase] = [
         source_image=SRC_IMAGE,
         description="Qwen-Image 图生图",
     ),
+    # ============ longcat-image (create) ============
+    BenchmarkCase(
+        id="longcat-image-create",
+        model="longcat-image", action="create",
+        prompt="a cat sitting on a couch",
+        seed=42, steps=4,
+        _mflux_cli="mflux-generate-longcat",
+        description="LongCat-Image 文生图",
+    ),
     # ============ z-image (create + rewrite) ============
     BenchmarkCase(
         id="z-image-create",

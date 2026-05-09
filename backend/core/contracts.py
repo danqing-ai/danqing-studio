@@ -55,6 +55,7 @@ class ImageGenerationRequest(BaseModel):
     steps: Optional[int] = None
     guidance: Optional[float] = None
     seed: Optional[int] = None
+    scheduler: Optional[str] = None
     adapters: list[AdapterRef] = Field(default_factory=list)
     structural_guide: Optional[StructuralGuide] = None
     style_guide: Optional[StyleGuide] = None

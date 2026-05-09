@@ -434,7 +434,13 @@
         },
         "lora_support": true,
         "seed_support": true,
-        "negative_prompt_support": false
+        "negative_prompt_support": false,
+        "vae_scale": 16,
+        "text_encoder_out_layers": [
+          9,
+          18,
+          27
+        ]
       },
       "recommended": true,
       "source": "huggingface",
@@ -554,7 +560,13 @@
         },
         "lora_support": true,
         "seed_support": true,
-        "negative_prompt_support": false
+        "negative_prompt_support": false,
+        "vae_scale": 16,
+        "text_encoder_out_layers": [
+          9,
+          18,
+          27
+        ]
       },
       "recommended": true,
       "source": "huggingface",
@@ -653,7 +665,13 @@
         },
         "lora_support": true,
         "seed_support": true,
-        "negative_prompt_support": false
+        "negative_prompt_support": false,
+        "vae_scale": 16,
+        "text_encoder_out_layers": [
+          9,
+          18,
+          27
+        ]
       },
       "recommended": false,
       "source": "huggingface",
@@ -752,7 +770,13 @@
         },
         "lora_support": true,
         "seed_support": true,
-        "negative_prompt_support": false
+        "negative_prompt_support": false,
+        "vae_scale": 16,
+        "text_encoder_out_layers": [
+          9,
+          18,
+          27
+        ]
       },
       "recommended": false,
       "source": "huggingface",
@@ -851,7 +875,9 @@
         },
         "lora_support": true,
         "seed_support": true,
-        "negative_prompt_support": true
+        "negative_prompt_support": true,
+        "requires_sigma_shift": true,
+        "vae_scale": 8
       },
       "recommended": false,
       "source": "modelscope",
@@ -952,7 +978,17 @@
         },
         "lora_support": true,
         "seed_support": true,
-        "negative_prompt_support": true
+        "negative_prompt_support": true,
+        "scheduler": {
+          "default": "linear",
+          "options": [
+            "linear",
+            "flow_match_euler"
+          ],
+          "type": "enum"
+        },
+        "requires_sigma_shift": true,
+        "vae_scale": 8
       },
       "recommended": true,
       "source": "modelscope",

@@ -62,28 +62,43 @@ class FlowMatchEulerScheduler(Scheduler):
     def set_timesteps(self, num_inference_steps: int,
                       init_timestep: int = 0,
                       image_seq_len: int = 256,
+                      use_empirical_mu: bool = True,
                       **kwargs) -> Any:
-        self._init_timestep = init_timestep
-        ctx = self.ctx
-        if ctx is None:
-            import mlx.core as mx
-            ctx = type('Ctx', (), {
-                'arange': mx.arange, 'float32': mx.float32,
-                'zeros': mx.zeros, 'concat': mx.concatenate,
-                'linspace': mx.linspace,
-            })()
+        """计算去噪时间步序列。
 
-        # 完全参考 mflux FlowMatchEulerDiscreteScheduler.get_timesteps_and_sigmas
+        默认参考 mflux FlowMatchEulerDiscreteScheduler._compute_timesteps_and_sigmas
+        (mu=1.0, shift_terminal=0.02)。当 use_empirical_mu=True 时参考 get_timesteps_and_sigmas。
+        """
+        self._init_timestep = init_timestep
         import mlx.core as mx
-        sigmas = mx.linspace(1.0, 1.0 / num_inference_steps, num_inference_steps, dtype=mx.float32)
-        mu = self._compute_empirical_mu(image_seq_len, num_inference_steps)
-        sigmas = self._time_shift_exponential_array(mu, 1.0, sigmas)
-        timesteps = sigmas * self._num_train_timesteps
-        sigmas = mx.concatenate([sigmas, mx.zeros(1)], axis=0)
+
+        if use_empirical_mu:
+            # 参考 mflux get_timesteps_and_sigmas (用于 set_image_seq_len)
+            sigmas = mx.linspace(1.0, 1.0 / num_inference_steps, num_inference_steps, dtype=mx.float32)
+            mu = self._compute_empirical_mu(image_seq_len, num_inference_steps)
+            sigmas = self._time_shift_exponential_array(mu, 1.0, sigmas)
+            timesteps = sigmas * self._num_train_timesteps
+            sigmas = mx.concatenate([sigmas, mx.zeros((1,), dtype=sigmas.dtype)], axis=0)
+        else:
+            # 参考 mflux _compute_timesteps_and_sigmas (默认初始化)
+            sigma_min = 1.0 / self._num_train_timesteps
+            sigma_max = 1.0
+            timesteps_linear = [
+                sigma_max * self._num_train_timesteps
+                - i * (sigma_max - sigma_min) * self._num_train_timesteps / (num_inference_steps - 1)
+                for i in range(num_inference_steps)
+            ]
+            sigmas_linear = [t / self._num_train_timesteps for t in timesteps_linear]
+            sigmas_shifted = [self._time_shift_exponential(1.0, 1.0, s) for s in sigmas_linear]
+            sigmas_final = self._stretch_to_terminal(sigmas_shifted)
+            timesteps = [s * self._num_train_timesteps for s in sigmas_final]
+            sigmas_with_zero = sigmas_final + [0.0]
+            sigmas = mx.array(sigmas_with_zero, dtype=mx.float32)
+            timesteps = mx.array(timesteps, dtype=mx.float32)
+
         self._sigmas = sigmas
         self._timesteps = timesteps
         self._step_index = init_timestep
-        # 返回整数索引序列 [init, init+1, ..., num_steps-1]（与 mflux 一致）
         return list(range(init_timestep, num_inference_steps))
 
     @staticmethod
@@ -99,18 +114,31 @@ class FlowMatchEulerScheduler(Scheduler):
         return float(a * num_steps + b)
 
     @staticmethod
+    def _time_shift_exponential(mu: float, sigma_power: float, t: float) -> float:
+        import math
+        return math.exp(mu) / (math.exp(mu) + ((1.0 / t - 1.0) ** sigma_power))
+
+    @staticmethod
     def _time_shift_exponential_array(mu: float, sigma_power: float, t) -> Any:
         import mlx.core as mx
         return mx.exp(mu) / (mx.exp(mu) + ((1.0 / t - 1.0) ** sigma_power))
 
+    def _stretch_to_terminal(self, sigmas: list[float]) -> list[float]:
+        shift_terminal = 0.02
+        one_minus_sigmas = [1.0 - s for s in sigmas]
+        scale_factor = one_minus_sigmas[-1] / (1.0 - shift_terminal)
+        stretched = [1.0 - (oms / scale_factor) for oms in one_minus_sigmas]
+        return stretched
+
     def step(self, noise_pred: Any, timestep: Any, latents: Any,
              **kwargs) -> Any:
         ctx = self.ctx
-        if self._step_index >= len(self._timesteps):
+        # Use passed timestep as index into sigmas (matching mflux)
+        t_idx = int(timestep)
+        if t_idx >= len(self._timesteps):
             return latents
-        sigma = self._sigmas[self._step_index]
-        sigma_next = self._sigmas[self._step_index + 1]
-        self._step_index += 1
+        sigma = self._sigmas[t_idx]
+        sigma_next = self._sigmas[t_idx + 1]
         # Euler: x_{t-1} = x_t + (sigma_{t-1} - sigma_t) * v
         dt = sigma_next - sigma
         return latents + dt * noise_pred
@@ -131,33 +159,52 @@ class LinearScheduler(Scheduler):
     def num_train_timesteps(self) -> int:
         return self._num_train_timesteps
 
+    @property
+    def sigmas(self) -> Any:
+        return self._sigmas
+
     def set_timesteps(self, num_inference_steps: int,
                       init_timestep: int = 0,
+                      image_seq_len: int = 256,
+                      image_width: int = 256,
+                      image_height: int = 256,
+                      requires_sigma_shift: bool = False,
                       **kwargs) -> Any:
         self._init_timestep = init_timestep
-        ctx = self.ctx
-        if ctx is None:
-            import mlx.core as mx
-            ctx = type('Ctx', (), {
-                'arange': mx.arange, 'float32': mx.float32,
-                'zeros': mx.zeros, 'concat': mx.concatenate,
-            })()
-        step_ratio = max(1, self._num_train_timesteps // max(1, num_inference_steps))
-        timesteps = (ctx.arange(0, num_inference_steps, dtype=ctx.float32()) * step_ratio)[::-1]
-        self._timesteps = timesteps
-        self._sigmas = ctx.concat([
-            timesteps,
-            ctx.zeros((1,), dtype=ctx.float32()),
-        ], axis=0) / self._num_train_timesteps
+        import mlx.core as mx
+        sigmas = mx.linspace(1.0, 1.0 / num_inference_steps, num_inference_steps, dtype=mx.float32)
+
+        # 与 mflux LinearScheduler._get_sigmas 一致
+        if requires_sigma_shift:
+            sigma_max_shift, sigma_base_shift = 1.15, 0.5
+            sigma_max_seq_len, sigma_base_seq_len = 4096, 256
+            sigma_shift_terminal = None  # z-image-turbo is None, some other models may set it
+            m = (sigma_max_shift - sigma_base_shift) / (sigma_max_seq_len - sigma_base_seq_len)
+            b = sigma_base_shift - m * sigma_base_seq_len
+            mu = m * image_width * image_height / 256 + b
+            mu = mx.array(mu)
+            shifted = mx.exp(mu) / (mx.exp(mu) + (1 / sigmas - 1))
+            if sigma_shift_terminal is not None:
+                one_minus = 1.0 - shifted
+                scale_val = one_minus[-1] / (1.0 - sigma_shift_terminal)
+                shifted = 1.0 - (one_minus / scale_val)
+            sigmas = mx.concatenate([shifted, mx.zeros((1,), dtype=mx.float32)], axis=0)
+        else:
+            sigmas = mx.concatenate([sigmas, mx.zeros((1,), dtype=mx.float32)], axis=0)
+
+        self._sigmas = sigmas
+        self._timesteps = mx.arange(num_inference_steps, dtype=mx.float32)
         self._step_index = init_timestep
-        return timesteps[init_timestep:]
+        return list(range(init_timestep, num_inference_steps))
+        return list(range(init_timestep, num_inference_steps))
 
     def step(self, noise_pred: Any, timestep: Any, latents: Any,
              **kwargs) -> Any:
         ctx = self.ctx
-        sigma = timestep / self._num_train_timesteps
-        sigma_prev = self._timesteps[min(self._step_index + 1, len(self._timesteps) - 1)] / self._num_train_timesteps if self._step_index < len(self._timesteps) - 1 else 0.0
-        self._step_index += 1
+        # Use sigmas array indexed by timestep (matching mflux LinearScheduler)
+        t_idx = int(timestep)
+        sigma = self._sigmas[t_idx]
+        sigma_prev = self._sigmas[t_idx + 1]
         dt = sigma_prev - sigma
         return latents + dt * noise_pred
 
