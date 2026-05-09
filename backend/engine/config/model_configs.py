@@ -62,7 +62,7 @@ class Flux2Config:
     supports_guidance: bool = True
     supports_img2img: bool = True
     supports_edit: bool = False
-    encoder_type: str = "qwen3"
+    encoder_type: str = "flux2"
     text_encoder_out_layers: tuple = (9, 18, 27)  # Flux2 Qwen3 取 3 层拼接
     enable_thinking: bool = False     # mflux Flux2KleinWeightDefinition 显式禁用
     vae_scale: int = 16              # Flux2 用 16x tile，非 8x
@@ -141,7 +141,7 @@ class ZImageConfig:
     qk_norm: bool = True
     supports_guidance: bool = True    # Z-Image=True, Z-Image-Turbo=False
     supports_img2img: bool = False
-    encoder_type: str = "qwen3"       # Qwen3Tokenizer + Qwen3Model
+    encoder_type: str = "z_image"       # ZImageTextEncoder
     text_encoder_out_layers: Optional[tuple] = None  # flux2=(9,18,27), z_image=None
     enable_thinking: bool = True       # z_image uses True, flux2 uses False
     vae_scale: int = 8
@@ -290,7 +290,7 @@ class LongCatConfig:
     qk_norm: bool = True
     supports_guidance: bool = False   # guidance_embeds=false
     supports_img2img: bool = True
-    encoder_type: str = "qwen2.5_vl"
+    encoder_type: str = "qwen25vl"
     vae_scale: int = 8
 
 

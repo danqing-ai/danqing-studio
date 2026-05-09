@@ -115,6 +115,18 @@ class MLXContext(RuntimeContext):
     def randn(self, shape: tuple, dtype: Any = None) -> Any:
         return mx.random.normal(shape, dtype=dtype or mx.float32)
 
+    def seeded_randn(self, shape: tuple, seed: int, dtype: Any = None) -> Any:
+        return mx.random.normal(shape, dtype=dtype or mx.float32, key=mx.random.key(seed))
+
+    def conv2d(self, x: Any, weight: Any, stride: int = 1, padding: int = 0) -> Any:
+        return mx.conv2d(x, weight, stride=stride, padding=padding)
+
+    def array(self, data: Any, dtype: Any = None) -> Any:
+        return mx.array(data, dtype=dtype or mx.float32)
+
+    def expand_dims(self, x: Any, axis: int) -> Any:
+        return mx.expand_dims(x, axis=axis)
+
     def zeros_like(self, x: Any) -> Any:
         return mx.zeros_like(x)
 

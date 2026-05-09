@@ -88,7 +88,7 @@ class DanQingImageEngine(IImageEngine):
             ctx.on_log(LogEvent(level=lvl, message=msg))
 
         result = await asyncio.to_thread(
-            pipeline.run_mlx, request, ctx, on_progress=on_progress, on_log=on_log,
+            pipeline.run, request, ctx, on_progress=on_progress, on_log=on_log,
         )
         if result is None:
             return EngineResult(primary_asset_id="", metadata={"status": "cancelled"})

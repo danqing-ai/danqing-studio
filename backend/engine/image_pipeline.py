@@ -18,43 +18,14 @@ from backend.core.contracts import (
 )
 from backend.engine.common.cache import ModelCache
 from backend.engine.common.schedulers import get_scheduler
-from backend.engine.common.text_encoders import T5Encoder, Qwen3TextEncoder
+from backend.engine.common.text_encoders import T5Encoder
+from backend.engine._transformer_registry import (
+    get_transformer_class as _get_transformer_class,
+    get_weight_remap as _get_weight_remap,
+    get_text_encoder as _get_text_encoder,
+)
 from backend.engine.config.model_configs import get_config_class
 from backend.engine.runtime._base import RuntimeContext
-
-
-# ---------------------------------------------------------------------------
-# Transformer 类注册表（family → class）
-# 新增模型仅需在此注册，run_mlx()零修改
-# ---------------------------------------------------------------------------
-def _get_transformer_class(family: str):
-    if family == "z_image":
-        from backend.engine.models.image.z_image import ZImageTransformer  # noqa: F811
-        return ZImageTransformer
-    if family == "flux2":
-        from backend.engine.models.image.flux2 import Flux2Transformer  # noqa: F811
-        return Flux2Transformer
-    if family == "fibo":
-        from backend.engine.models.image.fibo import FIBOTransformer  # noqa: F811
-        return FIBOTransformer
-    if family == "longcat":
-        from backend.engine.models.image.longcat import LongCatTransformer  # noqa: F811
-        return LongCatTransformer
-    if family == "flux1":
-        from backend.engine.models.image.flux1 import Flux1Transformer  # noqa: F811
-        return Flux1Transformer
-    raise RuntimeError(f"Unknown image model family: {family}")
-
-
-def _get_weight_remap(family: str):
-    """权重映射函数注册表（family → remap_func），返回 None 表示无需映射。"""
-    if family == "z_image":
-        from backend.engine.common.weights import remap_zimage_weights  # noqa: F811
-        return remap_zimage_weights
-    if family == "flux2":
-        from backend.engine.common.weights import remap_flux2_weights  # noqa: F811
-        return remap_flux2_weights
-    return None
 
 
 class ImagePipeline:
@@ -109,7 +80,7 @@ class ImagePipeline:
         path = self._resolve_path(lp)
         return path if path.exists() else None
 
-    def run_mlx(
+    def run(
         self,
         request: ImageGenerationRequest,
         ctx_exec: ExecutionContext,
@@ -169,22 +140,16 @@ class ImagePipeline:
         txt_embeds = None
         neg_embeds = None
         encoder_type = getattr(config, "encoder_type", "t5")
-        if request.prompt and encoder_type in ("qwen3", "qwen2.5_vl"):
+        if request.prompt and encoder_type != "t5":
             if bundle_root is None:
                 raise RuntimeError(
                     f"Model {model_key!r} has no installed bundle at local_path "
                     f"(version={version_key or 'default'}); cannot load text encoder."
                 )
-            if encoder_type == "qwen2.5_vl":
-                txt_embeds = self._qwen25vl_encode(request.prompt, bundle_root=bundle_root)
-            else:
-                txt_embeds = self._qwen3_encode(request.prompt, bundle_root=bundle_root, config=config)
+            txt_embeds = self._text_encode(request.prompt, bundle_root=bundle_root, encoder_type=encoder_type, config=config)
             if getattr(config, "supports_guidance", False) and guidance > 1.0:
                 neg_txt = request.negative_prompt.strip() if request.negative_prompt else " "
-                if encoder_type == "qwen2.5_vl":
-                    neg_embeds = self._qwen25vl_encode(neg_txt, bundle_root=bundle_root)
-                else:
-                    neg_embeds = self._qwen3_encode(neg_txt, bundle_root=bundle_root, config=config)
+                neg_embeds = self._text_encode(neg_txt, bundle_root=bundle_root, encoder_type=encoder_type, config=config)
         elif request.prompt and config.text_dim > 0:
             enc = T5Encoder(self.ctx, "google/t5-v1_1-xxl")
             txt_embeds = enc.encode([request.prompt])
@@ -214,11 +179,9 @@ class ImagePipeline:
         sigmas = getattr(scheduler, 'sigmas', None)
 
         # 使用 seed 创建确定性 latent
-        import mlx.core as mx
         latent_shape = (1, config.in_channels, h // vae_scale, w // vae_scale)
         if seed is not None:
-            key = mx.random.key(seed)
-            latents = mx.random.normal(latent_shape, dtype=mx.float32, key=key)
+            latents = self.ctx.seeded_randn(latent_shape, seed, dtype=self.ctx.float32())
         else:
             latents = self.ctx.randn(latent_shape, dtype=self.ctx.float32())
 
@@ -283,8 +246,8 @@ class ImagePipeline:
     # 内部
     # ------------------------------------------------------------------
 
-    def _qwen3_encode(self, text: str, *, bundle_root: Path, config: Any) -> Any:
-        """Qwen3 文本编码 — 通过 config.encoder_type 路由，从注册表读取 text_encoder_out_layers。"""
+    def _text_encode(self, text: str, *, bundle_root: Path, encoder_type: str, config: Any) -> Any:
+        """文本编码 — 由注册表 encoder_type 路由到具体实现。"""
         enc_dir = bundle_root / "text_encoder"
         tok_dir = bundle_root / "tokenizer"
         if not tok_dir.exists():
@@ -293,26 +256,19 @@ class ImagePipeline:
             enc_dir = bundle_root
             tok_dir = bundle_root
 
-        out_layers = getattr(config, "text_encoder_out_layers", None)
-        if out_layers is not None:
-            out_layers = tuple(out_layers)
-        enable_thinking = getattr(config, "enable_thinking", False)
-        enc = Qwen3TextEncoder(
-            self.ctx, str(enc_dir), tokenizer_path=str(tok_dir),
-            hidden_state_layers=out_layers,
-            enable_thinking=enable_thinking,
-        )
-        return enc.encode([text])
-
-    def _qwen25vl_encode(self, text: str, *, bundle_root: Path) -> Any:
-        """Qwen2.5-VL 文本编码 — longcat 系列。"""
-        from backend.engine.common.text_encoders_qwen25vl import Qwen25VLEncoder
-        enc = Qwen25VLEncoder(str(bundle_root))
+        enc_cls = _get_text_encoder(encoder_type)
+        if encoder_type == "z_image":
+            out_layers = getattr(config, "text_encoder_out_layers", None)
+            if out_layers is not None:
+                out_layers = tuple(out_layers)
+            enc = enc_cls(self.ctx, str(enc_dir), tokenizer_path=str(tok_dir),
+                          hidden_state_layers=out_layers,
+                          enable_thinking=getattr(config, "enable_thinking", False))
+        else:
+            enc = enc_cls(self.ctx, str(enc_dir), tokenizer_path=str(tok_dir))
         return enc.encode([text])
 
     def _load_model(self, family: str, config, entry, version_key: str | None):
-        import mlx.core as mx
-
         trans_cls = _get_transformer_class(family)
         model = trans_cls(config, self.ctx)
         remap_fn = _get_weight_remap(family)
@@ -324,54 +280,48 @@ class ImagePipeline:
 
         w = {}
         for sf in sorted(tp.glob("*.safetensors")):
-            w.update(dict(mx.load(str(sf))))
+            w.update(self.ctx.load_weights(str(sf)))
         if remap_fn:
             w = remap_fn(w)
         model.load_weights(list(w.items()), strict=False)
-        mx.eval([p for _, p in model.parameters()])
+        self.ctx.eval(*[p for _, p in model.parameters()])
         return model
 
-    @staticmethod
-    def _vae_preprocess_special(latents, vae_weights, scaling_factor, shift_factor):
-        """特殊 VAE 预处理 — flux2 风格（通过权重检测触发，非 family 硬编码）。
+    def _vae_preprocess_special(self, latents, vae_weights, scaling_factor, shift_factor):
+        """特殊 VAE 预处理 — flux2 风格（通过权重检测触发，非 family 硬编码）。"""
+        ctx = self.ctx
 
-        步骤: BN 归一化 → unpatchify(2x2) → post_quant_conv → scaling/shift
-        """
-        import mlx.core as mx
-
-        bn_mean = vae_weights.get("bn.running_mean", mx.zeros(128)).reshape(1, -1, 1, 1)
-        bn_var = vae_weights.get("bn.running_var", mx.ones(128)).reshape(1, -1, 1, 1)
-        bn_eps = 1e-4
-        latents = latents * mx.sqrt(bn_var + bn_eps) + bn_mean
+        bn_mean = vae_weights.get("bn.running_mean", ctx.zeros((128,))).reshape(1, -1, 1, 1)
+        bn_var = vae_weights.get("bn.running_var", ctx.ones((128,))).reshape(1, -1, 1, 1)
+        latents = latents * ctx.sqrt(bn_var + 1e-4) + bn_mean
 
         B, C_, H_, W_ = latents.shape
         latents = latents.reshape(B, C_ // 4, 2, 2, H_, W_)
-        latents = mx.transpose(latents, (0, 1, 4, 2, 5, 3))
+        latents = ctx.permute(latents, (0, 1, 4, 2, 5, 3))
         latents = latents.reshape(B, C_ // 4, H_ * 2, W_ * 2)
 
         latents = (latents / scaling_factor) + shift_factor
-        latents = mx.transpose(latents, (0, 2, 3, 1))
+        latents = ctx.permute(latents, (0, 2, 3, 1))
 
         pw = vae_weights.get("post_quant_conv.weight")
         pb = vae_weights.get("post_quant_conv.bias")
         if pw is not None and pb is not None:
-            latents = mx.conv2d(latents, mx.transpose(pw, (0, 2, 3, 1)), stride=1, padding=0)
+            latents = ctx.conv2d(latents, ctx.permute(pw, (0, 2, 3, 1)), stride=1, padding=0)
             latents = latents + pb.reshape(1, 1, 1, -1)
 
-        latents = mx.transpose(latents, (0, 3, 1, 2))
+        latents = ctx.permute(latents, (0, 3, 1, 2))
         return latents
 
     def _vae_decode(self, latents, entry, version_key):
         """VAE 解码 latent → PIL Image。"""
-        import mlx.core as mx
+        ctx = self.ctx
         import numpy as np
         from PIL import Image
-        from backend.engine.vae.image_vae import VAEDecoder
+        from backend.engine.common._vae import VAEDecoder
 
         bundle_root = self._local_bundle_root(entry, version_key)
         vae_dir = (bundle_root / "vae") if bundle_root else None
 
-        # 加载 VAE 配置
         scaling_factor = 1.0
         shift_factor = 0.0
         latent_cfg = 16
@@ -383,43 +333,39 @@ class ImagePipeline:
             shift_factor = vae_cfg.get("shift_factor", 0.0)
             latent_cfg = vae_cfg.get("latent_channels", 16)
 
-        # 通用 VAE 解码 — 自动处理 packed latents [B, S, C] → [B, C, H, W]
         if latents.ndim == 3:
             B, seq_len, channels = latents.shape
             latent_h = int(seq_len ** 0.5)
             latent_w = seq_len // latent_h
             latents = latents.reshape(B, latent_h, latent_w, channels).transpose(0, 3, 1, 2)
 
-        # 加载 VAE 权重（所有模型共用）
         vae_weights = {}
         if vae_dir and vae_dir.exists():
             for sf in sorted(vae_dir.glob("*.safetensors")):
-                vae_weights.update(dict(mx.load(str(sf))))
+                vae_weights.update(ctx.load_weights(str(sf)))
 
-        # 检测是否需要特殊 VAE 预处理（如 flux2: BN + post_quant_conv + unpatchify）
-        # 通过检测权重键名，而非 family 硬编码
         if "bn.running_mean" in vae_weights or "post_quant_conv.weight" in vae_weights:
-            # 特殊 VAE 预处理路径（flux2 风格）
             latents = self._vae_preprocess_special(latents, vae_weights, scaling_factor, shift_factor)
             scaling_factor = 1.0
             shift_factor = 0.0
-            latent_cfg = vae_weights.get("decoder.conv_in.weight", mx.zeros((1,))).shape[0] if "decoder.conv_in.weight" in vae_weights else 16
+            ci = vae_weights.get("decoder.conv_in.weight", ctx.zeros((1,))).shape[0] if "decoder.conv_in.weight" in vae_weights else 16
+            latent_cfg = ci
 
         C = latents.shape[1] if latents.ndim >= 4 else 16
-        vae = VAEDecoder(latent_channels=C, ctx=self.ctx, scaling_factor=scaling_factor, shift_factor=shift_factor)
+        vae = VAEDecoder(latent_channels=C, ctx=ctx, scaling_factor=scaling_factor, shift_factor=shift_factor)
         if vae_weights:
             from backend.engine.common.weights import remap_vae_weights
             decoder_w = remap_vae_weights(vae_weights)
             vae.load_weights(list(decoder_w.items()), strict=False)
         image = vae.forward(latents)
 
-        # 转 numpy + PIL
-        if isinstance(image, mx.array):
+        if hasattr(image, 'numpy'):
+            image = image.numpy()
+        else:
             image = np.array(image)
-        # NCHW → NHWC
         if image.ndim == 4:
-            image = image[0]  # 去掉 batch
-        if image.shape[0] <= 4:  # CHW format
+            image = image[0]
+        if image.shape[0] <= 4:
             image = np.transpose(image, (1, 2, 0))
         # 归一化到 0-255（VAE 输出 [-1, 1] → [0, 255]）
         image = (image + 1) / 2 * 255

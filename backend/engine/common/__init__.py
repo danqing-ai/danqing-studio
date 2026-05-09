@@ -20,12 +20,13 @@ from .embeddings import (
 from .weights import (
     parse_size_gb, load_safetensors, save_safetensors,
     LoRAConfig, load_lora_weights, inject_lora, quantize_weights,
+    remap_vae_weights,
 )
 from .cache import ModelCache
 from backend.core.contracts import CancelToken
 
 from .pipeline import DenoisingPipeline, GenerationCancelled
-from .text_encoders import T5Encoder, CLIPEncoder, Qwen3TextEncoder
+from .text_encoders import T5Encoder, CLIPEncoder
 
 __all__ = [
     # Schedulers
@@ -49,5 +50,5 @@ __all__ = [
     # Pipeline
     "DenoisingPipeline", "CancelToken", "GenerationCancelled",
     # Text Encoders
-    "T5Encoder", "CLIPEncoder", "Qwen3TextEncoder",
+    "T5Encoder", "CLIPEncoder", "ZImageTextEncoder", "Flux2TextEncoder",
 ]

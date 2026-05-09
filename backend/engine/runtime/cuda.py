@@ -135,6 +135,20 @@ class CudaContext(RuntimeContext):
         t = torch.randn(shape, dtype=dtype or torch.float32, device=self._device)
         return t
 
+    def seeded_randn(self, shape: tuple, seed: int, dtype: Any = None) -> Any:
+        g = torch.Generator(device=self._device)
+        g.manual_seed(seed)
+        return torch.randn(shape, dtype=dtype or torch.float32, device=self._device, generator=g)
+
+    def conv2d(self, x: Any, weight: Any, stride: int = 1, padding: int = 0) -> Any:
+        return torch.nn.functional.conv2d(x, weight, stride=stride, padding=padding)
+
+    def array(self, data: Any, dtype: Any = None) -> Any:
+        return torch.tensor(data, dtype=dtype or torch.float32, device=self._device)
+
+    def expand_dims(self, x: Any, axis: int) -> Any:
+        return x.unsqueeze(axis)
+
     def zeros_like(self, x: Any) -> Any:
         return torch.zeros_like(x)
 

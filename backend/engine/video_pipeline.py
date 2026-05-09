@@ -146,10 +146,10 @@ class VideoPipeline:
 
         family = getattr(entry, "family", "") or ""
         if family == "wan":
-            from .models.video.wan import WanTransformer
+            from backend.engine.wan.transformer import WanTransformer
             model = WanTransformer(config, self.ctx, num_frames=num_frames)
         elif family == "ltx":
-            from .models.video.ltx import LTXTransformer
+            from backend.engine.ltx.transformer import LTXTransformer
             model = LTXTransformer(config, self.ctx, num_frames=num_frames)
         elif family == "cogvideox":
             raise RuntimeError(

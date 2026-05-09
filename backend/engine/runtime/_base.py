@@ -95,6 +95,22 @@ class RuntimeContext(ABC):
         ...
 
     @abstractmethod
+    def seeded_randn(self, shape: tuple, seed: int, dtype: Any = None) -> Any:
+        ...
+
+    @abstractmethod
+    def conv2d(self, x: Any, weight: Any, stride: int = 1, padding: int = 0) -> Any:
+        ...
+
+    @abstractmethod
+    def array(self, data: Any, dtype: Any = None) -> Any:
+        ...
+
+    @abstractmethod
+    def expand_dims(self, x: Any, axis: int) -> Any:
+        ...
+
+    @abstractmethod
     def zeros_like(self, x: Any) -> Any:
         ...
 
