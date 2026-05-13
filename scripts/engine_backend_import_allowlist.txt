@@ -1,0 +1,2 @@
+# Intentionally empty: all backend/engine *.py files satisfy mlx/torch import rules
+# (runtime/, *_mlx.py, *_cuda.py, or importlib dynamic loads).
