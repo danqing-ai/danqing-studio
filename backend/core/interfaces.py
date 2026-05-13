@@ -1,11 +1,11 @@
 """
-MFLUX Studio v2.0 - 接口定义层
-面向接口编程，所有层之间只依赖此模块的接口定义
+DanQing Studio v3.0 - Interface definition layer
+Interface-oriented programming; all layers depend only on the interfaces defined in this module.
 """
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Optional, List, Dict, Any, Callable, Union
+from typing import Optional, List, Dict, Any, Callable
 from enum import Enum
 from datetime import datetime
 from pathlib import Path
@@ -22,95 +22,8 @@ class TaskStatus(str, Enum):
 
 
 @dataclass
-class GenerationParams:
-    """图像生成参数
-    
-    通用参数 + 模型特有参数(extra_params)
-    """
-    prompt: str
-    negative_prompt: str = ""
-    model: str = ""  # 模型 key（如 "z-image-turbo"）
-    version: str = ""  # 版本 key（如 "mflux-4bit"），空字符串表示默认版本
-    width: int = 1024
-    height: int = 1024
-    steps: int = 4
-    guidance: float = 3.5
-    seed: Optional[int] = None
-    lora: str = ""
-    lora_scale: float = 0.8
-    img2img: bool = False
-    image_path: str = ""
-    strength: float = 0.4
-    edit_mode: str = "text_to_image"  # "text_to_image" | "image_to_image" | "inpainting"
-    mask_path: str = ""
-    # 模型特有参数：温度、max_tokens、system_prompt 等
-    extra_params: Dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class GenerationTask:
-    """生成任务"""
-    id: str
-    params: GenerationParams
-    status: TaskStatus = TaskStatus.PENDING
-    progress: float = 0.0
-    output_path: str = ""
-    error_message: str = ""
-    created_at: datetime = field(default_factory=datetime.now)
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
-    logs: List[str] = field(default_factory=list)
-
-
-# ===== 视频生成接口 =====
-
-@dataclass
-class LoRAConfig:
-    """LoRA 配置"""
-    path: str
-    weight: float
-    tags: List[str] = field(default_factory=list)
-
-
-@dataclass
-class VideoGenerationParams:
-    """视频生成参数"""
-    prompt: str
-    negative_prompt: str = ""
-    model: str = ""  # 模型 key（如 "ltx-2.3-distilled"）
-    version: str = ""  # 版本 key
-    width: int = 768
-    height: int = 512
-    num_frames: int = 97
-    fps: int = 24
-    steps: int = 4
-    guide_scale: float = 3.0
-    shift: float = 0.0
-    seed: Optional[int] = None
-    image_path: str = ""  # 图生视频起始图
-    loras: List[LoRAConfig] = field(default_factory=list)
-    # 模型特有参数
-    extra_params: Dict[str, Any] = field(default_factory=dict)
-
-
-@dataclass
-class VideoGenerationTask:
-    """视频生成任务"""
-    id: str
-    params: VideoGenerationParams
-    status: TaskStatus = TaskStatus.PENDING
-    progress: float = 0.0
-    output_path: str = ""
-    error_message: str = ""
-    created_at: datetime = field(default_factory=datetime.now)
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
-    logs: List[str] = field(default_factory=list)
-
-
-@dataclass
 class ModelInfo:
-    """模型信息"""
+    """Model info"""
     name: str
     path: str
     type: str = "flux"  # flux, lora, etc.
@@ -120,7 +33,7 @@ class ModelInfo:
 
 @dataclass
 class DownloadTask:
-    """下载任务"""
+    """Download task"""
     id: str
     url: str
     target_path: str
@@ -133,7 +46,7 @@ class DownloadTask:
 
 @dataclass
 class ConversionTask:
-    """模型转换任务（生成量化版本）"""
+    """Model conversion task (generate quantized version)."""
     id: str
     model_name: str
     from_version: str
@@ -147,7 +60,7 @@ class ConversionTask:
 
 @dataclass
 class AppSettings:
-    """应用设置"""
+    """App settings"""
     language: str = "zh"
     theme: str = "dark"
     default_model: str = ""
@@ -164,56 +77,10 @@ class AppSettings:
     custom_outputs_dir: str = ""
 
 
-# ===== 任务持久化接口 =====
-
-class ITaskStore(ABC):
-    """任务持久化存储接口"""
-
-    @abstractmethod
-    def save_task(self, task: Union[GenerationTask, VideoGenerationTask]) -> None:
-        """保存或更新任务"""
-        pass
-
-    @abstractmethod
-    def get_task(self, task_id: str) -> Optional[Union[GenerationTask, VideoGenerationTask]]:
-        """获取单个任务"""
-        pass
-
-    @abstractmethod
-    def list_tasks(
-        self, limit: int = 100, offset: int = 0
-    ) -> List[Union[GenerationTask, VideoGenerationTask]]:
-        """列出任务"""
-        pass
-
-    @abstractmethod
-    def delete_task(self, task_id: str) -> bool:
-        """删除任务"""
-        pass
-
-    @abstractmethod
-    def append_log(self, task_id: str, message: str, level: str = "info") -> None:
-        """追加任务日志"""
-        pass
-
-    @abstractmethod
-    def get_logs(self, task_id: str, offset: int = 0, limit: int = 1000) -> List[Dict[str, Any]]:
-        """获取任务日志"""
-        pass
-
-    @abstractmethod
-    def update_progress(self, task_id: str, progress: float) -> None:
-        """更新任务进度"""
-        pass
-
-    @abstractmethod
-    def update_status(self, task_id: str, status: TaskStatus) -> None:
-        """更新任务状态"""
-        pass
-
+# ===== Task persistence interfaces =====
 
 class IV3TaskStore(ABC):
-    """v3 任务持久化（``studio.db``：JSON params、字典行视图）。与遗留 ``ITaskStore``（GenerationTask 模型）并存。"""
+    """v3 task persistence (``studio.db``: JSON params, dict-row views)."""
 
     @abstractmethod
     def insert_task(
@@ -281,13 +148,13 @@ class IV3TaskStore(ABC):
         ...
 
 
-# ===== 引擎层接口 =====
-# v3 媒体引擎见 backend.core.media_interfaces（IImageEngine / IVideoEngine）
+# ===== Engine layer interfaces =====
+# v3 media engines see backend.core.media_interfaces (IImageEngine / IVideoEngine)
 
-# ===== 持久化层接口 =====
+# ===== Persistence layer interfaces =====
 
 class IConfigStore(ABC):
-    """配置持久化接口"""
+    """Config persistence interface"""
 
     @abstractmethod
     def load(self) -> AppSettings:
@@ -299,7 +166,7 @@ class IConfigStore(ABC):
 
 
 class IPresetStore(ABC):
-    """预设持久化接口"""
+    """Preset persistence interface"""
 
     @abstractmethod
     def load_all(self) -> Dict[str, Dict[str, Any]]:
@@ -316,30 +183,30 @@ class IPresetStore(ABC):
 
 @dataclass
 class DownloadProgress:
-    """下载进度信息"""
+    """Download progress info"""
     task_id: str
     status: str  # pending, running, completed, failed, cancelled
     progress: float  # 0.0 - 1.0
     total_size: int = 0
     downloaded_size: int = 0
-    speed: str = ""  # 如 "12.5 MB/s"
+    speed: str = ""  # e.g. "12.5 MB/s"
     error_message: str = ""
     filename: str = ""
 
 
 class IDownloadService(ABC):
-    """下载服务接口 - 支持 HuggingFace、ModelScope 和 HTTP 多源下载"""
+    """Download service interface - supports HuggingFace, ModelScope, and HTTP multi-source downloads."""
 
     @abstractmethod
     async def download_model(self, model_name: str,
                             progress_callback: Optional[Callable[[DownloadProgress], None]] = None,
                             existing_task_id: Optional[str] = None) -> str:
-        """按注册表模型名称下载基础模型
+        """Download base model by registry model name.
 
-        根据 models_registry.json 中的 source 字段自动选择下载器：
-        - huggingface: 使用 huggingface_hub 下载
-        - modelscope: 使用 modelscope 下载（魔塔社区）
-        - civitai/http: 使用 aiohttp 下载
+        Automatically selects downloader based on the source field in models_registry.json:
+        - huggingface: uses huggingface_hub download
+        - modelscope: uses modelscope download
+        - civitai/http: uses aiohttp download
         """
         pass
 
@@ -347,78 +214,78 @@ class IDownloadService(ABC):
     async def download_lora(self, url: str, filename: str,
                            progress_callback: Optional[Callable[[DownloadProgress], None]] = None,
                            existing_task_id: Optional[str] = None) -> str:
-        """下载 LoRA（HTTP 通用）"""
+        """Download LoRA (generic HTTP)."""
         pass
 
     @abstractmethod
     def list_downloads(self) -> List[DownloadTask]:
-        """列出所有下载任务"""
+        """List all download tasks."""
         pass
 
     @abstractmethod
     async def cancel_download(self, task_id: str) -> bool:
-        """取消下载任务"""
+        """Cancel a download task."""
         pass
 
     @abstractmethod
     def delete_download(self, task_id: str) -> bool:
-        """删除下载任务"""
+        """Delete a download task."""
         pass
 
     @abstractmethod
     def get_progress(self, task_id: str) -> Optional[DownloadProgress]:
-        """获取单个下载任务的进度"""
+        """Get progress of a single download task."""
         pass
 
     @abstractmethod
     async def resume_download(self, task_id: str,
                              progress_callback: Optional[Callable[[DownloadProgress], None]] = None) -> str:
-        """恢复下载任务（进程重启后）"""
+        """Resume a download task (after process restart)."""
         pass
 
     @abstractmethod
     def get_model_download_config(self, model_name: str) -> Optional[Dict[str, Any]]:
-        """获取模型的下载配置信息"""
+        """Get download configuration info for a model."""
         pass
 
     @abstractmethod
     async def convert_model(self, model_name: str, from_version: str, to_version: str,
                            progress_callback: Optional[Callable[[ConversionTask], None]] = None) -> str:
-        """生成模型的量化版本（derived）
-        
+        """Produce a quantized derived layout (``to_version`` containing ``int4`` or ``int8``).
+
         Args:
-            model_name: 模型 key
-            from_version: 源版本 key（如 "fp16"）
-            to_version: 目标版本 key（如 "int4"）
-            progress_callback: 进度回调函数
-            
+            model_name: model key
+            from_version: source version key (e.g. ``fp16``, ``original``)
+            to_version: target version key (e.g. ``int4``, ``int8``)
+            progress_callback: progress callback function
+
         Returns:
-            输出目录路径
+            output directory path
         """
         pass
 
     @abstractmethod
     def list_conversions(self) -> List[ConversionTask]:
-        """列出所有转换任务"""
+        """List all conversion tasks."""
         pass
 
     @abstractmethod
     async def cancel_conversion(self, task_id: str) -> bool:
-        """取消转换任务"""
+        """Cancel a conversion task."""
         pass
 
     @abstractmethod
     def get_conversion_progress(self, task_id: str) -> Optional[ConversionTask]:
-        """获取单个转换任务的进度"""
+        """Get progress of a single conversion task."""
         pass
 
     @abstractmethod
     async def delete_model(self, model_name: str, version: Optional[str] = None) -> Dict[str, Any]:
-        """删除模型或指定版本
+        """Delete a model or specified version.
 
         Args:
-            model_name: 模型名称（注册表中的 key）
-            version: 可选，指定要删除的版本 key；不传则删除整个模型
+            model_name: model name (key in the registry)
+            version: optional, the version key to delete; if not provided, delete the entire model
 
         Returns:
             {"success": bool, "deleted_paths": List[str], "error": Optional[str]}
@@ -428,7 +295,7 @@ class IDownloadService(ABC):
 
 @dataclass
 class ModelConfig:
-    """models_registry 单条模型视图；actions 为 v2 动词块（create / rewrite / …）。"""
+    """Single model view from models_registry; actions are v2 verb blocks (create / rewrite / ...)."""
 
     engine: str
     type: str
@@ -445,12 +312,14 @@ class ModelConfig:
     negative_prompt_support: bool = False
     base_model: Optional[str] = None
     nsfw: bool = False
+    commercial_use_allowed: Optional[bool] = None
     media: str = "image"
     actions: Dict[str, Any] = field(default_factory=dict)
+    stub_no_download: bool = False
 
 
 class ISettingsService(ABC):
-    """设置服务接口"""
+    """Settings service interface"""
 
     @abstractmethod
     def get_settings(self) -> AppSettings:
@@ -478,19 +347,19 @@ class ISettingsService(ABC):
 
     @abstractmethod
     def get_model_registry(self) -> Dict[str, ModelConfig]:
-        """获取模型注册配置"""
+        """Get model registry configuration."""
         pass
 
     @abstractmethod
     def get_model_config(self, model_name: str) -> Optional[ModelConfig]:
-        """获取单个模型配置"""
+        """Get configuration for a single model."""
         pass
 
 
-# ===== 工具接口 =====
+# ===== Utility interfaces =====
 
 class IPathResolver(ABC):
-    """路径解析器接口"""
+    """Path resolver interface"""
 
     @abstractmethod
     def get_models_dir(self) -> Path:

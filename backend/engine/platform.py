@@ -3,6 +3,7 @@
 """
 from __future__ import annotations
 
+import importlib
 import platform
 import sys
 
@@ -13,19 +14,17 @@ class PlatformInfo:
     @staticmethod
     def detect() -> list[str]:
         """返回可用的后端列表: ["mlx"] / ["cuda"] / ["mlx", "cuda"]。"""
-        backends = []
+        backends: list[str] = []
 
-        # MLX: Apple Silicon + Darwin
         if sys.platform == "darwin" and platform.machine() == "arm64":
             try:
-                import mlx.core
+                importlib.import_module("mlx.core")
                 backends.append("mlx")
             except ImportError:
                 pass
 
-        # CUDA: PyTorch + NVIDIA GPU
         try:
-            import torch
+            torch = importlib.import_module("torch")
             if torch.cuda.is_available():
                 backends.append("cuda")
         except ImportError:
@@ -48,7 +47,20 @@ class PlatformInfo:
     @staticmethod
     def is_cuda_available() -> bool:
         try:
-            import torch
-            return torch.cuda.is_available()
+            torch = importlib.import_module("torch")
+            return bool(torch.cuda.is_available())
         except ImportError:
             return False
+
+    @staticmethod
+    def get_mlx_memory_stats() -> dict:
+        """Return MLX GPU memory stats (active/cache/peak in GB). Empty dict if MLX unavailable."""
+        try:
+            mx = importlib.import_module("mlx.core")
+            return {
+                "active_gb": round(mx.get_active_memory() / (1024**3), 2),
+                "cache_gb": round(mx.get_cache_memory() / (1024**3), 2),
+                "peak_gb": round(mx.get_peak_memory() / (1024**3), 2),
+            }
+        except Exception:
+            return {}

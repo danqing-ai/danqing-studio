@@ -1,5 +1,5 @@
 """
-服务层实现 — 设置（生成任务由 TaskScheduler + 媒体路由负责）
+Service layer implementation — settings (generation tasks handled by TaskScheduler + media routing)
 """
 
 import json
@@ -24,7 +24,7 @@ from backend.core.registry_format import (
 
 
 class SettingsService(ISettingsService):
-    """设置服务实现"""
+    """Settings service implementation"""
     
     def __init__(
         self,
@@ -73,7 +73,7 @@ class SettingsService(ISettingsService):
             category_name = subdir.name.lower()
             category_type = category_type_map.get(category_name, 'unknown')
             
-            # 1. 扫描子目录（第三级目录作为模型包）
+            # 1. Scan subdirectories (third-level directories as model packages)
             for model_dir in subdir.iterdir():
                 if not model_dir.is_dir() or model_dir.name.startswith('.'):
                     continue
@@ -85,7 +85,7 @@ class SettingsService(ISettingsService):
                         model_type = registry[model_dir.name].type or category_type
                     models.append(ModelInfo(name=model_dir.name, path=str(model_dir), type=model_type, size=size))
             
-            # 2. 扫描直接文件（第三级文件作为单文件模型）
+            # 2. Scan direct files (third-level files as single-file models)
             for f in subdir.iterdir():
                 if f.is_file() and not f.name.startswith('.') and f.suffix in valid_extensions:
                     models.append(ModelInfo(
@@ -98,11 +98,11 @@ class SettingsService(ISettingsService):
         return models
     
     def refresh_models(self) -> None:
-        # 重新扫描
+        # Rescan
         pass
     
     def install_environment(self) -> bool:
-        # TODO: 实现环境安装
+        # TODO: implement environment installation
         return False
     
     def check_environment(self) -> bool:
@@ -112,7 +112,7 @@ class SettingsService(ISettingsService):
         return get_system_info()
 
     def get_model_registry(self) -> Dict[str, ModelConfig]:
-        """读取 models_registry.json 获取所有模型配置"""
+        """Read models_registry.json to get all model configurations"""
         registry_path = self._path_resolver.get_project_root() / "config" / "models_registry.json"
         if not registry_path.exists():
             return {}
@@ -135,6 +135,13 @@ class SettingsService(ISettingsService):
                 if not isinstance(neg, bool):
                     p0 = val.get("parameters") or {}
                     neg = bool(p0.get("negative_prompt_support")) if isinstance(p0, dict) else False
+                cup_raw = val.get("commercial_use_allowed")
+                if cup_raw is True:
+                    commercial_use_allowed = True
+                elif cup_raw is False:
+                    commercial_use_allowed = False
+                else:
+                    commercial_use_allowed = None
                 models[key] = ModelConfig(
                     name={"zh": nz, "en": ne},
                     description={"zh": dz, "en": de},
@@ -151,43 +158,103 @@ class SettingsService(ISettingsService):
                     negative_prompt_support=neg,
                     base_model=val.get("base_model"),
                     nsfw=val.get("nsfw", False),
+                    commercial_use_allowed=commercial_use_allowed,
                     media=media,
                     actions=dict(acts),
+                    stub_no_download=bool(val.get("stub_no_download")),
                 )
             return models
         except Exception as e:
-            print(f"读取模型注册表失败: {e}")
+            print(f"Failed to read model registry: {e}")
             return {}
 
     def get_model_config(self, model_name: str) -> Optional[ModelConfig]:
-        """获取单个模型配置"""
+        """Get single model configuration"""
         registry = self.get_model_registry()
         return registry.get(model_name)
 
+    @staticmethod
+    def _path_has_bundle_weights(model_dir: Path) -> bool:
+        if model_dir.is_file():
+            return bool(
+                model_dir.suffix in [".safetensors", ".bin", ".pt", ".ckpt"]
+                or model_dir.name
+                in ["model_index.json", "config.json", "pytorch_model.bin.index.json"]
+            )
+        return any(
+            f.suffix in [".safetensors", ".bin", ".pt", ".ckpt"]
+            or f.name in ["model_index.json", "config.json", "pytorch_model.bin.index.json"]
+            for f in model_dir.rglob("*")
+            if f.is_file()
+        )
+
+    def _resolve_registry_version_bundle_dir(
+        self,
+        project_root: Path,
+        model_name: str,
+        version_key: str,
+        version_config: Any,
+    ) -> Path:
+        """Resolve bundle path from registry only: ``versions.*.local_path`` or ``models/{id}-{version_key}``."""
+        vc = version_config if isinstance(version_config, dict) else {}
+        local_path = vc.get("local_path")
+        if not local_path:
+            local_path = f"models/{model_name}-{version_key}"
+        return project_root / local_path
+
+    def _registry_has_any_ready_bundle(self, model_name: str, config: ModelConfig) -> bool:
+        """True when registry ``versions`` point at existing paths with weight files (same rule as detailed status)."""
+        if getattr(config, "stub_no_download", False):
+            return True
+        project_root = self._path_resolver.get_project_root()
+        versions = getattr(config, "versions", None) or {}
+        for version_key, version_config in versions.items():
+            model_dir = self._resolve_registry_version_bundle_dir(
+                project_root, model_name, version_key, version_config
+            )
+            if model_dir.exists() and self._path_has_bundle_weights(model_dir):
+                return True
+        return False
+
     def lora_adapter_picklist(self, for_model: Optional[str] = None) -> List[Dict[str, Any]]:
-        """已安装 LoRA 的适配器列表；`for_model` 为图像模型 id 时按 base_model 过滤。"""
+        """Adapter picklist of installed LoRAs; filters by base_model when ``for_model`` is an image model id."""
         registry = self.get_model_registry()
-        installed = self.get_available_models()
-        installed_names = {m.name for m in installed}
         out: List[Dict[str, Any]] = []
         for key, config in registry.items():
             if getattr(config, "category", None) != "loras":
                 continue
-            if key not in installed_names:
+            if not self._registry_has_any_ready_bundle(key, config):
                 continue
             lora_base = config.base_model or ""
             if for_model:
-                model_base = for_model
-                if model_base.startswith("flux2"):
-                    ok = lora_base == "" or lora_base.startswith("flux2") or lora_base == model_base
-                elif model_base.startswith("flux1"):
-                    ok = lora_base == "" or lora_base.startswith("flux1") or lora_base == model_base
-                elif model_base.startswith("flux"):
-                    ok = lora_base == "" or lora_base.startswith("flux") or lora_base == model_base
-                elif model_base.startswith("wan"):
-                    ok = lora_base == "" or lora_base.startswith("wan") or lora_base == model_base
+                model_base_key = for_model.split(":", 1)[0].strip()
+                lora_base_key = lora_base.split(":", 1)[0].strip() if lora_base else ""
+                if model_base_key.startswith("flux2"):
+                    ok = (
+                        lora_base_key == ""
+                        or lora_base_key.startswith("flux2")
+                        or lora_base_key == model_base_key
+                    )
+                elif model_base_key.startswith("flux1"):
+                    ok = (
+                        lora_base_key == ""
+                        or lora_base_key.startswith("flux1")
+                        or lora_base_key == model_base_key
+                    )
+                elif model_base_key.startswith("flux"):
+                    ok = (
+                        lora_base_key == ""
+                        or lora_base_key.startswith("flux")
+                        or lora_base_key == model_base_key
+                    )
+                elif model_base_key.startswith("wan"):
+                    ok = (
+                        lora_base_key == ""
+                        or lora_base_key.startswith("wan")
+                        or lora_base_key == model_base_key
+                    )
                 else:
-                    ok = lora_base == model_base
+                    ok = lora_base_key == "" or lora_base_key == model_base_key
                 if not ok:
                     continue
             out.append(
@@ -201,24 +268,35 @@ class SettingsService(ISettingsService):
         return out
 
     def get_models_status(self) -> Dict[str, bool]:
-        """获取所有注册模型的就绪状态
+        """Get readiness status for all registered models.
         
         Returns:
-            模型名称 -> 是否就绪的字典
+            model_name -> readiness dict
         """
-        # 复用详细状态的逻辑，避免路径解析不一致
+        # Reuse detailed status logic to avoid inconsistent path resolution
         detailed = self.get_models_detailed_status()
         return {k: v['ready'] for k, v in detailed.items()}
     
     def get_models_detailed_status(self) -> Dict[str, Dict[str, Any]]:
-        """获取模型详细状态（按版本检查，区分未下载/文件缺失/已就绪）"""
-        from pathlib import Path
-        
+        """Get detailed model status (version-level check, distinguishes not_downloaded/incomplete/ready)"""
         status = {}
         registry = self.get_model_registry()
         project_root = self._path_resolver.get_project_root()
         
         for model_name, config in registry.items():
+            if getattr(config, "stub_no_download", False):
+                status[model_name] = {
+                    "versions": {
+                        "stub": {
+                            "status": "ready",
+                            "label": "Stub (no download)",
+                            "ready": True,
+                        }
+                    },
+                    "ready": True,
+                    "status": "ready",
+                }
+                continue
             versions = getattr(config, 'versions', None) or {}
             model_status = {
                 "versions": {},
@@ -228,69 +306,37 @@ class SettingsService(ISettingsService):
             any_ready = False
             
             for version_key, version_config in versions.items():
-                # 从版本配置获取 local_path
-                local_path = version_config.get('local_path') if isinstance(version_config, dict) else None
-                if not local_path:
-                    local_path = f"models/{model_name}-{version_key}"
-                
-                model_dir = project_root / local_path
-                
-                # 如果路径不存在，尝试大小写不敏感搜索
-                if not model_dir.exists():
-                    models_base = self._path_resolver.get_models_dir()
-                    if models_base.exists():
-                        for subdir in models_base.iterdir():
-                            if subdir.is_dir() and not subdir.name.startswith('.'):
-                                for child in subdir.iterdir():
-                                    if child.is_dir() and child.name.lower() == (model_name + '-' + version_key).lower():
-                                        model_dir = child
-                                        break
-                                if model_dir.exists():
-                                    break
-                
+                model_dir = self._resolve_registry_version_bundle_dir(
+                    project_root, model_name, version_key, version_config
+                )
                 if not model_dir.exists():
                     model_status["versions"][version_key] = {
                         "status": "not_downloaded",
-                        "label": "未下载",
+                        "label": "Not downloaded",
                         "ready": False
                     }
                 else:
-                    # 路径存在，检查是否有权重文件
-                    if model_dir.is_file():
-                        # 如果路径本身是文件（如 LoRA 的 .safetensors 文件），直接检查
-                        has_weights = (
-                            model_dir.suffix in ['.safetensors', '.bin', '.pt', '.ckpt'] or
-                            model_dir.name in ['model_index.json', 'config.json', 'pytorch_model.bin.index.json']
-                        )
-                    else:
-                        # 如果是目录，递归检查
-                        has_weights = any(
-                            f.suffix in ['.safetensors', '.bin', '.pt', '.ckpt'] or
-                            f.name in ['model_index.json', 'config.json', 'pytorch_model.bin.index.json']
-                            for f in model_dir.rglob('*')
-                            if f.is_file()
-                        )
-                    
+                    has_weights = self._path_has_bundle_weights(model_dir)
                     if has_weights:
                         model_status["versions"][version_key] = {
                             "status": "ready",
-                            "label": "已就绪",
+                            "label": "Ready",
                             "ready": True
                         }
                         any_ready = True
                     else:
                         model_status["versions"][version_key] = {
                             "status": "incomplete",
-                            "label": "文件缺失",
+                            "label": "Files missing",
                             "ready": False
                         }
             
-            # 设置模型整体状态
+            # Set overall model status
             if any_ready:
                 model_status["ready"] = True
                 model_status["status"] = "ready"
             elif model_status["versions"]:
-                # 检查是否所有版本都未下载
+                # Check if all versions are not downloaded
                 all_not_downloaded = all(v["status"] == "not_downloaded" for v in model_status["versions"].values())
                 if all_not_downloaded:
                     model_status["status"] = "not_downloaded"
@@ -302,26 +348,26 @@ class SettingsService(ISettingsService):
         return status
     
     def get_disk_space(self) -> Dict[str, Any]:
-        """获取磁盘空间信息"""
+        """Get disk space info"""
         import shutil
         
-        # 获取各目录
+        # Get directory paths
         models_dir = self._path_resolver.get_models_dir()
         loras_dir = self._path_resolver.get_loras_dir()
         outputs_dir = self._path_resolver.get_outputs_dir()
         
-        # 获取磁盘使用情况
+        # Get disk usage
         def get_dir_info(path: Path) -> Dict[str, Any]:
             if not path.exists():
                 return {"exists": False, "size": 0, "size_human": "0 B"}
             
-            # 计算目录大小
+            # Calculate directory size
             total_size = 0
             for f in path.rglob("*"):
                 if f.is_file():
                     total_size += f.stat().st_size
             
-            # 获取磁盘剩余空间
+            # Get disk free space
             usage = shutil.disk_usage(str(path))
             
             return {
@@ -343,7 +389,7 @@ class SettingsService(ISettingsService):
 
 
 def _human_readable_size(size_bytes: int) -> str:
-    """转换为人类可读的大小"""
+    """Convert to human-readable size"""
     if size_bytes == 0:
         return "0 B"
     

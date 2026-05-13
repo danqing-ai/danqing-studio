@@ -1,5 +1,5 @@
 """
-依赖注入容器
+Dependency injection container
 """
 
 from typing import Type, TypeVar, Dict, Any, Optional
@@ -38,7 +38,7 @@ class Container:
             instance = self._registrations[interface](self)
             self._singletons[interface] = instance
             return instance
-        raise KeyError(f"未注册的接口: {interface.__name__}")
+        raise KeyError(f"Unregistered interface: {interface.__name__}")
 
     def try_resolve(self, interface: Type[T]) -> Optional[T]:
         try:

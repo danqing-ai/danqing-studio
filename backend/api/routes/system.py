@@ -99,20 +99,13 @@ def metrics() -> dict[str, Any]:
 
 @router.get("/cache")
 def cache_status() -> dict[str, Any]:
-    """模型缓存状态（ModelCache stats）。"""
+    """Model cache status (ModelCache stats)."""
+    from backend.engine.platform import PlatformInfo
+
     c = get_container()
     cache = c.try_resolve_named("shared_model_cache")
     out: dict[str, Any] = {"cache": None, "mlx": {}}
     if cache is not None:
         out["cache"] = cache.stats
-    try:
-        import mlx.core as mx
-
-        out["mlx"] = {
-            "active_gb": round(mx.get_active_memory() / (1024**3), 2),
-            "cache_gb": round(mx.get_cache_memory() / (1024**3), 2),
-            "peak_gb": round(mx.get_peak_memory() / (1024**3), 2),
-        }
-    except Exception:
-        pass
+    out["mlx"] = PlatformInfo.get_mlx_memory_stats()
     return out

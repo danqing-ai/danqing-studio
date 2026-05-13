@@ -11,10 +11,17 @@ danqing-edit — 图像编辑 CLI。
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_CLI_FILE = Path(__file__).resolve()
+PROJECT_ROOT = _CLI_FILE.parent.parent
+if sys.platform != "win32":
+    _venv_root = PROJECT_ROOT / ".venv"
+    _venv_py = _venv_root / "bin" / "python3"
+    if _venv_py.is_file() and Path(sys.prefix).resolve() != _venv_root.resolve():
+        os.execv(str(_venv_py), [str(_venv_py), str(_CLI_FILE), *sys.argv[1:]])
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from backend.cli.image_cli import edit
@@ -29,8 +36,14 @@ def main():
     parser.add_argument("--prompt", required=True)
     parser.add_argument("--source-fidelity", type=float, default=0.6)
     parser.add_argument("--negative-prompt", default="")
+    parser.add_argument("--guidance", type=float, default=None, help="CFG scale (default: model registry; use 0 to match mflux z-image rewrite bench)")
     parser.add_argument("--steps", type=int, default=None)
     parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument(
+        "--scheduler",
+        default=None,
+        help="Override scheduler id (registry default if omitted)",
+    )
     parser.add_argument("--output", required=True)
     parser.add_argument("--project-root", default=str(PROJECT_ROOT))
     args = parser.parse_args()
@@ -44,8 +57,10 @@ def main():
         source_image=args.source_image,
         source_fidelity=args.source_fidelity,
         negative_prompt=args.negative_prompt,
+        guidance=args.guidance,
         steps=args.steps,
         seed=args.seed,
+        scheduler=args.scheduler,
         output=args.output,
         project_root=Path(args.project_root).resolve(),
     )

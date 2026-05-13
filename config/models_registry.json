@@ -8,6 +8,10 @@
     "danqing-video": {
       "media": "video",
       "description": "DanQing video engine (MLX/CUDA)"
+    },
+    "danqing-audio": {
+      "media": "audio",
+      "description": "DanQing audio engine (MLX/CUDA)"
     }
   },
   "categories": {
@@ -76,6 +80,17 @@
         "en": "Video generation models"
       },
       "icon": "🎬"
+    },
+    "music_models": {
+      "name": {
+        "zh": "音乐模型",
+        "en": "Music Models"
+      },
+      "description": {
+        "zh": "文生音乐与音频生成模型",
+        "en": "Text-to-music and audio generation models"
+      },
+      "icon": "🎵"
     }
   },
   "models": {
@@ -136,14 +151,14 @@
         "negative_prompt_support": true
       },
       "recommended": false,
-      "source": "huggingface",
+      "source": "modelscope",
       "versions": {
         "fp16": {
           "name": "FP16 完整版",
           "size": "23.8GB",
           "default": true,
           "repo_id": "black-forest-labs/FLUX.1-schnell",
-          "local_path": "models/Base/flux1-schnell-fp16",
+          "local_path": "models/Image/flux1-schnell-fp16",
           "source_type": "full"
         },
         "int8": {
@@ -151,18 +166,26 @@
           "size": "12GB",
           "default": false,
           "repo_id": "black-forest-labs/FLUX.1-schnell",
-          "local_path": "models/Base/flux1-schnell-int8",
+          "local_path": "models/Image/flux1-schnell-int8",
           "source_type": "derived",
-          "from_version": "fp16"
+          "from_version": "fp16",
+          "quantization": {
+            "bits": 8,
+            "scheme": "mlx_affine"
+          }
         },
         "int4": {
           "name": "INT4 量化版",
           "size": "6GB",
           "default": false,
           "repo_id": "black-forest-labs/FLUX.1-schnell",
-          "local_path": "models/Base/flux1-schnell-int4",
+          "local_path": "models/Image/flux1-schnell-int4",
           "source_type": "derived",
-          "from_version": "fp16"
+          "from_version": "fp16",
+          "quantization": {
+            "bits": 4,
+            "scheme": "mlx_affine"
+          }
         }
       },
       "name": {
@@ -178,7 +201,8 @@
         "create": {},
         "rewrite": {}
       },
-      "family": "flux1"
+      "family": "flux1",
+      "commercial_use_allowed": true
     },
     "flux1-dev": {
       "category": "base_models",
@@ -237,14 +261,14 @@
         "negative_prompt_support": true
       },
       "recommended": false,
-      "source": "huggingface",
+      "source": "modelscope",
       "versions": {
         "fp16": {
           "name": "FP16 完整版",
           "size": "23.8GB",
           "default": true,
           "repo_id": "black-forest-labs/FLUX.1-dev",
-          "local_path": "models/Base/flux1-dev-fp16",
+          "local_path": "models/Image/flux1-dev-fp16",
           "source_type": "full"
         },
         "int8": {
@@ -252,18 +276,26 @@
           "size": "12GB",
           "default": false,
           "repo_id": "black-forest-labs/FLUX.1-dev",
-          "local_path": "models/Base/flux1-dev-int8",
+          "local_path": "models/Image/flux1-dev-int8",
           "source_type": "derived",
-          "from_version": "fp16"
+          "from_version": "fp16",
+          "quantization": {
+            "bits": 8,
+            "scheme": "mlx_affine"
+          }
         },
         "int4": {
           "name": "INT4 量化版",
           "size": "6GB",
           "default": false,
           "repo_id": "black-forest-labs/FLUX.1-dev",
-          "local_path": "models/Base/flux1-dev-int4",
+          "local_path": "models/Image/flux1-dev-int4",
           "source_type": "derived",
-          "from_version": "fp16"
+          "from_version": "fp16",
+          "quantization": {
+            "bits": 4,
+            "scheme": "mlx_affine"
+          }
         }
       },
       "name": {
@@ -279,7 +311,8 @@
         "create": {},
         "rewrite": {}
       },
-      "family": "flux1"
+      "family": "flux1",
+      "commercial_use_allowed": false
     },
     "flux1-krea-dev": {
       "category": "base_models",
@@ -336,14 +369,14 @@
         "negative_prompt_support": true
       },
       "recommended": false,
-      "source": "huggingface",
+      "source": "modelscope",
       "versions": {
         "fp16": {
           "name": "FP16 完整版",
           "size": "23.8GB",
           "default": true,
           "repo_id": "black-forest-labs/FLUX.1-Krea-dev",
-          "local_path": "models/Base/flux1-krea-dev-fp16",
+          "local_path": "models/Image/flux1-krea-dev-fp16",
           "source_type": "full"
         },
         "int8": {
@@ -351,18 +384,26 @@
           "size": "12GB",
           "default": false,
           "repo_id": "black-forest-labs/FLUX.1-Krea-dev",
-          "local_path": "models/Base/flux1-krea-dev-int8",
+          "local_path": "models/Image/flux1-krea-dev-int8",
           "source_type": "derived",
-          "from_version": "fp16"
+          "from_version": "fp16",
+          "quantization": {
+            "bits": 8,
+            "scheme": "mlx_affine"
+          }
         },
         "int4": {
           "name": "INT4 量化版",
           "size": "6GB",
           "default": false,
           "repo_id": "black-forest-labs/FLUX.1-Krea-dev",
-          "local_path": "models/Base/flux1-krea-dev-int4",
+          "local_path": "models/Image/flux1-krea-dev-int4",
           "source_type": "derived",
-          "from_version": "fp16"
+          "from_version": "fp16",
+          "quantization": {
+            "bits": 4,
+            "scheme": "mlx_affine"
+          }
         }
       },
       "name": {
@@ -378,7 +419,8 @@
         "create": {},
         "rewrite": {}
       },
-      "family": "flux1"
+      "family": "flux1",
+      "commercial_use_allowed": false
     },
     "flux2-klein-4b": {
       "category": "base_models",
@@ -440,17 +482,22 @@
           9,
           18,
           27
-        ]
+        ],
+        "inner_dim": 3072,
+        "num_heads": 24,
+        "joint_attention_dim": 7680,
+        "num_layers": 5,
+        "num_single_layers": 20
       },
       "recommended": true,
-      "source": "huggingface",
+      "source": "modelscope",
       "versions": {
         "fp16": {
           "name": "FP16 完整版",
           "size": "15GB",
           "default": true,
           "repo_id": "black-forest-labs/FLUX.2-klein-4B",
-          "local_path": "models/Base/flux2-klein-4b-fp16",
+          "local_path": "models/Image/flux2-klein-4b-fp16",
           "source_type": "full"
         },
         "int8": {
@@ -458,26 +505,38 @@
           "size": "8GB",
           "default": false,
           "repo_id": "black-forest-labs/FLUX.2-klein-4B",
-          "local_path": "models/Base/flux2-klein-4b-int8",
+          "local_path": "models/Image/flux2-klein-4b-int8",
           "source_type": "derived",
-          "from_version": "fp16"
+          "from_version": "fp16",
+          "quantization": {
+            "bits": 8,
+            "scheme": "mlx_affine"
+          }
         },
         "int4": {
           "name": "INT4 量化版",
           "size": "4GB",
           "default": false,
           "repo_id": "black-forest-labs/FLUX.2-klein-4B",
-          "local_path": "models/Base/flux2-klein-4b-int4",
+          "local_path": "models/Image/flux2-klein-4b-int4",
           "source_type": "derived",
-          "from_version": "fp16"
+          "from_version": "fp16",
+          "quantization": {
+            "bits": 4,
+            "scheme": "mlx_affine"
+          }
         },
         "mlx-4bit": {
-          "name": "MFlux预量化4bit",
+          "name": "MLX预量化4bit",
           "size": "4GB",
           "default": false,
           "repo_id": "black-forest-labs/FLUX.2-klein-4B",
-          "local_path": "models/Base/flux2-klein-4b-mlx-4bit",
-          "source_type": "prequantized"
+          "local_path": "models/Image/flux2-klein-4b-mlx-4bit",
+          "source_type": "prequantized",
+          "quantization": {
+            "bits": 4,
+            "scheme": "mlx_affine"
+          }
         }
       },
       "name": {
@@ -493,7 +552,8 @@
         "create": {},
         "rewrite": {}
       },
-      "family": "flux2"
+      "family": "flux2",
+      "commercial_use_allowed": true
     },
     "flux2-klein-9b": {
       "category": "base_models",
@@ -569,14 +629,14 @@
         ]
       },
       "recommended": true,
-      "source": "huggingface",
+      "source": "modelscope",
       "versions": {
         "fp16": {
           "name": "FP16 完整版",
           "size": "32GB",
           "default": true,
           "repo_id": "black-forest-labs/FLUX.2-klein-9B",
-          "local_path": "models/Base/flux2-klein-9b-fp16",
+          "local_path": "models/Image/flux2-klein-9b-fp16",
           "source_type": "full"
         },
         "int8": {
@@ -584,18 +644,26 @@
           "size": "16GB",
           "default": false,
           "repo_id": "black-forest-labs/FLUX.2-klein-9B",
-          "local_path": "models/Base/flux2-klein-9b-int8",
+          "local_path": "models/Image/flux2-klein-9b-int8",
           "source_type": "derived",
-          "from_version": "fp16"
+          "from_version": "fp16",
+          "quantization": {
+            "bits": 8,
+            "scheme": "mlx_affine"
+          }
         },
         "int4": {
           "name": "INT4 量化版",
           "size": "8GB",
           "default": false,
           "repo_id": "black-forest-labs/FLUX.2-klein-9B",
-          "local_path": "models/Base/flux2-klein-9b-int4",
+          "local_path": "models/Image/flux2-klein-9b-int4",
           "source_type": "derived",
-          "from_version": "fp16"
+          "from_version": "fp16",
+          "quantization": {
+            "bits": 4,
+            "scheme": "mlx_affine"
+          }
         }
       },
       "name": {
@@ -611,7 +679,8 @@
         "create": {},
         "rewrite": {}
       },
-      "family": "flux2"
+      "family": "flux2",
+      "commercial_use_allowed": null
     },
     "flux2-klein-base-4b": {
       "category": "base_models",
@@ -671,17 +740,22 @@
           9,
           18,
           27
-        ]
+        ],
+        "inner_dim": 3072,
+        "num_heads": 24,
+        "joint_attention_dim": 7680,
+        "num_layers": 5,
+        "num_single_layers": 20
       },
       "recommended": false,
-      "source": "huggingface",
+      "source": "modelscope",
       "versions": {
         "fp16": {
           "name": "FP16 完整版",
           "size": "15GB",
           "default": true,
           "repo_id": "black-forest-labs/FLUX.2-klein-base-4B",
-          "local_path": "models/Base/flux2-klein-base-4b-fp16",
+          "local_path": "models/Image/flux2-klein-base-4b-fp16",
           "source_type": "full"
         },
         "int8": {
@@ -689,18 +763,26 @@
           "size": "8GB",
           "default": false,
           "repo_id": "black-forest-labs/FLUX.2-klein-base-4B",
-          "local_path": "models/Base/flux2-klein-base-4b-int8",
+          "local_path": "models/Image/flux2-klein-base-4b-int8",
           "source_type": "derived",
-          "from_version": "fp16"
+          "from_version": "fp16",
+          "quantization": {
+            "bits": 8,
+            "scheme": "mlx_affine"
+          }
         },
         "int4": {
           "name": "INT4 量化版",
           "size": "4GB",
           "default": false,
           "repo_id": "black-forest-labs/FLUX.2-klein-base-4B",
-          "local_path": "models/Base/flux2-klein-base-4b-int4",
+          "local_path": "models/Image/flux2-klein-base-4b-int4",
           "source_type": "derived",
-          "from_version": "fp16"
+          "from_version": "fp16",
+          "quantization": {
+            "bits": 4,
+            "scheme": "mlx_affine"
+          }
         }
       },
       "name": {
@@ -716,7 +798,8 @@
         "create": {},
         "rewrite": {}
       },
-      "family": "flux2"
+      "family": "flux2",
+      "commercial_use_allowed": true
     },
     "flux2-klein-base-9b": {
       "category": "base_models",
@@ -779,14 +862,14 @@
         ]
       },
       "recommended": false,
-      "source": "huggingface",
+      "source": "modelscope",
       "versions": {
         "fp16": {
           "name": "FP16 完整版",
           "size": "32GB",
           "default": true,
           "repo_id": "black-forest-labs/FLUX.2-klein-base-9B",
-          "local_path": "models/Base/flux2-klein-base-9b-fp16",
+          "local_path": "models/Image/flux2-klein-base-9b-fp16",
           "source_type": "full"
         },
         "int8": {
@@ -794,18 +877,26 @@
           "size": "16GB",
           "default": false,
           "repo_id": "black-forest-labs/FLUX.2-klein-base-9B",
-          "local_path": "models/Base/flux2-klein-base-9b-int8",
+          "local_path": "models/Image/flux2-klein-base-9b-int8",
           "source_type": "derived",
-          "from_version": "fp16"
+          "from_version": "fp16",
+          "quantization": {
+            "bits": 8,
+            "scheme": "mlx_affine"
+          }
         },
         "int4": {
           "name": "INT4 量化版",
           "size": "8GB",
           "default": false,
           "repo_id": "black-forest-labs/FLUX.2-klein-base-9B",
-          "local_path": "models/Base/flux2-klein-base-9b-int4",
+          "local_path": "models/Image/flux2-klein-base-9b-int4",
           "source_type": "derived",
-          "from_version": "fp16"
+          "from_version": "fp16",
+          "quantization": {
+            "bits": 4,
+            "scheme": "mlx_affine"
+          }
         }
       },
       "name": {
@@ -821,10 +912,15 @@
         "create": {},
         "rewrite": {}
       },
-      "family": "flux2"
+      "family": "flux2",
+      "commercial_use_allowed": null
     },
     "z-image": {
       "category": "base_models",
+      "backends": [
+        "mlx",
+        "cuda"
+      ],
       "engine": "danqing-image",
       "type": "diffusion",
       "parameters": {
@@ -887,7 +983,7 @@
           "size": "31GB",
           "default": true,
           "repo_id": "Tongyi-MAI/Z-Image",
-          "local_path": "models/Base/z-image-fp16",
+          "local_path": "models/Image/z-image-fp16",
           "source_type": "full"
         },
         "int8": {
@@ -895,18 +991,26 @@
           "size": "16GB",
           "default": false,
           "repo_id": "Tongyi-MAI/Z-Image",
-          "local_path": "models/Base/z-image-int8",
+          "local_path": "models/Image/z-image-int8",
           "source_type": "derived",
-          "from_version": "fp16"
+          "from_version": "fp16",
+          "quantization": {
+            "bits": 8,
+            "scheme": "mlx_affine"
+          }
         },
         "int4": {
           "name": "INT4 量化版",
           "size": "8GB",
           "default": false,
           "repo_id": "Tongyi-MAI/Z-Image",
-          "local_path": "models/Base/z-image-int4",
+          "local_path": "models/Image/z-image-int4",
           "source_type": "derived",
-          "from_version": "fp16"
+          "from_version": "fp16",
+          "quantization": {
+            "bits": 4,
+            "scheme": "mlx_affine"
+          }
         }
       },
       "name": {
@@ -922,10 +1026,15 @@
         "create": {},
         "rewrite": {}
       },
-      "family": "z_image"
+      "family": "z_image",
+      "commercial_use_allowed": true
     },
     "z-image-turbo": {
       "category": "base_models",
+      "backends": [
+        "mlx",
+        "cuda"
+      ],
       "engine": "danqing-image",
       "type": "diffusion",
       "parameters": {
@@ -998,7 +1107,7 @@
           "size": "31GB",
           "default": true,
           "repo_id": "Tongyi-MAI/Z-Image-Turbo",
-          "local_path": "models/Base/z-image-turbo-fp16",
+          "local_path": "models/Image/z-image-turbo-fp16",
           "source_type": "full"
         },
         "int8": {
@@ -1006,26 +1115,38 @@
           "size": "16GB",
           "default": false,
           "repo_id": "Tongyi-MAI/Z-Image-Turbo",
-          "local_path": "models/Base/z-image-turbo-int8",
+          "local_path": "models/Image/z-image-turbo-int8",
           "source_type": "derived",
-          "from_version": "fp16"
+          "from_version": "fp16",
+          "quantization": {
+            "bits": 8,
+            "scheme": "mlx_affine"
+          }
         },
         "int4": {
           "name": "INT4 量化版",
           "size": "8GB",
           "default": false,
           "repo_id": "Tongyi-MAI/Z-Image-Turbo",
-          "local_path": "models/Base/z-image-turbo-int4",
+          "local_path": "models/Image/z-image-turbo-int4",
           "source_type": "derived",
-          "from_version": "fp16"
+          "from_version": "fp16",
+          "quantization": {
+            "bits": 4,
+            "scheme": "mlx_affine"
+          }
         },
-        "mflux-4bit": {
-          "name": "MFlux预量化4bit",
+        "danqing-4bit": {
+          "name": "MLX预量化4bit",
           "size": "5.5GB",
           "default": false,
           "repo_id": "filipstrand/Z-Image-Turbo-mflux-4bit",
-          "local_path": "models/Base/z-image-turbo-mflux-4bit",
-          "source_type": "prequantized"
+          "local_path": "models/Image/z-image-turbo-danqing-4bit",
+          "source_type": "prequantized",
+          "quantization": {
+            "bits": 4,
+            "scheme": "mlx_affine"
+          }
         }
       },
       "name": {
@@ -1041,7 +1162,8 @@
         "create": {},
         "rewrite": {}
       },
-      "family": "z_image"
+      "family": "z_image",
+      "commercial_use_allowed": true
     },
     "fibo": {
       "category": "base_models",
@@ -1098,14 +1220,14 @@
         "negative_prompt_support": false
       },
       "recommended": false,
-      "source": "huggingface",
+      "source": "modelscope",
       "versions": {
         "fp16": {
           "name": "FP16 完整版",
           "size": "24GB",
           "default": true,
           "repo_id": "briaai/FIBO",
-          "local_path": "models/Base/fibo-fp16",
+          "local_path": "models/Image/fibo-fp16",
           "source_type": "full"
         },
         "int8": {
@@ -1113,18 +1235,26 @@
           "size": "12GB",
           "default": false,
           "repo_id": "briaai/FIBO",
-          "local_path": "models/Base/fibo-int8",
+          "local_path": "models/Image/fibo-int8",
           "source_type": "derived",
-          "from_version": "fp16"
+          "from_version": "fp16",
+          "quantization": {
+            "bits": 8,
+            "scheme": "mlx_affine"
+          }
         },
         "int4": {
           "name": "INT4 量化版",
           "size": "6GB",
           "default": false,
           "repo_id": "briaai/FIBO",
-          "local_path": "models/Base/fibo-int4",
+          "local_path": "models/Image/fibo-int4",
           "source_type": "derived",
-          "from_version": "fp16"
+          "from_version": "fp16",
+          "quantization": {
+            "bits": 4,
+            "scheme": "mlx_affine"
+          }
         }
       },
       "name": {
@@ -1140,7 +1270,8 @@
         "create": {},
         "rewrite": {}
       },
-      "family": "fibo"
+      "family": "fibo",
+      "commercial_use_allowed": null
     },
     "fibo-lite": {
       "category": "base_models",
@@ -1197,14 +1328,14 @@
         "negative_prompt_support": false
       },
       "recommended": false,
-      "source": "huggingface",
+      "source": "modelscope",
       "versions": {
         "fp16": {
           "name": "FP16 完整版",
           "size": "24GB",
           "default": true,
           "repo_id": "briaai/FIBO-lite",
-          "local_path": "models/Base/fibo-lite-fp16",
+          "local_path": "models/Image/fibo-lite-fp16",
           "source_type": "full"
         },
         "int8": {
@@ -1212,18 +1343,26 @@
           "size": "12GB",
           "default": false,
           "repo_id": "briaai/FIBO-lite",
-          "local_path": "models/Base/fibo-lite-int8",
+          "local_path": "models/Image/fibo-lite-int8",
           "source_type": "derived",
-          "from_version": "fp16"
+          "from_version": "fp16",
+          "quantization": {
+            "bits": 8,
+            "scheme": "mlx_affine"
+          }
         },
         "int4": {
           "name": "INT4 量化版",
           "size": "6GB",
           "default": false,
           "repo_id": "briaai/FIBO-lite",
-          "local_path": "models/Base/fibo-lite-int4",
+          "local_path": "models/Image/fibo-lite-int4",
           "source_type": "derived",
-          "from_version": "fp16"
+          "from_version": "fp16",
+          "quantization": {
+            "bits": 4,
+            "scheme": "mlx_affine"
+          }
         }
       },
       "name": {
@@ -1239,7 +1378,8 @@
         "create": {},
         "rewrite": {}
       },
-      "family": "fibo"
+      "family": "fibo",
+      "commercial_use_allowed": true
     },
     "fibo-edit": {
       "category": "base_models",
@@ -1294,14 +1434,14 @@
         }
       },
       "recommended": false,
-      "source": "huggingface",
+      "source": "modelscope",
       "versions": {
         "fp16": {
           "name": "FP16 完整版",
           "size": "24GB",
           "default": true,
           "repo_id": "briaai/Fibo-Edit",
-          "local_path": "models/Base/fibo-edit-fp16",
+          "local_path": "models/Image/fibo-edit-fp16",
           "source_type": "full"
         },
         "int8": {
@@ -1309,18 +1449,26 @@
           "size": "12GB",
           "default": false,
           "repo_id": "briaai/Fibo-Edit",
-          "local_path": "models/Base/fibo-edit-int8",
+          "local_path": "models/Image/fibo-edit-int8",
           "source_type": "derived",
-          "from_version": "fp16"
+          "from_version": "fp16",
+          "quantization": {
+            "bits": 8,
+            "scheme": "mlx_affine"
+          }
         },
         "int4": {
           "name": "INT4 量化版",
           "size": "6GB",
           "default": false,
           "repo_id": "briaai/Fibo-Edit",
-          "local_path": "models/Base/fibo-edit-int4",
+          "local_path": "models/Image/fibo-edit-int4",
           "source_type": "derived",
-          "from_version": "fp16"
+          "from_version": "fp16",
+          "quantization": {
+            "bits": 4,
+            "scheme": "mlx_affine"
+          }
         }
       },
       "name": {
@@ -1335,7 +1483,8 @@
       "actions": {
         "rewrite": {}
       },
-      "family": "fibo"
+      "family": "fibo",
+      "commercial_use_allowed": null
     },
     "fibo-edit-rmbg": {
       "category": "base_models",
@@ -1391,14 +1540,14 @@
         }
       },
       "recommended": false,
-      "source": "huggingface",
+      "source": "modelscope",
       "versions": {
         "fp16": {
           "name": "FP16 完整版",
           "size": "24GB",
           "default": true,
           "repo_id": "briaai/Fibo-Edit-RMBG",
-          "local_path": "models/Base/fibo-edit-rmbg-fp16",
+          "local_path": "models/Image/fibo-edit-rmbg-fp16",
           "source_type": "full"
         },
         "int8": {
@@ -1406,18 +1555,26 @@
           "size": "12GB",
           "default": false,
           "repo_id": "briaai/Fibo-Edit-RMBG",
-          "local_path": "models/Base/fibo-edit-rmbg-int8",
+          "local_path": "models/Image/fibo-edit-rmbg-int8",
           "source_type": "derived",
-          "from_version": "fp16"
+          "from_version": "fp16",
+          "quantization": {
+            "bits": 8,
+            "scheme": "mlx_affine"
+          }
         },
         "int4": {
           "name": "INT4 量化版",
           "size": "6GB",
           "default": false,
           "repo_id": "briaai/Fibo-Edit-RMBG",
-          "local_path": "models/Base/fibo-edit-rmbg-int4",
+          "local_path": "models/Image/fibo-edit-rmbg-int4",
           "source_type": "derived",
-          "from_version": "fp16"
+          "from_version": "fp16",
+          "quantization": {
+            "bits": 4,
+            "scheme": "mlx_affine"
+          }
         }
       },
       "name": {
@@ -1432,13 +1589,25 @@
       "actions": {
         "rewrite": {}
       },
-      "family": "fibo"
+      "family": "fibo",
+      "commercial_use_allowed": null
     },
     "qwen-image": {
       "category": "base_models",
       "engine": "danqing-image",
       "type": "diffusion",
       "parameters": {
+        "vae_scale": 16,
+        "requires_sigma_shift": true,
+        "scheduler": {
+          "default": "flow_match_euler_discrete",
+          "options": [
+            "flow_match_euler_discrete",
+            "linear"
+          ],
+          "label": "调度器",
+          "type": "enum"
+        },
         "steps": {
           "default": 20,
           "min": 1,
@@ -1484,7 +1653,7 @@
           "label": "去噪强度",
           "type": "float"
         },
-        "lora_support": false,
+        "lora_support": true,
         "seed_support": true,
         "negative_prompt_support": false
       },
@@ -1496,7 +1665,7 @@
           "size": "40GB",
           "default": true,
           "repo_id": "Qwen/Qwen-Image",
-          "local_path": "models/Base/qwen-image-fp16",
+          "local_path": "models/Image/qwen-image-fp16",
           "source_type": "full"
         },
         "int8": {
@@ -1504,18 +1673,26 @@
           "size": "20GB",
           "default": false,
           "repo_id": "Qwen/Qwen-Image",
-          "local_path": "models/Base/qwen-image-int8",
+          "local_path": "models/Image/qwen-image-int8",
           "source_type": "derived",
-          "from_version": "fp16"
+          "from_version": "fp16",
+          "quantization": {
+            "bits": 8,
+            "scheme": "mlx_affine"
+          }
         },
         "int4": {
           "name": "INT4 量化版",
           "size": "10GB",
           "default": false,
           "repo_id": "Qwen/Qwen-Image",
-          "local_path": "models/Base/qwen-image-int4",
+          "local_path": "models/Image/qwen-image-int4",
           "source_type": "derived",
-          "from_version": "fp16"
+          "from_version": "fp16",
+          "quantization": {
+            "bits": 4,
+            "scheme": "mlx_affine"
+          }
         }
       },
       "name": {
@@ -1528,16 +1705,23 @@
       },
       "media": "image",
       "actions": {
-        "create": {},
         "rewrite": {}
       },
-      "family": "qwen_image"
+      "family": "qwen_image",
+      "commercial_use_allowed": true
     },
     "seedvr2-3b": {
       "category": "upscalers",
       "engine": "danqing-image",
       "type": "upscaler",
       "parameters": {
+        "scheduler": {
+          "default": "seedvr2_euler",
+          "options": [
+            "seedvr2_euler"
+          ],
+          "type": "enum"
+        },
         "scale_factor": {
           "default": 4,
           "options": [
@@ -1549,7 +1733,7 @@
         }
       },
       "recommended": false,
-      "source": "huggingface",
+      "source": "modelscope",
       "versions": {
         "fp16": {
           "name": "FP16",
@@ -1572,13 +1756,21 @@
       "actions": {
         "upscale": {}
       },
-      "family": "seedvr2"
+      "family": "seedvr2",
+      "commercial_use_allowed": true
     },
     "seedvr2-7b": {
       "category": "upscalers",
       "engine": "danqing-image",
       "type": "upscaler",
       "parameters": {
+        "scheduler": {
+          "default": "seedvr2_euler",
+          "options": [
+            "seedvr2_euler"
+          ],
+          "type": "enum"
+        },
         "scale_factor": {
           "default": 4,
           "options": [
@@ -1590,7 +1782,7 @@
         }
       },
       "recommended": true,
-      "source": "huggingface",
+      "source": "modelscope",
       "versions": {
         "fp16": {
           "name": "FP16",
@@ -1613,7 +1805,8 @@
       "actions": {
         "upscale": {}
       },
-      "family": "seedvr2"
+      "family": "seedvr2",
+      "commercial_use_allowed": true
     },
     "depth-pro": {
       "category": "tools",
@@ -1621,7 +1814,7 @@
       "type": "tool",
       "parameters": {},
       "recommended": false,
-      "source": "huggingface",
+      "source": "modelscope",
       "versions": {
         "fp16": {
           "name": "FP16",
@@ -1642,7 +1835,8 @@
       },
       "media": "image",
       "actions": {},
-      "family": "flux1"
+      "family": "flux1",
+      "commercial_use_allowed": false
     },
     "flux-canny-controlnet": {
       "category": "controlnets",
@@ -1679,7 +1873,7 @@
         }
       },
       "recommended": false,
-      "source": "huggingface",
+      "source": "modelscope",
       "versions": {
         "fp16": {
           "name": "FP16",
@@ -1700,7 +1894,8 @@
       },
       "media": "image",
       "actions": {},
-      "family": "flux1"
+      "family": "flux1",
+      "commercial_use_allowed": false
     },
     "flux-depth-controlnet": {
       "category": "controlnets",
@@ -1737,7 +1932,7 @@
         }
       },
       "recommended": false,
-      "source": "huggingface",
+      "source": "modelscope",
       "versions": {
         "fp16": {
           "name": "FP16",
@@ -1758,7 +1953,8 @@
       },
       "media": "image",
       "actions": {},
-      "family": "flux1"
+      "family": "flux1",
+      "commercial_use_allowed": false
     },
     "flux-fill-controlnet": {
       "category": "controlnets",
@@ -1795,7 +1991,7 @@
         }
       },
       "recommended": false,
-      "source": "huggingface",
+      "source": "modelscope",
       "versions": {
         "fp16": {
           "name": "FP16",
@@ -1819,7 +2015,8 @@
         "retouch": {},
         "extend": {}
       },
-      "family": "flux1"
+      "family": "flux1",
+      "commercial_use_allowed": false
     },
     "flux-redux": {
       "category": "controlnets",
@@ -1855,7 +2052,7 @@
         }
       },
       "recommended": false,
-      "source": "huggingface",
+      "source": "modelscope",
       "versions": {
         "fp16": {
           "name": "FP16",
@@ -1876,7 +2073,8 @@
       },
       "media": "image",
       "actions": {},
-      "family": "flux1"
+      "family": "flux1",
+      "commercial_use_allowed": false
     },
     "flux1-kontext": {
       "category": "base_models",
@@ -1933,14 +2131,14 @@
         "negative_prompt_support": false
       },
       "recommended": false,
-      "source": "huggingface",
+      "source": "modelscope",
       "versions": {
         "fp16": {
           "name": "FP16 完整版",
           "size": "23.8GB",
           "default": true,
           "repo_id": "black-forest-labs/FLUX.1-Kontext-dev",
-          "local_path": "models/Base/flux1-kontext-fp16",
+          "local_path": "models/Image/flux1-kontext-fp16",
           "source_type": "full"
         },
         "int8": {
@@ -1948,18 +2146,26 @@
           "size": "12GB",
           "default": false,
           "repo_id": "black-forest-labs/FLUX.1-Kontext-dev",
-          "local_path": "models/Base/flux1-kontext-int8",
+          "local_path": "models/Image/flux1-kontext-int8",
           "source_type": "derived",
-          "from_version": "fp16"
+          "from_version": "fp16",
+          "quantization": {
+            "bits": 8,
+            "scheme": "mlx_affine"
+          }
         },
         "int4": {
           "name": "INT4 量化版",
           "size": "6GB",
           "default": false,
           "repo_id": "black-forest-labs/FLUX.1-Kontext-dev",
-          "local_path": "models/Base/flux1-kontext-int4",
+          "local_path": "models/Image/flux1-kontext-int4",
           "source_type": "derived",
-          "from_version": "fp16"
+          "from_version": "fp16",
+          "quantization": {
+            "bits": 4,
+            "scheme": "mlx_affine"
+          }
         }
       },
       "name": {
@@ -1975,7 +2181,8 @@
         "create": {},
         "rewrite": {}
       },
-      "family": "flux1"
+      "family": "flux1",
+      "commercial_use_allowed": false
     },
     "realism-lora-nsfw": {
       "category": "loras",
@@ -1993,7 +2200,7 @@
         }
       },
       "recommended": false,
-      "source": "huggingface",
+      "source": "modelscope",
       "nsfw": false,
       "versions": {
         "fp16": {
@@ -2015,7 +2222,8 @@
       },
       "media": "image",
       "actions": {},
-      "family": "flux1"
+      "family": "flux1",
+      "commercial_use_allowed": null
     },
     "miasweet-nsfw-lora": {
       "category": "loras",
@@ -2033,7 +2241,7 @@
         }
       },
       "recommended": false,
-      "source": "huggingface",
+      "source": "modelscope",
       "nsfw": true,
       "versions": {
         "fp16": {
@@ -2055,7 +2263,254 @@
       },
       "media": "image",
       "actions": {},
-      "family": "flux1"
+      "family": "flux1",
+      "commercial_use_allowed": null
+    },
+    "flux-uncensored-enhanceaiteam-v2-ms": {
+      "category": "loras",
+      "engine": "danqing-image",
+      "type": "lora",
+      "base_model": "flux1-dev",
+      "parameters": {
+        "lora_scale": {
+          "default": 0.85,
+          "min": 0.0,
+          "max": 2.0,
+          "step": 0.1,
+          "label": "LoRA强度",
+          "type": "float"
+        }
+      },
+      "recommended": false,
+      "source": "modelscope",
+      "nsfw": true,
+      "versions": {
+        "fp16": {
+          "name": "FP16",
+          "size": "300MB",
+          "default": true,
+          "repo_id": "FluxLora/enhanceaiteam-Flux-Uncensored-V2",
+          "local_path": "models/Lora/flux-uncensored-enhanceaiteam-v2-ms-fp16",
+          "source_type": "full"
+        }
+      },
+      "name": {
+        "zh": "Flux Uncensored V2（魔搭）",
+        "en": "Flux Uncensored V2 (ModelScope)"
+      },
+      "description": {
+        "zh": "enhanceaiteam Flux Uncensored V2 LoRA，魔搭 FluxLora/enhanceaiteam-Flux-Uncensored-V2；基于 FLUX.1-dev，成人向，请遵守法律与许可",
+        "en": "enhanceaiteam Flux Uncensored V2 LoRA (ModelScope FluxLora/enhanceaiteam-Flux-Uncensored-V2); FLUX.1-dev base, adult content—comply with law and licenses"
+      },
+      "media": "image",
+      "actions": {},
+      "family": "flux1",
+      "commercial_use_allowed": false
+    },
+    "flux-uncensored-ryouko-v2-ms": {
+      "category": "loras",
+      "engine": "danqing-image",
+      "type": "lora",
+      "base_model": "flux1-dev",
+      "parameters": {
+        "lora_scale": {
+          "default": 0.85,
+          "min": 0.0,
+          "max": 2.0,
+          "step": 0.1,
+          "label": "LoRA强度",
+          "type": "float"
+        }
+      },
+      "recommended": false,
+      "source": "modelscope",
+      "nsfw": true,
+      "versions": {
+        "fp16": {
+          "name": "FP16",
+          "size": "300MB",
+          "default": true,
+          "repo_id": "FluxLora/Ryouko65777-Flux-Uncensored-V2",
+          "local_path": "models/Lora/flux-uncensored-ryouko-v2-ms-fp16",
+          "source_type": "full"
+        }
+      },
+      "name": {
+        "zh": "Flux Uncensored V2 Ryouko（魔搭）",
+        "en": "Flux Uncensored V2 Ryouko (ModelScope)"
+      },
+      "description": {
+        "zh": "社区镜像 Uncensored V2 变体，魔搭 FluxLora/Ryouko65777-Flux-Uncensored-V2；底模 FLUX.1-dev，成人向",
+        "en": "Community mirror variant (ModelScope FluxLora/Ryouko65777-Flux-Uncensored-V2); FLUX.1-dev, adult content"
+      },
+      "media": "image",
+      "actions": {},
+      "family": "flux1",
+      "commercial_use_allowed": false
+    },
+    "flux-uncensored-lustlyai-v1-ms": {
+      "category": "loras",
+      "engine": "danqing-image",
+      "type": "lora",
+      "base_model": "flux1-dev",
+      "parameters": {
+        "lora_scale": {
+          "default": 0.85,
+          "min": 0.0,
+          "max": 2.0,
+          "step": 0.1,
+          "label": "LoRA强度",
+          "type": "float"
+        }
+      },
+      "recommended": false,
+      "source": "modelscope",
+      "nsfw": true,
+      "versions": {
+        "fp16": {
+          "name": "FP16",
+          "size": "300MB",
+          "default": true,
+          "repo_id": "FluxLora/lustlyai-Flux_Lustly.ai_Uncensored_nsfw_v1",
+          "local_path": "models/Lora/flux-uncensored-lustlyai-v1-ms-fp16",
+          "source_type": "full"
+        }
+      },
+      "name": {
+        "zh": "Lustly.ai Uncensored NSFW v1（魔搭）",
+        "en": "Lustly.ai Uncensored NSFW v1 (ModelScope)"
+      },
+      "description": {
+        "zh": "Lustly.ai 出品 NSFW/Uncensored LoRA，魔搭 FluxLora/lustlyai-Flux_Lustly.ai_Uncensored_nsfw_v1；底模 FLUX.1-dev",
+        "en": "Lustly.ai NSFW/uncensored LoRA (ModelScope FluxLora/lustlyai-Flux_Lustly.ai_Uncensored_nsfw_v1); FLUX.1-dev base"
+      },
+      "media": "image",
+      "actions": {},
+      "family": "flux1",
+      "commercial_use_allowed": false
+    },
+    "flux-uncensored-enhanceaiteam-v1-hf": {
+      "category": "loras",
+      "engine": "danqing-image",
+      "type": "lora",
+      "base_model": "flux1-dev",
+      "parameters": {
+        "lora_scale": {
+          "default": 0.85,
+          "min": 0.0,
+          "max": 2.0,
+          "step": 0.1,
+          "label": "LoRA强度",
+          "type": "float"
+        }
+      },
+      "recommended": false,
+      "source": "huggingface",
+      "nsfw": true,
+      "versions": {
+        "fp16": {
+          "name": "FP16",
+          "size": "300MB",
+          "default": true,
+          "repo_id": "enhanceaiteam/Flux-uncensored",
+          "local_path": "models/Lora/flux-uncensored-enhanceaiteam-v1-hf-fp16",
+          "source_type": "full"
+        }
+      },
+      "name": {
+        "zh": "Flux Uncensored V1（Hugging Face）",
+        "en": "Flux Uncensored V1 (Hugging Face)"
+      },
+      "description": {
+        "zh": "enhanceaiteam 经典 uncensored LoRA（HF enhanceaiteam/Flux-uncensored）；多为 lora.safetensors；底模 FLUX.1-dev；HF 可能需登录同意条款",
+        "en": "enhanceaiteam classic uncensored LoRA (HF enhanceaiteam/Flux-uncensored); often lora.safetensors; FLUX.1-dev; HF may require login/accept terms"
+      },
+      "media": "image",
+      "actions": {},
+      "family": "flux1",
+      "commercial_use_allowed": false
+    },
+    "flux-uncensored-enhanceaiteam-v2-hf": {
+      "category": "loras",
+      "engine": "danqing-image",
+      "type": "lora",
+      "base_model": "flux1-dev",
+      "parameters": {
+        "lora_scale": {
+          "default": 0.85,
+          "min": 0.0,
+          "max": 2.0,
+          "step": 0.1,
+          "label": "LoRA强度",
+          "type": "float"
+        }
+      },
+      "recommended": false,
+      "source": "huggingface",
+      "nsfw": true,
+      "versions": {
+        "fp16": {
+          "name": "FP16",
+          "size": "300MB",
+          "default": true,
+          "repo_id": "enhanceaiteam/Flux-Uncensored-V2",
+          "local_path": "models/Lora/flux-uncensored-enhanceaiteam-v2-hf-fp16",
+          "source_type": "full"
+        }
+      },
+      "name": {
+        "zh": "Flux Uncensored V2（Hugging Face）",
+        "en": "Flux Uncensored V2 (Hugging Face)"
+      },
+      "description": {
+        "zh": "enhanceaiteam Uncensored V2（HF enhanceaiteam/Flux-Uncensored-V2）；与魔搭 V2 同源系列，底模 FLUX.1-dev",
+        "en": "enhanceaiteam Uncensored V2 (HF enhanceaiteam/Flux-Uncensored-V2); same family as MS V2, FLUX.1-dev base"
+      },
+      "media": "image",
+      "actions": {},
+      "family": "flux1",
+      "commercial_use_allowed": false
+    },
+    "flux-uncensored-the1ian-hf": {
+      "category": "loras",
+      "engine": "danqing-image",
+      "type": "lora",
+      "base_model": "flux1-dev",
+      "parameters": {
+        "lora_scale": {
+          "default": 0.85,
+          "min": 0.0,
+          "max": 2.0,
+          "step": 0.1,
+          "label": "LoRA强度",
+          "type": "float"
+        }
+      },
+      "recommended": false,
+      "source": "huggingface",
+      "nsfw": true,
+      "versions": {
+        "fp16": {
+          "name": "FP16",
+          "size": "300MB",
+          "default": true,
+          "repo_id": "the1ian/Flux-uncensored",
+          "local_path": "models/Lora/flux-uncensored-the1ian-hf-fp16",
+          "source_type": "full"
+        }
+      },
+      "name": {
+        "zh": "Flux Uncensored the1ian（Hugging Face）",
+        "en": "Flux Uncensored the1ian (Hugging Face)"
+      },
+      "description": {
+        "zh": "the1ian 版 Flux uncensored LoRA（HF the1ian/Flux-uncensored）；底模 FLUX.1-dev；页面常标 NSFW",
+        "en": "the1ian Flux uncensored LoRA (HF the1ian/Flux-uncensored); FLUX.1-dev; often NSFW-gated on HF"
+      },
+      "media": "image",
+      "actions": {},
+      "family": "flux1",
+      "commercial_use_allowed": false
     },
     "bbw-style": {
       "category": "loras",
@@ -2104,7 +2559,8 @@
       },
       "media": "image",
       "actions": {},
-      "family": "flux1"
+      "family": "flux2",
+      "commercial_use_allowed": null
     },
     "lyza": {
       "category": "loras",
@@ -2147,7 +2603,500 @@
       },
       "media": "image",
       "actions": {},
-      "family": "flux1"
+      "family": "flux1",
+      "commercial_use_allowed": null
+    },
+    "flux1-dev-lora-antiblur": {
+      "category": "loras",
+      "engine": "danqing-image",
+      "type": "lora",
+      "base_model": "flux1-dev",
+      "parameters": {
+        "lora_scale": {
+          "default": 0.8,
+          "min": 0.0,
+          "max": 2.0,
+          "step": 0.1,
+          "label": "LoRA强度",
+          "type": "float"
+        }
+      },
+      "recommended": false,
+      "source": "modelscope",
+      "nsfw": false,
+      "versions": {
+        "fp16": {
+          "name": "FP16",
+          "size": "200MB",
+          "default": true,
+          "repo_id": "LiblibAI/FLUX.1-dev-LoRA-AntiBlur",
+          "local_path": "models/Lora/flux1-dev-lora-antiblur-fp16",
+          "source_type": "full"
+        }
+      },
+      "name": {
+        "zh": "FLUX.1-dev AntiBlur LoRA",
+        "en": "FLUX.1-dev AntiBlur LoRA"
+      },
+      "description": {
+        "zh": "LiblibAI 去糊/清晰增强 LoRA，基于 FLUX.1-dev（魔搭 LiblibAI/FLUX.1-dev-LoRA-AntiBlur）",
+        "en": "LiblibAI anti-blur / sharpness LoRA for FLUX.1-dev (ModelScope LiblibAI/FLUX.1-dev-LoRA-AntiBlur)"
+      },
+      "media": "image",
+      "actions": {},
+      "family": "flux1",
+      "commercial_use_allowed": false
+    },
+    "flux1-dev-lora-ghibli": {
+      "category": "loras",
+      "engine": "danqing-image",
+      "type": "lora",
+      "base_model": "flux1-dev",
+      "parameters": {
+        "lora_scale": {
+          "default": 0.8,
+          "min": 0.0,
+          "max": 2.0,
+          "step": 0.1,
+          "label": "LoRA强度",
+          "type": "float"
+        }
+      },
+      "recommended": false,
+      "source": "modelscope",
+      "nsfw": false,
+      "versions": {
+        "fp16": {
+          "name": "FP16",
+          "size": "200MB",
+          "default": true,
+          "repo_id": "InstantX/FLUX.1-dev-LoRA-Ghibli",
+          "local_path": "models/Lora/flux1-dev-lora-ghibli-fp16",
+          "source_type": "full"
+        }
+      },
+      "name": {
+        "zh": "FLUX.1-dev 吉卜力风格 LoRA",
+        "en": "FLUX.1-dev Ghibli Style LoRA"
+      },
+      "description": {
+        "zh": "InstantX 吉卜力动画风格 LoRA，基于 FLUX.1-dev（魔搭 InstantX/FLUX.1-dev-LoRA-Ghibli）",
+        "en": "InstantX Ghibli-style LoRA for FLUX.1-dev (ModelScope InstantX/FLUX.1-dev-LoRA-Ghibli)"
+      },
+      "media": "image",
+      "actions": {},
+      "family": "flux1",
+      "commercial_use_allowed": false
+    },
+    "flux1-dev-lora-makoto-shinkai": {
+      "category": "loras",
+      "engine": "danqing-image",
+      "type": "lora",
+      "base_model": "flux1-dev",
+      "parameters": {
+        "lora_scale": {
+          "default": 0.8,
+          "min": 0.0,
+          "max": 2.0,
+          "step": 0.1,
+          "label": "LoRA强度",
+          "type": "float"
+        }
+      },
+      "recommended": false,
+      "source": "modelscope",
+      "nsfw": false,
+      "versions": {
+        "fp16": {
+          "name": "FP16",
+          "size": "200MB",
+          "default": true,
+          "repo_id": "InstantX/FLUX.1-dev-LoRA-Makoto-Shinkai",
+          "local_path": "models/Lora/flux1-dev-lora-makoto-shinkai-fp16",
+          "source_type": "full"
+        }
+      },
+      "name": {
+        "zh": "FLUX.1-dev 新海诚风 LoRA",
+        "en": "FLUX.1-dev Makoto Shinkai Style LoRA"
+      },
+      "description": {
+        "zh": "InstantX 新海诚画风 LoRA，基于 FLUX.1-dev（魔搭 InstantX/FLUX.1-dev-LoRA-Makoto-Shinkai）",
+        "en": "InstantX Makoto Shinkai–style LoRA for FLUX.1-dev (ModelScope InstantX/FLUX.1-dev-LoRA-Makoto-Shinkai)"
+      },
+      "media": "image",
+      "actions": {},
+      "family": "flux1",
+      "commercial_use_allowed": false
+    },
+    "flux1-canny-dev-lora": {
+      "category": "loras",
+      "engine": "danqing-image",
+      "type": "lora",
+      "base_model": "flux1-dev",
+      "parameters": {
+        "lora_scale": {
+          "default": 0.8,
+          "min": 0.0,
+          "max": 2.0,
+          "step": 0.1,
+          "label": "LoRA强度",
+          "type": "float"
+        }
+      },
+      "recommended": false,
+      "source": "modelscope",
+      "nsfw": false,
+      "versions": {
+        "fp16": {
+          "name": "FP16",
+          "size": "250MB",
+          "default": true,
+          "repo_id": "AI-ModelScope/FLUX.1-Canny-dev-lora",
+          "local_path": "models/Lora/flux1-canny-dev-lora-fp16",
+          "source_type": "full"
+        }
+      },
+      "name": {
+        "zh": "FLUX.1-dev Canny LoRA",
+        "en": "FLUX.1-dev Canny LoRA"
+      },
+      "description": {
+        "zh": "官方 Canny 控制相关 LoRA 权重（魔搭 AI-ModelScope/FLUX.1-Canny-dev-lora），需配合边缘/Canny 条件流程",
+        "en": "BFL Canny-related LoRA weights (ModelScope AI-ModelScope/FLUX.1-Canny-dev-lora); use with edge/Canny conditioning"
+      },
+      "media": "image",
+      "actions": {},
+      "family": "flux1",
+      "commercial_use_allowed": false
+    },
+    "flux1-depth-dev-lora": {
+      "category": "loras",
+      "engine": "danqing-image",
+      "type": "lora",
+      "base_model": "flux1-dev",
+      "parameters": {
+        "lora_scale": {
+          "default": 0.8,
+          "min": 0.0,
+          "max": 2.0,
+          "step": 0.1,
+          "label": "LoRA强度",
+          "type": "float"
+        }
+      },
+      "recommended": false,
+      "source": "modelscope",
+      "nsfw": false,
+      "versions": {
+        "fp16": {
+          "name": "FP16",
+          "size": "300MB",
+          "default": true,
+          "repo_id": "black-forest-labs/FLUX.1-Depth-dev-lora",
+          "local_path": "models/Lora/flux1-depth-dev-lora-fp16",
+          "source_type": "full"
+        }
+      },
+      "name": {
+        "zh": "FLUX.1-dev Depth LoRA",
+        "en": "FLUX.1-dev Depth LoRA"
+      },
+      "description": {
+        "zh": "官方 Depth 控制 LoRA（魔搭镜像 black-forest-labs/FLUX.1-Depth-dev-lora），需配合深度图条件；许可以仓库为准",
+        "en": "BFL Depth LoRA (ModelScope mirror black-forest-labs/FLUX.1-Depth-dev-lora); requires depth conditioning; license per upstream"
+      },
+      "media": "image",
+      "actions": {},
+      "family": "flux1",
+      "commercial_use_allowed": false
+    },
+    "flux-super-realism-lora": {
+      "category": "loras",
+      "engine": "danqing-image",
+      "type": "lora",
+      "base_model": "flux1-dev",
+      "parameters": {
+        "lora_scale": {
+          "default": 0.8,
+          "min": 0.0,
+          "max": 2.0,
+          "step": 0.1,
+          "label": "LoRA强度",
+          "type": "float"
+        }
+      },
+      "recommended": false,
+      "source": "huggingface",
+      "nsfw": false,
+      "versions": {
+        "fp16": {
+          "name": "FP16",
+          "size": "650MB",
+          "default": true,
+          "repo_id": "strangerzonehf/Flux-Super-Realism-LoRA",
+          "local_path": "models/Lora/flux-super-realism-lora-fp16",
+          "source_type": "full"
+        }
+      },
+      "name": {
+        "zh": "Flux Super Realism LoRA",
+        "en": "Flux Super Realism LoRA"
+      },
+      "description": {
+        "zh": "高写实人像与细节增强（HF strangerzonehf/Flux-Super-Realism-LoRA），触发词可参考仓库说明",
+        "en": "Photorealism boost (HF strangerzonehf/Flux-Super-Realism-LoRA); see repo for trigger words"
+      },
+      "media": "image",
+      "actions": {},
+      "family": "flux1",
+      "commercial_use_allowed": true
+    },
+    "flux1-schnell-pvc-style-lora": {
+      "category": "loras",
+      "engine": "danqing-image",
+      "type": "lora",
+      "base_model": "flux1-schnell",
+      "parameters": {
+        "lora_scale": {
+          "default": 0.85,
+          "min": 0.0,
+          "max": 2.0,
+          "step": 0.1,
+          "label": "LoRA强度",
+          "type": "float"
+        }
+      },
+      "recommended": false,
+      "source": "huggingface",
+      "nsfw": false,
+      "versions": {
+        "fp16": {
+          "name": "FP16",
+          "size": "150MB",
+          "default": true,
+          "repo_id": "p1atdev/flux.1-schnell-pvc-style-lora",
+          "local_path": "models/Lora/flux1-schnell-pvc-style-lora-fp16",
+          "source_type": "full"
+        }
+      },
+      "name": {
+        "zh": "FLUX.1 Schnell PVC 手办风 LoRA",
+        "en": "FLUX.1 Schnell PVC Figure Style LoRA"
+      },
+      "description": {
+        "zh": "Schnell 用 PVC/手办风格 LoRA（HF p1atdev/flux.1-schnell-pvc-style-lora）",
+        "en": "PVC figure style LoRA for Schnell (HF p1atdev/flux.1-schnell-pvc-style-lora)"
+      },
+      "media": "image",
+      "actions": {},
+      "family": "flux1",
+      "commercial_use_allowed": true
+    },
+    "flux2-klein-ac-style-lora": {
+      "category": "loras",
+      "engine": "danqing-image",
+      "type": "lora",
+      "base_model": "flux2-klein-9b",
+      "parameters": {
+        "lora_scale": {
+          "default": 0.8,
+          "min": 0.0,
+          "max": 2.0,
+          "step": 0.1,
+          "label": "LoRA强度",
+          "type": "float"
+        }
+      },
+      "recommended": false,
+      "source": "modelscope",
+      "nsfw": false,
+      "versions": {
+        "fp16": {
+          "name": "FP16",
+          "size": "200MB",
+          "default": true,
+          "repo_id": "AI-ModelScope/FLUX.2-klein-AC-Style-LORA",
+          "local_path": "models/Lora/flux2-klein-ac-style-lora-fp16",
+          "source_type": "full"
+        }
+      },
+      "name": {
+        "zh": "FLUX.2 Klein AC 风格 LoRA",
+        "en": "FLUX.2 Klein AC Style LoRA"
+      },
+      "description": {
+        "zh": "Klein 用 AC 风格 LoRA（魔搭 AI-ModelScope/FLUX.2-klein-AC-Style-LORA）；默认绑定 9B，若作者标明仅 4B 请改 base 或勿混用",
+        "en": "AC-style LoRA for FLUX.2 Klein (ModelScope AI-ModelScope/FLUX.2-klein-AC-Style-LORA); defaults to 9B—verify upstream if 4B-only"
+      },
+      "media": "image",
+      "actions": {},
+      "family": "flux2",
+      "commercial_use_allowed": true
+    },
+    "flux2-klein-4b-spritesheet-lora": {
+      "category": "loras",
+      "engine": "danqing-image",
+      "type": "lora",
+      "base_model": "flux2-klein-4b",
+      "parameters": {
+        "lora_scale": {
+          "default": 0.8,
+          "min": 0.0,
+          "max": 2.0,
+          "step": 0.1,
+          "label": "LoRA强度",
+          "type": "float"
+        }
+      },
+      "recommended": false,
+      "source": "modelscope",
+      "nsfw": false,
+      "versions": {
+        "fp16": {
+          "name": "FP16",
+          "size": "200MB",
+          "default": true,
+          "repo_id": "fal/flux-2-klein-4b-spritesheet-lora",
+          "local_path": "models/Lora/flux2-klein-4b-spritesheet-lora-fp16",
+          "source_type": "full"
+        }
+      },
+      "name": {
+        "zh": "FLUX.2 Klein 4B 精灵表 LoRA",
+        "en": "FLUX.2 Klein 4B Spritesheet LoRA"
+      },
+      "description": {
+        "zh": "Klein 4B 精灵表/序列帧向 LoRA（魔搭 fal/flux-2-klein-4b-spritesheet-lora）",
+        "en": "Spritesheet-oriented LoRA for Klein 4B (ModelScope fal/flux-2-klein-4b-spritesheet-lora)"
+      },
+      "media": "image",
+      "actions": {},
+      "family": "flux2",
+      "commercial_use_allowed": true
+    },
+    "flux2-klein-4b-zoom-lora": {
+      "category": "loras",
+      "engine": "danqing-image",
+      "type": "lora",
+      "base_model": "flux2-klein-4b",
+      "parameters": {
+        "lora_scale": {
+          "default": 0.8,
+          "min": 0.0,
+          "max": 2.0,
+          "step": 0.1,
+          "label": "LoRA强度",
+          "type": "float"
+        }
+      },
+      "recommended": false,
+      "source": "modelscope",
+      "nsfw": false,
+      "versions": {
+        "fp16": {
+          "name": "FP16",
+          "size": "200MB",
+          "default": true,
+          "repo_id": "fal/flux-2-klein-4B-zoom-lora",
+          "local_path": "models/Lora/flux2-klein-4b-zoom-lora-fp16",
+          "source_type": "full"
+        }
+      },
+      "name": {
+        "zh": "FLUX.2 Klein 4B 变焦 LoRA",
+        "en": "FLUX.2 Klein 4B Zoom LoRA"
+      },
+      "description": {
+        "zh": "Klein 4B 变焦效果向 LoRA（魔搭 fal/flux-2-klein-4B-zoom-lora）",
+        "en": "Zoom-effect LoRA for Klein 4B (ModelScope fal/flux-2-klein-4B-zoom-lora)"
+      },
+      "media": "image",
+      "actions": {},
+      "family": "flux2",
+      "commercial_use_allowed": true
+    },
+    "flux2-klein-4b-outpaint-lora": {
+      "category": "loras",
+      "engine": "danqing-image",
+      "type": "lora",
+      "base_model": "flux2-klein-4b",
+      "parameters": {
+        "lora_scale": {
+          "default": 0.8,
+          "min": 0.0,
+          "max": 2.0,
+          "step": 0.1,
+          "label": "LoRA强度",
+          "type": "float"
+        }
+      },
+      "recommended": false,
+      "source": "modelscope",
+      "nsfw": false,
+      "versions": {
+        "fp16": {
+          "name": "FP16",
+          "size": "200MB",
+          "default": true,
+          "repo_id": "RealmSky/flux-2-klein-4B-outpaint-lora",
+          "local_path": "models/Lora/flux2-klein-4b-outpaint-lora-fp16",
+          "source_type": "full"
+        }
+      },
+      "name": {
+        "zh": "FLUX.2 Klein 4B 外扩 LoRA",
+        "en": "FLUX.2 Klein 4B Outpaint LoRA"
+      },
+      "description": {
+        "zh": "Klein 4B 画面外扩向 LoRA（魔搭 RealmSky/flux-2-klein-4B-outpaint-lora）",
+        "en": "Outpainting LoRA for Klein 4B (ModelScope RealmSky/flux-2-klein-4B-outpaint-lora)"
+      },
+      "media": "image",
+      "actions": {},
+      "family": "flux2",
+      "commercial_use_allowed": true
+    },
+    "flux2-klein-4b-object-remove-lora": {
+      "category": "loras",
+      "engine": "danqing-image",
+      "type": "lora",
+      "base_model": "flux2-klein-4b",
+      "parameters": {
+        "lora_scale": {
+          "default": 0.8,
+          "min": 0.0,
+          "max": 2.0,
+          "step": 0.1,
+          "label": "LoRA强度",
+          "type": "float"
+        }
+      },
+      "recommended": false,
+      "source": "modelscope",
+      "nsfw": false,
+      "versions": {
+        "fp16": {
+          "name": "FP16",
+          "size": "200MB",
+          "default": true,
+          "repo_id": "fal/flux-2-klein-4B-object-remove-lora",
+          "local_path": "models/Lora/flux2-klein-4b-object-remove-lora-fp16",
+          "source_type": "full"
+        }
+      },
+      "name": {
+        "zh": "FLUX.2 Klein 4B 物体移除 LoRA",
+        "en": "FLUX.2 Klein 4B Object Remove LoRA"
+      },
+      "description": {
+        "zh": "Klein 4B 物体移除向 LoRA（魔搭 fal/flux-2-klein-4B-object-remove-lora）",
+        "en": "Object-removal LoRA for Klein 4B (ModelScope fal/flux-2-klein-4B-object-remove-lora)"
+      },
+      "media": "image",
+      "actions": {},
+      "family": "flux2",
+      "commercial_use_allowed": true
     },
     "wan2.2-i2v-high-noise-lora": {
       "category": "loras",
@@ -2168,7 +3117,7 @@
         }
       },
       "recommended": false,
-      "source": "huggingface",
+      "source": "modelscope",
       "versions": {
         "fp16": {
           "name": "FP16",
@@ -2189,7 +3138,8 @@
       },
       "media": "video",
       "actions": {},
-      "family": "wan"
+      "family": "wan",
+      "commercial_use_allowed": true
     },
     "lightx2v-i2v-distill": {
       "category": "loras",
@@ -2208,7 +3158,7 @@
         }
       },
       "recommended": false,
-      "source": "huggingface",
+      "source": "modelscope",
       "versions": {
         "bf16": {
           "name": "BF16",
@@ -2229,7 +3179,8 @@
       },
       "media": "video",
       "actions": {},
-      "family": "ltx"
+      "family": "wan",
+      "commercial_use_allowed": null
     },
     "wan2.2-inp-low-noise": {
       "category": "loras",
@@ -2271,7 +3222,8 @@
       },
       "media": "video",
       "actions": {},
-      "family": "wan"
+      "family": "wan",
+      "commercial_use_allowed": null
     },
     "wan2.2-inp-high-noise": {
       "category": "loras",
@@ -2313,7 +3265,90 @@
       },
       "media": "video",
       "actions": {},
-      "family": "wan"
+      "family": "wan",
+      "commercial_use_allowed": null
+    },
+    "starface-z-image-ms": {
+      "category": "loras",
+      "engine": "danqing-image",
+      "type": "lora",
+      "base_model": "z-image",
+      "parameters": {
+        "lora_scale": {
+          "default": 0.8,
+          "min": 0.0,
+          "max": 2.0,
+          "step": 0.1,
+          "label": "LoRA强度",
+          "type": "float"
+        }
+      },
+      "recommended": false,
+      "source": "modelscope",
+      "nsfw": false,
+      "versions": {
+        "fp16": {
+          "name": "FP16",
+          "size": "152MB",
+          "default": true,
+          "repo_id": "SecretDongGe/StarFace",
+          "local_path": "models/Lora/starface-z-image-ms-fp16",
+          "source_type": "full"
+        }
+      },
+      "name": {
+        "zh": "StarFace（Z-Image，魔搭）",
+        "en": "StarFace (Z-Image, ModelScope)"
+      },
+      "description": {
+        "zh": "明星脸 / 中国高颜值气质人像风格 LoRA，基于通义 Z-Image 训练；仓库内含 StarFace1.0-Z-Image.safetensors；魔搭 SecretDongGe/StarFace；许可 Apache-2.0",
+        "en": "Celebrity-style Chinese portrait LoRA trained on Tongyi Z-Image; repo ships StarFace1.0-Z-Image.safetensors; ModelScope SecretDongGe/StarFace; Apache-2.0 license"
+      },
+      "media": "image",
+      "actions": {},
+      "family": "z_image",
+      "commercial_use_allowed": true
+    },
+    "starface-qwen-image-2512-ms": {
+      "category": "loras",
+      "engine": "danqing-image",
+      "type": "lora",
+      "base_model": "qwen-image",
+      "parameters": {
+        "lora_scale": {
+          "default": 0.8,
+          "min": 0.0,
+          "max": 2.0,
+          "step": 0.1,
+          "label": "LoRA强度",
+          "type": "float"
+        }
+      },
+      "recommended": false,
+      "source": "modelscope",
+      "nsfw": false,
+      "versions": {
+        "fp16": {
+          "name": "FP16",
+          "size": "225MB",
+          "default": true,
+          "repo_id": "SecretDongGe/StarFace-Qwen-Image-2512",
+          "local_path": "models/Lora/starface-qwen-image-2512-ms-fp16",
+          "source_type": "full"
+        }
+      },
+      "name": {
+        "zh": "StarFace（Qwen Image，魔搭）",
+        "en": "StarFace (Qwen Image, ModelScope)"
+      },
+      "description": {
+        "zh": "明星脸 / 中国高颜值气质人像风格 LoRA，基于通义 Qwen Image 训练；仓库内含 StarFace1.0-Qwen-Image.safetensors；魔搭 SecretDongGe/StarFace-Qwen-Image-2512；许可 Apache-2.0；引擎内合并仅 MLX",
+        "en": "Celebrity-style Chinese portrait LoRA for Qwen Image; ships StarFace1.0-Qwen-Image.safetensors; ModelScope SecretDongGe/StarFace-Qwen-Image-2512; Apache-2.0; in-engine merge is MLX-only"
+      },
+      "media": "image",
+      "actions": {},
+      "family": "qwen_image",
+      "commercial_use_allowed": true
     },
     "ltx-2.3-distilled": {
       "category": "video_models",
@@ -2372,10 +3407,16 @@
           "type": "int"
         },
         "seed_support": true,
-        "negative_prompt_support": false
+        "negative_prompt_support": false,
+        "vae_scale": 32,
+        "supports_guidance": false,
+        "default_scheduler": "flow_match_euler"
       },
       "recommended": true,
-      "source": "huggingface",
+      "source": "modelscope",
+      "backends": [
+        "mlx"
+      ],
       "versions": {
         "original": {
           "name": "原始权重",
@@ -2386,13 +3427,31 @@
           "source_type": "full"
         },
         "mlx": {
-          "name": "MLX 转换版",
-          "size": "19GB",
+          "name": "MLX int8 (HF, q8)",
+          "size": "21GB",
           "default": false,
+          "source": "huggingface",
+          "repo_id": "dgrauet/ltx-2.3-mlx-q8",
           "local_path": "models/Video/ltx-2.3-distilled-mlx",
-          "source_type": "derived",
-          "from_version": "original",
-          "convert_script": "mlx_video.ltx_2.convert"
+          "source_type": "full"
+        },
+        "mlx-bf16": {
+          "name": "MLX bf16 (HF)",
+          "size": "42GB",
+          "default": false,
+          "source": "huggingface",
+          "repo_id": "dgrauet/ltx-2.3-mlx",
+          "local_path": "models/Video/ltx-2.3-distilled-mlx-bf16",
+          "source_type": "full"
+        },
+        "mlx-q4": {
+          "name": "MLX int4 (HF, q4)",
+          "size": "12GB",
+          "default": false,
+          "source": "huggingface",
+          "repo_id": "dgrauet/ltx-2.3-mlx-q4",
+          "local_path": "models/Video/ltx-2.3-distilled-mlx-q4",
+          "source_type": "full"
         }
       },
       "name": {
@@ -2408,7 +3467,8 @@
         "create": {},
         "animate": {}
       },
-      "family": "ltx"
+      "family": "ltx",
+      "commercial_use_allowed": null
     },
     "ltx-2.3-dev": {
       "category": "video_models",
@@ -2465,10 +3525,16 @@
           "type": "int"
         },
         "seed_support": true,
-        "negative_prompt_support": true
+        "negative_prompt_support": true,
+        "vae_scale": 32,
+        "supports_guidance": true,
+        "default_scheduler": "flow_match_euler"
       },
       "recommended": false,
-      "source": "huggingface",
+      "source": "modelscope",
+      "backends": [
+        "mlx"
+      ],
       "versions": {
         "original": {
           "name": "原始权重",
@@ -2479,13 +3545,31 @@
           "source_type": "full"
         },
         "mlx": {
-          "name": "MLX 转换版",
-          "size": "19GB",
+          "name": "MLX int8 (HF, q8)",
+          "size": "21GB",
           "default": false,
+          "source": "huggingface",
+          "repo_id": "dgrauet/ltx-2.3-mlx-q8",
           "local_path": "models/Video/ltx-2.3-dev-mlx",
-          "source_type": "derived",
-          "from_version": "original",
-          "convert_script": "mlx_video.ltx_2.convert"
+          "source_type": "full"
+        },
+        "mlx-bf16": {
+          "name": "MLX bf16 (HF)",
+          "size": "42GB",
+          "default": false,
+          "source": "huggingface",
+          "repo_id": "dgrauet/ltx-2.3-mlx",
+          "local_path": "models/Video/ltx-2.3-dev-mlx-bf16",
+          "source_type": "full"
+        },
+        "mlx-q4": {
+          "name": "MLX int4 (HF, q4)",
+          "size": "12GB",
+          "default": false,
+          "source": "huggingface",
+          "repo_id": "dgrauet/ltx-2.3-mlx-q4",
+          "local_path": "models/Video/ltx-2.3-dev-mlx-q4",
+          "source_type": "full"
         }
       },
       "name": {
@@ -2501,7 +3585,8 @@
         "create": {},
         "animate": {}
       },
-      "family": "ltx"
+      "family": "ltx",
+      "commercial_use_allowed": null
     },
     "wan-2.2-t2v-14b": {
       "category": "video_models",
@@ -2569,15 +3654,6 @@
           "repo_id": "Wan-AI/Wan2.2-T2V-14B",
           "local_path": "models/Video/wan-2.2-t2v-14b-original",
           "source_type": "full"
-        },
-        "mlx": {
-          "name": "MLX 转换版",
-          "size": "28GB",
-          "default": false,
-          "local_path": "models/Video/wan-2.2-t2v-14b-mlx",
-          "source_type": "derived",
-          "from_version": "original",
-          "convert_script": "mlx_video.wan_2.convert"
         }
       },
       "name": {
@@ -2592,7 +3668,8 @@
       "actions": {
         "create": {}
       },
-      "family": "wan"
+      "family": "wan",
+      "commercial_use_allowed": null
     },
     "wan-2.2-i2v-14b": {
       "category": "video_models",
@@ -2669,15 +3746,6 @@
           "repo_id": "Wan-AI/Wan2.2-I2V-14B",
           "local_path": "models/Video/wan-2.2-i2v-14b-original",
           "source_type": "full"
-        },
-        "mlx": {
-          "name": "MLX 转换版",
-          "size": "28GB",
-          "default": false,
-          "local_path": "models/Video/wan-2.2-i2v-14b-mlx",
-          "source_type": "derived",
-          "from_version": "original",
-          "convert_script": "mlx_video.wan_2.convert"
         }
       },
       "name": {
@@ -2692,7 +3760,8 @@
       "actions": {
         "animate": {}
       },
-      "family": "wan"
+      "family": "wan",
+      "commercial_use_allowed": null
     },
     "wan-2.2-ti2v-5b": {
       "category": "video_models",
@@ -2760,15 +3829,6 @@
           "repo_id": "Wan-AI/Wan2.2-TI2V-5B",
           "local_path": "models/Video/wan-2.2-ti2v-5b-original",
           "source_type": "full"
-        },
-        "mlx": {
-          "name": "MLX 转换版",
-          "size": "10GB",
-          "default": false,
-          "local_path": "models/Video/wan-2.2-ti2v-5b-mlx",
-          "source_type": "derived",
-          "from_version": "original",
-          "convert_script": "mlx_video.wan_2.convert"
         }
       },
       "name": {
@@ -2784,7 +3844,8 @@
         "create": {},
         "animate": {}
       },
-      "family": "wan"
+      "family": "wan",
+      "commercial_use_allowed": true
     },
     "cogvideox-5b": {
       "category": "video_models",
@@ -2843,15 +3904,13 @@
       },
       "recommended": true,
       "source": "modelscope",
-      "repo_id": "ZhipuAI/CogVideoX-5b",
-      "local_path": "models/Base/cogvideox-5b-fp16",
       "versions": {
         "fp16": {
           "name": "FP16 完整版",
           "size": "18GB",
           "default": true,
           "repo_id": "ZhipuAI/CogVideoX-5b",
-          "local_path": "models/Base/cogvideox-5b-fp16",
+          "local_path": "models/Video/cogvideox-5b-fp16",
           "source_type": "full"
         }
       },
@@ -2867,66 +3926,82 @@
       "actions": {
         "create": {}
       },
-      "family": "cogvideox"
+      "family": "cogvideox",
+      "commercial_use_allowed": true,
+      "backends": [
+        "mlx"
+      ]
     },
-    "longcat-image": {
-      "name": {
-        "zh": "LongCat-Image",
-        "en": "LongCat-Image"
-      },
-      "description": {
-        "zh": "美团 LongCat-Image — MM-DiT + Qwen2.5-VL 文生图模型",
-        "en": "Meituan LongCat-Image — MM-DiT + Qwen2.5-VL text-to-image"
-      },
-      "family": "longcat",
-      "media": "image",
-      "engine": "danqing-image",
+    "ace-step-xl-sft": {
+      "category": "music_models",
+      "engine": "danqing-audio",
+      "media": "audio",
+      "family": "ace_step",
+      "backends": [
+        "mlx",
+        "cuda"
+      ],
       "actions": {
         "create": {}
       },
-      "type": "diffusion",
-      "category": "base_models",
       "parameters": {
+        "duration": {
+          "type": "int",
+          "default": 30,
+          "min": 10,
+          "max": 600
+        },
         "steps": {
           "type": "int",
-          "default": 8,
+          "default": 50,
           "min": 1,
-          "max": 50
+          "max": 100
         },
         "guidance": {
           "type": "float",
-          "default": 3.5,
-          "min": 0.0,
+          "default": 3.0,
+          "min": 1.0,
           "max": 20.0
         },
-        "size": {
-          "type": "enum",
-          "values": [
-            "512x512",
-            "768x768",
-            "1024x1024"
-          ],
-          "default": "1024x1024"
-        },
-        "scheduler": {
-          "type": "str",
-          "default": "flow_match_euler"
-        },
-        "use_empirical_mu": false,
-        "scheduler_mu": 3.0
+        "supports_lyrics": true,
+        "supports_instrumental": true,
+        "supports_vocal_language": true,
+        "supports_bpm": true,
+        "supports_key_scale": true,
+        "supports_time_signature": true,
+        "audio_formats": [
+          "flac",
+          "mp3",
+          "wav",
+          "opus",
+          "aac"
+        ]
       },
+      "recommended": true,
+      "source": "modelscope",
       "versions": {
-        "fp16": {
-          "name": "FP16",
-          "size": "27GB",
+        "xl-sft": {
+          "name": "XL SFT (4B)",
+          "size": "20GB",
           "default": true,
-          "repo_id": "meituan-longcat/LongCat-Image",
-          "local_path": "models/Base/longcat-image-fp16",
-          "source_type": "full"
+          "repo_id": "ACE-Step/Ace-Step1.5",
+          "local_path": "models/acestep-v15-xl-sft",
+          "source_type": "full",
+          "companion_repo_id": "Qwen/Qwen3-Embedding-0.6B",
+          "companion_local_path": "models/Qwen3-Embedding-0.6B",
+          "companion_name": "Qwen3 Embedding 0.6B",
+          "companion_size": "2.4GB"
         }
       },
-      "source": "modelscope",
-      "recommended": {}
+      "name": {
+        "zh": "ACE-Step 音乐 (4B)",
+        "en": "ACE-Step Music (4B)"
+      },
+      "description": {
+        "zh": "ACE-Step-1.5 XL SFT — 4B DiT 解码器，高质量音乐生成，支持歌词/ BPM / 调式 / 拍号控制",
+        "en": "ACE-Step-1.5 XL SFT — 4B DiT decoder, high-quality music generation with lyrics/BPM/key/time signature control"
+      },
+      "commercial_use_allowed": null
     }
   }
 }

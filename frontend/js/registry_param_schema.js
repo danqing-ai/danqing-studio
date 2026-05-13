@@ -1,5 +1,5 @@
 /**
- * models_registry.json parameters — 与 backend/core/registry_format.typed_parameters 对齐的推断与工具。
+ * models_registry.json parameters — inference and utilities aligned with backend/core/registry_format.typed_parameters.
  */
 (function (w) {
     function inferType(spec, key) {
@@ -40,6 +40,9 @@
         'steps',
         'guidance',
         'scheduler',
+        'scheduler_sigma_schedule',
+        'enable_cfg_renorm',
+        'cfg_renorm_min',
         'strength',
         'controlnet_strength',
         'redux_strength',

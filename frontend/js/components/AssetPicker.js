@@ -1,11 +1,11 @@
 /**
- * Plan C4：从上传、最近图库条、资产库选择 `asset:{id}`，统一走 /api/assets。
+ * Plan C4: pick `asset:{id}` from upload, recent gallery items, and asset library, all via /api/assets.
  */
 const AssetPicker = {
     name: 'AssetPicker',
     props: {
         recentGallery: { type: Array, default: () => [] },
-        /** 过滤最近条与资产库列表：`image` | `video` */
+        /** Filter recent items and asset library list: `image` | `video` */
         acceptKind: { type: String, default: 'image' },
     },
     emits: ['pick'],

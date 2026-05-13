@@ -20,8 +20,8 @@ from .embeddings import (
 from .weights import (
     parse_size_gb, load_safetensors, save_safetensors,
     LoRAConfig, load_lora_weights, inject_lora, quantize_weights,
-    remap_vae_weights,
 )
+from .vae import remap_vae_weights
 from .cache import ModelCache
 from backend.core.contracts import CancelToken
 
@@ -49,6 +49,6 @@ __all__ = [
     "ModelCache",
     # Pipeline
     "DenoisingPipeline", "CancelToken", "GenerationCancelled",
-    # Text Encoders
-    "T5Encoder", "CLIPEncoder", "ZImageTextEncoder", "Flux2TextEncoder",
+    # Text Encoders (family-specific encoders live under ``engine.families.*``)
+    "T5Encoder", "CLIPEncoder",
 ]

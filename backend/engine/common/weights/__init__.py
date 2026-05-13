@@ -1,12 +1,13 @@
 """权重工具 — safetensors 加载 / LoRA 注入 / 量化 / VAE 映射。模型专属映射在 models/image/_*_weights.py。"""
 from __future__ import annotations
 
+import importlib
 import json
 import re
 from pathlib import Path
 from typing import Any, Optional
 
-from backend.engine.common.weights._vae import remap_vae_weights
+from backend.engine.common.vae.weight_remap import remap_vae_weights
 
 
 def parse_size_gb(size_str: str) -> float:
@@ -22,7 +23,7 @@ def load_safetensors(path: str, ctx: Any = None) -> dict:
     if ctx is not None:
         return ctx.load_weights(path)
     try:
-        import mlx.core as mx
+        mx = importlib.import_module("mlx.core")
         return dict(mx.load(path))
     except ImportError:
         pass
@@ -38,7 +39,7 @@ def save_safetensors(weights: dict, path: str, ctx: Any = None) -> None:
         ctx.save_weights(weights, path)
         return
     try:
-        import mlx.core as mx
+        mx = importlib.import_module("mlx.core")
         mx.save_safetensors(path, weights)
         return
     except ImportError:
@@ -120,7 +121,7 @@ def quantize_weights(weights: dict, bits: int = 4,
             quantized[key] = tensor
             continue
         groups = (tensor.shape[-1] + group_size - 1) // group_size
-        import mlx.core as mx
+        mx = importlib.import_module("mlx.core")
         if isinstance(tensor, mx.array):
             flat = tensor.reshape(-1, tensor.shape[-1])
         else:

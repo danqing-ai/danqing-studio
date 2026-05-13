@@ -26,7 +26,11 @@
     }
 
     function imageModelRow(config) {
-        return config && config.media === 'image';
+        return (
+            config &&
+            config.media === 'image' &&
+            config.category !== 'loras'
+        );
     }
 
     function videoModelRow(config) {
@@ -41,6 +45,18 @@
         return hasAction(actions, 'create');
     }
 
+    function audioModelRow(config) {
+        return config && config.media === 'audio';
+    }
+
+    function audioSupportsCreate(actions) {
+        return hasAction(actions, 'create');
+    }
+
+    function audioSupportsCover(actions) {
+        return hasAction(actions, 'cover');
+    }
+
     w.RegistryActions = {
         hasAction: hasAction,
         imageSupportsCreate: imageSupportsCreate,
@@ -49,6 +65,9 @@
         imageModelRow: imageModelRow,
         videoModelRow: videoModelRow,
         videoSupportsCreate: videoSupportsCreate,
-        videoSupportsAnimate: videoSupportsAnimate
+        videoSupportsAnimate: videoSupportsAnimate,
+        audioModelRow: audioModelRow,
+        audioSupportsCreate: audioSupportsCreate,
+        audioSupportsCover: audioSupportsCover,
     };
 })(window);

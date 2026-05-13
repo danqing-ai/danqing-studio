@@ -1,0 +1,73 @@
+"""
+ACE-Step Transformer — 对外入口；MLX / CUDA 实现分别见 ``transformer_mlx`` / ``transformer_cuda``。
+"""
+from __future__ import annotations
+
+from typing import Any, Optional, Tuple
+
+from backend.engine.common._base import TransformerBase
+
+
+class AceStepTransformer(TransformerBase):
+    """ACE-Step DiT decoder — dual-backend dispatcher via RuntimeContext.
+
+    Constructed by ``music_pipeline`` with the current ``RuntimeContext``
+    so that the appropriate MLX or CUDA implementation is selected.
+    """
+
+    def __init__(self, ctx: Any, **config: Any):
+        super().__init__()
+        self._ctx = ctx
+        backend = getattr(ctx, "backend", "mlx")
+
+        if backend == "mlx":
+            from .transformer_mlx import AceStepDiTMLX
+            self._model = AceStepDiTMLX(**config)
+        elif backend == "cuda":
+            from .transformer_cuda import AceStepDiTCuda
+            self._model = AceStepDiTCuda(**config)
+        else:
+            raise RuntimeError(f"Unsupported backend: {backend}")
+
+        self._backend = backend
+        self._build_param_map()
+
+    # ------------------------------------------------------------------
+    # TransformerBase interface
+    # ------------------------------------------------------------------
+
+    def forward(
+        self,
+        hidden_states: Any,
+        timestep: Any,
+        timestep_r: Optional[Any] = None,
+        encoder_hidden_states: Optional[Any] = None,
+        context_latents: Optional[Any] = None,
+        cache: Any = None,
+        use_cache: bool = True,
+        **kwargs: Any,
+    ) -> Tuple[Any, Any]:
+        if timestep_r is None:
+            timestep_r = timestep
+        return self._model(
+            hidden_states=hidden_states,
+            timestep=timestep,
+            timestep_r=timestep_r,
+            encoder_hidden_states=encoder_hidden_states,
+            context_latents=context_latents,
+            cache=cache,
+            use_cache=use_cache,
+        )
+
+    def parameters(self):
+        return self._model.parameters()
+
+    def _build_param_map(self):
+        self._param_map = {}
+        for name, param in self._model.named_parameters():
+            self._param_map[name] = param
+        # Collect buffers if available (torch.nn.Module has named_buffers; mlx.nn.Module does not)
+        if hasattr(self._model, "named_buffers"):
+            for name, buf in self._model.named_buffers():
+                if name not in self._param_map:
+                    self._param_map[name] = buf

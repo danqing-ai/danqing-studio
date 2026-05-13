@@ -1,5 +1,5 @@
 """
-MLX Runtime — 参考 mflux 项目实现。
+MLX Runtime — Reference implementation.
 """
 from __future__ import annotations
 
@@ -23,6 +23,25 @@ _mlx_dtype_map = {
 }
 
 
+class _MLXModuleList(nn.Module):
+    """PyTorch-like ModuleList: registers children so ``parameters()`` includes nested modules."""
+
+    def __init__(self, layers: list):
+        super().__init__()
+        self._layers = list(layers)
+        for i, layer in enumerate(self._layers):
+            setattr(self, str(i), layer)
+
+    def __getitem__(self, idx: int):
+        return self._layers[idx]
+
+    def __len__(self) -> int:
+        return len(self._layers)
+
+    def __iter__(self):
+        return iter(self._layers)
+
+
 class MLXContext(RuntimeContext):
     backend = "mlx"
 
@@ -33,7 +52,7 @@ class MLXContext(RuntimeContext):
         os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
 
     # ------------------------------------------------------------------
-    # 模块工厂
+    # Module factories
     # ------------------------------------------------------------------
 
     def Linear(self, in_features: int, out_features: int, bias: bool = True) -> Any:
@@ -94,10 +113,13 @@ class MLXContext(RuntimeContext):
         return nn.Sequential(*layers)
 
     def ModuleList(self, layers: list) -> Any:
-        return nn.ModuleList(layers)
+        return _MLXModuleList(layers)
+
+    def Dropout(self, p: float = 0.0) -> Any:
+        return nn.Dropout(p)
 
     # ------------------------------------------------------------------
-    # 张量创建
+    # Tensor creation
     # ------------------------------------------------------------------
 
     def zeros(self, shape: tuple, dtype: Any = None) -> Any:
@@ -109,7 +131,9 @@ class MLXContext(RuntimeContext):
     def full(self, shape: tuple, value: float, dtype: Any = None) -> Any:
         return mx.full(shape, value, dtype=dtype or mx.float32)
 
-    def arange(self, start: int, end: int, step: int = 1, dtype: Any = None) -> Any:
+    def arange(self, start: int, end: int | None = None, step: int = 1, dtype: Any = None) -> Any:
+        if end is None:
+            return mx.arange(0, start, step, dtype=dtype or mx.int32)
         return mx.arange(start, end, step, dtype=dtype or mx.int32)
 
     def randn(self, shape: tuple, dtype: Any = None) -> Any:
@@ -134,7 +158,7 @@ class MLXContext(RuntimeContext):
         return mx.ones_like(x)
 
     # ------------------------------------------------------------------
-    # 张量操作
+    # Tensor operations
     # ------------------------------------------------------------------
 
     def concat(self, tensors: list, axis: int = 0) -> Any:
@@ -151,6 +175,9 @@ class MLXContext(RuntimeContext):
 
     def permute(self, x: Any, dims: tuple) -> Any:
         return mx.transpose(x, dims)
+
+    def flip(self, x: Any, axis: int = 0) -> Any:
+        return mx.flip(x, axis)
 
     def sin(self, x: Any) -> Any:
         return mx.sin(x)
@@ -221,8 +248,30 @@ class MLXContext(RuntimeContext):
     def repeat(self, x: Any, repeats: int, axis: int = 0) -> Any:
         return mx.repeat(x, repeats, axis=axis)
 
+    def linspace(self, start: float, end: float, steps: int, dtype: Any = None) -> Any:
+        return mx.linspace(start, end, steps, dtype=dtype or mx.float32)
+
+    def dequantize(self, weight: Any, scales: Any, biases: Any, group_size: int, bits: int) -> Any:
+        return mx.dequantize(weight, scales, biases, group_size, bits)
+
+    def is_tensor(self, x: Any) -> bool:
+        return isinstance(x, mx.array)
+
+    def is_integer_dtype_tensor(self, x: Any) -> bool:
+        if not isinstance(x, mx.array):
+            return False
+        return x.dtype in (mx.int32, mx.int64)
+
+    def cast(self, x: Any, dtype: Any) -> Any:
+        if isinstance(x, mx.array):
+            return x.astype(dtype)
+        return mx.array(x, dtype=dtype)
+
+    def to_numpy(self, x: Any) -> Any:
+        return x.tolist() if isinstance(x, mx.array) else x
+
     # ------------------------------------------------------------------
-    # 微分 / 评估 / 编译
+    # Differentiation / evaluation / compilation
     # ------------------------------------------------------------------
 
     def eval(self, *arrays) -> None:
@@ -232,7 +281,7 @@ class MLXContext(RuntimeContext):
         return mx.compile(fn, *args, **kwargs)
 
     # ------------------------------------------------------------------
-    # 高级操作
+    # Advanced operations
     # ------------------------------------------------------------------
 
     def attention(self, q: Any, k: Any, v: Any, scale: float | None = None,
@@ -253,7 +302,7 @@ class MLXContext(RuntimeContext):
         raise NotImplementedError(f"interpolate mode={mode} ndim={x.ndim} not supported for MLX")
 
     # ------------------------------------------------------------------
-    # 内存
+    # Memory
     # ------------------------------------------------------------------
 
     def clear_cache(self) -> None:
@@ -266,7 +315,7 @@ class MLXContext(RuntimeContext):
             return 0.0
 
     # ------------------------------------------------------------------
-    # 权重 I/O
+    # Weight I/O
     # ------------------------------------------------------------------
 
     def load_weights(self, path: str) -> dict:
@@ -276,7 +325,7 @@ class MLXContext(RuntimeContext):
         mx.save_safetensors(path, weights)
 
     # ------------------------------------------------------------------
-    # 数据类型
+    # Data types
     # ------------------------------------------------------------------
 
     def float32(self) -> Any:

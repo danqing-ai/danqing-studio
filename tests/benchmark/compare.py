@@ -114,3 +114,31 @@ def compare_images(our_path: str | Path, ref_path: str | Path) -> CompareResult:
         pixel_max_diff=compute_pixel_diff(our_arr, ref_arr)[0],
         pixel_mean_diff=compute_pixel_diff(our_arr, ref_arr)[1],
     )
+
+
+def compare_images_match_ref_size(our_path: str | Path, ref_path: str | Path) -> CompareResult:
+    """对比两张图；若 H×W 不一致，将 ``our`` 双线性缩放到 ``ref`` 尺寸后再算 PSNR/SSIM（视频抽帧常见）。"""
+    our_arr = load_as_array(our_path)
+    ref_arr = load_as_array(ref_path)
+    if our_arr.ndim != 3 or ref_arr.ndim != 3 or our_arr.shape[-1] != 3 or ref_arr.shape[-1] != 3:
+        return CompareResult(
+            our_hash=hash_image(our_path),
+            ref_hash=hash_image(ref_path),
+            match=False,
+        )
+    h0, w0 = our_arr.shape[0], our_arr.shape[1]
+    h1, w1 = ref_arr.shape[0], ref_arr.shape[1]
+    if (h0, w0) != (h1, w1):
+        pil = Image.fromarray((our_arr * 255.0).clip(0, 255).astype(np.uint8))
+        pil = pil.resize((w1, h1), Image.Resampling.BICUBIC)
+        our_arr = np.asarray(pil, dtype=np.float32) / 255.0
+
+    return CompareResult(
+        our_hash=hash_image(our_path),
+        ref_hash=hash_image(ref_path),
+        match=hash_image(our_path) == hash_image(ref_path),
+        psnr=compute_psnr(our_arr, ref_arr),
+        ssim=compute_ssim(our_arr, ref_arr),
+        pixel_max_diff=compute_pixel_diff(our_arr, ref_arr)[0],
+        pixel_mean_diff=compute_pixel_diff(our_arr, ref_arr)[1],
+    )

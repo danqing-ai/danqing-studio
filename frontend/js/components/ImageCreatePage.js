@@ -1,17 +1,17 @@
 /**
- * 创作页面组件 - 简洁版
- * 对普通用户友好，只保留核心功能
+ * Creation page component - Simplified version
+ * User-friendly, keeping only core features
  */
 
 const ImageCreatePage = {
     template: `
         <div class="create-page">
             <el-row :gutter="24">
-                <!-- 左侧面板：创作区 -->
+                <!-- Left panel: creation area -->
                 <el-col :xs="24" :md="16" :lg="14">
                     <div class="creation-panel">
                         
-                        <!-- Plan §2.1：一级 Tab（文生图 / 参考原图 / 按描述改图 / 局部修饰 / 扩展 / 放大） -->
+                        <!-- Plan §2.1: top-level tabs (create / rewrite by reference / rewrite by instruction / retouch / extend / upscale) -->
                         <div class="mode-segment" style="margin-bottom: 12px; display: flex; flex-wrap: wrap; gap: 4px;">
                                 <div
                                     class="mode-segment-item"
@@ -66,7 +66,7 @@ const ImageCreatePage = {
                             {{ editingSubModeDesc }}
                         </div>
 
-                        <!-- 模型选择：单层下拉，推荐项靠前 -->
+                        <!-- Model selector: single-level dropdown, recommended items first -->
                         <div class="card" style="margin-bottom: 16px;">
                             <div class="card-title">
                                 <el-icon><cpu /></el-icon>
@@ -125,14 +125,14 @@ const ImageCreatePage = {
                             </el-alert>
                         </div>
                         
-                        <!-- 提示词（精修放大不需要） -->
+                        <!-- Prompt (not needed for upscale) -->
                         <div v-if="editMode !== 'image_upscale'" class="card" style="margin-bottom: 16px;">
                             <div class="card-title">
                                 <el-icon><edit-pen /></el-icon>
                                 {{ $t('studio.prompt') }}
                             </div>
                             
-                            <!-- 预设快速选择 -->
+                            <!-- Preset quick pick -->
                             <el-row :gutter="8" style="margin-bottom: 16px;">
                                 <el-col :span="18">
                                     <el-select 
@@ -166,7 +166,7 @@ const ImageCreatePage = {
                                 @keydown.ctrl.enter.prevent="startGeneration"
                             />
                             
-                            <!-- 负面提示词（仅支持负面提示词的模型显示） -->
+                            <!-- Negative prompt (only shown for models that support it) -->
                             <el-collapse v-if="currentModelConfig?.parameters?.negative_prompt_support" style="margin-top: 12px; border: none;">
                                 <el-collapse-item :title="$t('studio.negativePrompt')" name="negative">
                                     <el-input
@@ -195,7 +195,7 @@ const ImageCreatePage = {
                             </div>
                         </div>
                         
-                        <!-- 精修放大参数（plan §6.3 /image/upscales） -->
+                        <!-- Upscale params (plan §6.3 /image/upscales) -->
                         <div v-if="editMode === 'image_upscale'" class="card" style="margin-bottom: 16px;">
                             <div class="card-title">
                                 <el-icon><zoom-in /></el-icon>
@@ -222,7 +222,7 @@ const ImageCreatePage = {
                             </el-form>
                         </div>
                         
-                        <!-- 高级参数（可折叠） -->
+                        <!-- Advanced params (collapsible) -->
                         <div v-if="editMode !== 'image_upscale'" class="card" style="margin-bottom: 16px;">
                             <el-collapse v-model="advancedParamsOpen" style="border: none;">
                                 <el-collapse-item name="advanced">
@@ -250,7 +250,7 @@ const ImageCreatePage = {
                             </el-collapse>
                         </div>
                         
-                        <!-- 主操作（plan §2.3：主按钮 + 排队提示） -->
+                        <!-- Main action (plan §2.3: primary button + queue hint) -->
                         <div class="card" style="margin-bottom: 16px;">
                             <el-button
                                 type="primary"
@@ -266,7 +266,7 @@ const ImageCreatePage = {
                                 {{ $t('studio.sendShortcutHint') }}
                             </div>
                             
-                            <!-- 进度显示 -->
+                            <!-- Progress display -->
                             <div v-if="currentTask" style="margin-top: 16px;">
                                 <el-progress 
                                     :percentage="Math.round(currentTask.progress * 100)" 
@@ -283,7 +283,7 @@ const ImageCreatePage = {
                             </div>
                         </div>
                         
-                        <!-- 日志 -->
+                        <!-- Logs -->
                         <div class="card">
                             <div class="card-title" style="justify-content: space-between;">
                                 <span>
@@ -308,11 +308,11 @@ const ImageCreatePage = {
                     </div>
                 </el-col>
                 
-                <!-- 右侧面板 -->
+                <!-- Right panel -->
                 <el-col :xs="24" :md="8" :lg="10">
                     <div class="preview-panel">
                         
-                        <!-- 改图 / 局部修饰 / 扩展：编辑器 -->
+                        <!-- Editing (rewrite / retouch / extend): image editor -->
                         <div v-if="editMode === 'image_editing'" class="card" style="margin-bottom: 16px;">
                             <div class="source-input-card-head">
                                 <div class="card-title" style="margin-bottom: 0;">
@@ -335,7 +335,7 @@ const ImageCreatePage = {
                                 @pick-edit-source="onEditAssetPick"
                             />
                         </div>
-                        <!-- 精修放大：仅需源图 -->
+                        <!-- Upscale: source image only -->
                         <div v-else-if="editMode === 'image_upscale'" class="card" style="margin-bottom: 16px;">
                             <div class="source-input-card-head">
                                 <div class="card-title" style="margin-bottom: 0;">
@@ -356,7 +356,7 @@ const ImageCreatePage = {
                             <el-empty v-else :description="$t('studio.uploadEditImage')" />
                         </div>
                         
-                        <!-- 当前生成预览 -->
+                        <!-- Current generation preview -->
                         <div class="card" style="margin-bottom: 16px;">
                             <div class="card-title">
                                 <el-icon><picture-filled /></el-icon>
@@ -369,7 +369,7 @@ const ImageCreatePage = {
                             <el-empty v-else :description="$t('studio.noPreview')" />
                         </div>
                         
-                        <!-- 最近生成 -->
+                        <!-- Recent generations -->
                         <div class="card">
                             <div class="card-title" style="justify-content: space-between;">
                                 <span>
@@ -412,7 +412,7 @@ const ImageCreatePage = {
                 </el-col>
             </el-row>
             
-            <!-- 图片预览对话框 -->
+            <!-- Image preview dialog -->
             <el-dialog v-model="previewVisible" :title="selectedImage?.name" width="70%" center>
                 <div v-if="selectedImage" style="text-align: center;">
                     <img :src="getImageUrl(selectedImage)" style="max-width: 100%; border-radius: 8px;" />
@@ -426,7 +426,7 @@ const ImageCreatePage = {
         const systemInfo = inject('systemInfo');
         const RA = window.RegistryActions || {};
 
-        // 参数（含高级参数）
+        // Params (including advanced params)
         const params = reactive({
             prompt: '',
             negative_prompt: '',
@@ -451,13 +451,17 @@ const ImageCreatePage = {
             extend_pixels: 256,
         });
         
-        // 选中的模型+版本组合（格式: "modelKey|versionKey"）
+        // Selected model+version combo (format: "modelKey|versionKey")
         const selectedModelVersion = ref('');
         
-        // 状态
+        // State
         const generating = ref(false);
         const currentTask = ref(null);
         const logs = ref([]);
+        /** Last denoise step mirrored into the log card from SSE progress (avoids empty panel until DB catches up) */
+        const genLogLastStep = ref(0);
+        /** 'denoise' | 'post' — log post-phase line once when SSE reports message post */
+        const genLogLastPhase = ref('');
         const previewImage = ref('');
         const recentImages = ref([]);
         const advancedParamsOpen = ref([]);
@@ -466,11 +470,11 @@ const ImageCreatePage = {
         const controlImageSrc = ref('');
         const controlImagePath = ref('');
         
-        // 模式：一级 Tab 与引擎子模式（rewrite 拆成 reference / instruct 两档）
+        // Mode: top-level tab and engine sub-mode (rewrite split into reference / instruct)
         const editMode = ref('image_generation'); // image_generation | image_editing | image_upscale
         const imageWorkTab = ref('create'); // create | rewrite_reference | rewrite_instruct | retouch | extend | upscale
         const editingSubMode = ref('inpainting'); // inpainting | text_editing | outpainting
-        /** 与 API rewrite_mode 对齐；由 imageWorkTab 驱动 */
+        /** Aligned with API rewrite_mode; driven by imageWorkTab */
         const rewriteDriveMode = ref('reference');
 
         const setImageWorkMode = (mode) => {
@@ -501,12 +505,12 @@ const ImageCreatePage = {
             }
         };
         
-        // 局部重绘：图片编辑器
+        // Local redraw: image editor
         const editImageSrc = ref('');
         const editImagePath = ref('');
         const imageEditorRef = ref(null);
         
-        // 预设
+        // Presets
         const presets = ref({});
         const selectedPreset = ref('');
         
@@ -564,14 +568,14 @@ const ImageCreatePage = {
             return result;
         });
         
-        // 模型注册表
+        // Model registry
         const modelRegistry = ref({});
         
-        // 模型就绪状态
+        // Model readiness status
         const modelsStatus = ref({});
         const modelsDetailedStatus = ref({});
         
-        // 所有模型版本（扁平化列表）
+        // All model versions (flattened list)
         const allVersions = computed(() => {
             const result = [];
             for (const [modelKey, config] of Object.entries(modelRegistry.value)) {
@@ -580,7 +584,7 @@ const ImageCreatePage = {
                 }
                 const actions = { ...(config.actions || {}) };
                 const engine = config.engine || '';
-                const versions = config.versions || { default: { name: '默认版本', size: '', default: true } };
+                const versions = config.versions || { default: { name: 'Default', size: '', default: true } };
                 const detailed = modelsDetailedStatus.value[modelKey] || {};
                 const versionStatuses = detailed.versions || {};
                 
@@ -607,12 +611,12 @@ const ImageCreatePage = {
             return result;
         });
         
-        // 推荐版本
+        // Recommended versions
         const recommendedVersions = computed(() => {
             return allVersions.value.filter(v => v.recommended);
         });
         
-        // 按模式过滤模型
+        // Filter models by mode
         const filteredAllVersions = computed(() => {
             if (editMode.value === 'image_editing') {
                 return allVersions.value.filter((v) => {
@@ -639,7 +643,7 @@ const ImageCreatePage = {
             return filteredAllVersions.value.filter(v => v.recommended);
         });
 
-        /** 模型下拉：单层列表，仅展示已就绪的模型，推荐版本排在前面 */
+        /** Model dropdown: single-layer list, shows only ready models, recommended versions first */
         const filteredModelPickerVersions = computed(() => {
             const rows = filteredAllVersions.value.filter((v) => v.ready);
             rows.sort((a, b) => {
@@ -657,7 +661,7 @@ const ImageCreatePage = {
             return rows;
         });
 
-        // 当前模型配置
+        // Current model config
         const currentModelConfig = computed(() => modelRegistry.value[params.model] || null);
 
         const currentModelDisplayName = computed(() => {
@@ -668,7 +672,7 @@ const ImageCreatePage = {
             return params.model || '';
         });
         
-        // 当前选中版本是否就绪
+        // Whether current selected version is ready
         const selectedModelNotReady = computed(() => {
             if (!params.model || !params.version) return false;
             const detailed = modelsDetailedStatus.value[params.model];
@@ -677,7 +681,7 @@ const ImageCreatePage = {
             return !versionStatus || !versionStatus.ready;
         });
 
-        // 编辑子类型描述
+        // Edit sub-type description
         const editingSubModeDesc = computed(() => {
             if (editMode.value === 'image_upscale') {
                 return $tt('action.image.upscaleDesc');
@@ -726,7 +730,7 @@ const ImageCreatePage = {
             return $tt('studio.generate');
         });
 
-        // 加载模型注册表和状态
+        // Load model registry and status
         const loadModelRegistry = async () => {
             try {
                 const RS = window.RegistryStore;
@@ -744,7 +748,7 @@ const ImageCreatePage = {
                 modelsStatus.value = statusData || {};
                 modelsDetailedStatus.value = detailedStatusData || {};
                 
-                // 设置默认模型+版本（优先选择已就绪的推荐版本的默认版本）
+                // Set default model+version (prefer ready recommended version's default)
                 if (!selectedModelVersion.value) {
                     let found = false;
                     for (const [modelKey, config] of Object.entries(modelRegistry.value)) {
@@ -797,7 +801,7 @@ const ImageCreatePage = {
             }
         };
         
-        // 加载模型的默认配置（注册表 schema 驱动）
+        // Load model default config (registry schema driven)
         const loadModelDefaults = () => {
             const config = currentModelConfig.value;
             if (!config || !config.parameters) return;
@@ -811,7 +815,7 @@ const ImageCreatePage = {
             loadCompatibleControlNets();
         };
         
-        // 加载与当前模型匹配的 LoRA
+        // Load LoRAs compatible with current model
         const loadCompatibleLoras = async () => {
             if (!params.model) return;
             try {
@@ -823,13 +827,13 @@ const ImageCreatePage = {
             }
         };
         
-        // 加载与当前模型匹配的 ControlNet
+        // Load ControlNets compatible with current model
         const loadCompatibleControlNets = async () => {
             if (!params.model) return;
             try {
                 const nets = await api.settings.getCompatibleControlNets(params.model);
                 compatibleControlNets.value = nets || [];
-                // 如果当前选的 ControlNet 不在返回列表中（不匹配或已删除），清空
+                // If current selected ControlNet is not in the returned list (incompatible or deleted), clear it
                 if (params.controlnet && !nets.some(n => n.key === params.controlnet)) {
                     params.controlnet = '';
                     controlImageSrc.value = '';
@@ -841,7 +845,7 @@ const ImageCreatePage = {
             }
         };
         
-        // 重置为默认配置（从注册表重新加载）
+        // Reset to default config (reload from registry)
         const resetToDefaults = () => {
             loadModelDefaults();
             ElementPlus.ElMessage.success($tt('studio.restoredDefaults'));
@@ -871,7 +875,7 @@ const ImageCreatePage = {
             return tag ? `${tag} ${display}` : display;
         };
         
-        // 加载预设
+        // Load presets
         const loadPresets = async () => {
             try {
                 const data = await api.settings.getPresets();
@@ -882,7 +886,7 @@ const ImageCreatePage = {
             }
         };
         
-        // 加载预设到参数（追加到新行）
+        // Load preset into params (append to new line)
         const loadPreset = () => {
             if (!selectedPreset.value || !presets.value[selectedPreset.value]) return;
             
@@ -890,7 +894,7 @@ const ImageCreatePage = {
             
             if (preset.positive) {
                 params.prompt = params.prompt
-                    ? params.prompt + '\n风格增强: ' + preset.positive
+                    ? params.prompt + '\nStyle boost: ' + preset.positive
                     : preset.positive;
             }
             if (preset.negative) {
@@ -899,7 +903,7 @@ const ImageCreatePage = {
                     : preset.negative;
             }
             
-            // 仅面向编辑类动作、不含文生图 create 的预设：在文生图 Tab 上提示切换到改图并选源图
+            // Edit-only presets (without create): prompt to switch tab and select source image if on T2I tab
             const app = preset.applies_to;
             const needsEditSource =
                 !app.includes('create') &&
@@ -909,7 +913,7 @@ const ImageCreatePage = {
             }
         };
         
-        // 添加日志
+        // Add log
         const addLog = (message, level = 'info') => {
             const now = new Date();
             const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
@@ -926,19 +930,37 @@ const ImageCreatePage = {
                 }
             });
         };
+
+        function parseStepKeyFromLine(msg) {
+            const m = String(msg || '').trim().match(/^Step (\d+)\/(\d+)/i);
+            return m ? `${m[1]}/${m[2]}` : null;
+        }
+
+        function ingestServerLog(logData) {
+            const msg = logData.message || '';
+            const lvl = logData.level || 'info';
+            const sk = parseStepKeyFromLine(msg);
+            if (sk) {
+                const last = logs.value[logs.value.length - 1];
+                if (last && parseStepKeyFromLine(last.message) === sk) {
+                    return;
+                }
+            }
+            addLog(msg, lvl);
+        }
         
-        // 清空日志
+        // Clear logs
         const clearLogs = () => {
             logs.value = [];
         };
         
-        // 截断文本
+        // Truncate text
         const truncate = (text, length) => {
             if (!text) return '';
             return text.length > length ? text.substring(0, length) + '...' : text;
         };
         
-        // 开始生成
+        // Start generation
         const startGeneration = async () => {
             if (editMode.value === 'image_upscale') {
                 if (!editImageSrc.value) {
@@ -950,7 +972,7 @@ const ImageCreatePage = {
                 return;
             }
 
-            // ControlNet 必须上传控制图
+            // ControlNet requires an uploaded control image
             if (editMode.value !== 'image_upscale' && params.controlnet && !controlImageSrc.value) {
                 ElementPlus.ElMessage.warning($tt('studio.needControlImage'));
                 return;
@@ -982,6 +1004,8 @@ const ImageCreatePage = {
             }
 
             const attachStream = (tid) => {
+                genLogLastStep.value = 0;
+                genLogLastPhase.value = '';
                 currentTask.value = {
                     id: tid,
                     progress: 0,
@@ -995,7 +1019,7 @@ const ImageCreatePage = {
                 };
                 api.gen.streamMediaTask(
                     tid,
-                    (logData) => addLog(logData.message || '', logData.level || 'info'),
+                    (logData) => ingestServerLog(logData),
                     (statusData) => {
                         if (currentTask.value) {
                             currentTask.value.progress = statusData.progress ?? 0;
@@ -1021,9 +1045,33 @@ const ImageCreatePage = {
                     },
                     () => addLog($tt('studio.connectionLost'), 'warning'),
                     (progressData) => {
-                        if (currentTask.value) {
-                            currentTask.value.step = progressData.step ?? currentTask.value.step;
-                            currentTask.value.total = progressData.total ?? currentTask.value.total;
+                        if (!currentTask.value) return;
+                        if (typeof progressData.progress === 'number') {
+                            currentTask.value.progress = progressData.progress;
+                        }
+                        const nextStep =
+                            progressData.step != null ? progressData.step : currentTask.value.step;
+                        const nextTotal =
+                            progressData.total != null ? progressData.total : currentTask.value.total;
+                        currentTask.value.step = nextStep;
+                        currentTask.value.total = nextTotal;
+                        if (progressData.message === 'post') {
+                            if (genLogLastPhase.value !== 'post') {
+                                genLogLastPhase.value = 'post';
+                                addLog($tt('studio.queuePostProcessHint'), 'info');
+                            }
+                        } else if (progressData.message === 'denoise') {
+                            genLogLastPhase.value = 'denoise';
+                        }
+                        if (nextTotal > 0 && nextStep > 0 && nextStep !== genLogLastStep.value) {
+                            genLogLastStep.value = nextStep;
+                            addLog(
+                                $tt('studio.queueDenoiseProgress', {
+                                    current: nextStep,
+                                    total: nextTotal,
+                                }),
+                                'info',
+                            );
                         }
                     }
                 );
@@ -1189,7 +1237,7 @@ const ImageCreatePage = {
             }
         };
         
-        // 加载最近图片
+        // Load recent images
         const loadRecentImages = async () => {
             try {
                 const images = await api.gallery.listImages(24, 0);
@@ -1205,12 +1253,12 @@ const ImageCreatePage = {
             }
         };
         
-        // 获取图片URL
+        // Get image URL
         const getImageUrl = (image) => {
             return api.gallery.getImageUrl(image.path);
         };
         
-        // 图片预览
+        // Image preview
         const previewVisible = ref(false);
         const selectedImage = ref(null);
         
@@ -1230,7 +1278,7 @@ const ImageCreatePage = {
             await loadRecentImages();
         };
         
-        // 局部重绘：编辑文件变化
+        // Local redraw: edit file change
         const onEditAssetPick = async ({ path, previewUrl }) => {
             editImagePath.value = path;
             editImageSrc.value = previewUrl;
@@ -1247,7 +1295,7 @@ const ImageCreatePage = {
             controlImagePath.value = '';
         };
         
-        // 跳转到设置页面
+        // Navigate to settings page
         const goToSettings = () => window.DQStudioNav.goSettings();
         const goToDownload = () => window.DQStudioNav.goModels();
         
@@ -1346,7 +1394,7 @@ const ImageCreatePage = {
             }
         });
         
-        // 监听编辑模式切换：图像编辑自动选支持的模型
+        // Watch edit mode switch: auto-select a supported model for image editing
         watch(editMode, (newMode) => {
             if (newMode === 'image_editing') {
                 params.strength = 0.99;
@@ -1378,7 +1426,7 @@ const ImageCreatePage = {
             }
         });
 
-        // 监听子类型切换：重新过滤模型
+        // Watch sub-type switch: re-filter models
         watch(editingSubMode, () => {
             if (editMode.value !== 'image_editing') return;
             const config = currentModelConfig.value;

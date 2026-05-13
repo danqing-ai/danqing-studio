@@ -1,11 +1,11 @@
 """
-API 路由 - 下载相关
-支持模型下载、LoRA 下载、CivitAI 搜索、进度 SSE
+API routes - download related
+Supports model download, LoRA download, CivitAI search, progress SSE
 """
 
 import asyncio
 import uuid
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional
@@ -60,7 +60,7 @@ def get_settings_service():
 
 
 async def start_model_install(model_name: str, *, version: Optional[str] = None) -> DownloadProgressResponse:
-    """启动 HuggingFace 模型文件下载；进度见 GET /api/download/progress/{task_id}/stream。"""
+    """Start HuggingFace model file download; progress via GET /api/download/progress/{task_id}/stream."""
     service = get_download_service()
     progress_queue: asyncio.Queue = asyncio.Queue()
 
@@ -99,7 +99,7 @@ async def start_model_install(model_name: str, *, version: Optional[str] = None)
 
 @router.post("/lora", response_model=DownloadProgressResponse)
 async def download_lora(request: DownloadLoraRequest):
-    """下载 LoRA 文件"""
+    """Download LoRA file"""
     service = get_download_service()
 
     progress_queue: asyncio.Queue = asyncio.Queue()
@@ -139,7 +139,7 @@ async def download_lora(request: DownloadLoraRequest):
 
 @router.get("/progress/{task_id}/stream")
 async def stream_progress(task_id: str):
-    """SSE 流式推送下载进度"""
+    """SSE streaming download progress"""
     service = get_download_service()
 
     async def event_generator():
@@ -202,7 +202,7 @@ async def get_progress(task_id: str, req: Request = None):
 
 @router.post("/cancel/{task_id}")
 async def cancel_download(task_id: str):
-    """取消下载任务"""
+    """Cancel download task"""
     service = get_download_service()
     success = await service.cancel_download(task_id)
     return {"success": success}
@@ -210,7 +210,7 @@ async def cancel_download(task_id: str):
 
 @router.delete("/tasks/{task_id}")
 async def delete_download(task_id: str):
-    """删除下载任务"""
+    """Delete download task"""
     service = get_download_service()
     success = service.delete_download(task_id)
     return {"success": success}
@@ -218,7 +218,7 @@ async def delete_download(task_id: str):
 
 @router.post("/resume/{task_id}", response_model=DownloadProgressResponse)
 async def resume_download(task_id: str):
-    """恢复下载任务（进程重启后）"""
+    """Resume download task (after process restart)"""
     service = get_download_service()
 
     progress_queue: asyncio.Queue = asyncio.Queue()
@@ -240,7 +240,7 @@ async def resume_download(task_id: str):
 
     asyncio.create_task(do_resume())
 
-    # 等待获取第一个真实进度（最长 10 秒）
+    # Wait for first real progress (max 10 seconds)
     try:
         first_progress = await asyncio.wait_for(progress_queue.get(), timeout=10.0)
     except asyncio.TimeoutError:
@@ -269,7 +269,7 @@ async def resume_download(task_id: str):
 
 @router.get("/tasks")
 async def list_downloads():
-    """列出所有下载任务"""
+    """List all download tasks"""
     service = get_download_service()
     tasks = service.list_downloads()
     result = []
@@ -289,7 +289,7 @@ async def list_downloads():
     return result
 
 
-# ===== CivitAI 搜索路由 =====
+# ===== CivitAI search routes =====
 
 class CivitAISearchResponse(BaseModel):
     items: List[CivitAIModelResponse]
@@ -299,14 +299,14 @@ class CivitAISearchResponse(BaseModel):
 
 @router.get("/civitai/search", response_model=CivitAISearchResponse)
 async def search_civitai(
-    q: str = Query("", description="搜索关键词"),
-    types: str = Query("LORA", description="模型类型，逗号分隔如 LORA,Checkpoint"),
+    q: str = Query("", description="Search keyword"),
+    types: str = Query("LORA", description="Model type, comma-separated e.g. LORA,Checkpoint"),
     limit: int = Query(20, ge=1, le=100),
     page: int = Query(1, ge=1),
-    cursor: Optional[str] = Query(None, description="分页游标（搜索时使用）"),
-    sort: str = Query("Highest Rated", description="排序方式")
+    cursor: Optional[str] = Query(None, description="Pagination cursor (used during search)"),
+    sort: str = Query("Highest Rated", description="Sort method")
 ):
-    """搜索 CivitAI 模型（不过滤 NSFW）"""
+    """Search CivitAI models (no NSFW filtering)"""
     settings = get_settings_service().get_settings()
     client = CivitAIClient(api_key=settings.civitai_token or None)
 
@@ -368,7 +368,7 @@ async def search_civitai(
 
 @router.get("/civitai/model/{model_id}", response_model=CivitAIModelResponse)
 async def get_civitai_model(model_id: int):
-    """获取 CivitAI 模型详情"""
+    """Get CivitAI model details"""
     settings = get_settings_service().get_settings()
     client = CivitAIClient(api_key=settings.civitai_token or None)
 
@@ -408,7 +408,7 @@ async def get_civitai_model(model_id: int):
         await client.close()
 
 
-# ===== 模型转换（生成量化版本）=====
+# ===== Model conversion (generate quantized version) =====
 
 class ConvertModelRequest(BaseModel):
     model_name: str
@@ -425,9 +425,17 @@ class ConversionProgressResponse(BaseModel):
 
 
 @router.post("/convert")
-async def convert_model(request: ConvertModelRequest):
-    """开始模型转换（生成量化版本）"""
+async def convert_model(request: ConvertModelRequest, http_request: Request):
+    """Start model conversion (int4|int8 MLX quantization of transformer weights)."""
+    locale = resolve_locale(http_request.headers.get("Accept-Language"))
     service = get_download_service()
+    cfg = service.get_model_download_config(request.model_name)
+    if not cfg:
+        raise HTTPException(status_code=404, detail=t("error.model_not_in_registry", locale, name=request.model_name))
+    versions = cfg.get("versions") or {}
+    to_ver = versions.get(request.to_version)
+    if not to_ver:
+        raise HTTPException(status_code=404, detail=t("error.target_version_not_found", locale, version=request.to_version))
 
     progress_queue: asyncio.Queue = asyncio.Queue()
 
@@ -471,7 +479,7 @@ async def convert_model(request: ConvertModelRequest):
 
 @router.get("/convert/{task_id}/stream")
 async def stream_conversion_progress(task_id: str):
-    """SSE 流式推送转换进度"""
+    """SSE streaming conversion progress"""
     service = get_download_service()
 
     async def event_generator():
@@ -505,7 +513,7 @@ async def stream_conversion_progress(task_id: str):
 
 @router.post("/convert/{task_id}/cancel")
 async def cancel_conversion(task_id: str):
-    """取消转换任务"""
+    """Cancel conversion task"""
     service = get_download_service()
     success = await service.cancel_conversion(task_id)
     return {"success": success}
@@ -513,7 +521,7 @@ async def cancel_conversion(task_id: str):
 
 @router.get("/conversions")
 async def list_conversions():
-    """列出所有转换任务"""
+    """List all conversion tasks"""
     service = get_download_service()
     tasks = service.list_conversions()
     return [

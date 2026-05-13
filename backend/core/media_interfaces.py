@@ -1,5 +1,5 @@
 """
-v3 媒体引擎接口：与 REST 端点 1:1 对齐。
+v3 media engine interfaces: 1:1 aligned with REST endpoints.
 """
 
 from __future__ import annotations
@@ -8,6 +8,8 @@ from abc import ABC, abstractmethod
 from typing import ClassVar, List
 
 from backend.core.contracts import (
+    AudioEditRequest,
+    AudioGenerationRequest,
     EngineResult,
     ExecutionContext,
     ImageEditRequest,
@@ -15,6 +17,7 @@ from backend.core.contracts import (
     ImageUpscaleRequest,
     VideoEditRequest,
     VideoGenerationRequest,
+    VideoUpscaleRequest,
 )
 
 
@@ -76,7 +79,7 @@ class IVideoEngine(ABC):
 
     @abstractmethod
     def supports(self, model_id: str, action: str) -> bool:
-        """action: generate | edit"""
+        """action: generate | edit | upscale"""
         ...
 
     @abstractmethod
@@ -87,6 +90,46 @@ class IVideoEngine(ABC):
 
     @abstractmethod
     async def edit(self, request: VideoEditRequest, ctx: ExecutionContext) -> EngineResult:
+        pass
+
+    @abstractmethod
+    async def upscale(self, request: VideoUpscaleRequest, ctx: ExecutionContext) -> EngineResult:
+        pass
+
+    @abstractmethod
+    async def cancel(self, task_id: str) -> bool:
+        pass
+
+
+class IAudioEngine(ABC):
+    media_type: ClassVar[str] = "audio"
+    engine_id: ClassVar[str]
+
+    @abstractmethod
+    def is_available(self) -> bool:
+        pass
+
+    @abstractmethod
+    def is_model_ready(self, model_name: str, version: str = "") -> bool:
+        pass
+
+    @abstractmethod
+    def get_supported_models(self) -> List[str]:
+        pass
+
+    @abstractmethod
+    def supports(self, model_id: str, action: str) -> bool:
+        """action: create_music | edit"""
+        ...
+
+    @abstractmethod
+    async def generate(
+        self, request: AudioGenerationRequest, ctx: ExecutionContext
+    ) -> EngineResult:
+        pass
+
+    @abstractmethod
+    async def edit(self, request: AudioEditRequest, ctx: ExecutionContext) -> EngineResult:
         pass
 
     @abstractmethod

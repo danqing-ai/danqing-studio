@@ -9,7 +9,11 @@ from typing import Any, FrozenSet, Literal, Optional, cast
 
 from backend.core.registry_format import api_action_frozenset, media_from_record
 
-MediaKind = Literal["image", "video"]
+MediaKind = Literal["image", "video", "audio"]
+
+
+def _infer_audio_family(model_id: str) -> str:
+    return "stub"
 
 
 def _infer_image_family(model_id: str) -> str:
@@ -57,6 +61,14 @@ class ModelEntry:
     def parameters(self) -> dict[str, Any]:
         return self.raw.get("parameters") or {}
 
+    @property
+    def backends(self) -> tuple[str, ...]:
+        """Preferred runtime order from ``models_registry.json`` (e.g. mlx / cuda)."""
+        raw_b = self.raw.get("backends")
+        if isinstance(raw_b, list) and raw_b:
+            return tuple(str(x) for x in raw_b)
+        return ("mlx",)
+
 
 class ModelRegistry:
     def __init__(self, path: Path, models: dict[str, ModelEntry]):
@@ -82,6 +94,8 @@ class ModelRegistry:
             actions = api_action_frozenset(acts_block, media=media)
             if media == "video":
                 fam = raw.get("family") or _infer_video_family(mid)
+            elif media == "audio":
+                fam = raw.get("family") or _infer_audio_family(mid)
             else:
                 fam = raw.get("family") or _infer_image_family(mid)
             built[mid] = ModelEntry(

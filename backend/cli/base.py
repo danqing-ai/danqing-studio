@@ -5,20 +5,18 @@ CLI 和 REST API 都通过此模块初始化 Engine，确保路径一致。
 """
 from __future__ import annotations
 
-import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from backend.core.contracts import CancelToken, ExecutionContext, LogEvent, ProgressEvent
 from backend.core.model_registry import ModelRegistry
 from backend.engine.common.cache import ModelCache
+from backend.engine.danqing_audio_engine import DanQingAudioEngine
 from backend.engine.danqing_image_engine import DanQingImageEngine
 from backend.engine.danqing_video_engine import DanQingVideoEngine
 from backend.engine.engine_registry import EngineRegistry
 from backend.engine.platform import PlatformInfo
-from backend.engine.runtime.mlx import MLXContext
-from backend.engine.runtime.cuda import CudaContext
 from backend.persistence.asset_store import SQLiteAssetStore
 from backend.utils.path_utils import PathResolver
 
@@ -31,6 +29,7 @@ class EngineContext:
     engine_registry: EngineRegistry
     image_engine: DanQingImageEngine
     video_engine: DanQingVideoEngine
+    audio_engine: DanQingAudioEngine
     runtimes: dict[str, Any]
     asset_store: SQLiteAssetStore
     model_cache: ModelCache
@@ -52,8 +51,12 @@ def build_engine_context(project_root: Path | None = None) -> EngineContext:
     platforms = PlatformInfo.detect()
     runtimes: dict[str, Any] = {}
     if "mlx" in platforms:
+        from backend.engine.runtime.mlx import MLXContext
+
         runtimes["mlx"] = MLXContext()
     if "cuda" in platforms:
+        from backend.engine.runtime.cuda import CudaContext
+
         runtimes["cuda"] = CudaContext()
 
     if not runtimes:
@@ -65,10 +68,15 @@ def build_engine_context(project_root: Path | None = None) -> EngineContext:
     video_engine = DanQingVideoEngine(
         path_resolver, model_registry, runtimes, model_cache=shared_cache,
     )
+    audio_engine = DanQingAudioEngine(
+        path_resolver, model_registry, runtimes, model_cache=shared_cache,
+    )
 
     engine_registry = EngineRegistry(model_registry)
     engine_registry.register(image_engine)
     engine_registry.register(video_engine)
+    engine_registry.register(audio_engine)
+
 
     v3_db = root / "db" / "studio.db"
     asset_root = root / "outputs" / "assets"
@@ -80,6 +88,7 @@ def build_engine_context(project_root: Path | None = None) -> EngineContext:
         engine_registry=engine_registry,
         image_engine=image_engine,
         video_engine=video_engine,
+        audio_engine=audio_engine,
         runtimes=runtimes,
         asset_store=asset_store,
         model_cache=shared_cache,

@@ -1,6 +1,6 @@
 /**
- * 全局任务队列轮询 + 媒体任务 SSE 单例 — Plan C2
- * CDN 无打包：挂载 window.TasksStore
+ * Global task queue polling + media task SSE singleton — Plan C2
+ * CDN no-build: mounted as window.TasksStore
  */
 (function (w) {
     const API_BASE = '';
@@ -10,6 +10,29 @@
         running: [],
         queued: [],
     });
+
+    /** Latest SSE progress per task — merged into queue snapshots so UI is not stuck on 2s poll only */
+    const liveTaskProgress = reactive({});
+
+    function patchLiveTaskProgress(taskId, patch) {
+        if (!taskId || !patch || Object.keys(patch).length === 0) return;
+        const prev = liveTaskProgress[taskId] || {};
+        const next = Object.assign({}, prev);
+        if (typeof patch.progress === 'number') next.progress = patch.progress;
+        if (patch.step != null) next.step = patch.step;
+        if (patch.total != null) next.total = patch.total;
+        if (patch.eta_seconds != null) next.eta_seconds = patch.eta_seconds;
+        if (Object.prototype.hasOwnProperty.call(patch, 'progressMessage')) {
+            next.progressMessage = patch.progressMessage;
+        }
+        liveTaskProgress[taskId] = next;
+    }
+
+    function clearLiveTaskProgress(taskId) {
+        if (taskId && liveTaskProgress[taskId] != null) {
+            delete liveTaskProgress[taskId];
+        }
+    }
 
     let pollTimer = null;
     let pollRefCount = 0;
@@ -22,6 +45,11 @@
                     : (await axios.get(`${API_BASE}/api/queue`)).data;
             queueState.running = data.running || [];
             queueState.queued = data.queued || [];
+            for (const t of queueState.running || []) {
+                if (t && t.id && !logStreams.has(t.id)) {
+                    openTaskLogStream(t.id, {});
+                }
+            }
         } catch (e) {
             console.error('TasksStore: queue poll failed', e);
         }
@@ -58,7 +86,7 @@
     }
 
     /**
-     * 同一 taskId 仅保留一条 SSE；done/error 时自动关闭。
+     * One SSE per taskId; auto-close on done/error.
      */
     function openTaskLogStream(taskId, { onLog, onStatus, onProgress, onResult, onDone, onError }) {
         closeTaskLogStream(taskId);
@@ -74,6 +102,15 @@
         });
         eventSource.addEventListener('progress', (event) => {
             const data = JSON.parse(event.data);
+            const patch = {};
+            if (typeof data.progress === 'number') patch.progress = data.progress;
+            if (data.step != null) patch.step = data.step;
+            if (data.total != null) patch.total = data.total;
+            if (data.eta_seconds != null) patch.eta_seconds = data.eta_seconds;
+            if (Object.prototype.hasOwnProperty.call(data, 'message')) {
+                patch.progressMessage = data.message;
+            }
+            patchLiveTaskProgress(taskId, patch);
             if (onProgress) onProgress(data);
             else if (onStatus) {
                 onStatus({
@@ -87,6 +124,9 @@
         });
         eventSource.addEventListener('status', (event) => {
             const data = JSON.parse(event.data);
+            if (typeof data.progress === 'number') {
+                patchLiveTaskProgress(taskId, { progress: data.progress });
+            }
             if (onStatus) onStatus(data);
         });
         eventSource.addEventListener('result', (event) => {
@@ -96,10 +136,12 @@
         eventSource.addEventListener('done', (event) => {
             const data = JSON.parse(event.data);
             if (onDone) onDone(data);
+            clearLiveTaskProgress(taskId);
             closeTaskLogStream(taskId);
         });
         eventSource.addEventListener('error', (event) => {
             if (onError) onError(event);
+            clearLiveTaskProgress(taskId);
             closeTaskLogStream(taskId);
         });
         return eventSource;
@@ -107,6 +149,7 @@
 
     w.TasksStore = {
         queueState,
+        liveTaskProgress,
         ensureQueuePoller,
         releaseQueuePoller,
         pollQueueOnce,

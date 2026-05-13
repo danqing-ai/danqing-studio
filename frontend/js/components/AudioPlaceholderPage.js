@@ -1,5 +1,5 @@
 /**
- * 音频创作占位页 — Plan I1（引擎未接入，无旧 API 形态）
+ * Audio creation placeholder page — Plan I1 (engine not yet connected, no legacy API surface)
  */
 const AudioPlaceholderPage = {
     template: `

@@ -1,51 +1,24 @@
 """
-下载器模块 - 统一接口封装 HF Hub 和 HTTP 下载
+Downloader module — unified interface wrapping HF Hub and HTTP downloads
 """
 
 import time
 import asyncio
 import aiohttp
-from abc import ABC, abstractmethod
 from typing import Optional, Callable, Dict, Any
 from pathlib import Path
 
 from backend.core.interfaces import DownloadProgress
 
 
-class IDownloader(ABC):
-    """下载器抽象接口"""
+class HTTPDownloader:
+    """HTTP generic downloader
 
-    @abstractmethod
-    async def download(self, task_id: str, source: str, target: Path,
-                      progress_callback: Optional[Callable[[DownloadProgress], None]] = None) -> str:
-        """
-        执行下载
-
-        Args:
-            task_id: 任务ID
-            source: 下载源（repo_id 或 url）
-            target: 本地目标路径
-            progress_callback: 进度回调
-
-        Returns:
-            下载完成的本地路径
-        """
-        pass
-
-    @abstractmethod
-    async def cancel(self, task_id: str) -> bool:
-        """取消下载任务"""
-        pass
-
-
-class HTTPDownloader(IDownloader):
-    """HTTP 通用下载器
-
-    使用 aiohttp 流式下载，支持：
-    - 断点续传（通过 Range 请求）
-    - 进度回调
-    - 取消下载
-    - CivitAI 直链（支持 API Key）
+    Uses aiohttp streaming download, supports:
+    - Resume (via Range request)
+    - Progress callback
+    - Cancel download
+    - CivitAI direct links (supports API Key)
     """
 
     def __init__(self, civitai_token: Optional[str] = None):
@@ -55,23 +28,23 @@ class HTTPDownloader(IDownloader):
 
     async def download(self, task_id: str, url: str, target: Path,
                       progress_callback: Optional[Callable[[DownloadProgress], None]] = None) -> str:
-        """HTTP 流式下载"""
+        """HTTP streaming download"""
         self._cancelled.discard(task_id)
 
-        # 确保目标目录存在
+        # Ensure target directory exists
         target.parent.mkdir(parents=True, exist_ok=True)
 
-        # 断点续传：检查已下载大小
+        # Resume: check already downloaded size
         downloaded_size = 0
         if target.exists():
             downloaded_size = target.stat().st_size
 
-        # 构建请求头
+        # Build request headers
         headers = {}
         if downloaded_size > 0:
             headers["Range"] = f"bytes={downloaded_size}-"
 
-        # CivitAI 鉴权
+        # CivitAI auth
         if "civitai.com" in url and self._civitai_token:
             headers["Authorization"] = f"Bearer {self._civitai_token}"
 
@@ -86,28 +59,28 @@ class HTTPDownloader(IDownloader):
                 if resp.status not in (200, 206):
                     raise Exception(f"HTTP {resp.status}: {resp.reason}")
 
-                # 获取总大小
+                # Get total size
                 total_size = int(resp.headers.get("content-length", 0))
                 if downloaded_size > 0 and resp.status == 206:
-                    # Range 请求成功，总大小 = 已下载 + 剩余
+                    # Range request succeeded, total = downloaded + remaining
                     total_size += downloaded_size
                 elif downloaded_size > 0 and resp.status == 200:
-                    # 服务器不支持断点续传，从头开始
+                    # Server doesn't support resume, restart from beginning
                     downloaded_size = 0
                     mode = "wb"
 
                 with open(target, mode) as f:
                     async for chunk in resp.content.iter_chunked(8192):
                         if task_id in self._cancelled:
-                            raise asyncio.CancelledError("用户取消下载")
+                            raise asyncio.CancelledError("User cancelled download")
 
                         f.write(chunk)
                         downloaded_size += len(chunk)
 
-                        # 计算进度
+                        # Calculate progress
                         progress = downloaded_size / total_size if total_size > 0 else 0
 
-                        # 计算速度（每0.5秒报告一次）
+                        # Calculate speed (report every 0.5 seconds)
                         now = time.time()
                         dt = now - last_report["time"]
                         if dt >= 0.5:
@@ -127,7 +100,7 @@ class HTTPDownloader(IDownloader):
                                     filename=target.name
                                 ))
 
-            # 下载完成
+            # Download complete
             if progress_callback:
                 await self._safe_callback(progress_callback, DownloadProgress(
                     task_id=task_id,
@@ -184,7 +157,7 @@ class HTTPDownloader(IDownloader):
 
     @staticmethod
     async def _safe_callback(callback: Callable, progress: DownloadProgress):
-        """安全调用回调"""
+        """Safely invoke callback"""
         try:
             if asyncio.iscoroutinefunction(callback):
                 await callback(progress)

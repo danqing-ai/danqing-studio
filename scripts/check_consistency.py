@@ -6,9 +6,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 REG = ROOT / "config" / "models_registry.json"
-KNOWN = {"mflux", "mlx-video"}
+KNOWN = {"danqing-image", "danqing-video", "danqing-audio"}
 REGISTRY_IMAGE_ACTION_KEYS = frozenset({"create", "rewrite", "retouch", "extend", "upscale"})
 REGISTRY_VIDEO_ACTION_KEYS = frozenset({"create", "animate"})
+REGISTRY_AUDIO_ACTION_KEYS = frozenset({"create", "cover", "repaint"})
 I18N = ROOT / "frontend" / "js" / "i18n.js"
 INDEX_HTML = ROOT / "frontend" / "index.html"
 APP_JS = ROOT / "frontend" / "js" / "app.js"
@@ -55,8 +56,8 @@ def main() -> int:
         print("FAIL: models_registry.json must have schema_version: 2")
         return 1
     eng_block = data.get("engines") or {}
-    if "mflux" not in eng_block or "mlx-video" not in eng_block:
-        print("FAIL: models_registry.json engines must include mflux and mlx-video")
+    if "danqing-image" not in eng_block or "danqing-video" not in eng_block or "danqing-audio" not in eng_block:
+        print("FAIL: models_registry.json engines must include danqing-image, danqing-video, and danqing-audio")
         return 1
     for mid, cfg in (data.get("models") or {}).items():
         if not isinstance(cfg, dict):
@@ -65,10 +66,15 @@ def main() -> int:
             print("FAIL: model", mid, "must have actions dict (v2)")
             return 1
         media = cfg.get("media")
-        if media not in ("image", "video"):
-            print("FAIL: model", mid, "must have media: image|video, got", repr(media))
+        if media not in ("image", "video", "audio"):
+            print("FAIL: model", mid, "must have media: image|video|audio, got", repr(media))
             return 1
-        allowed = REGISTRY_IMAGE_ACTION_KEYS if media == "image" else REGISTRY_VIDEO_ACTION_KEYS
+        if media == "image":
+            allowed = REGISTRY_IMAGE_ACTION_KEYS
+        elif media == "video":
+            allowed = REGISTRY_VIDEO_ACTION_KEYS
+        else:
+            allowed = REGISTRY_AUDIO_ACTION_KEYS
         for action_key in cfg["actions"]:
             if action_key not in allowed:
                 print(
@@ -259,12 +265,9 @@ def main() -> int:
         for needle in (
             "async cancel(taskId)",
             "async resume(taskId)",
-            "async startConvert(body)",
-            "async cancelConvert(taskId)",
             "async civitaiSearch(params)",
             "async startLoraDownload(url, filename)",
             "installProgressStreamUrl(taskId)",
-            "convertProgressStreamUrl(taskId)",
         ):
             if needle not in aj:
                 print("FAIL: api.js download section must include", needle)
@@ -350,14 +353,11 @@ def main() -> int:
             return 1
         for needle in (
             "api.download.listDownloads",
-            "api.download.startConvert",
-            "api.download.cancelConvert",
             "api.download.cancel",
             "api.download.resume",
             "api.download.civitaiSearch",
             "api.download.startLoraDownload",
             "api.download.installProgressStreamUrl",
-            "api.download.convertProgressStreamUrl",
         ):
             if needle not in pg:
                 print("FAIL: ModelsPage must call", needle)

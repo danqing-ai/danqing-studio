@@ -31,10 +31,9 @@ from backend.persistence.v3_task_store import V3TaskStore
 from backend.core.model_registry import ModelRegistry
 from backend.engine.engine_registry import EngineRegistry
 from backend.engine.platform import PlatformInfo
+from backend.engine.danqing_audio_engine import DanQingAudioEngine
 from backend.engine.danqing_image_engine import DanQingImageEngine
 from backend.engine.danqing_video_engine import DanQingVideoEngine
-from backend.engine.runtime.mlx import MLXContext
-from backend.engine.runtime.cuda import CudaContext
 from backend.engine.common.cache import ModelCache
 from backend.services.services import SettingsService
 from backend.services.download_service import DownloadService
@@ -138,8 +137,12 @@ def _setup_dependencies():
     _logger.info(f"Detected GPU backends: {platforms}")
     runtimes: dict[str, Any] = {}
     if "mlx" in platforms:
+        from backend.engine.runtime.mlx import MLXContext
+
         runtimes["mlx"] = MLXContext()
     if "cuda" in platforms:
+        from backend.engine.runtime.cuda import CudaContext
+
         runtimes["cuda"] = CudaContext()
 
     if not runtimes:
@@ -152,12 +155,16 @@ def _setup_dependencies():
     danqing_video = DanQingVideoEngine(
         path_resolver, model_registry, runtimes, model_cache=shared_cache,
     )
+    danqing_audio = DanQingAudioEngine(
+        path_resolver, model_registry, runtimes, model_cache=shared_cache,
+    )
 
     engine_registry = EngineRegistry(model_registry)
     engine_registry.register(danqing_image)
     engine_registry.register(danqing_video)
-    _logger.info("DanQing engines registered: image=%s video=%s",
-                 danqing_image.is_available(), danqing_video.is_available())
+    engine_registry.register(danqing_audio)
+    _logger.info("DanQing engines registered: image=%s video=%s audio=%s",
+                 danqing_image.is_available(), danqing_video.is_available(), danqing_audio.is_available())
 
     # 持久化层
     v3_db = path_resolver.get_project_root() / "db" / "studio.db"

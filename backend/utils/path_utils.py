@@ -74,7 +74,6 @@ def get_system_info() -> dict:
     # 获取关键依赖版本
     deps = {
         "mlx": "mlx.core",
-        "mflux": "mflux",
         "fastapi": "fastapi",
         "uvicorn": "uvicorn",
         "Pillow": "PIL",
@@ -127,11 +126,3 @@ def is_apple_silicon() -> bool:
     return platform.system() == "Darwin" and platform.machine() == "arm64"
 
 
-def open_directory(path: Path) -> None:
-    """打开目录"""
-    if platform.system() == "Darwin":
-        subprocess.run(["open", str(path)])
-    elif platform.system() == "Windows":
-        subprocess.run(["explorer", str(path)])
-    else:
-        subprocess.run(["xdg-open", str(path)])

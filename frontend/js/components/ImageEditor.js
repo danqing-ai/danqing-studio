@@ -1,7 +1,7 @@
 /**
- * 图像编辑器组件（Plan C6 蒙版画布）
- * 支持画笔、套索、橡皮擦遮罩绘制，导出黑白遮罩图；键盘快捷键绑在根节点（非 window）。
- * 用于 Inpainting（局部重绘）模式；空态仅文案引导，上传/资产库/最近由创作页卡片头部 AssetPicker 提供（Plan C4）。
+ * Image editor component (Plan C6 Mask Canvas).
+ * Supports brush, lasso, eraser mask drawing; exports black-and-white mask; keyboard shortcuts bound to root node (not window).
+ * Used for Inpainting (local redraw) mode; empty state shows only text guidance; upload/asset library/recent items provided by AssetPicker in creation page card header (Plan C4).
  */
 
 const ImageEditor = {
@@ -86,14 +86,14 @@ const ImageEditor = {
                 </div>
                 <div class="toolbar-divider"></div>
                 <div class="toolbar-group">
-                    <el-button size="small" circle @click="zoomOut" :disabled="zoom <= 0.25" title="缩小">
+                    <el-button size="small" circle @click="zoomOut" :disabled="zoom <= 0.25" title="Zoom out">
                         <el-icon><zoom-out /></el-icon>
                     </el-button>
                     <span class="toolbar-val" style="min-width: 48px; text-align: center;">{{ Math.round(zoom * 100) }}%</span>
-                    <el-button size="small" circle @click="zoomIn" :disabled="zoom >= 4" title="放大">
+                    <el-button size="small" circle @click="zoomIn" :disabled="zoom >= 4" title="Zoom in">
                         <el-icon><zoom-in /></el-icon>
                     </el-button>
-                    <el-button size="small" circle @click="resetView" title="重置视图">
+                    <el-button size="small" circle @click="resetView" title="Reset view">
                         <el-icon><refresh /></el-icon>
                     </el-button>
                 </div>
@@ -128,7 +128,7 @@ const ImageEditor = {
         const lassoPoints = ref([]);
         let isDrawing = false;
 
-        // 视图变换状态
+        // View transform state
         const zoom = ref(1.0);
         const panX = ref(0);
         const panY = ref(0);
@@ -178,10 +178,10 @@ const ImageEditor = {
             mainCtx.translate(panX.value, panY.value);
             mainCtx.scale(zoom.value, zoom.value);
 
-            // 绘制背景图
+            // Draw background image
             mainCtx.drawImage(img, 0, 0, displayWidth, displayHeight);
 
-            // 绘制遮罩
+            // Draw mask
             if (offscreenCanvas) {
                 mainCtx.save();
                 mainCtx.globalAlpha = 0.5;
@@ -189,7 +189,7 @@ const ImageEditor = {
                 mainCtx.restore();
             }
 
-            // 绘制套索
+            // Draw lasso polygon
             if (currentTool.value === 'lasso' && lassoPoints.value.length > 0) {
                 mainCtx.save();
                 mainCtx.strokeStyle = '#e94560';
@@ -280,7 +280,7 @@ const ImageEditor = {
                     editorRoot.value.focus();
                 }
             } catch (err) { /* ignore */ }
-            // 中键拖拽平移
+            // Middle-button drag pan
             if (e.button === 1 || (e.button === 0 && e.ctrlKey)) {
                 isPanning = true;
                 lastPanX = e.clientX;

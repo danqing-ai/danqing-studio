@@ -1,0 +1,519 @@
+"""
+ACE-Step DiT decoder — pure MLX implementation for Apple Silicon.
+
+Mirrors ``acestep/models/mlx/dit_model.py`` with adaptations to the DanQing
+``TransformerBase`` contract.  All tensor operations stay in ``mlx.nn`` / ``mlx.core``
+(importing ``mlx`` is allowed in ``*_mlx.py`` files per the dual-platform rules).
+
+Architecture
+------------
+32 transformer layers, alternating sliding-window self-attention and full
+self-attention, each followed by cross-attention to encoder hidden states and
+a SwiGLU MLP.  Modulation is via AdaLN (scale_shift_table + timestep projection).
+"""
+from __future__ import annotations
+
+import math
+import logging
+from typing import Dict, List, Optional, Tuple
+
+import mlx.core as mx
+import mlx.nn as nn
+
+from backend.engine.common._base import TransformerBase
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Rotary helpers
+# ---------------------------------------------------------------------------
+
+def _rotate_half(x: mx.array) -> mx.array:
+    half = x.shape[-1] // 2
+    x1 = x[..., :half]
+    x2 = x[..., half:]
+    return mx.concatenate([-x2, x1], axis=-1)
+
+
+def _apply_rotary_pos_emb(
+    q: mx.array, k: mx.array, cos: mx.array, sin: mx.array,
+) -> Tuple[mx.array, mx.array]:
+    q_embed = (q * cos) + (_rotate_half(q) * sin)
+    k_embed = (k * cos) + (_rotate_half(k) * sin)
+    return q_embed, k_embed
+
+
+def _create_sliding_window_mask(
+    seq_len: int, window_size: int, dtype: mx.Dtype = mx.float32,
+) -> mx.array:
+    indices = mx.arange(seq_len)
+    diff = mx.abs(indices[:, None] - indices[None, :])
+    zeros = mx.zeros(diff.shape, dtype=dtype)
+    neginf = mx.full(diff.shape, -1e9, dtype=dtype)
+    mask = mx.where(diff <= window_size, zeros, neginf)
+    return mask[None, None, :, :]
+
+
+# ---------------------------------------------------------------------------
+# RoPE
+# ---------------------------------------------------------------------------
+
+class _AceStepRotaryEmbedding(nn.Module):
+    """Pre-computes cos/sin tables for RoPE."""
+
+    def __init__(self, head_dim: int, max_len: int = 32768, base: float = 1_000_000.0):
+        super().__init__()
+        self.head_dim = head_dim
+        self.max_len = max_len
+        self.base = base
+
+        inv_freq = 1.0 / (base ** (mx.arange(0, head_dim, 2).astype(mx.float32) / head_dim))
+        positions = mx.arange(max_len).astype(mx.float32)
+        freqs = positions[:, None] * inv_freq[None, :]
+        freqs = mx.concatenate([freqs, freqs], axis=-1)
+        self._cos = mx.cos(freqs)
+        self._sin = mx.sin(freqs)
+
+    def __call__(self, seq_len: int) -> Tuple[mx.array, mx.array]:
+        cos = self._cos[:seq_len][None, None, :, :]
+        sin = self._sin[:seq_len][None, None, :, :]
+        return cos, sin
+
+
+# ---------------------------------------------------------------------------
+# Cross-attention KV cache
+# ---------------------------------------------------------------------------
+
+class _CrossAttentionCache:
+    """KV cache for cross-attention layers.
+
+    Cross-attention K/V are computed once on the first diffusion step and
+    re-used for all subsequent steps.
+    """
+
+    def __init__(self):
+        self._keys: Dict[int, mx.array] = {}
+        self._values: Dict[int, mx.array] = {}
+        self._updated: set = set()
+
+    def update(self, key: mx.array, value: mx.array, layer_idx: int):
+        self._keys[layer_idx] = key
+        self._values[layer_idx] = value
+        self._updated.add(layer_idx)
+
+    def is_updated(self, layer_idx: int) -> bool:
+        return layer_idx in self._updated
+
+    def get(self, layer_idx: int) -> Tuple[mx.array, mx.array]:
+        return self._keys[layer_idx], self._values[layer_idx]
+
+
+# ---------------------------------------------------------------------------
+# Primitives
+# ---------------------------------------------------------------------------
+
+class _SwiGLUMLP(nn.Module):
+    def __init__(self, hidden_size: int, intermediate_size: int):
+        super().__init__()
+        self.gate_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
+        self.up_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
+        self.down_proj = nn.Linear(intermediate_size, hidden_size, bias=False)
+
+    def __call__(self, x: mx.array) -> mx.array:
+        return self.down_proj(nn.silu(self.gate_proj(x)) * self.up_proj(x))
+
+
+class _Attention(nn.Module):
+    """Multi-head attention with QK-RMSNorm.  Supports self-attention (with RoPE)
+    and cross-attention (with optional KV caching).
+    """
+
+    def __init__(
+        self,
+        hidden_size: int,
+        num_attention_heads: int,
+        num_key_value_heads: int,
+        head_dim: int,
+        rms_norm_eps: float,
+        attention_bias: bool,
+        layer_idx: int,
+        is_cross_attention: bool = False,
+        sliding_window: Optional[int] = None,
+    ):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.num_heads = num_attention_heads
+        self.num_kv_heads = num_key_value_heads
+        self.head_dim = head_dim
+        self.n_rep = num_attention_heads // num_key_value_heads
+        self.scale = head_dim ** -0.5
+        self.layer_idx = layer_idx
+        self.is_cross_attention = is_cross_attention
+        self.sliding_window = sliding_window
+
+        self.q_proj = nn.Linear(hidden_size, num_attention_heads * head_dim, bias=attention_bias)
+        self.k_proj = nn.Linear(hidden_size, num_key_value_heads * head_dim, bias=attention_bias)
+        self.v_proj = nn.Linear(hidden_size, num_key_value_heads * head_dim, bias=attention_bias)
+        self.o_proj = nn.Linear(num_attention_heads * head_dim, hidden_size, bias=attention_bias)
+
+        self.q_norm = nn.RMSNorm(head_dim, eps=rms_norm_eps)
+        self.k_norm = nn.RMSNorm(head_dim, eps=rms_norm_eps)
+
+    @staticmethod
+    def _repeat_kv(x: mx.array, n_rep: int) -> mx.array:
+        if n_rep == 1:
+            return x
+        B, n_kv, L, D = x.shape
+        x = mx.expand_dims(x, axis=2)
+        x = mx.broadcast_to(x, (B, n_kv, n_rep, L, D))
+        return x.reshape(B, n_kv * n_rep, L, D)
+
+    def __call__(
+        self,
+        hidden_states: mx.array,
+        position_cos_sin: Optional[Tuple[mx.array, mx.array]] = None,
+        attention_mask: Optional[mx.array] = None,
+        encoder_hidden_states: Optional[mx.array] = None,
+        cache: Optional[_CrossAttentionCache] = None,
+        use_cache: bool = False,
+    ) -> mx.array:
+        B, L, _ = hidden_states.shape
+
+        q = self.q_proj(hidden_states)
+        q = self.q_norm(q.reshape(B, L, self.num_heads, self.head_dim))
+        q = q.transpose(0, 2, 1, 3)
+
+        if self.is_cross_attention and encoder_hidden_states is not None:
+            if cache is not None and cache.is_updated(self.layer_idx):
+                k, v = cache.get(self.layer_idx)
+            else:
+                enc_L = encoder_hidden_states.shape[1]
+                k = self.k_proj(encoder_hidden_states)
+                k = self.k_norm(k.reshape(B, enc_L, self.num_kv_heads, self.head_dim))
+                k = k.transpose(0, 2, 1, 3)
+                v = self.v_proj(encoder_hidden_states).reshape(
+                    B, enc_L, self.num_kv_heads, self.head_dim,
+                ).transpose(0, 2, 1, 3)
+                if cache is not None and use_cache:
+                    cache.update(k, v, self.layer_idx)
+        else:
+            k = self.k_proj(hidden_states)
+            k = self.k_norm(k.reshape(B, L, self.num_kv_heads, self.head_dim))
+            k = k.transpose(0, 2, 1, 3)
+            v = self.v_proj(hidden_states).reshape(
+                B, L, self.num_kv_heads, self.head_dim,
+            ).transpose(0, 2, 1, 3)
+
+            if position_cos_sin is not None:
+                cos, sin = position_cos_sin
+                q, k = _apply_rotary_pos_emb(q, k, cos, sin)
+
+        k = self._repeat_kv(k, self.n_rep)
+        v = self._repeat_kv(v, self.n_rep)
+
+        attn_out = mx.fast.scaled_dot_product_attention(
+            q, k, v, scale=self.scale, mask=attention_mask,
+        )
+        attn_out = attn_out.transpose(0, 2, 1, 3).reshape(B, L, -1)
+        return self.o_proj(attn_out)
+
+
+# ---------------------------------------------------------------------------
+# DiT layer
+# ---------------------------------------------------------------------------
+
+class _DiTLayer(nn.Module):
+    """Single DiT layer: self-attn (AdaLN) → cross-attn → MLP (AdaLN)."""
+
+    def __init__(
+        self,
+        hidden_size: int,
+        intermediate_size: int,
+        num_attention_heads: int,
+        num_key_value_heads: int,
+        head_dim: int,
+        rms_norm_eps: float,
+        attention_bias: bool,
+        layer_idx: int,
+        layer_type: str,
+        sliding_window: Optional[int] = None,
+    ):
+        super().__init__()
+        self.layer_type = layer_type
+        sw = sliding_window if layer_type == "sliding_attention" else None
+
+        self.self_attn_norm = nn.RMSNorm(hidden_size, eps=rms_norm_eps)
+        self.self_attn = _Attention(
+            hidden_size=hidden_size,
+            num_attention_heads=num_attention_heads,
+            num_key_value_heads=num_key_value_heads,
+            head_dim=head_dim,
+            rms_norm_eps=rms_norm_eps,
+            attention_bias=attention_bias,
+            layer_idx=layer_idx,
+            is_cross_attention=False,
+            sliding_window=sw,
+        )
+
+        self.cross_attn_norm = nn.RMSNorm(hidden_size, eps=rms_norm_eps)
+        self.cross_attn = _Attention(
+            hidden_size=hidden_size,
+            num_attention_heads=num_attention_heads,
+            num_key_value_heads=num_key_value_heads,
+            head_dim=head_dim,
+            rms_norm_eps=rms_norm_eps,
+            attention_bias=attention_bias,
+            layer_idx=layer_idx,
+            is_cross_attention=True,
+        )
+
+        self.mlp_norm = nn.RMSNorm(hidden_size, eps=rms_norm_eps)
+        self.mlp = _SwiGLUMLP(hidden_size, intermediate_size)
+
+        self.scale_shift_table = mx.zeros((1, 6, hidden_size))
+
+    def __call__(
+        self,
+        hidden_states: mx.array,
+        position_cos_sin: Tuple[mx.array, mx.array],
+        temb: mx.array,
+        self_attn_mask: Optional[mx.array],
+        encoder_hidden_states: Optional[mx.array],
+        encoder_attention_mask: Optional[mx.array],
+        cache: Optional[_CrossAttentionCache] = None,
+        use_cache: bool = False,
+    ) -> mx.array:
+        modulation = self.scale_shift_table + temb
+        parts = mx.split(modulation, 6, axis=1)
+        shift_msa, scale_msa, gate_msa = parts[0], parts[1], parts[2]
+        c_shift_msa, c_scale_msa, c_gate_msa = parts[3], parts[4], parts[5]
+
+        # 1) Self-attention
+        normed = self.self_attn_norm(hidden_states)
+        normed = normed * (1.0 + scale_msa) + shift_msa
+        attn_out = self.self_attn(
+            normed,
+            position_cos_sin=position_cos_sin,
+            attention_mask=self_attn_mask,
+        )
+        hidden_states = hidden_states + attn_out * gate_msa
+
+        # 2) Cross-attention
+        normed = self.cross_attn_norm(hidden_states)
+        cross_out = self.cross_attn(
+            normed,
+            encoder_hidden_states=encoder_hidden_states,
+            attention_mask=encoder_attention_mask,
+            cache=cache,
+            use_cache=use_cache,
+        )
+        hidden_states = hidden_states + cross_out
+
+        # 3) MLP
+        normed = self.mlp_norm(hidden_states)
+        normed = normed * (1.0 + c_scale_msa) + c_shift_msa
+        ff_out = self.mlp(normed)
+        hidden_states = hidden_states + ff_out * c_gate_msa
+
+        return hidden_states
+
+
+# ---------------------------------------------------------------------------
+# Timestep embedding
+# ---------------------------------------------------------------------------
+
+class _TimestepEmbedding(nn.Module):
+    """Sinusoidal timestep embedding → MLP → (temb, 6-way projection)."""
+
+    def __init__(self, in_channels: int = 256, time_embed_dim: int = 2048, scale: float = 1000.0):
+        super().__init__()
+        self.in_channels = in_channels
+        self.scale = scale
+
+        self.linear_1 = nn.Linear(in_channels, time_embed_dim, bias=True)
+        self.act1 = nn.SiLU()
+        self.linear_2 = nn.Linear(time_embed_dim, time_embed_dim, bias=True)
+        self.act2 = nn.SiLU()
+        self.time_proj = nn.Linear(time_embed_dim, time_embed_dim * 6, bias=True)
+
+    def _sinusoidal_embedding(self, t: mx.array, dim: int, max_period: int = 10000) -> mx.array:
+        t = t * self.scale
+        half = dim // 2
+        freqs = mx.exp(-math.log(max_period) * mx.arange(half).astype(mx.float32) / half)
+        args = t[:, None].astype(mx.float32) * freqs[None, :]
+        embedding = mx.concatenate([mx.cos(args), mx.sin(args)], axis=-1)
+        if dim % 2:
+            embedding = mx.concatenate([embedding, mx.zeros_like(embedding[:, :1])], axis=-1)
+        return embedding
+
+    def __call__(self, t: mx.array) -> Tuple[mx.array, mx.array]:
+        t_freq = self._sinusoidal_embedding(t, self.in_channels)
+        temb = self.linear_1(t_freq.astype(t.dtype))
+        temb = self.act1(temb)
+        temb = self.linear_2(temb)
+        proj = self.time_proj(self.act2(temb))
+        timestep_proj = proj.reshape(proj.shape[0], 6, -1)
+        return temb, timestep_proj
+
+
+# ---------------------------------------------------------------------------
+# Full DiT decoder
+# ---------------------------------------------------------------------------
+
+class AceStepDiTMLX(nn.Module):
+    """Native MLX DiT decoder for ACE-Step audio generation.
+
+    Mirrors the PyTorch ``AceStepDiTModel``:
+        - Conv1d patch embedding of input
+        - Dual timestep conditioning
+        - N DiT layers (self-attn / cross-attn / MLP) with AdaLN
+        - ConvTranspose1d output projection
+        - Adaptive output layer norm
+
+    *Not* a ``TransformerBase`` — the ``transformer.py`` wrapper adds the
+    DanQing base-class interface.
+    """
+
+    def __init__(
+        self,
+        hidden_size: int = 2048,
+        intermediate_size: int = 6144,
+        num_hidden_layers: int = 24,
+        num_attention_heads: int = 16,
+        num_key_value_heads: int = 8,
+        head_dim: int = 128,
+        rms_norm_eps: float = 1e-6,
+        attention_bias: bool = False,
+        in_channels: int = 192,
+        audio_acoustic_hidden_dim: int = 64,
+        patch_size: int = 2,
+        sliding_window: int = 128,
+        layer_types: Optional[list] = None,
+        rope_theta: float = 1_000_000.0,
+        max_position_embeddings: int = 32768,
+    ):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.patch_size = patch_size
+
+        if layer_types is None:
+            layer_types = [
+                "sliding_attention" if bool((i + 1) % 2) else "full_attention"
+                for i in range(num_hidden_layers)
+            ]
+
+        self.rotary_emb = _AceStepRotaryEmbedding(
+            head_dim, max_len=max_position_embeddings, base=rope_theta,
+        )
+
+        self.proj_in = nn.Conv1d(
+            in_channels=in_channels,
+            out_channels=hidden_size,
+            kernel_size=patch_size,
+            stride=patch_size,
+            padding=0,
+        )
+
+        self.time_embed = _TimestepEmbedding(time_embed_dim=hidden_size)
+        self.time_embed_r = _TimestepEmbedding(time_embed_dim=hidden_size)
+
+        self.condition_embedder = nn.Linear(hidden_size, hidden_size, bias=True)
+
+        self.layers = [
+            _DiTLayer(
+                hidden_size=hidden_size,
+                intermediate_size=intermediate_size,
+                num_attention_heads=num_attention_heads,
+                num_key_value_heads=num_key_value_heads,
+                head_dim=head_dim,
+                rms_norm_eps=rms_norm_eps,
+                attention_bias=attention_bias,
+                layer_idx=i,
+                layer_type=layer_types[i],
+                sliding_window=sliding_window,
+            )
+            for i in range(num_hidden_layers)
+        ]
+
+        self.norm_out = nn.RMSNorm(hidden_size, eps=rms_norm_eps)
+        self.proj_out = nn.ConvTranspose1d(
+            in_channels=hidden_size,
+            out_channels=audio_acoustic_hidden_dim,
+            kernel_size=patch_size,
+            stride=patch_size,
+            padding=0,
+        )
+
+        self.scale_shift_table = mx.zeros((1, 2, hidden_size))
+
+        self._sliding_masks: Dict[int, mx.array] = {}
+        self._sliding_window = sliding_window
+        self._layer_types = layer_types
+
+    def _get_sliding_mask(self, seq_len: int, dtype: mx.Dtype) -> mx.array:
+        if seq_len not in self._sliding_masks:
+            self._sliding_masks[seq_len] = _create_sliding_window_mask(
+                seq_len, self._sliding_window, dtype,
+            )
+        return self._sliding_masks[seq_len]
+
+    def __call__(
+        self,
+        hidden_states: mx.array,
+        timestep: mx.array,
+        timestep_r: mx.array,
+        encoder_hidden_states: mx.array,
+        context_latents: mx.array,
+        cache: Optional[_CrossAttentionCache] = None,
+        use_cache: bool = True,
+    ) -> Tuple[mx.array, Optional[_CrossAttentionCache]]:
+        temb_t, proj_t = self.time_embed(timestep)
+        temb_r, proj_r = self.time_embed_r(timestep - timestep_r)
+        temb = temb_t + temb_r
+        timestep_proj = proj_t + proj_r
+
+        hidden_states = mx.concatenate([context_latents, hidden_states], axis=-1)
+
+        original_seq_len = hidden_states.shape[1]
+        pad_length = 0
+        if hidden_states.shape[1] % self.patch_size != 0:
+            pad_length = self.patch_size - (hidden_states.shape[1] % self.patch_size)
+            padding = mx.zeros(
+                (hidden_states.shape[0], pad_length, hidden_states.shape[2]),
+                dtype=hidden_states.dtype,
+            )
+            hidden_states = mx.concatenate([hidden_states, padding], axis=1)
+
+        hidden_states = self.proj_in(hidden_states)
+        encoder_hidden_states = self.condition_embedder(encoder_hidden_states)
+
+        seq_len = hidden_states.shape[1]
+        dtype = hidden_states.dtype
+
+        cos, sin = self.rotary_emb(seq_len)
+
+        has_sliding = any(lt == "sliding_attention" for lt in self._layer_types)
+        sliding_mask = self._get_sliding_mask(seq_len, dtype) if has_sliding else None
+
+        for layer in self.layers:
+            self_attn_mask = sliding_mask if layer.layer_type == "sliding_attention" else None
+            hidden_states = layer(
+                hidden_states,
+                position_cos_sin=(cos, sin),
+                temb=timestep_proj,
+                self_attn_mask=self_attn_mask,
+                encoder_hidden_states=encoder_hidden_states,
+                encoder_attention_mask=None,
+                cache=cache,
+                use_cache=use_cache,
+            )
+
+        shift, scale = mx.split(
+            self.scale_shift_table + mx.expand_dims(temb, axis=1), 2, axis=1,
+        )
+        hidden_states = self.norm_out(hidden_states) * (1.0 + scale) + shift
+
+        hidden_states = self.proj_out(hidden_states)
+        hidden_states = hidden_states[:, :original_seq_len, :]
+
+        return hidden_states, cache

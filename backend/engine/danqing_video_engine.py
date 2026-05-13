@@ -1,11 +1,13 @@
 """
-DanQingVideoEngine — IVideoEngine 的丹青实现。
+DanQingVideoEngine — IVideoEngine 实现。
 
-聚合多个 RuntimeContext (MLX/CUDA)，按模型注册表自动选择后端。
+MLX 操作在 TaskScheduler 线程同步执行（全局串行队列保证互斥）。
+与 DanQingImageEngine 保持一致的架构模式。
 """
 from __future__ import annotations
 
-from typing import ClassVar, List
+from pathlib import Path
+from typing import ClassVar, List, Any
 
 from backend.core.contracts import (
     EngineResult, ExecutionContext, VideoEditRequest,
@@ -13,19 +15,15 @@ from backend.core.contracts import (
 )
 from backend.core.media_interfaces import IVideoEngine
 from backend.core.interfaces import IPathResolver
-
 from .common.cache import ModelCache
+from .pipelines.video_pipeline import VideoPipeline
+from .pipelines.video_upscale_pipeline import VideoUpscalePipeline
 from .runtime._base import RuntimeContext
 
 
 class DanQingVideoEngine(IVideoEngine):
-    """丹青视频引擎。
-
-    后端无关：通过 Registry 选择模型 → 自动路由到 MLX/CUDA RuntimeContext。
-    """
-
     media_type: ClassVar[str] = "video"
-    engine_id: ClassVar[str] = "danqing-video"  # matches registry entries
+    engine_id: ClassVar[str] = "danqing-video"
 
     def __init__(
         self,
@@ -46,7 +44,7 @@ class DanQingVideoEngine(IVideoEngine):
         m, v = parse_model_version(model_name) if ":" in model_name else (model_name, version)
         try:
             entry = self._registry.require(m)
-            backends = getattr(entry, "backends", [list(self._runtimes.keys())[0]])
+            backends = entry.backends
             for b in backends:
                 if b in self._runtimes:
                     return True
@@ -55,10 +53,7 @@ class DanQingVideoEngine(IVideoEngine):
         return False
 
     def get_supported_models(self) -> List[str]:
-        return [
-            mid for mid, entry in self._registry.entries.items()
-            if entry.media == "video"
-        ]
+        return [mid for mid, entry in self._registry.entries.items() if entry.media == "video"]
 
     def supports(self, model_id: str, action: str) -> bool:
         e = self._registry.get(model_id)
@@ -68,7 +63,7 @@ class DanQingVideoEngine(IVideoEngine):
 
     def _resolve_runtime(self, model_id: str) -> RuntimeContext:
         entry = self._registry.require(model_id)
-        backends = getattr(entry, "backends", ["mlx"])
+        backends = entry.backends
         for b in backends:
             if b in self._runtimes:
                 return self._runtimes[b]
@@ -76,34 +71,116 @@ class DanQingVideoEngine(IVideoEngine):
 
     async def generate(self, request: VideoGenerationRequest,
                        ctx: ExecutionContext) -> EngineResult:
+        import asyncio
+        if not self.supports(request.model, "generate"):
+            mid = request.model.split(":", 1)[0]
+            raise RuntimeError(
+                f"Model {mid!r} does not support text-to-video (create) for this engine; "
+                "see config/models_registry.json actions."
+            )
         runtime = self._resolve_runtime(request.model)
-        from .video_pipeline import VideoPipeline
         pipeline = VideoPipeline(
-            runtime, self._registry, ctx.asset_store,
+            runtime,
+            self._registry,
+            ctx.asset_store,
             model_cache=self._cache,
-            text_encoders_path=str(self._paths.get_models_dir()),
+            project_root=self._paths.get_project_root(),
         )
-        return await pipeline.generate(request, ctx)
 
-    async def edit(self, request: VideoEditRequest,
-                   ctx: ExecutionContext) -> EngineResult:
-        runtime = self._resolve_runtime(request.model)
-        from .video_pipeline import VideoPipeline
-        pipeline = VideoPipeline(
-            runtime, self._registry, ctx.asset_store,
-            model_cache=self._cache,
-        )
-        return await pipeline.edit(request, ctx)
+        def on_progress(p, s, t, msg):
+            from backend.core.contracts import ProgressEvent
+            ctx.on_progress(ProgressEvent(progress=p, step=s, total=t, message=msg))
 
-    async def upscale(self, request: VideoUpscaleRequest,
-                      ctx: ExecutionContext) -> EngineResult:
+        def on_log(lvl, msg):
+            from backend.core.contracts import LogEvent
+            ctx.on_log(LogEvent(level=lvl, message=msg))
+
+        result = await asyncio.to_thread(
+            pipeline.run, request, ctx, on_progress=on_progress, on_log=on_log,
+        )
+        if result is None:
+            return EngineResult(primary_asset_id="", metadata={"status": "cancelled"})
+
+        output_path, metadata = result
+        aid = ctx.asset_store.create_from_file(
+            Path(output_path), kind="video", mime_type="video/mp4",
+            source_task_id=ctx.task_id, metadata=metadata, source_action="create",
+        )
+        return EngineResult(primary_asset_id=aid, asset_ids=[aid], output_paths=[output_path])
+
+    async def edit(self, request: VideoEditRequest, ctx: ExecutionContext) -> EngineResult:
+        import asyncio
+        if not self.supports(request.model, "edit"):
+            mid = request.model.split(":", 1)[0]
+            raise RuntimeError(
+                f"Model {mid!r} does not support video edit (animate) for this engine; "
+                "see config/models_registry.json actions."
+            )
         runtime = self._resolve_runtime(request.model)
-        from .video_pipeline import VideoPipeline
         pipeline = VideoPipeline(
             runtime, self._registry, ctx.asset_store,
             model_cache=self._cache,
+            project_root=self._paths.get_project_root(),
         )
-        return await pipeline.upscale(request, ctx)
+
+        def on_progress(p, s, t, msg):
+            from backend.core.contracts import ProgressEvent
+            ctx.on_progress(ProgressEvent(progress=p, step=s, total=t, message=msg))
+
+        def on_log(lvl, msg):
+            from backend.core.contracts import LogEvent
+            ctx.on_log(LogEvent(level=lvl, message=msg))
+
+        result = await asyncio.to_thread(
+            pipeline.run_edit, request, ctx, on_progress=on_progress, on_log=on_log,
+        )
+        if result is None:
+            return EngineResult(primary_asset_id="", metadata={"status": "cancelled"})
+
+        output_path, metadata = result
+        aid = ctx.asset_store.create_from_file(
+            Path(output_path), kind="video", mime_type="video/mp4",
+            source_task_id=ctx.task_id, metadata=metadata, source_action="animate",
+        )
+        return EngineResult(primary_asset_id=aid, asset_ids=[aid], output_paths=[output_path])
+
+    async def upscale(self, request: VideoUpscaleRequest, ctx: ExecutionContext) -> EngineResult:
+        if not self.supports(request.model, "upscale"):
+            mid = request.model.split(":", 1)[0]
+            raise RuntimeError(
+                f"Model {mid!r} does not support video upscale for this engine; "
+                "see config/models_registry.json actions."
+            )
+        runtime = self._resolve_runtime(request.model)
+        pipeline = VideoUpscalePipeline(
+            runtime,
+            self._registry,
+            ctx.asset_store,
+            model_cache=self._cache,
+            project_root=self._paths.get_project_root(),
+        )
+        import asyncio
+
+        def on_progress(p, s, t, msg):
+            from backend.core.contracts import ProgressEvent
+            ctx.on_progress(ProgressEvent(progress=p, step=s, total=t, message=msg))
+
+        def on_log(lvl, msg):
+            from backend.core.contracts import LogEvent
+            ctx.on_log(LogEvent(level=lvl, message=msg))
+
+        result = await asyncio.to_thread(
+            pipeline.run, request, ctx, on_progress=on_progress, on_log=on_log,
+        )
+        if result is None:
+            return EngineResult(primary_asset_id="", metadata={"status": "cancelled"})
+
+        output_path, metadata = result
+        aid = ctx.asset_store.create_from_file(
+            Path(output_path), kind="video", mime_type="video/mp4",
+            source_task_id=ctx.task_id, metadata=metadata, source_action="upscale",
+        )
+        return EngineResult(primary_asset_id=aid, asset_ids=[aid], output_paths=[output_path])
 
     async def cancel(self, task_id: str) -> bool:
         return True

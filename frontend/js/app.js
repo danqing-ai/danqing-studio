@@ -1,18 +1,18 @@
 /**
- * Vue 应用入口
+ * Vue application entry point
  */
 
 const { createApp, ref, reactive, onMounted, onBeforeUnmount, provide, watch, nextTick, computed } = Vue;
 
-// 检查 VueI18n 是否加载
+// Check if VueI18n is loaded
 if (typeof VueI18n === 'undefined') {
-    console.error('VueI18n 未加载，请检查 CDN 链接');
+    console.error('VueI18n not loaded, check CDN link');
 }
 if (typeof messages === 'undefined') {
-    console.error('messages 未定义，请检查 i18n.js 是否加载');
+    console.error('messages not defined, check if i18n.js is loaded');
 }
 
-// 创建 i18n 实例
+// Create i18n instance
 let i18n;
 try {
     i18n = VueI18n.createI18n({
@@ -26,7 +26,7 @@ try {
         }
     });
 } catch (e) {
-    console.error('i18n 初始化失败:', e);
+    console.error('i18n initialization failed:', e);
     i18n = {
         install: (app) => {
             app.config.globalProperties.$t = (key) => key;
@@ -69,7 +69,7 @@ window.$md = (model, defaultDesc) => {
     return d || defaultDesc || '';
 };
 
-/** 注册表模型 + 版本行展示（config.name 可能为 {zh,en}，version.name 亦可能为对象） */
+/** Registry model + version row display (config.name may be {zh,en}, version.name may also be an object) */
 window.$mvn = (modelKey, config, versionConfig) => {
     const base = window.$mn ? window.$mn(config, modelKey) : modelKey;
     const vn = versionConfig && versionConfig.name;
@@ -84,7 +84,7 @@ window.$mvn = (modelKey, config, versionConfig) => {
     return suffix ? `${base} - ${suffix}` : base;
 };
 
-/** 与设置页 `theme` 同步：浅色加根类名，深色移除 */
+/** Sync with settings page `theme`: add root class for light, remove for dark */
 window.DQApplyTheme = (theme) => {
     const el = document.documentElement;
     if (theme === 'light') {
@@ -208,7 +208,7 @@ const app = createApp({
         // ---- Lifecycle ----
 
         onMounted(async () => {
-            // 加载语言设置
+            // Load language setting
             const SK = window.DQ_STORAGE || {};
             const savedLang = SK.LANG ? localStorage.getItem(SK.LANG) : null;
             if (savedLang) {
@@ -217,7 +217,7 @@ const app = createApp({
                 document.documentElement.lang = savedLang;
             }
 
-            // 加载系统信息
+            // Load system info
             loadSystemInfo();
 
             try {
@@ -229,7 +229,7 @@ const app = createApp({
                 console.warn('Theme bootstrap skipped:', e);
             }
 
-            // 定时刷新系统信息
+            // Periodically refresh system info
             setInterval(loadSystemInfo, 30000);
 
             const TS = window.TasksStore;
@@ -237,7 +237,7 @@ const app = createApp({
                 TS.ensureQueuePoller();
             }
 
-            // 监听全局导航事件（从创作页跳转到设置页）
+            // Listen for global navigation events (e.g., from creation page to settings page)
             window.addEventListener('navigate', (e) => {
                 if (e.detail) {
                     handleNavSelect(e.detail);
@@ -259,7 +259,7 @@ const app = createApp({
             }
         });
 
-        // 提供全局状态
+        // Provide global state
         provide('systemInfo', systemInfo);
 
         function openTaskQueue() {
@@ -299,10 +299,10 @@ const app = createApp({
     }
 });
 
-// 注册 shell 组件
+// Register shell component
 app.component('TopNav', TopNav);
 
-// 注册所有页面组件
+// Register all page components
 app.component('AdapterPicker', AdapterPicker);
 app.component('AssetPicker', AssetPicker);
 app.component('RegistryParamsForm', RegistryParamsForm);
@@ -312,9 +312,9 @@ app.component('VideoCreatePage', VideoCreatePage);
 app.component('GalleryPage', GalleryPage);
 app.component('ModelsPage', ModelsPage);
 app.component('SettingsPage', SettingsPage);
-app.component('AudioPlaceholderPage', AudioPlaceholderPage);
+app.component('AudioCreatePage', AudioCreatePage);
 
-// 注册 Element Plus 图标（安全加载）
+// Register Element Plus icons (safe loading)
 try {
     if (typeof ElementPlusIconsVue !== 'undefined') {
         for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
@@ -322,7 +322,7 @@ try {
         }
     }
 } catch (e) {
-    console.warn('图标注册失败（不影响核心功能）:', e);
+    console.warn('Icon registration failed (does not affect core functionality):', e);
 }
 
 app.mixin({

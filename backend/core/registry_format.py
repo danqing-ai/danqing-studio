@@ -1,4 +1,9 @@
-"""models_registry.json v2 解析（供 ModelRegistry / Settings）。"""
+"""models_registry.json v2 解析（供 ModelRegistry / Settings）。
+
+各模型条目可含 ``commercial_use_allowed``：``true`` / ``false`` / ``null``。
+``null`` 表示未在注册表断言，须自行核对上游许可；非法律意见。
+可选维护脚本：``scripts/infer_registry_commercial_use.py`` 根据 HF/魔搭公开元数据辅助推断。
+"""
 
 from __future__ import annotations
 
@@ -37,6 +42,13 @@ def api_action_frozenset(actions: Any, *, media: str) -> FrozenSet[str]:
         if actions.get("animate") is not None:
             s.add("edit")
         return frozenset(s)
+    if media == "audio":
+        s: set[str] = set()
+        if actions.get("create") is not None:
+            s.add("create_music")
+        if any(actions.get(k) is not None for k in ("cover", "repaint")):
+            s.add("edit")
+        return frozenset(s)
     s = set()
     if actions.get("create") is not None:
         s.add("generate")
@@ -49,7 +61,7 @@ def api_action_frozenset(actions: Any, *, media: str) -> FrozenSet[str]:
 
 def media_from_record(raw: Dict[str, Any]) -> str:
     m = raw.get("media")
-    if m in ("image", "video"):
+    if m in ("image", "video", "audio"):
         return str(m)
     cat = str(raw.get("category") or "")
     return "video" if cat == "video_models" else "image"

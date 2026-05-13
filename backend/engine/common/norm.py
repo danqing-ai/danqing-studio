@@ -5,12 +5,33 @@
 """
 from __future__ import annotations
 
+import importlib
 from typing import Any
+
+
+def _rms_norm_apply(x: Any, weight: Any, eps: float) -> Any:
+    """RMS norm over last dimension — matches ``mlx.nn.RMSNorm`` / ``_CudaRMSNorm``."""
+    eps = float(eps)
+    try:
+        torch = importlib.import_module("torch")
+        if isinstance(x, torch.Tensor):
+            dtype = x.dtype
+            xf = x.float()
+            norm = xf * torch.rsqrt(xf.pow(2).mean(-1, keepdim=True) + eps)
+            return (weight.float() * norm).to(dtype)
+    except ImportError:
+        pass
+
+    mx = importlib.import_module("mlx.core")
+    return mx.fast.rms_norm(x, weight, eps)
 
 
 def RMSNorm(dims: int, eps: float = 1e-6, ctx: Any = None) -> Any:
     """RMS 归一化。"""
     return ctx.RMSNorm(dims, eps=eps)
+
+
+RMSNorm._apply_norm = _rms_norm_apply  # type: ignore[attr-defined]
 
 
 def LayerNorm(dims: int, eps: float = 1e-5, ctx: Any = None) -> Any:
@@ -41,9 +62,9 @@ class AdaLayerNorm:
 
 
 class AdaLayerNormContinuous:
-    """连续自适应 LayerNorm — 与 mflux AdaLayerNormContinuous 一致。
+    """Continuous adaptive LayerNorm — matches reference AdaLayerNormContinuous.
 
-    使用单个 linear 层输出 scale + shift。
+    Uses a single linear layer to output scale + shift.
     """
 
     def __init__(self, embedding_dim: int, conditioning_embedding_dim: int, ctx: Any):
@@ -54,11 +75,10 @@ class AdaLayerNormContinuous:
         self.norm = nn.LayerNorm(embedding_dim, eps=1e-6, affine=False)
 
     def forward(self, x: Any, text_embeddings: Any) -> Any:
-        import mlx.core as mx
-        import mlx.nn as nn
-        text_embeddings = self.linear(nn.silu(text_embeddings))
+        ctx = self.ctx
+        text_embeddings = self.linear(ctx.silu(text_embeddings))
         chunk_size = self.embedding_dim
-        scale = text_embeddings[:, 0 * chunk_size: 1 * chunk_size]
-        shift = text_embeddings[:, 1 * chunk_size: 2 * chunk_size]
+        scale = text_embeddings[:, :chunk_size]
+        shift = text_embeddings[:, chunk_size:2 * chunk_size]
         x = self.norm(x) * (1 + scale)[:, None, :] + shift[:, None, :]
         return x

@@ -1,5 +1,5 @@
 /**
- * 创作页任务状态：Element Plus tag type + studio.* 文案键（与 i18n 对齐）。
+ * Creation page task status: Element Plus tag type + studio.* i18n key (aligned with i18n).
  */
 (function (w) {
     const TAG_TYPE = {
@@ -26,7 +26,7 @@
 
     /**
      * @param {string} status
-     * @param {function} $tt i18n 函数（如 window.$tt）
+     * @param {function} $tt i18n function (e.g. window.$tt)
      */
     function statusText(status, $tt) {
         const suf = I18N_SUFFIX[status] || status;

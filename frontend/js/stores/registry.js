@@ -1,6 +1,6 @@
 /**
- * 只读注册表缓存 — Plan C1（GET /api/registry）
- * CDN 无打包：挂载 window.RegistryStore
+ * Read-only registry cache — Plan C1 (GET /api/registry)
+ * CDN no-build: mounted as window.RegistryStore
  */
 (function (w) {
     const API_BASE = '';

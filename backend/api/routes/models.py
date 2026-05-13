@@ -53,12 +53,14 @@ def list_models_index(
             continue
         if installed is False and ready:
             continue
+        raw = e.raw if isinstance(e.raw, dict) else {}
         out[mid] = {
             "media": e.media,
             "family": e.family,
             "engine": e.engine,
             "actions": sorted(e.actions),
             "installed": ready,
+            "commercial_use_allowed": raw.get("commercial_use_allowed"),
         }
     return {"models": out}
 

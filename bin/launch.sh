@@ -66,7 +66,7 @@ if [ "$NEED_CREATE" -eq 1 ]; then
 fi
 
 echo -e "${BLUE}Checking dependencies...${NC}"
-if ! "$VENV_PYTHON" -c "import fastapi, uvicorn, mlx, mflux, pydantic" 2>/dev/null; then
+if ! "$VENV_PYTHON" -c "import fastapi, uvicorn, mlx, pydantic" 2>/dev/null; then
     echo -e "${YELLOW}Installing dependencies to virtual environment...${NC}"
     "$VENV_PIP" install -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt -q
     echo -e "${GREEN}✓ Dependencies installed${NC}"

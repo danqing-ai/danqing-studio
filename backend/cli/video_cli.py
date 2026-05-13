@@ -22,6 +22,8 @@ def generate(
     *,
     negative_prompt: str = "",
     size: str = "1024x1024",
+    num_frames: int | None = None,
+    fps: int | None = None,
     steps: int | None = None,
     guidance: float | None = None,
     seed: int | None = None,
@@ -37,7 +39,7 @@ def generate(
         on_log=lambda ev: print(f"  [{ev.level}] {ev.message}"),
     )
 
-    request = VideoGenerationRequest(
+    payload: dict = dict(
         model=model,
         prompt=prompt,
         negative_prompt=negative_prompt,
@@ -46,6 +48,17 @@ def generate(
         guidance=guidance,
         seed=seed,
     )
+    if num_frames is not None:
+        payload["num_frames"] = num_frames
+    if fps is not None:
+        payload["fps"] = fps
+    request = VideoGenerationRequest(**payload)
+
+    if not ctx.video_engine.supports(model, "generate"):
+        raise RuntimeError(
+            f"Model {model!r} does not support text-to-video (create); "
+            "check config/models_registry.json actions."
+        )
 
     t0 = time.time()
     result = asyncio.run(ctx.video_engine.generate(request, exec_ctx))
@@ -96,6 +109,12 @@ def edit(
         steps=steps,
         seed=seed,
     )
+
+    if not ctx.video_engine.supports(model, "edit"):
+        raise RuntimeError(
+            f"Model {model!r} does not support video edit (animate); "
+            "check config/models_registry.json actions."
+        )
 
     t0 = time.time()
     result = asyncio.run(ctx.video_engine.edit(request, exec_ctx))

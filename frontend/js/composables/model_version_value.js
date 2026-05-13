@@ -1,5 +1,5 @@
 /**
- * 模型下拉 `value`：`modelKey|versionKey` ↔ 拆分。
+ * Model dropdown `value`: `modelKey|versionKey` ↔ split.
  */
 (function (w) {
     /**

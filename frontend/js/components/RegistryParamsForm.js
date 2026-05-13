@@ -1,26 +1,26 @@
 /**
- * 注册表驱动的图像高级参数表单（步数 / CFG / 调度器 / 分辨率 / 去噪强度 / 种子等）。
- * LoRA、ControlNet 依赖运行时列表，由父组件传入 props。
+ * Registry-driven image advanced parameters form (steps / CFG / scheduler / resolution / denoising strength / seed, etc.).
+ * LoRA, ControlNet depend on runtime lists passed as props by the parent component.
  */
 const RegistryParamsForm = {
     name: 'RegistryParamsForm',
     props: {
         modelConfig: { type: Object, default: null },
-        /** 与 ImageCreatePage.params 同源的可变对象 */
+        /** Mutable object shared with ImageCreatePage.params */
         params: { type: Object, required: true },
-        /** 各参数字段是否显示；缺省为 true */
+        /** Whether each parameter field is visible; defaults to true */
         paramVisibility: { type: Object, default: () => ({}) },
-        /** 与当前模型匹配的 LoRA 列表；传 null 时不展示 LoRA 行（即便模型声明 lora_support） */
+        /** LoRA list compatible with current model; pass null to hide LoRA row (even if model declares lora_support) */
         loras: { type: Array, default: null },
-        /** 与当前模型匹配的 ControlNet 列表 */
+        /** ControlNet list compatible with current model */
         controlnets: { type: Array, default: null },
         controlImageSrc: { type: String, default: '' },
-        /** ControlNet 参考条：与创作页 recent 同源 */
+        /** ControlNet reference strip: shared with creation page recent gallery */
         controlRecentGallery: { type: Array, default: () => [] },
     },
     template: `
         <el-form label-position="top" size="small" style="padding-top: 12px;" v-if="modelConfig">
-            <!-- 分辨率 width + height -->
+            <!-- Resolution width + height -->
             <el-form-item v-if="resPair && visible('width')" :label="$t('studio.resolution')">
                 <div style="display: flex; align-items: center; gap: 8px;">
                     <el-select v-model="params.width" style="width: 120px;">
@@ -77,7 +77,7 @@ const RegistryParamsForm = {
                 </el-form-item>
             </template>
 
-            <!-- LoRA / 适配器 — Plan F3 AdapterPicker -->
+            <!-- LoRA / Adapter — Plan F3 AdapterPicker -->
             <adapter-picker
                 v-if="showLoraBlock"
                 :items="adapterItems"
@@ -139,7 +139,7 @@ const RegistryParamsForm = {
                 </div>
             </el-form-item>
 
-            <!-- 种子 -->
+            <!-- Seed -->
             <el-form-item v-if="seedSupport && visible('seed')" :label="$t('studio.seed')">
                 <div style="display: flex; gap: 8px;">
                     <el-input v-model="params.seed" :placeholder="$t('studio.seedPlaceholder')" style="flex: 1;" />
@@ -184,7 +184,7 @@ const RegistryParamsForm = {
             if (!Array.isArray(this.loras)) return [];
             return this.loras.map((l) => ({
                 kind: 'lora',
-                id: l.path,
+                id: l.id,
                 name: l.name,
             }));
         },

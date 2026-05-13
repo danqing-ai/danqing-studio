@@ -1,2 +1,9 @@
 # 旁路基准测试 — 独立依赖（不污染项目代码）
+# mflux 0.17+ 要求 transformers>=5、huggingface-hub>=1.1.6（否则 Qwen2Tokenizer 加载失败）
 mflux>=0.15.0
+transformers>=5.0,<6
+huggingface-hub>=1.1.6,<2.0
+
+# LTX 视频对照：ltx-2-mlx CLI（须先装 core 再装 pipelines；不在 PyPI）
+git+https://github.com/dgrauet/ltx-2-mlx.git#subdirectory=packages/ltx-core-mlx
+git+https://github.com/dgrauet/ltx-2-mlx.git#subdirectory=packages/ltx-pipelines-mlx

@@ -1,5 +1,5 @@
 /**
- * TaskDrawer — 全局任务队列抽屉
+ * TaskDrawer — Global task queue drawer
  * Props:  modelValue (Boolean), queue ({ running, queued })
  * Emits:  update:modelValue, cancel-task(taskId), set-priority(taskId, priority)
  */
@@ -45,6 +45,17 @@ const TaskDrawer = {
                             </el-button>
                         </div>
                         <el-progress class="dq-queue-progress" :percentage="Math.round(task.progress * 100)" :stroke-width="4" />
+                        <div v-if="task.total > 0" style="font-size: 11px; color: var(--text-muted); margin-top: 4px; text-align: right;">
+                            <template v-if="String(task.kind || '').startsWith('image.')">
+                                {{ $t('studio.queueDenoiseProgress', { current: task.step != null ? task.step : 0, total: task.total }) }}
+                            </template>
+                            <template v-else>
+                                {{ $t('studio.queueStepProgress', { current: task.step != null ? task.step : 0, total: task.total }) }}
+                            </template>
+                        </div>
+                        <div v-if="task.progressMessage === 'post' && typeof task.progress === 'number' && task.progress < 1" style="font-size: 11px; color: var(--text-muted); margin-top: 2px; text-align: right;">
+                            {{ $t('studio.queuePostProcessHint') }}
+                        </div>
                     </div>
                 </div>
                 <!-- Queued -->

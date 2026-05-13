@@ -1,11 +1,11 @@
 /**
- * 模型页 — 注册表模型下载、导入与队列（主导航「模型」）
+ * Models page — Registry model download, import, and queue (main nav "Models")
  */
 
 const ModelsPage = {
     template: `
         <div class="models-page" style="display: flex; gap: 20px; height: calc(100vh - 120px);">
-            <!-- 左侧分类导航 -->
+            <!-- Left sidebar: category navigation -->
             <div class="download-sidebar" style="width: 220px; flex-shrink: 0;">
                 <div class="card" style="height: 100%; display: flex; flex-direction: column;">
                     <div class="card-title" style="font-size: 16px;">
@@ -27,9 +27,19 @@ const ModelsPage = {
                             <el-tag size="small" type="info" style="margin-left: auto;">{{ totalModelCount }}</el-tag>
                         </el-menu-item>
                         
-                        <el-menu-item index="base_models">
-                            <el-icon><brush /></el-icon>
-                            <span>{{ $t('download.baseModels') }}</span>
+                        <el-menu-item index="image_models">
+                            <el-icon><picture-filled /></el-icon>
+                            <span>{{ $t('download.imageModels') }}</span>
+                        </el-menu-item>
+
+                        <el-menu-item index="video_models">
+                            <el-icon><video-camera /></el-icon>
+                            <span>{{ $t('download.videoModels') }}</span>
+                        </el-menu-item>
+
+                        <el-menu-item index="music_models">
+                            <el-icon><headset /></el-icon>
+                            <span>{{ $t('download.audioModels') }}</span>
                         </el-menu-item>
                         
                         <el-menu-item index="controlnets">
@@ -66,7 +76,7 @@ const ModelsPage = {
                         </el-menu-item>
                     </el-menu>
                     
-                    <!-- 磁盘空间 -->
+                    <!-- Disk space -->
                     <div v-if="diskSpace" class="disk-space-panel">
                         <div class="disk-space-title">
                             <el-icon><monitor /></el-icon>
@@ -93,12 +103,12 @@ const ModelsPage = {
                 </div>
             </div>
             
-            <!-- 右侧内容区 -->
+            <!-- Right content area -->
             <div style="flex: 1; overflow-y: auto;">
-                <!-- 模型网格 (分类浏览) -->
-                <div v-if="['all', 'base_models', 'controlnets', 'upscalers', 'tools', 'loras'].includes(activeCategory)">
-                    <!-- 快速开始工作流 -->
-                    <div v-if="activeCategory === 'all' || activeCategory === 'base_models'" 
+                <!-- Model grid (category browsing) -->
+                <div v-if="['all', 'image_models', 'video_models', 'music_models', 'controlnets', 'upscalers', 'tools', 'loras'].includes(activeCategory)">
+                    <!-- Quick-start workflow -->
+                    <div v-if="activeCategory === 'all' || activeCategory === 'image_models'" 
                          style="background: var(--bg-card); 
                                 border: 1px solid var(--border-color);
                                 padding: 16px 20px; border-radius: 12px; margin-bottom: 20px; 
@@ -121,7 +131,7 @@ const ModelsPage = {
                         </el-button>
                     </div>
 
-                    <!-- 分类标题 -->
+                    <!-- Category title -->
                     <div class="page-header">
                         <h2 class="page-title">{{ categoryTitle }}</h2>
                         <div class="page-actions">
@@ -146,7 +156,7 @@ const ModelsPage = {
                         </div>
                     </div>
 
-                    <!-- 导入本地模型对话框 -->
+                    <!-- Import local model dialog -->
                     <el-dialog v-model="importDialogVisible" :title="$t('download.importTitle')" width="500px">
                         <el-form label-position="top">
                             <el-form-item :label="$t('download.modelName')">
@@ -171,7 +181,7 @@ const ModelsPage = {
                         </template>
                     </el-dialog>
                     
-                    <!-- 模型卡片网格 -->
+                    <!-- Model card grid -->
                     <el-row :gutter="16" class="model-grid">
                         <el-col 
                             :xs="24" :sm="12" :md="8" :lg="6" 
@@ -184,7 +194,7 @@ const ModelsPage = {
                                 class="model-card"
                                 :class="{ 'model-ready': model.ready }"
                             >
-                                <!-- 卡片头部：图标/预览 + 状态 -->
+                                <!-- Card header: icon/preview + status -->
                                 <div class="model-card-header">
                                     <div class="model-icon">
                                         {{ getModelInitials(model) }}
@@ -197,7 +207,7 @@ const ModelsPage = {
                                     <el-tag v-if="model.recommended" size="small" class="recommended-badge" type="success">{{ $t('download.recommendedBadge') }}</el-tag>
                                 </div>
                                 
-                                <!-- 卡片内容 -->
+                                <!-- Card content -->
                                 <div class="model-card-content">
                                     <div class="model-card-name">
                                         {{ $mn(model) }}
@@ -208,7 +218,7 @@ const ModelsPage = {
                                         </div>
                                     </el-tooltip>
                                     
-                                    <!-- 元信息 -->
+                                    <!-- Meta info -->
                                     <div class="model-card-meta">
                                         <el-tag v-if="model.size" size="small" type="info" effect="plain">{{ model.size }}</el-tag>
                                         <el-tag v-if="model.source === 'huggingface'" size="small" type="primary" effect="plain">HF</el-tag>
@@ -217,7 +227,7 @@ const ModelsPage = {
                                         <el-tag v-if="model.base_model" size="small" type="success" effect="plain">{{ model.base_model }}</el-tag>
                                     </div>
                                     
-                                <!-- 版本列表（注册表项必有 versions，见 check_consistency） -->
+                                <!-- Version list (registry entries must have versions per check_consistency) -->
                                 <div v-if="model.versions" style="margin-bottom: 12px;">
                                     <div v-for="(ver, verKey) in model.versions" :key="verKey" 
                                          style="display: flex; align-items: center; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--border-color);">
@@ -225,15 +235,15 @@ const ModelsPage = {
                                             <div style="display: flex; align-items: center; gap: 6px;">
                                                 <span style="font-size: 13px; color: var(--text-primary);">{{ ver.name }}</span>
                                                 <el-tag size="small" type="info" effect="plain">{{ ver.size }}</el-tag>
-                                                <el-tag v-if="ver.source_type === 'derived'" size="small" type="warning" effect="plain">{{ $t('download.generated') }}</el-tag>
+                                                <el-tag v-if="ver.source_type === 'derived'" size="small" type="warning" effect="plain">{{ $t('download.derivedTag') }}</el-tag>
                                                 <el-tag v-else-if="ver.source_type === 'prequantized'" size="small" type="primary" effect="plain">{{ $t('download.prequantized') }}</el-tag>
                                             </div>
                                             <div v-if="ver.source_type === 'derived'" style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">
                                                 {{ $t('download.basedOn', { name: model.versions[ver.from_version]?.name || ver.from_version }) }}
                                             </div>
                                         </div>
-                                        <div style="display: flex; gap: 6px; flex-shrink: 0;">
-                                            <!-- 根据版本状态显示不同按钮 -->
+                                        <div style="display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end;">
+                                            <!-- Show different buttons based on version status -->
                                             <template v-if="getVersionStatus(model.id, verKey) === 'ready'">
                                                 <el-button type="warning" size="small" @click="downloadVersion(model, verKey)">
                                                     <el-icon><download /></el-icon> {{ $t('download.forceDownload') }}
@@ -242,19 +252,59 @@ const ModelsPage = {
                                                     <el-icon><delete /></el-icon>
                                                 </el-button>
                                             </template>
-                                            <template v-else-if="getVersionStatus(model.id, verKey) === 'generatable'">
+                                            <template v-else-if="getVersionStatus(model.id, verKey) === 'parent_missing'">
+                                                <el-tooltip 
+                                                    v-if="!canDownload(model)"
+                                                    :content="getDependencyHint(model)"
+                                                    placement="top"
+                                                >
+                                                    <span>
+                                                        <el-button 
+                                                            type="primary" 
+                                                            size="small"
+                                                            :disabled="true"
+                                                        >
+                                                            <el-icon><download /></el-icon>
+                                                            {{ $t('download.downloadVersion') }}
+                                                        </el-button>
+                                                    </span>
+                                                </el-tooltip>
                                                 <el-button 
+                                                    v-else
                                                     type="primary" 
                                                     size="small"
-                                                    @click="convertModel(model, verKey)"
-                                                    :loading="convertingModels[model.id + '-' + verKey]"
+                                                    @click="downloadVersion(model, ver.from_version, { uiLoadingKey: model.id + '-' + verKey })"
+                                                    :loading="downloadingModels[model.id + '-' + verKey]"
                                                 >
-                                                    <el-icon><cpu /></el-icon>
-                                                    {{ $t('download.genVersion') }}
+                                                    <el-icon><download /></el-icon>
+                                                    {{ $t('download.downloadVersion') }}
                                                 </el-button>
                                             </template>
-                                            <template v-else-if="getVersionStatus(model.id, verKey) === 'parent_missing'">
-                                                <el-tag size="small" type="info" effect="plain">{{ $t('download.waitingParent') }}</el-tag>
+                                            <template v-else-if="getVersionStatus(model.id, verKey) === 'quantize'">
+                                                <el-tooltip 
+                                                    v-if="!canDownload(model)"
+                                                    :content="getDependencyHint(model)"
+                                                    placement="top"
+                                                >
+                                                    <span>
+                                                        <el-button 
+                                                            type="primary" 
+                                                            size="small"
+                                                            :disabled="true"
+                                                        >
+                                                            {{ $t('download.quantizeVersion') }}
+                                                        </el-button>
+                                                    </span>
+                                                </el-tooltip>
+                                                <el-button 
+                                                    v-else
+                                                    type="primary" 
+                                                    size="small"
+                                                    @click="quantizeVersion(model, verKey)"
+                                                    :loading="downloadingModels[model.id + '-' + verKey]"
+                                                >
+                                                    {{ $t('download.quantizeVersion') }}
+                                                </el-button>
                                             </template>
                                             <template v-else>
                                                 <el-tooltip 
@@ -294,7 +344,7 @@ const ModelsPage = {
                     
                     <el-empty v-if="filteredModels.length === 0 && activeCategory !== 'loras'" :description="$t('download.noModelsInCategory')" />
                     
-                    <!-- LoRA 搜索 -->
+                    <!-- LoRA search -->
                     <div v-if="activeCategory === 'loras'" style="margin-top: 32px; border-top: 1px solid var(--border-color); padding-top: 24px;">
                         <div class="page-header">
                             <h2 class="page-title">{{ $t('download.civitaiSearch') }}</h2>
@@ -377,7 +427,7 @@ const ModelsPage = {
                     </div>
                 </div>
                 
-                <!-- 已安装 -->
+                <!-- Installed -->
                 <div v-if="activeCategory === 'installed'">
                     <div class="page-header">
                         <h2 class="page-title">{{ $t('download.installedLabel') }}</h2>
@@ -397,7 +447,7 @@ const ModelsPage = {
                     </el-table>
                 </div>
                 
-                <!-- 下载中 -->
+                <!-- Downloading -->
                 <div v-if="activeCategory === 'downloading'">
                     <div class="page-header">
                         <h2 class="page-title">{{ $t('download.downloadingTab') }} ({{ activeDownloadCount }})</h2>
@@ -414,11 +464,11 @@ const ModelsPage = {
                                 <div style="display: flex; align-items: center; gap: 12px;">
                                     <span style="color: var(--text-muted); font-size: 13px;">
                                         <span v-if="item.total_size > 0">
-                                            {{ Math.round(item.progress * 100) }}% 
+                                            {{ Math.round(item.progress * 100) }}%
                                             <span v-if="item.speed">({{ item.speed }})</span>
                                         </span>
                                         <span v-else-if="item.downloaded_size > 0">
-                                            {{ formatBytes(item.downloaded_size) }} 
+                                            {{ formatBytes(item.downloaded_size) }}
                                             <span v-if="item.speed">({{ item.speed }})</span>
                                         </span>
                                         <span v-else>{{ $t('download.preparing') }}</span>
@@ -435,8 +485,8 @@ const ModelsPage = {
                                     </el-button>
                                 </div>
                             </div>
-                            <el-progress 
-                                :percentage="item.total_size > 0 ? Math.round(item.progress * 100) : 0" 
+                            <el-progress
+                                :percentage="item.total_size > 0 ? Math.round(item.progress * 100) : 0"
                                 :status="item.status === 'failed' ? 'exception' : ''"
                                 :stroke-width="8"
                                 :show-text="item.total_size > 0"
@@ -454,12 +504,14 @@ const ModelsPage = {
     setup() {
         const { ref, reactive, onMounted, computed, onUnmounted } = Vue;
         
-        // 分类导航
+        // Category nav
         const activeCategory = ref('all');
         const categoryTitle = computed(() => {
             const titles = {
                 'all': $tt('download.allModels'),
-                'base_models': '🎨 ' + $tt('download.baseModels'),
+                'image_models': '🖼️ ' + $tt('download.imageModels'),
+                'video_models': '🎬 ' + $tt('download.videoModels'),
+                'music_models': '🎵 ' + $tt('download.audioModels'),
                 'controlnets': '🎯 ' + $tt('download.controlNet'),
                 'upscalers': '🔍 ' + $tt('download.upscalers'),
                 'tools': '⚙️ ' + $tt('download.tools'),
@@ -468,14 +520,16 @@ const ModelsPage = {
             return titles[activeCategory.value] || $tt('download.title');
         });
         const categoryIcons = {
-            'base_models': '🎨',
+            'image_models': '🖼️',
+            'video_models': '🎬',
+            'music_models': '🎵',
             'controlnets': '🎯',
             'upscalers': '🔍',
             'tools': '⚙️',
             'loras': '🎭'
         };
         
-        // 模型数据
+        // Model data
         const modelRegistry = ref({});
         const modelsStatus = ref({});
         const modelsDetailedStatus = ref({});
@@ -483,37 +537,35 @@ const ModelsPage = {
         const filterQuery = ref('');
         const refreshing = ref(false);
         
-        // 下载状态
+        // Download status
         const downloadingModels = ref({});
         const downloadingLoras = ref({});
         const downloadingRecommended = ref(false);
         const activeDownloads = ref({});
-        const activeConversions = ref({});
-        const convertingModels = ref({});
         const selectedVersions = ref({});
         const sseConnections = ref({});
         
-        // CivitAI 搜索
+        // CivitAI search
         const searchQuery = ref('');
         const searchType = ref('LORA');
         const searching = ref(false);
         const searchResults = ref([]);
         const hasSearched = ref(false);
         
-        // 已安装
+        // Installed
         const installedModels = ref([]);
         
-        // 磁盘空间
+        // Disk space
         const diskSpace = ref(null);
         
-        // 导入本地模型
+        // Import local model
         const importDialogVisible = ref(false);
         const importModelName = ref('');
         const importModelPath = ref('');
         const importModelType = ref('base');
         const importing = ref(false);
 
-        /** 注册表 v2：`name` / `description` 可能为 { zh, en }（GET /api/registry 原样） */
+        /** Registry v2: `name` / `description` may be { zh, en } (GET /api/registry as-is) */
         const modelLabel = (m) => (typeof window.$mn === 'function' ? window.$mn(m, m.id) : (m.id || ''));
         const modelSearchBlob = (m) => {
             const n = modelLabel(m);
@@ -521,7 +573,7 @@ const ModelsPage = {
             return `${n} ${d}`.toLowerCase();
         };
         
-        // 过滤后的模型列表
+        // Filtered model list
         const filteredModels = computed(() => {
             let list = [];
             for (const [id, config] of Object.entries(modelRegistry.value)) {
@@ -531,12 +583,17 @@ const ModelsPage = {
                     ready: modelsStatus.value[id] || false
                 };
                 
-                // 分类过滤
-                if (activeCategory.value !== 'all' && model.category !== activeCategory.value) {
-                    continue;
+                // Category filter (sidebar `image_models` ↔ registry `base_models`)
+                if (activeCategory.value !== 'all') {
+                    const regCat = model.category;
+                    if (activeCategory.value === 'image_models') {
+                        if (regCat !== 'base_models') continue;
+                    } else if (activeCategory.value !== regCat) {
+                        continue;
+                    }
                 }
                 
-                // 搜索过滤
+                // Search filter
                 if (filterQuery.value) {
                     const query = filterQuery.value.toLowerCase();
                     if (!modelSearchBlob(model).includes(query)) {
@@ -547,7 +604,7 @@ const ModelsPage = {
                 list.push(model);
             }
             
-            // 排序：推荐的排前面，然后按名称排序
+            // Sort: recommended first, then by name
             return list.sort((a, b) => {
                 if (a.recommended !== b.recommended) return a.recommended ? -1 : 1;
                 return modelLabel(a).localeCompare(modelLabel(b));
@@ -556,12 +613,12 @@ const ModelsPage = {
         
         const totalModelCount = computed(() => Object.keys(modelRegistry.value).length);
         
-        // 活跃下载任务数量（包含暂停中的任务）
+        // Active download task count (includes paused tasks)
         const activeDownloadCount = computed(() => {
             return Object.values(activeDownloads.value).filter(item => item.status === 'running' || item.status === 'paused' || item.status === 'failed').length;
         });
         
-        // 加载模型注册表
+        // Load model registry
         const loadModelRegistry = async () => {
             try {
                 const RS = window.RegistryStore;
@@ -587,7 +644,7 @@ const ModelsPage = {
             }
         };
         
-        // 刷新状态
+        // Refresh status
         const refreshStatus = async () => {
             refreshing.value = true;
             try {
@@ -606,7 +663,7 @@ const ModelsPage = {
             }
         };
         
-        // 加载已安装
+        // Load installed
         const loadInstalled = async () => {
             try {
                 const models = await api.settings.listModels();
@@ -616,7 +673,7 @@ const ModelsPage = {
             }
         };
         
-        // 加载磁盘空间
+        // Load disk space
         const loadDiskSpace = async () => {
             try {
                 const data = await api.settings.getDiskSpace();
@@ -626,7 +683,7 @@ const ModelsPage = {
             }
         };
         
-        // 加载活跃下载任务（刷新页面后恢复）
+        // Load active downloads (restore after page refresh)
         const loadActiveDownloads = async () => {
             try {
                 const tasks = await api.download.listDownloads();
@@ -642,7 +699,7 @@ const ModelsPage = {
                             total_size: task.total_size || 0,
                             downloaded_size: task.downloaded_size || 0
                         };
-                        // 只有真正在运行的任务才连接 SSE
+                        // Only connect SSE for truly running tasks
                         if (task.status === 'running') {
                             connectProgressSSE(task.id, task.filename || task.url);
                         }
@@ -653,7 +710,7 @@ const ModelsPage = {
             }
         };
         
-        // 磁盘使用百分比
+        // Disk usage percentage
         const getDiskPercent = (type) => {
             if (!diskSpace.value || !diskSpace.value[type]) return 0;
             const info = diskSpace.value[type];
@@ -661,7 +718,7 @@ const ModelsPage = {
             return Math.round(info.size / info.total * 100);
         };
         
-        // 格式化文件大小
+        // Format file size
         const formatBytes = (bytes) => {
             if (bytes === 0) return '0 B';
             const k = 1024;
@@ -670,12 +727,12 @@ const ModelsPage = {
             return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
         };
         
-        // 检查模型是否就绪
+        // Check if model is ready
         const isModelReady = (modelId) => {
             return modelsStatus.value[modelId] || false;
         };
         
-        // 获取模型名称（注册表项或 id）
+        // Get model name (registry entry or id)
         const getModelName = (modelId) => {
             const cfg = modelRegistry.value[modelId];
             if (!cfg) return modelId;
@@ -683,13 +740,13 @@ const ModelsPage = {
             return modelLabel(row);
         };
         
-        // 检查是否可以下载（依赖是否满足）
+        // Check if download is allowed (dependencies met)
         const canDownload = (model) => {
             if (!model.dependencies || model.dependencies.length === 0) return true;
             return model.dependencies.every(dep => isModelReady(dep));
         };
 
-        // 获取依赖不满足时的提示信息
+        // Get hint when dependencies are not met
         const getDependencyHint = (model) => {
             if (!model.dependencies || model.dependencies.length === 0) return '';
             const missing = model.dependencies.filter(dep => !isModelReady(dep));
@@ -698,137 +755,78 @@ const ModelsPage = {
             return $tt('download.dependencyMissing', { models: names });
         };
         
-        // 获取版本状态
+        // Get version status
         const getVersionStatus = (modelId, versionKey) => {
             const detail = modelsDetailedStatus.value[modelId];
             if (!detail || !detail.versions) return 'missing';
-            
+
             const verStatus = detail.versions[versionKey];
             if (!verStatus) return 'missing';
-            
+
             if (verStatus.ready) return 'ready';
-            
-            // 检查是否是 derived 版本
+
             const model = modelRegistry.value[modelId];
-            if (model && model.versions && model.versions[versionKey]) {
-                const ver = model.versions[versionKey];
-                if (ver.source_type === 'derived') {
-                    // 检查父版本是否就绪
-                    const parentVer = ver.from_version;
-                    if (parentVer && detail.versions[parentVer] && detail.versions[parentVer].ready) {
-                        return 'generatable';
-                    }
+            const ver = model?.versions?.[versionKey];
+            if (ver && ver.source_type === 'derived' && ver.from_version) {
+                const parentVer = ver.from_version;
+                const parentSt = parentVer ? detail.versions[parentVer] : null;
+                if (!parentSt || !parentSt.ready) {
                     return 'parent_missing';
                 }
+                return 'quantize';
             }
-            
+
             return 'missing';
         };
-        
-        // SSE 转换进度连接
-        const connectConversionSSE = (taskId, name) => {
-            if (sseConnections.value[taskId]) {
-                sseConnections.value[taskId].close();
-            }
-            
-            const eventSource = new EventSource(api.download.convertProgressStreamUrl(taskId));
-            sseConnections.value[taskId] = eventSource;
-            
-            eventSource.onmessage = (event) => {
-                try {
-                    const data = JSON.parse(event.data);
-                    activeConversions.value[taskId] = {
-                        name: name,
-                        progress: data.progress || 0,
-                        status: data.status,
-                        stage: data.stage,
-                        error: data.error_message || ''
-                    };
-                    
-                    if (data.status === 'completed') {
-                        eventSource.close();
-                        delete sseConnections.value[taskId];
-                        setTimeout(() => {
-                            delete activeConversions.value[taskId];
-                            delete convertingModels.value[`${data.model_name}-${data.to_version}`];
-                        }, 2000);
-                        ElementPlus.ElMessage.success($tt('download.genComplete', { name }));
-                        refreshStatus();
-                    } else if (data.status === 'failed') {
-                        eventSource.close();
-                        delete sseConnections.value[taskId];
-                        ElementPlus.ElMessage.error($tt('download.genFailed', { name, msg: data.error_message }));
-                        delete convertingModels.value[`${data.model_name}-${data.to_version}`];
-                    } else if (data.status === 'cancelled') {
-                        eventSource.close();
-                        delete sseConnections.value[taskId];
-                        delete activeConversions.value[taskId];
-                        delete convertingModels.value[`${data.model_name}-${data.to_version}`];
-                        ElementPlus.ElMessage.info($tt('download.genCancelled', { name }));
-                    }
-                } catch (e) {
-                    console.error('SSE parse error:', e);
-                }
-            };
-            
-            eventSource.onerror = (error) => {
-                console.error('SSE error:', error);
-                eventSource.close();
-                delete sseConnections.value[taskId];
-            };
-        };
-        
-        // 转换模型（生成量化版本）
-        const convertModel = async (model, versionKey) => {
-            const key = `${model.id}-${versionKey}`;
-            if (convertingModels.value[key]) return;
-            
-            const version = model.versions[versionKey];
-            if (!version || !version.from_version) {
-                ElementPlus.ElMessage.error($tt('download.versionConfigError'));
-                return;
-            }
-            
-            convertingModels.value[key] = true;
-            
-            try {
-                ElementPlus.ElMessage.info($tt('download.startConvert', { name: modelLabel(model), version: version.name }));
-                
-                const data = await api.download.startConvert({
-                    model_name: model.id,
-                    from_version: version.from_version,
-                    to_version: versionKey,
-                });
-                connectConversionSSE(data.task_id, `${modelLabel(model)} ${version.name}`);
-                
-            } catch (e) {
-                console.error('Conversion failed:', e);
-                ElementPlus.ElMessage.error($tt('download.convertFailed', { msg: e.message }));
-                delete convertingModels.value[key];
-            }
-        };
-        
-        // 下载指定版本
-        const downloadVersion = async (model, versionKey) => {
-            const key = `${model.id}-${versionKey}`;
-            if (downloadingModels.value[key]) return;
-            
-            downloadingModels.value[key] = true;
-            
+
+        // Download a specific version (optionally show loading on another row, e.g. derived row while parent installs)
+        const downloadVersion = async (model, versionKey, opts = {}) => {
+            const uiKey = opts.uiLoadingKey != null ? opts.uiLoadingKey : `${model.id}-${versionKey}`;
+            if (downloadingModels.value[uiKey]) return;
+
+            downloadingModels.value[uiKey] = true;
+
             try {
                 const version = model.versions[versionKey];
-                
                 const data = await api.models.install(model.id, { version: versionKey });
-                connectProgressSSE(data.task_id, `${modelLabel(model)} ${version?.name || ''}`, key);
-                
+                const label = version ? `${modelLabel(model)} ${version.name}` : `${modelLabel(model)} ${versionKey}`;
+                connectProgressSSE(data.task_id, label, uiKey);
             } catch (e) {
                 console.error('Download failed:', e);
                 ElementPlus.ElMessage.error($tt('download.downloadFailed', { msg: e.message }));
-                delete downloadingModels.value[key];
+                delete downloadingModels.value[uiKey];
             }
         };
-        
-        // 删除指定版本
+
+        /** Local MLX quantization (derived version); parent must already be installed. */
+        const quantizeVersion = async (model, versionKey) => {
+            const ver = model.versions[versionKey];
+            const fromV = ver?.from_version;
+            if (!fromV) {
+                ElementPlus.ElMessage.error($tt('download.versionConfigError'));
+                return;
+            }
+            const uiKey = `${model.id}-${versionKey}`;
+            if (downloadingModels.value[uiKey]) return;
+
+            downloadingModels.value[uiKey] = true;
+            try {
+                const data = await api.download.startConvert({
+                    model_name: model.id,
+                    from_version: fromV,
+                    to_version: versionKey,
+                });
+                const taskId = data.task_id;
+                const label = ver?.name ? `${modelLabel(model)} ${ver.name}` : `${modelLabel(model)} ${versionKey}`;
+                connectConversionSSE(taskId, label, uiKey);
+            } catch (e) {
+                console.error('Quantize failed:', e);
+                ElementPlus.ElMessage.error($tt('download.quantizeFailed', { msg: e.message || String(e) }));
+                delete downloadingModels.value[uiKey];
+            }
+        };
+
+        // Delete a specific version
         const deleteVersion = async (model, versionKey) => {
             try {
                 const version = model.versions[versionKey];
@@ -852,16 +850,7 @@ const ModelsPage = {
             }
         };
         
-        // 取消转换
-        const cancelConversion = async (taskId) => {
-            try {
-                await api.download.cancelConvert(taskId);
-            } catch (e) {
-                console.error('Cancel conversion failed:', e);
-            }
-        };
-        
-        // SSE 进度连接；`downloadingKey` 与 `downloadingModels` 的键一致（多版本安装为 `${modelId}-${versionKey}`）
+        // SSE progress connection; `downloadingKey` aligns with `downloadingModels` key (multi-version install: `${modelId}-${versionKey}`)
         const connectProgressSSE = (taskId, name, downloadingKey = null) => {
             const dmKey = downloadingKey != null ? downloadingKey : taskId;
             if (sseConnections.value[taskId]) {
@@ -917,14 +906,73 @@ const ModelsPage = {
                 delete downloadingModels.value[dmKey];
             };
         };
-        
-        // 批量下载推荐模型
+
+        /** Quantization job progress (same drawer as downloads; ``total_size: 1`` drives percent bar). */
+        const connectConversionSSE = (taskId, name, dmKey = null) => {
+            const rowKey = dmKey != null ? dmKey : taskId;
+            if (sseConnections.value[taskId]) {
+                try { sseConnections.value[taskId].close(); } catch (e) {}
+            }
+
+            const eventSource = new EventSource(api.download.convertProgressStreamUrl(taskId));
+            sseConnections.value[taskId] = eventSource;
+
+            eventSource.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    activeDownloads.value[taskId] = {
+                        kind: 'quantize',
+                        name,
+                        progress: typeof data.progress === 'number' ? data.progress : 0,
+                        status: data.status || 'running',
+                        speed: '',
+                        total_size: 1,
+                        downloaded_size: 0,
+                        error: data.error_message || '',
+                    };
+
+                    if (data.status === 'completed') {
+                        eventSource.close();
+                        delete sseConnections.value[taskId];
+                        setTimeout(() => {
+                            delete activeDownloads.value[taskId];
+                            delete downloadingModels.value[rowKey];
+                        }, 2000);
+                        ElementPlus.ElMessage.success($tt('download.quantizeComplete', { name }));
+                        refreshStatus();
+                    } else if (data.status === 'failed') {
+                        eventSource.close();
+                        delete sseConnections.value[taskId];
+                        delete downloadingModels.value[rowKey];
+                        ElementPlus.ElMessage.error(
+                            $tt('download.quantizeFailed', { msg: data.error_message || '' }),
+                        );
+                    } else if (data.status === 'cancelled') {
+                        eventSource.close();
+                        delete sseConnections.value[taskId];
+                        delete activeDownloads.value[taskId];
+                        delete downloadingModels.value[rowKey];
+                        ElementPlus.ElMessage.info($tt('download.genCancelled', { name }));
+                    }
+                } catch (e) {
+                    console.error('Conversion SSE parse error:', e);
+                }
+            };
+
+            eventSource.onerror = () => {
+                eventSource.close();
+                delete sseConnections.value[taskId];
+                delete downloadingModels.value[rowKey];
+            };
+        };
+
+        // Batch download recommended models
         const downloadRecommendedSet = async () => {
             if (downloadingRecommended.value) return;
             downloadingRecommended.value = true;
             
             try {
-                const modelsToDownload = ['flux1-schnell']; // 可以扩展为更多
+                const modelsToDownload = ['flux1-schnell']; // can be expanded to more
                 
                 ElementPlus.ElMessage.info($tt('download.batchDownloadStart'));
                 
@@ -947,8 +995,17 @@ const ModelsPage = {
             }
         };
         
-        // 取消下载
+        // Cancel download
         const cancelDownload = async (taskId) => {
+            const item = activeDownloads.value[taskId];
+            if (item && item.kind === 'quantize') {
+                try {
+                    await api.download.cancelConversion(taskId);
+                } catch (e) {
+                    console.error('Cancel conversion failed:', e);
+                }
+                return;
+            }
             try {
                 await api.download.cancel(taskId);
             } catch (e) {
@@ -956,7 +1013,7 @@ const ModelsPage = {
             }
         };
         
-        // 恢复下载
+        // Resume download
         const resumeDownload = async (taskId) => {
             try {
                 const item = activeDownloads.value[taskId];
@@ -964,10 +1021,10 @@ const ModelsPage = {
                 
                 await api.download.resume(taskId);
                 
-                // 更新状态为 running
+                // Update status to running
                 item.status = 'running';
                 
-                // 连接 SSE 监听进度
+                // Connect SSE to monitor progress
                 connectProgressSSE(taskId, item.name);
                 
                 ElementPlus.ElMessage.success($tt('download.resumeStart', { name: item.name }));
@@ -979,7 +1036,10 @@ const ModelsPage = {
 
         const deleteDownload = async (taskId) => {
             try {
-                await api.download.delete(taskId);
+                const item = activeDownloads.value[taskId];
+                if (!item || item.kind !== 'quantize') {
+                    await api.download.delete(taskId);
+                }
                 delete activeDownloads.value[taskId];
                 ElementPlus.ElMessage.success($tt('download.deleteSuccess'));
             } catch (e) {
@@ -988,7 +1048,7 @@ const ModelsPage = {
             }
         };
         
-        // CivitAI 搜索
+        // CivitAI search
         const searchCivitai = async () => {
             if (searching.value) return;
             searching.value = true;
@@ -1016,7 +1076,7 @@ const ModelsPage = {
             }
         };
         
-        // 下载 CivitAI 模型
+        // Download CivitAI model
         const downloadCivitaiModel = async (model) => {
             const versionId = selectedVersions.value[model.id];
             if (!versionId) {
@@ -1047,14 +1107,14 @@ const ModelsPage = {
             }
         };
         
-        // 格式化数字
+        // Format number
         const formatNumber = (num) => {
             if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
             if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
             return num.toString();
         };
         
-        // 导入本地模型
+        // Import local model
         const showImportDialog = () => {
             importModelName.value = '';
             importModelPath.value = '';
@@ -1070,8 +1130,8 @@ const ModelsPage = {
             
             importing.value = true;
             try {
-                // 这里应该调用后端 API 创建软链接或复制文件
-                // 简化处理：前端记录到 localStorage，提示用户手动放置文件
+                // Call backend API to create symlink or copy file
+                // Simplified: save to localStorage, prompt user to manually place file
                 const SK = window.DQ_STORAGE || {};
                 const importedModels = JSON.parse(
                     (SK.IMPORTED_MODELS && localStorage.getItem(SK.IMPORTED_MODELS)) || '[]'
@@ -1094,7 +1154,7 @@ const ModelsPage = {
             }
         };
         
-        // 获取模型名称首字母缩写（入参为整行 model，因 name 可能为 i18n 对象）
+        // Get model initials (param is full model row, as name may be i18n object)
         const getModelInitials = (model) => {
             const name = modelLabel(model);
             if (!name) return 'M';
@@ -1114,24 +1174,25 @@ const ModelsPage = {
             return name.slice(0, 3);
         };
         
-        // 获取模型类型对应的标签类型
+        // Get el-tag type for model type
         const getModelTypeTagType = (type) => {
             const typeMap = {
                 'diffusion': 'primary',
                 'controlnet': 'warning',
                 'upscaler': 'success',
                 'tool': 'info',
-                'lora': 'danger'
+                'lora': 'danger',
+                'video': 'success'
             };
             return typeMap[type] || 'info';
         };
         
-        // 分类选择
+        // Category selection
         const handleCategorySelect = (index) => {
             activeCategory.value = index;
         };
         
-        // 页面卸载时关闭所有 SSE，防止刷新/关闭时连接泄漏占用浏览器并发槽
+        // Close all SSE on page unload to prevent connection leaks consuming browser concurrency slots on refresh/close
         const closeAllSSE = () => {
             Object.values(sseConnections.value).forEach(es => {
                 try { es.close(); } catch (e) {}
@@ -1168,8 +1229,6 @@ const ModelsPage = {
             downloadingLoras,
             downloadingRecommended,
             activeDownloads,
-            activeConversions,
-            convertingModels,
             searchQuery,
             searchType,
             searching,
@@ -1186,11 +1245,11 @@ const ModelsPage = {
             handleCategorySelect,
             refreshStatus,
             downloadVersion,
+            quantizeVersion,
             downloadRecommendedSet,
             cancelDownload,
             resumeDownload,
             deleteDownload,
-            cancelConversion,
             deleteVersion,
             searchCivitai,
             downloadCivitaiModel,
@@ -1204,7 +1263,6 @@ const ModelsPage = {
             formatBytes,
             getVersionStatus,
             getDependencyHint,
-            convertModel,
             showImportDialog,
             importLocalModel
         };

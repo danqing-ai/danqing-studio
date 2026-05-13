@@ -43,10 +43,12 @@
 
 完整注册表见 `config/models_registry.json`。
 
+图像基准测试（**模型 × `actions` × mflux CLI** 对照表、PSNR 用例说明、跑法）见 [`tests/benchmark/README.md`](tests/benchmark/README.md)。
+
 ## 项目结构
 
 ```
-mflux-studio/
+DanQing-Studio/
 ├── backend/                    # 后端
 │   ├── api/routes/            # REST API 路由（按媒体类型拆分）
 │   ├── cli/                   # CLI 命令（与 REST API 一一对应）
@@ -80,7 +82,7 @@ mflux-studio/
 │   └── studio.db              # SQLite（任务 + 资产，v3，WAL 模式）
 ├── models/                     # 模型目录
 ├── outputs/                    # 输出目录
-├── tests/                      # 测试（含 benchmark 独立 venv）
+├── tests/                      # 测试（含 benchmark 独立 venv；说明见 tests/benchmark/README.md）
 └── requirements.txt            # Python 依赖
 ```
 
@@ -96,7 +98,7 @@ mflux-studio/
 
 ```bash
 # 1. 克隆或下载项目
-cd mflux-studio
+cd DanQing-Studio
 
 # 2. 创建虚拟环境
 python3 -m venv .venv
@@ -106,9 +108,11 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-> **mflux / mlx-video 不在项目 venv 中**。它们是旁路基准测试的依赖，如需运行 benchmark：
+> Benchmark tests use an independent virtual environment. To run benchmarks:
 > ```bash
-> make bench-setup  # 初始化 tests/benchmark/venv/
+> make bench-setup  # Initialize tests/benchmark/venv/
+> python -m tests.benchmark.run --all   # 28 PSNR cases vs mflux (see tests/benchmark/README.md)
+> python -m tests.benchmark.run --sanity
 > ```
 
 ### 启动
@@ -184,15 +188,15 @@ assets = get_container().resolve(SQLiteAssetStore)
 
 ### 模型插件化
 
-新增模型仅需 5 步，**Pipeline 装配逻辑零修改**：
+新增模型按 **AGENTS.md**「新模型接入流程」与 **`.cursor/rules/model-migration.mdc`** 执行；概要如下（**Pipeline 装配骨架不增 `family` 分支**）：
 
-1. **注册表声明** — `config/models_registry.json` 添加条目（含 `vae_scale`, `scheduler`, `text_encoder_out_layers`, `requires_sigma_shift` 等参数）
-2. **配置数据类** — `backend/engine/config/model_configs.py` 添加 Config（含 `vae_scale`, `encoder_type` 等架构字段）
-3. **Transformer 实现** — `backend/engine/models/image/{family}.py`
-4. **权重映射** — `backend/engine/common/weights.py` 添加 remap 函数
-5. **Pipeline 注册** — `backend/engine/image_pipeline.py` 的 `_get_transformer_class()` / `_get_weight_remap()` 中添加一行
+1. **注册表声明** — `config/models_registry.json` 添加条目（含 `vae_scale`, `scheduler`, `text_encoder_out_layers` 等参数）
+2. **配置数据类** — `backend/engine/config/model_configs.py` 添加 Config，并加入 `FAMILY_CONFIG_MAP`
+3. **Transformer 实现** — `backend/engine/<family>/transformer.py`（继承 `TransformerBase`，注入 `RuntimeContext`）
+4. **权重映射** — `backend/engine/<family>/weights.py` 等，提供 `remap_*_weights`
+5. **注册表接线** — [`backend/engine/_transformer_registry.py`](backend/engine/_transformer_registry.py) 中 `_TRANSFORMER` / `_WEIGHT_REMAP` /（若需）`_TEXT_ENCODER` 条目
 
-> **核心不变量**：新增模型不触碰 API / CLI / Engine / Scheduler / Persistence / Pipeline 代码。
+> **核心不变量**：新增模型优先只动注册表、Config、family 目录与 `_transformer_registry`；**不复制** API / CLI / Engine / Scheduler 业务路径。详见 [AGENTS.md](AGENTS.md)。
 
 ## API 文档
 

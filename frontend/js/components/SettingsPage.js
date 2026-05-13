@@ -1,5 +1,5 @@
 /**
- * 设置页面组件 - 美化版
+ * Settings page component - Beautified version
  */
 
 const SettingsPage = {
@@ -7,7 +7,7 @@ const SettingsPage = {
         <div class="settings-page">
             <el-tabs type="border-card" v-model="activeTab">
                 
-                <!-- 模型配置（增强版） -->
+                <!-- Model config (enhanced) -->
                 <el-tab-pane :label="$t('settings.modelConfig')" name="models">
                     <div class="card" style="margin-bottom: 24px;">
                         <div class="card-title">
@@ -18,7 +18,7 @@ const SettingsPage = {
                             </span>
                         </div>
 
-                        <!-- 模型选择器（增强：带版本状态、分类、大小） -->
+                        <!-- Model selector (enhanced: version status, category, size) -->
                         <el-select
                             v-model="selectedModel"
                             style="width: 100%; margin-bottom: 20px;"
@@ -44,9 +44,9 @@ const SettingsPage = {
                             </el-option>
                         </el-select>
 
-                        <!-- 当前模型配置（增强版） -->
+                        <!-- Current model config (enhanced) -->
                         <div v-if="currentModelConfig">
-                            <!-- 模型概览头部 -->
+                            <!-- Model overview header -->
                             <div class="model-overview-header" style="display: flex; align-items: flex-start; gap: 16px; margin-bottom: 24px; padding: 16px; background: var(--bg-card); border-radius: 12px; border: 1px solid var(--border-color);">
                                 <div style="width: 56px; height: 56px; border-radius: 12px; background: rgba(233, 69, 96, 0.1); border: 1px solid rgba(233, 69, 96, 0.2); display: flex; align-items: center; justify-content: center; flex-shrink: 0; color: var(--primary); font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 4px; box-sizing: border-box;">
                                     {{ modelInitials(currentModelConfig) }}
@@ -73,11 +73,11 @@ const SettingsPage = {
                                 </div>
                             </div>
 
-                            <!-- 两栏布局：参数配置 + 模型信息 -->
+                            <!-- Two-column layout: param config + model info -->
                             <el-row :gutter="24">
-                                <!-- 左栏：参数配置 -->
+                                <!-- Left column: parameter config -->
                                 <el-col :xs="24" :md="16">
-                                    <!-- 默认版本选择 -->
+                                    <!-- Default version selection -->
                                     <div v-if="currentModelConfig.versions" style="margin-bottom: 20px;">
                                         <div style="font-weight: 600; font-size: 14px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
                                             <el-icon><collection /></el-icon>
@@ -101,7 +101,7 @@ const SettingsPage = {
                                                         v-else-if="versionStatus(selectedModel, verKey) === 'generatable'"
                                                         size="small"
                                                         type="warning"
-                                                    >{{ $t('settings.canGenerate') }}</el-tag>
+                                                    >{{ versionStatusLabel(selectedModel, verKey) }}</el-tag>
                                                     <el-tag
                                                         v-else
                                                         size="small"
@@ -122,7 +122,7 @@ const SettingsPage = {
                                         </div>
                                     </div>
 
-                                    <!-- 参数预设管理 -->
+                                    <!-- Parameter preset management -->
                                     <div style="margin-bottom: 20px;">
                                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
                                             <div style="font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 8px;">
@@ -155,7 +155,7 @@ const SettingsPage = {
                                         </div>
                                     </div>
 
-                                    <!-- 参数配置表单（增强：带 note、类型图标、重置按钮） -->
+                                    <!-- Parameter config form (enhanced: note tooltips, type icons, reset buttons) -->
                                     <div class="model-params-section">
                                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
                                             <h4 class="section-title" style="margin: 0;">
@@ -168,9 +168,9 @@ const SettingsPage = {
                                             </el-button>
                                         </div>
 
-                                        <!-- 自定义参数表单（替代 RegistryParamsForm，增加 note 展示和重置按钮） -->
+                                        <!-- Custom param form (replaces RegistryParamsForm, adds note display and reset buttons) -->
                                         <el-form label-position="top" size="small" v-if="currentModelConfig">
-                                            <!-- 分辨率 -->
+                                            <!-- Resolution -->
                                             <el-form-item v-if="resPair" :label="$t('studio.resolution')">
                                                 <div style="display: flex; align-items: center; gap: 8px;">
                                                     <el-select v-model="modelParams.width" style="width: 120px;">
@@ -183,7 +183,7 @@ const SettingsPage = {
                                                 </div>
                                             </el-form-item>
 
-                                            <!-- 标量参数 -->
+                                            <!-- Scalar parameters -->
                                             <template v-for="key in scalarKeys" :key="key">
                                                 <el-form-item v-if="specOf(key)">
                                                     <template #label>
@@ -266,7 +266,7 @@ const SettingsPage = {
                                                 :weight-spec="loraScaleSpec"
                                             />
 
-                                            <!-- 种子 -->
+                                            <!-- Seed -->
                                             <el-form-item v-if="seedSupport" :label="$t('studio.seed')">
                                                 <div style="display: flex; gap: 8px;">
                                                     <el-input v-model="modelParams.seed" :placeholder="$t('studio.seedPlaceholder')" style="flex: 1;" />
@@ -286,9 +286,9 @@ const SettingsPage = {
                                     </div>
                                 </el-col>
 
-                                <!-- 右栏：模型信息参考 -->
+                                <!-- Right column: model info reference -->
                                 <el-col :xs="24" :md="8">
-                                    <!-- 版本状态矩阵 -->
+                                    <!-- Version status matrix -->
                                     <div class="card" style="margin-bottom: 20px; background: var(--bg-card);">
                                         <div style="font-weight: 600; font-size: 14px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
                                             <el-icon><collection /></el-icon>
@@ -328,7 +328,7 @@ const SettingsPage = {
                                         </div>
                                     </div>
 
-                                    <!-- 能力矩阵 -->
+                                    <!-- Capability matrix -->
                                     <div class="card" style="margin-bottom: 20px; background: var(--bg-card);">
                                         <div style="font-weight: 600; font-size: 14px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
                                             <el-icon><check /></el-icon>
@@ -349,7 +349,7 @@ const SettingsPage = {
                                         </div>
                                     </div>
 
-                                    <!-- 硬件适配 -->
+                                    <!-- Hardware compatibility -->
                                     <div class="card" style="margin-bottom: 20px; background: var(--bg-card);">
                                         <div style="font-weight: 600; font-size: 14px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
                                             <el-icon><cpu /></el-icon>
@@ -374,7 +374,7 @@ const SettingsPage = {
                                         </div>
                                     </div>
 
-                                    <!-- 参数说明 -->
+                                    <!-- Parameter notes -->
                                     <div class="card" style="background: var(--bg-card);">
                                         <div style="font-weight: 600; font-size: 14px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
                                             <el-icon><info-filled /></el-icon>
@@ -395,7 +395,7 @@ const SettingsPage = {
                         </div>
                     </div>
 
-                    <!-- 参数预设保存对话框 -->
+                    <!-- Parameter preset save dialog -->
                     <el-dialog v-model="paramPresetDialogVisible" :title="$t('settings.saveParamPreset')" width="400px">
                         <el-form label-position="top">
                             <el-form-item :label="$t('settings.presetName')" required>
@@ -412,7 +412,7 @@ const SettingsPage = {
                     </el-dialog>
                 </el-tab-pane>
                 
-                <!-- 提示词模板 -->
+                <!-- Prompt templates -->
                 <el-tab-pane :label="$t('settings.promptTemplates')" name="presets">
                     <div class="card" style="margin-bottom: 24px;">
                         <div class="card-title" style="justify-content: space-between;">
@@ -470,7 +470,7 @@ const SettingsPage = {
                         </el-table>
                     </div>
                     
-                    <!-- 添加/编辑模板对话框 -->
+                    <!-- Add/Edit template dialog -->
                     <el-dialog
                         v-model="presetDialogVisible"
                         :title="editingPresetName ? $t('settings.editTemplate') : $t('settings.addTemplate')"
@@ -523,12 +523,12 @@ const SettingsPage = {
                     </el-dialog>
                 </el-tab-pane>
                 
-                <!-- 系统设置 -->
+                <!-- System settings -->
                 <el-tab-pane :label="$t('settings.systemConfig')" name="system">
                     <el-row :gutter="24">
-                        <!-- 左侧：公共配置 + 模型列表 + LoRA 列表 -->
+                        <!-- Left: public config + model list + LoRA list -->
                         <el-col :xs="24" :md="16">
-                            <!-- 公共配置 -->
+                            <!-- Public config -->
                             <div class="card" style="margin-bottom: 24px;">
                                 <div class="card-title">
                                     <el-icon><setting /></el-icon>
@@ -677,9 +677,9 @@ const SettingsPage = {
                             
                         </el-col>
                         
-                        <!-- 右侧：系统信息 + 实时资源监控 -->
+                        <!-- Right: system info + real-time resource monitor -->
                         <el-col :xs="24" :md="8">
-                            <!-- 系统信息 -->
+                            <!-- System info -->
                             <div class="card" style="margin-bottom: 24px;">
                                 <div class="card-title">
                                     <el-icon><cpu /></el-icon>
@@ -716,7 +716,7 @@ const SettingsPage = {
                                     </div>
                                 </div>
                                 
-                                <!-- 依赖版本 -->
+                                <!-- Dependency versions -->
                                 <div v-if="systemInfo.dependencies" style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border-color);">
                                     <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 8px;">{{ $t('settings.dependencies') }}</div>
                                     <div style="display: flex; flex-wrap: wrap; gap: 8px;">
@@ -727,7 +727,7 @@ const SettingsPage = {
                                 </div>
                             </div>
                             
-                            <!-- 模型缓存状态 -->
+                            <!-- Model cache status -->
                             <div class="card" style="margin-bottom: 24px;">
                                 <div class="card-title" style="justify-content: space-between; align-items: center;">
                                     <span style="display: flex; align-items: center; gap: 8px;">
@@ -768,7 +768,7 @@ const SettingsPage = {
                                 </template>
                             </div>
                             
-                            <!-- 实时资源监控 -->
+                            <!-- Real-time resource monitor -->
                             <div class="card system-monitor-card">
                                 <div class="card-title">
                                     <el-icon><monitor /></el-icon>
@@ -793,7 +793,7 @@ const SettingsPage = {
                                     />
                                 </div>
                                 
-                                <!-- 内存 -->
+                                <!-- Memory -->
                                 <div class="monitor-item">
                                     <div class="monitor-label">
                                         <el-icon><menu /></el-icon>
@@ -843,9 +843,9 @@ const SettingsPage = {
         const systemInfo = inject('systemInfo');
         const SK = window.DQ_STORAGE || {};
 
-        // 恢复标签页状态
+        // Restore tab state
         const activeTab = ref((SK.SETTINGS_TAB && localStorage.getItem(SK.SETTINGS_TAB)) || 'models');
-        // 语言始终跟随 i18n，不从后端加载
+        // Language always follows i18n, not loaded from backend
         const settings = reactive({
             language: (typeof i18n !== 'undefined' ? i18n.global.locale.value : 'zh'),
             theme: 'dark',
@@ -863,19 +863,19 @@ const SettingsPage = {
             custom_outputs_dir: '',
         });
 
-        // 模型配置
+        // Model config
         const modelRegistry = ref({});
         const selectedModel = ref('');
-        // 模型安装状态（从后端加载）
+        // Model install status (loaded from backend)
         const modelsStatus = ref({});
         const modelsDetailedStatus = ref({});
-        // 默认版本选择
+        // Default version selection
         const selectedDefaultVersion = ref('');
-        // 参数预设（localStorage 持久化）
+        // Parameter presets (localStorage persisted)
         const paramPresets = ref([]);
         const paramPresetDialogVisible = ref(false);
         const paramPresetForm = reactive({ name: '', isDefault: false });
-        // 记录参数默认值（用于检测变更）
+        // Record parameter defaults (for detecting changes)
         const paramDefaults = reactive({});
 
         const modelParams = reactive({
@@ -898,13 +898,13 @@ const SettingsPage = {
             controlnet_strength: 0.8,
         });
 
-        /** 设置页：与当前模型兼容的已安装 LoRA（供 AdapterPicker） */
+        /** Settings page: installed LoRAs compatible with current model (for AdapterPicker) */
         const settingsCompatibleLoras = ref([]);
 
-        // 已安装的模型和LoRA
+        // Installed models and LoRAs
         const installedModels = ref([]);
         
-        // 提示词模板
+        // Prompt templates
         const presets = ref({});
         const presetDialogVisible = ref(false);
         const editingPresetName = ref('');
@@ -928,7 +928,7 @@ const SettingsPage = {
         const presetMediaLabel = (preset) =>
             preset.media_scope === 'video' ? $tt('settings.presetMediaVideo') : $tt('settings.presetMediaImage');
 
-        // 加载提示词模板
+        // Load prompt templates
         const loadPresets = async () => {
             try {
                 const data = await api.settings.getPresets();
@@ -938,7 +938,7 @@ const SettingsPage = {
             }
         };
 
-        // 打开模板对话框
+        // Open template dialog
         const openPresetDialog = (name = '', preset = null) => {
             editingPresetName.value = name;
             if (name && preset) {
@@ -957,7 +957,7 @@ const SettingsPage = {
             presetDialogVisible.value = true;
         };
 
-        // 保存模板
+        // Save template
         const savePreset = async () => {
             if (!presetForm.name.trim()) {
                 ElementPlus.ElMessage.warning($tt('settings.enterTemplateName'));
@@ -984,7 +984,7 @@ const SettingsPage = {
             }
         };
 
-        // 确认删除模板
+        // Confirm template deletion
         const confirmDeletePreset = (name) => {
             ElementPlus.ElMessageBox.confirm(
                 $tt('settings.deletePresetConfirm', { name }),
@@ -999,7 +999,7 @@ const SettingsPage = {
             }).catch(() => {});
         };
 
-        // 删除模板
+        // Delete template
         const deletePreset = async (name) => {
             try {
                 await api.settings.deletePreset(name);
@@ -1011,7 +1011,7 @@ const SettingsPage = {
             }
         };
 
-        // 实时资源监控
+        // Real-time resource monitoring
         const monitorData = reactive({
             cpu_percent: 0,
             memory: {
@@ -1044,7 +1044,7 @@ const SettingsPage = {
             }
         };
 
-        // ===== 增强：模型选择器 & 概览 =====
+        // ===== Enhanced: model selector & overview =====
 
         const sortedModelRegistry = computed(() => {
             const entries = Object.entries(modelRegistry.value);
@@ -1059,12 +1059,13 @@ const SettingsPage = {
 
         const categoryLabel = (cat) => {
             const map = {
-                'base_models': $tt('download.baseModels'),
+                'base_models': $tt('download.imageModels'),
                 'controlnets': $tt('download.controlNet'),
                 'upscalers': $tt('download.upscalers'),
                 'loras': $tt('download.loraModels'),
                 'tools': $tt('download.tools'),
                 'video_models': $tt('download.videoModels'),
+                'music_models': $tt('download.audioModels'),
             };
             return map[cat] || cat;
         };
@@ -1140,7 +1141,7 @@ const SettingsPage = {
             return '';
         };
 
-        // 解析版本大小字符串为 GB 数字
+        // Parse version size string to GB number
         const parseSizeGB = (sizeStr) => {
             if (!sizeStr) return 0;
             const match = String(sizeStr).match(/([\d.]+)\s*(GB|MB|KB|TB)/i);
@@ -1174,12 +1175,12 @@ const SettingsPage = {
             const ver = cfg.versions[verKey];
             if (!ver) return false;
             const sizeGB = parseSizeGB(ver.size);
-            // 推荐：已安装且内存充足，或未安装但内存充足的最小版本
+            // Recommended: installed with sufficient memory, or smallest within memory range if none installed
             const memoryGB = systemInfo.memory_gb;
             if (sizeGB > memoryGB * 1.2) return false;
             const status = versionStatus(selectedModel.value, verKey);
             if (status === 'ready') return true;
-            // 如果没有任何已安装版本，推荐内存范围内最小的
+            // If no installed version, recommend the smallest within memory range
             const allReady = Object.keys(cfg.versions).filter((k) => versionStatus(selectedModel.value, k) === 'ready');
             if (allReady.length === 0) {
                 const installable = Object.entries(cfg.versions)
@@ -1198,7 +1199,7 @@ const SettingsPage = {
             if (!cfg || !cfg.versions) return null;
             const candidates = Object.entries(cfg.versions).filter(([k]) => isRecommendedVersion(k));
             if (candidates.length === 0) return null;
-            // 优先选择已安装的
+            // Prefer already installed
             const ready = candidates.find(([k]) => versionStatus(selectedModel.value, k) === 'ready');
             if (ready) return { key: ready[0], ...ready[1] };
             return { key: candidates[0][0], ...candidates[0][1] };
@@ -1251,7 +1252,7 @@ const SettingsPage = {
             return caps;
         });
 
-        // ===== 参数预设 =====
+        // ===== Parameter presets =====
 
         const loadParamPresets = () => {
             try {
@@ -1295,7 +1296,7 @@ const SettingsPage = {
                     presetParams[key] = modelParams[key];
                 }
             }
-            // 如果设为默认，取消其他默认
+            // If set as default, unset other defaults
             if (paramPresetForm.isDefault) {
                 paramPresets.value.forEach((p) => {
                     if (p.modelKey === mk) p.isDefault = false;
@@ -1328,7 +1329,7 @@ const SettingsPage = {
             }
         };
 
-        // ===== 参数表单增强 =====
+        // ===== Enhanced param form =====
 
         const normalizedParams = computed(() => {
             const R = window.RegistryParamSchema;
@@ -1360,7 +1361,7 @@ const SettingsPage = {
 
         const adapterItems = computed(() => {
             if (!Array.isArray(settingsCompatibleLoras.value)) return [];
-            return settingsCompatibleLoras.value.map((l) => ({ kind: 'lora', id: l.path, name: l.name }));
+            return settingsCompatibleLoras.value.map((l) => ({ kind: 'lora', id: l.id, name: l.name }));
         });
 
         const loraScaleSpec = computed(() => {
@@ -1427,7 +1428,7 @@ const SettingsPage = {
 
         const hasParamNotes = computed(() => paramNotesList.value.length > 0);
 
-        // ===== 原有 computed =====
+        // ===== Existing computed =====
 
         const currentModelConfig = computed(() => {
             return modelRegistry.value[selectedModel.value] || null;
@@ -1445,14 +1446,14 @@ const SettingsPage = {
             return Object.keys(cfg.actions).filter((k) => cfg.actions[k] != null);
         });
 
-        /** Plan D：注册表动作 chip 走顶层 action.*；视频 create 与图像 create 分文案 */
+        /** Plan D: registry action chip uses top-level action.*; video create vs image create use ``media`` (not engine id strings). */
         const actionTagLabel = (key) => {
             const cfg = currentModelConfig.value;
-            const engine = cfg && cfg.engine ? String(cfg.engine) : '';
+            const media = cfg && cfg.media != null ? String(cfg.media) : '';
             if (key === 'animate') {
                 return window.$tt('action.video.animate');
             }
-            if (key === 'create' && engine === 'mlx-video') {
+            if (key === 'create' && media === 'video') {
                 return window.$tt('action.video.create');
             }
             const imageKeys = new Set(['create', 'rewrite', 'retouch', 'extend', 'upscale']);
@@ -1462,7 +1463,7 @@ const SettingsPage = {
             return window.$tt('settings.actionTags.' + key);
         };
 
-        // 持久化标签页状态
+        // Persist tab state
         watch(activeTab, (newVal) => {
             if (SK.SETTINGS_TAB) localStorage.setItem(SK.SETTINGS_TAB, newVal);
             if (newVal === 'system') {
@@ -1470,7 +1471,7 @@ const SettingsPage = {
             }
         });
 
-        // 同步 i18n 语言变化
+        // Sync i18n language change
         watch(() => settings.language, (newVal) => {
             if (typeof i18n !== 'undefined' && i18n.global.locale.value !== newVal) {
                 i18n.global.locale.value = newVal;
@@ -1488,7 +1489,7 @@ const SettingsPage = {
             },
         );
 
-        // 加载模型注册表（增强：同时加载状态）
+        // Load model registry (enhanced: also load status)
         const loadModelRegistry = async () => {
             try {
                 const [registryData, statusData, detailedStatusData] = await Promise.all([
@@ -1500,7 +1501,7 @@ const SettingsPage = {
                 modelsStatus.value = statusData || {};
                 modelsDetailedStatus.value = detailedStatusData || {};
 
-                // 设置默认选中模型
+                // Set default selected model
                 if (!selectedModel.value || !modelRegistry.value[selectedModel.value]) {
                     const recommended = Object.entries(modelRegistry.value)
                         .find(([key, val]) => val.recommended);
@@ -1533,16 +1534,16 @@ const SettingsPage = {
             }
         };
 
-        // 模型选择变化：注册表 defaults → modelParams + 默认版本 + 参数预设
+        // Model select change: registry defaults → modelParams + default version + param preset
         const onModelSelect = () => {
             const config = currentModelConfig.value;
             if (!config || !config.parameters) return;
 
-            // 1. 应用注册表默认值
+            // 1. Apply registry defaults
             const R = window.RegistryParamSchema;
             if (R) R.applyDefaults(config.parameters, modelParams);
 
-            // 2. 记录默认值（用于检测变更）
+            // 2. Record defaults (for detecting changes)
             Object.keys(paramDefaults).forEach((k) => delete paramDefaults[k]);
             for (const [key, spec] of Object.entries(config.parameters || {})) {
                 if (typeof spec === 'object' && 'default' in spec) {
@@ -1550,7 +1551,7 @@ const SettingsPage = {
                 }
             }
 
-            // 3. 设置默认版本
+            // 3. Set default version
             if (config.versions) {
                 const defaultVer = Object.entries(config.versions).find(([_, v]) => v.default);
                 if (defaultVer) {
@@ -1558,7 +1559,7 @@ const SettingsPage = {
                 } else {
                     selectedDefaultVersion.value = Object.keys(config.versions)[0] || '';
                 }
-                // 如果有推荐的硬件适配版本，优先选择
+                // If there's a recommended hardware-compatible version, prefer it
                 if (recommendedVersion.value) {
                     selectedDefaultVersion.value = recommendedVersion.value.key;
                 }
@@ -1566,7 +1567,7 @@ const SettingsPage = {
                 selectedDefaultVersion.value = '';
             }
 
-            // 4. 加载该模型的默认参数预设
+            // 4. Load default param preset for this model
             const defaultPreset = paramPresetsForModel.value.find((p) => p.isDefault);
             if (defaultPreset) {
                 loadParamPreset(defaultPreset);
@@ -1576,7 +1577,7 @@ const SettingsPage = {
         };
 
         const onDefaultVersionChange = () => {
-            // 版本切换时可以在这里添加额外逻辑
+            // Add extra logic here when version switches
             console.log('Default version changed to:', selectedDefaultVersion.value);
         };
 
@@ -1589,7 +1590,7 @@ const SettingsPage = {
             }
         };
 
-        // 保存模型配置（直接修改 models_registry.json）
+        // Save model config (directly modify models_registry.json)
         const saveModelConfig = async () => {
             const config = currentModelConfig.value;
             if (!config || !config.parameters) return;
@@ -1624,7 +1625,7 @@ const SettingsPage = {
             }
         };
 
-        // 加载设置
+        // Load settings
         const loadSettings = async () => {
             try {
                 const data = await api.settings.getSettings();
@@ -1643,7 +1644,7 @@ const SettingsPage = {
             }
         };
 
-        // 保存设置
+        // Save settings
         const saveSettings = async () => {
             try {
                 await api.settings.updateSettings({
@@ -1671,7 +1672,7 @@ const SettingsPage = {
             }
         };
 
-        // 加载已安装模型
+        // Load installed models
         const loadInstalledModels = async () => {
             try {
                 const models = await api.settings.listModels();
@@ -1681,20 +1682,20 @@ const SettingsPage = {
             }
         };
 
-        // 语言切换
+        // Language switch
         const handleLanguageChange = (lang) => {
             settings.language = lang;
-            // watch 会自动同步 i18n 和 localStorage，无需刷新页面
+            // watch auto-syncs i18n and localStorage, no page refresh needed
         };
         
-        // 获取进度条颜色
+        // Get progress bar color
         const getProgressColor = (percent) => {
             if (percent < 50) return '#67c23a';
             if (percent < 80) return '#e6a23c';
             return '#f56c6c';
         };
         
-        // 加载系统监控数据
+        // Load system monitor data
         const loadMonitorData = async () => {
             try {
                 const data = await api.settings.getSystemMonitor();
@@ -1704,13 +1705,13 @@ const SettingsPage = {
             }
         };
         
-        // 启动监控定时器
+        // Start monitor timer
         const startMonitor = () => {
             loadMonitorData();
             monitorInterval = setInterval(loadMonitorData, 3000);
         };
         
-        // 停止监控定时器
+        // Stop monitor timer
         const stopMonitor = () => {
             if (monitorInterval) {
                 clearInterval(monitorInterval);
@@ -1768,7 +1769,7 @@ const SettingsPage = {
             deletePreset,
             presetAppliesSummary,
             presetMediaLabel,
-            // 增强版新增
+            // Enhanced additions
             sortedModelRegistry,
             categoryLabel,
             modelInitials,
@@ -1785,7 +1786,7 @@ const SettingsPage = {
             capabilityList,
             memoryProgressColor,
             minVersionSizeGB,
-            // 参数预设
+            // Parameter presets
             paramPresets,
             paramPresetsForModel,
             paramPresetDialogVisible,
@@ -1794,7 +1795,7 @@ const SettingsPage = {
             saveParamPreset,
             loadParamPreset,
             deleteParamPreset,
-            // 参数表单增强
+            // Enhanced param form
             resPair,
             scalarKeys,
             seedSupport,
@@ -1808,7 +1809,7 @@ const SettingsPage = {
             resetParam,
             paramNotesList,
             hasParamNotes,
-            // 默认版本
+            // Default version
             selectedDefaultVersion,
             onDefaultVersionChange,
         };

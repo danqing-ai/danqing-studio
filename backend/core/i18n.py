@@ -14,9 +14,9 @@ _current_locale: str = "zh"
 def _load_translations():
     global _translations
     if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
-        # PyInstaller 打包后
+        # After PyInstaller packaging
         exe_dir = Path(sys.executable).parent.resolve()
-        # macOS .app bundle: 可执行文件在 Contents/MacOS/，数据在 Contents/Resources/
+        # macOS .app bundle: executable in Contents/MacOS/, data in Contents/Resources/
         if sys.platform == "darwin" and exe_dir.name == "MacOS" and (exe_dir.parent / "Resources").exists():
             base_dir = exe_dir.parent / "Resources"
         else:

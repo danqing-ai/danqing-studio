@@ -12,6 +12,7 @@
     "model_not_ready": "Model '{name}'{version} is not ready. Please download it from the Download page first.",
     "model_not_in_registry": "Model '{name}' not found in registry",
     "model_no_download_source": "Model '{name}' has no valid download source",
+    "audio_stub_no_download": "Model '{name}' is an API-only placeholder; there is no weight package to download",
     "download_not_paused": "Download task {id} not found or not paused",
     "download_missing_metadata": "Download task {id} is missing metadata required for resume",
     "source_version_not_found": "Source version '{version}' not found",
@@ -28,8 +29,7 @@
     "image_read_failed": "Failed to read image: {error}",
     "unsupported_width": "Unsupported width: {width}. Allowed: {allowed}",
     "unsupported_height": "Unsupported height: {height}. Allowed: {allowed}",
-    "mlx_video_python_api_required": "Video generation requires the mlx-video Python API to be importable (CLI fallback removed to avoid silent quality/behavior differences). Upgrade mlx-video or fix the venv. Import error: {detail}",
-    "mflux_model_profile_required": "No dedicated mflux ModelConfig for model '{name}' (generic defaults are disabled). Add it to config_map in backend/engine/image/mflux_generation_backend.py."
+    "model_profile_required": "Engine missing dedicated model config for model '{name}' (generic defaults disabled)."
   },
   "log": {
     "generating_step": "Generating... step {step}/{total}",

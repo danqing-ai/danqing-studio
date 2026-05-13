@@ -1,5 +1,5 @@
 /**
- * TopNav — 顶部导航内容组件（不含 el-header 外壳，由父级 index.html 提供）
+ * TopNav — Top navigation content component (does NOT include el-header wrapper, provided by parent index.html)
  * Props:  activePage (String), queueCount (Number)
  * Emits:  navigate(page), open-queue
  */

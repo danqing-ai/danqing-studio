@@ -1,5 +1,5 @@
 """
-CUDA Runtime — 基于 PyTorch 实现 RuntimeContext。
+CUDA Runtime — RuntimeContext implemented via PyTorch.
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import torch.nn as nn
 from ._base import RuntimeContext
 
 
-# torch 没有原生 RMSNorm，自行实现
+# torch has no native RMSNorm, implement our own
 class _CudaRMSNorm(nn.Module):
     def __init__(self, dims: int, eps: float = 1e-6):
         super().__init__()
@@ -27,15 +27,15 @@ class _CudaRMSNorm(nn.Module):
 
 
 class _CudaConv3d(nn.Conv3d):
-    """参考 mlx-video Conv3d 的 weight 转置惯例。"""
+    """Conv3d with optional load-time weight layout transpose (WAN-style checkpoints)."""
 
     @classmethod
     def from_pretrained(cls, in_channels, out_channels, kernel_size,
                         stride=1, padding=0, bias=True, weight=None):
-        """创建 Conv3d 并可选加载转置权重。
+        """Create Conv3d and optionally load transposed weights.
 
-        mlx-video 的 WAN Conv3d 权重形状为 [C_out, T, H, W, C_in]，
-        PyTorch 期望 [C_out, C_in, T, H, W]，需要转置加载。
+        Some WAN checkpoints store weight as [C_out, T, H, W, C_in];
+        PyTorch expects [C_out, C_in, T, H, W], needs transpose on load.
         """
         if isinstance(kernel_size, int):
             kernel_size = (kernel_size, kernel_size, kernel_size)
@@ -61,7 +61,7 @@ class CudaContext(RuntimeContext):
         return self._device
 
     # ------------------------------------------------------------------
-    # 模块工厂
+    # Module factories
     # ------------------------------------------------------------------
 
     def Linear(self, in_features: int, out_features: int, bias: bool = True) -> Any:
@@ -73,7 +73,9 @@ class CudaContext(RuntimeContext):
     def RMSNorm(self, dims: int, eps: float = 1e-6) -> Any:
         return _CudaRMSNorm(dims, eps=eps)
 
-    def GroupNorm(self, num_groups: int, num_channels: int, eps: float = 1e-5) -> Any:
+    def GroupNorm(self, num_groups: int, num_channels: int, eps: float = 1e-5,
+                  pytorch_compatible: bool = False, **_kwargs: Any) -> Any:
+        del pytorch_compatible  # NCHW path (CUDA VAE) / MLX NHWC handled in ``common.vae.decoder`` per backend.
         return nn.GroupNorm(num_groups, num_channels, eps=eps)
 
     def SiLU(self) -> Any:
@@ -115,8 +117,11 @@ class CudaContext(RuntimeContext):
     def ModuleList(self, layers: list) -> Any:
         return nn.ModuleList(layers)
 
+    def Dropout(self, p: float = 0.0) -> Any:
+        return nn.Dropout(p)
+
     # ------------------------------------------------------------------
-    # 张量创建
+    # Tensor creation
     # ------------------------------------------------------------------
 
     def zeros(self, shape: tuple, dtype: Any = None) -> Any:
@@ -128,7 +133,9 @@ class CudaContext(RuntimeContext):
     def full(self, shape: tuple, value: float, dtype: Any = None) -> Any:
         return torch.full(shape, value, dtype=dtype or torch.float32, device=self._device)
 
-    def arange(self, start: int, end: int, step: int = 1, dtype: Any = None) -> Any:
+    def arange(self, start: int, end: int | None = None, step: int = 1, dtype: Any = None) -> Any:
+        if end is None:
+            return torch.arange(0, start, step, dtype=dtype or torch.int32, device=self._device)
         return torch.arange(start, end, step, dtype=dtype or torch.int32, device=self._device)
 
     def randn(self, shape: tuple, dtype: Any = None) -> Any:
@@ -156,7 +163,7 @@ class CudaContext(RuntimeContext):
         return torch.ones_like(x)
 
     # ------------------------------------------------------------------
-    # 张量操作
+    # Tensor operations
     # ------------------------------------------------------------------
 
     def concat(self, tensors: list, axis: int = 0) -> Any:
@@ -173,6 +180,9 @@ class CudaContext(RuntimeContext):
 
     def permute(self, x: Any, dims: tuple) -> Any:
         return x.permute(dims)
+
+    def flip(self, x: Any, axis: int = 0) -> Any:
+        return torch.flip(x, dims=(axis,))
 
     def sin(self, x: Any) -> Any:
         return torch.sin(x)
@@ -243,8 +253,69 @@ class CudaContext(RuntimeContext):
     def repeat(self, x: Any, repeats: int, axis: int = 0) -> Any:
         return x.repeat_interleave(repeats, dim=axis)
 
+    def linspace(self, start: float, end: float, steps: int, dtype: Any = None) -> Any:
+        return torch.linspace(start, end, steps, dtype=dtype or torch.float32)
+
+    def dequantize(self, weight: Any, scales: Any, biases: Any, group_size: int, bits: int) -> Any:
+        """Unpack MLX **affine** quantized weights (``uint32`` + per-group scales/biases) to float32.
+
+        Matches MLX packing: unsigned integer codes in ``[0, 2**bits - 1]`` per nibble/byte,
+        with ``w ≈ scales * q + biases`` along the input axis (see ``mlx.core.quantize`` /
+        ``TransformerBase.load_weights``). Supports ``bits`` 4 and 8 only.
+        """
+        if bits not in (4, 8):
+            raise RuntimeError(
+                f"CudaContext.dequantize implements MLX affine 4-bit and 8-bit only (got bits={bits})"
+            )
+        w = weight.to(torch.int64) & 0xFFFFFFFF
+        parts: list[Any] = []
+        if bits == 8:
+            for sh in (0, 8, 16, 24):
+                q = (w >> sh) & 255
+                parts.append(q.to(torch.float32))
+        else:
+            for sh in range(0, 32, 4):
+                q = (w >> sh) & 15
+                parts.append(q.to(torch.float32))
+        dq = torch.cat(parts, dim=-1)
+        out_features, in_dim = dq.shape
+        s = scales.to(device=dq.device, dtype=torch.float32)
+        if s.dim() == 1:
+            s = s.unsqueeze(0).expand(out_features, -1)
+        num_groups = s.shape[-1]
+        if in_dim != num_groups * group_size:
+            raise RuntimeError(
+                f"dequantize shape mismatch: in_dim={in_dim}, num_groups={num_groups}, group_size={group_size}"
+            )
+        s_rep = s.repeat_interleave(group_size, dim=-1)
+        if biases is not None:
+            b = biases.to(device=dq.device, dtype=torch.float32)
+            if b.dim() == 1:
+                b = b.unsqueeze(0).expand(out_features, -1)
+            b_rep = b.repeat_interleave(group_size, dim=-1)
+            return dq * s_rep + b_rep
+        return dq * s_rep
+
+    def is_tensor(self, x: Any) -> bool:
+        return isinstance(x, torch.Tensor)
+
+    def is_integer_dtype_tensor(self, x: Any) -> bool:
+        if not isinstance(x, torch.Tensor):
+            return False
+        return x.dtype in (torch.int32, torch.int64)
+
+    def cast(self, x: Any, dtype: Any) -> Any:
+        if isinstance(x, torch.Tensor):
+            return x.to(dtype=dtype)
+        return torch.tensor(x, dtype=dtype, device=self._device)
+
+    def to_numpy(self, x: Any) -> Any:
+        if isinstance(x, torch.Tensor):
+            return x.detach().cpu().numpy()
+        return x
+
     # ------------------------------------------------------------------
-    # 微分 / 评估 / 编译
+    # Differentiation / evaluation / compilation
     # ------------------------------------------------------------------
 
     def eval(self, *arrays) -> None:
@@ -254,7 +325,7 @@ class CudaContext(RuntimeContext):
         return torch.compile(fn, *args, **kwargs)
 
     # ------------------------------------------------------------------
-    # 高级操作
+    # Advanced operations
     # ------------------------------------------------------------------
 
     def attention(self, q: Any, k: Any, v: Any, scale: float | None = None,
@@ -267,7 +338,7 @@ class CudaContext(RuntimeContext):
         return torch.nn.functional.interpolate(x, scale_factor=scale_factor, mode=mode)
 
     # ------------------------------------------------------------------
-    # 内存
+    # Memory
     # ------------------------------------------------------------------
 
     def clear_cache(self) -> None:
@@ -281,7 +352,7 @@ class CudaContext(RuntimeContext):
         return 0.0
 
     # ------------------------------------------------------------------
-    # 权重 I/O
+    # Weight I/O
     # ------------------------------------------------------------------
 
     def load_weights(self, path: str) -> dict:
@@ -293,7 +364,7 @@ class CudaContext(RuntimeContext):
         safetensors.torch.save_file(weights, path)
 
     # ------------------------------------------------------------------
-    # 数据类型
+    # Data types
     # ------------------------------------------------------------------
 
     def float32(self) -> Any:

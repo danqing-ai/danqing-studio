@@ -125,22 +125,16 @@ async def stream_task(task_id: str, sched: TaskScheduler = Depends(get_task_sche
                     "ts": log.get("time"),
                 }
                 yield f"event: log\ndata: {json.dumps(payload)}\n\n"
-            # 2. flush realtime queue events (progress + logs emitted from worker thread)
+            # 2. flush realtime queue events (progress from worker thread; logs come from §1 only)
             rt_queue = sched.get_realtime_queue(task_id)
             if rt_queue:
                 try:
                     while True:
                         ev_type, ev_data = rt_queue.get_nowait()
-                        if ev_type == "log" and hasattr(ev_data, "message"):
-                            payload = {
-                                "message": ev_data.message,
-                                "level": ev_data.level,
-                                "ts": None,
-                            }
-                            yield f"event: log\ndata: {json.dumps(payload)}\n\n"
-                        elif ev_type == "progress" and hasattr(ev_data, "progress"):
+                        if ev_type == "progress" and hasattr(ev_data, "progress"):
                             prog = float(ev_data.progress or 0.0)
-                            pkey = (prog, ev_data.step, ev_data.total, ev_data.eta_seconds)
+                            msg = getattr(ev_data, "message", None)
+                            pkey = (prog, ev_data.step, ev_data.total, ev_data.eta_seconds, msg)
                             if pkey != last_progress_key:
                                 last_progress_key = pkey
                                 yield (
@@ -151,6 +145,7 @@ async def stream_task(task_id: str, sched: TaskScheduler = Depends(get_task_sche
                                             "step": ev_data.step,
                                             "total": ev_data.total,
                                             "eta_seconds": ev_data.eta_seconds,
+                                            "message": msg,
                                         }
                                     )
                                     + "\n\n"
@@ -160,7 +155,13 @@ async def stream_task(task_id: str, sched: TaskScheduler = Depends(get_task_sche
             # 3. status
             meta = sched.get_progress_meta(task_id)
             prog = float(row.get("progress") or 0.0)
-            pkey = (prog, meta.get("step"), meta.get("total"), meta.get("eta_seconds"))
+            pkey = (
+                prog,
+                meta.get("step"),
+                meta.get("total"),
+                meta.get("eta_seconds"),
+                meta.get("message"),
+            )
             if pkey != last_progress_key:
                 last_progress_key = pkey
                 yield (
@@ -171,6 +172,7 @@ async def stream_task(task_id: str, sched: TaskScheduler = Depends(get_task_sche
                             "step": meta.get("step"),
                             "total": meta.get("total"),
                             "eta_seconds": meta.get("eta_seconds"),
+                            "message": meta.get("message"),
                         }
                     )
                     + "\n\n"

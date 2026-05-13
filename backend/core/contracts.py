@@ -1,6 +1,6 @@
 """
-v3 API 契约：请求/响应 DTO 与执行上下文。
-与 REST 及引擎方法签名 1:1 对齐。
+v3 API contracts: request/response DTOs and execution context.
+1:1 aligned with REST and engine method signatures.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field, model_validator
 from backend.core.asset_interfaces import IAssetStore
 
 
-# ----- 任务种类（与路由 / 调度器一致）-----
+# ----- Task kinds (consistent with routes / scheduler) -----
 
 TaskKind = Literal[
     "image.generation",
@@ -24,13 +24,17 @@ TaskKind = Literal[
     "image.upscale",
     "video.generation",
     "video.edit",
+    "audio.generation",
+    "audio.edit",
 ]
 
 
-# ----- 图像 -----
+# ----- Image -----
 
 
 class AdapterRef(BaseModel):
+    """LoRA / adapter — ``id`` is the registry LoRA model id (optional ``:version``, e.g. ``bbw-style:fp16``)."""
+
     id: str
     weight: float = Field(1.0, ge=0.0, le=2.0)
 
@@ -47,7 +51,7 @@ class StyleGuide(BaseModel):
 
 
 class ImageGenerationRequest(BaseModel):
-    model: str  # "z-image-turbo:fp16" 或 "z-image-turbo"（无版本则用注册表默认）
+    model: str  # "z-image-turbo:fp16" or "z-image-turbo" (no version uses registry default)
     prompt: str
     negative_prompt: str = ""
     size: str = "1024x1024"
@@ -80,10 +84,13 @@ class ImageEditRequest(BaseModel):
     n: int = Field(1, ge=1, le=8)
     steps: Optional[int] = None
     seed: Optional[int] = None
+    # None → 使用注册表 ``parameters.guidance.default``（与 mflux CLI 对齐时应对 rewrite 显式传 0）
+    guidance: Optional[float] = None
+    scheduler: Optional[str] = None
     adapters: list[AdapterRef] = Field(default_factory=list)
     priority: Literal["normal", "high"] = "normal"
     metadata: dict[str, Any] = Field(default_factory=dict)
-    # operation=rewrite：reference=整图 img2img；instruct=指令编辑（当前仅 flux1-kontext / text_editing）。None=沿用旧版自动规则。
+    # operation=rewrite: reference=full-image img2img; instruct=instruction-based edit (currently only flux1-kontext / text_editing). None=use legacy auto rules.
     rewrite_mode: Optional[Literal["reference", "instruct"]] = None
 
     @model_validator(mode="after")
@@ -103,13 +110,13 @@ class ImageUpscaleRequest(BaseModel):
     model: str
     source_asset_id: str
     scale: Literal[2, 4] = 2
-    denoise: float = Field(0.3, ge=0.0, le=1.0)
+    denoise: float = Field(0.0, ge=0.0, le=1.0)
     tile_size: int = Field(1024, ge=256, le=4096)
     priority: Literal["normal", "high"] = "normal"
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-# ----- 视频 -----
+# ----- Video -----
 
 
 class VideoGenerationRequest(BaseModel):
@@ -159,7 +166,45 @@ class VideoUpscaleRequest(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-# ----- 执行上下文 -----
+# ----- Audio -----
+
+
+class AudioGenerationRequest(BaseModel):
+    model: str  # e.g. "audio-stub" or "audio-stub:stub"
+    prompt: str
+    negative_prompt: str = ""
+    duration: Optional[int] = None  # seconds (10-600)
+    instrumental: bool = False
+    lyrics: str = ""
+    vocal_language: str = ""
+    bpm: Optional[int] = None  # auto-detect if None
+    key_scale: str = ""  # e.g. "C Major", empty=auto-detect
+    time_signature: str = ""  # "2","3","4","6", empty=auto-detect
+    steps: Optional[int] = None
+    guidance: Optional[float] = None
+    seed: Optional[int] = None
+    n: int = Field(2, ge=1, le=8)
+    audio_format: str = "mp3"
+    priority: Literal["normal", "high"] = "normal"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class AudioEditRequest(BaseModel):
+    model: str
+    operation: Literal["cover"] = "cover"
+    source_asset_id: str
+    prompt: str = ""
+    source_fidelity: float = Field(1.0, ge=0.0, le=1.0)
+    steps: Optional[int] = None
+    guidance: Optional[float] = None
+    seed: Optional[int] = None
+    n: int = Field(1, ge=1, le=8)
+    audio_format: str = "mp3"
+    priority: Literal["normal", "high"] = "normal"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+# U+23 U+24 U+25 (video) --- de-later
 
 
 class CancelToken:
@@ -221,7 +266,7 @@ def new_task_id() -> str:
 
 
 def parse_model_version(model_field: str) -> tuple[str, str]:
-    """'flux1-dev:fp16' -> ('flux1-dev', 'fp16')；无冒号则 version 为空"""
+    """'flux1-dev:fp16' -> ('flux1-dev', 'fp16'); no colon means version is empty"""
     if ":" in model_field:
         a, b = model_field.split(":", 1)
         return a.strip(), b.strip()

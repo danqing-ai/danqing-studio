@@ -1,16 +1,16 @@
 /**
- * 图库页面组件 v3 — 原比例紧凑网格、日期分组、Midjourney 风格悬停交互
+ * Gallery page component v3 — Original aspect ratio compact grid, date grouping, Midjourney-style hover interaction
  */
 
 const GalleryPage = {
     template: `
         <div class="gallery-page" style="display: flex; height: 100%; gap: 0;">
-            <!-- 主内容区 -->
+            <!-- Main content area -->
             <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden;">
-                <!-- 顶部工具栏 -->
+                <!-- Top toolbar -->
                 <div style="padding: 12px 16px 8px; border-bottom: 1px solid var(--border-color); flex-shrink: 0;">
                     <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
-                        <!-- 视图切换 -->
+                        <!-- View toggle -->
                         <el-radio-group v-model="viewMode" size="small">
                             <el-radio-button label="grid">
                                 <el-icon><Menu /></el-icon>
@@ -22,7 +22,7 @@ const GalleryPage = {
 
                         <el-divider direction="vertical" style="margin: 0;" />
 
-                        <!-- 类型筛选 Pills -->
+                        <!-- Type filter pills -->
                         <div class="gallery-filter-pills">
                             <button
                                 v-for="opt in typeOptions"
@@ -37,7 +37,7 @@ const GalleryPage = {
 
                         <el-divider direction="vertical" style="margin: 0;" />
 
-                        <!-- 时间筛选 Pills -->
+                        <!-- Time filter pills -->
                         <div class="gallery-filter-pills">
                             <button
                                 v-for="opt in timeOptions"
@@ -52,7 +52,7 @@ const GalleryPage = {
 
                         <div style="flex: 1;"></div>
 
-                        <!-- 模型筛选 -->
+                        <!-- Model filter -->
                         <el-select 
                             v-model="filterModels" 
                             size="small" 
@@ -64,7 +64,7 @@ const GalleryPage = {
                             <el-option v-for="m in allModelOptions" :key="m" :label="m" :value="m" />
                         </el-select>
 
-                        <!-- 更多筛选 -->
+                        <!-- More filters -->
                         <el-button size="small" @click="showAdvancedFilter = true">
                             <el-icon><filter /></el-icon>
                         </el-button>
@@ -75,9 +75,9 @@ const GalleryPage = {
                     </div>
                 </div>
 
-                <!-- 内容区 -->
+                <!-- Content area -->
                 <div class="gallery-scroll-area" style="flex: 1; overflow-y: auto; padding: 12px 16px;" @scroll="onScroll">
-                    <!-- 空态 -->
+                    <!-- Empty state -->
                     <div v-if="items.length === 0 && !loading" style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; gap: 16px;">
                         <el-empty :description="emptyMessage" />
                         <el-button v-if="hasActiveFilters" @click="resetFilters" type="primary">
@@ -85,7 +85,7 @@ const GalleryPage = {
                         </el-button>
                     </div>
 
-                    <!-- 网格视图 -->
+                    <!-- Grid view -->
                     <template v-else-if="viewMode === 'grid'">
                         <div v-for="group in groupedItems" :key="group.label" class="gallery-group">
                             <div class="gallery-group-header">{{ group.label }}</div>
@@ -97,12 +97,12 @@ const GalleryPage = {
                                     :class="{ 'is-selected': isSelected(item) }"
                                     @click="handleCardClick(item, $event)"
                                 >
-                                    <!-- 选择框 -->
+                                    <!-- Selection checkbox -->
                                     <div class="gallery-checkbox" @click.stop="toggleSelect(item)">
                                         <el-checkbox :model-value="isSelected(item)" size="small" />
                                     </div>
 
-                                    <!-- 媒体容器 -->
+                                    <!-- Media container -->
                                     <div class="gallery-media-wrapper" @click.stop="showPreview(item)">
                                         <template v-if="isImage(item)">
                                             <img :src="getImageUrl(item)" :alt="item.name" loading="lazy" @error="handleImageError" />
@@ -122,7 +122,7 @@ const GalleryPage = {
                                         </template>
                                     </div>
                                     
-                                    <!-- Hover 遮罩层 -->
+                                    <!-- Hover overlay -->
                                     <div class="gallery-card-overlay">
                                         <div class="gallery-card-overlay-content">
                                             <el-button 
@@ -138,7 +138,7 @@ const GalleryPage = {
                                                 <span v-if="item.model" class="gallery-card-model">{{ item.model }}</span>
                                             </div>
                                         </div>
-                                        <!-- 更多操作下拉 -->
+                                        <!-- More actions dropdown -->
                                         <el-dropdown 
                                             trigger="click" 
                                             @command="handleCommand($event, item)"
@@ -171,7 +171,7 @@ const GalleryPage = {
                                         </el-dropdown>
                                     </div>
 
-                                    <!-- 底部信息（仅在非 hover 时显示） -->
+                                    <!-- Footer info (only shown when not hovering) -->
                                     <div class="gallery-card-footer">
                                         <span v-if="isVideo(item) && formatVideoDuration(item)" class="gallery-card-duration">
                                             {{ formatVideoDuration(item) }}
@@ -186,7 +186,7 @@ const GalleryPage = {
                         </div>
                     </template>
 
-                    <!-- 列表视图 -->
+                    <!-- List view -->
                     <div v-else class="gallery-list-view">
                         <el-table
                             :data="flatItems"
@@ -259,19 +259,19 @@ const GalleryPage = {
                         </el-table>
                     </div>
 
-                    <!-- 加载中 -->
+                    <!-- Loading -->
                     <div v-if="loading" style="text-align: center; padding: 32px;">
                         <el-icon class="is-loading" size="28"><loading /></el-icon>
                     </div>
 
-                    <!-- 到底提示 -->
+                    <!-- End-of-list hint -->
                     <div v-if="!hasMore && items.length > 0" style="text-align: center; padding: 24px; color: var(--text-muted); font-size: 13px;">
                         {{ $t('gallery.noMore') }}
                     </div>
                 </div>
             </div>
 
-            <!-- 右侧详情面板 -->
+            <!-- Right side detail panel -->
             <div v-if="detailItem" class="gallery-detail-panel" style="width: 320px; flex-shrink: 0; border-left: 1px solid var(--border-color); background: var(--bg-secondary); display: flex; flex-direction: column;">
                 <div style="padding: 16px; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between;">
                     <span style="font-weight: 600; font-size: 14px;">{{ $t('gallery.details') }}</span>
@@ -281,13 +281,13 @@ const GalleryPage = {
                 </div>
                 
                 <div style="flex: 1; overflow-y: auto; padding: 16px;">
-                    <!-- 大图预览 -->
+                    <!-- Large preview -->
                     <div style="margin-bottom: 16px; border-radius: 8px; overflow: hidden; background: var(--bg-tertiary);">
                         <img v-if="isImage(detailItem)" :src="getImageUrl(detailItem)" style="width: 100%; display: block; cursor: pointer;" @click="showPreview(detailItem)" />
                         <video v-else :src="getImageUrl(detailItem)" controls style="width: 100%; display: block;"></video>
                     </div>
 
-                    <!-- 操作按钮 -->
+                    <!-- Action buttons -->
                     <div style="display: flex; gap: 8px; margin-bottom: 16px;">
                         <el-button size="small" @click="downloadImage(detailItem)" style="flex: 1;">
                             <el-icon><download /></el-icon>
@@ -312,7 +312,7 @@ const GalleryPage = {
                         </div>
                     </div>
 
-                    <!-- 参数列表 -->
+                    <!-- Param list -->
                     <div style="display: grid; gap: 8px;">
                         <div class="detail-param">
                             <span class="detail-param-label">{{ $t('gallery.model') }}</span>
@@ -346,7 +346,7 @@ const GalleryPage = {
                 </div>
             </div>
 
-            <!-- 底部固定批量操作栏 -->
+            <!-- Fixed bottom batch action bar -->
             <teleport to="body">
                 <div v-if="selectedItems.length > 0" class="gallery-batch-bar">
                     <div class="gallery-batch-bar-content">
@@ -373,7 +373,7 @@ const GalleryPage = {
                 </div>
             </teleport>
 
-            <!-- Lightbox 全屏预览 -->
+            <!-- Lightbox full-screen preview -->
             <teleport to="body">
                 <div v-if="previewVisible" class="gallery-lightbox" @click="previewVisible = false">
                     <div class="lightbox-content" @click.stop>
@@ -417,7 +417,7 @@ const GalleryPage = {
                 </div>
             </teleport>
 
-            <!-- 高级筛选抽屉 -->
+            <!-- Advanced filter drawer -->
             <el-drawer
                 v-model="showAdvancedFilter"
                 :title="$t('gallery.advancedFilter')"
@@ -461,22 +461,22 @@ const GalleryPage = {
     `,
     
     setup() {
-        const { ref, computed, onMounted, onUnmounted, watch, getCurrentInstance } = Vue;
+        const { ref, computed, onMounted, onUnmounted, watch, getCurrentInstance, nextTick } = Vue;
         const { Menu, Document } = ElementPlusIconsVue;
 
-        // 获取 i18n 翻译函数
+        // Get i18n translation functions
         const instance = getCurrentInstance();
         const $t = instance ? instance.proxy.$t : (key) => key;
         const $tt = window.$tt || ((key, params) => key);
 
-        // 数据
+        // Data
         const items = ref([]);
         const loading = ref(false);
         const hasMore = ref(true);
         const offset = ref(0);
         const limit = 40;
 
-        // 视图与筛选
+        // View and filters
         const viewMode = ref('grid');
         const filterType = ref('all');
         const filterModels = ref([]);
@@ -486,16 +486,16 @@ const GalleryPage = {
         const filterActions = ref([]);
         const showAdvancedFilter = ref(false);
 
-        // 选择
+        // Selection
         const selectedItems = ref([]);
 
-        // 预览与详情
+        // Preview and details
         const previewVisible = ref(false);
         const selectedItem = ref(null);
         const selectedIndex = ref(-1);
         const detailItem = ref(null);
 
-        // 选项
+        // Options
         const typeOptions = computed(() => [
             { value: 'all', label: $t('gallery.filterAll') },
             { value: 'image', label: $t('gallery.filterImage') },
@@ -543,7 +543,7 @@ const GalleryPage = {
             return $t('gallery.empty');
         });
 
-        // 日期分组
+        // Date grouping
         const groupedItems = computed(() => {
             const groups = [];
             const now = new Date();
@@ -582,14 +582,14 @@ const GalleryPage = {
             return groups;
         });
 
-        // 构建筛选参数
+        // Build filter params
         const buildFilterParams = () => {
             const params = {};
             if (filterType.value !== 'all') {
                 params.kind = filterType.value;
             }
             if (filterModels.value.length > 0) {
-                params.model = filterModels.value[0]; // 后端暂不支持多选，取第一个
+                params.model = filterModels.value[0]; // Backend doesn't support multi-select yet, use first
             }
             if (filterTime.value !== 'all') {
                 const now = new Date();
@@ -614,15 +614,15 @@ const GalleryPage = {
                 params.created_before = filterDateRange.value[1].toISOString();
             }
             if (filterMinWidth.value > 256) {
-                // 后端暂不支持，前端过滤
+                // Backend doesn't support yet, filter on frontend
             }
             if (filterActions.value.length > 0) {
-                // 后端暂不支持，前端过滤
+                // Backend doesn't support yet, filter on frontend
             }
             return params;
         };
 
-        // 加载媒体列表
+        // Load media list
         const loadImages = async (reset = false) => {
             if (loading.value) return;
             if (reset) {
@@ -655,6 +655,13 @@ const GalleryPage = {
                 ElementPlus.ElMessage.error($tt('gallery.loadFailed'));
             } finally {
                 loading.value = false;
+                // Auto-load next page if content doesn't fill the scroll area
+                nextTick(() => {
+                    const scrollArea = document.querySelector('.gallery-scroll-area');
+                    if (scrollArea && scrollArea.scrollHeight <= scrollArea.clientHeight && hasMore.value && !loading.value) {
+                        loadImages(false);
+                    }
+                });
             }
         };
 
@@ -662,7 +669,7 @@ const GalleryPage = {
             loadImages(true);
         };
 
-        // 无限滚动
+        // Infinite scroll
         const onScroll = (e) => {
             const el = e.target;
             const bottom = el.scrollHeight - el.scrollTop - el.clientHeight;
@@ -671,12 +678,12 @@ const GalleryPage = {
             }
         };
 
-        // 监听筛选变化
+        // Watch filter changes
         watch([filterType, filterTime, filterModels], () => {
             loadImages(true);
         });
 
-        // 选择相关
+        // Selection helpers
         const isSelected = (item) => {
             return selectedItems.value.some((it) => it.path === item.path);
         };
@@ -698,7 +705,7 @@ const GalleryPage = {
             }
         };
 
-        // 卡片点击处理
+        // Card click handler
         const handleCardClick = (item, event) => {
             if (event.ctrlKey || event.metaKey || event.shiftKey) {
                 event.preventDefault();
@@ -706,7 +713,7 @@ const GalleryPage = {
             }
         };
 
-        // 批量删除
+        // Batch delete
         const batchDelete = async () => {
             if (selectedItems.value.length === 0) return;
             try {
@@ -729,14 +736,14 @@ const GalleryPage = {
             }
         };
 
-        // 批量下载
+        // Batch download
         const batchDownload = () => {
             selectedItems.value.forEach((item) => {
                 downloadImage(item);
             });
         };
 
-        // 单张操作
+        // Single item operations
         const getImageUrl = (item) => {
             if (!item || !item.path) {
                 console.error('GalleryPage: item or item.path is missing', item);
@@ -851,7 +858,7 @@ const GalleryPage = {
             }
         };
 
-        // 视频交互
+        // Video interaction
         const handleVideoEnter = (e) => {
             const video = e.target;
             video.play().catch(() => {});
@@ -879,7 +886,7 @@ const GalleryPage = {
             }
         };
 
-        // 格式化
+        // Formatting
         const formatDate = (dateStr) => {
             if (!dateStr) return 'N/A';
             const date = new Date(dateStr);
@@ -951,7 +958,7 @@ const GalleryPage = {
             loadImages(true);
         };
 
-        // 键盘导航
+        // Keyboard navigation
         const onKeydown = (e) => {
             if (previewVisible.value) {
                 if (e.key === 'ArrowLeft') {

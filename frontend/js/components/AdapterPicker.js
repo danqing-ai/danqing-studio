@@ -1,5 +1,5 @@
 /**
- * Plan F3：LoRA / 未来注册表适配器 — 与 params.lora、params.lora_scale 双绑
+ * Plan F3: LoRA / future registry adapter — two-way binding with params.lora, params.lora_scale
  */
 const AdapterPicker = {
     name: 'AdapterPicker',

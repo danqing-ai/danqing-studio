@@ -1,5 +1,5 @@
 /**
- * 客户端持久化键（v3 专用，不读取旧 danqing-* 键）
+ * Client-side persistent keys (v3 only, does not read old danqing-* keys)
  */
 (function (w) {
     w.DQ_STORAGE = Object.freeze({
@@ -10,5 +10,6 @@
         IMPORTED_MODELS: 'dq-studio.importedModels.v3',
         IMAGE_CREATE_PROMPT_DRAFT: 'dq-studio.imageCreatePromptDraft.v3',
         VIDEO_CREATE_PROMPT_DRAFT: 'dq-studio.videoCreatePromptDraft.v3',
+        AUDIO_CREATE_PROMPT_DRAFT: 'dq-studio.audioCreatePromptDraft.v3',
     });
 })(window);

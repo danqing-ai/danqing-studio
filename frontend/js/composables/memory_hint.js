@@ -1,6 +1,6 @@
 /**
- * Plan E4：提交前内存风险软提示（不拦截）。基于注册表版本 `size` 文案与系统内存 / MLX 上限启发式比较。
- * 挂载 `window.DQMemoryHint`，由图文创作页在真正提交 API 前调用。
+ * Plan E4: Pre-submit memory risk soft hint (non-blocking). Heuristic comparison based on registry version `size` string and system memory / MLX limit.
+ * Mounted as `window.DQMemoryHint`, called by image/video creation pages before actually submitting to API.
  */
 (function (w) {
     function parseHumanSizeToGb(s) {
@@ -22,9 +22,9 @@
 
     /**
      * @param {object} opts
-     * @param {object} opts.systemInfo inject 的 reactive（需含 memory_gb、mlx_memory_limit）
-     * @param {string} opts.versionSizeHuman 当前版本注册表 `size` 字段（如 "19GB"）
-     * @param {function} opts.$tt i18n 函数
+     * @param {object} opts.systemInfo injected reactive (must include memory_gb, mlx_memory_limit)
+     * @param {string} opts.versionSizeHuman current version registry `size` field (e.g. "19GB")
+     * @param {function} opts.$tt i18n function
      */
     function warnIfRisky(opts) {
         if (typeof ElementPlus === 'undefined' || !ElementPlus.ElMessage) return;

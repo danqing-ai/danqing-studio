@@ -10,10 +10,17 @@ danqing-video-generate — 文生视频 CLI。
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_CLI_FILE = Path(__file__).resolve()
+PROJECT_ROOT = _CLI_FILE.parent.parent
+if sys.platform != "win32":
+    _venv_root = PROJECT_ROOT / ".venv"
+    _venv_py = _venv_root / "bin" / "python3"
+    if _venv_py.is_file() and Path(sys.prefix).resolve() != _venv_root.resolve():
+        os.execv(str(_venv_py), [str(_venv_py), str(_CLI_FILE), *sys.argv[1:]])
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from backend.cli.video_cli import generate
@@ -25,6 +32,8 @@ def main():
     parser.add_argument("--prompt", required=True)
     parser.add_argument("--negative-prompt", default="")
     parser.add_argument("--size", default="1024x1024")
+    parser.add_argument("--num-frames", type=int, default=None, help="Pixel frames (registry / model constraints apply)")
+    parser.add_argument("--fps", type=int, default=None, help="Output video frame rate")
     parser.add_argument("--steps", type=int, default=None)
     parser.add_argument("--guidance", type=float, default=None)
     parser.add_argument("--seed", type=int, default=None)
@@ -38,6 +47,8 @@ def main():
         prompt=args.prompt,
         negative_prompt=args.negative_prompt,
         size=args.size,
+        num_frames=args.num_frames,
+        fps=args.fps,
         steps=args.steps,
         guidance=args.guidance,
         seed=args.seed,

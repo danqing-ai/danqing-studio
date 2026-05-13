@@ -1,8 +1,8 @@
 """
-通用去噪循环 — 所有扩散模型共用。
+General denoising loop — shared by all diffusion models.
 
-唯一与后端相关的逻辑是 CFG（无条件 + 条件 双 B 前向），
-其余（调度器步进、进展回调、取消）完全通用。
+The only backend-dependent logic is CFG (unconditional + conditional dual-B forward),
+everything else (scheduler stepping, progress callback, cancellation) is fully generic.
 """
 from __future__ import annotations
 
@@ -14,21 +14,21 @@ from .schedulers import Scheduler
 
 
 class GenerationCancelled(Exception):
-    """生成被取消。"""
+    """Generation cancelled."""
     pass
 
 
 StepCallback = Callable[[int, int, Any], None]
-"""每步回调: (step, total_steps, latents) → None"""
+"""Per-step callback: (step, total_steps, latents) → None"""
 
 
 class DenoisingPipeline:
-    """通用去噪循环。
+    """General-purpose denoising loop.
 
-    支持:
-    - 无条件生成 (context=None)
-    - 无条件 CFG (context 不为 None 但 guidance_scale <= 1.0)
-    - 标准 CFG (双 B 前向：条件 + 无条件)
+    Supports:
+    - Unconditional generation (context=None)
+    - Unconditional CFG (context not None but guidance_scale <= 1.0)
+    - Standard CFG (dual-B forward: conditional + unconditional)
     """
 
     def __init__(self, ctx: Any = None):
@@ -46,47 +46,47 @@ class DenoisingPipeline:
         on_step: Optional[StepCallback] = None,
         cancel_token: Optional[CancelToken] = None,
     ) -> Any:
-        """执行去噪循环。
+        """Execute the denoising loop.
 
         Args:
-            model: 模型 (Flux1Transformer / LTXTransformer / ...)
-            scheduler: 调度器
-            latents: 初始噪声 [B, C, H, W] 或 [B, C, T, H, W]
-            timesteps: 去噪时间步序列
-            context: 条件字典 (txt_embeds, clip_embeds, image_embeds, ...)
-            negative_context: 负向条件字典（可选，用于 CFG）
-            guidance_scale: CFG 指导强度 (<=1 跳过 CFG)
-            on_step: 每步回调
-            cancel_token: 取消令牌
+            model: Model (Flux1Transformer / LTXTransformer / ...)
+            scheduler: Scheduler
+            latents: Initial noise [B, C, H, W] or [B, C, T, H, W]
+            timesteps: Denoising timestep sequence
+            context: Conditional dictionary (txt_embeds, clip_embeds, image_embeds, ...)
+            negative_context: Negative conditional dictionary (optional, for CFG)
+            guidance_scale: CFG guidance strength (<=1 skips CFG)
+            on_step: Per-step callback
+            cancel_token: Cancel token
 
         Returns:
-            去噪后的 latent
+            Denoised latent
         """
         for i, t in enumerate(timesteps):
             if cancel_token is not None and cancel_token.is_cancelled():
                 raise GenerationCancelled()
 
-            # 准备时间步张量
+            # Prepare timestep tensor
             t_batch = t
             if hasattr(t, 'reshape'):
                 pass  # already batched
             elif isinstance(t, (int, float)):
                 pass  # scalar
 
-            # 为需要 sigmas 的模型（如 Z-Image）传入调度器 sigma 序列
+            # Pass scheduler sigma sequence for models that need sigmas (e.g. Z-Image)
             model_kwargs = dict(context or {})
             if hasattr(scheduler, 'sigmas') and scheduler.sigmas is not None:
                 model_kwargs['sigmas'] = scheduler.sigmas
 
             if guidance_scale > 1.0 and (context is not None or negative_context is not None):
-                # CFG 模式
+                # CFG mode
                 neg_ctx = negative_context or self._build_empty_context(context)
                 noise_pred = self._cfg_forward(
                     model, latents, t_batch, context, neg_ctx, guidance_scale,
                     sigmas=model_kwargs.get('sigmas'),
                 )
             else:
-                # 无 CFG / 无条件
+                # No CFG / unconditional
                 noise_pred = model(latents, t_batch, **model_kwargs)
 
             latents = scheduler.step(noise_pred, t_batch, latents)
@@ -97,7 +97,7 @@ class DenoisingPipeline:
         return latents
 
     def _cfg_forward(self, model, latents, t, pos_ctx, neg_ctx, guidance_scale, sigmas=None):
-        """双 B CFG 前向：通过 RuntimeContext 操作张量。"""
+        """Dual-B CFG forward: operates on tensors via RuntimeContext."""
         ctx = self.ctx
         if ctx is None:
             raise RuntimeError("DenoisingPipeline._cfg_forward requires RuntimeContext (pass ctx= to constructor)")
@@ -116,7 +116,7 @@ class DenoisingPipeline:
             combined_ctx['sigmas'] = sigmas
         noise_pred = model(latents_combined, t, **combined_ctx)
 
-        # 拆分：neg | pos
+        # Split: neg | pos
         B_half = latents.shape[0]
         noise_pred_uncond = noise_pred[:B_half]
         noise_pred_text = noise_pred[B_half:]

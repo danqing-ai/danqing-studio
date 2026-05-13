@@ -1,7 +1,7 @@
 """
-注意力模块 — 所有模型共用。
+Attention modules — shared across all models.
 
-参考 mflux 项目的 Flux1/Flux2 Attention 实现和 mlx-video 的时空注意力。
+Reference implementations: Flux1/Flux2 Attention and spatiotemporal video attention patterns.
 """
 from __future__ import annotations
 
@@ -184,3 +184,31 @@ def _rotate_half(ctx, x):
     x1 = x[..., : x.shape[-1] // 2]
     x2 = x[..., x.shape[-1] // 2 :]
     return ctx.concat([-x2, x1], axis=-1)
+
+
+def apply_rope_interleaved_real(ctx, x, cos, sin):
+    """diffusers/Flux-style RoPE: ``out = x * cos + rotate_interleaved(x) * sin``.
+
+    Matches ``apply_rotary_emb`` with ``use_real_unbind_dim=-1`` (adjacent dimension pairs),
+    **not** GPT-style split-half ``rotate_half``.
+
+    x: [B, num_heads, seq, head_dim]
+    cos/sin: broadcastable to x (e.g. [1, 1, seq, rope_dim])
+    """
+    rope_dim = int(cos.shape[-1])
+    x_tail = x[..., rope_dim:] if x.shape[-1] > rope_dim else None
+    xr = x[..., :rope_dim]
+    xf = xr.astype(ctx.float32())
+    cf = cos.astype(ctx.float32())
+    sf = sin.astype(ctx.float32())
+    sh = xf.shape
+    x2 = ctx.reshape(xf, (*sh[:-1], -1, 2))
+    real = x2[..., 0]
+    imag = x2[..., 1]
+    rot = ctx.stack([-imag, real], axis=-1)
+    rot = ctx.reshape(rot, (*sh[:-1], rope_dim))
+    out = xf * cf + rot * sf
+    out = out.astype(x.dtype)
+    if x_tail is not None and x_tail.shape[-1] > 0:
+        return ctx.concat([out, x_tail], axis=-1)
+    return out

@@ -1,6 +1,6 @@
 """
-CivitAI API 客户端
-支持搜索 LoRA 和模型，不过滤 NSFW 内容
+CivitAI API client
+Supports searching LoRAs and models, no NSFW filtering
 """
 
 from typing import List, Optional, Dict, Any
@@ -10,7 +10,7 @@ import aiohttp
 
 @dataclass
 class CivitAIFile:
-    """CivitAI 文件信息"""
+    """CivitAI file info"""
     name: str
     download_url: str
     size_kb: float = 0.0
@@ -23,13 +23,13 @@ class CivitAIFile:
 
 @dataclass
 class CivitAIModelVersion:
-    """CivitAI 模型版本"""
+    """CivitAI model version"""
     id: int
     name: str
     description: str = ""
     download_url: str = ""
     trained_words: List[str] = field(default_factory=list)
-    base_model: str = ""  # 如 "Flux.1 D", "SDXL 1.0"
+    base_model: str = ""  # e.g. "Flux.1 D", "SDXL 1.0"
     files: List[CivitAIFile] = field(default_factory=list)
     created_at: Optional[str] = None
     stats: Dict[str, Any] = field(default_factory=dict)
@@ -38,7 +38,7 @@ class CivitAIModelVersion:
 
 @dataclass
 class CivitAIModel:
-    """CivitAI 模型信息"""
+    """CivitAI model info"""
     id: int
     name: str
     description: str = ""
@@ -51,9 +51,9 @@ class CivitAIModel:
 
 
 class CivitAIClient:
-    """CivitAI API 客户端
+    """CivitAI API client
 
-    注意：不过滤 NSFW 内容，返回所有搜索结果
+    Note: does not filter NSFW content, returns all search results
     """
 
     BASE_URL = "https://civitai.com/api/v1"
@@ -77,22 +77,22 @@ class CivitAIClient:
     async def search(self, query: str = "", types: Optional[List[str]] = None,
                     limit: int = 20, page: int = 1, cursor: Optional[str] = None,
                     sort: str = "Highest Rated", nsfw: Optional[bool] = None) -> Dict[str, Any]:
-        """搜索模型
+        """Search models
 
-        CivitAI 使用 cursor 分页，不支持 page 参数与 query 同时使用。
-        当 query 不为空时，page 参数会被忽略，改用 cursor 分页。
+        CivitAI uses cursor-based pagination; page parameter is not supported when query is present.
+        When query is not empty, the page parameter is ignored and cursor-based pagination is used instead.
 
         Args:
-            query: 搜索关键词
-            types: 模型类型列表，如 ["LORA", "Checkpoint"]
-            limit: 每页数量
-            page: 页码（仅无 query 时生效）
-            cursor: 分页游标（有 query 时使用）
-            sort: 排序方式
-            nsfw: 是否包含 NSFW 内容（需要 API key）
+            query: Search keyword
+            types: Model type list, e.g. ["LORA", "Checkpoint"]
+            limit: Items per page
+            page: Page number (only effective when no query)
+            cursor: Pagination cursor (used when query is present)
+            sort: Sort method
+            nsfw: Whether to include NSFW content (requires API key)
 
         Returns:
-            包含 items 和 metadata 的字典
+            Dict with items and metadata
         """
         session = await self._get_session()
 
@@ -126,10 +126,10 @@ class CivitAIClient:
                 return {"items": items, "metadata": metadata}
 
         except aiohttp.ClientError as e:
-            raise Exception(f"CivitAI 网络请求失败: {e}")
+            raise Exception(f"CivitAI network request failed: {e}")
 
     async def get_model(self, model_id: int) -> CivitAIModel:
-        """获取模型详情"""
+        """Get model details"""
         session = await self._get_session()
 
         try:
@@ -142,10 +142,10 @@ class CivitAIClient:
                 return self._parse_model(data)
 
         except aiohttp.ClientError as e:
-            raise Exception(f"CivitAI 网络请求失败: {e}")
+            raise Exception(f"CivitAI network request failed: {e}")
 
     def _parse_model(self, data: Dict[str, Any]) -> CivitAIModel:
-        """解析 API 返回的模型数据"""
+        """Parse model data returned by API"""
         versions = []
         for v in data.get("modelVersions", []):
             files = []

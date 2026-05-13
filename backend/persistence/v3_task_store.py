@@ -1,4 +1,4 @@
-"""v3 统一任务表：任意媒体、任意 params JSON。"""
+"""v3 unified task table: any media, any params JSON."""
 
 from __future__ import annotations
 
@@ -107,7 +107,7 @@ class V3TaskStore(IV3TaskStore):
                 conn.commit()
 
     def update_task_priority(self, task_id: str, priority: int) -> bool:
-        """仅 ``queued`` 行可改 ``priority``（50=高 / 100=普通）。成功返回 True。"""
+        """Only ``queued`` rows can change ``priority`` (50=high / 100=normal). Returns True on success."""
         with self._lock:
             with self._conn() as conn:
                 cur = conn.execute(

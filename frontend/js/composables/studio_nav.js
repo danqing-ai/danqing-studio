@@ -1,5 +1,5 @@
 /**
- * 创作页 → 主导航：与 `app.js` `VALID_PAGES` 一致（settings / models 等）。
+ * Creation page → main nav: consistent with `app.js` `VALID_PAGES` (settings / models, etc.).
  */
 (function (w) {
     function go(page) {

@@ -1,4 +1,4 @@
-"""全局单 Worker 任务调度 — plan TaskScheduler。"""
+"""Global single-worker task scheduling — plan TaskScheduler."""
 
 from __future__ import annotations
 
@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any, Literal, Optional
 
 from backend.core.contracts import (
+    AudioEditRequest,
+    AudioGenerationRequest,
     CancelToken,
     ExecutionContext,
     ImageEditRequest,
@@ -61,7 +63,7 @@ class TaskScheduler:
             self._worker = asyncio.create_task(self._worker_loop())
 
     async def _recover_orphaned_running(self) -> None:
-        """重启时：将上次遗留的 running 任务标记为 failed（上下文已丢失，无法恢复）。"""
+        """On restart: mark previously orphaned running tasks as failed (context lost, unrecoverable)."""
         rows = self._tasks.list_tasks(limit=500, offset=0, status=TaskStatus.RUNNING.value)
         for row in rows:
             tid = row["id"]
@@ -162,6 +164,8 @@ class TaskScheduler:
                 await self._engines.get_image(mid).cancel(task_id)
             elif TK.is_video_kind(k):
                 await self._engines.get_video(mid).cancel(task_id)
+            elif TK.is_audio_kind(k):
+                await self._engines.get_audio(mid).cancel(task_id)
             self._tasks.mark_cancelled(task_id)
             return True
         return False
@@ -209,7 +213,7 @@ class TaskScheduler:
         *,
         index_maps: Optional[tuple[dict[str, int], dict[str, Optional[int]]]] = None,
     ) -> dict[str, Any]:
-        """Plan §6.3 任务对象：排队位次、等待/剩余 ETA、model 摘要、error 镜像。"""
+        """Plan §6.3 task object: queue position, wait/remaining ETA, model summary, error mirror."""
         out = dict(row)
         tid = out.get("id") or ""
         st = out.get("status") or ""
@@ -243,7 +247,7 @@ class TaskScheduler:
         return (band, r.get("priority") or 100, r.get("created_at") or "")
 
     async def _rebuild_queued_heap(self) -> None:
-        """以 DB 中 ``queued`` 为准重建内存堆；排除已弹出尚未跑完的 tid（``_in_flight``）。"""
+        """Rebuild in-memory heap based on DB ``queued`` entries; exclude already-dequeued but not-yet-finished tids (``_in_flight``)."""
         async with self._heap_lock:
             while True:
                 try:
@@ -359,12 +363,14 @@ class TaskScheduler:
                 "step": ev.step,
                 "total": ev.total,
                 "eta_seconds": ev.eta_seconds,
+                "message": ev.message,
             }
             loop.call_soon_threadsafe(_put_rt, "progress", ev)
 
         def on_log(ev: LogEvent) -> None:
+            # Persist only — ``GET /api/tasks/{id}/stream`` replays from DB (step 1).
+            # Pushing the same log onto ``rt_queue`` duplicated every line (DB + queue).
             self._tasks.append_log(tid, ev.message, ev.level)
-            loop.call_soon_threadsafe(_put_rt, "log", ev)
 
         ctx = ExecutionContext(
             task_id=tid,
@@ -395,6 +401,12 @@ class TaskScheduler:
             elif kind == TK.VIDEO_EDIT:
                 req = VideoEditRequest.model_validate(params)
                 res = await self._engines.get_video(model_id).edit(req, ctx)
+            elif kind == TK.AUDIO_GENERATION:
+                req = AudioGenerationRequest.model_validate(params)
+                res = await self._engines.get_audio(model_id).generate(req, ctx)
+            elif kind == TK.AUDIO_EDIT:
+                req = AudioEditRequest.model_validate(params)
+                res = await self._engines.get_audio(model_id).edit(req, ctx)
             else:
                 raise RuntimeError(f"unknown kind {kind}")
 

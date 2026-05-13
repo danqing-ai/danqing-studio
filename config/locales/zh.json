@@ -12,6 +12,7 @@
     "model_not_ready": "模型 '{name}'{version} 未就绪。请先在'下载'页面下载该模型。",
     "model_not_in_registry": "模型 '{name}' 未在注册表中找到",
     "model_no_download_source": "模型 '{name}' 没有配置有效的下载源",
+    "audio_stub_no_download": "模型 '{name}' 仅为 API 占位条目，无可下载的权重包",
     "download_not_paused": "下载任务 {id} 不存在或未暂停",
     "download_missing_metadata": "下载任务 {id} 缺少恢复所需的元数据",
     "source_version_not_found": "源版本 '{version}' 不存在",
@@ -28,8 +29,7 @@
     "image_read_failed": "读取图片失败: {error}",
     "unsupported_width": "不支持的宽度: {width}。支持的宽度: {allowed}",
     "unsupported_height": "不支持的高度: {height}。支持的高度: {allowed}",
-    "mlx_video_python_api_required": "视频生成需要 mlx-video 的 Python API 已正确安装（不再静默降级到 CLI，避免画质/行为不一致）。请升级 mlx-video 或检查虚拟环境。导入错误: {detail}",
-    "mflux_model_profile_required": "图像引擎缺少模型「{name}」的专用 mflux 配置（已禁止套用其他模型的默认配置）。请在 backend/engine/image/mflux_generation_backend.py 的 config_map 中补全该模型。"
+    "model_profile_required": "引擎缺少模型「{name}」的专用配置（已禁止套用其他模型的默认配置）。请在引擎配置中补全该模型。"
   },
   "log": {
     "generating_step": "生成中... 步骤 {step}/{total}",

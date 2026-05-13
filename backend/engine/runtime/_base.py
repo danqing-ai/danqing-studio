@@ -1,7 +1,12 @@
 """
-RuntimeContext — 后端无关的张量操作上下文。
+RuntimeContext — backend-agnostic tensor operation context.
 
-模型代码只依赖 RuntimeContext，不直接 import mlx/torch。
+**窄契约（治理）**：此处只承载「模块工厂 + 张量/内存 API + 权重 I/O」等跨后端共性。
+新增算子/算法能力**默认不进**本 ABC；若 MLX/CUDA 分叉过大，用各组件的
+``xxx_mlx.py`` / ``xxx_cuda.py``（见 ``docs/dual_platform_architecture.md`` §8.5）承载平台实现，
+``xxx.py`` 保留基于 ``RuntimeContext`` 的公共路径或对外接口 + dispatch。
+
+``backend/engine/runtime/mlx.py`` 与 ``cuda.py`` 为唯一允许在此包顶层绑定 ``mlx``/``torch`` 的实现文件。
 """
 from __future__ import annotations
 
@@ -10,12 +15,12 @@ from typing import Any, ClassVar
 
 
 class RuntimeContext(ABC):
-    """后端无关的张量操作上下文。"""
+    """Backend-agnostic tensor operation context."""
 
     backend: ClassVar[str]  # "mlx" | "cuda"
 
     # ------------------------------------------------------------------
-    # 模块工厂
+    # Module factories
     # ------------------------------------------------------------------
 
     @abstractmethod
@@ -70,8 +75,12 @@ class RuntimeContext(ABC):
     def ModuleList(self, layers: list) -> Any:
         ...
 
+    @abstractmethod
+    def Dropout(self, p: float = 0.0) -> Any:
+        ...
+
     # ------------------------------------------------------------------
-    # 张量创建
+    # Tensor creation
     # ------------------------------------------------------------------
 
     @abstractmethod
@@ -119,7 +128,7 @@ class RuntimeContext(ABC):
         ...
 
     # ------------------------------------------------------------------
-    # 张量操作
+    # Tensor operations
     # ------------------------------------------------------------------
 
     @abstractmethod
@@ -140,6 +149,11 @@ class RuntimeContext(ABC):
 
     @abstractmethod
     def permute(self, x: Any, dims: tuple) -> Any:
+        ...
+
+    @abstractmethod
+    def flip(self, x: Any, axis: int = 0) -> Any:
+        """Reverse ``x`` along ``axis`` (1D schedules use axis 0)."""
         ...
 
     @abstractmethod
@@ -230,8 +244,38 @@ class RuntimeContext(ABC):
     def repeat(self, x: Any, repeats: int, axis: int = 0) -> Any:
         ...
 
+    @abstractmethod
+    def linspace(self, start: float, end: float, steps: int, dtype: Any = None) -> Any:
+        ...
+
+    @abstractmethod
+    def dequantize(self, weight: Any, scales: Any, biases: Any, group_size: int, bits: int) -> Any:
+        ...
+
+    @abstractmethod
+    def is_tensor(self, x: Any) -> bool:
+        ...
+
+    @abstractmethod
+    def is_integer_dtype_tensor(self, x: Any) -> bool:
+        """True if ``x`` is a backend tensor with an integral dtype (e.g. timestep index)."""
+        ...
+
+    @abstractmethod
+    def cast(self, x: Any, dtype: Any) -> Any:
+        """Cast ``x`` to ``dtype`` (``astype`` on MLX, ``to`` on torch)."""
+        ...
+
+    @abstractmethod
+    def to_numpy(self, x: Any) -> Any:
+        ...
+
+    @abstractmethod
+    def gelu(self, x: Any, approximate: str = "none") -> Any:
+        ...
+
     # ------------------------------------------------------------------
-    # 微分 / 评估 / 编译（MLX 特需）
+    # Differentiation / evaluation / compilation (MLX-specific)
     # ------------------------------------------------------------------
 
     @abstractmethod
@@ -243,7 +287,7 @@ class RuntimeContext(ABC):
         ...
 
     # ------------------------------------------------------------------
-    # 高级操作
+    # Advanced operations
     # ------------------------------------------------------------------
 
     @abstractmethod
@@ -256,7 +300,7 @@ class RuntimeContext(ABC):
         ...
 
     # ------------------------------------------------------------------
-    # 内存
+    # Memory
     # ------------------------------------------------------------------
 
     @abstractmethod
@@ -268,7 +312,7 @@ class RuntimeContext(ABC):
         ...
 
     # ------------------------------------------------------------------
-    # 权重 I/O
+    # Weight I/O
     # ------------------------------------------------------------------
 
     @abstractmethod
@@ -280,7 +324,7 @@ class RuntimeContext(ABC):
         ...
 
     # ------------------------------------------------------------------
-    # 数据类型
+    # Data types
     # ------------------------------------------------------------------
 
     @abstractmethod
@@ -304,7 +348,7 @@ class RuntimeContext(ABC):
         ...
 
     # ------------------------------------------------------------------
-    # 便利方法
+    # Convenience methods
     # ------------------------------------------------------------------
 
     def platform(self) -> str:

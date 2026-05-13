@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from backend.core.media_interfaces import IImageEngine, IVideoEngine
+from backend.core.media_interfaces import IAudioEngine, IImageEngine, IVideoEngine
 from backend.core.model_registry import ModelRegistry
 
 
@@ -11,7 +11,7 @@ class EngineRegistry:
         self._model_registry = model_registry
         self._by_engine_id: dict[str, object] = {}
 
-    def register(self, engine: IImageEngine | IVideoEngine) -> None:
+    def register(self, engine: IImageEngine | IVideoEngine | IAudioEngine) -> None:
         self._by_engine_id[engine.engine_id] = engine
 
     def get_image(self, model_id: str) -> IImageEngine:
@@ -30,4 +30,13 @@ class EngineRegistry:
         eng = self._by_engine_id.get(cfg.engine)
         if not isinstance(eng, IVideoEngine):
             raise TypeError(f"engine {cfg.engine!r} is not configured as IVideoEngine")
+        return eng
+
+    def get_audio(self, model_id: str) -> IAudioEngine:
+        cfg = self._model_registry.require(model_id)
+        if cfg.media != "audio":
+            raise ValueError(f"model {model_id} is not an audio model (media={cfg.media})")
+        eng = self._by_engine_id.get(cfg.engine)
+        if not isinstance(eng, IAudioEngine):
+            raise TypeError(f"engine {cfg.engine!r} is not configured as IAudioEngine")
         return eng

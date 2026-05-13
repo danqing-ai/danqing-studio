@@ -15,6 +15,8 @@ from backend.core.contracts import (
 from backend.core.media_interfaces import IImageEngine
 from backend.core.interfaces import IPathResolver
 from .common.cache import ModelCache
+from .pipelines.image_pipeline import ImagePipeline
+from .pipelines.image_upscale_pipeline import ImageUpscalePipeline
 from .runtime._base import RuntimeContext
 
 
@@ -41,7 +43,7 @@ class DanQingImageEngine(IImageEngine):
         m, v = parse_model_version(model_name) if ":" in model_name else (model_name, version)
         try:
             entry = self._registry.require(m)
-            backends = getattr(entry, "backends", [list(self._runtimes.keys())[0]])
+            backends = entry.backends
             for b in backends:
                 if b in self._runtimes:
                     return True
@@ -60,7 +62,7 @@ class DanQingImageEngine(IImageEngine):
 
     def _resolve_runtime(self, model_id: str) -> RuntimeContext:
         entry = self._registry.require(model_id)
-        backends = getattr(entry, "backends", ["mlx"])
+        backends = entry.backends
         for b in backends:
             if b in self._runtimes:
                 return self._runtimes[b]
@@ -69,8 +71,13 @@ class DanQingImageEngine(IImageEngine):
     async def generate(self, request: ImageGenerationRequest,
                        ctx: ExecutionContext) -> EngineResult:
         import asyncio
+        if not self.supports(request.model, "generate"):
+            mid = request.model.split(":", 1)[0]
+            raise RuntimeError(
+                f"Model {mid!r} does not support text-to-image (create) for this engine; "
+                "see config/models_registry.json actions."
+            )
         runtime = self._resolve_runtime(request.model)
-        from .image_pipeline import ImagePipeline
         pipeline = ImagePipeline(
             runtime,
             self._registry,
@@ -79,7 +86,7 @@ class DanQingImageEngine(IImageEngine):
             project_root=self._paths.get_project_root(),
         )
 
-        def on_progress(p, s, t, msg):
+        def on_progress(p, s, t, msg=None):
             from backend.core.contracts import ProgressEvent
             ctx.on_progress(ProgressEvent(progress=p, step=s, total=t, message=msg))
 
@@ -102,24 +109,77 @@ class DanQingImageEngine(IImageEngine):
 
     async def edit(self, request: ImageEditRequest, ctx: ExecutionContext) -> EngineResult:
         import asyncio
+        if not self.supports(request.model, "edit"):
+            mid = request.model.split(":", 1)[0]
+            raise RuntimeError(
+                f"Model {mid!r} does not support image edit (rewrite/retouch/extend) for this engine; "
+                "see config/models_registry.json actions."
+            )
         runtime = self._resolve_runtime(request.model)
-        from .image_pipeline import ImagePipeline
         pipeline = ImagePipeline(
             runtime, self._registry, ctx.asset_store,
             model_cache=self._cache,
             project_root=self._paths.get_project_root(),
         )
+
+        def on_progress(p, s, t, msg=None):
+            from backend.core.contracts import ProgressEvent
+            ctx.on_progress(ProgressEvent(progress=p, step=s, total=t, message=msg))
+
+        def on_log(lvl, msg):
+            from backend.core.contracts import LogEvent
+            ctx.on_log(LogEvent(level=lvl, message=msg))
+
         result = await asyncio.to_thread(
-            pipeline.run_edit, request, ctx, on_progress=None, on_log=None,
+            pipeline.run_edit, request, ctx, on_progress=on_progress, on_log=on_log,
         )
         if result is None:
-            return EngineResult(primary_asset_id="")
-        output_path, _ = result
-        from backend.core.contracts import new_asset_id
-        return EngineResult(primary_asset_id=new_asset_id(), output_paths=[output_path or ""])
+            return EngineResult(primary_asset_id="", metadata={"status": "cancelled"})
+
+        output_path, metadata = result
+        aid = ctx.asset_store.create_from_file(
+            Path(output_path), kind="image", mime_type="image/png",
+            source_task_id=ctx.task_id, metadata=metadata, source_action="rewrite",
+        )
+        return EngineResult(primary_asset_id=aid, asset_ids=[aid], output_paths=[output_path])
 
     async def upscale(self, request: ImageUpscaleRequest, ctx: ExecutionContext) -> EngineResult:
-        raise NotImplementedError("upscale not implemented")
+        if not self.supports(request.model, "upscale"):
+            mid = request.model.split(":", 1)[0]
+            raise RuntimeError(
+                f"Model {mid!r} does not support upscale for this engine; "
+                "see config/models_registry.json actions."
+            )
+        runtime = self._resolve_runtime(request.model)
+        pipeline = ImageUpscalePipeline(
+            runtime,
+            self._registry,
+            ctx.asset_store,
+            model_cache=self._cache,
+            project_root=self._paths.get_project_root(),
+        )
+        import asyncio
+
+        def on_progress(p, s, t, msg=None):
+            from backend.core.contracts import ProgressEvent
+            ctx.on_progress(ProgressEvent(progress=p, step=s, total=t, message=msg))
+
+        def on_log(lvl, msg):
+            from backend.core.contracts import LogEvent
+            ctx.on_log(LogEvent(level=lvl, message=msg))
+
+        result = await asyncio.to_thread(
+            pipeline.run, request, ctx, on_progress=on_progress, on_log=on_log,
+        )
+        if result is None:
+            return EngineResult(primary_asset_id="", metadata={"status": "cancelled"})
+
+        output_path, metadata = result
+        aid = ctx.asset_store.create_from_file(
+            Path(output_path), kind="image", mime_type="image/png",
+            source_task_id=ctx.task_id, metadata=metadata, source_action="upscale",
+        )
+        return EngineResult(primary_asset_id=aid, asset_ids=[aid], output_paths=[output_path])
 
     async def cancel(self, task_id: str) -> bool:
         return True

@@ -8,6 +8,7 @@ psutil>=5.9.0
 
 # MLX 核心（macOS Apple Silicon 专用）
 mlx>=0.21.0
+mlx-lm
 
 # 文本编码（tokenizer）
 transformers>=4.40.0
@@ -20,3 +21,6 @@ safetensors>=0.4.0
 
 # ModelScope（魔搭社区）模型下载
 modelscope>=1.20.0
+
+# 音频生成/处理
+soundfile>=0.12.0

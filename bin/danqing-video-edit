@@ -11,10 +11,17 @@ danqing-video-edit — 视频编辑 CLI。
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_CLI_FILE = Path(__file__).resolve()
+PROJECT_ROOT = _CLI_FILE.parent.parent
+if sys.platform != "win32":
+    _venv_root = PROJECT_ROOT / ".venv"
+    _venv_py = _venv_root / "bin" / "python3"
+    if _venv_py.is_file() and Path(sys.prefix).resolve() != _venv_root.resolve():
+        os.execv(str(_venv_py), [str(_venv_py), str(_CLI_FILE), *sys.argv[1:]])
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from backend.cli.video_cli import edit

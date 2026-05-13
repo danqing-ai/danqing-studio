@@ -1,16 +1,16 @@
 """
-下载服务实现 - 支持 HuggingFace 和 HTTP 双源下载
+Download service implementation - supports HuggingFace and HTTP dual-source downloads.
 """
 
 import os
-# 配置 HF 镜像站
+# Configure HF mirror site
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
 import time
 import uuid
 import json
 from pathlib import Path
-from typing import Dict, List, Optional, Callable, Any
+from typing import Any, Callable, Dict, List, Optional
 
 import asyncio
 import shutil
@@ -21,15 +21,16 @@ from backend.core.interfaces import (
 )
 from backend.core.i18n import t as tt, get_locale
 from backend.core.downloaders import HTTPDownloader
+from backend.services.hf_repo_resolve import resolve_huggingface_repo_id
 
 
 class DownloadService(IDownloadService):
-    """下载服务实现
+    """Download service implementation.
 
-    根据模型注册表的 source 字段自动选择下载方式：
-    - huggingface: 使用 huggingface_hub.snapshot_download，轮询目录大小算进度
-    - modelscope: 使用 modelscope.snapshot_download，轮询目录大小算进度
-    - civitai / http: 使用 HTTPDownloader (aiohttp)
+    Automatically selects the download method based on the source field in the model registry:
+    - huggingface: uses huggingface_hub.snapshot_download, polls directory size for progress
+    - modelscope: uses modelscope.snapshot_download, polls directory size for progress
+    - civitai / http: uses HTTPDownloader (aiohttp)
     """
 
     def __init__(self, path_resolver: IPathResolver, config_store: Optional[IConfigStore] = None):
@@ -41,7 +42,7 @@ class DownloadService(IDownloadService):
         self._conversion_events: Dict[str, asyncio.Event] = {}
         self._persist_path = path_resolver.get_project_root() / "config" / ".download_tasks.json"
 
-        # 读取配置中的 token
+        # Read tokens from config
         hf_token = None
         civitai_token = None
         if self._config:
@@ -49,21 +50,21 @@ class DownloadService(IDownloadService):
             hf_token = settings.huggingface_token or None
             civitai_token = settings.civitai_token or None
 
-        # 初始化下载器
+        # Initialize downloaders
         self._http_downloader = HTTPDownloader(civitai_token=civitai_token)
         self._cancelled_downloads: set = set()
         self._token = hf_token
 
-        # 活跃模型下载去重：(model_name, version) -> task_id
+        # Active model download dedup: (model_name, version) -> task_id
         self._active_model_downloads: Dict[tuple, str] = {}
-        # 保护去重检查和任务创建的并发锁
+        # Concurrency lock protecting dedup checks and task creation
         self._download_lock = asyncio.Lock()
 
-        # 加载持久化的下载任务
+        # Load persisted download tasks
         self._load_persisted_downloads()
 
     def _persist_downloads(self) -> None:
-        """持久化下载任务到 JSON 文件（保留所有状态，包括已完成和失败）"""
+        """Persist download tasks to JSON file (retains all states, including completed and failed)."""
         try:
             data = {}
             for task_id, task in self._downloads.items():
@@ -87,13 +88,13 @@ class DownloadService(IDownloadService):
             with open(self._persist_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            print(f"[DownloadService] 持久化下载任务失败: {e}")
+            print(f"[DownloadService] Failed to persist download tasks: {e}")
 
     def _load_persisted_downloads(self) -> None:
-        """从 JSON 文件加载持久化的下载任务
+        """Load persisted download tasks from JSON file.
 
-        进程重启后，将 running 状态的任务标记为 paused，
-        等待用户手动恢复。
+        After process restart, tasks in running state are marked as paused,
+        waiting for the user to manually resume.
         """
         if not self._persist_path.exists():
             return
@@ -107,13 +108,13 @@ class DownloadService(IDownloadService):
                     target_path=item["target_path"]
                 )
                 raw_status = item.get("status", "running")
-                # 进程重启后，原来的 running 任务变为 paused
+                # After process restart, tasks that were running become paused
                 if raw_status == "running":
                     task.status = TaskStatus.PAUSED
                 else:
                     task.status = TaskStatus(raw_status)
                 task.progress = item.get("progress", 0)
-                # 恢复元数据
+                # Restore metadata
                 if item.get("model_name"):
                     task._model_name = item["model_name"]
                 if item.get("version"):
@@ -134,12 +135,12 @@ class DownloadService(IDownloadService):
                     error_message=item.get("error_message", "")
                 )
         except Exception as e:
-            print(f"[DownloadService] 加载持久化下载任务失败: {e}")
+            print(f"[DownloadService] Failed to load persisted download tasks: {e}")
 
 
 
     def _load_registry(self) -> Dict[str, Any]:
-        """加载模型注册表"""
+        """Load model registry."""
         registry_path = self._path_resolver.get_project_root() / "config" / "models_registry.json"
         if not registry_path.exists():
             return {}
@@ -147,17 +148,17 @@ class DownloadService(IDownloadService):
             with open(registry_path, "r", encoding="utf-8") as f:
                 return json.load(f).get("models", {})
         except Exception as e:
-            print(f"[DownloadService] 加载模型注册表失败: {e}")
+            print(f"[DownloadService] Failed to load model registry: {e}")
             return {}
 
     def get_model_download_config(self, model_name: str) -> Optional[Dict[str, Any]]:
-        """获取模型的下载配置信息"""
+        """Get download configuration info for a model."""
         registry = self._load_registry()
         return registry.get(model_name)
 
     @staticmethod
     def _check_hf_connectivity(timeout: float = 10.0) -> bool:
-        """检查 HuggingFace 镜像站是否可访问"""
+        """Check if HuggingFace mirror is accessible."""
         import urllib.request
         try:
             endpoint = os.environ.get("HF_ENDPOINT", "https://hf-mirror.com")
@@ -173,7 +174,7 @@ class DownloadService(IDownloadService):
 
     @staticmethod
     def _check_modelscope_connectivity(timeout: float = 10.0) -> bool:
-        """检查 ModelScope（魔塔社区）是否可访问"""
+        """Check if ModelScope is accessible."""
         import urllib.request
         try:
             endpoint = "https://www.modelscope.cn"
@@ -189,7 +190,7 @@ class DownloadService(IDownloadService):
 
     @staticmethod
     def _parse_size_to_bytes(size_str: str) -> int:
-        """将注册表中的 size 字符串（如 '23.8GB'）解析为字节数"""
+        """Parse size string from registry (e.g. '23.8GB') into bytes."""
         if not size_str:
             return 0
         size_str = size_str.strip().upper()
@@ -211,18 +212,21 @@ class DownloadService(IDownloadService):
     async def download_model(self, model_name: str, version: Optional[str] = None,
                             progress_callback: Optional[Callable[[DownloadProgress], None]] = None,
                             existing_task_id: Optional[str] = None) -> str:
-        """按注册表模型名称下载模型（支持基础模型和 LoRA）"""
+        """Download model by registry model name (supports base models and LoRA)."""
         config = self.get_model_download_config(model_name)
         if not config:
             loc = get_locale()
             raise ValueError(tt("error.model_not_in_registry", loc, name=model_name))
+        if config.get("stub_no_download"):
+            loc = get_locale()
+            raise ValueError(tt("error.audio_stub_no_download", loc, name=model_name))
 
         source = config.get("source", "huggingface")
         repo_id = config.get("repo_id")
         download_url = config.get("download_url")
         local_path = config.get("local_path", f"models/{model_name}")
 
-        # 构造友好显示名称：模型名称 + 版本名称
+        # Build friendly display name: model name + version name
         model_display_name = model_name
         name_cfg = config.get("name", {})
         if isinstance(name_cfg, dict):
@@ -240,40 +244,46 @@ class DownloadService(IDownloadService):
                     download_url = ver_config.get("download_url")
                 if ver_config.get("local_path"):
                     local_path = ver_config["local_path"]
+                vs = ver_config.get("source")
+                if isinstance(vs, str) and vs.strip():
+                    source = vs.strip().lower()
 
-        # 解析注册表中该版本的预估大小（HF API 失败时用作 fallback）
+        if source == "huggingface" and repo_id:
+            repo_id = resolve_huggingface_repo_id(repo_id)
+
+        # Parse estimated size for this version from registry (fallback if HF API fails)
         estimated_size = 0
         if ver_config and ver_config.get("size"):
             estimated_size = self._parse_size_to_bytes(ver_config["size"])
         elif config.get("size"):
             estimated_size = self._parse_size_to_bytes(config["size"])
 
-        # 统一显示名称
+        # Unified display name
         display_name = model_display_name
         if version_display_name:
             display_name = f"{model_display_name} {version_display_name}"
 
-        # 解析本地路径
+        # Parse local path
         if local_path.startswith("models/"):
-            # 提取相对路径（可能含子目录，如 Base/Z-Image-Turbo-mflux-4bit-fp16）
+            # Extract relative path (may contain subdirectories, e.g. Base/Z-Image-Turbo-danqing-4bit-fp16)
             rel_path = local_path[len("models/"):]
             target = self._path_resolver.get_models_dir() / rel_path
         else:
             target = Path(local_path)
 
-        # 确保目标目录存在
+        # Ensure target directory exists
         target.mkdir(parents=True, exist_ok=True)
 
-        # 去重检查：同一模型同一版本只能有一个运行中/排队的下载任务
+        # Dedup check: only one running/queued download per model per version
         dedup_key = (model_name, version)
         existing_active_id = self._active_model_downloads.get(dedup_key)
         if existing_active_id and existing_active_id in self._downloads:
             existing_task = self._downloads[existing_active_id]
             if existing_task.status == TaskStatus.RUNNING:
-                # 已存在运行中任务，直接返回已有 task_id
+                # Running task already exists, return existing task_id
                 return existing_active_id
             elif existing_task.status == TaskStatus.PAUSED:
-                # 已存在暂停任务，如果是恢复下载则继续，否则返回已有 task_id
+                # Paused task exists; if resuming, continue; otherwise return existing task_id
                 if not existing_task_id or existing_task_id != existing_active_id:
                     return existing_active_id
 
@@ -294,14 +304,14 @@ class DownloadService(IDownloadService):
         self._active_model_downloads[dedup_key] = task_id
         task.status = TaskStatus.RUNNING
 
-        # 内部进度回调（存储进度 + 外部回调 + 持久化）
+        # Internal progress callback (store progress + external callback + persist)
         async def on_progress(progress: DownloadProgress):
             self._progress[task_id] = progress
             self._persist_downloads()
             if progress_callback:
                 await self._async_callback(progress_callback, progress)
 
-        # 恢复下载时保留已有进度，不重置为 0
+        # When resuming download, preserve existing progress; don't reset to 0
         existing_progress = self._progress.get(task_id)
         if progress_callback:
             if existing_progress and existing_progress.downloaded_size > 0:
@@ -323,14 +333,14 @@ class DownloadService(IDownloadService):
 
         try:
             if source == "huggingface" and repo_id:
-                # 内联 HuggingFace 下载：snapshot_download + 轮询目录大小算进度
+                # Inline HuggingFace download: snapshot_download + poll directory size for progress
                 from huggingface_hub import snapshot_download
 
-                def calc_downloaded():
-                    if not target.exists():
+                def calc_downloaded_for(p: Path) -> int:
+                    if not p.exists():
                         return 0
                     total = 0
-                    for dirpath, dirnames, filenames in os.walk(target):
+                    for dirpath, _dirnames, filenames in os.walk(p):
                         for f in filenames:
                             fp = os.path.join(dirpath, f)
                             try:
@@ -354,12 +364,12 @@ class DownloadService(IDownloadService):
                 loop = asyncio.get_event_loop()
 
                 def do_download():
-                    # 先检查网络是否通畅，避免 snapshot_download 静默回退到已有目录
+                    # Check network connectivity first; avoid snapshot_download silently falling back to existing dir
                     if not self._check_hf_connectivity():
                         raise ConnectionError(
-                            "无法连接到模型下载服务器 (HF_ENDPOINT=%s)，请检查网络连接" % os.environ.get("HF_ENDPOINT", "https://hf-mirror.com")
+                            "Cannot connect to model download server (HF_ENDPOINT=%s), please check network connection" % os.environ.get("HF_ENDPOINT", "https://hf-mirror.com")
                         )
-                    # 让 HF client 使用默认 tqdm，保留其日志输出
+                    # Let HF client use default tqdm, retain its log output
                     return snapshot_download(
                         repo_id=repo_id,
                         local_dir=str(target),
@@ -368,20 +378,20 @@ class DownloadService(IDownloadService):
 
                 download_future = loop.run_in_executor(None, do_download)
 
-                # 轮询目录大小计算进度
-                last_downloaded = calc_downloaded()
+                # Poll directory size to calculate progress (HF)
+                last_downloaded = calc_downloaded_for(target)
                 last_report_time = time.time()
 
                 try:
                     while not download_future.done():
-                        await asyncio.sleep(2)  # 每2秒检查一次
+                        await asyncio.sleep(2)  # Check every 2 seconds
                         if task_id in self._cancelled_downloads:
                             break
 
-                        current_downloaded = calc_downloaded()
+                        current_downloaded = calc_downloaded_for(target)
                         now = time.time()
 
-                        # 计算速度
+                        # Calculate speed
                         dt = now - last_report_time
                         speed_str = ""
                         if dt >= 1:
@@ -404,19 +414,103 @@ class DownloadService(IDownloadService):
 
                     result_path = await download_future
 
-                    # 最终进度
-                    final_downloaded = calc_downloaded()
-                    await on_progress(DownloadProgress(
-                        task_id=task_id,
-                        status="completed",
-                        progress=1.0,
-                        total_size=total_size,
-                        downloaded_size=final_downloaded,
-                        speed="",
-                        filename=display_name
-                    ))
+                    companion_repo = None
+                    companion_target: Optional[Path] = None
+                    companion_label = display_name
+                    if ver_config:
+                        companion_repo = ver_config.get("companion_repo_id")
+                        clp = ver_config.get("companion_local_path")
+                        if companion_repo and clp:
+                            companion_repo = resolve_huggingface_repo_id(str(companion_repo))
+                            if clp.startswith("models/"):
+                                rel_c = clp[len("models/"):]
+                                companion_target = self._path_resolver.get_models_dir() / rel_c
+                            else:
+                                companion_target = Path(clp)
+                            companion_target.mkdir(parents=True, exist_ok=True)
+                            cname = ver_config.get("companion_name")
+                            if isinstance(cname, str) and cname:
+                                companion_label = f"{display_name} + {cname}"
+                            est_c = 0
+                            if ver_config.get("companion_size"):
+                                est_c = self._parse_size_to_bytes(str(ver_config["companion_size"]))
+                            total_both = total_size + est_c
+                            bytes_primary = calc_downloaded_for(target)
 
-                    result = result_path
+                            def do_download_c():
+                                if not self._check_hf_connectivity():
+                                    raise ConnectionError(
+                                        "Cannot connect to model download server (HF_ENDPOINT=%s), please check network connection"
+                                        % os.environ.get("HF_ENDPOINT", "https://hf-mirror.com")
+                                    )
+                                return snapshot_download(
+                                    repo_id=companion_repo,
+                                    local_dir=str(companion_target),
+                                    token=self._token,
+                                )
+
+                            c_future = loop.run_in_executor(None, do_download_c)
+                            last_b = bytes_primary + calc_downloaded_for(companion_target)
+                            last_report_time = time.time()
+                            while not c_future.done():
+                                await asyncio.sleep(2)
+                                if task_id in self._cancelled_downloads:
+                                    break
+                                cur = bytes_primary + calc_downloaded_for(companion_target)
+                                now = time.time()
+                                dt = now - last_report_time
+                                speed_str = ""
+                                if dt >= 1:
+                                    speed_bytes = (cur - last_b) / dt
+                                    speed_str = format_speed(speed_bytes)
+                                    last_b = cur
+                                    last_report_time = now
+                                prog = cur / total_both if total_both > 0 else 0.0
+                                await on_progress(DownloadProgress(
+                                    task_id=task_id,
+                                    status="running",
+                                    progress=min(prog, 1.0),
+                                    total_size=total_both,
+                                    downloaded_size=cur,
+                                    speed=speed_str,
+                                    filename=companion_label,
+                                ))
+                            await c_future
+                            final_downloaded = bytes_primary + calc_downloaded_for(companion_target)
+                            await on_progress(DownloadProgress(
+                                task_id=task_id,
+                                status="completed",
+                                progress=1.0,
+                                total_size=total_both,
+                                downloaded_size=final_downloaded,
+                                speed="",
+                                filename=companion_label,
+                            ))
+                            result = result_path
+                        else:
+                            final_downloaded = calc_downloaded_for(target)
+                            await on_progress(DownloadProgress(
+                                task_id=task_id,
+                                status="completed",
+                                progress=1.0,
+                                total_size=total_size,
+                                downloaded_size=final_downloaded,
+                                speed="",
+                                filename=display_name
+                            ))
+                            result = result_path
+                    else:
+                        final_downloaded = calc_downloaded_for(target)
+                        await on_progress(DownloadProgress(
+                            task_id=task_id,
+                            status="completed",
+                            progress=1.0,
+                            total_size=total_size,
+                            downloaded_size=final_downloaded,
+                            speed="",
+                            filename=display_name
+                        ))
+                        result = result_path
 
                 except asyncio.CancelledError:
                     await on_progress(DownloadProgress(
@@ -436,25 +530,23 @@ class DownloadService(IDownloadService):
                     ))
                     raise
             elif source == "modelscope" and repo_id:
-                # 内联 ModelScope（魔塔社区）下载：snapshot_download + 轮询目录大小算进度
+                # Inline ModelScope download: snapshot_download + poll directory size for progress
                 from modelscope import snapshot_download
 
-                def calc_downloaded_ms():
-                    if not target.exists():
+                def calc_ms_tree(p: Path) -> int:
+                    if not p.exists():
                         return 0
                     total = 0
-                    # 计算目标目录中的文件大小
-                    for dirpath, dirnames, filenames in os.walk(target):
+                    for dirpath, _dirnames, filenames in os.walk(p):
                         for f in filenames:
                             fp = os.path.join(dirpath, f)
                             try:
                                 total += os.path.getsize(fp)
                             except OSError:
                                 pass
-                    # 计算临时目录中的文件大小（ModelScope 断点续传）
-                    temp_dir = target / '._____temp'
+                    temp_dir = p / "._____temp"
                     if temp_dir.exists():
-                        for dirpath, dirnames, filenames in os.walk(temp_dir):
+                        for dirpath, _dirnames, filenames in os.walk(temp_dir):
                             for f in filenames:
                                 fp = os.path.join(dirpath, f)
                                 try:
@@ -478,10 +570,10 @@ class DownloadService(IDownloadService):
                 loop = asyncio.get_event_loop()
 
                 def do_download_ms():
-                    # 先检查网络是否通畅
+                    # Check network connectivity first
                     if not self._check_modelscope_connectivity():
                         raise ConnectionError(
-                            "无法连接到 ModelScope（魔塔社区），请检查网络连接"
+                            "Cannot connect to ModelScope, please check network connection"
                         )
                     return snapshot_download(
                         model_id=repo_id,
@@ -490,20 +582,20 @@ class DownloadService(IDownloadService):
 
                 download_future = loop.run_in_executor(None, do_download_ms)
 
-                # 轮询目录大小计算进度
-                last_downloaded = calc_downloaded_ms()
+                # Poll directory size to calculate progress
+                last_downloaded = calc_ms_tree(target)
                 last_report_time = time.time()
 
                 try:
                     while not download_future.done():
-                        await asyncio.sleep(2)  # 每2秒检查一次
+                        await asyncio.sleep(2)  # Check every 2 seconds
                         if task_id in self._cancelled_downloads:
                             break
 
-                        current_downloaded = calc_downloaded_ms()
+                        current_downloaded = calc_ms_tree(target)
                         now = time.time()
 
-                        # 计算速度
+                        # Calculate speed
                         dt = now - last_report_time
                         speed_str = ""
                         if dt >= 1:
@@ -526,19 +618,101 @@ class DownloadService(IDownloadService):
 
                     result_path = await download_future
 
-                    # 最终进度
-                    final_downloaded = calc_downloaded_ms()
-                    await on_progress(DownloadProgress(
-                        task_id=task_id,
-                        status="completed",
-                        progress=1.0,
-                        total_size=total_size,
-                        downloaded_size=final_downloaded,
-                        speed="",
-                        filename=display_name
-                    ))
+                    companion_repo = None
+                    companion_target: Optional[Path] = None
+                    companion_label = display_name
+                    if ver_config:
+                        companion_repo = ver_config.get("companion_repo_id")
+                        clp = ver_config.get("companion_local_path")
+                        if companion_repo and clp:
+                            companion_repo = str(companion_repo).strip()
+                            if clp.startswith("models/"):
+                                rel_c = clp[len("models/"):]
+                                companion_target = self._path_resolver.get_models_dir() / rel_c
+                            else:
+                                companion_target = Path(clp)
+                            companion_target.mkdir(parents=True, exist_ok=True)
+                            cname = ver_config.get("companion_name")
+                            if isinstance(cname, str) and cname:
+                                companion_label = f"{display_name} + {cname}"
+                            est_c = 0
+                            if ver_config.get("companion_size"):
+                                est_c = self._parse_size_to_bytes(str(ver_config["companion_size"]))
+                            total_both = total_size + est_c
+                            bytes_primary = calc_ms_tree(target)
 
-                    result = result_path
+                            def do_download_ms_c():
+                                if not self._check_modelscope_connectivity():
+                                    raise ConnectionError(
+                                        "Cannot connect to ModelScope, please check network connection"
+                                    )
+                                return snapshot_download(
+                                    model_id=companion_repo,
+                                    local_dir=str(companion_target),
+                                )
+
+                            c_future = loop.run_in_executor(None, do_download_ms_c)
+                            last_b = bytes_primary + calc_ms_tree(companion_target)
+                            last_report_time = time.time()
+                            while not c_future.done():
+                                await asyncio.sleep(2)
+                                if task_id in self._cancelled_downloads:
+                                    break
+                                cur = bytes_primary + calc_ms_tree(companion_target)
+                                now = time.time()
+                                dt = now - last_report_time
+                                speed_str = ""
+                                if dt >= 1:
+                                    speed_bytes = (cur - last_b) / dt
+                                    speed_str = format_speed_ms(speed_bytes)
+                                    last_b = cur
+                                    last_report_time = now
+                                prog = cur / total_both if total_both > 0 else 0.0
+                                await on_progress(DownloadProgress(
+                                    task_id=task_id,
+                                    status="running",
+                                    progress=min(prog, 1.0),
+                                    total_size=total_both,
+                                    downloaded_size=cur,
+                                    speed=speed_str,
+                                    filename=companion_label,
+                                ))
+                            await c_future
+                            final_downloaded = bytes_primary + calc_ms_tree(companion_target)
+                            await on_progress(DownloadProgress(
+                                task_id=task_id,
+                                status="completed",
+                                progress=1.0,
+                                total_size=total_both,
+                                downloaded_size=final_downloaded,
+                                speed="",
+                                filename=companion_label,
+                            ))
+                            result = result_path
+                        else:
+                            final_downloaded = calc_ms_tree(target)
+                            await on_progress(DownloadProgress(
+                                task_id=task_id,
+                                status="completed",
+                                progress=1.0,
+                                total_size=total_size,
+                                downloaded_size=final_downloaded,
+                                speed="",
+                                filename=display_name
+                            ))
+                            result = result_path
+                    else:
+                        final_downloaded = calc_ms_tree(target)
+                        await on_progress(DownloadProgress(
+                            task_id=task_id,
+                            status="completed",
+                            progress=1.0,
+                            total_size=total_size,
+                            downloaded_size=final_downloaded,
+                            speed="",
+                            filename=display_name
+                        ))
+                        result = result_path
 
                 except asyncio.CancelledError:
                     await on_progress(DownloadProgress(
@@ -558,12 +732,12 @@ class DownloadService(IDownloadService):
                     ))
                     raise
             elif download_url:
-                # 从 download_url 下载，目标为目录下的文件
-                # 如果 files 指定了具体文件，逐个下载
+                # Download from download_url, target is a file under a directory
+                # If files specifies specific files, download one by one
                 files = config.get("files")
                 if files and isinstance(files, list):
                     for i, file_pattern in enumerate(files):
-                        # 这里简化处理，假设 files 是具体文件名
+                # Simplified: assume files is a list of specific filenames
                         file_url = f"{download_url}/{file_pattern}" if not file_pattern.startswith("http") else file_pattern
                         file_target = target / file_pattern
                         await self._http_downloader.download(
@@ -574,7 +748,7 @@ class DownloadService(IDownloadService):
                         )
                     result = str(target)
                 else:
-                    # 单文件下载，从 URL 推断文件名
+                    # Single file download, infer filename from URL
                     filename = download_url.split("/")[-1].split("?")[0] or "model.safetensors"
                     file_target = target / filename
                     result = await self._http_downloader.download(
@@ -608,7 +782,7 @@ class DownloadService(IDownloadService):
     async def download_lora(self, url: str, filename: str,
                            progress_callback: Optional[Callable[[DownloadProgress], None]] = None,
                            existing_task_id: Optional[str] = None) -> str:
-        """下载 LoRA（HTTP 通用）"""
+        """Download LoRA (generic HTTP)."""
         if existing_task_id and existing_task_id in self._downloads:
             task_id = existing_task_id
             task = self._downloads[task_id]
@@ -635,7 +809,7 @@ class DownloadService(IDownloadService):
             if progress_callback:
                 await self._async_callback(progress_callback, progress)
 
-        # 立即发送初始进度，让 API 层立刻返回 task_id，不阻塞前端
+        # Send initial progress immediately so the API layer returns task_id without blocking the frontend
         if progress_callback:
             await self._async_callback(progress_callback, DownloadProgress(
                 task_id=task_id,
@@ -670,11 +844,11 @@ class DownloadService(IDownloadService):
             raise
 
     def list_downloads(self) -> List[DownloadTask]:
-        """列出所有下载任务"""
+        """List all download tasks."""
         return list(self._downloads.values())
 
     async def cancel_download(self, task_id: str) -> bool:
-        """取消下载任务"""
+        """Cancel a download task."""
         task = self._downloads.get(task_id)
         if not task:
             return False
@@ -683,7 +857,6 @@ class DownloadService(IDownloadService):
         await self._http_downloader.cancel(task_id)
 
         task.status = TaskStatus.CANCELLED
-        # 清理去重映射
         model_name = getattr(task, '_model_name', None)
         version = getattr(task, '_version', None)
         if model_name is not None:
@@ -692,22 +865,22 @@ class DownloadService(IDownloadService):
         return True
 
     def delete_download(self, task_id: str) -> bool:
-        """删除下载任务（从内存和持久化中移除）"""
+        """Delete a download task (remove from memory and persistence)."""
         task = self._downloads.get(task_id)
         if not task:
             return False
 
-        # 如果任务仍在运行，先取消
+        # If the task is still running, cancel first
         if task.status == TaskStatus.RUNNING:
             self._cancelled_downloads.add(task_id)
-            # 异步取消 HTTP 下载
+            # Async cancel HTTP download
             try:
                 loop = asyncio.get_running_loop()
                 loop.create_task(self._http_downloader.cancel(task_id))
             except RuntimeError:
                 pass
 
-        # 清理去重映射
+        # Clean up dedup mapping
         model_name = getattr(task, '_model_name', None)
         version = getattr(task, '_version', None)
         if model_name is not None:
@@ -719,11 +892,11 @@ class DownloadService(IDownloadService):
         return True
 
     async def resume_download(self, task_id: str,
-                             progress_callback: Optional[Callable[[DownloadProgress], None]] = None) -> str:
-        """恢复下载任务（进程重启后）
+                              progress_callback: Optional[Callable[[DownloadProgress], None]] = None) -> str:
+        """Resume a download task (after process restart).
 
-        根据持久化的元数据判断是模型下载还是 LoRA 下载，
-        重新启动下载并复用原 task_id。
+        Determines whether this is a model download or LoRA download based on
+        persisted metadata, and restarts the download reusing the original task_id.
         """
         task = self._downloads.get(task_id)
         if not task or task.status != TaskStatus.PAUSED:
@@ -752,19 +925,12 @@ class DownloadService(IDownloadService):
             raise ValueError(tt("error.download_missing_metadata", loc, id=task_id))
 
     def get_progress(self, task_id: str) -> Optional[DownloadProgress]:
-        """获取单个下载任务的进度"""
+        """Get progress of a single download task."""
         return self._progress.get(task_id)
 
     async def convert_model(self, model_name: str, from_version: str, to_version: str,
                            progress_callback: Optional[Callable[[ConversionTask], None]] = None) -> str:
-        """通过 MLX 原生 API 生成量化版本（不依赖 mflux）。
-
-        流程：
-        1. 加载源目录（fp16）的 safetensors 权重字典
-        2. 对每个 2D weight 创建 nn.Linear 并用 to_quantized() 量化
-        3. 将量化后的参数（weight/scales/biases）分片保存到目标目录
-        4. 复制 VAE / text_encoder / tokenizer 等未量化组件
-        """
+        """Build a derived weight layout via int4|int8 MLX quantization (``to_version`` names)."""
         config = self.get_model_download_config(model_name)
         if not config:
             loc = get_locale()
@@ -814,35 +980,34 @@ class DownloadService(IDownloadService):
             await self._async_callback(progress_callback, task)
 
         try:
-            quantize_bits = 4 if "int4" in to_version else (8 if "int8" in to_version else None)
+            quantize_bits = (to_ver_config.get("quantization") or {}).get("bits")
             if not quantize_bits:
                 raise ValueError(tt("error.cannot_determine_quantization", get_locale(), version=to_version))
 
             await update_progress("loading", 0.1)
 
             def _do_conversion():
-                """在线程中执行量化（阻塞 MLX 计算）。"""
+                """Execute quantization in a thread (blocking MLX computation)."""
                 import mlx.core as mx
                 import mlx.nn as nn
-                from mlx.utils import tree_flatten
 
-                # 1. 加载源权重
+                # 1. Load source weights
                 weights = {}
                 transformer_dir = from_path / "transformer"
                 if transformer_dir.exists():
                     for sf in sorted(transformer_dir.glob("*.safetensors")):
                         weights.update(dict(mx.load(str(sf))))
                 else:
-                    # 兜底：直接在根目录找
+                    # Fallback: search directly in root directory
                     for sf in sorted(from_path.glob("*.safetensors")):
                         weights.update(dict(mx.load(str(sf))))
 
                 if not weights:
                     raise RuntimeError(f"No safetensors weights found in {from_path}")
 
-                # 2. 量化 — 参考 mflux ModelSaver 思路：
-                #    对每个 2D Linear weight 创建 nn.Linear → to_quantized()
-                #    跳过 Embedding / 1D bias / norm 等
+                # 2. Quantization — reference ModelSaver approach:
+                #    For each 2D Linear weight, create nn.Linear → to_quantized()
+                #    Skip Embedding / 1D bias / norm etc.
                 quantized = {}
                 processed_bias_keys = set()
                 total = len([k for k in weights if k.endswith(".weight")])
@@ -853,7 +1018,7 @@ class DownloadService(IDownloadService):
                         continue
                     if tensor.ndim != 2 or tensor.shape[0] <= 1 or tensor.shape[1] <= 1:
                         continue
-                    # 跳过 Embedding（key 含 embed / vocab / token）
+                    # Skip Embedding (key contains embed / vocab / token)
                     if any(x in key.lower() for x in ("embed", "vocab", "token")):
                         quantized[key] = tensor
                         continue
@@ -874,15 +1039,19 @@ class DownloadService(IDownloadService):
                     quantized[f"{base}.weight"] = q_linear.weight
                     quantized[f"{base}.scales"] = q_linear.scales
                     quantized[f"{base}.biases"] = q_linear.biases
+                    # QuantizedLinear keeps the original nn.Linear bias dense; affine ``biases`` are
+                    # per-group dequant params only. Older conversion omitted this and broke load.
+                    if "bias" in q_linear:
+                        quantized[f"{base}.bias"] = q_linear.bias
                     done += 1
 
-                # 保留未量化参数（norm / conv / 未处理的 bias 等）
+                # Retain unquantized params (norm / conv / unprocessed bias etc.)
                 for key, tensor in weights.items():
                     if key in processed_bias_keys or key in quantized:
                         continue
                     quantized[key] = tensor
 
-                # 3. 分片保存（同 mflux：最大 2GB/片）
+                # 3. Shard saving (max 2GB/shard)
                 max_shard_bytes = 2 << 30
                 shards = []
                 current_shard = {}
@@ -898,7 +1067,7 @@ class DownloadService(IDownloadService):
                 if current_shard:
                     shards.append(current_shard)
 
-                # 确保输出目录
+                # Ensure output directory exists
                 to_path.mkdir(parents=True, exist_ok=True)
                 transformer_out = to_path / "transformer"
                 transformer_out.mkdir(parents=True, exist_ok=True)
@@ -914,7 +1083,7 @@ class DownloadService(IDownloadService):
                     for k in shard.keys():
                         weight_map[k] = shard_name
 
-                # 写 model.safetensors.index.json（兼容 HF 格式）
+                # Write model.safetensors.index.json (HF format compatible)
                 index_data = {
                     "metadata": {"quantization_level": str(quantize_bits)},
                     "weight_map": weight_map,
@@ -922,7 +1091,7 @@ class DownloadService(IDownloadService):
                 with open(transformer_out / "model.safetensors.index.json", "w") as f:
                     json.dump(index_data, f, indent=2)
 
-                # 4. 复制未量化组件（VAE / text_encoder / tokenizer 等）
+                # 4. Copy unquantized components (VAE / text_encoder / tokenizer etc.)
                 for subdir in ("vae", "text_encoder", "tokenizer", "text_encoder_2", "tokenizer_2"):
                     src = from_path / subdir
                     if src.exists():
@@ -937,7 +1106,7 @@ class DownloadService(IDownloadService):
             if self._conversion_events[task_id].is_set():
                 if to_path.exists():
                     shutil.rmtree(to_path)
-                raise asyncio.CancelledError("转换已取消")
+                raise asyncio.CancelledError("Conversion cancelled")
 
             await update_progress("completed", 1.0)
 
@@ -963,7 +1132,7 @@ class DownloadService(IDownloadService):
             self._conversion_events.pop(task_id, None)
 
     def _resolve_version_path(self, version_config: Dict[str, Any]) -> Path:
-        """解析版本的本地路径"""
+        """Resolve local path for a version."""
         local_path = version_config.get("local_path", "")
         if local_path.startswith("models/"):
             rel_path = local_path[len("models/"):]
@@ -971,11 +1140,11 @@ class DownloadService(IDownloadService):
         return Path(local_path)
 
     def list_conversions(self) -> List[ConversionTask]:
-        """列出所有转换任务"""
+        """List all conversion tasks."""
         return list(self._conversions.values())
 
     async def cancel_conversion(self, task_id: str) -> bool:
-        """取消转换任务"""
+        """Cancel a conversion task."""
         task = self._conversions.get(task_id)
         if not task or task.status != TaskStatus.RUNNING:
             return False
@@ -988,13 +1157,13 @@ class DownloadService(IDownloadService):
         return True
 
     def get_conversion_progress(self, task_id: str) -> Optional[ConversionTask]:
-        """获取单个转换任务的进度"""
+        """Get progress of a single conversion task."""
         return self._conversions.get(task_id)
 
     async def delete_model(self, model_name: str, version: Optional[str] = None) -> Dict[str, Any]:
-        """删除模型或指定版本
+        """Delete a model or specified version.
 
-        根据 models_registry.json 中的 local_path 查找并删除模型文件目录。
+        Uses the local_path field in models_registry.json to find and delete the model file directory.
         """
         config = self.get_model_download_config(model_name)
         if not config:
@@ -1013,6 +1182,16 @@ class DownloadService(IDownloadService):
             if ver_path.exists():
                 shutil.rmtree(ver_path)
                 deleted_paths.append(str(ver_path))
+            clp = ver_config.get("companion_local_path")
+            if isinstance(clp, str) and clp:
+                cpath = (
+                    self._path_resolver.get_models_dir() / clp[len("models/"):]
+                    if clp.startswith("models/")
+                    else Path(clp)
+                )
+                if cpath.exists():
+                    shutil.rmtree(cpath)
+                    deleted_paths.append(str(cpath))
         else:
             versions = config.get("versions", {})
             if versions:
@@ -1021,6 +1200,16 @@ class DownloadService(IDownloadService):
                     if ver_path.exists():
                         shutil.rmtree(ver_path)
                         deleted_paths.append(str(ver_path))
+                    clp = ver_config.get("companion_local_path")
+                    if isinstance(clp, str) and clp:
+                        cpath = (
+                            self._path_resolver.get_models_dir() / clp[len("models/"):]
+                            if clp.startswith("models/")
+                            else Path(clp)
+                        )
+                        if cpath.exists():
+                            shutil.rmtree(cpath)
+                            deleted_paths.append(str(cpath))
             else:
                 local_path = config.get("local_path", f"models/{model_name}")
                 if local_path.startswith("models/"):
@@ -1036,11 +1225,11 @@ class DownloadService(IDownloadService):
 
     @staticmethod
     async def _async_callback(callback: Callable, progress):
-        """安全调用异步回调"""
+        """Safely invoke an async callback."""
         try:
             if asyncio.iscoroutinefunction(callback):
                 await callback(progress)
             else:
                 callback(progress)
         except Exception as e:
-            print(f"[DownloadService] 回调异常: {e}")
+            print(f"[DownloadService] Callback exception: {e}")

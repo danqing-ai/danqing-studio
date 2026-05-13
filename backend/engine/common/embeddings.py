@@ -36,11 +36,14 @@ class TimestepEmbedding:
         embedding = ctx.concat([ctx.cos(args), ctx.sin(args)], axis=-1)
         return self.mlp(embedding)
 
+    def __call__(self, timesteps):
+        return self.forward(timesteps)
+
 
 class RoPE2D:
     """2D 旋转位置编码 (图像模型)。
 
-    用于: Flux1 / Flux2 / Qwen / FIBO / Z-Image / SeedVR2。
+    用于: Flux1 / Flux2 / Qwen / FIBO / Z-Image。
     """
 
     def __init__(self, dim: int, ctx: Any, base: float = 10000.0):
@@ -71,6 +74,9 @@ class RoPE2D:
         cos = ctx.cos(freqs_concat)
         sin = ctx.sin(freqs_concat)
         return cos, sin
+
+    def __call__(self, height: int, width: int) -> tuple[Any, Any]:
+        return self.forward(height, width)
 
 
 class RoPE3D:
@@ -106,7 +112,7 @@ class RoPE3D:
         h_pos = ctx.arange(height, dtype=ctx.float32())
         w_pos = ctx.arange(width, dtype=ctx.float32())
 
-        t_grid, h_grid, w_grid = ctx.meshgrid3d(t_pos, h_pos, w_pos)
+        t_grid, h_grid, w_grid = ctx.meshgrid(t_pos, h_pos, w_pos)
         total = num_frames * height * width
 
         t_flat = ctx.reshape(t_grid, (total, 1))
@@ -121,6 +127,9 @@ class RoPE3D:
         cos = ctx.cos(freqs)
         sin = ctx.sin(freqs)
         return cos, sin
+
+    def __call__(self, num_frames: int, height: int, width: int) -> tuple[Any, Any]:
+        return self.forward(num_frames, height, width)
 
 
 class PatchEmbed2D:
@@ -138,9 +147,10 @@ class PatchEmbed2D:
 
     def forward(self, x) -> Any:
         ctx = self.ctx
-        x = self.proj(x)  # [B, C, H, W] → [B, dim, H/ps, W/ps]
-        B, C, H, W = x.shape
-        x = ctx.permute(x, (0, 2, 3, 1))  # [B, H, W, C]
+        # Pipeline latents are NCHW [B,C,H,W]; MLX Conv2d expects NHWC [B,H,W,C].
+        x = ctx.permute(x, (0, 2, 3, 1))
+        x = self.proj(x)
+        B, H, W, C = x.shape
         x = ctx.reshape(x, (B, H * W, C))
         return x
 
@@ -164,10 +174,11 @@ class PatchEmbed3D:
 
     def forward(self, x) -> Any:
         ctx = self.ctx
-        x = self.proj(x)  # [B, C, T, H, W] → [B, dim, T/pt, H/ph, W/pw]
-        B, C, T, H, W = x.shape
+        # Pipeline latents are NCTHW [B,C,T,H,W]; MLX Conv3d expects NDHWC [B,T,H,W,C].
+        x = ctx.permute(x, (0, 2, 3, 4, 1))  # [B, C, T, H, W] → [B, T, H, W, C]
+        x = self.proj(x)  # [B, T, H, W, C] → [B, T/pt, H/ph, W/pw, dim]
+        B, T, H, W, C = x.shape
         total_tokens = T * H * W
-        x = ctx.permute(x, (0, 2, 3, 4, 1))  # [B, T, H, W, C]
         x = ctx.reshape(x, (B, total_tokens, C))
         return x
 

@@ -1,16 +1,16 @@
 /**
- * 视频创作页面组件
+ * Video creation page component
  */
 
 const VideoCreatePage = {
     template: `
         <div class="create-page">
             <el-row :gutter="24">
-                <!-- 左侧面板：创作区 -->
+                <!-- Left panel: creation area -->
                 <el-col :xs="24" :md="16" :lg="14">
                     <div class="creation-panel">
                         
-                        <!-- Plan §3.1：文生视频 / 图生视频 二级 Tab -->
+                        <!-- Plan §3.1: text-to-video / image-to-video sub-tabs -->
                         <div class="mode-segment" style="margin-bottom: 8px; display: flex; flex-wrap: wrap; gap: 4px;">
                                 <div
                                     class="mode-segment-item"
@@ -30,7 +30,7 @@ const VideoCreatePage = {
                                 </div>
                         </div>
 
-                        <!-- 模型选择：单层下拉 -->
+                        <!-- Model selector: single-level dropdown -->
                         <div class="card" style="margin-bottom: 16px;">
                             <div class="card-title">
                                 <el-icon><cpu /></el-icon>
@@ -94,7 +94,7 @@ const VideoCreatePage = {
                             </div>
                         </el-alert>
                         
-                        <!-- 动画化：起始图（必需） -->
+                        <!-- Animate: start image (required) -->
                         <div v-if="videoWorkMode === 'animate'" class="card" style="margin-bottom: 16px;">
                             <div class="card-title" style="justify-content: space-between;">
                                 <span>
@@ -152,7 +152,7 @@ const VideoCreatePage = {
                             </div>
                         </div>
                         
-                        <!-- 提示词输入 -->
+                        <!-- Prompt input -->
                         <div class="card" style="margin-bottom: 16px;">
                             <div class="card-title">
                                 <el-icon><edit-pen /></el-icon>
@@ -192,7 +192,7 @@ const VideoCreatePage = {
                                 @keydown.ctrl.enter.prevent="startGeneration"
                             />
                             
-                            <!-- 负面提示词 -->
+                            <!-- Negative prompt -->
                             <el-collapse v-if="currentModelConfig?.parameters?.negative_prompt_support" style="margin-top: 12px; border: none;">
                                 <el-collapse-item :title="$t('studio.negativePrompt')" name="negative">
                                     <el-input
@@ -205,7 +205,7 @@ const VideoCreatePage = {
                             </el-collapse>
                         </div>
                         
-                        <!-- 高级参数 -->
+                        <!-- Advanced params -->
                         <div class="card" style="margin-bottom: 16px;">
                             <el-collapse v-model="advancedParamsOpen" style="border: none;">
                                 <el-collapse-item name="advanced">
@@ -218,7 +218,7 @@ const VideoCreatePage = {
                                     </template>
                                     
                                     <el-form label-position="top" size="small" style="padding-top: 12px;">
-                                        <!-- 步数 -->
+                                        <!-- Steps -->
                                         <el-form-item v-if="currentModelConfig?.parameters?.steps" :label="$t('studio.steps')">
                                             <div class="param-control-row">
                                                 <div class="param-slider">
@@ -262,7 +262,7 @@ const VideoCreatePage = {
                                             </div>
                                         </el-form-item>
                                         
-                                        <!-- 分辨率 -->
+                                        <!-- Resolution -->
                                         <el-form-item v-if="currentModelConfig?.parameters?.width" :label="$t('studio.resolution')">
                                             <div style="display: flex; align-items: center; gap: 8px;">
                                                 <el-select v-model="params.width" style="width: 120px;">
@@ -285,7 +285,7 @@ const VideoCreatePage = {
                                             </div>
                                         </el-form-item>
                                         
-                                        <!-- 帧数 -->
+                                        <!-- Num frames -->
                                         <el-form-item v-if="currentModelConfig?.parameters?.num_frames" :label="$t('video.numFramesLabel')">
                                             <div class="param-control-row">
                                                 <div class="param-slider">
@@ -317,7 +317,7 @@ const VideoCreatePage = {
                                             </div>
                                         </el-form-item>
                                         
-                                        <!-- 种子 -->
+                                        <!-- Seed -->
                                         <el-form-item v-if="currentModelConfig?.parameters?.seed_support" :label="$t('studio.seed')">
                                             <div style="display: flex; gap: 8px;">
                                                 <el-input v-model="params.seed" :placeholder="$t('studio.seedPlaceholder')" style="flex: 1;" />
@@ -327,7 +327,7 @@ const VideoCreatePage = {
                                             </div>
                                         </el-form-item>
                                         
-                                        <!-- 恢复默认 -->
+                                        <!-- Restore defaults -->
                                         <el-form-item>
                                             <el-button text type="primary" @click="resetToDefaults" size="small">
                                                 <el-icon><refresh /></el-icon>
@@ -339,14 +339,14 @@ const VideoCreatePage = {
                             </el-collapse>
                         </div>
 
-                        <!-- LoRA 选择器 -->
+                        <!-- LoRA selector -->
                         <div v-if="currentModelConfig?.parameters?.lora_support" class="card" style="margin-bottom: 16px;">
                             <div style="font-weight: 500; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
                                 <el-icon><collection-tag /></el-icon>
                                 <span>{{ $t('studio.loraLabel') }}</span>
                             </div>
 
-                            <!-- 已选 LoRA 列表 -->
+                            <!-- Selected LoRA list -->
                             <div v-if="selectedLoras.length > 0" style="margin-bottom: 12px;">
                                 <div
                                     v-for="(lora, index) in selectedLoras"
@@ -376,7 +376,7 @@ const VideoCreatePage = {
                                 </div>
                             </div>
 
-                            <!-- 添加 LoRA -->
+                            <!-- Add LoRA -->
                             <el-select
                                 :model-value="''"
                                 style="width: 100%;"
@@ -393,7 +393,7 @@ const VideoCreatePage = {
                             </el-select>
                         </div>
 
-                        <!-- 生成按钮 -->
+                        <!-- Generate button -->
                         <div class="card" style="margin-bottom: 16px;">
                             <el-button
                                 type="primary"
@@ -411,7 +411,7 @@ const VideoCreatePage = {
                                 {{ $t('studio.sendShortcutHint') }}
                             </div>
                             
-                            <!-- 进度显示 -->
+                            <!-- Progress display -->
                             <div v-if="currentTask" style="margin-top: 16px;">
                                 <el-progress 
                                     :percentage="Math.round(currentTask.progress * 100)" 
@@ -428,7 +428,7 @@ const VideoCreatePage = {
                             </div>
                         </div>
                         
-                        <!-- 日志 -->
+                        <!-- Logs -->
                         <div class="card">
                             <div class="card-title" style="justify-content: space-between;">
                                 <span>
@@ -453,10 +453,10 @@ const VideoCreatePage = {
                     </div>
                 </el-col>
                 
-                <!-- 右侧面板 -->
+                <!-- Right panel -->
                 <el-col :xs="24" :md="8" :lg="10">
                     <div class="preview-panel">
-                        <!-- 当前生成预览 -->
+                        <!-- Current generation preview -->
                         <div class="card" style="margin-bottom: 16px;">
                             <div class="card-title">
                                 <el-icon><video-camera /></el-icon>
@@ -469,7 +469,7 @@ const VideoCreatePage = {
                             <el-empty v-else :description="$t('studio.noPreview')" />
                         </div>
                         
-                        <!-- 最近生成 -->
+                        <!-- Recent generations -->
                         <div class="card">
                             <div class="card-title" style="justify-content: space-between;">
                                 <span>
@@ -502,7 +502,7 @@ const VideoCreatePage = {
                 </el-col>
             </el-row>
             
-            <!-- 起始图预览对话框 -->
+            <!-- Start image preview dialog -->
             <el-dialog v-model="startImageViewerVisible" :title="$t('action.video.startImage')" width="70%" center>
                 <div v-if="startImageSrc" style="text-align: center;">
                     <img :src="startImageSrc" style="max-width: 100%; max-height: 70vh; border-radius: 8px;" />
@@ -515,7 +515,7 @@ const VideoCreatePage = {
                 </div>
             </el-dialog>
             
-            <!-- 视频预览对话框 -->
+            <!-- Video preview dialog -->
             <el-dialog v-model="videoPreviewVisible" :title="selectedVideo?.name" width="80%" center destroy-on-close>
                 <div v-if="selectedVideo" style="text-align: center;">
                     <video :src="getVideoUrl(selectedVideo)" controls style="max-width: 100%; border-radius: 8px;"></video>
@@ -529,7 +529,7 @@ const VideoCreatePage = {
         const systemInfo = inject('systemInfo');
         const RA = window.RegistryActions || {};
 
-        // 参数
+        // Params
         const params = reactive({
             prompt: '',
             negative_prompt: '',
@@ -548,22 +548,23 @@ const VideoCreatePage = {
         
         const selectedModelVersion = ref('');
         
-        // 状态
+        // State
         const generating = ref(false);
         const currentTask = ref(null);
         const logs = ref([]);
+        const genLogLastStep = ref(0);
         const previewVideo = ref('');
         const recentVideos = ref([]);
         const recentStartImages = ref([]);
         const advancedParamsOpen = ref([]);
         
-        /** Plan §3.1：创建（文生视频）与 动画化（图生视频） */
+        /** Plan §3.1: Create (text-to-video) and Animate (image-to-video) */
         const videoWorkMode = ref('create');
         const setVideoWorkMode = (mode) => {
             videoWorkMode.value = mode === 'animate' ? 'animate' : 'create';
         };
 
-        // 起始图片
+        // Start image
         const startImageSrc = ref('');
         const startImagePath = ref('');
         const startImageViewerVisible = ref(false);
@@ -571,15 +572,13 @@ const VideoCreatePage = {
         const tailImagePath = ref('');
         const tailImageViewerVisible = ref(false);
         
-        // 视频预览
+        // Video preview
         const videoPreviewVisible = ref(false);
         const selectedVideo = ref(null);
         
-        // 模型注册表
         const modelRegistry = ref({});
         const modelsDetailedStatus = ref({});
 
-        // LoRA
         const selectedLoras = ref([]);
         const compatibleLoras = ref([]);
 
@@ -624,7 +623,7 @@ const VideoCreatePage = {
             selectedLoras.value[index + 1] = tmp;
         };
         
-        // 所有模型版本
+        // All model versions
         const allVersions = computed(() => {
             const result = [];
             for (const [modelKey, config] of Object.entries(modelRegistry.value)) {
@@ -692,7 +691,6 @@ const VideoCreatePage = {
             return rows;
         });
 
-        // 当前模型配置
         const currentModelConfig = computed(() => modelRegistry.value[params.model] || null);
 
         const currentModelDisplayName = computed(() => {
@@ -703,7 +701,7 @@ const VideoCreatePage = {
             return params.model || '';
         });
         
-        // 当前选中版本是否就绪
+        // Whether current selected version is ready
         const selectedModelNotReady = computed(() => {
             if (!params.model || !params.version) return false;
             const detailed = modelsDetailedStatus.value[params.model];
@@ -723,14 +721,14 @@ const VideoCreatePage = {
             videoWorkMode.value === 'animate' ? $tt('action.video.animate') : $tt('action.video.create'),
         );
 
-        /** Plan §3.2：成片时长（秒，一位小数）由帧数÷帧率估算 */
+        /** Plan §3.2: Output clip duration (seconds, one decimal) estimated by num_frames / fps */
         const outputClipSecRounded = computed(() => {
             const fps = Math.max(1, Number(params.fps) || 1);
             const nf = Math.max(1, Number(params.num_frames) || 1);
             return Math.round((nf / fps) * 10) / 10;
         });
 
-        /** 注册表当前版本的 size 字段（如 19GB），供显存/磁盘提示 */
+        /** Current version's size field from registry (e.g., 19GB), for VRAM/disk hints */
         const currentVersionDiskSize = computed(() => {
             const cfg = currentModelConfig.value;
             if (!cfg || !params.version) return '';
@@ -738,7 +736,7 @@ const VideoCreatePage = {
             return v && v.size ? String(v.size) : '';
         });
         
-        // 加载模型注册表和状态
+        // Load model registry and status
         const loadModelRegistry = async () => {
             try {
                 const RS = window.RegistryStore;
@@ -754,7 +752,7 @@ const VideoCreatePage = {
                 modelRegistry.value = (registryData && registryData.models) || {};
                 modelsDetailedStatus.value = detailedStatusData || {};
                 
-                // 设置默认模型
+                // Set default model
                 if (!selectedModelVersion.value) {
                     let found = false;
                     for (const item of videoRecommendedForMode.value) {
@@ -791,7 +789,7 @@ const VideoCreatePage = {
             }
         };
         
-        // 加载模型的默认配置
+        // Load model default config
         const loadModelDefaults = () => {
             const config = currentModelConfig.value;
             if (!config || !config.parameters) return;
@@ -807,13 +805,13 @@ const VideoCreatePage = {
             params.seed = '';
         };
         
-        // 重置为默认配置
+        // Reset to default config
         const resetToDefaults = () => {
             loadModelDefaults();
             ElementPlus.ElMessage.success($tt('studio.restoredDefaults'));
         };
         
-        // 检查是否有自定义参数
+        // Check if custom params exist
         const hasCustomParams = computed(() => {
             const config = currentModelConfig.value;
             if (!config || !config.parameters) return false;
@@ -912,7 +910,7 @@ const VideoCreatePage = {
             }
             if (preset.positive) {
                 params.prompt = params.prompt
-                    ? params.prompt + '\n风格增强: ' + preset.positive
+                    ? params.prompt + '\nStyle boost: ' + preset.positive
                     : preset.positive;
             }
             if (preset.negative) {
@@ -922,7 +920,7 @@ const VideoCreatePage = {
             }
         };
         
-        // 添加日志
+        // Add log
         const addLog = (message, level = 'info') => {
             const now = new Date();
             const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
@@ -939,19 +937,37 @@ const VideoCreatePage = {
                 }
             });
         };
+
+        function parseStepKeyFromLine(msg) {
+            const m = String(msg || '').trim().match(/^Step (\d+)\/(\d+)/i);
+            return m ? `${m[1]}/${m[2]}` : null;
+        }
+
+        function ingestServerLog(logData) {
+            const msg = logData.message || '';
+            const lvl = logData.level || 'info';
+            const sk = parseStepKeyFromLine(msg);
+            if (sk) {
+                const last = logs.value[logs.value.length - 1];
+                if (last && parseStepKeyFromLine(last.message) === sk) {
+                    return;
+                }
+            }
+            addLog(msg, lvl);
+        }
         
-        // 清空日志
+        // Clear logs
         const clearLogs = () => {
             logs.value = [];
         };
         
-        // 截断文本
+        // Truncate text
         const truncate = (text, length) => {
             if (!text) return '';
             return text.length > length ? text.substring(0, length) + '...' : text;
         };
         
-        // 开始生成
+        // Start generation
         const startGeneration = async () => {
             if (!params.prompt) {
                 ElementPlus.ElMessage.warning($tt('studio.enterPrompt'));
@@ -1043,10 +1059,11 @@ const VideoCreatePage = {
                     });
                 }
                 const tid = submitRes.task.id;
+                genLogLastStep.value = 0;
                 currentTask.value = { id: tid, progress: 0, step: 0, total: 0, status: 'queued', params: { model: modelStr } };
                 api.gen.streamMediaTask(
                     tid,
-                    (logData) => addLog(logData.message, logData.level),
+                    (logData) => ingestServerLog(logData),
                     (statusData) => {
                         if (currentTask.value) {
                             currentTask.value.progress = statusData.progress ?? 0;
@@ -1072,9 +1089,19 @@ const VideoCreatePage = {
                     },
                     () => addLog($tt('studio.connectionLost'), 'warning'),
                     (progressData) => {
-                        if (currentTask.value) {
-                            currentTask.value.step = progressData.step ?? currentTask.value.step;
-                            currentTask.value.total = progressData.total ?? currentTask.value.total;
+                        if (!currentTask.value) return;
+                        if (typeof progressData.progress === 'number') {
+                            currentTask.value.progress = progressData.progress;
+                        }
+                        const nextStep =
+                            progressData.step != null ? progressData.step : currentTask.value.step;
+                        const nextTotal =
+                            progressData.total != null ? progressData.total : currentTask.value.total;
+                        currentTask.value.step = nextStep;
+                        currentTask.value.total = nextTotal;
+                        if (nextTotal > 0 && nextStep > 0 && nextStep !== genLogLastStep.value) {
+                            genLogLastStep.value = nextStep;
+                            addLog(`Step ${nextStep}/${nextTotal}`, 'info');
                         }
                     }
                 );
@@ -1083,11 +1110,11 @@ const VideoCreatePage = {
             }
         };
         
-        // 加载最近视频
+        // Load recent videos
         const loadRecentVideos = async () => {
             try {
                 const videos = await api.gallery.listImages(4, 0);
-                // 过滤视频文件
+                // Filter video files
                 recentVideos.value = videos.filter((v) => {
                     if (v.metadata && v.metadata.asset_kind === 'video') {
                         return true;
@@ -1117,18 +1144,18 @@ const VideoCreatePage = {
             }
         };
         
-        // 获取视频URL
+        // Get video URL
         const getVideoUrl = (video) => {
             return api.gallery.getImageUrl(video.path);
         };
         
-        // 显示视频预览
+        // Show video preview
         const showVideoPreview = (video) => {
             selectedVideo.value = video;
             videoPreviewVisible.value = true;
         };
         
-        // 起始图相关
+        // Start image related
         const onStartAssetPick = async ({ path, previewUrl }) => {
             startImagePath.value = path;
             startImageSrc.value = previewUrl;
@@ -1161,7 +1188,7 @@ const VideoCreatePage = {
             tailImageViewerVisible.value = true;
         };
         
-        // 跳转到下载页面
+        // Navigate to download page
         const goToDownload = () => window.DQStudioNav.goModels();
         
         const TSU = window.DQTaskStatusUi;
@@ -1176,7 +1203,7 @@ const VideoCreatePage = {
             if (!parsed) return;
             params.model = parsed.modelKey;
             params.version = parsed.versionKey;
-            selectedLoras.value = []; // 切换模型时清空已选 LoRA
+            selectedLoras.value = []; // Clear selected LoRAs when switching models
             loadModelDefaults();
             loadCompatibleLoras();
             addLog(

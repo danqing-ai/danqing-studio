@@ -1,10 +1,10 @@
 /**
- * API 客户端 — 仅 v3 媒体端点 + 图库 / 设置 / 下载
+ * API Client — v3 media endpoints only + gallery / settings / download
  */
 
 const API_BASE = '';
 
-/** 将 `GET /api/assets` 的条目转为图库卡片行（与 `GET /api/gallery/images` 对齐，Plan C5） */
+/** Convert `GET /api/assets` entries to gallery card rows (aligned with `GET /api/gallery/images`, Plan C5) */
 function assetRowToGalleryItem(a) {
     const aid = a.id;
     const meta = { ...(a.metadata || {}) };
@@ -36,8 +36,8 @@ function assetRowToGalleryItem(a) {
 const api = {
     gallery: {
         /**
-         * 图库列表：与后端 `list_images` 同策略（cap → 映射 → 按 created_at 降序 → slice）。
-         * 数据来自 `api.gen.listAssets`，不重复请求 `/api/gallery/images`。
+         * Gallery list: same strategy as backend `list_images` (cap → map → sort by created_at desc → slice).
+         * Data from `api.gen.listAssets`, avoids duplicate requests to `/api/gallery/images`.
          */
         async listImages(limit = 40, offset = 0, options = {}) {
             const lim = Number(limit) || 40;
@@ -48,7 +48,7 @@ const api = {
             return rows;
         },
 
-        /** 图库项 path 恒为 `asset:{id}`；媒体字节走 `/api/assets`。 */
+        /** Gallery item path is always `asset:{id}`; media bytes via `/api/assets`. */
         getImageUrl(path) {
             if (typeof path !== 'string' || !path.startsWith('asset:')) {
                 throw new Error('expected asset:id');
@@ -90,12 +90,12 @@ const api = {
     },
 
     models: {
-        /** GET /api/models — 可选 ``media`` / ``action`` / ``installed``（plan §6.2） */
+        /** GET /api/models — optional ``media`` / ``action`` / ``installed`` (plan §6.2) */
         async list(params = {}) {
             const response = await axios.get(`${API_BASE}/api/models`, { params });
             return response.data;
         },
-        /** 注册表模型安装；返回 { task_id, ... }；进度 SSE 见 `api.download.installProgressStreamUrl` */
+        /** Registry model install; returns { task_id, ... }; progress SSE see `api.download.installProgressStreamUrl` */
         async install(modelId, body = {}) {
             const response = await axios.post(
                 `${API_BASE}/api/models/${encodeURIComponent(modelId)}/install`,
@@ -103,14 +103,14 @@ const api = {
             );
             return response.data;
         },
-        /** 删除注册表某一版本的本地权重目录 */
+        /** Delete a registry version's local weights directory */
         async deleteVersion(modelId, versionKey) {
             const response = await axios.delete(
                 `${API_BASE}/api/models/${encodeURIComponent(modelId)}/versions/${encodeURIComponent(versionKey)}`
             );
             return response.data;
         },
-        /** 批量启动注册表模型下载；body: { model_ids: string[] }，返回 { results } */
+        /** Batch start registry model downloads; body: { model_ids: string[] }, returns { results } */
         async installBatch(modelIds) {
             const response = await axios.post(`${API_BASE}/api/models/install-batch`, {
                 model_ids: modelIds,
@@ -147,18 +147,6 @@ const api = {
             return response.data;
         },
 
-        /** 量化 / derived 版本转换 */
-        async startConvert(body) {
-            const response = await axios.post(`${API_BASE}/api/download/convert`, body);
-            return response.data;
-        },
-
-        async cancelConvert(taskId) {
-            await axios.post(
-                `${API_BASE}/api/download/convert/${encodeURIComponent(taskId)}/cancel`
-            );
-        },
-
         async civitaiSearch(params) {
             const response = await axios.get(`${API_BASE}/api/download/civitai/search`, { params });
             return response.data;
@@ -169,19 +157,28 @@ const api = {
             return response.data;
         },
 
-        /** 安装 / LoRA 等下载进度 SSE（EventSource） */
+        /** Install / LoRA etc download progress SSE (EventSource) */
         installProgressStreamUrl(taskId) {
             return `${API_BASE}/api/download/progress/${encodeURIComponent(taskId)}/stream`;
         },
 
-        /** 模型量化转换进度 SSE */
+        /** MLX int4/int8 conversion from an installed parent version; returns { task_id, ... } */
+        async startConvert(body) {
+            const response = await axios.post(`${API_BASE}/api/download/convert`, body);
+            return response.data;
+        },
+
         convertProgressStreamUrl(taskId) {
             return `${API_BASE}/api/download/convert/${encodeURIComponent(taskId)}/stream`;
+        },
+
+        async cancelConversion(taskId) {
+            await axios.post(`${API_BASE}/api/download/convert/${encodeURIComponent(taskId)}/cancel`);
         },
     },
 
     tasks: {
-        /** 媒体任务日志 SSE（与 TasksStore.openTaskLogStream 一致） */
+        /** Media task log SSE (consistent with TasksStore.openTaskLogStream) */
         logStreamUrl(taskId) {
             return `${API_BASE}/api/tasks/${encodeURIComponent(taskId)}/stream`;
         },
@@ -279,7 +276,7 @@ const api = {
         }
     },
 
-    /** 生成任务 + 资产上传（原 api.media，已更名） */
+    /** Generation tasks + asset upload (formerly api.media, renamed) */
     gen: {
         async uploadAsset(file) {
             const fd = new FormData();
@@ -305,14 +302,14 @@ const api = {
             });
             return response.data;
         },
-        /** 磁盘对账：默认 dry_run；dry_run=false 时从 DB 删除主文件已丢失的资产行 */
+        /** Disk reconciliation: default dry_run; when dry_run=false, remove asset rows from DB whose main files are missing */
         async reconcileAssets(dryRun = true) {
             const response = await axios.post(`${API_BASE}/api/assets/reconcile`, {
                 dry_run: dryRun,
             });
             return response.data;
         },
-        /** 同源 URL、blob:、data: → Blob（创作页编辑图 / 参考图 / 视频首帧） */
+        /** Same-origin URL, blob:, data: → Blob (creation page edit image / reference image / video first frame) */
         async urlToBlob(url) {
             if (typeof url !== 'string' || !url.trim()) {
                 throw new Error('urlToBlob: expected non-empty string');
@@ -349,7 +346,7 @@ const api = {
             const response = await axios.get(`${API_BASE}/api/tasks/${taskId}`);
             return response.data;
         },
-        /** GET /api/tasks — plan §6.2（与旧 ``/list`` 等价）；kind / status / since 过滤 */
+        /** GET /api/tasks — plan §6.2 (equivalent to old ``/list``); kind / status / since filtering */
         async listMediaTasks({ limit = 100, offset = 0, kind, status, since } = {}) {
             const params = new URLSearchParams();
             params.set('limit', String(limit));
@@ -370,7 +367,7 @@ const api = {
             );
             return response.data;
         },
-        /** PATCH /api/tasks/{id} — body `{ priority: 'normal' | 'high' }`（仅 queued） */
+        /** PATCH /api/tasks/{id} — body `{ priority: 'normal' | 'high' }` (queued only) */
         async patchMediaTaskPriority(taskId, body) {
             const response = await axios.patch(
                 `${API_BASE}/api/tasks/${encodeURIComponent(taskId)}`,
@@ -424,7 +421,7 @@ const api = {
         },
     },
 
-    /** 音频占位 — 与 `backend/api/routes/audios.py` 对齐；引擎落地前服务端统一 501 */
+    /** Audio API — aligned with `backend/api/routes/audios.py`; generation is not implemented (tasks fail loud). */
     audios: {
         async listGenerations() {
             const response = await axios.get(`${API_BASE}/api/audios/generations`);

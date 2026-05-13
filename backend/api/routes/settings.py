@@ -1,5 +1,5 @@
 """
-API 路由 - 设置相关
+API routes - settings
 """
 
 from fastapi import APIRouter, HTTPException, Request
@@ -61,7 +61,7 @@ class ModelResponse(BaseModel):
 
 
 class SystemInfoResponse(BaseModel):
-    """GET /system：含 mlx_memory_limit（GB，与 AppSettings 一致）供前端 Plan E4 提交前软提示。"""
+    """GET /system: includes mlx_memory_limit (GB, consistent with AppSettings) for frontend Plan E4 pre-submit soft hint."""
 
     platform: str
     architecture: str
@@ -79,7 +79,7 @@ def get_settings_service():
 
 @router.get("", response_model=SettingsResponse)
 def get_settings():
-    """获取设置"""
+    """Get settings"""
     service = get_settings_service()
     settings = service.get_settings()
     return SettingsResponse(**settings.__dict__)
@@ -87,7 +87,7 @@ def get_settings():
 
 @router.put("")
 def update_settings(request: SettingsUpdateRequest):
-    """更新设置"""
+    """Update settings"""
     service = get_settings_service()
     settings = service.get_settings()
     payload = request.model_dump(exclude_unset=True)
@@ -102,7 +102,7 @@ def update_settings(request: SettingsUpdateRequest):
 
 @router.get("/models", response_model=List[ModelResponse])
 def list_models():
-    """列出可用模型"""
+    """List available models"""
     service = get_settings_service()
     models = service.get_available_models()
     return [
@@ -119,7 +119,7 @@ def list_models():
 
 @router.get("/loras", response_model=List[ModelResponse])
 def list_loras():
-    """列出可用的 LoRA 模型"""
+    """List available LoRA models"""
     service = get_settings_service()
     models = service.get_available_models()
     loras = [m for m in models if m.type == "lora"]
@@ -137,7 +137,7 @@ def list_loras():
 
 @router.post("/refresh")
 def refresh_models():
-    """刷新模型列表"""
+    """Refresh model list"""
     service = get_settings_service()
     service.refresh_models()
     return {"success": True}
@@ -145,7 +145,7 @@ def refresh_models():
 
 @router.get("/system", response_model=SystemInfoResponse)
 def get_system_info():
-    """获取系统信息"""
+    """Get system info"""
     service = get_settings_service()
     info = service.get_system_info()
     info["env_ready"] = service.check_environment()
@@ -156,7 +156,7 @@ def get_system_info():
 
 @router.post("/install")
 def install_environment():
-    """安装环境"""
+    """Install environment"""
     service = get_settings_service()
     success = service.install_environment()
     return {"success": success}
@@ -164,10 +164,10 @@ def install_environment():
 
 @router.get("/registry")
 def get_model_registry():
-    """获取模型注册表"""
+    """Get model registry"""
     service = get_settings_service()
     registry = service.get_model_registry()
-    # 同时返回每个模型的就绪状态
+    # Also return readiness status for each model
     status = service.get_models_status()
     return {
         "models": {
@@ -184,6 +184,7 @@ def get_model_registry():
                 "dependencies": val.dependencies,
                 "base_model": val.base_model,
                 "nsfw": val.nsfw,
+                "commercial_use_allowed": getattr(val, "commercial_use_allowed", None),
                 "ready": status.get(key, False),
                 "source": val.source,
                 "versions": val.versions,
@@ -195,7 +196,7 @@ def get_model_registry():
 
 @router.get("/models/status")
 def get_models_status():
-    """获取所有模型的就绪状态（简化版）"""
+    """Get readiness status for all models (simplified)"""
     service = get_settings_service()
     status = service.get_models_status()
     return status
@@ -203,22 +204,23 @@ def get_models_status():
 
 @router.get("/models/status/detailed")
 def get_models_detailed_status():
-    """获取模型详细状态（区分未下载/文件缺失/已就绪）"""
+    """Get detailed model status (distinguishes not_downloaded/incomplete/ready)"""
     service = get_settings_service()
     return service.get_models_detailed_status()
 
 
 @router.get("/loras/compatible/{model_name}")
 def get_compatible_loras(model_name: str):
-    """获取与指定模型兼容的 LoRA（从注册表读取 base_model 字段）"""
+    """Get LoRAs compatible with a given model (reads base_model field from registry)"""
     service = get_settings_service()
     rows = service.lora_adapter_picklist(model_name)
-    return [{"name": r["name"], "path": r["id"], "base_model": r.get("base_model", "")} for r in rows]
+    # Pick list for UI: ``id`` matches ``AdapterRef.id`` (registry model id, optional :version).
+    return [{"name": r["name"], "id": r["id"], "base_model": r.get("base_model", "")} for r in rows]
 
 
 @router.get("/controlnets/compatible/{model_name}")
 def get_compatible_controlnets(model_name: str):
-    """获取与指定模型兼容的 ControlNet（从注册表读取 base_model 字段）"""
+    """Get ControlNets compatible with a given model (reads base_model field from registry)"""
     service = get_settings_service()
     registry = service.get_model_registry()
     detailed_status = service.get_models_detailed_status()
@@ -231,7 +233,7 @@ def get_compatible_controlnets(model_name: str):
             continue
 
         net_base = config.base_model or ""
-        # 匹配逻辑：FLUX 模型兼容所有 FLUX ControlNet
+        # Matching logic: FLUX models are compatible with all FLUX ControlNets
         if model_name.startswith("flux"):
             is_compatible = net_base == "" or net_base.startswith("flux")
         else:
@@ -240,7 +242,7 @@ def get_compatible_controlnets(model_name: str):
         if not is_compatible:
             continue
 
-        # 检查就绪状态
+        # Check readiness status
         status_info = detailed_status.get(key, {})
         ready = status_info.get("ready", False)
         versions_ready = {}
@@ -263,7 +265,7 @@ def get_compatible_controlnets(model_name: str):
 
 @router.get("/disk-space")
 def get_disk_space():
-    """获取磁盘空间使用情况"""
+    """Get disk space usage"""
     service = get_settings_service()
     space = service.get_disk_space()
     return space
@@ -291,16 +293,16 @@ def update_model_parameters(model_name: str, request: dict, req: Request = None)
         if model_name not in registry.get("models", {}):
             return {"success": False, "error": t("error.model_not_found", locale, name=model_name)}
         
-        # 备份原文件（加上时间戳）
+        # Back up original file (with timestamp)
         backup_path = registry_path.parent / f"models_registry.json.backup.{datetime.now().strftime('%Y%m%d%H%M%S')}"
         shutil.copy2(registry_path, backup_path)
         
-        # 更新参数
+        # Update parameters
         model = registry["models"][model_name]
         if "parameters" not in model:
             model["parameters"] = {}
         
-        # Plan C3：凡注册表里带 default 的可写标量/枚举，均允许从设置页更新（与 RegistryParamsForm 对齐）
+        # Plan C3: all writable scalars/enums with default in the registry are allowed to be updated from the settings page (aligned with RegistryParamsForm)
         for key, value in request.items():
             spec = model["parameters"].get(key)
             if not isinstance(spec, dict) or "default" not in spec:
@@ -312,7 +314,7 @@ def update_model_parameters(model_name: str, request: dict, req: Request = None)
             else:
                 spec["default"] = value
 
-        # 写回文件
+        # Write back to file
         with open(registry_path, "w", encoding="utf-8") as f:
             json.dump(registry, f, ensure_ascii=False, indent=2)
         
@@ -323,7 +325,7 @@ def update_model_parameters(model_name: str, request: dict, req: Request = None)
 
 @router.get("/system/monitor")
 def get_system_monitor():
-    """获取实时系统资源监控（CPU、内存、GPU）"""
+    """Get real-time system resource monitoring (CPU, memory, GPU)"""
     import platform
     import subprocess
     
@@ -339,10 +341,10 @@ def get_system_monitor():
     
     try:
         import psutil
-        # CPU 使用率
+        # CPU usage
         data["cpu_percent"] = psutil.cpu_percent(interval=0.5)
         
-        # 内存信息
+        # Memory info
         mem = psutil.virtual_memory()
         data["memory"] = {
             "total_gb": round(mem.total / (1024**3), 1),
@@ -350,24 +352,24 @@ def get_system_monitor():
             "percent": mem.percent
         }
     except ImportError:
-        # psutil 未安装，尝试用系统命令
+        # psutil not installed, try system commands
         try:
             if platform.system() == "Darwin":
-                # CPU 使用率
+                # CPU usage
                 result = subprocess.run(
                     ["top", "-l", "1", "-n", "0"],
                     capture_output=True, text=True, timeout=3
                 )
                 for line in result.stdout.split("\n"):
                     if "CPU usage" in line:
-                        # 提取用户+系统 CPU 使用率
+                        # Extract user+system CPU usage
                         parts = line.split(":")[-1].strip().split(",")
                         user = float(parts[0].strip().replace("% user", ""))
                         sys = float(parts[1].strip().replace("% sys", ""))
                         data["cpu_percent"] = round(user + sys, 1)
                         break
                 
-                # 内存信息
+                # Memory info
                 result = subprocess.run(
                     ["vm_stat"],
                     capture_output=True, text=True, timeout=3
@@ -402,17 +404,17 @@ def get_system_monitor():
     except Exception:
         pass
     
-    # GPU 信息
+    # GPU info
     try:
         if platform.system() == "Darwin" and platform.machine() == "arm64":
-            # 尝试获取 Apple Silicon 芯片型号
+            # Try to get Apple Silicon chip model
             try:
                 result = subprocess.run(
                     ["sysctl", "-n", "machdep.cpu.brand_string"],
                     capture_output=True, text=True, timeout=2
                 )
                 chip_model = result.stdout.strip()
-                # 提取芯片型号，如 "Apple M1 Max" -> "M1 Max"
+                # Extract chip model, e.g. "Apple M1 Max" -> "M1 Max"
                 if "Apple" in chip_model:
                     chip_model = chip_model.replace("Apple ", "")
             except Exception:
@@ -433,7 +435,7 @@ def get_system_monitor():
 
 @router.get("/presets")
 def get_presets():
-    """获取所有提示词模板"""
+    """Get all prompt presets"""
     preset_store = get_container().resolve(IPresetStore)
     return preset_store.load_all()
 
@@ -447,7 +449,7 @@ _PRESET_MEDIA_SCOPES = frozenset({"image", "video"})
 
 
 def _validate_preset_plan_v2(preset: dict) -> None:
-    """Plan G：预设必须含非空 applies_to 与显式 media_scope（无运行时默认）。"""
+    """Plan G: presets must include non-empty applies_to and explicit media_scope (no runtime default)."""
     if not isinstance(preset, dict):
         raise HTTPException(status_code=400, detail="preset must be an object")
     app = preset.get("applies_to")
@@ -463,7 +465,7 @@ def _validate_preset_plan_v2(preset: dict) -> None:
 
 @router.post("/presets")
 def create_preset(request: PresetCreateRequest):
-    """创建或更新提示词模板"""
+    """Create or update prompt preset"""
     _validate_preset_plan_v2(request.preset)
     preset_store = get_container().resolve(IPresetStore)
     preset_store.save(request.name, request.preset)
@@ -472,14 +474,14 @@ def create_preset(request: PresetCreateRequest):
 
 @router.delete("/presets/{name}")
 def delete_preset(name: str):
-    """删除提示词模板"""
+    """Delete prompt preset"""
     preset_store = get_container().resolve(IPresetStore)
     preset_store.delete(name)
     return {"success": True}
 
 
 def _human_readable_size(size_bytes: int) -> str:
-    """转换为人类可读的大小"""
+    """Convert to human-readable size"""
     if size_bytes == 0:
         return "0 B"
     

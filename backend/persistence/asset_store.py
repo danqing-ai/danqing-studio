@@ -1,11 +1,11 @@
-"""SQLite 资产登记：上传与生成结果统一为 asset_id。
+"""SQLite asset registration: uploads and generation results are unified as asset_id.
 
-优化要点：
-1. 线程本地连接池（thread-local）复用连接，避免每次新建
-2. WAL 模式 + 同步级别 NORMAL + mmap，提升并发与读性能
-3. 添加 created_at 索引，加速图库按时间排序/分页
-4. 锁粒度缩小：文件 IO（copy/ffprobe/ffmpeg）在锁外，仅 DB 写入在锁内
-5. delete_batch 使用显式事务，减少锁持有时间
+Optimization points:
+1. Thread-local connection pool (thread-local) reuses connections to avoid creating new ones each time
+2. WAL mode + synchronous NORMAL + mmap for improved concurrency and read performance
+3. created_at index to accelerate gallery sorting/pagination by time
+4. Reduced lock scope: file IO (copy/ffprobe/ffmpeg) outside lock, only DB writes inside lock
+5. delete_batch uses explicit transactions to reduce lock holding time
 """
 
 from __future__ import annotations
@@ -83,12 +83,17 @@ class SQLiteAssetStore(IAssetStore):
         self._local = threading.local()
         self._init_db()
 
+    @property
+    def files_root(self) -> Path:
+        """资产主文件所在根目录（与 ``create_from_file`` 落盘路径一致）。"""
+        return self._root
+
     def _conn(self) -> sqlite3.Connection:
-        """线程本地连接池：每个线程复用同一连接，减少连接创建开销。"""
+        """Thread-local connection pool: reuse the same connection per thread to reduce connection creation overhead."""
         if not hasattr(self._local, "conn") or self._local.conn is None:
             c = sqlite3.connect(str(self._db_path), check_same_thread=False)
             c.row_factory = sqlite3.Row
-            # WAL 模式 + 性能优化（每个连接只需设置一次）
+            # WAL mode + performance optimization (set once per connection)
             c.execute("PRAGMA journal_mode=WAL")
             c.execute("PRAGMA synchronous=NORMAL")
             c.execute("PRAGMA temp_store=MEMORY")
@@ -140,7 +145,7 @@ class SQLiteAssetStore(IAssetStore):
         w = h = None
         duration: Optional[float] = None
 
-        # 1. 文件操作在锁外（copy / ffprobe / ffmpeg 可能耗时数秒）
+        # 1. File operations outside lock (copy / ffprobe / ffmpeg may take seconds)
         shutil.copy2(src_path, dest)
         if kind == "image" and mime_type.startswith("image/"):
             try:
@@ -172,7 +177,7 @@ class SQLiteAssetStore(IAssetStore):
             if isinstance(mh, int) and mh > 0:
                 h = mh
 
-        # 2. 数据库操作在锁内（仅一次 INSERT，毫秒级）
+        # 2. Database operations inside lock (single INSERT, millisecond level)
         with self._lock:
             conn = self._conn()
             conn.execute(
@@ -235,14 +240,14 @@ class SQLiteAssetStore(IAssetStore):
         return p.read_bytes()
 
     def delete(self, asset_id: str) -> bool:
-        # 1. 查询在锁外（读取不阻塞）
+        # 1. Query outside lock (read does not block)
         try:
             p = self.get_file_path(asset_id)
         except FileNotFoundError:
             return False
         tp = self.get_thumbnail_path(asset_id)
 
-        # 2. 文件删除 + DB 删除在锁内（原子操作）
+        # 2. File delete + DB delete inside lock (atomic operation)
         with self._lock:
             try:
                 if p.exists():
@@ -291,7 +296,7 @@ class SQLiteAssetStore(IAssetStore):
             args.append(created_before)
         if model:
             where.append("(metadata LIKE ?)")
-            args.append(f'"model": "{model}"%')
+            args.append(f'%"model": "{model}"%')
         if search:
             where.append("(metadata LIKE ?)")
             args.append(f"%{search}%")
@@ -315,7 +320,7 @@ class SQLiteAssetStore(IAssetStore):
         for r in rows:
             aid = r["id"]
             meta_raw = r["metadata"] or "{}"
-            # 延迟解析：仅在需要时加载 JSON
+            # Lazy parsing: load JSON only when needed
             meta = json.loads(meta_raw)
             if r["width"]:
                 meta.setdefault("width", r["width"])
@@ -343,7 +348,7 @@ class SQLiteAssetStore(IAssetStore):
         return out
 
     def delete_batch(self, asset_ids: list[str]) -> dict[str, Any]:
-        """批量删除资产，使用显式事务减少锁持有时间。"""
+        """Batch delete assets, using explicit transaction to reduce lock holding time."""
         removed = []
         failed = []
         with self._lock:
@@ -379,7 +384,7 @@ class SQLiteAssetStore(IAssetStore):
         return {"removed": removed, "failed": failed, "total": len(asset_ids)}
 
     def reconcile_disk_vs_db(self, *, dry_run: bool = True) -> dict[str, Any]:
-        """比对 `assets.file_path` 与磁盘：主文件不存在则计入 missing；`dry_run=False` 时删库行（复用 `delete`）。"""
+        """Reconcile ``assets.file_path`` vs disk: count missing if main file does not exist; when ``dry_run=False``, delete DB rows (reuses ``delete``)."""
         with self._conn() as conn:
             rows = conn.execute("SELECT id, file_path FROM assets").fetchall()
         missing_ids: list[str] = []
