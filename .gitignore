@@ -31,3 +31,8 @@ node_modules/
 /config/.download_tasks.json
 /db/
 /ts.md
+/.pycache_tmp/
+/.cache/
+/build/
+/dist/
+/frontend/dist/
