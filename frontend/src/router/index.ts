@@ -1,0 +1,46 @@
+import { createRouter, createWebHashHistory } from 'vue-router';
+import type { RouteRecordRaw } from 'vue-router';
+
+const routes: RouteRecordRaw[] = [
+  {
+    path: '/',
+    redirect: '/image_create',
+  },
+  {
+    path: '/image_create',
+    name: 'image_create',
+    component: () => import('@/views/ImageCreateView.vue'),
+  },
+  {
+    path: '/video_create',
+    name: 'video_create',
+    component: () => import('@/views/VideoCreateView.vue'),
+  },
+  {
+    path: '/audio_create',
+    name: 'audio_create',
+    component: () => import('@/views/AudioCreateView.vue'),
+  },
+  {
+    path: '/gallery',
+    name: 'gallery',
+    component: () => import('@/views/GalleryView.vue'),
+  },
+  {
+    path: '/models',
+    name: 'models',
+    component: () => import('@/views/ModelsView.vue'),
+  },
+  {
+    path: '/settings',
+    name: 'settings',
+    component: () => import('@/views/SettingsView.vue'),
+  },
+];
+
+const router = createRouter({
+  history: createWebHashHistory(),
+  routes,
+});
+
+export default router;

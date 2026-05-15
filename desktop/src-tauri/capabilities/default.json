@@ -1,0 +1,6 @@
+{
+  "identifier": "default",
+  "description": "Main window (splash then in-app UI from local API)",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
