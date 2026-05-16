@@ -33,6 +33,10 @@ node_modules/
 /ts.md
 /.pycache_tmp/
 /.cache/
-/build/
+
+# Build outputs (unified under out/ — see scripts/out_paths.py)
+/out/
 /dist/
+/build/
 /frontend/dist/
+*.spec

@@ -76,8 +76,25 @@ fi
 
 mkdir -p models outputs config db
 
+# Build frontend if needed
+FRONTEND_DIR="$PROJECT_ROOT/frontend"
+if [ -f "$FRONTEND_DIR/package.json" ]; then
+    if [ ! -d "$FRONTEND_DIR/dist" ] || [ "$FRONTEND_DIR/src" -nt "$FRONTEND_DIR/dist" ]; then
+        echo -e "${BLUE}Building frontend...${NC}"
+        cd "$FRONTEND_DIR"
+        if [ ! -d "node_modules" ]; then
+            npm install
+        fi
+        npm run build
+        cd "$PROJECT_ROOT"
+        echo -e "${GREEN}✓ Frontend built${NC}"
+    else
+        echo -e "${GREEN}✓ Frontend up to date${NC}"
+    fi
+fi
+
 echo ""
-echo -e "${GREEN}Starting DanQing Studio API...${NC}"
+echo -e "${GREEN}Starting DanQing Studio v4...${NC}"
 echo -e "${BLUE}Access at: http://localhost:7860${NC}"
 echo ""
 

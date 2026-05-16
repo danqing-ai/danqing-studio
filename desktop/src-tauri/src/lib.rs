@@ -22,7 +22,7 @@ fn sidecar_exe(app: &AppHandle) -> Result<PathBuf, String> {
         Ok(p)
     } else {
         Err(format!(
-            "Sidecar not found at {} (build with: python scripts/build_sidecar.py)",
+            "Sidecar not found at {} (build with: make desktop-bundle)",
             p.display()
         ))
     }
@@ -37,7 +37,7 @@ fn wait_for_health(port: u16) -> Result<(), String> {
         }
     }
     Err(format!(
-        "Timed out waiting for API at {url} (build sidecar: python scripts/build_sidecar.py)"
+        "Timed out waiting for API at {url} (run: make desktop-bundle)"
     ))
 }
 

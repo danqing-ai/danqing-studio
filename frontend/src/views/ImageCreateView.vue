@@ -3,74 +3,32 @@
   <div class="create-page">
     <el-row :gutter="24">
       <!-- Left panel: creation area -->
-      <el-col :xs="24" :md="16" :lg="14">
+      <el-col :xs="24" :md="16" :lg="17" :xl="18">
         <div class="creation-panel">
 
           <!-- Plan §2.1: top-level tabs (create / rewrite by reference / rewrite by instruction / retouch / extend / upscale) -->
-          <div class="mode-segment" style="margin-bottom: 12px; display: flex; flex-wrap: wrap; gap: 4px;">
-            <div
-              class="mode-segment-item"
-              :class="{ active: imageWorkTab === 'create' }"
-              @click="setImageWorkMode('create')"
-            >
-              <el-icon><magic-stick /></el-icon>
-              <span>{{ $t('action.image.create') }}</span>
-            </div>
-            <div
-              class="mode-segment-item"
-              :class="{ active: imageWorkTab === 'rewrite_reference' }"
-              @click="setImageWorkMode('rewrite_reference')"
-            >
-              <el-icon><copy-document /></el-icon>
-              <span>{{ $t('create.rewriteDriveReference') }}</span>
-            </div>
-            <div
-              class="mode-segment-item"
-              :class="{ active: imageWorkTab === 'rewrite_instruct' }"
-              @click="setImageWorkMode('rewrite_instruct')"
-            >
-              <el-icon><edit-pen /></el-icon>
-              <span>{{ $t('create.rewriteDriveInstruct') }}</span>
-            </div>
-            <div
-              class="mode-segment-item"
-              :class="{ active: imageWorkTab === 'retouch' }"
-              @click="setImageWorkMode('retouch')"
-            >
-              <el-icon><brush /></el-icon>
-              <span>{{ $t('action.image.retouch') }}</span>
-            </div>
-            <div
-              class="mode-segment-item"
-              :class="{ active: imageWorkTab === 'extend' }"
-              @click="setImageWorkMode('extend')"
-            >
-              <el-icon><expand /></el-icon>
-              <span>{{ $t('action.image.extend') }}</span>
-            </div>
-            <div
-              class="mode-segment-item"
-              :class="{ active: imageWorkTab === 'upscale' }"
-              @click="setImageWorkMode('upscale')"
-            >
-              <el-icon><zoom-in /></el-icon>
-              <span>{{ $t('action.image.upscale') }}</span>
-            </div>
-          </div>
-          <div v-if="editingSubModeDesc" style="margin-bottom: 16px; font-size: 12px; color: var(--text-muted); line-height: 1.5;">
+          <el-segmented
+            class="dq-work-segmented"
+            :model-value="imageWorkTab"
+            :options="imageWorkSegmentOptions"
+            block
+            @update:model-value="setImageWorkMode"
+          />
+          <div v-if="editingSubModeDesc" class="studio-ep-work-desc">
             {{ editingSubModeDesc }}
           </div>
 
           <!-- Model selector: single-level dropdown, recommended items first -->
-          <div class="card" style="margin-bottom: 16px;">
-            <div class="card-title">
-              <el-icon><cpu /></el-icon>
-              {{ $t('create.modelSelectTitle') }}
-            </div>
-            <div style="display: flex; align-items: center; gap: 12px;">
+          <el-card shadow="never" class="studio-ep-surface-card studio-ep-card-mb studio-ep-model-card">
+            <template #header>
+              <div class="card-title">
+                <el-icon><cpu /></el-icon>
+                {{ $t('create.modelSelectTitle') }}
+              </div>
+            </template>
+            <div class="studio-ep-model-toolbar">
               <el-select
                 v-model="selectedModelVersion"
-                style="flex: 1;"
                 size="large"
                 filterable
                 @change="onModelVersionChange"
@@ -83,13 +41,13 @@
                   :value="item.modelKey + '|' + item.versionKey"
                   :disabled="!item.ready"
                 >
-                  <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-                    <span :style="!item.ready ? 'opacity: 0.5;' : ''">{{ item.name }}</span>
+                  <div class="studio-ep-picker-option">
+                    <span class="studio-ep-picker-option__name" :class="{ 'is-disabled': !item.ready }">{{ item.name }}</span>
                     <el-tag v-if="item.recommended" size="small" type="success">{{ $t('studio.recommended') }}</el-tag>
                     <el-tag v-if="item.status === 'ready'" size="small" type="success">{{ $t('studio.ready') }}</el-tag>
                     <el-tag v-else-if="item.status === 'incomplete'" size="small" type="danger">{{ $t('studio.incomplete') }}</el-tag>
                     <el-tag v-else size="small" type="warning">{{ $t('studio.notDownloaded') }}</el-tag>
-                    <span v-if="item.size" style="color: var(--text-muted); font-size: 12px; margin-left: auto;">
+                    <span v-if="item.size" class="studio-ep-picker-option__meta">
                       {{ item.size }}
                     </span>
                   </div>
@@ -109,31 +67,37 @@
               :title="$t('studio.modelNotReady', { name: currentModelDisplayName })"
               type="warning"
               :closable="false"
-              style="margin-top: 12px;"
+              class="studio-ep-alert-mt"
             >
               <template #default>
                 <span>{{ $t('studio.notDownloadedMsg') }}</span>
-                <el-button size="small" type="primary" @click="goToDownload" style="margin-left: 12px;">
+                <el-button size="small" type="primary" class="studio-ep-alert-inline-btn" @click="goToDownload">
                   {{ $t('studio.goDownload') }}
                 </el-button>
               </template>
             </el-alert>
-          </div>
+          </el-card>
 
           <!-- Prompt (not needed for upscale) -->
-          <div v-if="editMode !== 'image_upscale'" class="card" style="margin-bottom: 16px;">
-            <div class="card-title">
-              <el-icon><edit-pen /></el-icon>
-              {{ $t('studio.prompt') }}
-            </div>
+          <el-card
+            v-if="editMode !== 'image_upscale'"
+            shadow="never"
+            class="studio-ep-surface-card studio-ep-card-mb"
+          >
+            <template #header>
+              <div class="card-title">
+                <el-icon><edit-pen /></el-icon>
+                {{ $t('studio.prompt') }}
+              </div>
+            </template>
 
             <!-- Preset quick pick -->
-            <el-row :gutter="8" style="margin-bottom: 16px;">
+            <el-row :gutter="8" class="studio-ep-presets-row">
               <el-col :span="18">
                 <el-select
                   v-model="selectedPreset"
                   :placeholder="$t('create.preset')"
-                  style="width: 100%"
+                  class="studio-ep-w-full"
                   clearable
                 >
                   <el-option
@@ -145,7 +109,7 @@
                 </el-select>
               </el-col>
               <el-col :span="6">
-                <el-button @click="loadPreset" style="width: 100%">
+                <el-button class="studio-ep-w-full" @click="loadPreset">
                   {{ $t('create.loadPreset') }}
                 </el-button>
               </el-col>
@@ -162,7 +126,7 @@
             />
 
             <!-- Negative prompt (only shown for models that support it) -->
-            <el-collapse v-if="currentModelConfig?.parameters?.negative_prompt_support" style="margin-top: 12px; border: none;">
+            <el-collapse v-if="currentModelConfig?.parameters?.negative_prompt_support" class="studio-ep-collapse-plain">
               <el-collapse-item :title="$t('studio.negativePrompt')" name="negative">
                 <el-input
                   v-model="params.negative_prompt"
@@ -172,8 +136,8 @@
                 />
               </el-collapse-item>
             </el-collapse>
-            <div v-if="editMode === 'image_editing' && editingSubMode === 'outpainting'" style="margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border-color);">
-              <div style="font-size: 13px; font-weight: 500; margin-bottom: 8px;">{{ $t('create.extendPanelTitle') }}</div>
+            <div v-if="editMode === 'image_editing' && editingSubMode === 'outpainting'" class="studio-ep-extend-panel">
+              <div class="studio-ep-extend-panel-title">{{ $t('create.extendPanelTitle') }}</div>
               <el-form label-position="top" size="small">
                 <el-form-item :label="$t('create.extendDirections')">
                   <el-checkbox-group v-model="params.extend_directions">
@@ -184,21 +148,23 @@
                   </el-checkbox-group>
                 </el-form-item>
                 <el-form-item :label="$t('create.extendPixels')">
-                  <el-input-number v-model="params.extend_pixels" :min="64" :max="2048" :step="64" style="width: 100%;" />
+                  <el-input-number v-model="params.extend_pixels" :min="64" :max="2048" :step="64" class="studio-ep-w-full" />
                 </el-form-item>
               </el-form>
             </div>
-          </div>
+          </el-card>
 
           <!-- Upscale params (plan §6.3 /image/upscales) -->
-          <div v-if="editMode === 'image_upscale'" class="card" style="margin-bottom: 16px;">
-            <div class="card-title">
-              <el-icon><zoom-in /></el-icon>
-              {{ $t('action.image.upscale') }}
-            </div>
+          <el-card v-if="editMode === 'image_upscale'" shadow="never" class="studio-ep-surface-card studio-ep-card-mb">
+            <template #header>
+              <div class="card-title">
+                <el-icon><zoom-in /></el-icon>
+                {{ $t('action.image.upscale') }}
+              </div>
+            </template>
             <el-form label-position="top" size="small">
               <el-form-item :label="$t('create.upscaleScale')">
-                <el-select v-model="params.upscale_scale" style="width: 100%;">
+                <el-select v-model="params.upscale_scale" class="studio-ep-w-full">
                   <el-option :label="'2×'" :value="2" />
                   <el-option :label="'4×'" :value="4" />
                 </el-select>
@@ -212,86 +178,270 @@
                 </div>
               </el-form-item>
               <el-form-item :label="$t('create.upscaleTile')">
-                <el-input-number v-model="params.upscale_tile" :min="256" :max="4096" :step="128" style="width: 100%;" />
+                <el-input-number v-model="params.upscale_tile" :min="256" :max="4096" :step="128" class="studio-ep-w-full" />
               </el-form-item>
             </el-form>
-          </div>
+          </el-card>
 
           <!-- Advanced params (collapsible) -->
-          <div v-if="editMode !== 'image_upscale'" class="card" style="margin-bottom: 16px;">
-            <el-collapse v-model="advancedParamsOpen" style="border: none;">
+          <el-card
+            v-if="editMode !== 'image_upscale'"
+            shadow="never"
+            class="studio-ep-surface-card studio-ep-card-mb"
+          >
+            <el-collapse v-model="advancedParamsOpen" class="studio-ep-collapse-plain">
               <el-collapse-item name="advanced">
                 <template #title>
-                  <div style="display: flex; align-items: center; gap: 8px; font-weight: 500;">
+                  <div class="studio-ep-collapse-title-row">
                     <el-icon><setting /></el-icon>
                     <span>{{ $t('studio.advancedParams') }}</span>
                     <el-tag v-if="hasCustomParams" size="small" type="warning">{{ $t('studio.hasCustom') }}</el-tag>
                   </div>
                 </template>
 
-                <registry-params-form
-                  :model-config="currentModelConfig"
-                  :params="params"
-                  :param-visibility="advancedParamVisibility"
-                  :loras="compatibleLoras"
-                  :controlnets="compatibleControlNets"
-                  :control-image-src="controlImageSrc"
-                  :control-recent-gallery="recentImages"
-                  @control-asset-pick="onControlAssetPick"
-                  @remove-control-image="removeControlImage"
-                  @restore-defaults="resetToDefaults"
-                />
+                <el-form label-position="top" size="small" class="studio-ep-form-pt">
+                  <!-- Steps -->
+                  <el-form-item v-if="currentModelConfig?.parameters?.steps" :label="$t('studio.steps')">
+                    <div class="param-control-row">
+                      <div class="param-slider">
+                        <el-slider
+                          v-model="params.steps"
+                          :min="Number(currentModelConfig.parameters.steps.min)"
+                          :max="Number(currentModelConfig.parameters.steps.max)"
+                        />
+                      </div>
+                      <el-input-number
+                        v-model="params.steps"
+                        :min="Number(currentModelConfig.parameters.steps.min)"
+                        :max="Number(currentModelConfig.parameters.steps.max)"
+                        class="param-input-number"
+                      />
+                    </div>
+                    <div v-if="currentModelConfig.parameters.steps.note" class="studio-ep-param-note">
+                      {{ currentModelConfig.parameters.steps.note }}
+                    </div>
+                  </el-form-item>
+
+                  <!-- CFG / guidance -->
+                  <el-form-item v-if="currentModelConfig?.parameters?.guidance" :label="$t('create.guidanceLabel')">
+                    <div class="param-control-row">
+                      <div class="param-slider">
+                        <el-slider
+                          v-model="params.guidance"
+                          :min="Number(currentModelConfig.parameters.guidance.min)"
+                          :max="Number(currentModelConfig.parameters.guidance.max)"
+                          :step="Number(currentModelConfig.parameters.guidance.step) || 0.1"
+                        />
+                      </div>
+                      <el-input-number
+                        v-model="params.guidance"
+                        :min="Number(currentModelConfig.parameters.guidance.min)"
+                        :max="Number(currentModelConfig.parameters.guidance.max)"
+                        :step="Number(currentModelConfig.parameters.guidance.step) || 0.1"
+                        class="param-input-number"
+                      />
+                    </div>
+                    <div v-if="currentModelConfig.parameters.guidance.note" class="studio-ep-param-note">
+                      {{ currentModelConfig.parameters.guidance.note }}
+                    </div>
+                  </el-form-item>
+
+                  <!-- Scheduler -->
+                  <el-form-item v-if="currentModelConfig?.parameters?.scheduler?.options" :label="String(currentModelConfig.parameters.scheduler.label || $t('create.schedulerLabel'))">
+                    <el-select v-model="params.scheduler" class="studio-ep-w-full">
+                      <el-option
+                        v-for="opt in currentModelConfig.parameters.scheduler.options"
+                        :key="String(opt)"
+                        :label="String(opt)"
+                        :value="opt"
+                      />
+                    </el-select>
+                    <div v-if="currentModelConfig.parameters.scheduler.note" class="studio-ep-param-note">
+                      {{ currentModelConfig.parameters.scheduler.note }}
+                    </div>
+                  </el-form-item>
+
+                  <!-- Resolution -->
+                  <el-form-item v-if="currentModelConfig?.parameters?.width && currentModelConfig?.parameters?.height" :label="$t('studio.resolution')">
+                    <div class="studio-ep-res-row">
+                      <el-select v-model="params.width" class="studio-ep-select-w120">
+                        <el-option
+                          v-for="w in currentModelConfig.parameters.width.options"
+                          :key="String(w)"
+                          :label="String(w)"
+                          :value="w"
+                        />
+                      </el-select>
+                      <span class="studio-ep-res-x">x</span>
+                      <el-select v-model="params.height" class="studio-ep-select-w120">
+                        <el-option
+                          v-for="h in currentModelConfig.parameters.height.options"
+                          :key="String(h)"
+                          :label="String(h)"
+                          :value="h"
+                        />
+                      </el-select>
+                    </div>
+                  </el-form-item>
+
+                  <!-- Strength (image editing) -->
+                  <el-form-item
+                    v-if="editMode === 'image_editing' && currentModelConfig?.parameters?.strength"
+                    :label="$t('create.strengthLabel')"
+                  >
+                    <div class="param-control-row">
+                      <div class="param-slider">
+                        <el-slider
+                          v-model="params.strength"
+                          :min="Number(currentModelConfig.parameters.strength.min)"
+                          :max="Number(currentModelConfig.parameters.strength.max)"
+                          :step="Number(currentModelConfig.parameters.strength.step) || 0.05"
+                        />
+                      </div>
+                      <el-input-number
+                        v-model="params.strength"
+                        :min="0"
+                        :max="1"
+                        :step="Number(currentModelConfig.parameters.strength.step) || 0.05"
+                        class="param-input-number"
+                      />
+                    </div>
+                    <div v-if="currentModelConfig.parameters.strength.note" class="studio-ep-param-note">
+                      {{ currentModelConfig.parameters.strength.note }}
+                    </div>
+                  </el-form-item>
+
+                  <!-- Seed -->
+                  <el-form-item v-if="currentModelConfig?.parameters?.seed_support" :label="$t('studio.seed')">
+                    <div class="studio-ep-seed-row">
+                      <el-input v-model="params.seed" :placeholder="$t('studio.seedPlaceholder')" />
+                      <el-button @click="params.seed = String(Math.floor(Math.random() * 1_000_000))">
+                        <el-icon><refresh /></el-icon>
+                      </el-button>
+                    </div>
+                  </el-form-item>
+
+                  <!-- LoRA -->
+                  <el-form-item v-if="currentModelConfig?.parameters?.lora_support" :label="$t('studio.loraLabel')">
+                    <el-select v-model="params.lora" class="studio-ep-w-full" clearable :placeholder="$t('studio.noLora')">
+                      <el-option :label="$t('studio.noLora')" value="" />
+                      <el-option
+                        v-for="l in compatibleLoras"
+                        :key="String(l.id)"
+                        :label="String(l.name || l.id)"
+                        :value="l.id"
+                      />
+                    </el-select>
+                    <div v-if="params.lora">
+                      <div class="settings-ep-form-hint settings-ep-form-hint--tight">{{ $t('create.loraScale') }}</div>
+                      <div class="param-control-row">
+                        <div class="param-slider">
+                          <el-slider v-model="params.lora_scale" :min="0" :max="2" :step="0.05" />
+                        </div>
+                        <el-input-number v-model="params.lora_scale" :min="0" :max="2" :step="0.05" class="param-input-number" />
+                      </div>
+                    </div>
+                  </el-form-item>
+
+                  <!-- ControlNet -->
+                  <template v-if="compatibleControlNets.length">
+                    <el-form-item :label="$t('studio.controlNet')">
+                      <el-select v-model="params.controlnet" class="studio-ep-w-full" clearable :placeholder="$t('studio.noControlNet')">
+                        <el-option :label="$t('studio.noControlNet')" value="" />
+                        <el-option
+                          v-for="n in compatibleControlNets"
+                          :key="String(n.key)"
+                          :label="String(n.name || n.key)"
+                          :value="n.key"
+                        />
+                      </el-select>
+                    </el-form-item>
+                    <el-form-item v-if="params.controlnet" :label="$t('create.controlNetStrengthLabel')">
+                      <div class="param-control-row">
+                        <div class="param-slider">
+                          <el-slider v-model="params.controlnet_strength" :min="0" :max="2" :step="0.05" />
+                        </div>
+                        <el-input-number v-model="params.controlnet_strength" :min="0" :max="2" :step="0.05" class="param-input-number" />
+                      </div>
+                    </el-form-item>
+                    <el-form-item v-if="params.controlnet" :label="$t('studio.uploadControlImage')">
+                      <asset-picker accept-kind="image" :recent-gallery="recentImages" @pick="onControlAssetPick" />
+                      <div v-if="controlImageSrc" class="studio-ep-control-preview">
+                        <img :src="controlImageSrc" alt="" />
+                        <el-button size="small" text type="danger" @click="removeControlImage">
+                          <el-icon><delete /></el-icon>
+                          {{ $t('common.delete') }}
+                        </el-button>
+                      </div>
+                    </el-form-item>
+                  </template>
+
+                  <el-form-item>
+                    <el-button text type="primary" size="small" @click="resetToDefaults">
+                      <el-icon><refresh /></el-icon>
+                      {{ $t('studio.restoreDefaults') }}
+                    </el-button>
+                  </el-form-item>
+                </el-form>
               </el-collapse-item>
             </el-collapse>
-          </div>
+          </el-card>
 
           <!-- Main action (plan §2.3: primary button + queue hint) -->
-          <div class="card" style="margin-bottom: 16px;">
+          <el-card shadow="never" class="studio-ep-surface-card studio-ep-card-mb">
             <el-button
               type="primary"
               size="large"
-              style="width: 100%; min-width: 200px; height: 50px; font-size: 16px;"
+              class="studio-ep-primary-cta"
               :disabled="submitDisabled"
               @click="startGeneration"
             >
               <el-icon size="20"><magic-stick /></el-icon>
-              <span style="margin-left: 8px;">{{ primaryCtaLabel }}</span>
+              <span class="studio-ep-cta-gap">{{ primaryCtaLabel }}</span>
             </el-button>
-            <div style="margin-top: 8px; font-size: 11px; color: var(--text-muted);">
-              {{ $t('studio.sendShortcutHint') }}
+            <div class="studio-ep-micro-hint">
+              {{ $sendShortcutHint() }}
             </div>
 
             <!-- Progress display -->
-            <div v-if="currentTask" style="margin-top: 16px;">
-              <el-progress
-                :percentage="Math.round(currentTask.progress * 100)"
-                :status="currentTask.status === 'failed' ? 'exception' : ''"
-              />
-              <div style="margin-top: 8px; text-align: center; color: var(--text-muted); font-size: 13px;">
-                <template v-if="currentTask.total > 0 && currentTask.status === 'running'">
-                  Step {{ currentTask.step }}/{{ currentTask.total }} &nbsp;
-                </template>
-                <el-tag :type="getStatusType(currentTask.status)" size="small">
-                  {{ getStatusText(currentTask.status) }}
-                </el-tag>
+            <div v-if="currentTask" class="studio-ep-task-wrap">
+              <div v-if="currentTask.status === 'submitting'" class="studio-ep-task-submitting">
+                <el-icon class="studio-ep-spin-icon" size="16"><loading /></el-icon>
+                {{ $tt('studio.submitting') }}
               </div>
+              <template v-else>
+                <el-progress
+                  :percentage="Math.round(currentTask.progress * 100)"
+                  :status="currentTask.status === 'failed' ? 'exception' : ''"
+                />
+                <div class="studio-ep-task-status">
+                  <template v-if="currentTask.total > 0 && currentTask.status === 'running'">
+                    Step {{ currentTask.step }}/{{ currentTask.total }} &nbsp;
+                  </template>
+                  <el-tag :type="getStatusType(currentTask.status)" size="small">
+                    {{ getStatusText(currentTask.status) }}
+                  </el-tag>
+                </div>
+              </template>
             </div>
-          </div>
+          </el-card>
 
           <!-- Logs -->
-          <div class="card">
-            <div class="card-title" style="justify-content: space-between;">
-              <span>
-                <el-icon><document /></el-icon>
-                {{ $t('studio.logs') }}
-              </span>
-              <el-button size="small" text @click="clearLogs">
-                <el-icon><delete /></el-icon>
-              </el-button>
-            </div>
+          <el-card shadow="never" class="studio-ep-surface-card">
+            <template #header>
+              <div class="card-title card-title--split">
+                <span>
+                  <el-icon><document /></el-icon>
+                  {{ $t('studio.logs') }}
+                </span>
+                <el-button size="small" text @click="clearLogs">
+                  <el-icon><delete /></el-icon>
+                </el-button>
+              </div>
+            </template>
 
-            <div class="log-container" ref="logContainer" style="max-height: 200px;">
-              <div v-if="logs.length === 0" style="text-align: center; color: var(--text-muted); padding: 20px;">
+            <div class="log-container studio-ep-log-container--sm" ref="logContainer">
+              <div v-if="logs.length === 0" class="studio-ep-log-empty">
                 {{ $t('studio.logsEmpty') }}
               </div>
               <div v-for="(log, index) in logs" :key="index" class="log-line">
@@ -299,18 +449,22 @@
                 <span :class="'log-' + log.level">{{ log.message }}</span>
               </div>
             </div>
-          </div>
+          </el-card>
         </div>
       </el-col>
 
       <!-- Right panel -->
-      <el-col :xs="24" :md="8" :lg="10">
+      <el-col :xs="24" :md="8" :lg="7" :xl="6">
         <div class="preview-panel">
 
           <!-- Editing (rewrite / retouch / extend): image editor -->
-          <div v-if="editMode === 'image_editing'" class="card" style="margin-bottom: 16px;">
+          <el-card
+            v-if="editMode === 'image_editing'"
+            shadow="never"
+            class="studio-ep-surface-card studio-ep-card-mb"
+          >
             <div class="source-input-card-head">
-              <div class="card-title" style="margin-bottom: 0;">
+              <div class="card-title">
                 <span>
                   <el-icon><picture-filled /></el-icon>
                   {{ $t('create.imageInput') }}
@@ -329,11 +483,15 @@
               mode="inpainting"
               @pick-edit-source="onEditAssetPick"
             />
-          </div>
+          </el-card>
           <!-- Upscale: source image only -->
-          <div v-else-if="editMode === 'image_upscale'" class="card" style="margin-bottom: 16px;">
+          <el-card
+            v-else-if="editMode === 'image_upscale'"
+            shadow="never"
+            class="studio-ep-surface-card studio-ep-card-mb"
+          >
             <div class="source-input-card-head">
-              <div class="card-title" style="margin-bottom: 0;">
+              <div class="card-title">
                 <span>
                   <el-icon><picture-filled /></el-icon>
                   {{ $t('create.imageInput') }}
@@ -345,36 +503,40 @@
                 @pick="onEditAssetPick"
               />
             </div>
-            <div v-if="editImageSrc" class="image-preview" style="aspect-ratio: 1; margin-top: 8px;">
-              <img :src="editImageSrc" alt="upscale source" style="width: 100%; height: 100%; object-fit: contain;" />
+            <div v-if="editImageSrc" class="image-preview studio-ep-preview-sq studio-ep-preview-sq--mt">
+              <img class="studio-ep-preview-media" :src="editImageSrc" alt="upscale source" />
             </div>
             <el-empty v-else :description="$t('studio.uploadEditImage')" />
-          </div>
+          </el-card>
 
           <!-- Current generation preview -->
-          <div class="card" style="margin-bottom: 16px;">
-            <div class="card-title">
-              <el-icon><picture-filled /></el-icon>
-              {{ $t('studio.currentPreview') }}
-            </div>
+          <el-card shadow="never" class="studio-ep-surface-card studio-ep-card-mb">
+            <template #header>
+              <div class="card-title">
+                <el-icon><picture-filled /></el-icon>
+                {{ $t('studio.currentPreview') }}
+              </div>
+            </template>
 
-            <div v-if="previewImage" class="image-preview" style="aspect-ratio: 1;">
-              <img :src="previewImage" alt="Preview" style="width: 100%; height: 100%; object-fit: contain;" />
+            <div v-if="previewImage" class="image-preview studio-ep-preview-sq">
+              <img class="studio-ep-preview-media" :src="previewImage" alt="Preview" />
             </div>
             <el-empty v-else :description="$t('studio.noPreview')" />
-          </div>
+          </el-card>
 
           <!-- Recent generations -->
-          <div class="card">
-            <div class="card-title" style="justify-content: space-between;">
-              <span>
-                <el-icon><clock /></el-icon>
-                {{ $t('studio.recent') }}
-              </span>
-              <el-button size="small" text @click="loadRecentImages">
-                <el-icon><refresh /></el-icon>
-              </el-button>
-            </div>
+          <el-card shadow="never" class="studio-ep-surface-card">
+            <template #header>
+              <div class="card-title card-title--split">
+                <span>
+                  <el-icon><clock /></el-icon>
+                  {{ $t('studio.recent') }}
+                </span>
+                <el-button size="small" text @click="loadRecentImages">
+                  <el-icon><refresh /></el-icon>
+                </el-button>
+              </div>
+            </template>
 
             <el-empty v-if="recentImages.length === 0" :description="$t('gallery.empty')" />
 
@@ -383,11 +545,20 @@
                 v-for="image in recentImages"
                 :key="image.path"
                 :span="12"
-                style="margin-bottom: 8px;"
+                class="studio-ep-gallery-col"
               >
                 <div class="gallery-card">
-                  <div class="gallery-image-wrapper" style="aspect-ratio: 1;" @click="showPreview(image)">
-                    <img :src="getImageUrl(image)" :alt="image.name" loading="lazy" />
+                  <div class="gallery-image-wrapper studio-ep-preview-sq" @click="showPreview(image)">
+                    <img
+                      v-if="!recentGalleryThumbFailed[String(image.path)]"
+                      :src="getImageUrl(image)"
+                      :alt="String(image.name || '')"
+                      loading="lazy"
+                      @error="markRecentGalleryThumbFailed(image)"
+                    />
+                    <div v-else class="gallery-thumb-fallback studio-ep-recent-thumb-fallback">
+                      <el-icon :size="44"><Picture /></el-icon>
+                    </div>
                   </div>
                   <div class="recent-actions">
                     <el-button class="action-btn rewrite-btn" size="small" @click.stop="quickFromGallery(image, 'rewrite')">
@@ -402,15 +573,15 @@
                 </div>
               </el-col>
             </el-row>
-          </div>
+          </el-card>
         </div>
       </el-col>
     </el-row>
 
     <!-- Image preview dialog -->
     <el-dialog v-model="previewVisible" :title="selectedImage?.name" width="70%" center>
-      <div v-if="selectedImage" style="text-align: center;">
-        <img :src="getImageUrl(selectedImage)" style="max-width: 100%; border-radius: 8px;" />
+      <div v-if="selectedImage" class="studio-ep-dialog-center">
+        <img class="studio-ep-dialog-img" :src="getImageUrl(selectedImage)" />
       </div>
     </el-dialog>
   </div>
@@ -418,15 +589,19 @@
 
 <script setup lang="ts">
 // @ts-nocheck
-import { ref, reactive, computed, watch, onMounted, inject, nextTick } from 'vue';
+import { ref, reactive, computed, watch, onMounted, inject, nextTick, unref } from 'vue';
 import type { Ref } from 'vue';
+import { useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
-import { api } from '@/utils/api';
+import { api, taskIdFromSubmitResponse } from '@/utils/api';
 import { $tt, $mn, $mvn, $pn } from '@/utils/i18n';
 import { DQ_STORAGE } from '@/utils/storage';
 import { useTasksStore } from '@/stores/tasks';
 import { useRegistryStore } from '@/stores/registry';
 import type { SystemInfo } from '@/types';
+import { applyDefaults, hasDeviation } from '@/utils/registryParamSchema';
+import { warnIfRiskyMemory } from '@/composables/memoryHint';
+import { formatGenLogMessage, isDuplicateDenoiseStepLog } from '@/utils/genTaskLog';
 
 /* ------------------------------------------------------------------ */
 /*  Injected / External                                                */
@@ -436,12 +611,7 @@ const systemInfo = inject<Ref<SystemInfo>>('systemInfo');
 
 const tasksStore = useTasksStore();
 const registryStore = useRegistryStore();
-
-// Access global legacy helpers (same pattern as SettingsView.vue)
-const RegistryParamSchema = (window as unknown as Record<string, unknown>).RegistryParamSchema as {
-  applyDefaults: (parameters: Record<string, unknown>, target: Record<string, unknown>) => void;
-  hasDeviation: (parameters: Record<string, unknown>, target: Record<string, unknown>, opts?: { ignoreKeys?: string[] }) => boolean;
-} | undefined;
+const router = useRouter();
 
 /* ------------------------------------------------------------------ */
 /*  RegistryActions helpers (inlined from legacy registry_actions.js)  */
@@ -478,6 +648,7 @@ function getStatusType(status: string): string {
   const map: Record<string, string> = {
     pending: 'info',
     queued: 'info',
+    submitting: 'info',
     running: 'warning',
     completed: 'success',
     failed: 'danger',
@@ -489,6 +660,7 @@ function getStatusText(status: string): string {
   const map: Record<string, string> = {
     pending: 'studio.pending',
     queued: 'studio.queued',
+    submitting: 'studio.submitting',
     running: 'studio.running',
     completed: 'studio.completed',
     failed: 'studio.failed',
@@ -544,13 +716,29 @@ const selectedModelVersion = ref('');
 const generating = ref(false);
 const currentTask = ref<Record<string, unknown> | null>(null);
 const logs = ref<Array<{ time: string; message: string; level: string }>>([]);
+const logContainer = ref<HTMLElement | null>(null);
 /** Last denoise step mirrored into the log card from SSE progress (avoids empty panel until DB catches up) */
 const genLogLastStep = ref(0);
 /** 'denoise' | 'post' — log post-phase line once when SSE reports message post */
 const genLogLastPhase = ref('');
 const previewImage = ref('');
 const recentImages = ref<Array<Record<string, unknown>>>([]);
-const advancedParamsOpen = ref<string[]>([]);
+/** 最近生成缩略图加载失败时避免浏览器默认裂图，改为统一占位 */
+const recentGalleryThumbFailed = ref<Record<string, boolean>>({});
+
+function isDefinitelyNonRasterRecent(v: Record<string, unknown>): boolean {
+  const meta = v.metadata as Record<string, unknown> | undefined;
+  if (meta?.asset_kind === 'video' || meta?.asset_kind === 'audio') return true;
+  const ext = String(v.name || '').split('.').pop()?.toLowerCase() || '';
+  return ['mp4', 'mov', 'avi', 'mkv', 'webm', 'wav', 'mp3', 'flac', 'm4a', 'aac', 'opus', 'ogg'].includes(ext);
+}
+
+const markRecentGalleryThumbFailed = (image: Record<string, unknown>) => {
+  const p = String(image.path || '');
+  if (!p) return;
+  recentGalleryThumbFailed.value = { ...recentGalleryThumbFailed.value, [p]: true };
+};
+const advancedParamsOpen = ref<string[]>(['advanced']);
 const compatibleLoras = ref<Array<Record<string, unknown>>>([]);
 const compatibleControlNets = ref<Array<Record<string, unknown>>>([]);
 const controlImageSrc = ref('');
@@ -559,6 +747,14 @@ const controlImagePath = ref('');
 // Mode: top-level tab and engine sub-mode (rewrite split into reference / instruct)
 const editMode = ref('image_generation'); // image_generation | image_editing | image_upscale
 const imageWorkTab = ref('create'); // create | rewrite_reference | rewrite_instruct | retouch | extend | upscale
+const imageWorkSegmentOptions = computed(() => [
+  { label: $tt('action.image.create'), value: 'create' },
+  { label: $tt('create.rewriteDriveReference'), value: 'rewrite_reference' },
+  { label: $tt('create.rewriteDriveInstruct'), value: 'rewrite_instruct' },
+  { label: $tt('action.image.retouch'), value: 'retouch' },
+  { label: $tt('action.image.extend'), value: 'extend' },
+  { label: $tt('action.image.upscale'), value: 'upscale' },
+]);
 const editingSubMode = ref('inpainting'); // inpainting | text_editing | outpainting
 /** Aligned with API rewrite_mode; driven by imageWorkTab */
 const rewriteDriveMode = ref('reference');
@@ -887,10 +1083,7 @@ const loadModelRegistry = async () => {
 const loadModelDefaults = () => {
   const config = currentModelConfig.value;
   if (!config || !config.parameters) return;
-  const R = RegistryParamSchema;
-  if (R) {
-    R.applyDefaults(config.parameters as Record<string, unknown>, params);
-  }
+  applyDefaults(config.parameters as Record<string, unknown>, params);
   controlImageSrc.value = '';
   controlImagePath.value = '';
   loadCompatibleLoras();
@@ -936,15 +1129,8 @@ const resetToDefaults = () => {
 const hasCustomParams = computed(() => {
   const config = currentModelConfig.value;
   if (!config || !config.parameters) return false;
-  const R = RegistryParamSchema;
-  if (R) return R.hasDeviation(config.parameters as Record<string, unknown>, params);
-  return false;
+  return hasDeviation(config.parameters as Record<string, unknown>, params);
 });
-
-const advancedParamVisibility = computed(() => ({
-  width: true,
-  strength: editMode.value !== 'image_upscale' && editMode.value === 'image_editing',
-}));
 
 const presetSelectLabel = (name: string, preset: Record<string, unknown>) => {
   const a = preset.applies_to as string[];
@@ -1006,29 +1192,20 @@ const addLog = (message: string, level = 'info') => {
   }
 
   nextTick(() => {
-    const container = document.querySelector('.log-container');
+    const container = logContainer.value;
     if (container) {
       container.scrollTop = container.scrollHeight;
     }
   });
 };
 
-function parseStepKeyFromLine(msg: string): string | null {
-  const m = String(msg || '').trim().match(/^Step (\d+)\/(\d+)/i);
-  return m ? `${m[1]}/${m[2]}` : null;
-}
-
 function ingestServerLog(logData: Record<string, unknown>) {
-  const msg = (logData.message || '') as string;
+  const raw = (logData.message || '') as string;
   const lvl = (logData.level || 'info') as string;
-  const sk = parseStepKeyFromLine(msg);
-  if (sk) {
-    const last = logs.value[logs.value.length - 1];
-    if (last && parseStepKeyFromLine(last.message) === sk) {
-      return;
-    }
+  if (isDuplicateDenoiseStepLog(logs.value, raw)) {
+    return;
   }
-  addLog(msg, lvl);
+  addLog(formatGenLogMessage(raw), lvl);
 }
 
 // Clear logs
@@ -1071,10 +1248,21 @@ const startGeneration = async () => {
 
   const verCfg = (currentModelConfig.value && currentModelConfig.value.versions && (currentModelConfig.value.versions as Record<string, Record<string, unknown>>)[params.version as string]) || null;
   const sizeHuman = verCfg && verCfg.size ? String(verCfg.size) : '';
-  const DQMemoryHint = (window as unknown as Record<string, unknown>).DQMemoryHint as { warnIfRisky: (opts: Record<string, unknown>) => void } | undefined;
-  if (DQMemoryHint && typeof DQMemoryHint.warnIfRisky === 'function') {
-    DQMemoryHint.warnIfRisky({ systemInfo, versionSizeHuman: sizeHuman, $tt });
-  }
+  warnIfRiskyMemory({
+    systemInfo: unref(systemInfo),
+    versionSizeHuman: sizeHuman,
+    $tt,
+  });
+
+  // Immediately show "submitting" progress to give visual feedback
+  generating.value = true;
+  currentTask.value = {
+    id: '',
+    progress: 0,
+    step: 0,
+    total: 0,
+    status: 'submitting',
+  };
 
   const modelStr = params.version ? `${params.model}:${params.version}` : params.model;
   const adapters = params.lora ? [{ id: params.lora, weight: params.lora_scale || 0.8 }] : [];
@@ -1085,6 +1273,15 @@ const startGeneration = async () => {
   if (params.scheduler) {
     meta.scheduler = params.scheduler;
   }
+
+  const attachStreamFromSubmit = (submitRes: unknown) => {
+    const tid = taskIdFromSubmitResponse(submitRes);
+    if (!tid) {
+      addLog($tt('studio.error', { msg: 'missing task id in submit response' }), 'error');
+      return;
+    }
+    attachStream(tid);
+  };
 
   const attachStream = (tid: string) => {
     genLogLastStep.value = 0;
@@ -1147,15 +1344,8 @@ const startGeneration = async () => {
         } else if (data.message === 'denoise') {
           genLogLastPhase.value = 'denoise';
         }
-        if (nextTotal > 0 && nextStep > 0 && nextStep !== genLogLastStep.value) {
+        if (nextTotal > 0 && nextStep > 0) {
           genLogLastStep.value = nextStep as number;
-          addLog(
-            $tt('studio.queueDenoiseProgress', {
-              current: String(nextStep),
-              total: String(nextTotal),
-            }),
-            'info',
-          );
         }
       },
     });
@@ -1186,7 +1376,7 @@ const startGeneration = async () => {
         priority: 'normal',
         metadata: {},
       });
-      attachStream((submitRes as Record<string, unknown>).id as string);
+      attachStreamFromSubmit(submitRes);
       return;
     }
 
@@ -1261,7 +1451,7 @@ const startGeneration = async () => {
         editBody.rewrite_mode = rewriteDriveMode.value;
       }
       const submitRes = await api.gen.createImageEdit(editBody);
-      attachStream((submitRes as Record<string, unknown>).id as string);
+      attachStreamFromSubmit(submitRes);
       return;
     }
 
@@ -1315,8 +1505,11 @@ const startGeneration = async () => {
         priority: 'normal',
       });
     }
-    attachStream((submitRes as Record<string, unknown>).id as string);
+    attachStreamFromSubmit(submitRes);
+    tasksStore.pollQueueOnce();
   } catch (e) {
+    generating.value = false;
+    currentTask.value = null;
     addLog($tt('studio.error', { msg: (e as Error).message || String(e) }), 'error');
   }
 };
@@ -1325,13 +1518,10 @@ const startGeneration = async () => {
 const loadRecentImages = async () => {
   try {
     const images = await api.gallery.listImages(24, 0);
-    recentImages.value = (images as Array<Record<string, unknown>>).filter((v: Record<string, unknown>) => {
-      if (v.metadata && (v.metadata as Record<string, unknown>).asset_kind === 'video') {
-        return false;
-      }
-      const ext = String(v.name || '').split('.').pop()?.toLowerCase();
-      return !['mp4', 'mov', 'avi', 'mkv', 'webm'].includes(ext || '');
-    }).slice(0, 4);
+    recentGalleryThumbFailed.value = {};
+    recentImages.value = (images as Array<Record<string, unknown>>)
+      .filter((v: Record<string, unknown>) => !isDefinitelyNonRasterRecent(v))
+      .slice(0, 4);
   } catch (e) {
     console.error('Failed to load recent images:', e);
   }
@@ -1379,14 +1569,12 @@ const removeControlImage = () => {
   controlImagePath.value = '';
 };
 
-// Navigate to settings page
+// Navigate to settings / models (Vue Router)
 const goToSettings = () => {
-  const DQStudioNav = (window as unknown as Record<string, unknown>).DQStudioNav as { goSettings: () => void } | undefined;
-  DQStudioNav?.goSettings();
+  router.push({ name: 'settings' });
 };
 const goToDownload = () => {
-  const DQStudioNav = (window as unknown as Record<string, unknown>).DQStudioNav as { goModels: () => void } | undefined;
-  DQStudioNav?.goModels();
+  router.push({ name: 'models' });
 };
 
 const onModelVersionChange = (value: string) => {

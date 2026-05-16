@@ -14,6 +14,7 @@ export interface GalleryItem {
 export interface AssetRow {
   id: string;
   path?: string;
+  mime_type?: string;
   metadata?: Record<string, unknown>;
   thumbnail_url?: string;
   duration_seconds?: number | null;
@@ -61,6 +62,7 @@ export interface VersionConfig {
 export interface RegistryData {
   engines?: Record<string, unknown>;
   models?: Record<string, ModelConfig>;
+  categories?: Record<string, unknown>;
   [key: string]: unknown;
 }
 
@@ -76,7 +78,6 @@ export interface SystemInfo {
 }
 
 export interface SettingsData {
-  theme?: 'dark' | 'light';
   language?: string;
   [key: string]: unknown;
 }

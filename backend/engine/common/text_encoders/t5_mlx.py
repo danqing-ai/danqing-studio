@@ -71,7 +71,15 @@ class T5Encoder:
     def _forward_mlx_via_torch_bridge(self, input_ids, attention_mask):
         """mlx-lm 已移除 ``models.t5`` 时：HF T5Encoder → numpy → MLX（数值与原生 MLX T5 不完全一致）。"""
         import mlx.core as mx
-        from backend.engine.common.text_encoders.t5_cuda import t5_cpu_torch_bridge_hidden_numpy
+
+        try:
+            from backend.engine.common.text_encoders.t5_cuda import t5_cpu_torch_bridge_hidden_numpy
+        except ImportError as e:
+            raise RuntimeError(
+                "T5 MLX forward failed: mlx-lm has no T5 module and the PyTorch CPU bridge "
+                "is not available in this build (desktop MLX bundle excludes torch/*_cuda). "
+                "Ensure mlx-lm provides T5 or use a full CUDA-capable install."
+            ) from e
 
         hidden_np = t5_cpu_torch_bridge_hidden_numpy(self, input_ids, attention_mask)
         return mx.array(hidden_np)

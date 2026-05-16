@@ -88,12 +88,18 @@ export function $pn(presetData: { name_en?: string } | null, chineseName?: strin
   return chineseName || presetData?.name_en || '';
 }
 
-/** Apply theme class to root */
-export function applyTheme(theme: 'light' | 'dark') {
-  const el = document.documentElement;
-  if (theme === 'light') {
-    el.classList.add('dq-theme-light');
-  } else {
-    el.classList.remove('dq-theme-light');
-  }
+/** 创作页主按钮下方快捷键提示（macOS 与 Windows 分文案）。 */
+export function sendShortcutHintText(): string {
+  const ua =
+    typeof navigator !== 'undefined'
+      ? navigator.platform || navigator.userAgent || ''
+      : '';
+  const isApple = /Mac|iPhone|iPad|iPod/i.test(ua);
+  return isApple ? $tt('studio.sendShortcutHintMac') : $tt('studio.sendShortcutHintWin');
+}
+
+/** 全站固定深色（Apple 极简暗色，见 theme-apple-dark.css）。 */
+export function applyTheme(): void {
+  document.documentElement.classList.remove('dq-theme-light');
+  document.documentElement.classList.add('dark');
 }

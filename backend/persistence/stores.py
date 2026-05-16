@@ -11,18 +11,30 @@ from backend.core.interfaces import (
     IConfigStore, IPresetStore,
     AppSettings, IPathResolver
 )
-from backend.utils.path_utils import PathResolver
+from backend.utils.workspace import (
+    ensure_workspace_layout,
+    normalize_workspace_path,
+    read_bootstrap_config,
+    write_bootstrap_workspace_pointer,
+)
 
 
 class JsonConfigStore(IConfigStore):
     """JSON配置存储"""
     
     def __init__(self, path_resolver: IPathResolver):
+        self._path_resolver = path_resolver
         self._path = path_resolver.get_config_path()
     
     def load(self) -> AppSettings:
+        bootstrap = self._path_resolver.get_bootstrap_root()
+        boot = read_bootstrap_config(bootstrap)
         if not self._path.exists():
-            return AppSettings()
+            settings = AppSettings()
+            ws = (boot.get("custom_workspace_dir") or "").strip()
+            if ws:
+                settings.custom_workspace_dir = ws
+            return settings
         
         try:
             with open(self._path, "r", encoding="utf-8") as f:
@@ -30,13 +42,30 @@ class JsonConfigStore(IConfigStore):
             if not isinstance(data, dict):
                 return AppSettings()
             allowed = {k: v for k, v in data.items() if k in AppSettings.__dataclass_fields__}
-            return AppSettings(**allowed)
+            settings = AppSettings(**allowed)
+            ws = (boot.get("custom_workspace_dir") or "").strip()
+            if ws:
+                settings.custom_workspace_dir = ws
+            return settings
         except Exception:
             return AppSettings()
     
     def save(self, settings: AppSettings) -> None:
-        with open(self._path, "w", encoding="utf-8") as f:
+        bootstrap = self._path_resolver.get_bootstrap_root()
+        ws_raw = (settings.custom_workspace_dir or "").strip()
+        if ws_raw:
+            workspace = normalize_workspace_path(bootstrap, ws_raw)
+            settings.custom_workspace_dir = str(workspace)
+            ensure_workspace_layout(workspace)
+            cfg_path = workspace / "config" / ".app_config.json"
+        else:
+            write_bootstrap_workspace_pointer(bootstrap, "")
+            cfg_path = bootstrap / "config" / ".app_config.json"
+
+        cfg_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(cfg_path, "w", encoding="utf-8") as f:
             json.dump(settings.__dict__, f, ensure_ascii=False, indent=2)
+        self._path = cfg_path
 
 
 class JsonPresetStore(IPresetStore):

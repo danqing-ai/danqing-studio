@@ -48,6 +48,23 @@ from backend.api.routes import (
 _logger = __import__("logging").getLogger(__name__)
 
 
+def _resolve_frontend_static_dir(project_root: Path) -> Path | None:
+    """Vite build at ``out/frontend/dist``; PyInstaller bundles under ``_MEIPASS/frontend/dist``."""
+    candidates: list[Path] = []
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        bundle = Path(sys._MEIPASS)
+        candidates.append(bundle / "frontend" / "dist")
+        candidates.append(bundle / "frontend")
+    repo_root = Path(__file__).resolve().parents[1]
+    candidates.append(repo_root / "out" / "frontend" / "dist")
+    candidates.append(project_root / "frontend" / "dist")
+    candidates.append(project_root / "frontend")
+    for path in candidates:
+        if path.is_dir() and any(path.iterdir()):
+            return path
+    return None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     c = get_container()
@@ -112,8 +129,8 @@ def create_app() -> FastAPI:
     app.include_router(download.router)
     app.include_router(settings.router)
 
-    frontend_dir = project_root / "frontend"
-    if frontend_dir.exists():
+    frontend_dir = _resolve_frontend_static_dir(project_root)
+    if frontend_dir is not None:
         app.mount("/", StaticFiles(directory=str(frontend_dir), html=True), name="frontend")
 
     return app

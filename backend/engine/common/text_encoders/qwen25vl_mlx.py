@@ -1,15 +1,10 @@
-"""Qwen2.5-VL 文本编码 — MLX 张量封装；HF / PyTorch 前向在 ``qwen25vl_cuda``。"""
+"""Qwen2.5-VL 文本编码 — MLX 张量封装；HF / PyTorch CPU 前向在 ``qwen25vl_cuda``（非桌面 MLX 包）。"""
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
 
 import mlx.core as mx
-
-from backend.engine.common.text_encoders.qwen25vl_cuda import (
-    encode_prompt_embeds_qwen25vl_numpy,
-    load_qwen25_vl_torch_model,
-)
 
 
 def encode_prompt_embeds_qwen25vl(
@@ -21,6 +16,16 @@ def encode_prompt_embeds_qwen25vl(
     device: str = "cpu",
 ) -> mx.array:
     """``[B, tokenizer_max_length, hidden]`` MLX float32 — matches upstream slice layout."""
+    try:
+        from backend.engine.common.text_encoders.qwen25vl_cuda import (
+            encode_prompt_embeds_qwen25vl_numpy,
+        )
+    except ImportError as e:
+        raise RuntimeError(
+            "Qwen2.5-VL encoding requires PyTorch (qwen25vl_cuda); "
+            "not included in MLX-only desktop bundles."
+        ) from e
+
     hidden_np = encode_prompt_embeds_qwen25vl_numpy(
         tokenizer,
         model,
@@ -47,6 +52,16 @@ class Qwen25VLEncoder:
         text_processor_path = self.model_path / "text_processor"
 
         self.tokenizer = Qwen2Tokenizer.from_pretrained(str(text_processor_path))
+
+        try:
+            from backend.engine.common.text_encoders.qwen25vl_cuda import (
+                load_qwen25_vl_torch_model,
+            )
+        except ImportError as e:
+            raise RuntimeError(
+                "Qwen2.5-VL encoder requires PyTorch (qwen25vl_cuda); "
+                "not included in MLX-only desktop bundles."
+            ) from e
 
         self.model = load_qwen25_vl_torch_model(text_encoder_path, device=self.device)
 

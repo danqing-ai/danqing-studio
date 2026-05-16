@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 
 from backend.core.container import get_container
-from backend.core.interfaces import ISettingsService, AppSettings, ModelConfig, IPresetStore
+from backend.core.interfaces import ISettingsService, AppSettings, ModelConfig, IPresetStore, IPathResolver
 from backend.core.i18n import t, resolve_locale
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
@@ -30,9 +30,11 @@ class SettingsResponse(BaseModel):
     civitai_token: str = ""
     huggingface_token: str = ""
     nsfw_enabled: bool = False
-    custom_models_dir: str
-    custom_loras_dir: str
-    custom_outputs_dir: str
+    custom_workspace_dir: str = ""
+
+
+class ApplyWorkspaceRequest(BaseModel):
+    path: str
 
 
 class SettingsUpdateRequest(BaseModel):
@@ -47,9 +49,7 @@ class SettingsUpdateRequest(BaseModel):
     civitai_token: Optional[str] = None
     huggingface_token: Optional[str] = None
     nsfw_enabled: Optional[bool] = None
-    custom_models_dir: Optional[str] = None
-    custom_loras_dir: Optional[str] = None
-    custom_outputs_dir: Optional[str] = None
+    custom_workspace_dir: Optional[str] = None
 
 
 class ModelResponse(BaseModel):
@@ -86,18 +86,113 @@ def get_settings():
 
 
 @router.put("")
-def update_settings(request: SettingsUpdateRequest):
+def update_settings(request: SettingsUpdateRequest, req: Request):
     """Update settings"""
+    locale = resolve_locale(req.headers.get("accept-language"))
     service = get_settings_service()
     settings = service.get_settings()
     payload = request.model_dump(exclude_unset=True)
+
+    if "custom_workspace_dir" in payload:
+        new_ws = (payload.pop("custom_workspace_dir") or "").strip()
+        cur_ws = (settings.custom_workspace_dir or "").strip()
+        if new_ws != cur_ws:
+            raise HTTPException(
+                status_code=400,
+                detail=t("error.workspace_use_apply_endpoint", locale),
+            )
 
     for key, value in payload.items():
         if value is not None:
             setattr(settings, key, value)
 
     service.update_settings(settings)
-    return {"success": True}
+    return {"success": True, "restart_required": False}
+
+
+@router.get("/workspace-status")
+def get_workspace_status():
+    """Whether a custom workspace was chosen and the effective data root."""
+    path_resolver = get_container().resolve(IPathResolver)
+    bootstrap = path_resolver.get_bootstrap_root()
+    from backend.utils.workspace import is_workspace_configured
+
+    return {
+        "configured": is_workspace_configured(bootstrap),
+        "effective_root": str(path_resolver.get_project_root()),
+        "bootstrap_root": str(bootstrap),
+    }
+
+
+@router.post("/apply-workspace")
+def apply_workspace(request: ApplyWorkspaceRequest, req: Request):
+    """Move workspace data to a new empty directory and point settings at it."""
+    locale = resolve_locale(req.headers.get("accept-language"))
+    path_resolver = get_container().resolve(IPathResolver)
+    service = get_settings_service()
+    bootstrap = path_resolver.get_bootstrap_root()
+    old_root = path_resolver.get_project_root()
+
+    from backend.utils.workspace import apply_workspace_relocation
+
+    raw = (request.path or "").strip()
+    if not raw:
+        raise HTTPException(
+            status_code=400,
+            detail=t("error.workspace_path_required", locale),
+        )
+
+    try:
+        new_root = apply_workspace_relocation(
+            bootstrap_root=bootstrap,
+            old_root=old_root,
+            new_path_raw=raw,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    except RuntimeError as e:
+        msg = str(e)
+        if "not empty" in msg.lower():
+            raise HTTPException(
+                status_code=400,
+                detail=t("error.workspace_not_empty", locale, path=raw),
+            ) from e
+        raise HTTPException(status_code=400, detail=msg) from e
+
+    settings = service.get_settings()
+    settings.custom_workspace_dir = str(new_root)
+    service.update_settings(settings)
+
+    restart_required = new_root.resolve() != old_root.resolve()
+    return {
+        "success": True,
+        "restart_required": restart_required,
+        "workspace": str(new_root),
+    }
+
+
+@router.get("/workspace-paths")
+def get_workspace_paths():
+    """Resolved data directories under the effective workspace root."""
+    path_resolver = get_container().resolve(IPathResolver)
+    from backend.utils.workspace import workspace_layout_paths
+
+    return workspace_layout_paths(path_resolver.get_project_root())
+
+
+@router.post("/pick-workspace-directory")
+def pick_workspace_directory(request: Request):
+    """Open a native folder picker (macOS)."""
+    locale = resolve_locale(request.headers.get("accept-language"))
+    from backend.utils.workspace import pick_directory_native
+
+    try:
+        path = pick_directory_native(
+            prompt=t("settings.pickWorkspacePrompt", locale),
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"path": path}
 
 
 @router.get("/models", response_model=List[ModelResponse])

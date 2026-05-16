@@ -1,13 +1,16 @@
 <!-- @ts-nocheck -->
 <template>
-  <div class="gallery-page" style="display: flex; height: 100%; gap: 0;">
+  <div
+    class="gallery-page"
+    :class="{ 'gallery-page--batch': selectedItems.length > 0 }"
+  >
     <!-- Main content area -->
-    <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; overflow: hidden;">
+    <div class="gallery-page__main">
       <!-- Top toolbar -->
-      <div style="padding: 12px 16px 8px; border-bottom: 1px solid var(--border-color); flex-shrink: 0;">
-        <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+      <div class="gallery-page__toolbar">
+        <div class="gallery-page__toolbar-inner">
           <!-- View toggle -->
-          <el-radio-group v-model="viewMode" size="small">
+          <el-radio-group v-model="viewMode" size="small" class="gallery-view-segmented">
             <el-radio-button label="grid">
               <el-icon><Menu /></el-icon>
             </el-radio-button>
@@ -16,7 +19,7 @@
             </el-radio-button>
           </el-radio-group>
 
-          <el-divider direction="vertical" style="margin: 0;" />
+          <el-divider direction="vertical" class="gallery-ep-divider--zero" />
 
           <!-- Type filter pills -->
           <div class="gallery-filter-pills">
@@ -31,7 +34,7 @@
             </button>
           </div>
 
-          <el-divider direction="vertical" style="margin: 0;" />
+          <el-divider direction="vertical" class="gallery-ep-divider--zero" />
 
           <!-- Time filter pills -->
           <div class="gallery-filter-pills">
@@ -46,35 +49,34 @@
             </button>
           </div>
 
-          <div style="flex: 1;"></div>
+          <!-- 右侧：与左侧筛选同排；窄屏时整组换行，避免 spacer 单独占一行把模型筛选挤到下一行 -->
+          <div class="gallery-page__toolbar-tail">
+            <el-select
+              v-model="filterModels"
+              size="small"
+              multiple
+              collapse-tags
+              :placeholder="$t('gallery.filterModel')"
+              class="gallery-page__model-filter"
+            >
+              <el-option v-for="m in allModelOptions" :key="m" :label="m" :value="m" />
+            </el-select>
 
-          <!-- Model filter -->
-          <el-select
-            v-model="filterModels"
-            size="small"
-            multiple
-            collapse-tags
-            :placeholder="$t('gallery.filterModel')"
-            style="width: 160px;"
-          >
-            <el-option v-for="m in allModelOptions" :key="m" :label="m" :value="m" />
-          </el-select>
+            <el-button size="small" @click="showAdvancedFilter = true">
+              <el-icon><Filter /></el-icon>
+            </el-button>
 
-          <!-- More filters -->
-          <el-button size="small" @click="showAdvancedFilter = true">
-            <el-icon><Filter /></el-icon>
-          </el-button>
-
-          <el-button @click="refresh" type="primary" plain size="small">
-            <el-icon><Refresh /></el-icon>
-          </el-button>
+            <el-button @click="refresh" type="primary" plain size="small">
+              <el-icon><Refresh /></el-icon>
+            </el-button>
+          </div>
         </div>
       </div>
 
       <!-- Content area -->
-      <div class="gallery-scroll-area" style="flex: 1; overflow-y: auto; padding: 12px 16px;" @scroll="onScroll">
+      <div class="gallery-scroll-area gallery-page__scroll" @scroll="onScroll">
         <!-- Empty state -->
-        <div v-if="items.length === 0 && !loading" style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; gap: 16px;">
+        <div v-if="items.length === 0 && !loading" class="gallery-page__empty">
           <el-empty :description="emptyMessage" />
           <el-button v-if="hasActiveFilters" @click="resetFilters" type="primary">
             {{ $t('gallery.clearFilters') }}
@@ -101,7 +103,16 @@
                 <!-- Media container -->
                 <div class="gallery-media-wrapper" @click.stop="showPreview(item)">
                   <template v-if="isImage(item)">
-                    <img :src="getImageUrl(item)" :alt="item.name" loading="lazy" @error="handleImageError" />
+                    <img
+                      v-if="!galleryImageLoadFailed[item.path]"
+                      :src="getImageUrl(item)"
+                      :alt="item.name"
+                      loading="lazy"
+                      @error="markGalleryImageFailed(item.path)"
+                    />
+                    <div v-else class="gallery-thumb-fallback">
+                      <el-icon :size="48"><Picture /></el-icon>
+                    </div>
                   </template>
                   <template v-else-if="isAudio(item)">
                     <div class="gallery-audio-tile">
@@ -120,7 +131,7 @@
                       @mouseleave="handleVideoLeave"
                     ></video>
                     <div class="video-overlay">
-                      <el-icon size="28" color="white"><VideoPlay /></el-icon>
+                      <el-icon size="28" color="var(--el-text-color-primary)"><VideoPlay /></el-icon>
                     </div>
                   </template>
                   <template v-else>
@@ -130,32 +141,25 @@
                   </template>
                 </div>
 
-                <!-- Hover overlay -->
-                <div class="gallery-card-overlay">
-                  <div class="gallery-card-overlay-content">
-                    <el-button
-                      type="primary"
-                      size="large"
-                      circle
-                      @click.stop="showPreview(item)"
-                    >
-                      <el-icon size="20"><ZoomIn /></el-icon>
-                    </el-button>
+                <!-- Hover overlay：底部渐变 + 分辨率/模型；点击打开预览 -->
+                <div class="gallery-card-overlay" @click.stop="showPreview(item)">
+                  <div class="gallery-card-overlay-gradient">
                     <div class="gallery-card-overlay-info">
                       <span class="gallery-card-resolution" v-if="isAudio(item)">{{ formatVideoDuration(item) || '—' }}</span>
                       <span class="gallery-card-resolution" v-else>{{ item.width }}×{{ item.height }}</span>
                       <span v-if="item.model" class="gallery-card-model">{{ item.model }}</span>
                     </div>
                   </div>
-                  <!-- More actions dropdown -->
+                </div>
+
+                <!-- 操作入口：右上角胶囊（el-dropdown 自带 relative，须外包一层做 absolute） -->
+                <div class="gallery-card-more" @click.stop>
                   <el-dropdown
                     trigger="click"
                     @command="handleCommand($event, item)"
-                    @click.stop
-                    class="gallery-card-more"
                   >
-                    <el-button text size="small" circle>
-                      <el-icon color="white"><MoreFilled /></el-icon>
+                    <el-button text size="small" class="gallery-card-more-btn" :title="$t('gallery.moreActions')">
+                      <el-icon><MoreFilled /></el-icon>
                     </el-button>
                     <template #dropdown>
                       <el-dropdown-menu>
@@ -172,8 +176,8 @@
                           {{ $t('gallery.useForImg2Img') }}
                         </el-dropdown-item>
                         <el-dropdown-item command="delete" divided>
-                          <el-icon color="#f56c6c"><Delete /></el-icon>
-                          <span style="color: #f56c6c;">{{ $t('gallery.delete') }}</span>
+                          <el-icon color="var(--el-color-danger)"><Delete /></el-icon>
+                          <el-text type="danger" size="small">{{ $t('gallery.delete') }}</el-text>
                         </el-dropdown-item>
                       </el-dropdown-menu>
                     </template>
@@ -198,116 +202,119 @@
 
         <!-- List view -->
         <div v-else class="gallery-list-view">
-          <el-table
-            :data="flatItems"
-            style="width: 100%;"
-            size="small"
-            @row-click="showDetail"
-            highlight-current-row
-          >
-            <el-table-column type="selection" width="40">
-              <template #default="{ row }">
-                <el-checkbox :model-value="isSelected(row)" @click.stop="toggleSelect(row)" />
-              </template>
-            </el-table-column>
-            <el-table-column width="60">
-              <template #default="{ row }">
-                <div style="width: 40px; height: 40px; border-radius: 4px; overflow: hidden; background: var(--bg-tertiary);">
-                  <img v-if="isImage(row)" :src="getImageUrl(row)" style="width: 100%; height: 100%; object-fit: cover;" @click.stop="showPreview(row)" @error="handleImageError" />
-                  <div v-else-if="isAudio(row)" class="gallery-audio-thumb-sm" @click.stop="showPreview(row)">
-                    <el-icon size="18"><Headset /></el-icon>
-                  </div>
-                  <div v-else style="width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;" @click.stop="showPreview(row)">
-                    <el-icon size="18"><VideoPlay /></el-icon>
-                  </div>
+          <ul class="gallery-ios-list" role="list">
+            <li
+              v-for="row in flatItems"
+              :key="row.path"
+              class="gallery-ios-row"
+              :class="{
+                'is-selected': isSelected(row),
+                'is-active': detailItem?.path === row.path,
+              }"
+              role="listitem"
+              @click="showDetail(row)"
+            >
+              <button
+                type="button"
+                class="gallery-ios-row__check"
+                @click.stop="toggleSelect(row)"
+              >
+                <el-checkbox :model-value="isSelected(row)" />
+              </button>
+              <button
+                type="button"
+                class="gallery-ios-row__thumb"
+                @click.stop="showPreview(row)"
+              >
+                <img
+                  v-if="isImage(row) && !galleryImageLoadFailed[row.path]"
+                  :src="getImageUrl(row)"
+                  alt=""
+                  @error="markGalleryImageFailed(row.path)"
+                />
+                <div
+                  v-else-if="isImage(row)"
+                  class="gallery-list-thumb-fallback"
+                >
+                  <el-icon size="20"><Picture /></el-icon>
                 </div>
-              </template>
-            </el-table-column>
-            <el-table-column :label="$t('gallery.prompt')" min-width="200">
-              <template #default="{ row }">
-                <el-tooltip :content="row.prompt || $t('gallery.noPrompt')" placement="top" :show-after="500">
-                  <span class="gallery-list-prompt">{{ truncatePrompt(row.prompt) }}</span>
-                </el-tooltip>
-              </template>
-            </el-table-column>
-            <el-table-column :label="$t('gallery.model')" width="120">
-              <template #default="{ row }">
-                <el-tag size="small" effect="plain" v-if="row.model">{{ row.model }}</el-tag>
-                <span v-else style="color: var(--text-muted);">—</span>
-              </template>
-            </el-table-column>
-            <el-table-column :label="$t('gallery.resolution')" width="90">
-              <template #default="{ row }">
-                <span style="font-size: 12px; color: var(--text-muted);">{{ row.width }}×{{ row.height }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column width="50">
-              <template #default="{ row }">
-                <el-icon v-if="isVideo(row)" size="16"><VideoPlay /></el-icon>
-                <el-icon v-else-if="isAudio(row)" size="16"><Headset /></el-icon>
-                <el-icon v-else size="16"><Picture /></el-icon>
-              </template>
-            </el-table-column>
-            <el-table-column width="80">
-              <template #default="{ row }">
-                <span v-if="(isVideo(row) || isAudio(row)) && formatVideoDuration(row)" style="font-size: 12px; color: var(--text-muted);">
-                  {{ formatVideoDuration(row) }}
-                </span>
-              </template>
-            </el-table-column>
-            <el-table-column width="100">
-              <template #default="{ row }">
-                <span style="font-size: 12px; color: var(--text-muted);">{{ formatRelativeTime(row.created_at) }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column width="80" fixed="right">
-              <template #default="{ row }">
-                <el-button size="small" text @click.stop="downloadImage(row)">
+                <div v-else-if="isAudio(row)" class="gallery-audio-thumb-sm">
+                  <el-icon size="20"><Headset /></el-icon>
+                </div>
+                <div v-else class="gallery-list-thumb-center">
+                  <el-icon size="20"><VideoPlay /></el-icon>
+                </div>
+              </button>
+              <div class="gallery-ios-row__body">
+                <p class="gallery-ios-row__title">{{ truncatePrompt(row.prompt) }}</p>
+                <div class="gallery-ios-row__meta">
+                  <el-tag v-if="row.model" size="small" effect="plain">{{ row.model }}</el-tag>
+                  <span v-if="row.width && row.height" class="gallery-list-meta">
+                    {{ row.width }}×{{ row.height }}
+                  </span>
+                  <span v-if="(isVideo(row) || isAudio(row)) && formatVideoDuration(row)" class="gallery-list-meta">
+                    {{ formatVideoDuration(row) }}
+                  </span>
+                  <span class="gallery-list-meta">{{ formatRelativeTime(row.created_at) }}</span>
+                </div>
+              </div>
+              <div class="gallery-ios-row__actions" @click.stop>
+                <el-button circle text @click="downloadImage(row)">
                   <el-icon><Download /></el-icon>
                 </el-button>
-                <el-button size="small" text type="danger" @click.stop="deleteImage(row)">
+                <el-button circle text type="danger" @click="deleteImage(row)">
                   <el-icon><Delete /></el-icon>
                 </el-button>
-              </template>
-            </el-table-column>
-          </el-table>
+              </div>
+            </li>
+          </ul>
         </div>
 
         <!-- Loading -->
-        <div v-if="loading" style="text-align: center; padding: 32px;">
+        <div v-if="loading" class="gallery-page__loading">
           <el-icon class="is-loading" size="28"><Loading /></el-icon>
         </div>
 
         <!-- End-of-list hint -->
-        <div v-if="!hasMore && items.length > 0" style="text-align: center; padding: 24px; color: var(--text-muted); font-size: 13px;">
+        <div v-if="!hasMore && items.length > 0" class="gallery-page__end-hint">
           {{ $t('gallery.noMore') }}
         </div>
       </div>
     </div>
 
     <!-- Right side detail panel -->
-    <div v-if="detailItem" class="gallery-detail-panel" style="width: 320px; flex-shrink: 0; border-left: 1px solid var(--border-color); background: var(--bg-secondary); display: flex; flex-direction: column;">
-      <div style="padding: 16px; border-bottom: 1px solid var(--border-color); display: flex; align-items: center; justify-content: space-between;">
-        <span style="font-weight: 600; font-size: 14px;">{{ $t('gallery.details') }}</span>
+    <div v-if="detailItem" class="gallery-detail-panel">
+      <div class="gallery-detail-panel__header">
+        <span class="gallery-detail-panel__title">{{ $t('gallery.details') }}</span>
         <el-button text size="small" @click="detailItem = null">
           <el-icon><Close /></el-icon>
         </el-button>
       </div>
 
-      <div style="flex: 1; overflow-y: auto; padding: 16px;">
+      <div class="gallery-detail-panel__body">
         <!-- Large preview -->
-        <div style="margin-bottom: 16px; border-radius: 8px; overflow: hidden; background: var(--bg-tertiary);">
-          <img v-if="isImage(detailItem)" :src="getImageUrl(detailItem)" style="width: 100%; display: block; cursor: pointer;" @click="showPreview(detailItem)" />
-          <video v-else :src="getImageUrl(detailItem)" controls style="width: 100%; display: block;"></video>
+        <div class="gallery-detail-panel__preview">
+          <template v-if="isImage(detailItem)">
+            <img
+              v-if="!galleryImageLoadFailed[detailItem.path]"
+              :src="getImageUrl(detailItem)"
+              @click="showPreview(detailItem)"
+              @error="markGalleryImageFailed(detailItem.path)"
+            />
+            <div v-else class="gallery-detail-panel__preview-fallback" @click="showPreview(detailItem)">
+              <el-icon :size="48"><Picture /></el-icon>
+            </div>
+          </template>
+          <video v-else :src="getImageUrl(detailItem)" controls></video>
         </div>
 
         <!-- Action buttons -->
-        <div style="display: flex; gap: 8px; margin-bottom: 16px;">
-          <el-button size="small" @click="downloadImage(detailItem)" style="flex: 1;">
+        <div class="gallery-detail-actions">
+          <el-button size="small" @click="downloadImage(detailItem)">
             <el-icon><Download /></el-icon>
             {{ $t('gallery.download') }}
           </el-button>
-          <el-button size="small" @click="useForImg2Img(detailItem)" v-if="isImage(detailItem)" style="flex: 1;">
+          <el-button size="small" @click="useForImg2Img(detailItem)" v-if="isImage(detailItem)">
             <el-icon><Brush /></el-icon>
             {{ $t('gallery.useForImg2Img') }}
           </el-button>
@@ -315,8 +322,8 @@
 
         <!-- Prompt -->
         <div class="gallery-detail-prompt-box">
-          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
-            <span style="font-size: 12px; color: var(--text-muted);">{{ $t('gallery.prompt') }}</span>
+          <div class="gallery-detail-prompt-head">
+            <span class="gallery-detail-prompt-label">{{ $t('gallery.prompt') }}</span>
             <el-button v-if="detailItem.prompt" size="small" text type="primary" @click="copyText(detailItem.prompt)">
               <el-icon><CopyDocument /></el-icon>
             </el-button>
@@ -327,7 +334,7 @@
         </div>
 
         <!-- Param list -->
-        <div style="display: grid; gap: 8px;">
+        <div class="gallery-detail-params">
           <div class="detail-param">
             <span class="detail-param-label">{{ $t('gallery.model') }}</span>
             <span class="detail-param-value">{{ detailItem.model || 'N/A' }}</span>
@@ -350,7 +357,7 @@
           </div>
           <div v-if="detailItem.metadata?.seed" class="detail-param">
             <span class="detail-param-label">{{ $t('gallery.seed') }}</span>
-            <span class="detail-param-value" style="font-family: monospace;">{{ detailItem.metadata.seed }}</span>
+            <span class="detail-param-value is-mono">{{ detailItem.metadata.seed }}</span>
           </div>
           <div v-if="isVideo(detailItem) && formatVideoDuration(detailItem)" class="detail-param">
             <span class="detail-param-label">{{ $t('gallery.durationLabel') }}</span>
@@ -362,27 +369,40 @@
 
     <!-- Fixed bottom batch action bar -->
     <teleport to="body">
-      <div v-if="selectedItems.length > 0" class="gallery-batch-bar">
+      <div
+        v-if="selectedItems.length > 0"
+        class="gallery-batch-bar"
+        role="toolbar"
+        :aria-label="$tt('gallery.selectedCount', { count: selectedItems.length })"
+      >
         <div class="gallery-batch-bar-content">
-          <span class="gallery-batch-count">
-            {{ $tt('gallery.selectedCount', { count: selectedItems.length }) }}
-          </span>
-          <div class="gallery-batch-actions">
-            <el-button size="small" @click="selectAllPage">
+          <div class="gallery-batch-bar__lead">
+            <span class="gallery-batch-count">
+              {{ $tt('gallery.selectedCount', { count: selectedItems.length }) }}
+            </span>
+            <el-button class="gallery-batch-bar__select-all" size="small" text @click="selectAllPage">
               {{ allPageSelected ? $t('gallery.deselectAll') : $t('gallery.selectAll') }}
             </el-button>
-            <el-button size="small" type="primary" @click="batchDownload">
+          </div>
+          <div class="gallery-batch-bar__actions">
+            <el-button size="small" type="primary" round @click="batchDownload">
               <el-icon><Download /></el-icon>
               {{ $t('gallery.batchDownload') }}
             </el-button>
-            <el-button size="small" type="danger" @click="batchDelete">
+            <el-button size="small" type="danger" round plain @click="batchDelete">
               <el-icon><Delete /></el-icon>
               {{ $t('gallery.batchDelete') }}
             </el-button>
-            <el-button size="small" text @click="selectedItems = []">
-              <el-icon><Close /></el-icon>
-            </el-button>
           </div>
+          <el-button
+            class="gallery-batch-bar__dismiss"
+            circle
+            text
+            :aria-label="$t('common.close')"
+            @click="selectedItems = []"
+          >
+            <el-icon><Close /></el-icon>
+          </el-button>
         </div>
       </div>
     </teleport>
@@ -416,7 +436,18 @@
           </el-button>
 
           <div class="lightbox-media-wrapper">
-            <img v-if="selectedItem && isImage(selectedItem)" :src="getImageUrl(selectedItem)" :alt="selectedItem.name" />
+            <img
+              v-if="selectedItem && isImage(selectedItem) && !galleryImageLoadFailed[selectedItem.path]"
+              :src="getImageUrl(selectedItem)"
+              :alt="selectedItem.name"
+              @error="markGalleryImageFailed(selectedItem.path)"
+            />
+            <div
+              v-else-if="selectedItem && isImage(selectedItem)"
+              class="gallery-lightbox-image-fallback"
+            >
+              <el-icon :size="64"><Picture /></el-icon>
+            </div>
             <audio
               v-else-if="selectedItem && isAudio(selectedItem)"
               :key="selectedItem.path"
@@ -424,7 +455,7 @@
               controls
               autoplay
               playsinline
-              style="width: min(92vw, 520px); max-height: 40vh;"
+              class="gallery-lightbox-audio"
             ></audio>
             <video
               v-else-if="selectedItem"
@@ -437,7 +468,7 @@
 
           <div class="lightbox-info" v-if="selectedItem">
             <span>{{ selectedItem.name }}</span>
-            <span style="color: var(--text-muted);">
+            <span class="gallery-lightbox-muted">
               <template v-if="isAudio(selectedItem)">{{ formatVideoDuration(selectedItem) || '—' }}</template>
               <template v-else>{{ selectedItem.width }}×{{ selectedItem.height }}</template>
               · {{ selectedIndex + 1 }} / {{ flatItems.length }}
@@ -450,29 +481,30 @@
     <!-- Advanced filter drawer -->
     <el-drawer
       v-model="showAdvancedFilter"
+      class="gallery-filter-drawer"
       :title="$t('gallery.advancedFilter')"
       direction="rtl"
-      size="320px"
+      size="min(360px, 92vw)"
     >
-      <div style="display: flex; flex-direction: column; gap: 20px;">
+      <div class="gallery-drawer-stack">
         <div>
-          <div style="font-weight: 600; margin-bottom: 10px; font-size: 13px;">{{ $t('gallery.dateRange') }}</div>
+          <div class="gallery-drawer-section-title">{{ $t('gallery.dateRange') }}</div>
           <el-date-picker
             v-model="filterDateRange"
             type="daterange"
             size="small"
-            style="width: 100%;"
+            class="studio-ep-w-full"
             :start-placeholder="$t('gallery.startDate')"
             :end-placeholder="$t('gallery.endDate')"
           />
         </div>
         <div>
-          <div style="font-weight: 600; margin-bottom: 10px; font-size: 13px;">{{ $t('gallery.minResolution') }}</div>
+          <div class="gallery-drawer-section-title">{{ $t('gallery.minResolution') }}</div>
           <el-slider v-model="filterMinWidth" :min="256" :max="2048" :step="64" show-stops />
-          <div style="text-align: center; font-size: 12px; color: var(--text-muted);">≥ {{ filterMinWidth }}px</div>
+          <div class="gallery-drawer-hint">≥ {{ filterMinWidth }}px</div>
         </div>
         <div>
-          <div style="font-weight: 600; margin-bottom: 10px; font-size: 13px;">{{ $t('gallery.actionType') }}</div>
+          <div class="gallery-drawer-section-title">{{ $t('gallery.actionType') }}</div>
           <el-checkbox-group v-model="filterActions">
             <el-checkbox label="create">{{ $t('gallery.actionCreate') }}</el-checkbox>
             <el-checkbox label="rewrite">{{ $t('gallery.actionRewrite') }}</el-checkbox>
@@ -481,7 +513,7 @@
         </div>
       </div>
       <template #footer>
-        <div style="display: flex; gap: 10px;">
+        <div class="gallery-drawer-footer">
           <el-button @click="resetAdvancedFilters" size="small">{{ $t('gallery.resetFilters') }}</el-button>
           <el-button type="primary" @click="applyAdvancedFilters" size="small">{{ $t('gallery.apply') }}</el-button>
         </div>
@@ -492,7 +524,7 @@
 
 <script setup lang="ts">
 // @ts-nocheck
-import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
+import { ref, computed, onMounted, watch, nextTick } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import {
@@ -503,7 +535,6 @@ import {
   Headset,
   VideoPlay,
   Picture,
-  ZoomIn,
   MoreFilled,
   Download,
   CopyDocument,
@@ -518,11 +549,14 @@ import { api } from '@/utils/api';
 import { $tt } from '@/utils/i18n';
 import { DQ_STORAGE } from '@/utils/storage';
 import type { GalleryItem } from '@/types';
+import { useDocumentEvent } from '@/composables/useDocumentEvent';
 
 const { t: $t } = useI18n();
 
 // Data
 const items = ref<GalleryItem[]>([]);
+/** 图片加载失败时用占位 UI，避免脚本写内联 style */
+const galleryImageLoadFailed = ref<Record<string, boolean>>({});
 const loading = ref(false);
 const hasMore = ref(true);
 const offset = ref(0);
@@ -685,6 +719,7 @@ const loadImages = async (reset = false) => {
   if (loading.value) return;
   if (reset) {
     items.value = [];
+    galleryImageLoadFailed.value = {};
     offset.value = 0;
     hasMore.value = true;
     selectedItems.value = [];
@@ -937,21 +972,13 @@ const handleVideoLeave = (e: Event) => {
   video.currentTime = 0;
 };
 
-const handleImageError = (e: Event) => {
-  const img = e.target as HTMLImageElement;
-  img.style.display = 'none';
-  const parent = img.parentElement;
-  if (parent) {
-    parent.style.display = 'flex';
-    parent.style.alignItems = 'center';
-    parent.style.justifyContent = 'center';
-    const icon = document.createElement('span');
-    icon.innerHTML = '❓';
-    icon.style.fontSize = '24px';
-    icon.style.opacity = '0.5';
-    parent.appendChild(icon);
-  }
-};
+function markGalleryImageFailed(path: string) {
+  if (!path) return;
+  galleryImageLoadFailed.value = {
+    ...galleryImageLoadFailed.value,
+    [path]: true,
+  };
+}
 
 // Formatting
 const formatDate = (dateStr: string) => {
@@ -1050,12 +1077,9 @@ const onKeydown = (e: KeyboardEvent) => {
   }
 };
 
+useDocumentEvent('keydown', onKeydown);
+
 onMounted(() => {
   loadImages(true);
-  window.addEventListener('keydown', onKeydown);
-});
-
-onUnmounted(() => {
-  window.removeEventListener('keydown', onKeydown);
 });
 </script>

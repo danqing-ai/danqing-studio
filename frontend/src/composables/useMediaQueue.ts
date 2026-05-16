@@ -1,5 +1,5 @@
 /**
- * Media queue composable — replaces window.DQMediaQueue
+ * Media queue composable — normalizes task rows and filters by media kind prefix.
  */
 import type { Task } from '@/types';
 import type { LiveTaskProgress } from '@/stores/tasks';

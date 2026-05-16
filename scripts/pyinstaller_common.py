@@ -1,106 +1,191 @@
 """
 Shared PyInstaller metadata for DanQing Studio (desktop sidecar + legacy bundle).
+
+Profiles:
+  mlx  — Apple Silicon / MLX inference only: no ``*_cuda`` modules, no PyTorch/CUDA stack.
+  full — include CUDA hidden imports (Linux/Windows CUDA builds).
 """
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
+from out_paths import FRONTEND_DIST, PROJECT_ROOT
 
-def get_hidden_imports() -> list[str]:
-    """Collect hidden imports for PyInstaller."""
-    return [
-        "uvicorn.protocols.http.auto",
-        "uvicorn.protocols.websockets.auto",
-        "uvicorn.loops.auto",
-        "uvicorn.logging",
-        "fastapi.middleware.cors",
-        "fastapi.staticfiles",
-        "backend.api.routes.adapters",
-        "backend.api.routes.assets",
-        "backend.api.routes.audios",
-        "backend.api.routes.download",
-        "backend.api.routes.gallery",
-        "backend.api.routes.images",
-        "backend.api.routes.models",
-        "backend.api.routes.presets",
-        "backend.api.routes.queue",
-        "backend.api.routes.registry",
-        "backend.api.routes.settings",
-        "backend.api.routes.system",
-        "backend.api.routes.tasks",
-        "backend.api.routes.videos",
-        "backend.core.container",
-        "backend.core.i18n",
-        "backend.core.interfaces",
-        "backend.core.contracts",
-        "backend.core.asset_interfaces",
-        "backend.core.media_interfaces",
-        "backend.core.model_registry",
-        "backend.core.registry_format",
-        "backend.core.task_kinds",
-        "backend.engine.engine_registry",
-        "backend.engine.base",
-        "backend.engine.mlx_runtime",
-        "backend.engine.model_cache",
-        "backend.engine.danqing_image_engine",
-        "backend.engine.danqing_video_engine",
-        "backend.engine.danqing_audio_engine",
-        "backend.engine.pipelines",
-        "backend.engine.pipelines.image_pipeline",
-        "backend.engine.pipelines.image_upscale_pipeline",
-        "backend.engine.pipelines.video_pipeline",
-        "backend.engine.pipelines.video_upscale_pipeline",
-        "backend.engine.common.safetensors_affine_quant",
-        "backend.engine._transformer_registry",
-        "backend.engine.families",
-        "backend.engine.families.fibo",
-        "backend.engine.families.flux1",
-        "backend.engine.families.flux2",
-        "backend.engine.families.qwen",
-        "backend.engine.families.z_image",
-        "backend.engine.families.z_image.text_encoder_cuda",
-        "backend.engine.families.seedvr2",
-        "backend.engine.families.seedvr2.video_restore_mlx",
-        "backend.engine.families.ltx",
-        "backend.engine.families.wan",
-        "backend.engine.families.cogvideox",
-        "backend.engine.common.text_encoders.clip_cuda",
-        "backend.engine.common.text_encoders.t5_cuda",
-        "backend.engine.common.text_encoders.qwen25vl_cuda",
-        "backend.services.services",
-        "backend.services.download_service",
-        "backend.persistence.stores",
-        "backend.persistence.asset_store",
-        "backend.persistence.v3_task_store",
-        "backend.scheduler.task_scheduler",
-        "backend.utils.path_utils",
-        "backend.utils.video_sr_ffmpeg",
-        "PIL",
-        "PIL._imagingtk",
-        "PIL._tkinter_finder",
-        "psutil",
-        "aiohttp",
-        "python_multipart",
-        "pydantic",
-        "huggingface_hub",
-        "safetensors",
-        "tqdm",
-        "requests",
-        "mlx",
-        "mlx.core",
-        "mlx._reprlib_fix",
-    ]
+# Hidden imports that pull PyTorch / CUDA-only modules (full profile only).
+_CUDA_HIDDEN_IMPORTS: tuple[str, ...] = (
+    "backend.engine.families.z_image.text_encoder_cuda",
+    "backend.engine.common.text_encoders.clip_cuda",
+    "backend.engine.common.text_encoders.t5_cuda",
+    "backend.engine.common.text_encoders.qwen25vl_cuda",
+)
+
+# Runtime modules that must not appear in mlx profile bundles.
+_MLX_EXCLUDED_MODULES: tuple[str, ...] = (
+    # PyTorch / CUDA GPU stack
+    "torch",
+    "torchvision",
+    "torchaudio",
+    "torchgen",
+    "functorch",
+    "triton",
+    # DanQing CUDA backends
+    "backend.engine.runtime.cuda",
+    "backend.engine.families.z_image.text_encoder_cuda",
+    "backend.engine.common.text_encoders.t5_cuda",
+    "backend.engine.common.text_encoders.clip_cuda",
+    "backend.engine.common.text_encoders.qwen25vl_cuda",
+    "backend.engine.families.ace_step.transformer_cuda",
+    "backend.engine.families.ace_step.vae_cuda",
+    # Common venv bloat not used by MLX inference paths
+    "cv2",
+    "opencv_python",
+    "pyarrow",
+    "datasets",
+    "pandas",
+    "matplotlib",
+    "scipy",
+    "sklearn",
+    "accelerate",
+    "bitsandbytes",
+    "tensorboard",
+    "tensorboard_data_server",
+    "torch.utils.tensorboard",
+)
+
+_MLX_CORE_HIDDEN_IMPORTS: tuple[str, ...] = (
+    "uvicorn.protocols.http.auto",
+    "uvicorn.protocols.websockets.auto",
+    "uvicorn.loops.auto",
+    "uvicorn.logging",
+    "fastapi.middleware.cors",
+    "fastapi.staticfiles",
+    "backend.api.routes.adapters",
+    "backend.api.routes.assets",
+    "backend.api.routes.audios",
+    "backend.api.routes.download",
+    "backend.api.routes.gallery",
+    "backend.api.routes.images",
+    "backend.api.routes.models",
+    "backend.api.routes.presets",
+    "backend.api.routes.queue",
+    "backend.api.routes.registry",
+    "backend.api.routes.settings",
+    "backend.api.routes.system",
+    "backend.api.routes.tasks",
+    "backend.api.routes.videos",
+    "backend.core.container",
+    "backend.core.i18n",
+    "backend.core.interfaces",
+    "backend.core.contracts",
+    "backend.core.asset_interfaces",
+    "backend.core.media_interfaces",
+    "backend.core.model_registry",
+    "backend.core.registry_format",
+    "backend.core.task_kinds",
+    "backend.engine.engine_registry",
+    "backend.engine.danqing_image_engine",
+    "backend.engine.danqing_video_engine",
+    "backend.engine.danqing_audio_engine",
+    "backend.engine.pipelines",
+    "backend.engine.pipelines.image_pipeline",
+    "backend.engine.pipelines.image_upscale_pipeline",
+    "backend.engine.pipelines.video_pipeline",
+    "backend.engine.pipelines.video_upscale_pipeline",
+    "backend.engine.common.safetensors_affine_quant",
+    "backend.engine._transformer_registry",
+    "backend.engine.families",
+    "backend.engine.families.fibo",
+    "backend.engine.families.flux1",
+    "backend.engine.families.flux2",
+    "backend.engine.families.qwen",
+    "backend.engine.families.z_image",
+    "backend.engine.families.seedvr2",
+    "backend.engine.families.seedvr2.video_restore_mlx",
+    "backend.engine.families.ltx",
+    "backend.engine.families.wan",
+    "backend.engine.families.cogvideox",
+    "backend.services.services",
+    "backend.services.download_service",
+    "backend.persistence.stores",
+    "backend.persistence.asset_store",
+    "backend.persistence.v3_task_store",
+    "backend.scheduler.task_scheduler",
+    "backend.utils.path_utils",
+    "backend.utils.video_sr_ffmpeg",
+    "PIL",
+    "PIL._imagingtk",
+    "PIL._tkinter_finder",
+    "psutil",
+    "aiohttp",
+    "python_multipart",
+    "pydantic",
+    "huggingface_hub",
+    "safetensors",
+    "tqdm",
+    "requests",
+    "mlx",
+    "mlx.core",
+    "mlx._reprlib_fix",
+    "mlx_lm",
+)
 
 
-def get_data_files(project_root: Path) -> list[str]:
+def packaging_profile() -> str:
+    """``mlx`` (default on macOS) or ``full``."""
+    raw = os.environ.get("DANQING_PYINSTALLER_PROFILE", "").strip().lower()
+    if raw in ("mlx", "full"):
+        return raw
+    if sys.platform == "darwin":
+        return "mlx"
+    return "full"
+
+
+def get_hidden_imports(profile: str | None = None) -> list[str]:
+    profile = profile or packaging_profile()
+    imports = list(_MLX_CORE_HIDDEN_IMPORTS)
+    if profile == "full":
+        imports.extend(_CUDA_HIDDEN_IMPORTS)
+    return imports
+
+
+def get_exclude_modules(profile: str | None = None) -> list[str]:
+    profile = profile or packaging_profile()
+    if profile == "full":
+        return [
+            "tensorboard",
+            "tensorboard_data_server",
+            "torch.utils.tensorboard",
+        ]
+    return list(_MLX_EXCLUDED_MODULES)
+
+
+def get_data_files(project_root: Path | None = None, *, profile: str | None = None) -> list[str]:
+    profile = profile or packaging_profile()
+    _ = project_root or PROJECT_ROOT
     data: list[str] = []
     separator = ";" if sys.platform == "win32" else ":"
 
-    frontend_dir = project_root / "frontend"
-    if frontend_dir.exists():
-        data.append(f"{frontend_dir}{separator}frontend")
+    frontend_dist = FRONTEND_DIST
+    legacy_dist = PROJECT_ROOT / "frontend" / "dist"
+    if profile == "mlx":
+        if not frontend_dist.is_dir() or not any(frontend_dist.iterdir()):
+            raise SystemExit(
+                "out/frontend/dist is missing or empty. Build the UI first:\n"
+                "  make frontend-build   # or: cd frontend && npm run build"
+            )
+        data.append(f"{frontend_dist}{separator}frontend/dist")
+    else:
+        if frontend_dist.is_dir() and any(frontend_dist.iterdir()):
+            data.append(f"{frontend_dist}{separator}frontend/dist")
+        elif legacy_dist.is_dir() and any(legacy_dist.iterdir()):
+            data.append(f"{legacy_dist}{separator}frontend/dist")
+        else:
+            frontend_dir = PROJECT_ROOT / "frontend"
+            if frontend_dir.exists():
+                data.append(f"{frontend_dir}{separator}frontend")
 
     config_dir = project_root / "config"
     if config_dir.exists():
@@ -163,26 +248,18 @@ def get_runtime_hooks(project_root: Path) -> list[str]:
     return [str(ensure_runtime_hook_file(project_root))]
 
 
-def get_exclude_modules() -> list[str]:
-    """Training / viz extras not required for inference; shrinks analysis noise."""
-    return [
-        "tensorboard",
-        "tensorboard_data_server",
-        "torch.utils.tensorboard",
-    ]
-
-
 def apply_pyinstaller_packaging_filters() -> None:
     """Only affects the PyInstaller parent process (not the frozen app)."""
     import logging
     import warnings
+
+    os.environ.setdefault("DANQING_PYINSTALLER_PROFILE", packaging_profile())
 
     warnings.filterwarnings(
         "ignore",
         category=DeprecationWarning,
         module=r"PyInstaller\.utils\.hooks",
     )
-    # torch.distributed.elastic: "Redirects are currently not supported in Windows or MacOs"
     for name in (
         "torch.distributed.elastic",
         "torch.distributed.elastic.multiprocessing",

@@ -1,39 +1,26 @@
 <!-- @ts-nocheck -->
 <template>
-  <div
-    class="models-page"
-    style="display: flex; gap: 20px; height: calc(100vh - 120px)"
-  >
+  <div class="models-page">
     <!-- Left sidebar: category navigation -->
-    <div class="download-sidebar" style="width: 220px; flex-shrink: 0">
-      <div
-        class="card"
-        style="height: 100%; display: flex; flex-direction: column"
-      >
-        <div class="card-title" style="font-size: 16px">
+    <div class="models-page__sidebar">
+      <el-card shadow="never" class="studio-ep-surface-card models-page__sidebar-card">
+        <div class="card-title">
           <el-icon><box /></el-icon>
           {{ $t('download.downloadCenter') }}
         </div>
-        <div
-          style="
-            font-size: 12px;
-            color: var(--text-muted);
-            margin: 6px 0 10px 0;
-            line-height: 1.4;
-          "
-        >
+        <div class="models-page__sidebar-intro">
           {{ $t('models.pageSubtitle') }}
         </div>
 
         <el-menu
+          class="dq-download-menu models-page__menu"
           :default-active="activeCategory"
-          style="border: none; flex: 1; background: transparent"
           @select="handleCategorySelect"
         >
           <el-menu-item index="all">
             <el-icon><grid /></el-icon>
             <span>{{ $t('download.allModels') }}</span>
-            <el-tag size="small" type="info" style="margin-left: auto">
+            <el-tag size="small" type="info" class="dq-menu-end-tag">
               {{ totalModelCount }}
             </el-tag>
           </el-menu-item>
@@ -82,7 +69,7 @@
               v-if="activeDownloadCount > 0"
               size="small"
               type="primary"
-              style="margin-left: auto"
+              class="dq-menu-end-tag"
             >
               {{ activeDownloadCount }}
             </el-tag>
@@ -120,18 +107,18 @@
               :percentage="getDiskPercent('loras')"
               :show-text="false"
               :stroke-width="4"
-              color="#67c23a"
+              color="var(--el-color-success)"
             />
           </div>
           <div class="disk-space-footer">
             {{ $t('download.free') }}: {{ diskSpace.models?.free_human }}
           </div>
         </div>
-      </div>
+      </el-card>
     </div>
 
     <!-- Right content area -->
-    <div style="flex: 1; overflow-y: auto">
+    <div class="models-page__main">
       <!-- Model grid (category browsing) -->
       <div
         v-if="
@@ -147,85 +134,30 @@
           ].includes(activeCategory)
         "
       >
-        <!-- Quick-start workflow -->
-        <div
-          v-if="activeCategory === 'all' || activeCategory === 'image_models'"
-          style="
-            background: var(--bg-card);
-            border: 1px solid var(--border-color);
-            padding: 16px 20px;
-            border-radius: 12px;
-            margin-bottom: 20px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-          "
-        >
-          <div style="display: flex; align-items: center; gap: 12px">
-            <div
-              style="
-                width: 40px;
-                height: 40px;
-                border-radius: 10px;
-                background: rgba(233, 69, 96, 0.1);
-                border: 1px solid rgba(233, 69, 96, 0.2);
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                flex-shrink: 0;
-                color: var(--primary);
-                font-size: 18px;
-                font-weight: 700;
-              "
-            >
-              <el-icon><promotion /></el-icon>
-            </div>
-            <div>
-              <div
-                style="
-                  font-weight: 600;
-                  font-size: 14px;
-                  margin-bottom: 2px;
-                  color: var(--text-primary);
-                "
-              >
-                {{ $t('download.quickStart') }}
-              </div>
-              <div style="font-size: 12px; color: var(--text-muted)">
-                {{ $t('download.quickStartDesc') }}
-              </div>
-            </div>
-          </div>
-          <el-button
-            type="primary"
-            :loading="downloadingRecommended"
-            :disabled="downloadingRecommended"
-            @click="downloadRecommendedSet"
-          >
-            <el-icon><download /></el-icon>
-            {{ $t('download.oneClickInstall') }}
-          </el-button>
-        </div>
-
         <!-- Category title -->
-        <div class="page-header">
-          <h2 class="page-title">{{ categoryTitle }}</h2>
-          <div class="page-actions">
+        <div class="page-header models-page__page-header">
+          <h2 class="page-title models-page__category-title">
+            <el-icon v-if="categoryPageIcon" class="models-page__title-icon" aria-hidden="true">
+              <component :is="categoryPageIcon" />
+            </el-icon>
+            <span>{{ categoryTitleText }}</span>
+          </h2>
+          <div class="page-actions models-page__toolbar">
             <el-button
               v-if="
                 activeCategory !== 'loras' && activeCategory !== 'installed'
               "
-              size="small"
+              class="models-toolbar-btn models-page__import-btn"
+              plain
               @click="showImportDialog"
             >
-              <el-icon><upload /></el-icon>
-              {{ $t('download.importLocal') }}
+              <el-icon class="models-toolbar-btn__icon"><upload /></el-icon>
+              <span class="models-toolbar-btn__label">{{ $t('download.importLocal') }}</span>
             </el-button>
             <el-input
               v-model="filterQuery"
               :placeholder="$t('download.searchModel')"
-              style="width: 220px"
-              size="small"
+              class="models-page__search-input"
               clearable
             >
               <template #prefix>
@@ -233,12 +165,13 @@
               </template>
             </el-input>
             <el-button
-              size="small"
-              circle
+              class="models-toolbar-btn models-page__refresh-btn"
+              plain
               :loading="refreshing"
               @click="refreshStatus"
             >
-              <el-icon><refresh /></el-icon>
+              <el-icon class="models-toolbar-btn__icon"><refresh /></el-icon>
+              <span class="models-toolbar-btn__label">{{ $t('gallery.refresh') }}</span>
             </el-button>
           </div>
         </div>
@@ -263,7 +196,7 @@
               />
             </el-form-item>
             <el-form-item :label="$t('download.modelType')">
-              <el-select v-model="importModelType" style="width: 100%">
+              <el-select v-model="importModelType" class="models-import-model-type">
                 <el-option
                   :label="$t('download.baseModel')"
                   value="base"
@@ -294,7 +227,7 @@
         </el-dialog>
 
         <!-- Model card grid -->
-        <el-row :gutter="16" class="model-grid">
+        <el-row :gutter="16" class="model-grid model-grid--fluid">
           <el-col
             v-for="model in filteredModels"
             :key="model.id"
@@ -302,10 +235,10 @@
             :sm="12"
             :md="8"
             :lg="6"
-            style="margin-bottom: 16px"
+            :xl="4"
+            class="models-page__col-mb"
           >
             <el-card
-              :body-style="{ padding: '0' }"
               class="model-card"
               :class="{ 'model-ready': model.ready }"
             >
@@ -381,7 +314,7 @@
                   <el-tag
                     v-else-if="model.source === 'modelscope'"
                     size="small"
-                    type="danger"
+                    type="info"
                     effect="plain"
                   >
                     ModelScope
@@ -404,40 +337,27 @@
                   </el-tag>
                 </div>
 
-                <!-- Version list -->
-                <div v-if="model.versions" style="margin-bottom: 12px">
-                  <div
-                    v-for="(ver, verKey) in model.versions"
-                    :key="verKey"
-                    style="
-                      display: flex;
-                      align-items: center;
-                      justify-content: space-between;
-                      padding: 6px 0;
-                      border-bottom: 1px solid var(--border-color);
-                    "
+                <ul
+                  v-if="model.versions"
+                  class="model-version-list"
+                  role="list"
+                >
+                  <li
+                    v-for="row in modelVersionTableRows(model)"
+                    :key="row.verKey"
+                    class="model-version-row"
+                    :class="{
+                      'is-ready': row.vstatus === 'ready',
+                      'is-pending': row.vstatus !== 'ready',
+                    }"
+                    role="listitem"
                   >
-                    <div style="flex: 1; min-width: 0">
-                      <div
-                        style="
-                          display: flex;
-                          align-items: center;
-                          gap: 6px;
-                        "
-                      >
-                        <span
-                          style="
-                            font-size: 13px;
-                            color: var(--text-primary);
-                          "
-                        >
-                          {{ ver.name }}
-                        </span>
-                        <el-tag size="small" type="info" effect="plain">
-                          {{ ver.size }}
-                        </el-tag>
+                    <div class="model-version-row__info">
+                      <div class="model-version-cell-row">
+                        <span class="model-version-name">{{ row.ver.name }}</span>
+                        <el-tag v-if="row.ver.size" size="small" type="info" effect="plain">{{ row.ver.size }}</el-tag>
                         <el-tag
-                          v-if="ver.source_type === 'derived'"
+                          v-if="row.ver.source_type === 'derived'"
                           size="small"
                           type="warning"
                           effect="plain"
@@ -445,143 +365,141 @@
                           {{ $t('download.derivedTag') }}
                         </el-tag>
                         <el-tag
-                          v-else-if="ver.source_type === 'prequantized'"
+                          v-else-if="row.ver.source_type === 'prequantized'"
                           size="small"
-                          type="primary"
+                          type="info"
                           effect="plain"
                         >
                           {{ $t('download.prequantized') }}
                         </el-tag>
+                        <el-tag
+                          v-if="row.vstatus === 'ready'"
+                          size="small"
+                          type="success"
+                          effect="plain"
+                        >
+                          {{ $t('studio.ready') }}
+                        </el-tag>
                       </div>
                       <div
-                        v-if="ver.source_type === 'derived'"
-                        style="
-                          font-size: 11px;
-                          color: var(--text-muted);
-                          margin-top: 2px;
-                        "
+                        v-if="row.ver.source_type === 'derived'"
+                        class="model-version-derived"
                       >
                         {{
                           $t('download.basedOn', {
                             name:
-                              model.versions[ver.from_version]?.name ||
-                              ver.from_version,
+                              row.model.versions[row.ver.from_version]?.name ||
+                              row.ver.from_version,
                           })
                         }}
                       </div>
                     </div>
-                    <div
-                      style="
-                        display: flex;
-                        gap: 6px;
-                        flex-shrink: 0;
-                        flex-wrap: wrap;
-                        justify-content: flex-end;
-                      "
-                    >
-                      <!-- Show different buttons based on version status -->
-                      <template v-if="getVersionStatus(model.id, verKey) === 'ready'">
-                        <el-button
-                          type="warning"
-                          size="small"
-                          @click="downloadVersion(model, verKey)"
-                        >
-                          <el-icon><download /></el-icon>
-                          {{ $t('download.forceDownload') }}
-                        </el-button>
-                        <el-button
-                          type="danger"
-                          size="small"
-                          @click="deleteVersion(model, verKey)"
-                        >
-                          <el-icon><delete /></el-icon>
-                        </el-button>
-                      </template>
-                      <template
-                        v-else-if="
-                          getVersionStatus(model.id, verKey) === 'parent_missing'
-                        "
-                      >
-                        <el-tooltip
-                          v-if="!canDownload(model)"
-                          :content="getDependencyHint(model)"
-                          placement="top"
-                        >
-                          <span>
-                            <el-button type="primary" size="small" disabled>
-                              <el-icon><download /></el-icon>
-                              {{ $t('download.downloadVersion') }}
-                            </el-button>
-                          </span>
-                        </el-tooltip>
-                        <el-button
-                          v-else
-                          type="primary"
-                          size="small"
-                          :loading="downloadingModels[model.id + '-' + verKey]"
-                          @click="
-                            downloadVersion(model, ver.from_version, {
-                              uiLoadingKey: model.id + '-' + verKey,
-                            })
-                          "
-                        >
-                          <el-icon><download /></el-icon>
-                          {{ $t('download.downloadVersion') }}
-                        </el-button>
-                      </template>
-                      <template
-                        v-else-if="
-                          getVersionStatus(model.id, verKey) === 'quantize'
-                        "
-                      >
-                        <el-tooltip
-                          v-if="!canDownload(model)"
-                          :content="getDependencyHint(model)"
-                          placement="top"
-                        >
-                          <span>
-                            <el-button type="primary" size="small" disabled>
-                              {{ $t('download.quantizeVersion') }}
-                            </el-button>
-                          </span>
-                        </el-tooltip>
-                        <el-button
-                          v-else
-                          type="primary"
-                          size="small"
-                          :loading="downloadingModels[model.id + '-' + verKey]"
-                          @click="quantizeVersion(model, verKey)"
-                        >
-                          {{ $t('download.quantizeVersion') }}
-                        </el-button>
-                      </template>
-                      <template v-else>
-                        <el-tooltip
-                          v-if="!canDownload(model)"
-                          :content="getDependencyHint(model)"
-                          placement="top"
-                        >
-                          <span>
-                            <el-button type="primary" size="small" disabled>
-                              <el-icon><download /></el-icon>
-                              {{ $t('download.downloadVersion') }}
-                            </el-button>
-                          </span>
-                        </el-tooltip>
-                        <el-button
-                          v-else
-                          type="primary"
-                          size="small"
-                          :loading="downloadingModels[model.id + '-' + verKey]"
-                          @click="downloadVersion(model, verKey)"
-                        >
-                          <el-icon><download /></el-icon>
-                          {{ $t('download.downloadVersion') }}
-                        </el-button>
-                      </template>
+                    <div class="model-version-row__actions">
+                      <el-space wrap :size="6" justify="end">
+                        <template v-if="row.vstatus === 'ready'">
+                          <el-button
+                            size="small"
+                            plain
+                            class="model-ver-btn model-ver-btn--force"
+                            @click="downloadVersion(row.model, row.verKey)"
+                          >
+                            <el-icon class="model-ver-btn__icon"><download /></el-icon>
+                            <span class="model-ver-btn__label">{{ $t('download.forceDownload') }}</span>
+                          </el-button>
+                          <el-button
+                            size="small"
+                            plain
+                            class="model-ver-btn model-ver-btn--delete"
+                            @click="deleteVersion(row.model, row.verKey)"
+                          >
+                            <el-icon class="model-ver-btn__icon"><delete /></el-icon>
+                            <span class="model-ver-btn__label">{{ $t('common.delete') }}</span>
+                          </el-button>
+                        </template>
+                        <template v-else-if="row.vstatus === 'parent_missing'">
+                          <el-tooltip
+                            v-if="!canDownload(row.model)"
+                            :content="getDependencyHint(row.model)"
+                            placement="top"
+                          >
+                            <span>
+                              <el-button class="model-ver-btn model-ver-btn--download" size="small" plain disabled>
+                                <el-icon class="model-ver-btn__icon"><download /></el-icon>
+                                <span class="model-ver-btn__label">{{ $t('download.downloadVersion') }}</span>
+                              </el-button>
+                            </span>
+                          </el-tooltip>
+                          <el-button
+                            v-else
+                            class="model-ver-btn model-ver-btn--download"
+                            size="small"
+                            plain
+                            :loading="downloadingModels[row.model.id + '-' + row.verKey]"
+                            @click="
+                              downloadVersion(row.model, row.ver.from_version, {
+                                uiLoadingKey: row.model.id + '-' + row.verKey,
+                              })
+                            "
+                          >
+                            <el-icon class="model-ver-btn__icon"><download /></el-icon>
+                            <span class="model-ver-btn__label">{{ $t('download.downloadVersion') }}</span>
+                          </el-button>
+                        </template>
+                        <template v-else-if="row.vstatus === 'quantize'">
+                          <el-tooltip
+                            v-if="!canDownload(row.model)"
+                            :content="getDependencyHint(row.model)"
+                            placement="top"
+                          >
+                            <span>
+                              <el-button class="model-ver-btn model-ver-btn--quantize" size="small" plain disabled>
+                                <el-icon class="model-ver-btn__icon"><cpu /></el-icon>
+                                <span class="model-ver-btn__label">{{ $t('download.quantizeVersion') }}</span>
+                              </el-button>
+                            </span>
+                          </el-tooltip>
+                          <el-button
+                            v-else
+                            class="model-ver-btn model-ver-btn--quantize"
+                            size="small"
+                            plain
+                            :loading="downloadingModels[row.model.id + '-' + row.verKey]"
+                            @click="quantizeVersion(row.model, row.verKey)"
+                          >
+                            <el-icon class="model-ver-btn__icon"><cpu /></el-icon>
+                            <span class="model-ver-btn__label">{{ $t('download.quantizeVersion') }}</span>
+                          </el-button>
+                        </template>
+                        <template v-else>
+                          <el-tooltip
+                            v-if="!canDownload(row.model)"
+                            :content="getDependencyHint(row.model)"
+                            placement="top"
+                          >
+                            <span>
+                              <el-button class="model-ver-btn model-ver-btn--download" size="small" plain disabled>
+                                <el-icon class="model-ver-btn__icon"><download /></el-icon>
+                                <span class="model-ver-btn__label">{{ $t('download.downloadVersion') }}</span>
+                              </el-button>
+                            </span>
+                          </el-tooltip>
+                          <el-button
+                            v-else
+                            class="model-ver-btn model-ver-btn--download"
+                            size="small"
+                            plain
+                            :loading="downloadingModels[row.model.id + '-' + row.verKey]"
+                            @click="downloadVersion(row.model, row.verKey)"
+                          >
+                            <el-icon class="model-ver-btn__icon"><download /></el-icon>
+                            <span class="model-ver-btn__label">{{ $t('download.downloadVersion') }}</span>
+                          </el-button>
+                        </template>
+                      </el-space>
                     </div>
-                  </div>
-                </div>
+                  </li>
+                </ul>
+
               </div>
             </el-card>
           </el-col>
@@ -595,22 +513,17 @@
         <!-- LoRA search -->
         <div
           v-if="activeCategory === 'loras'"
-          style="
-            margin-top: 32px;
-            border-top: 1px solid var(--border-color);
-            padding-top: 24px;
-          "
+          class="models-lora-section"
         >
           <div class="page-header">
             <h2 class="page-title">{{ $t('download.civitaiSearch') }}</h2>
           </div>
 
-          <div class="card" style="margin-bottom: 16px">
-            <div style="display: flex; gap: 12px">
+          <el-card shadow="never" class="studio-ep-surface-card models-page__col-mb">
+            <div class="models-civit-search-row">
               <el-input
                 v-model="searchQuery"
                 :placeholder="$t('download.searchCivitai')"
-                style="flex: 1"
                 clearable
                 @keyup.enter="searchCivitai"
               >
@@ -618,21 +531,21 @@
                   <el-icon><search /></el-icon>
                 </template>
               </el-input>
-              <el-select v-model="searchType" style="width: 150px">
+              <el-select v-model="searchType" class="models-civit-search-type">
                 <el-option label="LoRA" value="LORA" />
                 <el-option label="Checkpoint" value="Checkpoint" />
                 <el-option :label="$t('download.all')" value="LORA,Checkpoint" />
               </el-select>
               <el-button
-                type="primary"
+                class="models-toolbar-btn models-toolbar-btn--primary"
                 :loading="searching"
                 @click="searchCivitai"
               >
-                <el-icon><search /></el-icon>
-                {{ $t('download.search') }}
+                <el-icon class="models-toolbar-btn__icon"><search /></el-icon>
+                <span class="models-toolbar-btn__label">{{ $t('download.search') }}</span>
               </el-button>
             </div>
-          </div>
+          </el-card>
 
           <el-row v-if="searchResults.length > 0" :gutter="16">
             <el-col
@@ -641,55 +554,42 @@
               :xs="24"
               :sm="12"
               :md="8"
-              style="margin-bottom: 16px"
+              class="models-page__col-mb"
             >
-              <el-card
-                :body-style="{ padding: '12px' }"
-                class="civitai-card"
-              >
-                <div style="display: flex; gap: 12px">
+              <el-card class="civitai-card">
+                <div class="models-civit-card-inner">
                   <div class="civitai-preview">
                     <img
-                      v-if="model.model_versions[0]?.images[0]?.url"
-                      :src="model.model_versions[0].images[0].url"
-                      @error="$event.target.style.display = 'none'"
+                      v-if="
+                        getCivitaiPreviewUrl(model) &&
+                        !civitaiPreviewLoadFailed[String(model.id)]
+                      "
+                      :src="getCivitaiPreviewUrl(model)"
+                      loading="lazy"
+                      :alt="model.name"
+                      @error="onCivitaiPreviewError(model.id)"
                     />
-                    <div v-else class="no-preview">
+                    <div
+                      v-else
+                      class="no-preview"
+                    >
                       <el-icon><picture-filled /></el-icon>
                     </div>
                   </div>
 
-                  <div style="flex: 1; min-width: 0">
+                  <div class="models-civit-side">
                     <div class="civitai-name">{{ model.name }}</div>
-                    <div
-                      style="
-                        font-size: 12px;
-                        color: var(--text-muted);
-                        margin-bottom: 4px;
-                      "
-                    >
+                    <div class="models-civit-meta">
                       {{ model.type }} |
                       {{ model.model_versions[0]?.base_model || 'Unknown' }}
                     </div>
-                    <div
-                      style="
-                        font-size: 12px;
-                        color: var(--text-muted);
-                        margin-bottom: 8px;
-                      "
-                    >
+                    <div class="models-civit-meta models-civit-meta--creator">
                       {{
                         model.creator?.username ||
                         $tt('download.unknownCreator')
                       }}
                     </div>
-                    <div
-                      style="
-                        display: flex;
-                        gap: 8px;
-                        align-items: center;
-                      "
-                    >
+                    <div class="models-civit-tags-row">
                       <el-tag
                         v-if="model.nsfw"
                         size="small"
@@ -705,13 +605,11 @@
                   </div>
                 </div>
 
-                <div
-                  style="margin-top: 12px; display: flex; gap: 8px"
-                >
+                <div class="models-civit-footer-actions">
                   <el-select
                     v-model="selectedVersions[model.id]"
                     size="small"
-                    style="flex: 1"
+                    class="models-civit-version-select"
                     :placeholder="$t('download.selectVersion')"
                   >
                     <el-option
@@ -722,12 +620,14 @@
                     />
                   </el-select>
                   <el-button
-                    type="primary"
+                    class="model-ver-btn model-ver-btn--download"
                     size="small"
+                    plain
                     :loading="downloadingLoras[model.id]"
                     @click="downloadCivitaiModel(model)"
                   >
-                    {{ $t('download.download_') }}
+                    <el-icon class="model-ver-btn__icon"><download /></el-icon>
+                    <span class="model-ver-btn__label">{{ $t('download.download_') }}</span>
                   </el-button>
                 </div>
               </el-card>
@@ -747,31 +647,24 @@
           <h2 class="page-title">{{ $t('download.installedLabel') }}</h2>
         </div>
 
-        <el-table :data="installedModels" style="width: 100%">
-          <el-table-column
-            prop="name"
-            :label="$t('download.nameCol')"
-          />
-          <el-table-column prop="type" :label="$t('download.typeCol')" width="120">
-            <template #default="scope">
-              <el-tag
-                size="small"
-                :type="getModelTypeTagType(scope.row.type)"
-              >
-                {{ scope.row.type || 'unknown' }}
+        <div v-if="installedModels.length" class="models-installed-list" role="list">
+          <article
+            v-for="(row, idx) in installedModels"
+            :key="row.path || row.name || idx"
+            class="models-installed-row"
+            role="listitem"
+          >
+            <div class="models-installed-row__main">
+              <span class="models-installed-row__name">{{ row.name }}</span>
+              <el-tag size="small" :type="getModelTypeTagType(row.type)">
+                {{ row.type || 'unknown' }}
               </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column
-            prop="size_human"
-            :label="$t('download.sizeCol')"
-            width="120"
-          />
-          <el-table-column
-            prop="path"
-            :label="$t('download.pathCol')"
-          />
-        </el-table>
+            </div>
+            <span class="models-installed-row__size">{{ row.size_human }}</span>
+            <span class="models-installed-row__path" :title="row.path">{{ row.path }}</span>
+          </article>
+        </div>
+        <el-empty v-else :description="$t('download.noModels')" />
       </div>
 
       <!-- Downloading -->
@@ -782,27 +675,20 @@
           </h2>
         </div>
 
-        <div v-if="activeDownloadCount === 0" class="card">
+        <el-card v-if="activeDownloadCount === 0" shadow="never" class="studio-ep-surface-card">
           <el-empty :description="$t('download.noTasks')" />
-        </div>
+        </el-card>
 
-        <div v-else class="card">
+        <el-card v-else shadow="never" class="studio-ep-surface-card">
           <div
             v-for="(item, taskId) in activeDownloads"
             :key="taskId"
-            style="margin-bottom: 16px"
+            class="models-download-task"
           >
-            <div
-              style="
-                display: flex;
-                justify-content: space-between;
-                margin-bottom: 8px;
-                align-items: center;
-              "
-            >
-              <span style="font-weight: 500">{{ item.name }}</span>
-              <div style="display: flex; align-items: center; gap: 12px">
-                <span style="color: var(--text-muted); font-size: 13px">
+            <div class="models-download-task-head">
+              <span class="models-download-task-name">{{ item.name }}</span>
+              <div class="models-download-task-meta">
+                <span class="models-download-progress-text">
                   <span v-if="item.total_size > 0">
                     {{ Math.round(item.progress * 100) }}%
                     <span v-if="item.speed">({{ item.speed }})</span>
@@ -815,27 +701,33 @@
                 </span>
                 <el-button
                   v-if="item.status === 'paused'"
-                  type="primary"
+                  class="model-ver-btn model-ver-btn--download"
                   size="small"
+                  plain
                   @click="resumeDownload(taskId)"
                 >
-                  {{ $t('download.resume') }}
+                  <el-icon class="model-ver-btn__icon"><video-play /></el-icon>
+                  <span class="model-ver-btn__label">{{ $t('download.resume') }}</span>
                 </el-button>
                 <el-button
                   v-else-if="item.status === 'running'"
+                  class="model-ver-btn model-ver-btn--neutral"
                   size="small"
+                  plain
                   @click="cancelDownload(taskId)"
                 >
-                  {{ $t('download.cancelDownload') }}
+                  <el-icon class="model-ver-btn__icon"><close /></el-icon>
+                  <span class="model-ver-btn__label">{{ $t('download.cancelDownload') }}</span>
                 </el-button>
                 <el-button
                   v-else-if="item.status === 'failed'"
-                  type="danger"
+                  class="model-ver-btn model-ver-btn--delete"
                   size="small"
+                  plain
                   @click="deleteDownload(taskId)"
                 >
-                  <el-icon><delete /></el-icon>
-                  {{ $t('download.deleteTask') }}
+                  <el-icon class="model-ver-btn__icon"><delete /></el-icon>
+                  <span class="model-ver-btn__label">{{ $t('download.deleteTask') }}</span>
                 </el-button>
               </div>
             </div>
@@ -849,12 +741,12 @@
             />
             <div
               v-if="item.error"
-              style="color: var(--error); font-size: 12px; margin-top: 4px"
+              class="models-download-error"
             >
               {{ item.error }}
             </div>
           </div>
-        </div>
+        </el-card>
       </div>
     </div>
   </div>
@@ -863,9 +755,12 @@
 <script setup lang="ts">
 // @ts-nocheck
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
+import { onBeforeRouteLeave } from 'vue-router';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { api } from '@/utils/api';
 import { $tt, $mn, $md } from '@/utils/i18n';
+import { useRegistryStore } from '@/stores/registry';
+import { DQ_STORAGE, getItem, setItem } from '@/utils/storage';
 
 /* ───── Types ───── */
 
@@ -930,9 +825,10 @@ const categories = ref<Record<string, any>>({});
 const filterQuery = ref('');
 const refreshing = ref(false);
 
+const registryStore = useRegistryStore();
+
 const downloadingModels = ref<Record<string, boolean>>({});
 const downloadingLoras = ref<Record<string, boolean>>({});
-const downloadingRecommended = ref(false);
 const activeDownloads = ref<Record<string, DownloadItem>>({});
 const selectedVersions = ref<Record<string, string>>({});
 const sseConnections = ref<Record<string, EventSource>>({});
@@ -942,6 +838,8 @@ const searchType = ref('LORA');
 const searching = ref(false);
 const searchResults = ref<any[]>([]);
 const hasSearched = ref(false);
+/** CivitAI 缩略图加载失败时切到占位，避免对 img 写内联 style */
+const civitaiPreviewLoadFailed = ref<Record<string, boolean>>({});
 
 const installedModels = ref<any[]>([]);
 const diskSpace = ref<DiskSpaceData | null>(null);
@@ -954,26 +852,31 @@ const importing = ref(false);
 
 /* ───── Helpers ───── */
 
-const categoryIcons: Record<string, string> = {
-  image_models: '🖼️',
-  video_models: '🎬',
-  music_models: '🎵',
-  controlnets: '🎯',
-  upscalers: '🔍',
-  tools: '⚙️',
-  loras: '🎭',
-};
+/** Same Element Plus icons as left sidebar `el-menu-item`. */
+const categoryPageIcon = computed(() => {
+  const icons: Record<string, string> = {
+    all: 'Grid',
+    image_models: 'PictureFilled',
+    video_models: 'VideoCamera',
+    music_models: 'Headset',
+    controlnets: 'Aim',
+    upscalers: 'ZoomIn',
+    tools: 'Tools',
+    loras: 'MagicStick',
+  };
+  return icons[activeCategory.value] ?? null;
+});
 
-const categoryTitle = computed(() => {
+const categoryTitleText = computed(() => {
   const titles: Record<string, string> = {
     all: $tt('download.allModels'),
-    image_models: categoryIcons.image_models + ' ' + $tt('download.imageModels'),
-    video_models: categoryIcons.video_models + ' ' + $tt('download.videoModels'),
-    music_models: categoryIcons.music_models + ' ' + $tt('download.audioModels'),
-    controlnets: categoryIcons.controlnets + ' ' + $tt('download.controlNet'),
-    upscalers: categoryIcons.upscalers + ' ' + $tt('download.upscalers'),
-    tools: categoryIcons.tools + ' ' + $tt('download.tools'),
-    loras: categoryIcons.loras + ' ' + $tt('download.loraModels'),
+    image_models: $tt('download.imageModels'),
+    video_models: $tt('download.videoModels'),
+    music_models: $tt('download.audioModels'),
+    controlnets: $tt('download.controlNet'),
+    upscalers: $tt('download.upscalers'),
+    tools: $tt('download.tools'),
+    loras: $tt('download.loraModels'),
   };
   return titles[activeCategory.value] || $tt('download.title');
 });
@@ -1033,24 +936,16 @@ const activeDownloadCount = computed(() => {
 
 async function loadModelRegistry() {
   try {
-    const RS = (window as any).RegistryStore;
-    const regPromise =
-      RS && RS.load
-        ? RS.load()
-        : api.settings.getModelRegistry().then((r: any) => ({
-            models: r.models,
-            categories: r.categories,
-          }));
     const [registryData, statusData, detailedStatusData] = await Promise.all([
-      regPromise,
+      registryStore.load(),
       api.settings.getModelsStatus(),
       api.settings.getModelsDetailedStatus(),
     ]);
-
-    modelRegistry.value = registryData.models || {};
+    const reg = registryData || { models: {}, categories: {} };
+    modelRegistry.value = reg.models || {};
     modelsStatus.value = statusData || {};
     modelsDetailedStatus.value = detailedStatusData || {};
-    categories.value = registryData.categories || {};
+    categories.value = reg.categories || {};
   } catch (e) {
     console.error('Failed to load model registry:', e);
   }
@@ -1184,6 +1079,17 @@ function getVersionStatus(modelId: string, versionKey: string): string {
   }
 
   return 'missing';
+}
+
+/** 供版本列表行展示（iOS 分组列表 + 操作区） */
+function modelVersionTableRows(model: ModelRow) {
+  if (!model.versions) return [];
+  return Object.entries(model.versions).map(([verKey, ver]) => ({
+    verKey,
+    ver: ver as ModelVersion,
+    model,
+    vstatus: getVersionStatus(model.id, verKey),
+  }));
 }
 
 /* ───── Download / Quantize / Delete ───── */
@@ -1409,33 +1315,6 @@ function connectConversionSSE(
 
 /* ───── Batch / Cancel / Resume ───── */
 
-async function downloadRecommendedSet() {
-  if (downloadingRecommended.value) return;
-  downloadingRecommended.value = true;
-
-  try {
-    const modelsToDownload = ['flux1-schnell'];
-
-    ElMessage.info($tt('download.batchDownloadStart'));
-
-    const data = (await api.models.installBatch(modelsToDownload)) as any;
-
-    for (const result of data.results as any[]) {
-      if (result.status === 'started') {
-        const modelName = getModelName(result.model_name);
-        connectProgressSSE(result.task_id, modelName);
-      } else if (result.status === 'skipped') {
-        ElMessage.warning(`${result.model_name}: ${result.reason}`);
-      }
-    }
-  } catch (e: any) {
-    console.error('Batch download failed:', e);
-    ElMessage.error($tt('download.batchDownloadFailed', { msg: e.message }));
-  } finally {
-    downloadingRecommended.value = false;
-  }
-}
-
 async function cancelDownload(taskId: string) {
   const item = activeDownloads.value[taskId];
   if (item && item.kind === 'quantize') {
@@ -1486,10 +1365,23 @@ async function deleteDownload(taskId: string) {
 
 /* ───── CivitAI ───── */
 
+function getCivitaiPreviewUrl(model: any): string {
+  return model?.model_versions?.[0]?.images?.[0]?.url || '';
+}
+
+function onCivitaiPreviewError(modelId: string | number) {
+  const key = String(modelId);
+  civitaiPreviewLoadFailed.value = {
+    ...civitaiPreviewLoadFailed.value,
+    [key]: true,
+  };
+}
+
 async function searchCivitai() {
   if (searching.value) return;
   searching.value = true;
   hasSearched.value = true;
+  civitaiPreviewLoadFailed.value = {};
 
   try {
     const data = await api.download.civitaiSearch({
@@ -1566,21 +1458,21 @@ async function importLocalModel() {
 
   importing.value = true;
   try {
-    const SK = (window as any).DQ_STORAGE || {};
-    const importedModels = JSON.parse(
-      (SK.IMPORTED_MODELS && localStorage.getItem(SK.IMPORTED_MODELS)) || '[]'
-    );
+    let importedModels: unknown[] = [];
+    try {
+      const raw = getItem(DQ_STORAGE.IMPORTED_MODELS);
+      importedModels = raw ? JSON.parse(raw) : [];
+      if (!Array.isArray(importedModels)) importedModels = [];
+    } catch {
+      importedModels = [];
+    }
     importedModels.push({
       name: importModelName.value,
       path: importModelPath.value,
       type: importModelType.value,
       importedAt: new Date().toISOString(),
     });
-    if (SK.IMPORTED_MODELS)
-      localStorage.setItem(
-        SK.IMPORTED_MODELS,
-        JSON.stringify(importedModels)
-      );
+    setItem(DQ_STORAGE.IMPORTED_MODELS, JSON.stringify(importedModels));
 
     ElMessage.success(
       $tt('download.importSuccess', { name: importModelName.value })
@@ -1638,6 +1530,10 @@ function closeAllSSE() {
   sseConnections.value = {};
 }
 
+onBeforeRouteLeave(() => {
+  closeAllSSE();
+});
+
 /* ───── Lifecycle ───── */
 
 onMounted(() => {
@@ -1645,11 +1541,9 @@ onMounted(() => {
   loadInstalled();
   loadDiskSpace();
   loadActiveDownloads();
-  window.addEventListener('beforeunload', closeAllSSE);
 });
 
 onUnmounted(() => {
   closeAllSSE();
-  window.removeEventListener('beforeunload', closeAllSSE);
 });
 </script>

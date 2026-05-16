@@ -10,34 +10,50 @@ from pathlib import Path
 from typing import Optional
 
 from backend.core.interfaces import IPathResolver
+from backend.utils.workspace import (
+    ensure_workspace_layout,
+    resolve_workspace_root,
+    seed_workspace_from_bootstrap,
+)
 
 
 class PathResolver(IPathResolver):
     """路径解析器实现"""
     
     def __init__(self, project_root: Optional[Path] = None):
-        if project_root is None:
-            if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
-                # PyInstaller 打包后
-                exe_dir = Path(sys.executable).parent.resolve()
-                # macOS .app bundle: 可执行文件在 Contents/MacOS/，数据在 Contents/Resources/
-                if sys.platform == "darwin" and exe_dir.name == "MacOS" and (exe_dir.parent / "Resources").exists():
-                    self._root = exe_dir.parent / "Resources"
-                else:
-                    self._root = exe_dir
+        bundle_root: Path | None = None
+        if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+            bundle_root = Path(sys._MEIPASS).resolve()
+            exe_dir = Path(sys.executable).parent.resolve()
+            if project_root is not None:
+                bootstrap = Path(project_root).resolve()
             else:
-                # 开发环境：从当前文件向上回溯到项目根目录
-                self._root = Path(__file__).parent.parent.parent.parent.resolve()
+                raw_ws = os.environ.get("DANQING_USER_DATA_DIR", "").strip()
+                if raw_ws:
+                    bootstrap = Path(raw_ws).expanduser().resolve()
+                elif (
+                    sys.platform == "darwin"
+                    and exe_dir.name == "MacOS"
+                    and (exe_dir.parent / "Resources").exists()
+                ):
+                    bootstrap = exe_dir.parent / "Resources"
+                else:
+                    bootstrap = exe_dir
+        elif project_root is None:
+            bootstrap = Path(__file__).parent.parent.parent.parent.resolve()
         else:
-            self._root = project_root
-        
-        # 确保目录存在
-        self.get_models_dir().mkdir(parents=True, exist_ok=True)
-        self.get_loras_dir().mkdir(parents=True, exist_ok=True)
-        self.get_outputs_dir().mkdir(parents=True, exist_ok=True)
-        (self._root / "config").mkdir(parents=True, exist_ok=True)
-        (self._root / "db").mkdir(parents=True, exist_ok=True)
+            bootstrap = Path(project_root).resolve()
+
+        self._bundle_root = bundle_root
+        self._bootstrap = bootstrap
+        self._root = resolve_workspace_root(self._bootstrap)
+        ensure_workspace_layout(self._root)
+        if bundle_root is not None:
+            seed_workspace_from_bootstrap(bundle_root, self._root)
     
+    def get_bootstrap_root(self) -> Path:
+        return self._bootstrap
+
     def get_project_root(self) -> Path:
         return self._root
     

@@ -1,7 +1,7 @@
 <template>
-  <div style="display: flex; align-items: center; justify-content: space-between; width: 100%; height: 60px;">
+  <div class="dq-top-nav-bar">
     <div class="header-brand">
-      <el-icon size="28" color="#e94560"><magic-stick /></el-icon>
+      <el-icon class="dq-top-nav-brand-icon" :size="28"><magic-stick /></el-icon>
       <span class="brand-title">DanQing Studio</span>
       <span class="brand-subtitle">v4</span>
     </div>
@@ -12,9 +12,6 @@
       mode="horizontal"
       class="nav-menu"
       @select="onNavSelect"
-      background-color="transparent"
-      text-color="#a0a3bd"
-      active-text-color="#e94560"
     >
       <el-menu-item index="image_create">
         <el-icon><brush /></el-icon>
@@ -44,9 +41,9 @@
 
     <div class="header-actions">
       <el-badge :value="queueCount" :hidden="queueCount === 0" class="queue-badge">
-        <el-button @click="openQueue" :title="$tt('studio.taskQueue')">
+        <el-button class="dq-top-nav-queue-btn" @click="openQueue" :title="$tt('studio.taskQueue')">
           <el-icon><document-copy /></el-icon>
-          <span>{{ $tt('studio.taskQueue') }}</span>
+          <span class="dq-top-nav-queue-label">{{ $tt('studio.taskQueue') }}</span>
         </el-button>
       </el-badge>
     </div>

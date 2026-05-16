@@ -21,15 +21,14 @@
     direction="rtl"
     size="420px"
   >
-    <div
+    <el-empty
       v-if="globalTaskQueue.running.length === 0 && globalTaskQueue.queued.length === 0"
-      style="text-align: center; padding: 40px; color: var(--text-muted);"
-    >
-      {{ $tt('studio.queueEmpty') }}
-    </div>
+      class="dq-task-queue-empty"
+      :description="$tt('studio.queueEmpty')"
+    />
     <div v-else>
-      <div v-if="globalTaskQueue.running.length > 0" style="margin-bottom: 20px;">
-        <div style="font-weight: 600; margin-bottom: 12px; color: var(--primary-color);">
+      <div v-if="globalTaskQueue.running.length > 0" class="dq-task-queue-section">
+        <div class="dq-task-queue-heading dq-task-queue-heading--primary">
           {{ $tt('studio.running') }}
         </div>
         <div
@@ -37,12 +36,12 @@
           :key="task.id"
           class="queue-dialog-item running"
         >
-          <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
-            <div style="flex: 1; overflow: hidden; min-width: 0;">
-              <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 4px;">
+          <div class="dq-task-queue-item-head">
+            <div class="dq-task-queue-item-main">
+              <div class="dq-task-queue-kind">
                 {{ taskKindLabel(task.kind) }}
               </div>
-              <div style="font-size: 13px; color: var(--text-muted); margin-bottom: 4px;">
+              <div class="dq-task-queue-model">
                 {{ task.params?.model || $tt('queue.unspecifiedModel') }}
               </div>
               <div class="dq-queue-prompt-line">{{ queueTruncate(task.params?.prompt || '', 40) }}</div>
@@ -51,8 +50,8 @@
               size="small"
               circle
               type="danger"
+              class="dq-task-queue-cancel-btn"
               @click="cancelGlobalTask(task.id)"
-              style="margin-left: 8px; flex-shrink: 0;"
               :title="$tt('studio.cancelTask')"
             >
               <el-icon><delete /></el-icon>
@@ -65,7 +64,7 @@
           />
           <div
             v-if="(task.total || 0) > 0"
-            style="font-size: 11px; color: var(--text-muted); margin-top: 4px; text-align: right;"
+            class="dq-task-queue-progress-hint"
           >
             <template v-if="String(task.kind || '').startsWith('image.')">
               {{ $tt('studio.queueDenoiseProgress', { current: task.step != null ? task.step : 0, total: task.total || 0 }) }}
@@ -76,7 +75,7 @@
           </div>
           <div
             v-if="task.progressMessage === 'post' && typeof task.progress === 'number' && task.progress < 1"
-            style="font-size: 11px; color: var(--text-muted); margin-top: 2px; text-align: right;"
+            class="dq-task-queue-progress-hint dq-task-queue-progress-hint--tight"
           >
             {{ $tt('studio.queuePostProcessHint') }}
           </div>
@@ -84,7 +83,7 @@
       </div>
 
       <div v-if="globalTaskQueue.queued.length > 0">
-        <div style="font-weight: 600; margin-bottom: 12px; color: var(--text-muted);">
+        <div class="dq-task-queue-heading dq-task-queue-heading--muted">
           {{ $tt('studio.queued') }} ({{ globalTaskQueue.queued.length }})
         </div>
         <div
@@ -92,35 +91,35 @@
           :key="task.id"
           class="queue-dialog-item queued"
         >
-          <div style="display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;">
-            <div style="flex: 1; display: flex; align-items: center; gap: 8px; overflow: hidden; min-width: 0;">
-              <span style="font-size: 12px; color: var(--text-muted); min-width: 24px;">#{{ index + 1 }}</span>
-              <div style="flex: 1; overflow: hidden;">
-                <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 2px;">
+          <div class="dq-task-queue-queued-layout">
+            <div class="dq-task-queue-queued-left">
+              <span class="dq-task-queue-idx">#{{ index + 1 }}</span>
+              <div class="dq-task-queue-queued-main">
+                <div class="dq-task-queue-row-meta">
                   <span>{{ taskKindLabel(task.kind) }}</span>
                   <el-tag
                     v-if="(task.priority ?? 100) <= 50"
                     size="small"
                     type="warning"
                     effect="plain"
-                    style="margin-left: 6px;"
+                    class="dq-task-queue-priority-tag"
                   >
                     {{ $tt('studio.queuePriorityHigh') }}
                   </el-tag>
                 </div>
-                <div style="font-size: 13px; color: var(--text-muted); margin-bottom: 2px;">
+                <div class="dq-task-queue-row-model">
                   {{ task.params?.model || $tt('queue.unspecifiedModel') }}
                 </div>
                 <div class="dq-queue-prompt-line">{{ queueTruncate(task.params?.prompt || '', 40) }}</div>
                 <div
                   v-if="task.estimated_wait_seconds != null"
-                  style="font-size: 11px; color: var(--text-muted); margin-top: 2px;"
+                  class="dq-task-queue-wait"
                 >
                   {{ $tt('queue.estimatedWait', { s: task.estimated_wait_seconds }) }}
                 </div>
               </div>
             </div>
-            <div style="display: flex; flex-direction: column; align-items: stretch; gap: 6px; flex-shrink: 0;">
+            <div class="dq-task-queue-side-actions">
               <el-button
                 size="small"
                 @click="setQueuedPriority(task.id, 'high')"
@@ -139,8 +138,8 @@
                 size="small"
                 circle
                 type="danger"
+                class="dq-task-queue-cancel-end"
                 @click="cancelGlobalTask(task.id)"
-                style="align-self: flex-end;"
                 :title="$tt('studio.cancelTask')"
               >
                 <el-icon><delete /></el-icon>
@@ -151,6 +150,12 @@
       </div>
     </div>
   </el-drawer>
+
+  <WorkspaceSetupDialog
+    v-model:visible="showWorkspaceSetup"
+    :effective-root="workspaceEffectiveRoot"
+    @completed="onWorkspaceSetupCompleted"
+  />
 </template>
 
 <script setup lang="ts">
@@ -158,11 +163,13 @@ import { ref, computed, onMounted, onBeforeUnmount, watch, provide } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { ElMessage } from 'element-plus';
 import TopNav from '@/components/shell/TopNav.vue';
+import WorkspaceSetupDialog from '@/components/workspace/WorkspaceSetupDialog.vue';
 import { useTasksStore } from '@/stores/tasks';
 import { api } from '@/utils/api';
 import { $tt, applyTheme } from '@/utils/i18n';
 import { getItem, DQ_STORAGE } from '@/utils/storage';
 import type { PageKey, SystemInfo, Task } from '@/types';
+import { appEvents } from '@/utils/appEvents';
 
 const router = useRouter();
 const route = useRoute();
@@ -170,6 +177,8 @@ const tasksStore = useTasksStore();
 
 const activePage = ref<PageKey>('image_create');
 const showGlobalQueueDrawer = ref(false);
+const showWorkspaceSetup = ref(false);
+const workspaceEffectiveRoot = ref('');
 const currentLang = ref('zh');
 
 const systemInfo = ref<SystemInfo>({
@@ -266,36 +275,46 @@ function taskKindLabel(kind?: string): string {
 
 let sysInfoInterval: ReturnType<typeof setInterval> | null = null;
 
+async function loadWorkspaceGate() {
+  try {
+    const status = await api.settings.getWorkspaceStatus();
+    workspaceEffectiveRoot.value = status.effective_root || '';
+    if (!status.configured) {
+      showWorkspaceSetup.value = true;
+    }
+  } catch (e) {
+    console.error('Failed to load workspace status:', e);
+  }
+}
+
+function onWorkspaceSetupCompleted() {
+  void loadWorkspaceGate();
+}
+
 onMounted(async () => {
   const savedLang = getItem(DQ_STORAGE.LANG);
   if (savedLang) {
     currentLang.value = savedLang;
   }
 
+  await loadWorkspaceGate();
   await loadSystemInfo();
 
-  try {
-    const st = await api.settings.getSettings();
-    if (st?.theme) {
-      applyTheme(st.theme);
-    }
-  } catch (e) {
-    console.warn('Theme bootstrap skipped:', e);
-  }
+  applyTheme();
 
   sysInfoInterval = setInterval(loadSystemInfo, 30000);
 
   tasksStore.ensureQueuePoller();
 
-  window.addEventListener('open-global-task-queue', onOpenGlobalTaskQueue);
+  appEvents.on('open-global-task-queue', onOpenGlobalTaskQueue);
 });
 
-function onOpenGlobalTaskQueue() {
+function onOpenGlobalTaskQueue(_: void) {
   showGlobalQueueDrawer.value = true;
 }
 
 onBeforeUnmount(() => {
-  window.removeEventListener('open-global-task-queue', onOpenGlobalTaskQueue);
+  appEvents.off('open-global-task-queue', onOpenGlobalTaskQueue);
   if (sysInfoInterval) {
     clearInterval(sysInfoInterval);
   }
@@ -315,7 +334,10 @@ provide('systemInfo', systemInfo);
   align-items: center;
 }
 .app-main {
-  padding: 20px;
+  padding: 16px 20px 20px;
   overflow-y: auto;
+  width: 100%;
+  max-width: none;
+  box-sizing: border-box;
 }
 </style>

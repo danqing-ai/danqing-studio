@@ -1,0 +1,348 @@
+<template>
+  <div class="asset-picker">
+    <div class="asset-picker__actions">
+      <input
+        ref="fileInputRef"
+        type="file"
+        class="asset-picker__file-input"
+        :accept="acceptAttr"
+        @change="onFileChange"
+      />
+      <el-button type="primary" size="small" @click="triggerUpload">
+        <el-icon><upload /></el-icon>
+        {{ $t('assetPicker.upload') }}
+      </el-button>
+      <el-button size="small" @click="openLibrary">
+        <el-icon><folder-opened /></el-icon>
+        {{ $t('assetPicker.library') }}
+      </el-button>
+    </div>
+
+    <div v-if="recentFiltered.length" class="asset-picker__recent">
+      <div class="asset-picker__recent-label">{{ $t('assetPicker.recent') }}</div>
+      <div class="asset-picker__recent-grid">
+        <div
+          v-for="item in recentFiltered"
+          :key="String(item.path)"
+          class="asset-picker__thumb"
+          role="button"
+          tabindex="0"
+          @click="emitPickFromRecent(item)"
+          @keydown.enter.prevent="emitPickFromRecent(item)"
+        >
+          <img
+            v-if="!thumbFailed[String(item.path)]"
+            :src="thumbUrlForRecent(item)"
+            alt=""
+            @error="markThumbFailed(item)"
+          />
+          <div v-else class="asset-picker__thumb-fallback" />
+        </div>
+      </div>
+    </div>
+
+    <el-dialog
+      v-model="libraryOpen"
+      :title="$t('assetPicker.dialogTitle')"
+      width="min(640px, 92vw)"
+      destroy-on-close
+      append-to-body
+      @opened="onLibraryOpened"
+    >
+      <div v-loading="libraryLoading" class="asset-picker__library">
+        <el-empty
+          v-if="!libraryLoading && libraryExhausted && libraryRows.length === 0"
+          :description="$t('assetPicker.emptyLibrary')"
+        />
+        <div v-if="libraryRows.length" class="asset-picker__library-grid">
+          <button
+            v-for="row in libraryRows"
+            :key="row.id"
+            type="button"
+            class="asset-picker__library-cell"
+            @click="selectLibraryRow(row)"
+          >
+            <img v-if="acceptKind === 'image'" :src="row.thumbUrl" alt="" class="asset-picker__library-img" />
+            <template v-else>
+              <img :src="row.thumbUrl" alt="" class="asset-picker__library-img" />
+              <span class="asset-picker__library-badge">{{ $t('gallery.filterVideo') }}</span>
+            </template>
+          </button>
+        </div>
+        <div v-if="!libraryExhausted || libraryRows.length" class="asset-picker__library-more">
+          <el-button
+            v-if="!libraryExhausted"
+            size="small"
+            :loading="libraryLoading"
+            @click="fetchLibraryPage(false)"
+          >
+            {{ $t('assetPicker.loadMore') }}
+          </el-button>
+          <span v-else-if="libraryRows.length" class="asset-picker__library-end">{{ $t('assetPicker.noMore') }}</span>
+        </div>
+      </div>
+    </el-dialog>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, ref } from 'vue';
+import { useI18n } from 'vue-i18n';
+import { ElMessage } from 'element-plus';
+import { api } from '@/utils/api';
+import type { AssetRow } from '@/types';
+
+const props = withDefaults(
+  defineProps<{
+    acceptKind?: 'image' | 'video';
+    recentGallery?: Array<Record<string, unknown>>;
+  }>(),
+  {
+    acceptKind: 'image',
+    recentGallery: () => [],
+  },
+);
+
+const emit = defineEmits<{
+  pick: [payload: { path: string; previewUrl: string }];
+}>();
+
+const { t: $t } = useI18n();
+
+const fileInputRef = ref<HTMLInputElement | null>(null);
+const thumbFailed = ref<Record<string, boolean>>({});
+
+const acceptAttr = computed(() =>
+  props.acceptKind === 'video' ? 'video/*,.mp4,.webm,.mov,.mkv,.avi' : 'image/*',
+);
+
+function isVideoAsset(row: AssetRow): boolean {
+  const k = String(row.kind || '');
+  const mime = String(row.mime_type || '');
+  if (k === 'video') return true;
+  if (mime.startsWith('video/')) return true;
+  const base = String(row.path || '')
+    .split(/[/\\]/)
+    .pop()
+    ?.toLowerCase();
+  if (base && /\.(mp4|mov|webm|mkv|avi)$/.test(base)) return true;
+  return false;
+}
+
+function isImageAsset(row: AssetRow): boolean {
+  const k = String(row.kind || '');
+  const mime = String(row.mime_type || '');
+  if (k === 'image') return true;
+  return mime.startsWith('image/');
+}
+
+const recentFiltered = computed(() => {
+  const list = props.recentGallery || [];
+  return list.filter((raw) => {
+    const item = raw as Record<string, unknown>;
+    const meta = item.metadata as Record<string, unknown> | undefined;
+    const ext = String(item.name || '')
+      .split('.')
+      .pop()
+      ?.toLowerCase() || '';
+    if (props.acceptKind === 'video') {
+      if (meta?.asset_kind === 'video') return true;
+      return ['mp4', 'mov', 'avi', 'mkv', 'webm'].includes(ext);
+    }
+    if (meta?.asset_kind === 'video' || meta?.asset_kind === 'audio') return false;
+    return !['mp4', 'mov', 'avi', 'mkv', 'webm', 'wav', 'mp3', 'flac', 'm4a', 'aac', 'opus', 'ogg'].includes(ext);
+  });
+});
+
+function thumbUrlForRecent(item: Record<string, unknown>): string {
+  const th = item.thumbnail as string | undefined;
+  if (typeof th === 'string' && th.length) return th;
+  const p = String(item.path || '');
+  if (p.startsWith('asset:')) {
+    const id = p.slice('asset:'.length);
+    return `/api/assets/${id}/thumbnail`;
+  }
+  return '';
+}
+
+function emitPickFromRecent(item: Record<string, unknown>) {
+  const path = String(item.path || '');
+  if (!path.startsWith('asset:')) {
+    ElMessage.warning(props.acceptKind === 'video' ? $t('assetPicker.needVideo') : $t('assetPicker.needImage'));
+    return;
+  }
+  emit('pick', {
+    path,
+    previewUrl: api.gallery.getImageUrl(path),
+  });
+}
+
+function markThumbFailed(item: Record<string, unknown>) {
+  const p = String(item.path || '');
+  if (!p) return;
+  thumbFailed.value = { ...thumbFailed.value, [p]: true };
+}
+
+function triggerUpload() {
+  fileInputRef.value?.click();
+}
+
+async function onFileChange(ev: Event) {
+  const input = ev.target as HTMLInputElement;
+  const file = input.files?.[0];
+  input.value = '';
+  if (!file) return;
+
+  if (props.acceptKind === 'image' && !file.type.startsWith('image/')) {
+    ElMessage.warning($t('assetPicker.needImage'));
+    return;
+  }
+  if (props.acceptKind === 'video' && !file.type.startsWith('video/')) {
+    ElMessage.warning($t('assetPicker.needVideo'));
+    return;
+  }
+
+  try {
+    const data = (await api.gen.uploadAsset(file)) as { id: string };
+    const path = `asset:${data.id}`;
+    emit('pick', { path, previewUrl: api.gallery.getImageUrl(path) });
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    ElMessage.error($t('studio.uploadFailed', { msg }));
+  }
+}
+
+/** Library dialog */
+const libraryOpen = ref(false);
+const libraryLoading = ref(false);
+const libraryRows = ref<{ id: string; thumbUrl: string; previewUrl: string }[]>([]);
+const libraryApiOffset = ref(0);
+const libraryExhausted = ref(false);
+const LIB_FETCH = 48;
+
+function mapAssetRow(row: AssetRow) {
+  const aid = row.id;
+  const path = `asset:${aid}`;
+  return {
+    id: aid,
+    thumbUrl: row.thumbnail_url || `/api/assets/${aid}/thumbnail`,
+    previewUrl: api.gallery.getImageUrl(path),
+  };
+}
+
+async function fetchLibraryPage(reset: boolean) {
+  if (reset) {
+    libraryApiOffset.value = 0;
+    libraryRows.value = [];
+    libraryExhausted.value = false;
+  }
+  if (libraryExhausted.value && !reset) return;
+
+  libraryLoading.value = true;
+  try {
+    const kind = props.acceptKind === 'image' ? 'image' : null;
+    const data = await api.gen.listAssets(kind, LIB_FETCH, libraryApiOffset.value, {
+      exclude_upload_refs: false,
+    });
+    const items = (data.items || []) as AssetRow[];
+    if (items.length < LIB_FETCH) libraryExhausted.value = true;
+    libraryApiOffset.value += items.length;
+
+    const filtered =
+      props.acceptKind === 'image' ? items.filter((r) => isImageAsset(r)) : items.filter((r) => isVideoAsset(r));
+
+    const mapped = filtered.map(mapAssetRow);
+    if (reset) libraryRows.value = mapped;
+    else libraryRows.value = libraryRows.value.concat(mapped);
+
+    if (items.length === 0) libraryExhausted.value = true;
+  } catch (e: unknown) {
+    console.error(e);
+    ElMessage.error($t('gallery.loadFailed'));
+    libraryExhausted.value = true;
+  } finally {
+    libraryLoading.value = false;
+  }
+}
+
+function openLibrary() {
+  libraryOpen.value = true;
+}
+
+function onLibraryOpened() {
+  void fetchLibraryPage(true);
+}
+
+function selectLibraryRow(row: { id: string; previewUrl: string }) {
+  const path = `asset:${row.id}`;
+  emit('pick', { path, previewUrl: row.previewUrl });
+  libraryOpen.value = false;
+}
+</script>
+
+<style scoped>
+.asset-picker__file-input {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.asset-picker__thumb-fallback {
+  width: 100%;
+  height: 100%;
+  background: var(--bg-secondary, var(--el-bg-color));
+}
+
+.asset-picker__library {
+  min-height: 120px;
+}
+
+.asset-picker__library-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.asset-picker__library-cell {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  padding: 0;
+  border: 1px solid var(--border-color, var(--el-border-color));
+  border-radius: 8px;
+  overflow: hidden;
+  cursor: pointer;
+  background: var(--bg-secondary, var(--el-bg-color));
+}
+
+.asset-picker__library-cell:focus-visible {
+  outline: 2px solid var(--el-color-primary);
+  outline-offset: 2px;
+}
+
+.asset-picker__library-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.asset-picker__library-badge {
+  position: absolute;
+  right: 2px;
+  bottom: 2px;
+  font-size: 10px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--el-mask-color);
+  color: var(--el-text-color-primary);
+}
+
+.asset-picker__library-more {
+  margin-top: 12px;
+  display: flex;
+  justify-content: center;
+}
+</style>

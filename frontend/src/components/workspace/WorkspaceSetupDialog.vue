@@ -1,0 +1,147 @@
+<template>
+  <el-dialog
+    v-model="visibleModel"
+    class="dq-workspace-setup-dialog"
+    :title="$t('settings.workspaceSetupTitle')"
+    width="520px"
+    :close-on-click-modal="false"
+    :close-on-press-escape="false"
+    :show-close="false"
+    align-center
+  >
+    <p class="dq-workspace-setup-intro">{{ $t('settings.workspaceSetupIntro') }}</p>
+    <p class="dq-workspace-setup-hint">{{ $t('settings.workspaceSetupEmptyHint') }}</p>
+    <div class="settings-ep-workspace-input-row dq-workspace-setup-input-row">
+      <el-input
+        v-model="pickedPath"
+        :placeholder="$t('settings.customWorkspacePlaceholder')"
+        readonly
+      />
+      <el-button class="settings-ep-workspace-pick-btn" :loading="picking" @click="pickDirectory">
+        {{ $t('settings.workspaceSetupPick') }}
+      </el-button>
+    </div>
+    <p v-if="effectiveRoot" class="dq-workspace-setup-from">
+      <span class="dq-workspace-setup-from-label">{{ $t('settings.workspaceLayoutTitle') }}</span>
+      <span class="dq-workspace-setup-from-path">{{ effectiveRoot }}</span>
+    </p>
+    <template #footer>
+      <el-button type="primary" :loading="applying" :disabled="!pickedPath.trim()" @click="confirm">
+        {{ $t('settings.workspaceSetupConfirm') }}
+      </el-button>
+    </template>
+  </el-dialog>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, watch } from 'vue';
+import { ElMessage } from 'element-plus';
+import { api } from '@/utils/api';
+import { $tt } from '@/utils/i18n';
+
+const props = defineProps<{
+  visible: boolean;
+  effectiveRoot?: string;
+}>();
+
+const emit = defineEmits<{
+  'update:visible': [value: boolean];
+  completed: [];
+}>();
+
+const visibleModel = computed({
+  get: () => props.visible,
+  set: (v: boolean) => emit('update:visible', v),
+});
+
+const pickedPath = ref('');
+const picking = ref(false);
+const applying = ref(false);
+
+watch(
+  () => props.visible,
+  (open) => {
+    if (open) {
+      pickedPath.value = '';
+    }
+  },
+);
+
+function extractApiError(e: unknown): string {
+  if (typeof e === 'object' && e !== null && 'response' in e) {
+    const err = e as { response?: { data?: { detail?: string } } };
+    if (err.response?.data?.detail) {
+      return err.response.data.detail;
+    }
+  }
+  if (e instanceof Error) return e.message;
+  return String(e);
+}
+
+async function pickDirectory() {
+  picking.value = true;
+  try {
+    const { path } = await api.settings.pickWorkspaceDirectory();
+    if (path) {
+      pickedPath.value = path;
+    }
+  } catch (e) {
+    ElMessage.error(extractApiError(e));
+  } finally {
+    picking.value = false;
+  }
+}
+
+async function confirm() {
+  const path = pickedPath.value.trim();
+  if (!path) {
+    ElMessage.warning($tt('settings.workspaceRequired'));
+    return;
+  }
+  applying.value = true;
+  try {
+    const res = await api.settings.applyWorkspace(path);
+    emit('completed');
+    visibleModel.value = false;
+    if (res.restart_required) {
+      ElMessage.warning($tt('settings.customWorkspaceRestartHint'));
+    } else {
+      ElMessage.success($tt('settings.saved'));
+    }
+  } catch (e) {
+    ElMessage.error(extractApiError(e) || $tt('settings.workspaceApplyFailed'));
+  } finally {
+    applying.value = false;
+  }
+}
+</script>
+
+<style scoped>
+.dq-workspace-setup-intro {
+  margin: 0 0 8px;
+  line-height: 1.5;
+  color: var(--dq-text-secondary, #a0a0a8);
+}
+.dq-workspace-setup-hint {
+  margin: 0 0 16px;
+  font-size: 12px;
+  color: var(--dq-text-muted, #888);
+}
+.dq-workspace-setup-input-row {
+  margin-bottom: 12px;
+}
+.dq-workspace-setup-from {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--dq-text-muted, #888);
+}
+.dq-workspace-setup-from-label {
+  display: block;
+  margin-bottom: 4px;
+}
+.dq-workspace-setup-from-path {
+  word-break: break-all;
+  font-family: ui-monospace, monospace;
+}
+</style>

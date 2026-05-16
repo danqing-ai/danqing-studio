@@ -3,9 +3,17 @@ import { createPinia } from 'pinia';
 import ElementPlus, { ElNotification } from 'element-plus';
 import * as ElementPlusIconsVue from '@element-plus/icons-vue';
 import router from './router';
-import i18n, { $tt, $mn, $md, $mvn, $pn, applyTheme } from './utils/i18n';
+import i18n, { $tt, $mn, $md, $mvn, $pn, sendShortcutHintText, applyTheme } from './utils/i18n';
 import App from './App.vue';
+/* Element Plus + 固定深色（index.html class="dark"，见 applyTheme / theme-apple-dark.css）。 */
+import 'element-plus/dist/index.css';
+import 'element-plus/theme-chalk/dark/css-vars.css';
 import './styles/theme.css';
+import './styles/theme-apple-dark.css';
+import './styles/theme-apple-finish.css';
+import './styles/theme-apple-native.css';
+
+applyTheme();
 
 const app = createApp(App);
 
@@ -20,6 +28,7 @@ app.config.globalProperties.$mn = $mn;
 app.config.globalProperties.$md = $md;
 app.config.globalProperties.$mvn = $mvn;
 app.config.globalProperties.$pn = $pn;
+app.config.globalProperties.$sendShortcutHint = sendShortcutHintText;
 
 app.use(createPinia());
 app.use(router);
@@ -64,11 +73,3 @@ window.addEventListener('unhandledrejection', function (event) {
     position: 'bottom-right',
   });
 });
-
-// Expose helpers on window for legacy compatibility
-(window as unknown as Record<string, unknown>).$tt = $tt;
-(window as unknown as Record<string, unknown>).$mn = $mn;
-(window as unknown as Record<string, unknown>).$md = $md;
-(window as unknown as Record<string, unknown>).$mvn = $mvn;
-(window as unknown as Record<string, unknown>).$pn = $pn;
-(window as unknown as Record<string, unknown>).DQApplyTheme = applyTheme;

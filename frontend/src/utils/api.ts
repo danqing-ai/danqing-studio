@@ -8,6 +8,24 @@ const client = axios.create({
   timeout: 30000,
 });
 
+/** Task id from media submit 202 body `{ task: { id, ... } }` (legacy flat `{ id }` tolerated). */
+export function taskIdFromSubmitResponse(res: unknown): string {
+  if (res == null || typeof res !== 'object') return '';
+  const top = res as Record<string, unknown>;
+  const task = top.task;
+  if (task != null && typeof task === 'object') {
+    const nested = (task as Record<string, unknown>).id;
+    if (nested != null && String(nested).trim() !== '') {
+      return String(nested);
+    }
+  }
+  const direct = top.id;
+  if (direct != null && String(direct).trim() !== '') {
+    return String(direct);
+  }
+  return '';
+}
+
 function assetRowToGalleryItem(a: AssetRow): GalleryItem {
   const aid = a.id;
   const meta = { ...(a.metadata || {}) };
@@ -187,8 +205,36 @@ export const api = {
       return response.data;
     },
 
-    async updateSettings(settings: SettingsData): Promise<unknown> {
+    async updateSettings(settings: SettingsData): Promise<{ success?: boolean; restart_required?: boolean }> {
       const response = await client.put('/api/settings', settings);
+      return response.data;
+    },
+
+    async getWorkspacePaths(): Promise<Record<string, string>> {
+      const response = await client.get('/api/settings/workspace-paths');
+      return response.data;
+    },
+
+    async getWorkspaceStatus(): Promise<{
+      configured: boolean;
+      effective_root: string;
+      bootstrap_root: string;
+    }> {
+      const response = await client.get('/api/settings/workspace-status');
+      return response.data;
+    },
+
+    async applyWorkspace(path: string): Promise<{
+      success: boolean;
+      restart_required: boolean;
+      workspace?: string;
+    }> {
+      const response = await client.post('/api/settings/apply-workspace', { path });
+      return response.data;
+    },
+
+    async pickWorkspaceDirectory(): Promise<{ path: string }> {
+      const response = await client.post('/api/settings/pick-workspace-directory');
       return response.data;
     },
 

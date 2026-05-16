@@ -3,39 +3,28 @@
   <div class="create-page">
     <el-row :gutter="24">
       <!-- Left panel: creation area -->
-      <el-col :xs="24" :md="16" :lg="14">
+      <el-col :xs="24" :md="16" :lg="17" :xl="18">
         <div class="creation-panel">
 
           <!-- Tab bar -->
-          <div class="mode-segment" style="margin-bottom: 8px; display: flex; flex-wrap: wrap; gap: 4px;">
-            <div
-              class="mode-segment-item"
-              :class="{ active: audioWorkTab === 'create' }"
-              @click="setAudioWorkMode('create')"
-            >
-              <el-icon><headset /></el-icon>
-              <span>{{ $t('action.audio.create') }}</span>
-            </div>
-            <div
-              class="mode-segment-item"
-              :class="{ active: audioWorkTab === 'cover' }"
-              @click="setAudioWorkMode('cover')"
-            >
-              <el-icon><switch /></el-icon>
-              <span>{{ $t('action.audio.cover') }}</span>
-            </div>
-          </div>
+          <el-segmented
+            class="dq-work-segmented dq-work-segmented--sm"
+            v-model="audioWorkTab"
+            :options="audioWorkSegmentOptions"
+            block
+          />
 
           <!-- Model selector -->
-          <div class="card" style="margin-bottom: 16px;">
-            <div class="card-title">
-              <el-icon><cpu /></el-icon>
-              {{ $t('create.modelSelectTitle') }}
-            </div>
-            <div style="display: flex; align-items: center; gap: 12px;">
+          <el-card shadow="never" class="studio-ep-surface-card studio-ep-card-mb studio-ep-model-card">
+            <template #header>
+              <div class="card-title">
+                <el-icon><cpu /></el-icon>
+                {{ $t('create.modelSelectTitle') }}
+              </div>
+            </template>
+            <div class="studio-ep-model-toolbar">
               <el-select
                 v-model="selectedModelVersion"
-                style="flex: 1;"
                 size="large"
                 filterable
                 @change="onModelChange"
@@ -48,12 +37,12 @@
                   :value="mv.key"
                   :disabled="!mv.ready"
                 >
-                  <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
-                    <span :style="!mv.ready ? 'opacity: 0.5;' : ''">{{ mv.label }}</span>
+                  <div class="studio-ep-picker-option">
+                    <span class="studio-ep-picker-option__name" :class="{ 'is-disabled': !mv.ready }">{{ mv.label }}</span>
                     <el-tag v-if="mv.isRec" size="small" type="success">{{ $t('studio.recommended') }}</el-tag>
                     <el-tag v-if="mv.ready" size="small" type="success">{{ $t('studio.ready') }}</el-tag>
                     <el-tag v-else size="small" type="warning">{{ $t('studio.notDownloaded') }}</el-tag>
-                    <span v-if="mv.size" style="color: var(--text-muted); font-size: 12px; margin-left: auto;">{{ mv.size }}</span>
+                    <span v-if="mv.size" class="studio-ep-picker-option__meta">{{ mv.size }}</span>
                   </div>
                 </el-option>
               </el-select>
@@ -63,26 +52,26 @@
               :title="$t('studio.modelNotReady', { name: currentModelDisplayName })"
               type="warning"
               :closable="false"
-              style="margin-top: 12px;"
+              class="studio-ep-alert-mt"
             >
               <template #default>
                 <span>{{ $t('studio.notDownloadedMsg') }}</span>
-                <el-button size="small" type="primary" @click="goToDownload" style="margin-left: 12px;">
+                <el-button size="small" type="primary" class="studio-ep-alert-inline-btn" @click="goToDownload">
                   {{ $t('studio.goDownload') }}
                 </el-button>
               </template>
             </el-alert>
-          </div>
-
-          <!-- 文生音乐 Tab -->
+          </el-card>
           <template v-if="audioWorkTab === 'create'">
 
             <!-- Prompt input -->
-            <div class="card" style="margin-bottom: 16px;">
-              <div class="card-title">
-                <el-icon><edit-pen /></el-icon>
-                {{ $t('studio.prompt') }}
-              </div>
+            <el-card shadow="never" class="studio-ep-surface-card studio-ep-card-mb">
+              <template #header>
+                <div class="card-title">
+                  <el-icon><edit-pen /></el-icon>
+                  {{ $t('studio.prompt') }}
+                </div>
+              </template>
               <el-input
                 v-model="params.prompt"
                 type="textarea"
@@ -92,7 +81,7 @@
                 @keydown.meta.enter.prevent="startGeneration"
                 @keydown.ctrl.enter.prevent="startGeneration"
               />
-              <el-collapse v-if="supportsNegativePrompt" style="margin-top: 12px; border: none;">
+              <el-collapse v-if="supportsNegativePrompt" class="studio-ep-collapse-plain">
                 <el-collapse-item :title="$t('audio.negativePrompt')" name="negative">
                   <el-input
                     v-model="params.negative_prompt"
@@ -102,15 +91,16 @@
                   />
                 </el-collapse-item>
               </el-collapse>
-            </div>
+            </el-card>
 
             <!-- Lyrics -->
-            <div class="card" style="margin-bottom: 16px;">
-              <div class="card-title">
-                <el-icon><document /></el-icon>
-                {{ $t('audio.lyrics') }}
-                <span style="color: var(--text-muted); font-size: 12px; font-weight: 400; margin-left: 4px;">{{ $t('studio.optional') }}</span>
-              </div>
+            <el-card shadow="never" class="studio-ep-surface-card studio-ep-card-mb studio-ep-audio-lyrics-card">
+              <template #header>
+                <div class="card-title">
+                  <el-icon><document /></el-icon>
+                  {{ $t('audio.lyrics') }}
+                </div>
+              </template>
               <el-input
                 v-model="params.lyrics"
                 type="textarea"
@@ -118,26 +108,35 @@
                 :placeholder="$t('audio.lyricsPlaceholder')"
                 resize="none"
               />
-              <div style="display: flex; align-items: center; gap: 20px; margin-top: 12px; flex-wrap: wrap;">
-                <div style="display: flex; align-items: center; gap: 8px;">
-                  <span style="font-size: 13px; color: var(--text-secondary);">{{ $t('audio.instrumental') }}</span>
+              <p class="studio-ep-field-footnote">{{ $t('studio.optional') }}</p>
+              <div class="studio-ep-audio-meta-row">
+                <div class="studio-ep-audio-meta-item studio-ep-audio-meta-item--switch">
+                  <span class="studio-ep-audio-meta-label">{{ $t('audio.instrumental') }}</span>
                   <el-switch v-model="params.instrumental" size="small" />
                 </div>
-                <div style="display: flex; align-items: center; gap: 8px;">
-                  <span style="font-size: 13px; color: var(--text-secondary);">{{ $t('audio.vocalLanguage') }}</span>
-                  <el-select v-model="params.vocal_language" size="small" style="width: 140px;" clearable :placeholder="$t('audio.vocalLanguageAuto')">
+                <div class="studio-ep-audio-meta-item studio-ep-audio-meta-item--vocal">
+                  <span class="studio-ep-audio-meta-label">{{ $t('audio.vocalLanguage') }}</span>
+                  <el-select
+                    v-model="params.vocal_language"
+                    size="small"
+                    class="studio-ep-audio-vocal-lang-select"
+                    clearable
+                    :placeholder="$t('audio.vocalLanguageAuto')"
+                  >
                     <el-option v-for="l in vocalLanguages" :key="l.value" :label="l.label" :value="l.value" />
                   </el-select>
                 </div>
               </div>
-            </div>
+            </el-card>
 
             <!-- Music params -->
-            <div class="card" style="margin-bottom: 16px;">
-              <div class="card-title">
-                <el-icon><setting /></el-icon>
-                {{ $t('audio.musicParams') }}
-              </div>
+            <el-card shadow="never" class="studio-ep-surface-card studio-ep-card-mb">
+              <template #header>
+                <div class="card-title">
+                  <el-icon><setting /></el-icon>
+                  {{ $t('audio.musicParams') }}
+                </div>
+              </template>
               <el-form label-position="top" size="small">
                 <el-form-item :label="$t('audio.duration')">
                   <el-radio-group v-model="params.duration" size="small">
@@ -150,39 +149,39 @@
                 <el-row :gutter="12">
                   <el-col :span="8">
                     <el-form-item :label="$t('audio.bpm')">
-                      <el-input-number v-model="params.bpm" :min="30" :max="300" controls-position="right" style="width: 100%;" :placeholder="$t('audio.bpmAuto')" />
+                      <el-input-number v-model="params.bpm" :min="30" :max="300" controls-position="right" class="studio-ep-w-full" :placeholder="$t('audio.bpmAuto')" />
                     </el-form-item>
                   </el-col>
                   <el-col :span="8">
                     <el-form-item :label="$t('audio.keyScale')">
-                      <el-select v-model="params.key_scale" style="width: 100%;" clearable :placeholder="$t('audio.keyScaleAuto')">
+                      <el-select v-model="params.key_scale" class="studio-ep-w-full" clearable :placeholder="$t('audio.keyScaleAuto')">
                         <el-option v-for="k in musicalKeys" :key="k" :label="k" :value="k" />
                       </el-select>
                     </el-form-item>
                   </el-col>
                   <el-col :span="8">
                     <el-form-item :label="$t('audio.timeSignature')">
-                      <el-select v-model="params.time_signature" style="width: 100%;" clearable :placeholder="$t('audio.timeSignatureAuto')">
+                      <el-select v-model="params.time_signature" class="studio-ep-w-full" clearable :placeholder="$t('audio.timeSignatureAuto')">
                         <el-option v-for="ts in timeSignatures" :key="ts.value" :label="ts.label" :value="ts.value" />
                       </el-select>
                     </el-form-item>
                   </el-col>
                 </el-row>
               </el-form>
-            </div>
+            </el-card>
 
             <!-- Advanced params -->
-            <div class="card" style="margin-bottom: 16px;">
-              <el-collapse v-model="advancedOpen" style="border: none;">
+            <el-card shadow="never" class="studio-ep-surface-card studio-ep-card-mb">
+              <el-collapse v-model="advancedOpen" class="studio-ep-collapse-plain">
                 <el-collapse-item name="advanced">
                   <template #title>
-                    <div style="display: flex; align-items: center; gap: 8px; font-weight: 500;">
+                    <div class="studio-ep-collapse-title-row">
                       <el-icon><setting /></el-icon>
                       <span>{{ $t('studio.advancedParams') }}</span>
                       <el-tag v-if="hasCustomParams" size="small" type="warning">{{ $t('studio.hasCustom') }}</el-tag>
                     </div>
                   </template>
-                  <el-form label-position="top" size="small" style="padding-top: 12px;">
+                  <el-form label-position="top" size="small" class="studio-ep-form-pt">
                     <el-form-item v-if="currentModelConfig?.parameters?.steps" :label="$t('audio.sampleQuality')">
                       <div class="param-control-row">
                         <div class="param-slider">
@@ -209,18 +208,18 @@
                       </div>
                     </el-form-item>
                     <el-form-item :label="$t('audio.seed')">
-                      <div style="display: flex; gap: 8px;">
-                        <el-input v-model="params.seed" :placeholder="$t('audio.randomSeed')" style="flex: 1;" />
+                      <div class="studio-ep-seed-row">
+                        <el-input v-model="params.seed" :placeholder="$t('audio.randomSeed')" />
                         <el-button @click="randomizeSeed">
                           <el-icon><refresh /></el-icon>
                         </el-button>
                       </div>
                     </el-form-item>
                     <el-form-item :label="$t('audio.batchCount')">
-                      <el-input-number v-model="params.n" :min="1" :max="8" controls-position="right" style="width: 100%;" />
+                      <el-input-number v-model="params.n" :min="1" :max="8" controls-position="right" class="studio-ep-w-full" />
                     </el-form-item>
                     <el-form-item :label="$t('audio.audioFormat')">
-                      <el-select v-model="params.audio_format" style="width: 100%;">
+                      <el-select v-model="params.audio_format" class="studio-ep-w-full">
                         <el-option v-for="f in audioFormats" :key="f" :label="f" :value="f" />
                       </el-select>
                     </el-form-item>
@@ -233,43 +232,43 @@
                   </el-form>
                 </el-collapse-item>
               </el-collapse>
-            </div>
+            </el-card>
           </template>
 
           <!-- 同声翻唱 占位 -->
           <template v-if="audioWorkTab === 'cover'">
-            <div class="card" style="padding: 40px 20px; text-align: center;">
-              <el-icon :size="40" color="var(--text-muted)"><clock /></el-icon>
-              <p style="margin-top: 16px; color: var(--text-muted); font-size: 14px;">{{ $t('audio.coverComingSoon') }}</p>
-            </div>
+            <el-card shadow="never" class="studio-ep-surface-card studio-ep-cover-placeholder">
+              <el-icon class="studio-ep-cover-placeholder-icon" :size="40"><clock /></el-icon>
+              <p>{{ $t('audio.coverComingSoon') }}</p>
+            </el-card>
           </template>
 
           <!-- Generate button -->
-          <div class="card" style="margin-bottom: 16px;">
+          <el-card shadow="never" class="studio-ep-surface-card studio-ep-card-mb">
             <el-button
               v-if="audioWorkTab === 'create'"
               type="primary"
               size="large"
-              style="width: 100%; height: 50px; font-size: 16px;"
+              class="studio-ep-primary-cta studio-ep-primary-cta--simple"
               :disabled="submitDisabled"
               @click="startGeneration"
             >
               <el-icon size="20"><headset /></el-icon>
-              <span style="margin-left: 8px;">
+              <span class="studio-ep-cta-gap">
                 {{ generating ? $t('audio.generating') : $t('audio.generate') }}
               </span>
             </el-button>
-            <div style="margin-top: 8px; font-size: 11px; color: var(--text-muted);">
-              {{ $t('studio.sendShortcutHint') }}
+            <div class="studio-ep-micro-hint">
+              {{ $sendShortcutHint() }}
             </div>
 
             <!-- Progress display -->
-            <div v-if="currentTask.id" style="margin-top: 16px;">
+            <div v-if="currentTask.id" class="studio-ep-task-wrap">
               <el-progress
                 :percentage="Math.round(currentTask.progress * 100)"
                 :status="currentTask.status === 'failed' ? 'exception' : ''"
               />
-              <div style="margin-top: 8px; text-align: center; color: var(--text-muted); font-size: 13px;">
+              <div class="studio-ep-task-status">
                 <template v-if="currentTask.total > 0 && currentTask.status === 'running'">
                   Step {{ currentTask.step }}/{{ currentTask.total }} &nbsp;
                 </template>
@@ -278,21 +277,23 @@
                 </el-tag>
               </div>
             </div>
-          </div>
+          </el-card>
 
           <!-- Logs -->
-          <div class="card">
-            <div class="card-title" style="justify-content: space-between;">
-              <span>
-                <el-icon><document /></el-icon>
-                {{ $t('studio.logs') }}
-              </span>
-              <el-button size="small" text @click="clearLogs">
-                <el-icon><delete /></el-icon>
-              </el-button>
-            </div>
-            <div class="log-container" ref="logContainer" style="max-height: 200px;">
-              <div v-if="logs.length === 0" style="text-align: center; color: var(--text-muted); padding: 20px;">
+          <el-card shadow="never" class="studio-ep-surface-card">
+            <template #header>
+              <div class="card-title card-title--split">
+                <span>
+                  <el-icon><document /></el-icon>
+                  {{ $t('studio.logs') }}
+                </span>
+                <el-button size="small" text @click="clearLogs">
+                  <el-icon><delete /></el-icon>
+                </el-button>
+              </div>
+            </template>
+            <div class="log-container studio-ep-log-container--sm" ref="logContainer">
+              <div v-if="logs.length === 0" class="studio-ep-log-empty">
                 {{ $t('studio.logsEmpty') }}
               </div>
               <div v-for="(log, index) in logs" :key="index" class="log-line">
@@ -300,21 +301,23 @@
                 <span :class="'log-' + log.level">{{ log.message }}</span>
               </div>
             </div>
-          </div>
+          </el-card>
 
         </div>
       </el-col>
 
       <!-- Right panel: preview + recent -->
-      <el-col :xs="24" :md="8" :lg="10">
+      <el-col :xs="24" :md="8" :lg="7" :xl="6">
         <div class="preview-panel">
 
           <!-- Current generation preview -->
-          <div class="card" style="margin-bottom: 16px;">
-            <div class="card-title">
-              <el-icon><headset /></el-icon>
-              {{ $t('studio.currentPreview') }}
-            </div>
+          <el-card shadow="never" class="studio-ep-surface-card studio-ep-card-mb">
+            <template #header>
+              <div class="card-title">
+                <el-icon><headset /></el-icon>
+                {{ $t('studio.currentPreview') }}
+              </div>
+            </template>
             <div v-if="previewAudioSrc" class="dq-audio-create-cover">
               <el-icon :size="34"><headset /></el-icon>
               <span class="dq-audio-create-cover-title">{{ $t('audio.previewListen') }}</span>
@@ -326,48 +329,49 @@
                 playsinline
                 preload="metadata"
               ></audio>
-              <div style="margin-top: 4px; font-size: 12px; color: rgba(255,255,255,0.55); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; width: 100%; text-align: center;">
+              <div class="studio-ep-audio-caption">
                 {{ previewPrompt }}
               </div>
             </div>
             <el-empty v-else :description="$t('studio.noPreview')" />
-          </div>
+          </el-card>
 
           <!-- Recent generations -->
-          <div class="card">
-            <div class="card-title" style="justify-content: space-between;">
-              <span>
-                <el-icon><clock /></el-icon>
-                {{ $t('audio.recentTitle') }}
-              </span>
-              <el-button size="small" text @click="loadRecentAudio">
-                <el-icon><refresh /></el-icon>
-              </el-button>
-            </div>
+          <el-card shadow="never" class="studio-ep-surface-card">
+            <template #header>
+              <div class="card-title card-title--split">
+                <span>
+                  <el-icon><clock /></el-icon>
+                  {{ $t('audio.recentTitle') }}
+                </span>
+                <el-button size="small" text @click="loadRecentAudio">
+                  <el-icon><refresh /></el-icon>
+                </el-button>
+              </div>
+            </template>
             <el-empty v-if="recentAudio.length === 0" :description="$t('gallery.empty')" />
             <div v-else>
               <div
                 v-for="ra in recentAudio"
                 :key="ra.id"
-                class="gallery-card dq-audio-recent-card"
-                style="margin-bottom: 10px; cursor: pointer;"
+                class="gallery-card dq-audio-recent-card studio-ep-recent-card-mb"
                 @click="previewAudio(ra)"
               >
-                <div style="display: flex; align-items: stretch; gap: 10px; padding: 10px;">
+                <div class="studio-ep-audio-recent-row">
                   <div class="dq-audio-recent-cover" @click.stop="previewAudio(ra)">
                     <el-icon :size="26"><headset /></el-icon>
                   </div>
-                  <div style="flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center;">
-                    <div style="font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                  <div class="studio-ep-audio-recent-main">
+                    <div class="studio-ep-audio-recent-title">
                       {{ ra.prompt || ra.name || 'Audio' }}
                     </div>
-                    <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">
+                    <div class="studio-ep-audio-recent-meta">
                       {{ ra.duration ? formatTime(ra.duration) : '' }}
                     </div>
                   </div>
-                  <div style="display: flex; flex-direction: column; justify-content: center; gap: 6px;">
+                  <div class="studio-ep-audio-recent-actions">
                     <el-button circle size="small" @click.stop="toggleRecentPlay(ra)">
-                      <span style="font-size: 13px;">{{ ra.playing ? '⏸' : '▶' }}</span>
+                      <span class="studio-ep-play-icon">{{ ra.playing ? '⏸' : '▶' }}</span>
                     </el-button>
                     <el-button size="small" text @click.stop="downloadAudioUrl(ra.url)">
                       <el-icon><download /></el-icon>
@@ -380,11 +384,11 @@
                   preload="metadata"
                   @ended="ra.playing = false"
                   @loadedmetadata="onRecentMeta(ra, $event)"
-                  style="display: none;"
+                  class="studio-ep-hidden-audio"
                 />
               </div>
             </div>
-          </div>
+          </el-card>
 
         </div>
       </el-col>
@@ -395,14 +399,17 @@
 <script setup lang="ts">
 // @ts-nocheck
 import { ref, reactive, computed, watch, onMounted, nextTick } from 'vue';
+import { useRouter } from 'vue-router';
 import { ElMessage } from 'element-plus';
-import api from '@/utils/api';
+import { api, taskIdFromSubmitResponse } from '@/utils/api';
+import { formatGenLogMessage, isDuplicateDenoiseStepLog } from '@/utils/genTaskLog';
 import { $tt } from '@/utils/i18n';
 import { useTasksStore } from '@/stores/tasks';
 import { useRegistryStore } from '@/stores/registry';
 
 const tasksStore = useTasksStore();
 const registryStore = useRegistryStore();
+const router = useRouter();
 
 // ---- Helpers (migrated from window globals) ----
 const STORAGE_KEY = 'dq-studio.audio-create-prompt-draft.v3';
@@ -416,8 +423,17 @@ function isAudioModel(config: any) {
   return config && config.media === 'audio';
 }
 
-function supportsAction(actions: string[], action: string) {
-  return Array.isArray(actions) && actions.includes(action);
+/** Registry v2: `actions` is `{ create: {}, ... }`, not a string array. */
+function supportsAction(actions: unknown, action: string): boolean {
+  if (actions == null) return false;
+  if (Array.isArray(actions)) {
+    return actions.includes(action);
+  }
+  if (typeof actions === 'object') {
+    const rec = actions as Record<string, unknown>;
+    return Object.prototype.hasOwnProperty.call(rec, action) && rec[action] != null;
+  }
+  return false;
 }
 
 function getModelName(c: any, mk: string) {
@@ -440,15 +456,15 @@ const TSU = {
 
 // ---- Tab navigation ----
 const audioWorkTab = ref('create');
-
-function setAudioWorkMode(mode: string) {
-  audioWorkTab.value = mode;
-}
+const audioWorkSegmentOptions = computed(() => [
+  { label: $tt('action.audio.create'), value: 'create' },
+  { label: $tt('action.audio.cover'), value: 'cover' },
+]);
 
 // ---- State ----
 const generating = ref(false);
 const modelsLoading = ref(false);
-const advancedOpen = ref<string[]>([]);
+const advancedOpen = ref<string[]>(['advanced']);
 const logContainer = ref<HTMLElement | null>(null);
 const previewAudioEl = ref<HTMLAudioElement | null>(null);
 
@@ -554,9 +570,11 @@ const filteredModelPickerVersions = computed(() => {
     const verKeys = Object.keys(versions);
     const isRec = config.recommended === true;
     const ds = modelsDetailedStatus.value[mid] || {};
-    const ready = ds.status === 'ready';
+    const versionStatuses = ds.versions || {};
     for (const vk of verKeys) {
       const vd = versions[vk];
+      const vst = versionStatuses[vk] || {};
+      const ready = vst.ready === true || (ds.status === 'ready' && vst.ready !== false);
       const label = getModelVersionName(mid, vk, vd);
       rows.push({ key: mid + '|' + vk, label, ready, isRec, mid, vk, size: vd.size || '' });
     }
@@ -634,7 +652,7 @@ function restoreDefaults() {
 }
 
 function goToDownload() {
-  (window as any).DQStudioNav?.goModels?.();
+  router.push({ name: 'models' });
 }
 
 function loadPromptDraft() {
@@ -695,72 +713,96 @@ async function startGeneration() {
     };
 
     const resp = await api.audios.createGeneration(body);
-
-    currentTask.id = (resp && resp.task && resp.task.id) || '';
-    if (currentTask.id && api.gen?.streamMediaTask) {
-      await api.gen.streamMediaTask(
-        currentTask.id,
-        (logData: any) => {
-          const now = new Date();
-          const time = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0') + ':' + String(now.getSeconds()).padStart(2, '0');
-          logs.push({ level: logData.level || 'info', message: logData.message || '', time });
-          nextTick(() => {
-            if (logContainer.value) {
-              logContainer.value.scrollTop = logContainer.value.scrollHeight;
-            }
-          });
-        },
-        (statusData: any) => {
-          if (statusData.status) currentTask.status = statusData.status;
-          if (statusData.progress != null) currentTask.progress = statusData.progress;
-        },
-        (doneData: any) => {
-          if (doneData.status === 'completed') {
-            const pid = doneData.result && doneData.result.primary_asset_id;
-            if (pid) {
-              const url = api.gallery?.getImageUrl ? api.gallery.getImageUrl('asset:' + pid) : ('/api/assets/' + pid + '/file');
-              recentAudio.unshift({ id: pid, url, prompt: params.prompt, duration: 0, playing: false });
-              previewAudioSrc.value = url;
-              previewPrompt.value = params.prompt;
-              previewAudioKey.value += 1;
-              nextTick(() => {
-                try {
-                  previewAudioEl.value?.load?.();
-                } catch (e) { /* ignore */ }
-              });
-            }
-          }
-          generating.value = false;
-        },
-        () => {
-          ElMessage.error('Generation failed');
-          generating.value = false;
-        },
-        (progressData: any) => {
-          if (progressData.progress != null) currentTask.progress = progressData.progress;
-          if (progressData.step != null) currentTask.step = progressData.step;
-          if (progressData.total != null) currentTask.total = progressData.total;
-        },
-        (resultData: any) => {
-          if (resultData && resultData.asset_ids) {
-            resultData.asset_ids.forEach((aid: string) => {
-              const url = api.gallery?.getImageUrl ? api.gallery.getImageUrl('asset:' + aid) : ('/api/assets/' + aid + '/file');
-              recentAudio.unshift({ id: aid, url, prompt: params.prompt, duration: 0, playing: false });
-              previewAudioSrc.value = url;
-              previewPrompt.value = params.prompt;
-              previewAudioKey.value += 1;
-              nextTick(() => {
-                try {
-                  previewAudioEl.value?.load?.();
-                } catch (e) { /* ignore */ }
-              });
-            });
-          }
-        },
-      );
-    } else {
+    const tid = taskIdFromSubmitResponse(resp);
+    if (!tid) {
+      ElMessage.error($tt('studio.error', { msg: 'missing task id in submit response' }));
       generating.value = false;
+      return;
     }
+    currentTask.id = tid;
+    if (!api.gen?.streamMediaTask) {
+      generating.value = false;
+      return;
+    }
+
+    const pushPreviewFromAsset = (aid: string) => {
+      const url = api.gallery?.getImageUrl
+        ? api.gallery.getImageUrl('asset:' + aid)
+        : '/api/assets/' + aid + '/file';
+      recentAudio.unshift({ id: aid, url, prompt: params.prompt, duration: 0, playing: false });
+      previewAudioSrc.value = url;
+      previewPrompt.value = params.prompt;
+      previewAudioKey.value += 1;
+      nextTick(() => {
+        try {
+          previewAudioEl.value?.load?.();
+        } catch {
+          /* ignore */
+        }
+      });
+    };
+
+    api.gen.streamMediaTask(tid, {
+      onLog: (logData: unknown) => {
+        const row = logData as Record<string, unknown>;
+        const raw = (row.message as string) || '';
+        const lvl = (row.level as string) || 'info';
+        if (isDuplicateDenoiseStepLog(logs, raw)) {
+          return;
+        }
+        const now = new Date();
+        const time =
+          String(now.getHours()).padStart(2, '0') +
+          ':' +
+          String(now.getMinutes()).padStart(2, '0') +
+          ':' +
+          String(now.getSeconds()).padStart(2, '0');
+        logs.push({
+          level: lvl,
+          message: formatGenLogMessage(raw),
+          time,
+        });
+        nextTick(() => {
+          if (logContainer.value) {
+            logContainer.value.scrollTop = logContainer.value.scrollHeight;
+          }
+        });
+      },
+      onStatus: (statusData: unknown) => {
+        const row = statusData as Record<string, unknown>;
+        if (row.status) currentTask.status = row.status as string;
+        if (row.progress != null) currentTask.progress = row.progress as number;
+      },
+      onProgress: (progressData: unknown) => {
+        const row = progressData as Record<string, unknown>;
+        if (row.progress != null) currentTask.progress = row.progress as number;
+        if (row.step != null) currentTask.step = row.step as number;
+        if (row.total != null) currentTask.total = row.total as number;
+      },
+      onResult: (resultData: unknown) => {
+        const row = resultData as Record<string, unknown>;
+        const ids = row.asset_ids as string[] | undefined;
+        if (ids?.length) {
+          ids.forEach((aid) => pushPreviewFromAsset(aid));
+        }
+      },
+      onDone: (doneData: unknown) => {
+        const row = doneData as Record<string, unknown>;
+        if (row.status === 'completed') {
+          const pid =
+            row.result &&
+            (row.result as Record<string, unknown>).primary_asset_id;
+          if (pid) pushPreviewFromAsset(String(pid));
+        } else if (row.status === 'failed') {
+          ElMessage.error($tt('studio.genFailed', { msg: String(row.error || '') }));
+        }
+        generating.value = false;
+      },
+      onError: () => {
+        ElMessage.error($tt('studio.connectionLost'));
+        generating.value = false;
+      },
+    });
   } catch (e: any) {
     ElMessage.error((e.response && e.response.data && e.response.data.detail) || e.message || 'Generation failed');
     generating.value = false;

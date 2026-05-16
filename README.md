@@ -59,16 +59,12 @@ DanQing-Studio/
 │   ├── services/              # 业务服务层（设置、下载等）
 │   ├── utils/                 # 工具函数
 │   └── main.py                # FastAPI 入口
-├── frontend/                   # 前端 (Vue3 + CDN，无需构建)
-│   ├── css/theme.css          # 暗色主题样式
-│   ├── js/                    # JavaScript 模块
-│   │   ├── app.js             # Vue 应用入口
-│   │   ├── i18n.js            # 国际化配置
-│   │   ├── api.js             # API 客户端
-│   │   ├── stores/            # RegistryStore、TasksStore
-│   │   ├── composables/       # 可复用逻辑（media_queue、memory_hint 等）
-│   │   └── components/        # 页面组件
-│   └── index.html             # HTML 入口
+├── frontend/                   # 前端 (Vue 3 + TypeScript + Vite + Element Plus + Pinia + Vue Router)
+│   ├── src/                   # 应用源码（views、components、stores、utils、locales）
+│   ├── index.html             # Vite HTML 入口
+│   ├── vite.config.ts
+│   ├── package.json
+│   └── dist/                  # `npm run build` 产物（部署用）
 ├── bin/                        # 脚本目录
 │   ├── launch.sh              # 启动脚本
 │   └── stop.sh                # 停止脚本

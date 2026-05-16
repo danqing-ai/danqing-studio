@@ -1,23 +1,22 @@
 <!-- @ts-nocheck -->
 <template>
   <div class="settings-page">
-    <el-tabs type="border-card" v-model="activeTab">
+    <el-tabs v-model="activeTab" class="settings-ep-tabs settings-ep-tabs--segmented">
+    <el-tab-pane :label="$t('settings.modelConfig')" name="models">
+        <el-card shadow="never" class="studio-ep-surface-card settings-ep-tab-panel">
+          <template #header>
+            <div class="card-title">
+              <el-icon><box /></el-icon>
+              {{ $t('settings.modelConfig') }}
+              <el-text class="settings-ep-title-desc" size="small" type="info">
+                {{ $t('settings.modelConfigDesc') }}
+              </el-text>
+            </div>
+          </template>
 
-      <!-- Model config (enhanced) -->
-      <el-tab-pane :label="$t('settings.modelConfig')" name="models">
-        <div class="card" style="margin-bottom: 24px;">
-          <div class="card-title">
-            <el-icon><box /></el-icon>
-            {{ $t('settings.modelConfig') }}
-            <span style="color: var(--text-muted); font-size: 13px; font-weight: normal; margin-left: 8px;">
-              {{ $t('settings.modelConfigDesc') }}
-            </span>
-          </div>
-
-          <!-- Model selector (enhanced: version status, category, size) -->
           <el-select
             v-model="selectedModel"
-            style="width: 100%; margin-bottom: 20px;"
+            class="settings-ep-model-picker"
             size="large"
             @change="onModelSelect"
             filterable
@@ -28,64 +27,64 @@
               :label="$mn(config)"
               :value="key"
             >
-              <div style="display: flex; align-items: center; gap: 8px;">
-                <span style="font-weight: 500;">{{ $mn(config) }}</span>
+              <div class="settings-ep-select-option">
+                <span class="settings-ep-select-option__name">{{ $mn(config) }}</span>
                 <el-tag v-if="config.recommended" size="small" type="success" effect="dark">{{ $t('studio.recommended') }}</el-tag>
                 <el-tag size="small" type="info">{{ config.engine }}</el-tag>
                 <el-tag v-if="config.category" size="small" type="warning">{{ categoryLabel(config.category) }}</el-tag>
-                <span style="margin-left: auto; font-size: 12px; color: var(--text-muted);">
+                <span class="settings-ep-select-option__meta">
                   {{ installedVersionCount(key) }}/{{ versionCount(config) }} {{ $t('settings.versionsInstalled') }}
                 </span>
               </div>
             </el-option>
           </el-select>
 
-          <!-- Current model config (enhanced) -->
           <div v-if="currentModelConfig">
-            <!-- Model overview header -->
-            <div class="model-overview-header" style="display: flex; align-items: flex-start; gap: 16px; margin-bottom: 24px; padding: 16px; background: var(--bg-card); border-radius: 12px; border: 1px solid var(--border-color);">
-              <div style="width: 56px; height: 56px; border-radius: 12px; background: rgba(233, 69, 96, 0.1); border: 1px solid rgba(233, 69, 96, 0.2); display: flex; align-items: center; justify-content: center; flex-shrink: 0; color: var(--primary); font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 4px; box-sizing: border-box;">
-                {{ modelInitials(currentModelConfig) }}
-              </div>
-              <div style="flex: 1; min-width: 0;">
-                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
-                  <span style="font-size: 18px; font-weight: 600; color: var(--text-primary);">{{ $mn(currentModelConfig) }}</span>
-                  <el-tag v-if="currentModelConfig.recommended" size="small" type="success" effect="dark">{{ $t('studio.recommended') }}</el-tag>
+            <el-card class="settings-ep-overview-card" shadow="never">
+              <div class="settings-ep-overview">
+                <div class="settings-ep-overview__avatar">
+                  {{ modelInitials(currentModelConfig) }}
                 </div>
-                <div style="font-size: 13px; color: var(--text-muted); line-height: 1.5;">{{ $md(currentModelConfig) }}</div>
-                <div style="display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap;">
-                  <el-tag size="small" type="info">{{ currentModelConfig.engine }}</el-tag>
-                  <el-tag v-if="currentModelConfig.category" size="small" type="warning">{{ categoryLabel(currentModelConfig.category) }}</el-tag>
-                  <el-tag size="small" type="primary">{{ currentModelConfig.type }}</el-tag>
-                  <el-tag
-                    v-for="key in modelActionKeyList"
-                    :key="key"
-                    size="small"
-                    effect="plain"
-                  >
-                    {{ actionTagLabel(key) }}
-                  </el-tag>
+                <div class="settings-ep-overview__body">
+                  <div class="settings-ep-overview__title-row">
+                    <span class="settings-ep-overview__title">{{ $mn(currentModelConfig) }}</span>
+                    <el-tag v-if="currentModelConfig.recommended" size="small" type="success" effect="dark">{{ $t('studio.recommended') }}</el-tag>
+                  </div>
+                  <el-text class="settings-ep-overview__desc" size="small" type="info" tag="p">
+                    {{ $md(currentModelConfig) }}
+                  </el-text>
+                  <div class="settings-ep-overview__tags">
+                    <el-tag size="small" type="info">{{ currentModelConfig.engine }}</el-tag>
+                    <el-tag v-if="currentModelConfig.category" size="small" type="warning">{{ categoryLabel(currentModelConfig.category) }}</el-tag>
+                    <el-tag size="small" type="info" effect="plain">{{ currentModelConfig.type }}</el-tag>
+                    <el-tag
+                      v-for="ak in modelActionKeyList"
+                      :key="ak"
+                      size="small"
+                      effect="plain"
+                    >
+                      {{ actionTagLabel(ak) }}
+                    </el-tag>
+                  </div>
                 </div>
               </div>
-            </div>
+            </el-card>
 
             <!-- Two-column layout: param config + model info -->
-            <el-row :gutter="24">
-              <!-- Left column: parameter config -->
-              <el-col :xs="24" :md="16" :lg="14">
-                <!-- Default version selection -->
-                <div v-if="currentModelConfig.versions" style="margin-bottom: 20px;">
-                  <div style="font-weight: 600; font-size: 14px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
+            <el-row :gutter="20" class="settings-ep-layout-row">
+              <el-col :xs="24" :md="16" :lg="17" :xl="18">
+                <div v-if="currentModelConfig.versions" class="settings-ep-section">
+                  <div class="settings-ep-section-head">
                     <el-icon><collection /></el-icon>
                     {{ $t('settings.defaultVersion') }}
                   </div>
-                  <el-select v-model="selectedDefaultVersion" style="width: 100%;" @change="onDefaultVersionChange">
+                  <el-select v-model="selectedDefaultVersion" class="settings-ep-default-version-select" @change="onDefaultVersionChange">
                     <el-option
                       v-for="(ver, verKey) in currentModelConfig.versions"
                       :key="verKey"
                       :value="verKey"
                     >
-                      <div style="display: flex; align-items: center; gap: 8px;">
+                      <div class="settings-ep-select-option">
                         <span>{{ ver.name }}</span>
                         <el-tag size="small" type="info">{{ ver.size }}</el-tag>
                         <el-tag
@@ -96,7 +95,8 @@
                         <el-tag
                           v-else-if="versionStatus(selectedModel, verKey) === 'generatable'"
                           size="small"
-                          type="warning"
+                          type="info"
+                          effect="plain"
                         >{{ versionStatusLabel(selectedModel, verKey) }}</el-tag>
                         <el-tag
                           v-else
@@ -105,56 +105,62 @@
                         >{{ $t('settings.notInstalled') }}</el-tag>
                         <span
                           v-if="isRecommendedVersion(verKey)"
-                          style="margin-left: auto; font-size: 12px; color: var(--primary);"
+                          class="settings-ep-version-option-rec"
                         >{{ $t('settings.recommendedForYourHardware') }}</span>
                       </div>
                     </el-option>
                   </el-select>
-                  <div v-if="hardwareAdvice" style="margin-top: 8px; padding: 10px 14px; border-radius: 8px; font-size: 13px;" :style="hardwareAdviceStyle">
-                    <div style="display: flex; align-items: center; gap: 8px;">
-                      <el-icon :size="16"><component :is="hardwareAdvice.icon" /></el-icon>
-                      <span>{{ hardwareAdvice.message }}</span>
-                    </div>
-                  </div>
+                  <el-alert
+                    v-if="hardwareAdvice"
+                    :type="hardwareAdviceAlertType"
+                    :closable="false"
+                    show-icon
+                    class="settings-ep-hardware-alert"
+                  >
+                    {{ hardwareAdvice.message }}
+                  </el-alert>
                 </div>
 
-                <!-- Parameter preset management -->
-                <div style="margin-bottom: 20px;">
-                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-                    <div style="font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 8px;">
+                <div class="settings-ep-section">
+                  <div class="settings-ep-section-head settings-ep-section-head--toolbar">
+                    <span class="settings-ep-card-header">
                       <el-icon><magic-stick /></el-icon>
                       {{ $t('settings.paramPresets') }}
-                    </div>
-                    <el-button type="primary" size="small" @click="openParamPresetDialog">
+                    </span>
+                    <el-button size="small" plain class="settings-ep-tool-btn" @click="openParamPresetDialog">
                       <el-icon><plus /></el-icon>
                       {{ $t('settings.saveAsPreset') }}
                     </el-button>
                   </div>
-                  <div v-if="paramPresetsForModel.length === 0" style="font-size: 13px; color: var(--text-muted); padding: 12px; background: var(--bg-card); border-radius: 8px; border: 1px dashed var(--border-color);">
+                  <el-alert
+                    v-if="paramPresetsForModel.length === 0"
+                    type="info"
+                    :closable="false"
+                    show-icon
+                  >
                     {{ $t('settings.noParamPresets') }}
-                  </div>
-                  <div v-else style="display: flex; flex-wrap: wrap; gap: 8px;">
+                  </el-alert>
+                  <div v-else class="settings-ep-preset-tags">
                     <el-tag
                       v-for="preset in paramPresetsForModel"
                       :key="preset.id"
                       size="small"
                       effect="plain"
                       closable
+                      class="settings-ep-preset-tag"
                       @close="deleteParamPreset(preset.id)"
                       @click="loadParamPreset(preset)"
-                      style="cursor: pointer;"
                       :type="preset.isDefault ? 'success' : ''"
                     >
                       {{ preset.name }}
-                      <span v-if="preset.isDefault" style="margin-left: 4px; font-size: 10px;">({{ $t('settings.default') }})</span>
+                      <span v-if="preset.isDefault" class="settings-ep-preset-tag-default-note">({{ $t('settings.default') }})</span>
                     </el-tag>
                   </div>
                 </div>
 
-                <!-- Parameter config form (enhanced: note tooltips, type icons, reset buttons) -->
                 <div class="model-params-section">
-                  <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-                    <h4 class="section-title" style="margin: 0;">
+                  <div class="settings-ep-params-toolbar">
+                    <h4 class="section-title">
                       <el-icon><sliders /></el-icon>
                       {{ $t('settings.parameters') }}
                     </h4>
@@ -168,27 +174,26 @@
                   <el-form label-position="top" size="small" v-if="currentModelConfig">
                     <!-- Resolution -->
                     <el-form-item v-if="resPair" :label="$t('studio.resolution')">
-                      <div style="display: flex; align-items: center; gap: 8px;">
-                        <el-select v-model="modelParams.width" style="width: 120px;">
+                      <div class="settings-ep-res-row">
+                        <el-select v-model="modelParams.width" class="settings-ep-select--w120">
                           <el-option v-for="w in resPair.width.options" :key="w" :label="String(w)" :value="w" />
                         </el-select>
-                        <span style="color: var(--text-muted);">x</span>
-                        <el-select v-model="modelParams.height" style="width: 120px;">
+                        <span class="settings-ep-res-x">x</span>
+                        <el-select v-model="modelParams.height" class="settings-ep-select--w120">
                           <el-option v-for="h in resPair.height.options" :key="h" :label="String(h)" :value="h" />
                         </el-select>
                       </div>
                     </el-form-item>
 
-                    <!-- Scalar parameters -->
                     <template v-for="key in scalarKeys" :key="key">
                       <el-form-item v-if="specOf(key)">
                         <template #label>
-                          <div style="display: flex; align-items: center; gap: 6px;">
+                          <div class="settings-ep-param-label-row">
                             <span>{{ paramLabel(key, specOf(key)) }}</span>
                             <el-tooltip v-if="specOf(key).note" :content="specOf(key).note" placement="top">
-                              <el-icon style="color: var(--text-muted); cursor: help;"><question-filled /></el-icon>
+                              <el-icon class="settings-ep-help-icon"><question-filled /></el-icon>
                             </el-tooltip>
-                            <el-tag v-if="isParamChanged(key)" size="small" type="warning" effect="plain" style="margin-left: auto;">{{ $t('settings.modified') }}</el-tag>
+                            <el-tag v-if="isParamChanged(key)" size="small" type="warning" effect="plain">{{ $t('settings.modified') }}</el-tag>
                           </div>
                         </template>
                         <!-- int / float slider -->
@@ -221,8 +226,8 @@
                           </div>
                         </template>
                         <!-- enum -->
-                        <div v-else-if="specOf(key).type === 'enum'" style="display: flex; align-items: center; gap: 8px;">
-                          <el-select v-model="modelParams[key]" style="flex: 1;">
+                        <div v-else-if="specOf(key).type === 'enum'" class="settings-ep-enum-row">
+                          <el-select v-model="modelParams[key]" class="settings-ep-select--flex">
                             <el-option v-for="opt in specOf(key).options" :key="String(opt)" :label="String(opt)" :value="opt" />
                           </el-select>
                           <el-button
@@ -236,7 +241,7 @@
                           </el-button>
                         </div>
                         <!-- bool -->
-                        <div v-else-if="specOf(key).type === 'bool'" style="display: flex; align-items: center; gap: 8px;">
+                        <div v-else-if="specOf(key).type === 'bool'" class="settings-ep-bool-row">
                           <el-switch v-model="modelParams[key]" />
                           <el-button
                             v-if="isParamChanged(key)"
@@ -264,8 +269,8 @@
 
                     <!-- Seed -->
                     <el-form-item v-if="seedSupport" :label="$t('studio.seed')">
-                      <div style="display: flex; gap: 8px;">
-                        <el-input v-model="modelParams.seed" :placeholder="$t('studio.seedPlaceholder')" style="flex: 1;" />
+                      <div class="settings-ep-seed-row">
+                        <el-input v-model="modelParams.seed" :placeholder="$t('studio.seedPlaceholder')" />
                         <el-button @click="modelParams.seed = String(Math.floor(Math.random() * 1_000_000))">
                           <el-icon><refresh /></el-icon>
                         </el-button>
@@ -273,7 +278,7 @@
                     </el-form-item>
                   </el-form>
 
-                  <div class="save-button-wrapper" style="margin-top: 20px;">
+                  <div class="save-button-wrapper settings-ep-form-mt">
                     <el-button type="primary" @click="saveModelConfig" class="save-button">
                       <el-icon><check /></el-icon>
                       {{ $t('common.save') }}
@@ -283,113 +288,124 @@
               </el-col>
 
               <!-- Right column: model info reference -->
-              <el-col :xs="24" :md="8" :lg="10">
-                <!-- Version status matrix -->
-                <div class="card" style="margin-bottom: 20px; background: var(--bg-card);">
-                  <div style="font-weight: 600; font-size: 14px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
-                    <el-icon><collection /></el-icon>
-                    {{ $t('settings.versionStatus') }}
-                  </div>
-                  <div v-if="!currentModelConfig.versions" style="font-size: 13px; color: var(--text-muted);">
+              <el-col :xs="24" :md="8" :lg="7" :xl="6">
+                <el-card class="settings-ep-side-card" shadow="never">
+                  <template #header>
+                    <div class="settings-ep-card-header">
+                      <el-icon><collection /></el-icon>
+                      <span>{{ $t('settings.versionStatus') }}</span>
+                    </div>
+                  </template>
+                  <el-text v-if="!currentModelConfig.versions" size="small" type="info">
                     {{ $t('settings.noVersions') }}
-                  </div>
-                  <div v-else style="display: flex; flex-direction: column; gap: 8px;">
+                  </el-text>
+                  <div v-else class="settings-ep-version-stack">
                     <div
                       v-for="(ver, verKey) in currentModelConfig.versions"
                       :key="verKey"
-                      style="padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border-color);"
-                      :style="versionItemStyle(verKey)"
+                      class="settings-ep-version-item"
+                      :class="{ 'is-selected': selectedDefaultVersion === verKey }"
                     >
-                      <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
-                        <span style="font-weight: 500; font-size: 13px;">{{ ver.name }}</span>
+                      <div class="settings-ep-version-item__row">
+                        <span class="settings-ep-version-item__name">{{ ver.name }}</span>
                         <el-tag size="small" type="info">{{ ver.size }}</el-tag>
                       </div>
-                      <div style="display: flex; align-items: center; gap: 6px;">
+                      <div class="settings-ep-version-item__meta">
                         <el-tag
                           :type="versionStatusType(selectedModel, verKey)"
                           size="small"
-                          effect="dark"
+                          effect="plain"
                         >
                           {{ versionStatusLabel(selectedModel, verKey) }}
                         </el-tag>
-                        <span v-if="ver.source_type === 'derived'" style="font-size: 11px; color: var(--text-muted);">
+                        <span v-if="ver.source_type === 'derived'" class="settings-ep-version-derived">
                           {{ $t('settings.from') }} {{ currentModelConfig.versions[ver.from_version]?.name || ver.from_version }}
                         </span>
                       </div>
-                      <div v-if="isRecommendedVersion(verKey)" style="margin-top: 6px; font-size: 12px; color: var(--primary);">
-                        <el-icon style="vertical-align: middle; margin-right: 4px;"><star-filled /></el-icon>
+                      <div v-if="isRecommendedVersion(verKey)" class="settings-ep-version-recommended">
+                        <el-icon><star-filled /></el-icon>
                         {{ $t('settings.recommendedForYourHardware') }}
                       </div>
                     </div>
                   </div>
-                </div>
+                </el-card>
 
-                <!-- Capability matrix -->
-                <div class="card" style="margin-bottom: 20px; background: var(--bg-card);">
-                  <div style="font-weight: 600; font-size: 14px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
-                    <el-icon><check /></el-icon>
-                    {{ $t('settings.capabilities') }}
-                  </div>
-                  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                <el-card class="settings-ep-side-card" shadow="never">
+                  <template #header>
+                    <div class="settings-ep-card-header">
+                      <el-icon><check /></el-icon>
+                      <span>{{ $t('settings.capabilities') }}</span>
+                    </div>
+                  </template>
+                  <div class="settings-ep-cap-grid">
                     <div
                       v-for="cap in capabilityList"
                       :key="cap.key"
-                      style="display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 6px;"
-                      :style="cap.value ? 'background: rgba(103, 194, 58, 0.1);' : 'background: rgba(144, 147, 153, 0.1);'"
+                      class="settings-ep-cap-cell"
+                      :class="cap.value ? 'is-active' : 'is-inactive'"
                     >
-                      <el-icon :size="14" :color="cap.value ? '#67c23a' : '#909399'">
+                      <el-icon :size="14" :color="cap.value ? 'var(--el-color-success)' : 'var(--el-text-color-secondary)'">
                         <component :is="cap.value ? 'check' : 'close'" />
                       </el-icon>
-                      <span style="font-size: 12px;" :style="cap.value ? 'color: #67c23a;' : 'color: #909399;'">{{ cap.label }}</span>
+                      <span class="settings-ep-cap-label">{{ cap.label }}</span>
                     </div>
                   </div>
-                </div>
+                </el-card>
 
-                <!-- Hardware compatibility -->
-                <div class="card" style="margin-bottom: 20px; background: var(--bg-card);">
-                  <div style="font-weight: 600; font-size: 14px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
-                    <el-icon><cpu /></el-icon>
-                    {{ $t('settings.hardwareCompatibility') }}
-                  </div>
-                  <div v-if="systemInfo.memory_gb" style="margin-bottom: 12px;">
-                    <div style="display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px;">
+                <el-card class="settings-ep-side-card" shadow="never">
+                  <template #header>
+                    <div class="settings-ep-card-header">
+                      <el-icon><cpu /></el-icon>
+                      <span>{{ $t('settings.hardwareCompatibility') }}</span>
+                    </div>
+                  </template>
+                  <div v-if="systemInfo.memory_gb" class="settings-ep-memory-row">
+                    <div class="settings-ep-memory-row-head">
                       <span>{{ $t('settings.systemMemory') }}</span>
-                      <span style="font-weight: 500;">{{ systemInfo.memory_gb.toFixed(1) }} GB</span>
+                      <span class="settings-ep-memory-val">{{ systemInfo.memory_gb.toFixed(1) }} GB</span>
                     </div>
                     <el-progress :percentage="Math.min(100, (minVersionSizeGB / systemInfo.memory_gb * 100))" :show-text="false" :stroke-width="6" :color="memoryProgressColor" />
                   </div>
-                  <div v-if="recommendedVersion" style="padding: 10px; border-radius: 8px; background: rgba(103, 194, 58, 0.1); border: 1px solid rgba(103, 194, 58, 0.3);">
-                    <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 4px;">{{ $t('settings.recommendedVersion') }}</div>
-                    <div style="font-weight: 600; color: #67c23a;">{{ recommendedVersion.name }} ({{ recommendedVersion.size }})</div>
-                  </div>
-                  <div v-else-if="currentModelConfig.versions" style="padding: 10px; border-radius: 8px; background: rgba(245, 108, 108, 0.1); border: 1px solid rgba(245, 108, 108, 0.3);">
-                    <div style="font-size: 13px; color: var(--danger);">
-                      <el-icon style="vertical-align: middle; margin-right: 4px;"><warning /></el-icon>
-                      {{ $t('settings.memoryInsufficient') }}
-                    </div>
-                  </div>
-                </div>
+                  <el-alert
+                    v-if="recommendedVersion"
+                    type="success"
+                    :closable="false"
+                    show-icon
+                  >
+                    <template #title>{{ $t('settings.recommendedVersion') }}</template>
+                    {{ recommendedVersion.name }} ({{ recommendedVersion.size }})
+                  </el-alert>
+                  <el-alert
+                    v-else-if="currentModelConfig.versions"
+                    type="error"
+                    :closable="false"
+                    show-icon
+                  >
+                    {{ $t('settings.memoryInsufficient') }}
+                  </el-alert>
+                </el-card>
 
-                <!-- Parameter notes -->
-                <div class="card" style="background: var(--bg-card);">
-                  <div style="font-weight: 600; font-size: 14px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px;">
-                    <el-icon><info-filled /></el-icon>
-                    {{ $t('settings.paramNotes') }}
-                  </div>
-                  <div v-if="!hasParamNotes" style="font-size: 13px; color: var(--text-muted);">
+                <el-card class="settings-ep-side-card settings-ep-side-card--last" shadow="never">
+                  <template #header>
+                    <div class="settings-ep-card-header">
+                      <el-icon><info-filled /></el-icon>
+                      <span>{{ $t('settings.paramNotes') }}</span>
+                    </div>
+                  </template>
+                  <el-text v-if="!hasParamNotes" size="small" type="info">
                     {{ $t('settings.noParamNotes') }}
-                  </div>
-                  <div v-else style="display: flex; flex-direction: column; gap: 10px;">
-                    <div v-for="note in paramNotesList" :key="note.key" style="padding: 8px 10px; background: var(--bg-body); border-radius: 6px;">
-                      <div style="font-weight: 500; font-size: 12px; margin-bottom: 4px; color: var(--text-primary);">{{ note.label }}</div>
-                      <div style="font-size: 12px; color: var(--text-muted); line-height: 1.5;">{{ note.note }}</div>
+                  </el-text>
+                  <div v-else class="settings-ep-notes-stack">
+                    <div v-for="note in paramNotesList" :key="note.key" class="settings-ep-note-item">
+                      <div class="settings-ep-note-label">{{ note.label }}</div>
+                      <div class="settings-ep-note-body">{{ note.note }}</div>
                     </div>
                   </div>
-                </div>
+                </el-card>
               </el-col>
             </el-row>
           </div>
-        </div>
+        </el-card>
 
         <!-- Parameter preset save dialog -->
         <el-dialog v-model="paramPresetDialogVisible" :title="$t('settings.saveParamPreset')" width="400px">
@@ -406,51 +422,52 @@
             <el-button type="primary" @click="saveParamPreset">{{ $t('common.save') }}</el-button>
           </template>
         </el-dialog>
-      </el-tab-pane>
+    </el-tab-pane>
 
-      <!-- Prompt templates -->
-      <el-tab-pane :label="$t('settings.promptTemplates')" name="presets">
-        <div class="card" style="margin-bottom: 24px;">
-          <div class="card-title" style="justify-content: space-between;">
-            <span>
-              <el-icon><collection /></el-icon>
-              {{ $t('settings.promptTemplates') }}
-              <span style="color: var(--text-muted); font-size: 13px; font-weight: normal; margin-left: 8px;">
-                {{ $t('settings.promptTemplatesDesc') }}
+    <el-tab-pane :label="$t('settings.promptTemplates')" name="presets">
+        <el-card shadow="never" class="studio-ep-surface-card settings-ep-tab-panel">
+          <template #header>
+            <div class="card-title card-title--split">
+              <span class="settings-ep-card-header">
+                <el-icon><collection /></el-icon>
+                {{ $t('settings.promptTemplates') }}
+                <el-text class="settings-ep-title-desc" size="small" type="info">
+                  {{ $t('settings.promptTemplatesDesc') }}
+                </el-text>
               </span>
-            </span>
-            <el-button type="primary" size="small" @click="openPresetDialog()">
-              <el-icon><plus /></el-icon>
-              {{ $t('settings.addTemplate') }}
-            </el-button>
-          </div>
+              <el-button type="primary" size="small" @click="openPresetDialog()">
+                <el-icon><plus /></el-icon>
+                {{ $t('settings.addTemplate') }}
+              </el-button>
+            </div>
+          </template>
 
           <el-empty v-if="Object.keys(presets).length === 0" :description="$t('settings.noTemplates')" />
 
-          <el-table v-else :data="presetList" style="width: 100%">
+          <el-table v-else :data="presetList" class="settings-ep-table-full">
             <el-table-column :label="$t('settings.templateName')" prop="name" min-width="150" />
             <el-table-column :label="$t('settings.presetMediaScope')" width="140">
               <template #default="{ row }">
-                <span style="font-size: 12px;">{{ presetMediaLabel(row.preset) }}</span>
+                <el-text size="small">{{ presetMediaLabel(row.preset) }}</el-text>
               </template>
             </el-table-column>
             <el-table-column :label="$t('settings.positivePrompt')" min-width="250">
               <template #default="{ row }">
-                <div style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 300px;">
+                <div class="settings-ep-table-ellipsis">
                   {{ row.preset.positive || '-' }}
                 </div>
               </template>
             </el-table-column>
             <el-table-column :label="$t('settings.negativePrompt')" min-width="250">
               <template #default="{ row }">
-                <div style="white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 300px;">
+                <div class="settings-ep-table-ellipsis">
                   {{ row.preset.negative || '-' }}
                 </div>
               </template>
             </el-table-column>
             <el-table-column :label="$t('settings.presetAppliesTo')" min-width="160">
               <template #default="{ row }">
-                <span style="font-size: 12px; color: var(--text-muted);">{{ presetAppliesSummary(row.preset) }}</span>
+                <span class="settings-ep-table-muted">{{ presetAppliesSummary(row.preset) }}</span>
               </template>
             </el-table-column>
             <el-table-column :label="$t('common.action')" width="150" fixed="right">
@@ -464,7 +481,7 @@
               </template>
             </el-table-column>
           </el-table>
-        </div>
+        </el-card>
 
         <!-- Add/Edit template dialog -->
         <el-dialog
@@ -477,12 +494,14 @@
               <el-input v-model="presetForm.name" :placeholder="$t('settings.presetNamePlaceholder')" />
             </el-form-item>
             <el-form-item :label="$t('settings.presetMediaScope')">
-              <el-radio-group v-model="presetForm.media_scope">
-                <el-radio-button label="image">{{ $t('settings.presetMediaImage') }}</el-radio-button>
-                <el-radio-button label="video">{{ $t('settings.presetMediaVideo') }}</el-radio-button>
-              </el-radio-group>
-              <div style="font-size: 12px; color: var(--text-muted); margin-top: 6px;">
-                {{ $t('settings.presetMediaScopeHint') }}
+              <div class="settings-ep-stacked-control">
+                <el-radio-group v-model="presetForm.media_scope" class="settings-ep-media-scope-group">
+                  <el-radio-button label="image">{{ $t('settings.presetMediaImage') }}</el-radio-button>
+                  <el-radio-button label="video">{{ $t('settings.presetMediaVideo') }}</el-radio-button>
+                </el-radio-group>
+                <p class="settings-ep-form-hint settings-ep-form-hint--below-control">
+                  {{ $t('settings.presetMediaScopeHint') }}
+                </p>
               </div>
             </el-form-item>
             <el-form-item :label="$t('settings.positivePrompt')">
@@ -494,12 +513,15 @@
               />
             </el-form-item>
             <el-form-item :label="$t('settings.negativePrompt')">
-              <el-input
-                v-model="presetForm.negative"
-                type="textarea"
-                :rows="2"
-                :placeholder="$t('settings.negativePlaceholder')"
-              />
+              <div class="settings-ep-stacked-control">
+                <el-input
+                  v-model="presetForm.negative"
+                  type="textarea"
+                  :rows="2"
+                  :placeholder="$t('settings.negativePlaceholder')"
+                />
+                <p class="studio-ep-field-footnote">{{ $t('studio.optional') }}</p>
+              </div>
             </el-form-item>
             <el-form-item :label="$t('settings.presetAppliesTo')">
               <el-checkbox-group v-model="presetForm.applies_to">
@@ -517,49 +539,55 @@
             <el-button type="primary" @click="savePreset">{{ $t('common.save') }}</el-button>
           </template>
         </el-dialog>
-      </el-tab-pane>
+    </el-tab-pane>
 
-      <!-- System settings -->
-      <el-tab-pane :label="$t('settings.systemConfig')" name="system">
-        <el-row :gutter="24">
+    <el-tab-pane :label="$t('settings.systemConfig')" name="system">
+        <el-row :gutter="20" class="settings-ep-system-layout-row">
           <!-- Left: public config + model list + LoRA list -->
-          <el-col :xs="24" :md="16" :lg="14">
+          <el-col :xs="24" :md="16" :lg="17" :xl="18">
             <!-- Public config -->
-            <div class="card" style="margin-bottom: 24px;">
-              <div class="card-title">
-                <el-icon><setting /></el-icon>
-                {{ $t('settings.publicConfig') }}
-                <span style="color: var(--text-muted); font-size: 13px; font-weight: normal; margin-left: 8px;">
-                  {{ $t('settings.publicConfigDesc') }}
-                </span>
-              </div>
+            <el-card shadow="never" class="studio-ep-surface-card settings-ep-tab-panel">
+              <template #header>
+                <div class="card-title">
+                  <el-icon><setting /></el-icon>
+                  {{ $t('settings.publicConfig') }}
+                  <el-text class="settings-ep-title-desc" size="small" type="info">
+                    {{ $t('settings.publicConfigDesc') }}
+                  </el-text>
+                </div>
+              </template>
 
-              <el-form :model="settings" label-position="top">
-                <el-form-item :label="$t('settings.defaultModel')">
-                  <el-select v-model="settings.default_model" style="width: 100%" :placeholder="$t('settings.selectDefaultModel')">
-                    <el-option
-                      v-for="model in installedModels"
-                      :key="model.name"
-                      :label="model.name"
-                      :value="model.name"
-                    />
-                  </el-select>
-                  <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
-                    {{ $t('settings.defaultModelDesc') }}
-                  </div>
-                </el-form-item>
+              <el-form :model="settings" label-position="top" class="settings-ep-system-form">
+                <section class="settings-ep-group-block">
+                  <h3 class="settings-ep-group-block-title">{{ $t('settings.systemGroupGeneral') }}</h3>
+                  <div class="settings-ep-grouped-form settings-ep-grouped-form--system">
+                    <el-form-item :label="$t('settings.defaultModel')">
+                      <div class="settings-ep-stacked-control">
+                        <el-select
+                          v-model="settings.default_model"
+                          class="settings-ep-default-version-select"
+                          :placeholder="$t('settings.selectDefaultModel')"
+                        >
+                          <el-option
+                            v-for="model in installedModels"
+                            :key="model.name"
+                            :label="model.name"
+                            :value="model.name"
+                          />
+                        </el-select>
+                        <p class="settings-ep-form-hint settings-ep-form-hint--below-control">
+                          {{ $t('settings.defaultModelDesc') }}
+                        </p>
+                      </div>
+                    </el-form-item>
 
-                <el-row :gutter="16">
-                  <el-col :span="12">
                     <el-form-item :label="$t('settings.language')">
                       <el-select v-model="settings.language" @change="handleLanguageChange">
                         <el-option :label="$t('settings.label_zh')" value="zh" />
                         <el-option :label="$t('settings.label_en')" value="en" />
                       </el-select>
                     </el-form-item>
-                  </el-col>
 
-                  <el-col :span="12">
                     <el-form-item :label="$t('settings.outputFormat')">
                       <el-select v-model="settings.output_format">
                         <el-option label="PNG" value="png" />
@@ -567,125 +595,177 @@
                         <el-option label="WebP" value="webp" />
                       </el-select>
                     </el-form-item>
-                  </el-col>
-                </el-row>
+                  </div>
+                </section>
 
-                <el-form-item :label="$t('settings.memoryLimit')">
-                  <div class="param-control-row">
-                    <div class="param-slider">
-                      <el-slider v-model="settings.mlx_memory_limit" :min="32" :max="256" :step="8" />
+                <section class="settings-ep-group-block">
+                  <h3 class="settings-ep-group-block-title">{{ $t('settings.systemGroupPerformance') }}</h3>
+                  <div class="settings-ep-grouped-form settings-ep-grouped-form--system">
+                    <el-form-item :label="$t('settings.memoryLimit')">
+                      <div class="param-control-row">
+                        <div class="param-slider">
+                          <el-slider v-model="settings.mlx_memory_limit" :min="32" :max="256" :step="8" />
+                        </div>
+                        <span class="settings-ep-slider-suffix">{{ settings.mlx_memory_limit }} GB</span>
+                      </div>
+                    </el-form-item>
+
+                    <el-form-item :label="$t('settings.modelCacheTtl')">
+                      <div class="settings-ep-stacked-control">
+                        <div class="param-control-row">
+                          <div class="param-slider">
+                            <el-slider v-model="settings.model_cache_ttl_minutes" :min="5" :max="120" :step="5" />
+                          </div>
+                          <span class="settings-ep-slider-suffix">{{ settings.model_cache_ttl_minutes }} min</span>
+                        </div>
+                        <p class="settings-ep-form-hint settings-ep-form-hint--below-control">
+                          {{ $t('settings.modelCacheTtlDesc') }}
+                        </p>
+                      </div>
+                    </el-form-item>
+
+                    <el-form-item :label="$t('settings.queueImageFirst')">
+                      <div class="settings-ep-stacked-control">
+                        <el-switch v-model="settings.queue_image_first" />
+                        <p class="settings-ep-form-hint settings-ep-form-hint--below-control">
+                          {{ $t('settings.queueImageFirstDesc') }}
+                        </p>
+                      </div>
+                    </el-form-item>
+
+                    <el-form-item :label="$t('settings.autoSavePrompts')">
+                      <div class="settings-ep-stacked-control">
+                        <el-switch v-model="settings.auto_save_prompts" />
+                        <p class="settings-ep-form-hint settings-ep-form-hint--below-control">
+                          {{ $t('settings.autoSavePromptsDesc') }}
+                        </p>
+                      </div>
+                    </el-form-item>
+                  </div>
+                </section>
+
+                <section class="settings-ep-group-block">
+                  <h3 class="settings-ep-group-block-title">{{ $t('settings.systemGroupWorkspace') }}</h3>
+                  <div class="settings-ep-grouped-form settings-ep-grouped-form--system">
+                    <el-form-item :label="$t('settings.customWorkspace')">
+                  <div class="settings-ep-stacked-control settings-ep-workspace-picker">
+                    <div class="settings-ep-workspace-input-row">
+                      <el-input
+                        v-model="settings.custom_workspace_dir"
+                        :placeholder="$t('settings.customWorkspacePlaceholder')"
+                      />
+                      <el-button class="settings-ep-workspace-pick-btn" @click="pickWorkspaceDirectory">
+                        {{ $t('settings.pickWorkspace') }}
+                      </el-button>
                     </div>
-                    <span style="color: var(--text-muted); white-space: nowrap;">{{ settings.mlx_memory_limit }} GB</span>
-                  </div>
-                </el-form-item>
-
-                <el-form-item :label="$t('settings.modelCacheTtl')">
-                  <div class="param-control-row">
-                    <div class="param-slider">
-                      <el-slider v-model="settings.model_cache_ttl_minutes" :min="5" :max="120" :step="5" />
+                    <p class="settings-ep-form-hint settings-ep-form-hint--below-control">
+                      {{ $t('settings.workspaceSetupEmptyHint') }}
+                    </p>
+                    <p class="settings-ep-form-hint settings-ep-form-hint--below-control">
+                      {{ $t('settings.customWorkspaceHint') }}
+                    </p>
+                    <p class="settings-ep-form-hint settings-ep-form-hint--below-control">
+                      {{ $t('settings.customWorkspaceRestartHint') }}
+                    </p>
+                    <div v-if="workspacePaths" class="settings-ep-workspace-paths">
+                      <div class="settings-ep-workspace-paths-title">{{ $t('settings.workspaceLayoutTitle') }}</div>
+                      <ul class="settings-ep-workspace-paths-list">
+                        <li v-for="(p, key) in workspacePaths" :key="key">
+                          <span class="settings-ep-workspace-paths-key">{{ key }}</span>
+                          <span class="settings-ep-workspace-paths-val">{{ p }}</span>
+                        </li>
+                      </ul>
                     </div>
-                    <span style="color: var(--text-muted); white-space: nowrap;">{{ settings.model_cache_ttl_minutes }} min</span>
                   </div>
-                  <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
-                    {{ $t('settings.modelCacheTtlDesc') }}
+                    </el-form-item>
                   </div>
-                </el-form-item>
+                </section>
 
-                <el-form-item :label="$t('settings.queueImageFirst')">
-                  <el-switch v-model="settings.queue_image_first" />
-                  <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
-                    {{ $t('settings.queueImageFirstDesc') }}
+                <section class="settings-ep-group-block">
+                  <h3 class="settings-ep-group-block-title">{{ $t('settings.systemGroupHuggingface') }}</h3>
+                  <div class="settings-ep-grouped-form settings-ep-grouped-form--system">
+                    <el-form-item :label="$t('settings.huggingfaceToken')">
+                      <div class="settings-ep-stacked-control">
+                        <el-input
+                          v-model="settings.huggingface_token"
+                          type="password"
+                          show-password
+                          :placeholder="$t('settings.huggingfaceTokenPlaceholder')"
+                        >
+                          <template #prefix>
+                            <el-icon><key /></el-icon>
+                          </template>
+                        </el-input>
+                        <p class="studio-ep-field-footnote">{{ $t('studio.optional') }}</p>
+                        <p class="settings-ep-form-hint settings-ep-form-hint--below-control">
+                          {{ $t('settings.huggingfaceTokenDesc') }}
+                        </p>
+                      </div>
+                    </el-form-item>
                   </div>
-                </el-form-item>
+                </section>
 
-                <el-form-item :label="$t('settings.theme')">
-                  <el-radio-group v-model="settings.theme">
-                    <el-radio-button label="dark">{{ $t('settings.themeDark') }}</el-radio-button>
-                    <el-radio-button label="light">{{ $t('settings.themeLight') }}</el-radio-button>
-                  </el-radio-group>
-                </el-form-item>
+                <section class="settings-ep-group-block">
+                  <h3 class="settings-ep-group-block-title">{{ $t('settings.systemGroupCivitai') }}</h3>
+                  <div class="settings-ep-grouped-form settings-ep-grouped-form--system">
+                    <el-form-item :label="$t('settings.civitaiToken')">
+                      <div class="settings-ep-stacked-control">
+                        <el-input
+                          v-model="settings.civitai_token"
+                          type="password"
+                          show-password
+                          :placeholder="$t('settings.civitaiTokenPlaceholder')"
+                        >
+                          <template #prefix>
+                            <el-icon><key /></el-icon>
+                          </template>
+                        </el-input>
+                        <p class="studio-ep-field-footnote">{{ $t('studio.optional') }}</p>
+                        <p class="settings-ep-form-hint settings-ep-form-hint--below-control">
+                          {{ $t('settings.civitaiTokenDesc') }}
+                        </p>
+                      </div>
+                    </el-form-item>
 
-                <el-form-item :label="$t('settings.autoSavePrompts')">
-                  <el-switch v-model="settings.auto_save_prompts" />
-                  <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
-                    {{ $t('settings.autoSavePromptsDesc') }}
+                    <el-form-item v-if="settings.civitai_token">
+                      <div class="settings-ep-stacked-control">
+                        <el-checkbox v-model="settings.nsfw_enabled" size="large">
+                          <el-text type="danger">{{ $t('settings.nsfwContent') }}</el-text>
+                        </el-checkbox>
+                        <p class="settings-ep-form-hint settings-ep-form-hint--below-control">
+                          {{ $t('settings.nsfwDesc') }}
+                        </p>
+                      </div>
+                    </el-form-item>
                   </div>
-                </el-form-item>
+                </section>
 
-                <el-form-item :label="$t('settings.customModelsDir')">
-                  <el-input v-model="settings.custom_models_dir" clearable :placeholder="'./models'" />
-                </el-form-item>
-                <el-form-item :label="$t('settings.customLorasDir')">
-                  <el-input v-model="settings.custom_loras_dir" clearable :placeholder="'./loras'" />
-                </el-form-item>
-                <el-form-item :label="$t('settings.customOutputsDir')">
-                  <el-input v-model="settings.custom_outputs_dir" clearable :placeholder="'./outputs'" />
-                </el-form-item>
-                <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 16px;">
-                  {{ $t('settings.customPathsHint') }}
-                </div>
-
-                <el-divider>HuggingFace</el-divider>
-
-                <el-form-item :label="$t('settings.huggingfaceToken')">
-                  <el-input v-model="settings.huggingface_token" type="password" show-password
-                    :placeholder="$t('settings.huggingfaceTokenPlaceholder')">
-                    <template #prefix>
-                      <el-icon><key /></el-icon>
-                    </template>
-                  </el-input>
-                  <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
-                    {{ $t('settings.huggingfaceTokenDesc') }}
-                  </div>
-                </el-form-item>
-
-                <el-divider>CivitAI</el-divider>
-
-                <el-form-item :label="$t('settings.civitaiToken')">
-                  <el-input v-model="settings.civitai_token" type="password" show-password
-                    :placeholder="$t('settings.civitaiTokenPlaceholder')">
-                    <template #prefix>
-                      <el-icon><key /></el-icon>
-                    </template>
-                  </el-input>
-                  <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
-                    {{ $t('settings.civitaiTokenDesc') }}
-                  </div>
-                </el-form-item>
-
-                <el-form-item v-if="settings.civitai_token">
-                  <el-checkbox v-model="settings.nsfw_enabled" size="large">
-                    <span style="color: var(--danger);">{{ $t('settings.nsfwContent') }}</span>
-                  </el-checkbox>
-                  <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px;">
-                    {{ $t('settings.nsfwDesc') }}
-                  </div>
-                </el-form-item>
-
-                <el-form-item>
+                <el-form-item class="settings-ep-system-save-row">
                   <el-button type="primary" @click="saveSettings">
                     <el-icon><check /></el-icon>
                     {{ $t('common.save') }}
                   </el-button>
                 </el-form-item>
               </el-form>
-            </div>
+            </el-card>
 
           </el-col>
 
           <!-- Right: system info + real-time resource monitor -->
-          <el-col :xs="24" :md="8">
+          <el-col :xs="24" :md="8" :lg="7" :xl="6">
             <!-- System info -->
-            <div class="card" style="margin-bottom: 24px;">
-              <div class="card-title">
-                <el-icon><cpu /></el-icon>
-                {{ $t('settings.systemInfo') }}
-              </div>
+            <el-card shadow="never" class="studio-ep-surface-card settings-ep-tab-panel">
+              <template #header>
+                <div class="card-title">
+                  <el-icon><cpu /></el-icon>
+                  {{ $t('settings.systemInfo') }}
+                </div>
+              </template>
 
               <div class="system-info-grid">
                 <div class="info-item">
                   <div class="info-icon">
-                    <el-icon style="font-size: 20px;"><monitor /></el-icon>
+                    <el-icon class="settings-ep-info-icon-lg"><monitor /></el-icon>
                   </div>
                   <div class="info-content">
                     <div class="info-label">{{ $t('settings.platform') }}</div>
@@ -694,7 +774,7 @@
                 </div>
                 <div class="info-item">
                   <div class="info-icon">
-                    <el-icon style="font-size: 20px;"><cpu /></el-icon>
+                    <el-icon class="settings-ep-info-icon-lg"><cpu /></el-icon>
                   </div>
                   <div class="info-content">
                     <div class="info-label">{{ $t('settings.memory') }}</div>
@@ -703,7 +783,7 @@
                 </div>
                 <div class="info-item">
                   <div class="info-icon">
-                    <el-icon style="font-size: 20px;"><document /></el-icon>
+                    <el-icon class="settings-ep-info-icon-lg"><document /></el-icon>
                   </div>
                   <div class="info-content">
                     <div class="info-label">{{ $t('settings.pythonVersion') }}</div>
@@ -712,31 +792,31 @@
                 </div>
               </div>
 
-              <!-- Dependency versions -->
-              <div v-if="systemInfo.dependencies" style="margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border-color);">
-                <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 8px;">{{ $t('settings.dependencies') }}</div>
-                <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+              <div v-if="systemInfo.dependencies" class="settings-ep-dependencies">
+                <div class="settings-ep-dependencies-title">{{ $t('settings.dependencies') }}</div>
+                <div class="settings-ep-dep-tags">
                   <el-tag v-for="(version, name) in systemInfo.dependencies" :key="name" size="small" type="info" effect="plain">
                     {{ name }} {{ version }}
                   </el-tag>
                 </div>
               </div>
-            </div>
+            </el-card>
 
-            <!-- Model cache status -->
-            <div class="card" style="margin-bottom: 24px;">
-              <div class="card-title" style="justify-content: space-between; align-items: center;">
-                <span style="display: flex; align-items: center; gap: 8px;">
-                  <el-icon style="font-size: 18px; color: var(--primary);"><collection /></el-icon>
-                  {{ $t('settings.modelCacheTitle') }}
-                </span>
-                <el-button size="small" text @click="refreshCacheStatus" :loading="cacheLoading">
-                  <el-icon><refresh /></el-icon>
-                </el-button>
-              </div>
-              <div v-if="cacheError" style="color: var(--el-color-danger); font-size: 13px; margin-top: 8px;">{{ cacheError }}</div>
+            <el-card shadow="never" class="studio-ep-surface-card settings-ep-tab-panel">
+              <template #header>
+                <div class="card-title card-title--split">
+                  <span class="settings-ep-card-header">
+                    <el-icon class="settings-ep-cache-title-icon"><collection /></el-icon>
+                    {{ $t('settings.modelCacheTitle') }}
+                  </span>
+                  <el-button size="small" text @click="refreshCacheStatus" :loading="cacheLoading">
+                    <el-icon><refresh /></el-icon>
+                  </el-button>
+                </div>
+              </template>
+              <el-alert v-if="cacheError" type="error" :closable="false" :title="cacheError" class="settings-ep-hardware-alert" />
               <template v-else>
-                <div v-if="cacheStatus && cacheStatus.cache" style="font-size: 12px; color: var(--text-muted); margin: 12px 0;">
+                <div v-if="cacheStatus && cacheStatus.cache" class="settings-ep-cache-summary">
                   {{ $tt('settings.modelCacheTotal', {
                     count: cacheStatus.cache.cached_models,
                     total: cacheStatus.cache.total_gb,
@@ -762,17 +842,19 @@
                   :description="$t('settings.modelCacheEmpty')"
                 />
               </template>
-            </div>
+            </el-card>
 
             <!-- Real-time resource monitor -->
-            <div class="card system-monitor-card">
-              <div class="card-title">
-                <el-icon><monitor /></el-icon>
-                {{ $t('settings.resourceMonitor') }}
-                <span style="margin-left: auto; color: var(--text-muted); font-size: 12px; font-weight: normal;">
-                  {{ $t('settings.realtime') }}
-                </span>
-              </div>
+            <el-card shadow="never" class="studio-ep-surface-card system-monitor-card">
+              <template #header>
+                <div class="card-title">
+                  <el-icon><monitor /></el-icon>
+                  {{ $t('settings.resourceMonitor') }}
+                  <span class="settings-ep-monitor-sub">
+                    {{ $t('settings.realtime') }}
+                  </span>
+                </div>
+              </template>
 
               <!-- CPU -->
               <div class="monitor-item">
@@ -815,21 +897,21 @@
                     {{ monitorData.gpu.model }}
                   </span>
                 </div>
-                <div style="font-size: 12px; color: var(--text-muted); margin-top: 4px; display: flex; gap: 12px;">
+                <div class="settings-ep-monitor-gpu-meta">
                   <span v-if="monitorData.gpu.memory_gb">{{ monitorData.gpu.memory_gb }} {{ $t('settings.unifiedMemory') }}</span>
                   <span v-if="monitorData.gpu.note">{{ monitorData.gpu.note }}</span>
                 </div>
               </div>
 
-              <div style="text-align: center; margin-top: 12px;">
+              <div class="settings-ep-monitor-foot">
                 <el-tag size="small" type="info" effect="plain">
                   {{ $t('settings.refreshInterval') }}
                 </el-tag>
               </div>
-            </div>
+            </el-card>
           </el-col>
         </el-row>
-      </el-tab-pane>
+    </el-tab-pane>
     </el-tabs>
   </div>
 </template>
@@ -837,12 +919,14 @@
 <script setup lang="ts">
 // @ts-nocheck
 import { ref, reactive, computed, watch, onMounted, onUnmounted, inject, type Ref } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { ElMessage, ElMessageBox } from 'element-plus';
 import { api } from '@/utils/api';
-import { $tt, $mn, $md, applyTheme } from '@/utils/i18n';
+import { $tt, $mn, $md } from '@/utils/i18n';
 import { DQ_STORAGE, getItem, setItem } from '@/utils/storage';
 import { useRegistryStore } from '@/stores/registry';
 import type { SystemInfo } from '@/types';
+import * as RegistryParamSchema from '@/utils/registryParamSchema';
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -894,14 +978,7 @@ interface MonitorData {
 const systemInfo = inject<Ref<SystemInfo>>('systemInfo');
 
 const registryStore = useRegistryStore();
-
-// Access global legacy helpers
-const RegistryParamSchema = (window as unknown as Record<string, unknown>).RegistryParamSchema as {
-  normalizeParamsDef: (parameters: Record<string, unknown>) => Record<string, Record<string, unknown>>;
-  resolutionPair: (normalized: Record<string, Record<string, unknown>>) => { width: { options: number[] }; height: { options: number[] } } | null;
-  scalarKeysForForm: (normalized: Record<string, Record<string, unknown>>) => string[];
-  applyDefaults: (parameters: Record<string, unknown>, target: Record<string, unknown>) => void;
-} | undefined;
+const { locale } = useI18n();
 
 /* ------------------------------------------------------------------ */
 /*  State                                                              */
@@ -911,7 +988,6 @@ const activeTab = ref<string>(getItem(DQ_STORAGE.SETTINGS_TAB) || 'models');
 
 const settings = reactive<Record<string, unknown>>({
   language: 'zh',
-  theme: 'dark',
   default_model: '',
   auto_save_prompts: true,
   output_format: 'png',
@@ -921,10 +997,12 @@ const settings = reactive<Record<string, unknown>>({
   civitai_token: '',
   huggingface_token: '',
   nsfw_enabled: false,
-  custom_models_dir: '',
-  custom_loras_dir: '',
-  custom_outputs_dir: '',
+  custom_workspace_dir: '',
 });
+
+const workspacePaths = ref<Record<string, string> | null>(null);
+const initialWorkspaceDir = ref('');
+const workspaceEffectiveRoot = ref('');
 
 const modelRegistry = ref<Record<string, ModelConfig>>({});
 const selectedModel = ref('');
@@ -992,8 +1070,8 @@ const sortedModelRegistry = computed(() => {
   const entries = Object.entries(modelRegistry.value);
   entries.sort((a, b) => {
     if (a[1].recommended !== b[1].recommended) return a[1].recommended ? -1 : 1;
-    const nameA = typeof $mn === 'function' ? $mn(a[1], a[0]) : a[0];
-    const nameB = typeof $mn === 'function' ? $mn(b[1], b[0]) : b[0];
+    const nameA = $mn(a[1], a[0]);
+    const nameB = $mn(b[1], b[0]);
     return nameA.localeCompare(nameB);
   });
   return Object.fromEntries(entries);
@@ -1048,7 +1126,7 @@ const versionStatus = (modelId: string, verKey: string): string => {
 
 const versionStatusType = (modelId: string, verKey: string) => {
   const s = versionStatus(modelId, verKey);
-  const map: Record<string, string> = { ready: 'success', generatable: 'warning', parent_missing: 'info', missing: 'info' };
+  const map: Record<string, string> = { ready: 'success', generatable: 'info', parent_missing: 'info', missing: 'info' };
   return map[s] || 'info';
 };
 
@@ -1061,13 +1139,6 @@ const versionStatusLabel = (modelId: string, verKey: string) => {
     missing: $tt('settings.notInstalled'),
   };
   return map[s] || s;
-};
-
-const versionItemStyle = (verKey: string) => {
-  if (selectedDefaultVersion.value === verKey) {
-    return 'border-color: var(--primary); background: rgba(233, 69, 96, 0.05);';
-  }
-  return '';
 };
 
 const parseSizeGB = (sizeStr: string | undefined) => {
@@ -1093,9 +1164,9 @@ const minVersionSizeGB = computed(() => {
 const memoryProgressColor = computed(() => {
   const memoryGB = systemInfo?.value.memory_gb ?? 0;
   const ratio = memoryGB ? minVersionSizeGB.value / memoryGB : 0;
-  if (ratio < 0.5) return '#67c23a';
-  if (ratio < 0.8) return '#e6a23c';
-  return '#f56c6c';
+  if (ratio < 0.5) return 'var(--el-color-success)';
+  if (ratio < 0.8) return 'var(--el-color-warning)';
+  return 'var(--el-color-danger)';
 });
 
 const isRecommendedVersion = (verKey: string) => {
@@ -1152,12 +1223,12 @@ const hardwareAdvice = computed(() => {
   return { icon: 'info', message: $tt('settings.modelNotInstalled') };
 });
 
-const hardwareAdviceStyle = computed(() => {
-  if (!hardwareAdvice.value) return {};
-  const icon = hardwareAdvice.value.icon;
-  if (icon === 'warning') return { background: 'rgba(245, 108, 108, 0.1)', border: '1px solid rgba(245, 108, 108, 0.3)', color: 'var(--danger)' };
-  if (icon === 'check') return { background: 'rgba(103, 194, 58, 0.1)', border: '1px solid rgba(103, 194, 58, 0.3)', color: '#67c23a' };
-  return { background: 'rgba(144, 147, 153, 0.1)', border: '1px solid rgba(144, 147, 153, 0.3)', color: 'var(--text-muted)' };
+const hardwareAdviceAlertType = computed(() => {
+  const h = hardwareAdvice.value;
+  if (!h) return 'info';
+  if (h.icon === 'warning') return 'warning';
+  if (h.icon === 'check') return 'success';
+  return 'info';
 });
 
 const capabilityList = computed(() => {
@@ -1185,21 +1256,32 @@ const paramPresetsForModel = computed(() => {
 });
 
 const normalizedParams = computed(() => {
-  const R = RegistryParamSchema;
   const cfg = currentModelConfig.value;
-  if (!R || !cfg || !cfg.parameters) return {};
-  return R.normalizeParamsDef(cfg.parameters);
+  if (!cfg || !cfg.parameters) return {};
+  return RegistryParamSchema.normalizeParamsDef(cfg.parameters as Record<string, unknown>);
 });
 
-const resPair = computed(() => {
-  const R = RegistryParamSchema;
-  return R ? R.resolutionPair(normalizedParams.value) : null;
-});
+const resPair = computed(() => RegistryParamSchema.resolutionPair(normalizedParams.value));
 
-const scalarKeys = computed(() => {
-  const R = RegistryParamSchema;
-  return R ? R.scalarKeysForForm(normalizedParams.value) : [];
-});
+/** el-select 用 === 匹配 value：预设/存储里的字符串需对齐到 registry 枚举的原始类型，否则选中项不显示 */
+const snapModelResolutionEnums = () => {
+  const pair = resPair.value;
+  if (!pair) return;
+  const snap = (key: 'width' | 'height', spec: Record<string, unknown>) => {
+    const opts = spec.options;
+    if (!Array.isArray(opts) || opts.length === 0) return;
+    const cur = modelParams[key];
+    const found = opts.find(
+      (o) => o === cur || String(o) === String(cur) || (Number(o) === Number(cur) && !Number.isNaN(Number(cur)))
+    );
+    if (found !== undefined) modelParams[key] = found;
+    else if ('default' in spec) modelParams[key] = (spec as { default?: unknown }).default;
+  };
+  snap('width', pair.width);
+  snap('height', pair.height);
+};
+
+const scalarKeys = computed(() => RegistryParamSchema.scalarKeysForForm(normalizedParams.value));
 
 const seedSupport = computed(() => {
   const cfg = currentModelConfig.value;
@@ -1324,7 +1406,7 @@ const categoryLabel = (cat: string) => {
 };
 
 const modelInitials = (config: ModelConfig) => {
-  const name = typeof $mn === 'function' ? $mn(config, '') : (config.id as string || '');
+  const name = $mn(config, '');
   if (!name) return 'M';
   const dashIndex = name.indexOf('-');
   const spaceIndex = name.indexOf(' ');
@@ -1341,9 +1423,9 @@ const modelInitials = (config: ModelConfig) => {
 };
 
 const getProgressColor = (percent: number) => {
-  if (percent < 50) return '#67c23a';
-  if (percent < 80) return '#e6a23c';
-  return '#f56c6c';
+  if (percent < 50) return 'var(--el-color-success)';
+  if (percent < 80) return 'var(--el-color-warning)';
+  return 'var(--el-color-danger)';
 };
 
 /* ------------------------------------------------------------------ */
@@ -1362,19 +1444,11 @@ watch(activeTab, (newVal) => {
 watch(
   () => settings.language as string,
   (newVal) => {
-    const i18n = (window as unknown as Record<string, unknown>).i18n as { global: { locale: { value: string } } } | undefined;
-    if (i18n && i18n.global.locale.value !== newVal) {
-      i18n.global.locale.value = newVal;
+    if (locale.value !== newVal) {
+      locale.value = newVal;
       setItem(DQ_STORAGE.LANG, newVal);
       document.documentElement.lang = newVal;
     }
-  }
-);
-
-watch(
-  () => settings.theme as string,
-  (t) => {
-    applyTheme(t as 'light' | 'dark');
   }
 );
 
@@ -1426,8 +1500,7 @@ const onModelSelect = () => {
   const config = currentModelConfig.value;
   if (!config || !config.parameters) return;
 
-  const R = RegistryParamSchema;
-  if (R) R.applyDefaults(config.parameters, modelParams);
+  RegistryParamSchema.applyDefaults(config.parameters, modelParams);
 
   Object.keys(paramDefaults).forEach((k) => delete paramDefaults[k]);
   for (const [key, spec] of Object.entries(config.parameters || {})) {
@@ -1455,7 +1528,13 @@ const onModelSelect = () => {
     loadParamPreset(defaultPreset);
   }
 
+  snapModelResolutionEnums();
   loadSettingsCompatibleLoras();
+};
+
+const selectDefaultVersionKey = (verKey: string) => {
+  selectedDefaultVersion.value = verKey;
+  onDefaultVersionChange();
 };
 
 const onDefaultVersionChange = () => {
@@ -1464,9 +1543,9 @@ const onDefaultVersionChange = () => {
 
 const onSettingsModelRestoreDefaults = () => {
   const config = currentModelConfig.value;
-  const R = RegistryParamSchema;
-  if (R && config && config.parameters) {
-    R.applyDefaults(config.parameters, modelParams);
+  if (config && config.parameters) {
+    RegistryParamSchema.applyDefaults(config.parameters, modelParams);
+    snapModelResolutionEnums();
     ElMessage.success($tt('studio.restoredDefaults'));
   }
 };
@@ -1503,28 +1582,121 @@ const saveModelConfig = async () => {
 
 // ----- Settings -----
 
+function extractApiError(e: unknown): string {
+  if (typeof e === 'object' && e !== null && 'response' in e) {
+    const err = e as { response?: { data?: { detail?: string } } };
+    if (err.response?.data?.detail) {
+      return err.response.data.detail;
+    }
+  }
+  if (e instanceof Error) return e.message;
+  return String(e);
+}
+
+async function confirmWorkspaceRelocation(fromPath: string, toPath: string): Promise<boolean> {
+  try {
+    await ElMessageBox.confirm(
+      $tt('settings.workspaceChangeConfirm', { from: fromPath, to: toPath }),
+      $tt('settings.workspaceChangeTitle'),
+      {
+        type: 'warning',
+        confirmButtonText: $tt('settings.workspaceChangeContinue'),
+        cancelButtonText: $tt('settings.deleteCancel'),
+      },
+    );
+    await ElMessageBox.confirm(
+      $tt('settings.workspaceChangeConfirmFinal'),
+      $tt('settings.workspaceChangeTitle'),
+      {
+        type: 'warning',
+        confirmButtonText: $tt('settings.workspaceChangeContinue'),
+        cancelButtonText: $tt('settings.deleteCancel'),
+      },
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const loadSettings = async () => {
   try {
     const data = await api.settings.getSettings();
     Object.assign(settings, data);
-    const i18n = (window as unknown as Record<string, unknown>).i18n as { global: { locale: { value: string } } } | undefined;
-    if (i18n && data.language) {
-      i18n.global.locale.value = data.language;
+    delete settings.theme;
+    delete settings.custom_models_dir;
+    delete settings.custom_loras_dir;
+    delete settings.custom_outputs_dir;
+    initialWorkspaceDir.value = String(data.custom_workspace_dir || '').trim();
+    if (data.language) {
+      locale.value = data.language;
       settings.language = data.language;
       setItem(DQ_STORAGE.LANG, data.language);
       document.documentElement.lang = data.language;
     }
-    applyTheme((settings.theme as 'light' | 'dark') || 'dark');
   } catch (e) {
     console.error('Failed to load settings:', e);
   }
 };
 
+const loadWorkspacePaths = async () => {
+  try {
+    const [paths, status] = await Promise.all([
+      api.settings.getWorkspacePaths(),
+      api.settings.getWorkspaceStatus(),
+    ]);
+    workspacePaths.value = paths;
+    workspaceEffectiveRoot.value = status.effective_root || '';
+  } catch (e) {
+    workspacePaths.value = null;
+  }
+};
+
+const pickWorkspaceDirectory = async () => {
+  try {
+    const { path } = await api.settings.pickWorkspaceDirectory();
+    if (path) {
+      settings.custom_workspace_dir = path;
+    }
+  } catch (e) {
+    ElMessage.error((e as Error).message || String(e));
+  }
+};
+
 const saveSettings = async () => {
+  const newWs = String(settings.custom_workspace_dir || '').trim();
+  const oldWs = initialWorkspaceDir.value;
+
+  if (newWs !== oldWs) {
+    if (!newWs) {
+      ElMessage.warning($tt('settings.workspaceRequired'));
+      settings.custom_workspace_dir = oldWs;
+      return;
+    }
+    const fromLabel = oldWs || workspaceEffectiveRoot.value || $tt('settings.workspaceLayoutTitle');
+    const ok = await confirmWorkspaceRelocation(fromLabel, newWs);
+    if (!ok) {
+      settings.custom_workspace_dir = oldWs;
+      return;
+    }
+    try {
+      const wsRes = await api.settings.applyWorkspace(newWs);
+      initialWorkspaceDir.value = String(wsRes.workspace || newWs).trim();
+      settings.custom_workspace_dir = initialWorkspaceDir.value;
+      if (wsRes.restart_required) {
+        ElMessage.warning($tt('settings.customWorkspaceRestartHint'));
+      }
+      await loadWorkspacePaths();
+    } catch (e) {
+      settings.custom_workspace_dir = oldWs;
+      ElMessage.error(extractApiError(e) || $tt('settings.workspaceApplyFailed'));
+      return;
+    }
+  }
+
   try {
     await api.settings.updateSettings({
       language: settings.language,
-      theme: settings.theme,
       output_format: settings.output_format,
       mlx_memory_limit: settings.mlx_memory_limit,
       model_cache_ttl_minutes: settings.model_cache_ttl_minutes,
@@ -1534,11 +1706,7 @@ const saveSettings = async () => {
       civitai_token: settings.civitai_token || '',
       huggingface_token: settings.huggingface_token || '',
       nsfw_enabled: settings.nsfw_enabled,
-      custom_models_dir: settings.custom_models_dir || '',
-      custom_loras_dir: settings.custom_loras_dir || '',
-      custom_outputs_dir: settings.custom_outputs_dir || '',
     });
-    applyTheme((settings.theme as 'light' | 'dark') || 'dark');
     ElMessage.success($tt('settings.saved'));
   } catch (e) {
     ElMessage.error($tt('settings.saveFailed'));
@@ -1698,6 +1866,7 @@ const saveParamPreset = () => {
 const loadParamPreset = (preset: ParamPreset) => {
   if (!preset || !preset.params) return;
   Object.assign(modelParams, preset.params);
+  snapModelResolutionEnums();
   ElMessage.success($tt('settings.presetLoaded', { name: preset.name }));
 };
 
@@ -1753,6 +1922,7 @@ const refreshCacheStatus = async () => {
 onMounted(() => {
   loadModelRegistry();
   loadSettings();
+  loadWorkspacePaths();
   loadInstalledModels();
   loadPresets();
   loadParamPresets();
@@ -1764,10 +1934,3 @@ onUnmounted(() => {
   stopMonitor();
 });
 </script>
-
-<style scoped>
-.settings-page {
-  max-width: 1200px;
-  margin: 0 auto;
-}
-</style>

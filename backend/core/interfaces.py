@@ -72,9 +72,7 @@ class AppSettings:
     mlx_memory_limit: int = 120
     model_cache_ttl_minutes: int = 30
     queue_image_first: bool = False
-    custom_models_dir: str = ""
-    custom_loras_dir: str = ""
-    custom_outputs_dir: str = ""
+    custom_workspace_dir: str = ""
 
 
 # ===== Task persistence interfaces =====

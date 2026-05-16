@@ -1,0 +1,3 @@
+# Keep Rust/Tauri artifacts under repo ``out/desktop/cargo/`` (see scripts/out_paths.py).
+[build]
+target-dir = "../../out/desktop/cargo"

@@ -240,7 +240,7 @@ V3TaskStore + SQLiteAssetStore (SQLite WAL 模式持久化)
 - `PATCH /api/tasks/{id}` — 仅 **`queued`** 可改 `{ "priority": "normal" | "high" }`（与提交时语义一致；调度器重建堆 + 进程重启后从 DB 恢复排队）
 - `DELETE /api/tasks/{id}` — 取消
 - `GET /api/tasks/{id}/stream` — SSE：`log`（含 **`ts`**）、**`progress`**（step/total/eta）、**`status`**、**`result`**（完成时）、**`done`**
-- `GET /api/queue` — 运行中 / 排队快照（queued 项含 **`estimated_wait_seconds`**）；设置页「系统」**队列快照**亦经 **`api.gen.getQueue`**；**顶栏右侧**角标 + **`el-drawer`** 全局任务列表（`TasksStore` 由 **`app.js`** 统一轮询；`open-global-task-queue` 事件仍可由其他 UI 复用以打开同一抽屉）
+- `GET /api/queue` — 运行中 / 排队快照（queued 项含 **`estimated_wait_seconds`**）；设置页「系统」**队列快照**亦经 **`api.gen.getQueue`**；**顶栏右侧**角标 + **`el-drawer`** 全局任务列表（`useTasksStore` 由 **`App.vue`** 在挂载时 `ensureQueuePoller()`；其他模块可调用 **`openGlobalTaskQueue()`**（`@/utils/appEvents`）打开同一抽屉）
 - 任务 kind 常量：`backend/core/task_kinds.py`（勿手写 `image.generation` 等字符串）
 - 设置 **`queue_image_first`**：图像任务先于视频出队（见 `AppSettings` / 设置页开关）
 
@@ -284,16 +284,14 @@ python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 7860
 - 任务持久化: SQLite 存储任务状态和日志
 
 ## i18n Architecture
-### Frontend
-- `frontend/js/i18n.js` — All translation keys (zh + en)；顶层 `action.image.*` / `action.video.*`（与注册表 `actions` 键对齐）及 **`studio.*`**（模型下拉、队列、任务状态、提示词/步数、生成与日志文案、模型切换、高级参数/ControlNet/LoRA、蒙版工具栏、上传失败等跨页共用文案）；**`video.runtime*`** — 视频创作页成片时长 / 耗时与磁盘占用提示
-- Vue I18n 9 (Composition API, `legacy: false`)
-- `$t('section.key')` for template strings
-- `$tt('section.key', {params})` for JS code strings
-- `$mn(model)` / `$md(model)` for bilingual model names/descriptions
-- `$pn(preset, chineseName)` for bilingual preset names
-- Language / 导航 / 设置页等持久化键：`frontend/js/storage_keys.js` → `window.DQ_STORAGE`（`dq-studio.*.v3`，不读旧 `danqing-*` 键）
-- 前端缓存：`frontend/js/api.js` 末尾挂载 **`window.api`**（与 `const api` 同源）；`frontend/js/stores/registry.js`（`RegistryStore`，优先 `api.registry.getFull`）、`frontend/js/stores/tasks_store.js`（`api.gen.getQueue` 轮询 + `api.tasks.logStreamUrl` SSE）；`frontend/js/components/AdapterPicker.js`（LoRA / 适配器选择，由 `RegistryParamsForm` 使用）；`frontend/js/components/AssetPicker.js`（参考图 / 编辑图 / 视频起始图 / 蒙版编辑器空态：上传 + 最近条 + `/api/assets` 资产库）；创作页产出预览 **`api.gallery.getImageUrl('asset:{id}')`**；编辑/参考/视频首帧字节 **`api.gen.urlToBlob`**（`blob:`/`data:` 走 `fetch`，同源走 `axios`）；`ImageEditor.js` 蒙版快捷键绑在组件根 `tabindex` + `@keydown`（非 `window`）；`frontend/js/composables/media_queue.js` 挂载 **`window.DQMediaQueue`**（`normalizeTaskRow`、`snapshotFullQueue` 顶栏全队列；`tasksForMedia` 按 `kind` 前缀过滤，供顶栏等消费）；`frontend/js/composables/memory_hint.js` 挂载 **`window.DQMemoryHint`**（`warnIfRisky` 提交前软警告）；**`task_status_ui.js`**（`DQTaskStatusUi`）、**`model_version_value.js`**（`DQModelVersionValue`）、**`studio_nav.js`**（`DQStudioNav.goSettings` / `goModels`，`navigate` 事件）
-- Components in `frontend/js/components/` use `$t()` and `$tt()` universally
+### Frontend (Vue 3 + Vite SPA under `frontend/src/`)
+- `frontend/src/locales/zh.json` / `en.json` — Translation keys（`action.image.*` / `action.video.*`、`studio.*`、`video.runtime*` 等）
+- Vue I18n 9 (Composition API, `legacy: false`)；脚本内用 **`useI18n()`** 同步 `locale`，勿再读 `window.i18n`
+- `$t('section.key')`（模板）、`$tt('section.key', {params})`（脚本，见 `@/utils/i18n`）
+- `$mn` / `$md` / `$mvn` / `$pn` — 双语模型与预设名（`@/utils/i18n` + `main.ts` 注册到 `globalProperties`）
+- 持久化键：`@/utils/storage` 的 **`DQ_STORAGE`**（`dq-studio.*.v4`）
+- API：`@/utils/api`（`export const api`）；Pinia：`@/stores/registry`（`api.registry.getFull`）、`@/stores/tasks`（队列轮询 + SSE）；内存提交前软提示：`@/composables/memoryHint`（`warnIfRiskyMemory`）；页面间跳转：**Vue Router**（`router.push({ name: '…' })`），勿依赖已移除的 `window.DQStudioNav`
+- 顶栏队列、任务抽屉等：`App.vue` + `TopNav.vue` + `useTasksStore`；跨组件打开队列：调用 **`openGlobalTaskQueue()`**（`@/utils/appEvents`，内部为类型化 `appEvents` 总线，不使用 `window`）
 
 ### Backend
 - `backend/core/i18n.py` — Translation service
@@ -320,10 +318,10 @@ python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 7860
 - **数据库 schema**：`assets` / `tasks` 表以当前 `CREATE TABLE` 为准，**不做**运行时 `ALTER` 迁移；本地 schema 异常时删除 `db/studio.db` 与 `outputs/`（或至少 `outputs/assets/`）后重启即可重建。
 - **macOS + Apple Silicon only** — MLX 加速依赖 Metal
 - **First generation is slow** — 模型加载到内存
-- **No build step** — 前端纯 CDN，无需打包
+- **Frontend build** — `frontend/` 使用 **Vite**（`npm run dev` / `npm run build`）；生产产物在 **`out/frontend/dist/`**（桌面打包与 sidecar 共用；`make clean` 清理）
 - **Add model** — 见「核心架构目标」插件化判据与下文「新模型接入流程」（注册表 + Config + Transformer + remap + `_transformer_registry`；非仅改 JSON 一处）
 - **EP container 子节点约束**：`<el-header>` 和 `<el-main>` 必须是 `<el-container>` 的**直接子节点**（Element Plus flex 布局据此检测），不可包进 Vue 组件。`TopNav` 组件只渲染导航**内容**（单根 `<div>`）；`<el-header>` 外壳留在 `index.html` 模板中。`TaskDrawer` 可独立封装，因 `el-drawer` 走 Teleport 到 body。
-- **跨模块 ref 解包不可靠**：`app.js` 中 `activePage` 必须用**本地 `ref`**，通过 `watch` 与 `DQRouter.currentPage` 双向同步，不可直接赋值为路由模块的 ref。
+- **跨模块 ref 解包不可靠**：`App.vue` 中 `activePage` 用**本地 `ref`**，通过 `watch` 与 **`route.name`** 同步，避免与路由 ref 直接绑死。
 
 ## Reference
 - `README.md` — 用户文档
