@@ -68,7 +68,7 @@ DanQing-Studio/
 ├── bin/                        # 脚本目录
 │   ├── launch.sh              # 启动脚本
 │   └── stop.sh                # 停止脚本
-├── scripts/                    # 运维与 CI（一致性检查、配置格式转换）
+├── scripts/                    # 桌面打包 + 代码门禁（check_consistency / check_engine_backend_imports）
 ├── config/                     # 配置文件目录
 │   ├── models_registry.json   # 模型注册表（v2，schema_version: 2）
 │   ├── .app_config.json       # 应用配置
@@ -107,8 +107,9 @@ pip install -r requirements.txt
 > Benchmark tests use an independent virtual environment. To run benchmarks:
 > ```bash
 > make bench-setup  # Initialize tests/benchmark/venv/
-> python -m tests.benchmark.run --all   # 28 PSNR cases vs mflux (see tests/benchmark/README.md)
-> python -m tests.benchmark.run --sanity
+> make bench-mflux / make bench-sanity
+> python -m tests.benchmark mflux --all
+> python -m tests.benchmark sanity --all
 > ```
 
 ### 启动
@@ -223,7 +224,7 @@ python3 scripts/check_consistency.py
 预设文件格式转换：
 
 ```bash
-python3 scripts/migrate_presets_mode_to_applies.py --write
+make check-consistency
 ```
 
 ## 配置

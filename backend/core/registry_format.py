@@ -2,7 +2,7 @@
 
 各模型条目可含 ``commercial_use_allowed``：``true`` / ``false`` / ``null``。
 ``null`` 表示未在注册表断言，须自行核对上游许可；非法律意见。
-可选维护脚本：``scripts/infer_registry_commercial_use.py`` 根据 HF/魔搭公开元数据辅助推断。
+``commercial_use`` 等字段由注册表维护者按 HF/魔搭公开许可信息手工填写。
 """
 
 from __future__ import annotations

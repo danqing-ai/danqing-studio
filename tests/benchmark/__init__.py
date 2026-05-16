@@ -1,10 +1,19 @@
-"""基准测试框架"""
-from .cases import BenchmarkCase, ALL_CASES, get_case, list_cases
-from .compare import CompareResult, compare_images, compute_psnr, compute_ssim, hash_image
-from .runner import BenchmarkRunner, run_benchmark
+"""Benchmark: ``mflux`` PSNR suite + ``sanity`` output checks."""
+from .cases import ALL_CASES, BenchmarkCase, get_case, list_cases, list_sanity_cases
+from .metrics import CompareResult, SanityResult, compare_images, hash_image
+from .run import BenchmarkRunner, run_mflux, run_sanity
 
 __all__ = [
-    "BenchmarkCase", "ALL_CASES", "get_case", "list_cases",
-    "CompareResult", "compare_images", "compute_psnr", "compute_ssim", "hash_image",
-    "BenchmarkRunner", "run_benchmark",
+    "BenchmarkCase",
+    "ALL_CASES",
+    "get_case",
+    "list_cases",
+    "list_sanity_cases",
+    "CompareResult",
+    "SanityResult",
+    "compare_images",
+    "hash_image",
+    "BenchmarkRunner",
+    "run_mflux",
+    "run_sanity",
 ]

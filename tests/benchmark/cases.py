@@ -25,7 +25,7 @@ mflux 对比仅包含有 **真实 mflux 子命令** 的路径；用例按 ``conf
 SeedVR2 超分健全性：若 ``models/Upscaler/seedvr2-*-fp16`` 下缺少 ``job_mlx.expected_seedvr2_weight_files``
   所列文件，运行器 **SKIP**（不计 FAIL），与 ``make bench-seedvr2-mflux`` 对 3b 缺权重行为一致。
 
-``python -m tests.benchmark.run --all`` 的进程退出码：仅统计「非豁免」FAIL；豁免集合为
+``python -m tests.benchmark mflux --all`` 的进程退出码：仅统计「非豁免」FAIL；豁免集合为
 ``BENCHMARK_EXIT_EXEMPT_MISMATCH_VS_MFLUX``（与 mflux 像素级尚未对齐、但仍保留对照输出的用例）。
 
 小分辨率 (256px) 快速对比。
@@ -93,7 +93,7 @@ MFLUX_FP16_MODEL_ROOT: dict[str, str] = {
 
 # 视频权重目录为 ``models/Video/``（见注册表）；``ALL_CASES`` 尚无视频 PSNR 行，故未建 mflux 路径映射表。
 
-# ``python -m tests.benchmark.run --all`` 退出码：以下用例仍打印 FAIL/WARN，但不计入失败总数
+# ``python -m tests.benchmark mflux --all`` 退出码：以下用例仍打印 FAIL/WARN，但不计入失败总数
 BENCHMARK_EXIT_EXEMPT_MISMATCH_VS_MFLUX: frozenset[str] = frozenset({
     "qwen-image-rewrite",
     # z-image-create: 基准里 guidance 与 mflux 相同；PSNR 差来自两条前向的合成方式（见模块说明）。

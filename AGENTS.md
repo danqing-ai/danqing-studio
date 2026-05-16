@@ -187,9 +187,9 @@ V3TaskStore + SQLiteAssetStore (SQLite WAL 模式持久化)
 
 差异化逻辑放在 Transformer / remap / Text Encoder，**不在** `ImagePipeline` 写 `if family == ...` 硬分支。
 
-**验证：** `bin/danqing-generate --model <id> --prompt "..."`；与参考 CLI 像素对比见 `tests/benchmark/`。
+**验证：** `bin/danqing-generate --model <id> --prompt "..."`；mflux 像素对照 **`make bench-mflux`** / `python -m tests.benchmark mflux --all`。
 
-无参考 CLI 的模型：跑 **`make bench-sanity`** 或 `python -m tests.benchmark.run --sanity`，做成片健全性（拒纯白/纯黑/近乎单色平场）。
+无参考 CLI 的模型：跑 **`make bench-sanity`** 或 `python -m tests.benchmark sanity --all`，做成片健全性（拒纯白/纯黑/近乎单色平场）。引擎轻量单测：**`make test-engine-unit`**（`scripts/test_engine_unit.py` → `tests/engine_unit.py`）。
 
 当前基准测试结果（2026-05）：
 | 模型 | Action | PSNR | 状态 |
@@ -206,12 +206,12 @@ V3TaskStore + SQLiteAssetStore (SQLite WAL 模式持久化)
 - 每个模型：`name` / `description` 为 `{ "zh", "en" }`；`media`：`image` | `video`
 - **`actions`** 替代 `capabilities`：图像用 `create` / `rewrite` / `retouch` / `extend` / `upscale`；视频用 `create` / `animate`
 - `parameters`：条目带 `type`（`int` | `float` | `enum` | `bool` | `object`）
-- 格式转换脚本：`scripts/migrate_models_registry.py`（写回前在同目录生成 `.pre_v2.*.json` 备份；仓库不提交该备份）
+- 注册表格式迁移须在仓库外或一次性维护分支完成（仓库内不再保留迁移脚本）
 
 ### 设置文件
 - `config/.app_config.json` — 应用设置
 - `db/studio.db` — SQLite（`tasks` / `task_logs` + `assets` 表；WAL 模式）
-- `config/presets.json` — 提示词预设（必填 **`applies_to`** 与 **`media_scope`**：`image` \| `video` 二选一）；创作页按动作 Tab + `media_scope` 过滤；格式异常时运行 `scripts/migrate_presets_mode_to_applies.py --write`（默认 dry-run；写回前生成 `*.pre_applies_migrate.*.json` 备份，勿提交备份）
+- `config/presets.json` — 提示词预设（必填 **`applies_to`** 与 **`media_scope`**：`image` \| `video` 二选一）；创作页按动作 Tab + `media_scope` 过滤
 
 ## Hardcoded paths
 - Models: `./models/`

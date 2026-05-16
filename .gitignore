@@ -27,7 +27,10 @@ node_modules/
 
 # Logs
 *.log
-/tests/
+/tests/benchmark/outputs/
+/tests/benchmark/venv/
+/tests/__pycache__/
+/tests/benchmark/__pycache__/
 /config/.download_tasks.json
 /db/
 /ts.md

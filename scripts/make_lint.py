@@ -24,10 +24,10 @@ def main() -> int:
     extra = (
         "backend/main.py",
         "tests/benchmark/cases.py",
-        "tests/benchmark/runner.py",
-        "tests/benchmark/compare.py",
-        "tests/benchmark/sanity.py",
-        "tests/benchmark/test_exit_exempt.py",
+        "tests/benchmark/metrics.py",
+        "tests/benchmark/run.py",
+        "tests/engine_unit.py",
+        "tests/benchmark/__main__.py",
     )
     for f in extra:
         try:
@@ -39,4 +39,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())
