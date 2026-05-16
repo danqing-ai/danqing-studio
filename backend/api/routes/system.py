@@ -48,8 +48,9 @@ def health() -> dict[str, Any]:
     except Exception:
         out["backends"]["mlx"] = "unavailable"
     try:
-        import torch
-        if torch.cuda.is_available():
+        torch = __import__("torch")
+        cuda = getattr(torch, "cuda", None)
+        if cuda is not None and cuda.is_available():
             out["backends"]["cuda"] = "ok"
     except Exception:
         pass

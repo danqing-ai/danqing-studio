@@ -10,7 +10,8 @@
 |------|------|
 | `out/frontend/dist/` | Vite 生产构建 |
 | `out/sidecar/danqing-api/` | PyInstaller sidecar |
-| `out/desktop/cargo/release/bundle/` | `.app` / `.dmg` |
+| `out/desktop/bundle/` | `.app` / `.dmg`（发布产物） |
+| `out/desktop/cargo/` | Cargo 中间产物（可清理） |
 
 清理：`make clean` 或 `python scripts/clean_build.py`
 

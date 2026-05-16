@@ -77,6 +77,9 @@ def build(*, clean: bool = True) -> Path:
     cmd.extend(["--workpath", str(op.PYINSTALLER_WORK)])
     cmd.extend(["--specpath", str(op.PYINSTALLER_SPEC)])
 
+    if sys.platform == "darwin" and profile == "mlx":
+        cmd.append("--strip")
+
     print("Building sidecar:", name)
     PyInstaller.__main__.run(cmd)
 
@@ -84,6 +87,14 @@ def build(*, clean: bool = True) -> Path:
     if not out.exists():
         print("Warning: expected output missing:", out)
     else:
+        if profile == "mlx":
+            import prune_sidecar as prune  # noqa: E402
+
+            removed, placed = prune.finalize_mlx_sidecar(out)
+            if removed:
+                print(f"Pruned sidecar ({len(removed)} entries)")
+            if placed:
+                print(f"MLX layout: {', '.join(placed)} next to danqing-api")
         print("Sidecar bundle:", out)
     return out
 

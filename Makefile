@@ -123,12 +123,13 @@ export DANQING_PYINSTALLER_PROFILE ?= mlx
 desktop-sidecar: frontend-build
 	DANQING_PYINSTALLER_PROFILE=$(DANQING_PYINSTALLER_PROFILE) $(PYTHON) scripts/build_sidecar.py
 
+# Apple Silicon only; CARGO_TARGET_DIR and staging handled in scripts/tauri_build.sh
 desktop-tauri: desktop-prereqs
-	cd $(DESKTOP_DIR) && npm install && npm run build
+	@./scripts/tauri_build.sh
 
-# frontend dist -> MLX sidecar -> Tauri (outputs under out/)
+# frontend dist -> MLX sidecar -> Tauri (final .app/.dmg under out/desktop/bundle/)
 desktop-bundle: frontend-build desktop-sidecar desktop-tauri
-	@echo "Desktop bundle: $(OUT_DIR)/desktop/cargo/release/bundle/"
+	@echo "Desktop bundle: $(OUT_DIR)/desktop/bundle/"
 
 # ============================================================================
 # Help
@@ -152,9 +153,9 @@ help:
 	@echo "  make frontend-dev    Start frontend dev server (Vite, port 5173)"
 	@echo "  make frontend-build  Build frontend for production"
 	@echo "  make frontend-typecheck  Run TypeScript type check"
-	@echo "  make clean           Remove out/ and legacy dist/build artifacts"
+	@echo "  make clean           Remove out/ and staged Tauri resources"
 	@echo "  make desktop-prereqs Check npm + cargo (Tauri build requirements)"
 	@echo "  make desktop-sidecar PyInstaller -> out/sidecar/danqing-api (MLX on macOS)"
-	@echo "  make desktop-tauri   Tauri bundle -> out/desktop/cargo/release/bundle/"
+	@echo "  make desktop-tauri   Tauri aarch64 bundle -> out/desktop/bundle/"
 	@echo "  make desktop-bundle  Full desktop build (recommended)"
 	@echo "  ./scripts/build_desktop.sh  Same as desktop-bundle (shell entry)"

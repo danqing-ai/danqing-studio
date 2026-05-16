@@ -8,8 +8,8 @@ Layout::
       sidecar/danqing-api/  # PyInstaller onedir (Tauri bundles this tree)
       pyinstaller/work/     # PyInstaller cache
       pyinstaller/spec/     # Generated .spec files
-      desktop/cargo/        # Cargo target-dir (Tauri / Rust)
-        release/bundle/     # .app / .dmg
+      desktop/cargo/        # Cargo target-dir (intermediate Rust build)
+      desktop/bundle/       # Staged .app / .dmg (final deliverables)
 """
 
 from __future__ import annotations
@@ -26,18 +26,8 @@ SIDECAR_DIR = SIDECAR_ROOT / "danqing-api"
 PYINSTALLER_WORK = OUT_ROOT / "pyinstaller" / "work"
 PYINSTALLER_SPEC = OUT_ROOT / "pyinstaller" / "spec"
 DESKTOP_CARGO_TARGET = OUT_ROOT / "desktop" / "cargo"
-DESKTOP_BUNDLE_DIR = DESKTOP_CARGO_TARGET / "release" / "bundle"
-
-# Legacy paths (pre-unification); removed by ``clean_build_artifacts``.
-LEGACY_PATHS: tuple[Path, ...] = (
-    PROJECT_ROOT / "dist",
-    PROJECT_ROOT / "build",
-    PROJECT_ROOT / "frontend" / "dist",
-    PROJECT_ROOT / "desktop" / "src-tauri" / "target",
-    PROJECT_ROOT / "danqing-api.spec",
-    PROJECT_ROOT / "DanQingStudio.spec",
-    PROJECT_ROOT / "scripts" / "Info.plist",
-)
+DESKTOP_BUNDLE_DIR = OUT_ROOT / "desktop" / "bundle"
+TAURI_STAGED_SIDECAR = PROJECT_ROOT / "desktop" / "src-tauri" / "danqing-api"
 
 
 def ensure_out_layout() -> None:
@@ -53,19 +43,17 @@ def ensure_out_layout() -> None:
 
 
 def clean_build_artifacts(*, include_frontend: bool = True) -> list[Path]:
-    """Delete ``out/`` and legacy build dirs. Returns paths that were removed."""
+    """Delete ``out/`` and staged Tauri resources. Returns paths that were removed."""
     removed: list[Path] = []
-    targets: list[Path] = list(LEGACY_PATHS)
     if include_frontend:
-        targets.insert(0, OUT_ROOT)
+        targets: list[Path] = [OUT_ROOT, TAURI_STAGED_SIDECAR]
     else:
-        # Keep Vite output; drop sidecar + desktop + pyinstaller cache only.
-        targets.insert(
-            0,
+        targets = [
             OUT_ROOT / "sidecar",
-        )
-        targets.insert(1, OUT_ROOT / "pyinstaller")
-        targets.insert(2, OUT_ROOT / "desktop")
+            OUT_ROOT / "pyinstaller",
+            OUT_ROOT / "desktop",
+            TAURI_STAGED_SIDECAR,
+        ]
 
     seen: set[Path] = set()
     for path in targets:

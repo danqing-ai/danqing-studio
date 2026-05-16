@@ -1,5 +1,5 @@
 """
-Shared PyInstaller metadata for DanQing Studio (desktop sidecar + legacy bundle).
+Shared PyInstaller metadata for DanQing Studio desktop sidecar.
 
 Profiles:
   mlx  — Apple Silicon / MLX inference only: no ``*_cuda`` modules, no PyTorch/CUDA stack.
@@ -53,6 +53,10 @@ _MLX_EXCLUDED_MODULES: tuple[str, ...] = (
     "tensorboard",
     "tensorboard_data_server",
     "torch.utils.tensorboard",
+    "hf_xet",
+    "soundfile",
+    "backend.engine.pipelines.music_pipeline",
+    "backend.engine.families.ace_step",
 )
 
 _MLX_CORE_HIDDEN_IMPORTS: tuple[str, ...] = (
@@ -169,23 +173,12 @@ def get_data_files(project_root: Path | None = None, *, profile: str | None = No
     separator = ";" if sys.platform == "win32" else ":"
 
     frontend_dist = FRONTEND_DIST
-    legacy_dist = PROJECT_ROOT / "frontend" / "dist"
-    if profile == "mlx":
-        if not frontend_dist.is_dir() or not any(frontend_dist.iterdir()):
-            raise SystemExit(
-                "out/frontend/dist is missing or empty. Build the UI first:\n"
-                "  make frontend-build   # or: cd frontend && npm run build"
-            )
-        data.append(f"{frontend_dist}{separator}frontend/dist")
-    else:
-        if frontend_dist.is_dir() and any(frontend_dist.iterdir()):
-            data.append(f"{frontend_dist}{separator}frontend/dist")
-        elif legacy_dist.is_dir() and any(legacy_dist.iterdir()):
-            data.append(f"{legacy_dist}{separator}frontend/dist")
-        else:
-            frontend_dir = PROJECT_ROOT / "frontend"
-            if frontend_dir.exists():
-                data.append(f"{frontend_dir}{separator}frontend")
+    if not frontend_dist.is_dir() or not any(frontend_dist.iterdir()):
+        raise SystemExit(
+            "out/frontend/dist is missing or empty. Build the UI first:\n"
+            "  make frontend-build   # or: cd frontend && npm run build"
+        )
+    data.append(f"{frontend_dist}{separator}frontend/dist")
 
     config_dir = root / "config"
     if config_dir.exists():
@@ -214,8 +207,9 @@ def get_binary_files(project_root: Path) -> list[str]:
             for site in venv_lib.glob("python3.*/site-packages"):
                 mlx_lib = site / "mlx" / "lib"
                 if mlx_lib.exists():
-                    for dylib in mlx_lib.glob("*.dylib"):
-                        binaries.append(f"{dylib}{separator}mlx/lib")
+                    for pattern in ("*.dylib", "*.metallib"):
+                        for lib_file in mlx_lib.glob(pattern):
+                            binaries.append(f"{lib_file}{separator}mlx/lib")
                     break
 
     return binaries
@@ -229,7 +223,7 @@ import os
 import sys
 from pathlib import Path
 
-# PyInstaller: ensure writable dirs exist (Tauri sets DANQING_USER_DATA_DIR).
+# PyInstaller: writable dirs + MLX metallib next to bundled dylibs.
 if getattr(sys, "frozen", False):
     raw = os.environ.get("DANQING_USER_DATA_DIR")
     if raw:
@@ -238,6 +232,8 @@ if getattr(sys, "frozen", False):
         app_dir = Path(sys.executable).parent.resolve()
     for dir_name in ("models", "outputs", "db", "config"):
         (app_dir / dir_name).mkdir(parents=True, exist_ok=True)
+
+    # MLX metallib is copied next to the executable by scripts/prune_sidecar.layout_mlx_runtime.
 """
     hook_file.parent.mkdir(parents=True, exist_ok=True)
     hook_file.write_text(hook_content.strip() + "\n", encoding="utf-8")

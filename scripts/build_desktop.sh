@@ -30,11 +30,9 @@ cd "$ROOT"
 export DANQING_PYINSTALLER_PROFILE="${DANQING_PYINSTALLER_PROFILE:-mlx}"
 "$PYTHON" scripts/build_sidecar.py
 
-echo "==> Tauri -> out/desktop/cargo/release/bundle/"
-cd "$ROOT/desktop"
-npm install
-npm run build
+echo "==> Tauri (aarch64) -> out/desktop/bundle/"
+"$ROOT/scripts/tauri_build.sh"
 
 echo "Done."
 echo "  Sidecar:  $ROOT/out/sidecar/danqing-api"
-echo "  Desktop:  $ROOT/out/desktop/cargo/release/bundle/"
+echo "  Desktop:  $ROOT/out/desktop/bundle/"

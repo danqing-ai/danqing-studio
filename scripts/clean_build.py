@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Remove unified ``out/`` and legacy build artifacts from the repo root."""
+"""Remove unified ``out/`` and staged Tauri sidecar resources."""
 
 from __future__ import annotations
 

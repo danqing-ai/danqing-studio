@@ -27,11 +27,11 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["app", "dmg"],
     "category": "DeveloperTool",
     "shortDescription": "DanQing Studio desktop",
     "longDescription": "Native shell for the DanQing Studio FastAPI server (REST).",
     "icon": ["icons/icon.png"],
-    "resources": ["../../out/sidecar/danqing-api"]
+    "resources": ["danqing-api"]
   }
 }

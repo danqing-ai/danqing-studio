@@ -232,5 +232,9 @@ def _load_locale():
 app = create_app()
 
 if __name__ == "__main__":
+    import os
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=7860)
+
+    host = os.environ.get("DANQING_HTTP_HOST", "0.0.0.0")
+    port = int(os.environ.get("DANQING_HTTP_PORT", "7860"))
+    uvicorn.run(app, host=host, port=port)
