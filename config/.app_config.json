@@ -1,16 +1,3 @@
 {
-  "language": "zh",
-  "theme": "dark",
-  "default_model": "",
-  "auto_save_prompts": true,
-  "output_format": "png",
-  "civitai_token": "",
-  "nsfw_enabled": false,
-  "huggingface_token": "",
-  "mlx_memory_limit": 120,
-  "model_cache_ttl_minutes": 30,
-  "queue_image_first": false,
-  "custom_models_dir": "",
-  "custom_loras_dir": "",
-  "custom_outputs_dir": ""
+  "custom_workspace_dir": "/Users/nil.luo/Workspace/studio-workspace"
 }

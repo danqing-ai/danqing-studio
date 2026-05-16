@@ -205,15 +205,6 @@ class VideoPipeline:
         # ── Hook ①: after weight loading (LoRA / Adapter merging) ──
         model.after_load_weights(bundle_root=str(bundle_root) if bundle_root else None)
 
-        # ── Runtime quantization (auto 4-bit for fp16 versions) ──
-        ver_block = _resolve_version_block_fn(entry, version_key or None)
-        disk_quant = (ver_block or {}).get("quantization")
-        if not disk_quant:
-            if on_log:
-                on_log("info", "Auto runtime quantization (4-bit)...")
-            model.quantize_runtime(bits=4, ctx=self.ctx)
-            self.ctx.eval(*[p for _, p in model.parameters()])
-
         # ── Hook ②: condition preparation ──
         extra_cond = model.prepare_conditioning(request,
                                                 bundle_root=str(bundle_root) if bundle_root else None)
@@ -398,15 +389,6 @@ class VideoPipeline:
             raise RuntimeError(f"Failed to load model: {model_key}")
 
         model.after_load_weights(bundle_root=str(bundle_root) if bundle_root else None)
-
-        # ── Runtime quantization (auto 4-bit for fp16 versions) ──
-        ver_block = _resolve_version_block_fn(entry, version_key or None)
-        disk_quant = (ver_block or {}).get("quantization")
-        if not disk_quant:
-            if on_log:
-                on_log("info", "Auto runtime quantization (4-bit)...")
-            model.quantize_runtime(bits=4, ctx=self.ctx)
-            self.ctx.eval(*[p for _, p in model.parameters()])
 
         extra_cond = model.prepare_conditioning(request,
                                                 bundle_root=str(bundle_root) if bundle_root else None)

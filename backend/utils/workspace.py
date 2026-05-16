@@ -135,6 +135,15 @@ def apply_workspace_relocation(
     ensure_workspace_layout(new_root)
     seed_workspace_from_bootstrap(bootstrap_root, new_root)
     write_bootstrap_workspace_pointer(bootstrap_root, str(new_root))
+    db_path = new_root / "db" / "studio.db"
+    if db_path.is_file():
+        from backend.persistence.asset_store import repair_asset_paths_in_database
+
+        repair_asset_paths_in_database(
+            db_path,
+            new_root / "outputs" / "assets",
+            former_workspace_roots=[old_root],
+        )
     return new_root
 
 

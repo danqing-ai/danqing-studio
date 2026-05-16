@@ -29,7 +29,10 @@
     "image_read_failed": "Failed to read image: {error}",
     "unsupported_width": "Unsupported width: {width}. Allowed: {allowed}",
     "unsupported_height": "Unsupported height: {height}. Allowed: {allowed}",
-    "model_profile_required": "Engine missing dedicated model config for model '{name}' (generic defaults disabled)."
+    "model_profile_required": "Engine missing dedicated model config for model '{name}' (generic defaults disabled).",
+    "workspace_path_required": "Please choose a workspace directory",
+    "workspace_not_empty": "Target directory must be empty: {path}",
+    "workspace_use_apply_endpoint": "Change the workspace via the apply-workspace flow (Settings saves migrate automatically)"
   },
   "log": {
     "generating_step": "Generating... step {step}/{total}",
@@ -39,5 +42,8 @@
     "loading_model": "Loading model...",
     "preprocessing_image": "Preprocessing image...",
     "postprocessing_image": "Post-processing image..."
+  },
+  "settings": {
+    "pickWorkspacePrompt": "Choose a custom workspace folder"
   }
 }

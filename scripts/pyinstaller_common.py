@@ -164,7 +164,7 @@ def get_exclude_modules(profile: str | None = None) -> list[str]:
 
 def get_data_files(project_root: Path | None = None, *, profile: str | None = None) -> list[str]:
     profile = profile or packaging_profile()
-    _ = project_root or PROJECT_ROOT
+    root = project_root or PROJECT_ROOT
     data: list[str] = []
     separator = ";" if sys.platform == "win32" else ":"
 
@@ -187,7 +187,7 @@ def get_data_files(project_root: Path | None = None, *, profile: str | None = No
             if frontend_dir.exists():
                 data.append(f"{frontend_dir}{separator}frontend")
 
-    config_dir = project_root / "config"
+    config_dir = root / "config"
     if config_dir.exists():
         locales_dir = config_dir / "locales"
         if locales_dir.exists():

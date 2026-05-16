@@ -25,6 +25,106 @@ from PIL import Image
 from backend.core.asset_interfaces import IAssetStore
 
 
+def _path_to_storage_key(path: Path, assets_root: Path) -> str:
+    """Persist paths relative to ``outputs/assets`` when possible."""
+    path = path.resolve()
+    root = assets_root.resolve()
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        return path.name
+
+
+def _path_from_storage_key(stored: str, assets_root: Path) -> Path:
+    """Map DB key → filesystem path (must be relative to ``outputs/assets``)."""
+    raw = (stored or "").strip()
+    if not raw:
+        raise FileNotFoundError("empty asset path")
+    p = Path(raw)
+    if p.is_absolute():
+        raise RuntimeError(
+            f"asset path must be relative to outputs/assets, got absolute: {raw!r}; "
+            "run: python scripts/repair_asset_paths.py"
+        )
+    return (assets_root.resolve() / p).resolve()
+
+
+def _normalize_storage_key(stored: str) -> str | None:
+    """Convert legacy absolute paths to a key relative to ``outputs/assets``."""
+    raw = (stored or "").strip()
+    if not raw:
+        return None
+    p = Path(raw)
+    if not p.is_absolute():
+        return raw.replace("\\", "/").lstrip("/")
+    parts = p.parts
+    for i in range(len(parts) - 1):
+        if parts[i] == "outputs" and parts[i + 1] == "assets":
+            tail = Path(*parts[i + 2 :])
+            return str(tail).replace("\\", "/") if tail.parts else None
+    return p.name or None
+
+
+def repair_asset_paths_in_database(
+    db_path: Path,
+    assets_root: Path,
+    *,
+    former_workspace_roots: list[Path] | None = None,
+) -> dict[str, Any]:
+    """One-shot DB repair: rewrite rows to paths relative to ``outputs/assets``."""
+    del former_workspace_roots  # prefix remap handled by normalizing to storage keys
+    assets_root = assets_root.resolve()
+
+    if not db_path.is_file():
+        return {"ok": False, "error": f"database not found: {db_path}"}
+
+    conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
+    updated_rows = 0
+    missing_main: list[str] = []
+    scanned = 0
+    try:
+        rows = conn.execute(
+            "SELECT id, file_path, thumbnail_path FROM assets"
+        ).fetchall()
+        scanned = len(rows)
+        for r in rows:
+            patch: dict[str, str] = {}
+            main_key: str | None = None
+            for col in ("file_path", "thumbnail_path"):
+                stored = r[col]
+                if not stored:
+                    continue
+                key = _normalize_storage_key(str(stored))
+                if not key:
+                    continue
+                if col == "file_path":
+                    main_key = key
+                if key != stored:
+                    patch[col] = key
+            if patch:
+                sets = ", ".join(f"{col} = ?" for col in patch)
+                conn.execute(
+                    f"UPDATE assets SET {sets} WHERE id = ?",
+                    (*patch.values(), r["id"]),
+                )
+                updated_rows += 1
+            if main_key and not (assets_root / main_key).is_file():
+                missing_main.append(r["id"])
+        conn.commit()
+    finally:
+        conn.close()
+
+    return {
+        "ok": True,
+        "db_path": str(db_path),
+        "assets_root": str(assets_root),
+        "scanned_rows": scanned,
+        "updated_rows": updated_rows,
+        "missing_main_file": missing_main,
+    }
+
+
 def _ffprobe_duration(path: Path) -> Optional[float]:
     try:
         r = subprocess.run(
@@ -192,8 +292,8 @@ class SQLiteAssetStore(IAssetStore):
                     aid,
                     kind,
                     mime_type,
-                    str(dest),
-                    str(thumb_path) if thumb_path else None,
+                    _path_to_storage_key(dest, self._root),
+                    _path_to_storage_key(thumb_path, self._root) if thumb_path else None,
                     w,
                     h,
                     duration,
@@ -223,7 +323,7 @@ class SQLiteAssetStore(IAssetStore):
             ).fetchone()
         if not row:
             raise FileNotFoundError(f"asset not found: {asset_id}")
-        return Path(row["file_path"])
+        return _path_from_storage_key(row["file_path"], self._root)
 
     def get_thumbnail_path(self, asset_id: str) -> Optional[Path]:
         with self._conn() as conn:
@@ -232,7 +332,7 @@ class SQLiteAssetStore(IAssetStore):
             ).fetchone()
         if not row or not row["thumbnail_path"]:
             return None
-        p = Path(row["thumbnail_path"])
+        p = _path_from_storage_key(row["thumbnail_path"], self._root)
         return p if p.exists() else None
 
     def read_bytes(self, asset_id: str) -> bytes:
@@ -389,7 +489,11 @@ class SQLiteAssetStore(IAssetStore):
             rows = conn.execute("SELECT id, file_path FROM assets").fetchall()
         missing_ids: list[str] = []
         for r in rows:
-            fp = Path(r["file_path"])
+            try:
+                fp = _path_from_storage_key(r["file_path"], self._root)
+            except (FileNotFoundError, RuntimeError):
+                missing_ids.append(r["id"])
+                continue
             if not fp.exists():
                 missing_ids.append(r["id"])
         removed: list[str] = []
