@@ -38,6 +38,9 @@ def list_models_index(
     media: Optional[str] = Query(None, description="image | video"),
     action: Optional[str] = Query(None, description="create | rewrite | … 等注册表 action 键"),
     installed: Optional[bool] = Query(None, description="true=至少一版本就绪；false=未就绪"),
+    commercial_use_allowed: Optional[bool] = Query(
+        None, description="true=注册表标注可商用；false=明确不可商用或未标注"
+    ),
     reg: ModelRegistry = Depends(get_model_registry),
 ):
     detailed = _settings_service().get_models_detailed_status()
@@ -54,6 +57,11 @@ def list_models_index(
         if installed is False and ready:
             continue
         raw = e.raw if isinstance(e.raw, dict) else {}
+        cup = raw.get("commercial_use_allowed")
+        if commercial_use_allowed is True and cup is not True:
+            continue
+        if commercial_use_allowed is False and cup is True:
+            continue
         out[mid] = {
             "media": e.media,
             "family": e.family,

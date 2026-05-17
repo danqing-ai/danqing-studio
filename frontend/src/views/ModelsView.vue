@@ -75,23 +75,49 @@
       >
         <!-- Category title -->
         <div class="page-header models-page__page-header">
-          <h2 class="page-title models-page__category-title">
-            <DqIcon v-if="categoryPageIcon" class="models-page__title-icon" aria-hidden="true">
-              <component :is="categoryPageIcon" />
-            </DqIcon>
-            <span>{{ categoryTitleText }}</span>
-          </h2>
-          <div class="page-actions models-page__toolbar">
-            <DqButton
-              v-if="
-                activeCategory !== 'loras' && activeCategory !== 'installed'
-              "
-              class="models-toolbar-btn models-page__import-btn"
-              @click="showImportDialog"
-            >
-              <DqIcon class="models-toolbar-btn__icon"><upload /></DqIcon>
-              <span class="models-toolbar-btn__label">{{ $t('download.importLocal') }}</span>
-            </DqButton>
+          <div class="models-page__header-row models-page__header-row--title">
+            <h2 class="page-title models-page__category-title">
+              <DqIcon v-if="categoryPageIcon" class="models-page__title-icon" aria-hidden="true">
+                <component :is="categoryPageIcon" />
+              </DqIcon>
+              <span>{{ categoryTitleText }}</span>
+            </h2>
+            <div class="page-actions models-page__actions">
+              <DqButton
+                v-if="
+                  activeCategory !== 'loras' && activeCategory !== 'installed'
+                "
+                class="models-toolbar-btn models-page__import-btn"
+                @click="showImportDialog"
+              >
+                <DqIcon class="models-toolbar-btn__icon"><upload /></DqIcon>
+                <span class="models-toolbar-btn__label">{{ $t('download.importLocal') }}</span>
+              </DqButton>
+              <DqButton
+                class="models-toolbar-btn models-page__refresh-btn"
+                :loading="refreshing"
+                @click="refreshStatus"
+              >
+                <DqIcon class="models-toolbar-btn__icon"><refresh /></DqIcon>
+                <span class="models-toolbar-btn__label">{{ $t('gallery.refresh') }}</span>
+              </DqButton>
+            </div>
+          </div>
+          <div
+            v-if="
+              [
+                'all',
+                'image_models',
+                'video_models',
+                'music_models',
+                'controlnets',
+                'upscalers',
+                'tools',
+                'loras',
+              ].includes(activeCategory)
+            "
+            class="models-page__header-row models-page__header-row--filters"
+          >
             <DqInput
               v-model="filterQuery"
               :placeholder="$t('download.searchModel')"
@@ -102,14 +128,10 @@
                 <DqIcon><search /></DqIcon>
               </template>
             </DqInput>
-            <DqButton
-              class="models-toolbar-btn models-page__refresh-btn"
-              :loading="refreshing"
-              @click="refreshStatus"
-            >
-              <DqIcon class="models-toolbar-btn__icon"><refresh /></DqIcon>
-              <span class="models-toolbar-btn__label">{{ $t('gallery.refresh') }}</span>
-            </DqButton>
+            <ModelPickerFilters
+              v-model:installed-only="modelFilterInstalledOnly"
+              v-model:commercial-only="modelFilterCommercialOnly"
+            />
           </div>
         </div>
 
@@ -640,8 +662,11 @@ import { $tt, $mn, $md } from '@/utils/i18n';
 import { useRegistryStore } from '@/stores/registry';
 import { DQ_STORAGE, getItem, setItem } from '@/utils/storage';
 import ModelLicenseBadges from '@/components/model/ModelLicenseBadges.vue';
+import ModelPickerFilters from '@/components/model/ModelPickerFilters.vue';
 import ModelsImportDialog from '@/components/models/ModelsImportDialog.vue';
 import ModelsCategoryNav from '@/components/models/ModelsCategoryNav.vue';
+import { useModelRegistryFilters } from '@/composables/useModelRegistryFilters';
+import { modelPassesRegistryFilters } from '@/utils/modelPickerFilters';
 
 /* ───── Types ───── */
 
@@ -705,6 +730,8 @@ const modelsStatus = ref<Record<string, boolean>>({});
 const modelsDetailedStatus = ref<Record<string, any>>({});
 const categories = ref<Record<string, any>>({});
 const filterQuery = ref('');
+const { installedOnly: modelFilterInstalledOnly, commercialOnly: modelFilterCommercialOnly } =
+  useModelRegistryFilters();
 const refreshing = ref(false);
 
 const registryStore = useRegistryStore();
@@ -792,6 +819,15 @@ const filteredModels = computed(() => {
       if (!modelSearchBlob(model).includes(query)) {
         continue;
       }
+    }
+
+    if (
+      !modelPassesRegistryFilters(model, {
+        installedOnly: modelFilterInstalledOnly.value,
+        commercialOnly: modelFilterCommercialOnly.value,
+      })
+    ) {
+      continue;
     }
 
     list.push(model);

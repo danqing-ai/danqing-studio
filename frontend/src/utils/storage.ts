@@ -10,6 +10,8 @@ export const DQ_STORAGE = Object.freeze({
   IMAGE_CREATE_PROMPT_DRAFT: 'dq-studio.imageCreatePromptDraft.v4',
   VIDEO_CREATE_PROMPT_DRAFT: 'dq-studio.videoCreatePromptDraft.v4',
   AUDIO_CREATE_PROMPT_DRAFT: 'dq-studio.audioCreatePromptDraft.v4',
+  MODEL_FILTER_INSTALLED: 'dq-studio.modelFilterInstalled.v4',
+  MODEL_FILTER_COMMERCIAL: 'dq-studio.modelFilterCommercial.v4',
 } as const);
 
 export type StorageKey = (typeof DQ_STORAGE)[keyof typeof DQ_STORAGE];

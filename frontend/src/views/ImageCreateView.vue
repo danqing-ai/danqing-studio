@@ -66,6 +66,10 @@
               >
                 <DqIcon :size="14"><setting /></DqIcon>
               </DqButton>
+              <ModelPickerFilters
+                v-model:commercial-only="modelFilterCommercialOnly"
+                :show-installed-filter="false"
+              />
             </div>
             <DqAlert
               v-if="selectedModelNotReady"
@@ -398,7 +402,10 @@ import { pickDefaultVersionKey, resolveDefaultModelRegistryKey } from '@/utils/d
 import { warnIfRiskyMemory } from '@/composables/memoryHint';
 import { formatGenLogMessage, isDuplicateDenoiseStepLog } from '@/utils/genTaskLog';
 import ModelLicenseBadges from '@/components/model/ModelLicenseBadges.vue';
+import ModelPickerFilters from '@/components/model/ModelPickerFilters.vue';
 import ModelVersionPickerExtras from '@/components/model/ModelVersionPickerExtras.vue';
+import { useModelRegistryFilters, reconcileVersionPickerSelection } from '@/composables/useModelRegistryFilters';
+import { applyModelVersionFilters } from '@/utils/modelPickerFilters';
 import AssetPicker from '@/components/asset/AssetPicker.vue';
 import ImageEditor from '@/components/image/ImageEditor.vue';
 import ImageCreateAdvancedParams from '@/components/create/ImageCreateAdvancedParams.vue';
@@ -732,8 +739,13 @@ const selectedModelPickerItem = computed(() => {
 });
 
 /** Model dropdown: single-layer list, shows only ready models, recommended versions first */
+const { commercialOnly: modelFilterCommercialOnly } = useModelRegistryFilters();
+
 const filteredModelPickerVersions = computed(() => {
-  const rows = filteredAllVersions.value.filter((v) => v.ready);
+  const rows = applyModelVersionFilters(filteredAllVersions.value, {
+    installedOnly: true,
+    commercialOnly: modelFilterCommercialOnly.value,
+  });
   rows.sort((a, b) => {
     const ar = a.recommended ? 1 : 0;
     const br = b.recommended ? 1 : 0;
@@ -1510,6 +1522,14 @@ watch(imageWorkTab, (t) => {
       selectedModelVersion.value = String(firstMatch.modelKey) + '|' + String(firstMatch.versionKey);
       loadModelDefaults();
     }
+  }
+});
+
+watch(modelFilterCommercialOnly, () => {
+  if (
+    reconcileVersionPickerSelection(filteredModelPickerVersions.value, params, selectedModelVersion)
+  ) {
+    loadModelDefaults();
   }
 });
 </script>

@@ -55,6 +55,10 @@
                   />
                 </DqOption>
               </DqSelect>
+              <ModelPickerFilters
+                v-model:commercial-only="modelFilterCommercialOnly"
+                :show-installed-filter="false"
+              />
             </div>
             <DqAlert
               v-if="selectedModelNotReady"
@@ -523,7 +527,10 @@ import { warnIfRiskyMemory } from '@/composables/memoryHint';
 import { pickDefaultVersionKey, resolveDefaultModelRegistryKey } from '@/utils/defaultModelSettings';
 import { formatGenLogMessage, isDuplicateDenoiseStepLog } from '@/utils/genTaskLog';
 import ModelLicenseBadges from '@/components/model/ModelLicenseBadges.vue';
+import ModelPickerFilters from '@/components/model/ModelPickerFilters.vue';
 import ModelVersionPickerExtras from '@/components/model/ModelVersionPickerExtras.vue';
+import { useModelRegistryFilters, reconcileVersionPickerSelection } from '@/composables/useModelRegistryFilters';
+import { applyModelVersionFilters } from '@/utils/modelPickerFilters';
 import AssetPicker from '@/components/asset/AssetPicker.vue';
 import VideoCreateAdvancedParams from '@/components/create/VideoCreateAdvancedParams.vue';
 import CreateUpscaleParams from '@/components/create/CreateUpscaleParams.vue';
@@ -765,8 +772,13 @@ const selectedModelPickerItem = computed(() => {
   return allVersions.value.find((item) => `${item.modelKey}|${item.versionKey}` === key) ?? null;
 });
 
+const { commercialOnly: modelFilterCommercialOnly } = useModelRegistryFilters();
+
 const videoModelPickerVersions = computed(() => {
-  const rows = videoVersionsForMode.value.filter((v) => v.ready);
+  const rows = applyModelVersionFilters(videoVersionsForMode.value, {
+    installedOnly: true,
+    commercialOnly: modelFilterCommercialOnly.value,
+  });
   rows.sort((a, b) => {
     const ar = a.recommended ? 1 : 0;
     const br = b.recommended ? 1 : 0;
@@ -1450,6 +1462,14 @@ watch(videoWorkMode, () => {
       selectedModelVersion.value = first.modelKey + '|' + first.versionKey;
       loadModelDefaults();
     }
+  }
+});
+
+watch(modelFilterCommercialOnly, () => {
+  if (
+    reconcileVersionPickerSelection(videoModelPickerVersions.value, params, selectedModelVersion)
+  ) {
+    loadModelDefaults();
   }
 });
 </script>

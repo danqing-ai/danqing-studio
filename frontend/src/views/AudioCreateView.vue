@@ -49,6 +49,10 @@
                   </div>
                 </DqOption>
               </DqSelect>
+              <ModelPickerFilters
+                v-model:commercial-only="modelFilterCommercialOnly"
+                :show-installed-filter="false"
+              />
             </div>
             <DqAlert
               v-if="selectedModelNotReady"
@@ -348,6 +352,9 @@ import { useTasksStore } from '@/stores/tasks';
 import { useRegistryStore } from '@/stores/registry';
 import { pickDefaultVersionKey, resolveDefaultModelRegistryKey } from '@/utils/defaultModelSettings';
 import ModelLicenseBadges from '@/components/model/ModelLicenseBadges.vue';
+import ModelPickerFilters from '@/components/model/ModelPickerFilters.vue';
+import { useModelRegistryFilters } from '@/composables/useModelRegistryFilters';
+import { applyModelVersionFilters } from '@/utils/modelPickerFilters';
 import AudioCreateMusicParams from '@/components/audio/AudioCreateMusicParams.vue';
 import AudioCreateAdvancedParams from '@/components/audio/AudioCreateAdvancedParams.vue';
 
@@ -503,6 +510,8 @@ const timeSignatures = [
 // ---- Model selector ----
 const selectedModelVersion = ref('');
 
+const { commercialOnly: modelFilterCommercialOnly } = useModelRegistryFilters();
+
 const filteredModelPickerVersions = computed(() => {
   const rows: Array<any> = [];
   for (const [mid, config] of Object.entries(modelRegistry.value)) {
@@ -537,7 +546,10 @@ const filteredModelPickerVersions = computed(() => {
     if (a.ready !== b.ready) return a.ready ? -1 : 1;
     return a.label.localeCompare(b.label);
   });
-  return rows;
+  return applyModelVersionFilters(rows, {
+    installedOnly: true,
+    commercialOnly: modelFilterCommercialOnly.value,
+  });
 });
 
 const submitDisabled = computed(() => {
@@ -889,5 +901,19 @@ watch(audioWorkTab, () => {
   if (selectedModelVersion.value) {
     onModelChange(selectedModelVersion.value);
   }
+});
+
+watch(modelFilterCommercialOnly, () => {
+  const rows = filteredModelPickerVersions.value;
+  const key = selectedModelVersion.value;
+  if (key && rows.some((r) => r.key === key)) {
+    return;
+  }
+  const pick = rows.find((r) => r.ready) || rows[0];
+  if (!pick) {
+    return;
+  }
+  selectedModelVersion.value = pick.key;
+  onModelChange(pick.key);
 });
 </script>

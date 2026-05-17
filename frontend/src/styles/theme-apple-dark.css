@@ -808,7 +808,7 @@ html.dark .models-page__page-header {
  padding-bottom: 16px;
 }
 
-html.dark .models-page__header-top .page-title {
+html.dark .models-page__category-title.page-title {
  flex: 0 1 auto;
  min-width: 0;
 }
