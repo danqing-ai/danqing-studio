@@ -247,31 +247,12 @@
                 <div class="model-icon">
                   {{ getModelInitials(model) }}
                 </div>
-                <div class="model-card-badges">
-                  <el-tag
-                    v-if="model.recommended"
-                    size="small"
-                    class="recommended-badge"
-                    type="success"
-                    effect="dark"
-                  >
-                    {{ $t('download.recommendedBadge') }}
-                  </el-tag>
-                  <el-tooltip
-                    v-if="isCommercialUseAllowed(model)"
-                    :content="$t('download.commercialUseBadgeTip')"
-                    placement="bottom"
-                    :show-after="400"
-                  >
-                    <el-tag
-                      size="small"
-                      class="commercial-badge"
-                      effect="dark"
-                    >
-                      {{ $t('download.commercialUseBadge') }}
-                    </el-tag>
-                  </el-tooltip>
-                </div>
+                <ModelLicenseBadges
+                  class="model-card-badges"
+                  :recommended="model.recommended"
+                  :commercial-use-allowed="model.commercial_use_allowed"
+                  stacked
+                />
                 <div class="model-status">
                   <el-tag
                     v-if="modelsDetailedStatus[model.id]?.status === 'ready'"
@@ -778,6 +759,7 @@ import { api } from '@/utils/api';
 import { $tt, $mn, $md } from '@/utils/i18n';
 import { useRegistryStore } from '@/stores/registry';
 import { DQ_STORAGE, getItem, setItem } from '@/utils/storage';
+import ModelLicenseBadges from '@/components/model/ModelLicenseBadges.vue';
 
 /* ───── Types ───── */
 
@@ -903,10 +885,6 @@ function modelSearchBlob(m: ModelRow): string {
   const n = $mn(m, m.id);
   const d = $md(m, '');
   return `${n} ${d}`.toLowerCase();
-}
-
-function isCommercialUseAllowed(m: ModelRow): boolean {
-  return m.commercial_use_allowed === true;
 }
 
 const filteredModels = computed(() => {

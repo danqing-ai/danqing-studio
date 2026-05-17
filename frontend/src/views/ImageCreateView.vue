@@ -43,7 +43,11 @@
                 >
                   <div class="studio-ep-picker-option">
                     <span class="studio-ep-picker-option__name" :class="{ 'is-disabled': !item.ready }">{{ item.name }}</span>
-                    <el-tag v-if="item.recommended" size="small" type="success">{{ $t('studio.recommended') }}</el-tag>
+                    <ModelLicenseBadges
+                      :recommended="item.recommended"
+                      :commercial-use-allowed="item.commercialUseAllowed"
+                      effect="plain"
+                    />
                     <el-tag v-if="item.status === 'ready'" size="small" type="success">{{ $t('studio.ready') }}</el-tag>
                     <el-tag v-else-if="item.status === 'incomplete'" size="small" type="danger">{{ $t('studio.incomplete') }}</el-tag>
                     <el-tag v-else size="small" type="warning">{{ $t('studio.notDownloaded') }}</el-tag>
@@ -602,6 +606,7 @@ import type { SystemInfo } from '@/types';
 import { applyDefaults, hasDeviation } from '@/utils/registryParamSchema';
 import { warnIfRiskyMemory } from '@/composables/memoryHint';
 import { formatGenLogMessage, isDuplicateDenoiseStepLog } from '@/utils/genTaskLog';
+import ModelLicenseBadges from '@/components/model/ModelLicenseBadges.vue';
 
 /* ------------------------------------------------------------------ */
 /*  Injected / External                                                */
@@ -882,6 +887,7 @@ const allVersions = computed(() => {
         status: status.status,
         ready: status.ready,
         recommended: config.recommended && (versionConfig as Record<string, unknown>).default,
+        commercialUseAllowed: config.commercial_use_allowed === true,
         actions,
         engine,
       });

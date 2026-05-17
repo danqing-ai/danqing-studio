@@ -3712,27 +3712,12 @@ body {
     color: var(--el-color-success);
 }
 
-.model-card-badges {
+.model-card-header .model-card-badges {
     position: absolute;
     top: 10px;
     left: 10px;
     z-index: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 4px;
     max-width: calc(100% - 88px);
-}
-
-.model-card-badges .recommended-badge,
-.model-card-badges .commercial-badge {
-    position: static;
-}
-
-.commercial-badge {
-    --el-tag-bg-color: color-mix(in srgb, #4f6ef7 88%, #000);
-    --el-tag-border-color: color-mix(in srgb, #4f6ef7 70%, transparent);
-    --el-tag-text-color: #fff;
 }
 
 .model-status {

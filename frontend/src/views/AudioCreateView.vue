@@ -39,7 +39,11 @@
                 >
                   <div class="studio-ep-picker-option">
                     <span class="studio-ep-picker-option__name" :class="{ 'is-disabled': !mv.ready }">{{ mv.label }}</span>
-                    <el-tag v-if="mv.isRec" size="small" type="success">{{ $t('studio.recommended') }}</el-tag>
+                    <ModelLicenseBadges
+                      :recommended="mv.isRec"
+                      :commercial-use-allowed="mv.commercialUseAllowed"
+                      effect="plain"
+                    />
                     <el-tag v-if="mv.ready" size="small" type="success">{{ $t('studio.ready') }}</el-tag>
                     <el-tag v-else size="small" type="warning">{{ $t('studio.notDownloaded') }}</el-tag>
                     <span v-if="mv.size" class="studio-ep-picker-option__meta">{{ mv.size }}</span>
@@ -406,6 +410,7 @@ import { formatGenLogMessage, isDuplicateDenoiseStepLog } from '@/utils/genTaskL
 import { $tt } from '@/utils/i18n';
 import { useTasksStore } from '@/stores/tasks';
 import { useRegistryStore } from '@/stores/registry';
+import ModelLicenseBadges from '@/components/model/ModelLicenseBadges.vue';
 
 const tasksStore = useTasksStore();
 const registryStore = useRegistryStore();
@@ -576,7 +581,16 @@ const filteredModelPickerVersions = computed(() => {
       const vst = versionStatuses[vk] || {};
       const ready = vst.ready === true || (ds.status === 'ready' && vst.ready !== false);
       const label = getModelVersionName(mid, vk, vd);
-      rows.push({ key: mid + '|' + vk, label, ready, isRec, mid, vk, size: vd.size || '' });
+      rows.push({
+        key: mid + '|' + vk,
+        label,
+        ready,
+        isRec,
+        commercialUseAllowed: config.commercial_use_allowed === true,
+        mid,
+        vk,
+        size: vd.size || '',
+      });
     }
   }
   rows.sort((a, b) => {

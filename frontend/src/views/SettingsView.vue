@@ -29,7 +29,10 @@
             >
               <div class="settings-ep-select-option">
                 <span class="settings-ep-select-option__name">{{ $mn(config) }}</span>
-                <el-tag v-if="config.recommended" size="small" type="success" effect="dark">{{ $t('studio.recommended') }}</el-tag>
+                <ModelLicenseBadges
+                  :recommended="config.recommended"
+                  :commercial-use-allowed="config.commercial_use_allowed"
+                />
                 <el-tag size="small" type="info">{{ config.engine }}</el-tag>
                 <el-tag v-if="config.category" size="small" type="warning">{{ categoryLabel(config.category) }}</el-tag>
                 <span class="settings-ep-select-option__meta">
@@ -48,7 +51,10 @@
                 <div class="settings-ep-overview__body">
                   <div class="settings-ep-overview__title-row">
                     <span class="settings-ep-overview__title">{{ $mn(currentModelConfig) }}</span>
-                    <el-tag v-if="currentModelConfig.recommended" size="small" type="success" effect="dark">{{ $t('studio.recommended') }}</el-tag>
+                    <ModelLicenseBadges
+                      :recommended="currentModelConfig.recommended"
+                      :commercial-use-allowed="currentModelConfig.commercial_use_allowed"
+                    />
                   </div>
                   <el-text class="settings-ep-overview__desc" size="small" type="info" tag="p">
                     {{ $md(currentModelConfig) }}
@@ -927,6 +933,7 @@ import { DQ_STORAGE, getItem, setItem } from '@/utils/storage';
 import { useRegistryStore } from '@/stores/registry';
 import type { SystemInfo } from '@/types';
 import * as RegistryParamSchema from '@/utils/registryParamSchema';
+import ModelLicenseBadges from '@/components/model/ModelLicenseBadges.vue';
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -938,6 +945,7 @@ interface ModelConfig {
   name_en?: string;
   description_en?: string;
   recommended?: boolean;
+  commercial_use_allowed?: boolean | null;
   engine?: string;
   category?: string;
   type?: string;

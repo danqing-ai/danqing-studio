@@ -39,7 +39,11 @@
                 >
                   <div class="studio-ep-picker-option">
                     <span class="studio-ep-picker-option__name" :class="{ 'is-disabled': !item.ready }">{{ item.name }}</span>
-                    <el-tag v-if="item.recommended" size="small" type="success">{{ $t('studio.recommended') }}</el-tag>
+                    <ModelLicenseBadges
+                      :recommended="item.recommended"
+                      :commercial-use-allowed="item.commercialUseAllowed"
+                      effect="plain"
+                    />
                     <el-tag v-if="item.status === 'ready'" size="small" type="success">{{ $t('studio.ready') }}</el-tag>
                     <el-tag v-else size="small" type="warning">{{ $t('studio.notDownloaded') }}</el-tag>
                     <span v-if="item.size" class="studio-ep-picker-option__meta">
@@ -617,6 +621,7 @@ import { DQ_STORAGE } from '@/utils/storage';
 import type { SystemInfo, GalleryItem } from '@/types';
 import { warnIfRiskyMemory } from '@/composables/memoryHint';
 import { formatGenLogMessage, isDuplicateDenoiseStepLog } from '@/utils/genTaskLog';
+import ModelLicenseBadges from '@/components/model/ModelLicenseBadges.vue';
 
 const router = useRouter();
 const registryStore = useRegistryStore();
@@ -815,6 +820,7 @@ const allVersions = computed(() => {
         status: status.status,
         ready: status.ready,
         recommended: config.recommended && (versionConfig as any).default,
+        commercialUseAllowed: config.commercial_use_allowed === true,
         actions,
       });
     }
