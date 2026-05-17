@@ -1,5 +1,5 @@
 #!/bin/bash
-# DanQing Studio v2.0 Launcher
+# DanQing Studio v4 Launcher
 
 set -e
 
@@ -14,7 +14,7 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 echo -e "${BLUE}╔══════════════════════════════════════╗${NC}"
-echo -e "${BLUE}║    DanQing Studio v2.0 Launcher     ║${NC}"
+echo -e "${BLUE}║    DanQing Studio v4 Launcher       ║${NC}"
 echo -e "${BLUE}╚══════════════════════════════════════╝${NC}"
 echo ""
 
@@ -74,22 +74,44 @@ else
     echo -e "${GREEN}✓ Dependencies ready${NC}"
 fi
 
-mkdir -p models outputs config db
+# Data dirs under custom workspace when configured (see config/.app_config.json)
+"$VENV_PYTHON" -c "
+from pathlib import Path
+import sys
+sys.path.insert(0, '${PROJECT_ROOT}')
+from backend.utils.workspace import prepare_data_directories
+prepare_data_directories(Path('${PROJECT_ROOT}').resolve())
+"
 
-# Build frontend if needed
+# Build frontend if needed (Vite -> out/frontend/dist/, see frontend/vite.config.ts)
 FRONTEND_DIR="$PROJECT_ROOT/frontend"
+FRONTEND_DIST="$PROJECT_ROOT/out/frontend/dist"
 if [ -f "$FRONTEND_DIR/package.json" ]; then
-    if [ ! -d "$FRONTEND_DIR/dist" ] || [ "$FRONTEND_DIR/src" -nt "$FRONTEND_DIR/dist" ]; then
-        echo -e "${BLUE}Building frontend...${NC}"
+    NEED_FRONTEND_BUILD=0
+    if [ ! -f "$FRONTEND_DIST/index.html" ]; then
+        NEED_FRONTEND_BUILD=1
+    elif [ "$FRONTEND_DIR/package.json" -nt "$FRONTEND_DIST/index.html" ] \
+        || [ "$FRONTEND_DIR/vite.config.ts" -nt "$FRONTEND_DIST/index.html" ]; then
+        NEED_FRONTEND_BUILD=1
+    elif find "$FRONTEND_DIR/src" -type f -newer "$FRONTEND_DIST/index.html" -print -quit 2>/dev/null | grep -q .; then
+        NEED_FRONTEND_BUILD=1
+    fi
+
+    if [ "$NEED_FRONTEND_BUILD" -eq 1 ]; then
+        echo -e "${BLUE}Building frontend -> out/frontend/dist ...${NC}"
         cd "$FRONTEND_DIR"
         if [ ! -d "node_modules" ]; then
             npm install
         fi
         npm run build
         cd "$PROJECT_ROOT"
+        if [ ! -f "$FRONTEND_DIST/index.html" ]; then
+            echo -e "${RED}Error: frontend build failed (missing $FRONTEND_DIST/index.html)${NC}" >&2
+            exit 1
+        fi
         echo -e "${GREEN}✓ Frontend built${NC}"
     else
-        echo -e "${GREEN}✓ Frontend up to date${NC}"
+        echo -e "${GREEN}✓ Frontend up to date (out/frontend/dist)${NC}"
     fi
 fi
 

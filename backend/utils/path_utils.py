@@ -11,8 +11,7 @@ from typing import Optional
 
 from backend.core.interfaces import IPathResolver
 from backend.utils.workspace import (
-    ensure_workspace_layout,
-    resolve_workspace_root,
+    prepare_data_directories,
     seed_workspace_from_bootstrap,
 )
 
@@ -46,8 +45,7 @@ class PathResolver(IPathResolver):
 
         self._bundle_root = bundle_root
         self._bootstrap = bootstrap
-        self._root = resolve_workspace_root(self._bootstrap)
-        ensure_workspace_layout(self._root)
+        self._root = prepare_data_directories(self._bootstrap)
         if bundle_root is not None:
             seed_workspace_from_bootstrap(bundle_root, self._root)
     
@@ -74,6 +72,37 @@ class PathResolver(IPathResolver):
     
     def get_presets_path(self) -> Path:
         return self._root / "config" / "presets.json"
+
+    def resolve_registry_local_path(self, local_path: str) -> Path:
+        """Resolve registry paths against the effective workspace (never the repo bootstrap root)."""
+        text = (local_path or "").strip()
+        if not text:
+            raise ValueError("local_path is required")
+        candidate = Path(text).expanduser()
+        if candidate.is_absolute():
+            return candidate.resolve()
+        if text.startswith("models/"):
+            return (self.get_models_dir() / text[len("models/") :]).resolve()
+        return (self.get_project_root() / text).resolve()
+
+    def remap_legacy_data_path(self, path: str | Path) -> Path:
+        """Rewrite paths that still point at bootstrap ``models/`` / ``outputs/`` / ``db/`` after workspace migration."""
+        raw = Path(path).expanduser()
+        if not raw.is_absolute():
+            raw = (self.get_bootstrap_root() / raw).resolve()
+        else:
+            raw = raw.resolve()
+        workspace = self.get_project_root().resolve()
+        bootstrap = self.get_bootstrap_root().resolve()
+        if workspace == bootstrap:
+            return raw
+        try:
+            rel = raw.relative_to(bootstrap)
+        except ValueError:
+            return raw
+        if rel.parts and rel.parts[0] in ("models", "outputs", "db"):
+            return (workspace / rel).resolve()
+        return raw
 
 
 def get_system_info() -> dict:

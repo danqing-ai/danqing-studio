@@ -247,6 +247,31 @@
                 <div class="model-icon">
                   {{ getModelInitials(model) }}
                 </div>
+                <div class="model-card-badges">
+                  <el-tag
+                    v-if="model.recommended"
+                    size="small"
+                    class="recommended-badge"
+                    type="success"
+                    effect="dark"
+                  >
+                    {{ $t('download.recommendedBadge') }}
+                  </el-tag>
+                  <el-tooltip
+                    v-if="isCommercialUseAllowed(model)"
+                    :content="$t('download.commercialUseBadgeTip')"
+                    placement="bottom"
+                    :show-after="400"
+                  >
+                    <el-tag
+                      size="small"
+                      class="commercial-badge"
+                      effect="dark"
+                    >
+                      {{ $t('download.commercialUseBadge') }}
+                    </el-tag>
+                  </el-tooltip>
+                </div>
                 <div class="model-status">
                   <el-tag
                     v-if="modelsDetailedStatus[model.id]?.status === 'ready'"
@@ -268,14 +293,6 @@
                     {{ $t('download.notDownloadedTag') }}
                   </el-tag>
                 </div>
-                <el-tag
-                  v-if="model.recommended"
-                  size="small"
-                  class="recommended-badge"
-                  type="success"
-                >
-                  {{ $t('download.recommendedBadge') }}
-                </el-tag>
               </div>
 
               <!-- Card content -->
@@ -781,6 +798,7 @@ interface ModelConfig {
   source?: string;
   base_model?: string;
   recommended?: boolean;
+  commercial_use_allowed?: boolean | null;
   dependencies?: string[];
   versions?: Record<string, ModelVersion>;
   ready?: boolean;
@@ -885,6 +903,10 @@ function modelSearchBlob(m: ModelRow): string {
   const n = $mn(m, m.id);
   const d = $md(m, '');
   return `${n} ${d}`.toLowerCase();
+}
+
+function isCommercialUseAllowed(m: ModelRow): boolean {
+  return m.commercial_use_allowed === true;
 }
 
 const filteredModels = computed(() => {

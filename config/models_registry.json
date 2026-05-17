@@ -150,7 +150,7 @@
         "seed_support": true,
         "negative_prompt_support": true
       },
-      "recommended": false,
+      "recommended": true,
       "source": "modelscope",
       "versions": {
         "fp16": {
@@ -628,7 +628,7 @@
           27
         ]
       },
-      "recommended": true,
+      "recommended": false,
       "source": "modelscope",
       "versions": {
         "fp16": {
@@ -671,8 +671,8 @@
         "en": "FLUX.2-klein-9B"
       },
       "description": {
-        "zh": "FLUX.2 Klein 9B 蒸馏版，8步真实感出图，提示词遵从度高，编辑能力强",
-        "en": "FLUX.2 Klein 9B 蒸馏版，8步真实感出图，提示词遵从度高，编辑能力强"
+        "zh": "FLUX.2 Klein 9B 蒸馏版，8步真实感出图；许可为 FLUX 非商用许可（NCL），不可商用",
+        "en": "FLUX.2 Klein 9B distilled; FLUX Non-Commercial License (NCL)—not for commercial use"
       },
       "media": "image",
       "actions": {
@@ -680,7 +680,7 @@
         "rewrite": {}
       },
       "family": "flux2",
-      "commercial_use_allowed": null
+      "commercial_use_allowed": false
     },
     "flux2-klein-base-4b": {
       "category": "base_models",
@@ -904,8 +904,8 @@
         "en": "FLUX.2-klein-base-9B"
       },
       "description": {
-        "zh": "FLUX.2 Klein 9B 基础版，50步高质量，支持训练",
-        "en": "FLUX.2 Klein 9B 基础版，50步高质量，支持训练"
+        "zh": "FLUX.2 Klein 9B 基础版，50步高质量；许可为 FLUX 非商用许可（NCL），不可商用",
+        "en": "FLUX.2 Klein 9B base; FLUX Non-Commercial License (NCL)—not for commercial use"
       },
       "media": "image",
       "actions": {
@@ -913,7 +913,7 @@
         "rewrite": {}
       },
       "family": "flux2",
-      "commercial_use_allowed": null
+      "commercial_use_allowed": false
     },
     "z-image": {
       "category": "base_models",
@@ -3412,7 +3412,7 @@
         "supports_guidance": false,
         "default_scheduler": "flow_match_euler"
       },
-      "recommended": true,
+      "recommended": false,
       "source": "modelscope",
       "backends": [
         "mlx"
@@ -3459,8 +3459,8 @@
         "en": "LTX 2.3 [Distilled]"
       },
       "description": {
-        "zh": "LTX 2.3 蒸馏版视频生成模型，4步快速生成，支持T2V/I2V",
-        "en": "LTX 2.3 distilled video generation model, 4-step fast generation, supports T2V/I2V"
+        "zh": "LTX 2.3 蒸馏版视频生成模型，4步快速生成；开放权重许可对年营收≥1000万美元主体需另行商业授权",
+        "en": "LTX 2.3 distilled; open-weights license requires a separate commercial agreement for entities with ≥$10M annual revenue"
       },
       "media": "video",
       "actions": {
@@ -3468,7 +3468,7 @@
         "animate": {}
       },
       "family": "ltx",
-      "commercial_use_allowed": null
+      "commercial_use_allowed": false
     },
     "ltx-2.3-dev": {
       "category": "video_models",
@@ -3586,7 +3586,7 @@
         "animate": {}
       },
       "family": "ltx",
-      "commercial_use_allowed": null
+      "commercial_use_allowed": false
     },
     "wan-2.2-t2v-14b": {
       "category": "video_models",
@@ -3644,7 +3644,7 @@
         "seed_support": true,
         "negative_prompt_support": true
       },
-      "recommended": true,
+      "recommended": false,
       "source": "modelscope",
       "versions": {
         "original": {
@@ -3669,7 +3669,7 @@
         "create": {}
       },
       "family": "wan",
-      "commercial_use_allowed": null
+      "commercial_use_allowed": true
     },
     "wan-2.2-i2v-14b": {
       "category": "video_models",
@@ -3761,7 +3761,7 @@
         "animate": {}
       },
       "family": "wan",
-      "commercial_use_allowed": null
+      "commercial_use_allowed": true
     },
     "wan-2.2-ti2v-5b": {
       "category": "video_models",
@@ -3819,7 +3819,7 @@
         "seed_support": true,
         "negative_prompt_support": true
       },
-      "recommended": false,
+      "recommended": true,
       "source": "modelscope",
       "versions": {
         "original": {
@@ -3998,10 +3998,10 @@
         "en": "ACE-Step Music (4B)"
       },
       "description": {
-        "zh": "ACE-Step-1.5 XL SFT — 4B DiT 解码器，高质量音乐生成，支持歌词/ BPM / 调式 / 拍号控制",
-        "en": "ACE-Step-1.5 XL SFT — 4B DiT decoder, high-quality music generation with lyrics/BPM/key/time signature control"
+        "zh": "ACE-Step-1.5 XL SFT — 4B DiT 解码器，高质量音乐生成；MIT 许可，可商用",
+        "en": "ACE-Step-1.5 XL SFT — 4B DiT decoder, high-quality music; MIT license, commercial use allowed"
       },
-      "commercial_use_allowed": null
+      "commercial_use_allowed": true
     }
   }
 }

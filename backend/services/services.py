@@ -190,7 +190,6 @@ class SettingsService(ISettingsService):
 
     def _resolve_registry_version_bundle_dir(
         self,
-        project_root: Path,
         model_name: str,
         version_key: str,
         version_config: Any,
@@ -200,17 +199,16 @@ class SettingsService(ISettingsService):
         local_path = vc.get("local_path")
         if not local_path:
             local_path = f"models/{model_name}-{version_key}"
-        return project_root / local_path
+        return self._path_resolver.resolve_registry_local_path(local_path)
 
     def _registry_has_any_ready_bundle(self, model_name: str, config: ModelConfig) -> bool:
         """True when registry ``versions`` point at existing paths with weight files (same rule as detailed status)."""
         if getattr(config, "stub_no_download", False):
             return True
-        project_root = self._path_resolver.get_project_root()
         versions = getattr(config, "versions", None) or {}
         for version_key, version_config in versions.items():
             model_dir = self._resolve_registry_version_bundle_dir(
-                project_root, model_name, version_key, version_config
+                model_name, version_key, version_config
             )
             if model_dir.exists() and self._path_has_bundle_weights(model_dir):
                 return True
@@ -281,8 +279,6 @@ class SettingsService(ISettingsService):
         """Get detailed model status (version-level check, distinguishes not_downloaded/incomplete/ready)"""
         status = {}
         registry = self.get_model_registry()
-        project_root = self._path_resolver.get_project_root()
-        
         for model_name, config in registry.items():
             if getattr(config, "stub_no_download", False):
                 status[model_name] = {
@@ -307,7 +303,7 @@ class SettingsService(ISettingsService):
             
             for version_key, version_config in versions.items():
                 model_dir = self._resolve_registry_version_bundle_dir(
-                    project_root, model_name, version_key, version_config
+                    model_name, version_key, version_config
                 )
                 if not model_dir.exists():
                     model_status["versions"][version_key] = {

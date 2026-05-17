@@ -2,6 +2,7 @@
 
 各模型条目可含 ``commercial_use_allowed``：``true`` / ``false`` / ``null``。
 ``null`` 表示未在注册表断言，须自行核对上游许可；非法律意见。
+``recommended: true`` 仅用于 ``commercial_use_allowed: true`` 的开源可商用模型。
 ``commercial_use`` 等字段由注册表维护者按 HF/魔搭公开许可信息手工填写。
 """
 

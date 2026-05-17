@@ -102,10 +102,13 @@ class DownloadService(IDownloadService):
             with open(self._persist_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             for task_id, item in data.items():
+                remapped_target = str(
+                    self._path_resolver.remap_legacy_data_path(item["target_path"])
+                )
                 task = DownloadTask(
                     id=item["id"],
                     url=item["url"],
-                    target_path=item["target_path"]
+                    target_path=remapped_target,
                 )
                 raw_status = item.get("status", "running")
                 # After process restart, tasks that were running become paused
@@ -263,15 +266,7 @@ class DownloadService(IDownloadService):
         if version_display_name:
             display_name = f"{model_display_name} {version_display_name}"
 
-        # Parse local path
-        if local_path.startswith("models/"):
-            # Extract relative path (may contain subdirectories, e.g. Base/Z-Image-Turbo-danqing-4bit-fp16)
-            rel_path = local_path[len("models/"):]
-            target = self._path_resolver.get_models_dir() / rel_path
-        else:
-            target = Path(local_path)
-
-        # Ensure target directory exists
+        target = self._path_resolver.resolve_registry_local_path(local_path)
         target.mkdir(parents=True, exist_ok=True)
 
         # Dedup check: only one running/queued download per model per version
@@ -291,6 +286,7 @@ class DownloadService(IDownloadService):
             task_id = existing_task_id
             task = self._downloads[task_id]
             task.status = TaskStatus.RUNNING
+            task.target_path = str(target)
         else:
             task_id = str(uuid.uuid4())
             task = DownloadTask(
@@ -422,11 +418,7 @@ class DownloadService(IDownloadService):
                         clp = ver_config.get("companion_local_path")
                         if companion_repo and clp:
                             companion_repo = resolve_huggingface_repo_id(str(companion_repo))
-                            if clp.startswith("models/"):
-                                rel_c = clp[len("models/"):]
-                                companion_target = self._path_resolver.get_models_dir() / rel_c
-                            else:
-                                companion_target = Path(clp)
+                            companion_target = self._path_resolver.resolve_registry_local_path(clp)
                             companion_target.mkdir(parents=True, exist_ok=True)
                             cname = ver_config.get("companion_name")
                             if isinstance(cname, str) and cname:
@@ -626,11 +618,7 @@ class DownloadService(IDownloadService):
                         clp = ver_config.get("companion_local_path")
                         if companion_repo and clp:
                             companion_repo = str(companion_repo).strip()
-                            if clp.startswith("models/"):
-                                rel_c = clp[len("models/"):]
-                                companion_target = self._path_resolver.get_models_dir() / rel_c
-                            else:
-                                companion_target = Path(clp)
+                            companion_target = self._path_resolver.resolve_registry_local_path(clp)
                             companion_target.mkdir(parents=True, exist_ok=True)
                             cname = ver_config.get("companion_name")
                             if isinstance(cname, str) and cname:
@@ -1134,10 +1122,9 @@ class DownloadService(IDownloadService):
     def _resolve_version_path(self, version_config: Dict[str, Any]) -> Path:
         """Resolve local path for a version."""
         local_path = version_config.get("local_path", "")
-        if local_path.startswith("models/"):
-            rel_path = local_path[len("models/"):]
-            return self._path_resolver.get_models_dir() / rel_path
-        return Path(local_path)
+        if not local_path:
+            raise ValueError("version local_path is required")
+        return self._path_resolver.resolve_registry_local_path(local_path)
 
     def list_conversions(self) -> List[ConversionTask]:
         """List all conversion tasks."""
@@ -1184,11 +1171,7 @@ class DownloadService(IDownloadService):
                 deleted_paths.append(str(ver_path))
             clp = ver_config.get("companion_local_path")
             if isinstance(clp, str) and clp:
-                cpath = (
-                    self._path_resolver.get_models_dir() / clp[len("models/"):]
-                    if clp.startswith("models/")
-                    else Path(clp)
-                )
+                cpath = self._path_resolver.resolve_registry_local_path(clp)
                 if cpath.exists():
                     shutil.rmtree(cpath)
                     deleted_paths.append(str(cpath))
@@ -1202,21 +1185,13 @@ class DownloadService(IDownloadService):
                         deleted_paths.append(str(ver_path))
                     clp = ver_config.get("companion_local_path")
                     if isinstance(clp, str) and clp:
-                        cpath = (
-                            self._path_resolver.get_models_dir() / clp[len("models/"):]
-                            if clp.startswith("models/")
-                            else Path(clp)
-                        )
+                        cpath = self._path_resolver.resolve_registry_local_path(clp)
                         if cpath.exists():
                             shutil.rmtree(cpath)
                             deleted_paths.append(str(cpath))
             else:
                 local_path = config.get("local_path", f"models/{model_name}")
-                if local_path.startswith("models/"):
-                    rel_path = local_path[len("models/"):]
-                    target = self._path_resolver.get_models_dir() / rel_path
-                else:
-                    target = Path(local_path)
+                target = self._path_resolver.resolve_registry_local_path(local_path)
                 if target.exists():
                     shutil.rmtree(target)
                     deleted_paths.append(str(target))

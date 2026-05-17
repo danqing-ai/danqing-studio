@@ -62,6 +62,12 @@ def main():
         if invalid:
             failures.append(f"Invalid actions for {m.get('id', '?')}: {invalid}")
 
+    for model_id, m in models.items():
+        if m.get("recommended") is True and m.get("commercial_use_allowed") is not True:
+            failures.append(
+                f"Model '{model_id}': recommended=true requires commercial_use_allowed=true"
+            )
+
     # =========================================================================
     # 3. 预设 media_scope 校验
     # =========================================================================

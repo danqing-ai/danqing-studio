@@ -158,8 +158,51 @@ def resolve_workspace_root(bootstrap_root: Path) -> Path:
     else:
         candidate = candidate.resolve()
     if not candidate.is_dir():
-        return bootstrap_root.resolve()
+        raise RuntimeError(
+            f"Configured custom_workspace_dir does not exist or is not a directory: {candidate}"
+        )
     return candidate
+
+
+def _tree_has_user_files(path: Path) -> bool:
+    if not path.exists():
+        return False
+    for entry in path.rglob("*"):
+        if entry.is_file() and entry.name not in _IGNORE_EMPTY_NAMES:
+            return True
+    return False
+
+
+def prune_obsolete_bootstrap_data_dirs(bootstrap_root: Path) -> None:
+    """Remove empty legacy ``models/`` / ``outputs/`` / ``db/`` under bootstrap after workspace migration."""
+    bootstrap = bootstrap_root.resolve()
+    if not is_workspace_configured(bootstrap):
+        return
+    workspace = resolve_workspace_root(bootstrap)
+    if workspace == bootstrap:
+        return
+    for name in _WORKSPACE_TOP_LEVEL:
+        if name == "config":
+            continue
+        path = bootstrap / name
+        if path.exists() and not _tree_has_user_files(path):
+            shutil.rmtree(path)
+
+
+def prepare_data_directories(bootstrap_root: Path) -> Path:
+    """Create data layout under the effective workspace; keep bootstrap free of models/outputs/db when relocated.
+
+    Bootstrap always gets ``config/`` (workspace pointer). ``models/``, ``outputs/``, and ``db/`` are created
+    only under the resolved workspace root.
+    """
+    bootstrap = bootstrap_root.resolve()
+    (bootstrap / "config").mkdir(parents=True, exist_ok=True)
+    root = resolve_workspace_root(bootstrap)
+    ensure_workspace_layout(root)
+    if root != bootstrap and is_workspace_configured(bootstrap):
+        write_bootstrap_workspace_pointer(bootstrap, str(root))
+    prune_obsolete_bootstrap_data_dirs(bootstrap)
+    return root
 
 
 def ensure_workspace_layout(workspace_root: Path) -> None:

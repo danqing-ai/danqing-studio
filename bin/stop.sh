@@ -1,5 +1,5 @@
 #!/bin/bash
-# DanQing Studio v2.0 Shutdown Script
+# DanQing Studio v4 Shutdown Script
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"

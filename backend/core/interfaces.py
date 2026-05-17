@@ -378,3 +378,8 @@ class IPathResolver(ABC):
     @abstractmethod
     def get_project_root(self) -> Path:
         pass
+
+    @abstractmethod
+    def resolve_registry_local_path(self, local_path: str) -> Path:
+        """Resolve registry ``local_path`` (e.g. ``models/Image/foo``) under the effective workspace."""
+        pass
