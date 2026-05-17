@@ -18,7 +18,7 @@ html.dark .recent-actions .upscale-btn:hover {
 
 html.dark .dq-select__option[data-highlighted],
 html.dark .dq-dropdown-item[data-highlighted]:not([data-disabled]) {
- background: rgba(255, 255, 255, 0.08);
+ background: var(--dq-fill-on-glass);
 }
 
 html.dark .dq-dropdown-item {
@@ -27,13 +27,8 @@ html.dark .dq-dropdown-item {
  padding: 8px 12px;
 }
 
-/* —— 图库高级筛选抽屉 —— */
-html.dark .gallery-filter-drawer.dq-drawer-panel {
- background: #1c1c1e;
-}
-
 html.dark .gallery-filter-drawer .dq-drawer-footer {
- border-top: 1px solid rgba(255, 255, 255, 0.08);
+ border-top: 0.5px solid var(--dq-glass-border);
  padding: 12px 16px 16px;
 }
 
@@ -71,15 +66,15 @@ html.dark .asset-picker__library-cell {
  padding: 0;
  border-radius: 12px;
  overflow: hidden;
- border: 1px solid rgba(255, 255, 255, 0.1);
- background: rgba(0, 0, 0, 0.25);
+ border: 1px solid var(--dq-fill-on-glass);
+ background: var(--dq-overlay-light);
  cursor: pointer;
  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 html.dark .asset-picker__library-cell:hover {
- border-color: rgba(10, 132, 255, 0.45);
- box-shadow: 0 0 0 2px rgba(10, 132, 255, 0.2);
+ border-color: var(--dq-accent-border-hover);
+ box-shadow: 0 0 0 2px var(--dq-accent-ring-subtle);
 }
 
 html.dark .asset-picker__library-img {
@@ -96,8 +91,8 @@ html.dark .asset-picker__library-badge {
  font-size: 9px;
  padding: 2px 5px;
  border-radius: 4px;
- background: rgba(0, 0, 0, 0.65);
- color: #fff;
+ background: var(--dq-overlay-heavy);
+ color: var(--dq-color-white);
 }
 
 html.dark .asset-picker__library-cell {
@@ -111,7 +106,7 @@ html.dark .settings-version-item {
 }
 
 html.dark .settings-version-item:focus-visible {
- outline: 2px solid rgba(10, 132, 255, 0.55);
+ outline: 2px solid var(--dq-accent-glow-strong);
  outline-offset: 2px;
 }
 
@@ -138,27 +133,10 @@ html.dark .create-page .studio-primary-cta.dq-btn--primary {
  max-width: none;
 }
 
-/* —— 图库 lightbox —— */
-html.dark .gallery-lightbox {
- background: rgba(0, 0, 0, 0.88);
- backdrop-filter: blur(8px);
- -webkit-backdrop-filter: blur(8px);
-}
-
-html.dark .lightbox-close.dq-btn {
- background: rgba(255, 255, 255, 0.12);
- border: none;
-}
-
-html.dark .lightbox-nav {
- background: rgba(255, 255, 255, 0.12);
- border: 1px solid rgba(255, 255, 255, 0.1);
-}
-
 /* —— 任务队列抽屉 —— */
 html.dark .dq-task-queue-drawer.dq-drawer,
 html.dark .dq-task-queue-drawer.dq-drawer-panel {
- background: #1c1c1e;
+ background: var(--dq-bg-base);
 }
 
 html.dark .dq-task-queue-drawer .queue-dialog-item {
@@ -171,15 +149,6 @@ html.dark .dq-task-queue-drawer .queue-dialog-item {
 html.dark ::-webkit-scrollbar {
  width: 8px;
  height: 8px;
-}
-
-html.dark ::-webkit-scrollbar-thumb {
- background: rgba(255, 255, 255, 0.14);
- border-radius: 8px;
-}
-
-html.dark ::-webkit-scrollbar-thumb:hover {
- background: rgba(255, 255, 255, 0.22);
 }
 
 /* =============================================================================
@@ -279,14 +248,14 @@ html.dark .model-ver-btn--quantize.dq-btn .model-ver-btn__icon {
 }
 
 html.dark .model-ver-btn--download.dq-btn {
- background: rgba(255, 255, 255, 0.06);
- border: 1px solid rgba(255, 255, 255, 0.12);
+ background: var(--dq-fill-on-glass-subtle);
+ border: 1px solid var(--dq-scrollbar-thumb);
  color: var(--dq-label-primary);
 }
 
 html.dark .model-ver-btn--download.dq-btn:hover:not(:disabled) {
- background: rgba(255, 255, 255, 0.1);
- border-color: rgba(255, 255, 255, 0.18);
+ background: var(--dq-fill-on-glass);
+ border-color: var(--dq-scrollbar-thumb-hover);
 }
 
 html.dark .model-ver-btn--download.dq-btn .model-ver-btn__icon {
@@ -294,14 +263,14 @@ html.dark .model-ver-btn--download.dq-btn .model-ver-btn__icon {
 }
 
 html.dark .model-ver-btn--quantize.dq-btn {
- background: rgba(255, 159, 10, 0.1);
- border: 1px solid rgba(255, 159, 10, 0.22);
+ background: var(--dq-warning-surface);
+ border: 1px solid var(--dq-warning-surface-border);
  color: #ffb340;
 }
 
 html.dark .model-ver-btn--quantize.dq-btn:hover:not(:disabled) {
- background: rgba(255, 159, 10, 0.16);
- border-color: rgba(255, 159, 10, 0.35);
+ background: var(--dq-warning-surface-strong);
+ border-color: var(--dq-warning-border-hover);
 }
 
 html.dark .model-ver-btn--quantize.dq-btn .model-ver-btn__icon {
@@ -309,14 +278,14 @@ html.dark .model-ver-btn--quantize.dq-btn .model-ver-btn__icon {
 }
 
 html.dark .model-ver-btn--force.dq-btn {
- background: rgba(255, 159, 10, 0.08);
- border: 1px solid rgba(255, 159, 10, 0.22);
+ background: var(--dq-warning-surface);
+ border: 1px solid var(--dq-warning-surface-border);
  color: #ffb340;
 }
 
 html.dark .model-ver-btn--force.dq-btn:hover:not(:disabled) {
- background: rgba(255, 159, 10, 0.14);
- border-color: rgba(255, 159, 10, 0.35);
+ background: var(--dq-warning-surface-strong);
+ border-color: var(--dq-warning-border-hover);
 }
 
 html.dark .model-ver-btn--force.dq-btn .model-ver-btn__icon {
@@ -324,14 +293,14 @@ html.dark .model-ver-btn--force.dq-btn .model-ver-btn__icon {
 }
 
 html.dark .model-ver-btn--delete.dq-btn {
- background: rgba(255, 69, 58, 0.08);
- border: 1px solid rgba(255, 69, 58, 0.22);
+ background: var(--dq-danger-surface);
+ border: 1px solid var(--dq-danger-surface-border);
  color: #ff6b63;
 }
 
 html.dark .model-ver-btn--delete.dq-btn:hover:not(:disabled) {
- background: rgba(255, 69, 58, 0.14);
- border-color: rgba(255, 69, 58, 0.35);
+ background: var(--dq-danger-surface-strong);
+ border-color: var(--dq-danger-border-hover);
 }
 
 html.dark .model-ver-btn--delete.dq-btn .model-ver-btn__icon {
@@ -339,14 +308,14 @@ html.dark .model-ver-btn--delete.dq-btn .model-ver-btn__icon {
 }
 
 html.dark .model-ver-btn--neutral.dq-btn {
- background: rgba(255, 255, 255, 0.06);
- border: 1px solid rgba(255, 255, 255, 0.12);
+ background: var(--dq-fill-on-glass-subtle);
+ border: 1px solid var(--dq-scrollbar-thumb);
  color: var(--dq-label-secondary);
 }
 
 html.dark .model-ver-btn--neutral.dq-btn:hover:not(:disabled) {
- background: rgba(255, 255, 255, 0.1);
- border-color: rgba(255, 255, 255, 0.18);
+ background: var(--dq-fill-on-glass);
+ border-color: var(--dq-scrollbar-thumb-hover);
 }
 
 /* 模型页顶栏：与卡片内操作按钮同一套 icon + 文字 */
@@ -374,21 +343,21 @@ html.dark .models-toolbar-btn__icon.dq-icon {
 
 html.dark .models-page__import-btn.dq-btn,
 html.dark .models-page__refresh-btn.dq-btn {
- background: rgba(255, 255, 255, 0.06);
- border: 1px solid rgba(255, 255, 255, 0.12);
+ background: var(--dq-fill-on-glass-subtle);
+ border: 1px solid var(--dq-scrollbar-thumb);
  color: var(--dq-label-primary);
 }
 
 html.dark .models-page__import-btn.dq-btn:hover:not(:disabled),
 html.dark .models-page__refresh-btn.dq-btn:hover:not(:disabled) {
- background: rgba(255, 255, 255, 0.1);
- border-color: rgba(255, 255, 255, 0.18);
+ background: var(--dq-fill-on-glass);
+ border-color: var(--dq-scrollbar-thumb-hover);
 }
 
 html.dark .models-toolbar-btn--primary.dq-btn {
  background: color-mix(in srgb, var(--dq-accent) 88%, #000);
  border-color: transparent;
- color: #fff;
+ color: var(--dq-color-white);
 }
 
 /* =============================================================================
@@ -422,14 +391,14 @@ html.dark .asset-picker__actions .dq-btn .dq-icon {
 html.dark .gallery-audio-tile,
 html.dark .gallery-audio-thumb-sm,
 html.dark .dq-audio-recent-cover {
- background: rgba(255, 255, 255, 0.05);
- border: 1px solid rgba(255, 255, 255, 0.08);
+ background: var(--dq-surface-inset-hover);
+ border: 1px solid var(--dq-fill-on-glass);
  color: var(--dq-label-tertiary);
 }
 
 html.dark .gallery-audio-tile-icon,
 html.dark .gallery-card-type-icon.is-audio {
- color: rgba(255, 255, 255, 0.45);
+ color: var(--dq-label-footnote);
  opacity: 1;
 }
 
@@ -443,15 +412,15 @@ html.dark .gallery-audio-tile-label {
 /* 最近生成 · 编辑/放大：灰胶囊 + 蓝图标 */
 html.dark .recent-actions .rewrite-btn,
 html.dark .recent-actions .upscale-btn {
- background: rgba(255, 255, 255, 0.07);
- border-color: rgba(255, 255, 255, 0.1);
+ background: var(--dq-fill-faint);
+ border-color: var(--dq-fill-on-glass);
  color: var(--dq-label-primary);
 }
 
 html.dark .recent-actions .rewrite-btn:hover,
 html.dark .recent-actions .upscale-btn:hover {
- background: rgba(255, 255, 255, 0.11);
- border-color: rgba(255, 255, 255, 0.16);
+ background: var(--dq-fill-faint-hover);
+ border-color: var(--dq-glass-border-strong);
  transform: none;
 }
 
@@ -462,5 +431,5 @@ html.dark .recent-actions .upscale-btn .dq-icon {
 
 /* 顶栏品牌图标：略降饱和 */
 html.dark .dq-top-nav-brand-icon {
- color: rgba(255, 255, 255, 0.88);
+ color: var(--dq-label-on-media);
 }

@@ -131,6 +131,8 @@ fn navigate_main(app: &AppHandle, port: u16) -> Result<(), String> {
         .ok_or_else(|| "missing webview window 'main'".to_string())?;
     let target = Url::parse(&format!("http://127.0.0.1:{port}/")).map_err(|e| e.to_string())?;
     win.navigate(target).map_err(|e| e.to_string())?;
+    #[cfg(target_os = "macos")]
+    apply_macos_shell(app);
     Ok(())
 }
 
@@ -190,10 +192,28 @@ fn pct_encode(s: &str) -> String {
     out
 }
 
+#[cfg(target_os = "macos")]
+fn apply_macos_shell(app: &AppHandle) {
+    let Some(win) = app.get_webview_window("main") else {
+        return;
+    };
+    use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial};
+    if let Err(err) = apply_vibrancy(&win, NSVisualEffectMaterial::UnderWindowBackground, None, None) {
+        eprintln!("macOS window vibrancy failed: {err}");
+    }
+    let _ = win.eval(
+        r#"document.documentElement.classList.add('dq-tauri-macos');"#,
+    );
+}
+
 pub fn run() {
     let app = tauri::Builder::default()
         .manage(ApiProcess(Mutex::new(None)))
-        .setup(|_app| Ok(()))
+        .setup(|app| {
+            #[cfg(target_os = "macos")]
+            apply_macos_shell(app.handle());
+            Ok(())
+        })
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 

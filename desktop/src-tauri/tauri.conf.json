@@ -10,6 +10,7 @@
     "frontendDist": "../loader"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",
@@ -17,6 +18,9 @@
         "width": 1280,
         "height": 800,
         "resizable": true,
+        "transparent": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
         "url": "index.html"
       }
     ],

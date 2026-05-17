@@ -18,16 +18,16 @@ html.dark {
 /* —— 壳层 —— */
 html.dark,
 html.dark body {
- background-color: #000000;
+ background-color: var(--dq-bg-page);
 }
 
 html.dark .main-container {
  height: 100vh;
- background: #000000;
+ background: var(--dq-bg-page);
 }
 
 html.dark .app-main {
- background-color: #000000 !important;
+ background-color: var(--dq-bg-page) !important;
  background-image: none !important;
  padding: 12px 16px 20px;
  width: 100%;
@@ -56,12 +56,12 @@ html.dark .dq-top-nav-queue-btn.dq-btn {
 }
 
 html.dark .brand-subtitle {
- background: rgba(120, 120, 128, 0.32);
- color: rgba(235, 235, 245, 0.72);
+ background: var(--dq-fill-control-hover);
+ color: var(--dq-label-secondary);
 }
 
 html.dark .dq-top-nav-brand-icon {
- color: rgba(235, 235, 245, 0.92);
+ color: var(--dq-label-primary);
 }
 
 /* —— 业务页铺满 —— */
@@ -80,7 +80,7 @@ html.dark .studio-surface-card.dq-surface-card,
 html.dark .settings-overview-card.dq-surface-card,
 html.dark .settings-side-card.dq-surface-card,
 html.dark .preview-panel .studio-surface-card.dq-surface-card {
- background: #1c1c1e !important;
+ background: var(--dq-bg-base) !important;
  border: 0.5px solid var(--dq-separator) !important;
  border-radius: var(--dq-radius-group) !important;
  box-shadow: none !important;
@@ -89,7 +89,7 @@ html.dark .preview-panel .studio-surface-card.dq-surface-card {
 html.dark .studio-surface-card.dq-surface-card:hover,
 html.dark .settings-overview-card.dq-surface-card:hover,
 html.dark .settings-side-card.dq-surface-card:hover {
- border-color: rgba(84, 84, 88, 0.65) !important;
+ border-color: var(--dq-separator) !important;
  transform: none !important;
  box-shadow: none !important;
 }
@@ -110,20 +110,18 @@ html.dark .settings-tab-panel.studio-surface-card > .dq-surface-card__header {
  border-bottom: none;
 }
 
-/* preview-panel glass: theme-apple-chrome.css */
-
 html.dark .dq-input-number__btn {
- background: rgba(120, 120, 128, 0.32) !important;
- color: rgba(235, 235, 245, 0.85) !important;
+ background: var(--dq-fill-control-hover) !important;
+ color: var(--dq-label-secondary) !important;
 }
 
 html.dark .dq-input-number__btn:not(:disabled):hover {
- background: rgba(120, 120, 128, 0.44) !important;
- color: #ffffff !important;
+ background: var(--dq-fill-control-strong) !important;
+ color: var(--dq-color-white) !important;
 }
 
 html.dark .param-display-value {
- color: rgba(235, 235, 245, 0.76) !important;
+ color: var(--dq-label-secondary) !important;
  font-weight: 500;
 }
 
@@ -134,11 +132,11 @@ html.dark .dq-work-segmented.dq-segmented {
 }
 
 html.dark .dq-work-segmented.dq-segmented .dq-segmented__item:not(.is-active) {
- color: rgba(235, 235, 245, 0.72);
+ color: var(--dq-label-secondary);
 }
 
 html.dark .dq-work-segmented.dq-segmented .dq-segmented__item.is-active {
- color: #ffffff;
+ color: var(--dq-color-white);
  font-weight: 600;
 }
 
@@ -156,7 +154,7 @@ html.dark .studio-primary-cta--simple.dq-btn--primary {
 }
 
 html.dark .recent-actions .action-btn .dq-icon {
- color: rgba(235, 235, 245, 0.72);
+ color: var(--dq-label-secondary);
 }
 
 /* —— 标签 / 提示 —— */
@@ -167,28 +165,28 @@ html.dark .dq-tag {
 
 html.dark .dq-tag.dq-tag--info.dq-tag--plain,
 html.dark .dq-tag.dq-tag--info {
- background: rgba(120, 120, 128, 0.28);
- color: rgba(235, 235, 245, 0.76);
+ background: var(--dq-tag-neutral-bg);
+ color: var(--dq-label-secondary);
 }
 
 html.dark .dq-tag.dq-tag--success {
- background: rgba(50, 215, 75, 0.14);
+ background: var(--dq-success-surface-strong);
  color: #5de070;
 }
 
 html.dark .dq-tag.dq-tag--warning {
- background: rgba(255, 159, 10, 0.12);
+ background: var(--dq-warning-surface);
  color: #ffb340;
 }
 
 html.dark .dq-tag.dq-tag--danger {
- background: rgba(255, 69, 58, 0.12);
+ background: var(--dq-danger-surface);
  color: #ff6b63;
 }
 
 html.dark .dq-tag.dq-tag--primary {
- background: rgba(120, 120, 128, 0.28);
- color: rgba(235, 235, 245, 0.76);
+ background: var(--dq-tag-neutral-bg);
+ color: var(--dq-label-secondary);
 }
 
 html.dark .dq-alert {
@@ -196,43 +194,35 @@ html.dark .dq-alert {
 }
 
 html.dark .dq-alert--info.is-light {
- background: rgba(120, 120, 128, 0.18) !important;
+ background: var(--dq-fill-muted-surface-hover) !important;
  border: 0.5px solid var(--dq-separator) !important;
 }
 
 html.dark .dq-alert--success.is-light {
- background: rgba(50, 215, 75, 0.1) !important;
- border: 0.5px solid rgba(50, 215, 75, 0.28) !important;
+ background: var(--dq-success-surface) !important;
+ border: 0.5px solid var(--dq-success-surface-border) !important;
 }
 
 html.dark .dq-alert--warning.is-light {
- background: rgba(255, 159, 10, 0.1) !important;
- border: 0.5px solid rgba(255, 159, 10, 0.28) !important;
+ background: var(--dq-warning-surface) !important;
+ border: 0.5px solid var(--dq-warning-surface-border) !important;
 }
 
 html.dark .dq-alert--error.is-light {
- background: rgba(255, 69, 58, 0.1) !important;
- border: 0.5px solid rgba(255, 69, 58, 0.28) !important;
+ background: var(--dq-danger-surface) !important;
+ border: 0.5px solid var(--dq-danger-surface-border) !important;
 }
-
-/* —— Tabs —— */
 
 /* —— 设置页：分组列表 —— */
 html.dark .settings-overview__avatar {
- background: rgba(120, 120, 128, 0.32) !important;
- color: #ffffff !important;
+ background: var(--dq-fill-control-hover) !important;
+ color: var(--dq-color-white) !important;
  border: none !important;
  border-radius: 14px;
 }
 
-html.dark .settings-version-stack {
- background: rgba(120, 120, 128, 0.12);
- border: 0.5px solid var(--dq-separator);
- border-radius: var(--dq-radius-group);
-}
-
 html.dark .settings-version-item.is-selected {
- background: rgba(120, 120, 128, 0.36) !important;
+ background: var(--dq-fill-muted-control-hover) !important;
  box-shadow: none !important;
  border-left: none !important;
  padding-left: 14px !important;
@@ -248,9 +238,6 @@ html.dark .settings-version-option-rec {
 }
 
 html.dark .settings-grouped-form {
- background: rgba(120, 120, 128, 0.12);
- border: 0.5px solid var(--dq-separator);
- border-radius: var(--dq-radius-group);
  overflow: hidden;
 }
 
@@ -259,11 +246,11 @@ html.dark .settings-action-row {
 }
 
 html.dark .settings-action-row:hover:not(:disabled) {
- background: rgba(120, 120, 128, 0.16);
+ background: var(--dq-fill-muted-surface-hover);
 }
 
 html.dark .settings-action-row:active:not(:disabled) {
- background: rgba(120, 120, 128, 0.22);
+ background: var(--dq-fill-muted-surface-hover);
 }
 
 html.dark .settings-action-row--destructive {
@@ -271,15 +258,15 @@ html.dark .settings-action-row--destructive {
 }
 
 html.dark .settings-action-row__chevron {
- color: rgba(235, 235, 245, 0.28);
+ color: var(--dq-label-chevron);
 }
 
 html.dark .settings-action-row--destructive .settings-action-row__chevron {
- color: rgba(255, 69, 58, 0.42);
+ color: var(--dq-danger-icon-muted);
 }
 
 html.dark .settings-group-footnote {
- color: rgba(235, 235, 245, 0.45);
+ color: var(--dq-label-footnote);
 }
 
 html.dark .settings-link-destructive.dq-btn.is-text {
@@ -289,28 +276,25 @@ html.dark .settings-link-destructive.dq-btn.is-text {
 html.dark .settings-link-destructive.dq-btn.is-text:hover,
 html.dark .settings-link-destructive.dq-btn.is-text:focus-visible {
  color: #ff6961;
- background: rgba(255, 69, 58, 0.12);
+ background: var(--dq-danger-surface);
 }
 
 html.dark .settings-cap-cell.is-active {
- background: rgba(50, 215, 75, 0.12);
+ background: var(--dq-success-surface);
 }
 
 html.dark .settings-cap-cell.is-inactive {
- background: rgba(120, 120, 128, 0.16);
+ background: var(--dq-fill-muted-surface-hover);
 }
 
 html.dark .settings-preset-tag {
  cursor: pointer;
 }
 
-/* —— 图库：筛选 chip —— */
-/* gallery chrome + pills: theme-apple-chrome.css */
-
 html.dark .gallery-audio-tile,
 html.dark .gallery-audio-thumb-sm,
 html.dark .dq-audio-recent-cover {
- background: rgba(120, 120, 128, 0.16);
+ background: var(--dq-fill-muted-surface-hover);
  border: 0.5px solid var(--dq-separator);
  color: var(--dq-label-tertiary);
 }
@@ -320,11 +304,6 @@ html.dark .models-page {
  height: calc(100vh - 76px);
 }
 
-html.dark .model-version-list {
- border: 0.5px solid var(--dq-separator);
- background: rgba(120, 120, 128, 0.08);
-}
-
 /* —— 折叠 / 空状态 / 进度 —— */
 html.dark .create-page .studio-collapse-plain .dq-collapse-item__header {
  font-size: 15px;
@@ -332,11 +311,11 @@ html.dark .create-page .studio-collapse-plain .dq-collapse-item__header {
 }
 
 html.dark .dq-progress-bar__outer {
- background-color: rgba(120, 120, 128, 0.32);
+ background-color: var(--dq-fill-control-hover);
 }
 
 html.dark .dq-progress-bar__inner {
- background-color: #0a84ff;
+ background-color: var(--dq-accent);
 }
 
 /* —— 交互：禁止卡片上浮、轻按反馈 —— */
@@ -357,13 +336,13 @@ html.dark .model-card:active {
  filter: brightness(0.92);
 }
 
-html.dark .dq-segmented .dq-segmented-item:active {
+html.dark .dq-segmented .dq-segmented__item:active {
  transform: scale(0.96);
 }
 
 /* 全局焦点环 */
 html.dark :focus-visible {
- outline: 2px solid rgba(10, 132, 255, 0.5);
+ outline: 2px solid var(--dq-accent-glow-strong);
  outline-offset: 2px;
  border-radius: 4px;
 }
@@ -397,16 +376,16 @@ html.dark .settings-page--macos .settings-model-tab--macos .settings-group-block
  font-weight: 600;
  letter-spacing: 0;
  text-transform: none;
- color: rgba(235, 235, 245, 0.5);
+ color: var(--dq-label-block-title);
 }
 
 html.dark .settings-grouped-form--model {
- background: rgba(120, 120, 128, 0.12);
+ background: var(--dq-fill-muted-surface);
  border: 0.5px solid var(--dq-separator);
 }
 
 html.dark .settings-model-hero-panel.settings-grouped-form--model {
- background: rgba(120, 120, 128, 0.1);
+ background: var(--dq-fill-muted-surface-medium);
 }
 
 html.dark .settings-page--macos .settings-model-tab--macos .settings-overview--inset .settings-overview__title {
@@ -416,19 +395,19 @@ html.dark .settings-page--macos .settings-model-tab--macos .settings-overview--i
 }
 
 html.dark .settings-page--macos .settings-model-tab--macos .settings-overview--inset .settings-overview__desc {
- color: rgba(235, 235, 245, 0.56);
+ color: var(--dq-label-desc);
  font-size: 12px;
  line-height: 1.45;
 }
 
 html.dark .settings-preset-tags--inset {
- background: rgba(120, 120, 128, 0.12);
+ background: var(--dq-fill-muted-surface);
  border: 0.5px solid var(--dq-separator);
 }
 
 html.dark .settings-grouped-form--version-list .settings-list-row.is-selected {
- background: rgba(120, 120, 128, 0.28) !important;
- box-shadow: inset 3px 0 0 #0a84ff;
+ background: var(--dq-fill-muted-control-hover) !important;
+ box-shadow: inset 3px 0 0 var(--dq-accent);
 }
 
 /* 版本状态只读：无选区蓝底，仅默认版本小标签 */
@@ -447,11 +426,11 @@ html.dark .settings-grouped-form--version-list .settings-list-row {
 }
 
 html.dark .settings-cap-panel .settings-cap-cell.is-active {
- background: rgba(50, 215, 75, 0.14);
+ background: var(--dq-success-surface-strong);
 }
 
 html.dark .settings-cap-panel .settings-cap-cell.is-inactive {
- background: rgba(120, 120, 128, 0.16);
+ background: var(--dq-fill-muted-surface-hover);
 }
 
 html.dark .settings-hardware-panel .settings-list-row {
@@ -463,7 +442,7 @@ html.dark .settings-page--macos .settings-model-tab--macos .settings-model-save-
 }
 
 html.dark .settings-restore-btn.dq-btn.is-text {
- color: #0a84ff;
+ color: var(--dq-accent);
 }
 
 html.dark .settings-model-sidebar {
@@ -477,32 +456,26 @@ html.dark .settings-model-sidebar {
  }
 }
 
-/* macOS 偏好设置行：13px 标签 + 弹出式菜单控件 */
-
-/* 设置顶栏：macOS 工具栏 Tab（高对比、系统蓝指示条） */
-
-/* settings inspector glass: theme-apple-chrome.css */
-
 html.dark .settings-page--macos .settings-inspector-section {
  border-bottom-color: var(--dq-separator);
 }
 
 html.dark .settings-page--macos .settings-inspector-section-title {
- color: rgba(235, 235, 245, 0.55);
+ color: var(--dq-label-muted-strong);
 }
 
 html.dark .settings-page--macos .settings-inspector-list-item {
- border-bottom-color: rgba(84, 84, 88, 0.45);
+ border-bottom-color: var(--dq-separator);
 }
 
 html.dark .settings-page--macos .settings-inspector-callout--success {
- background: rgba(48, 209, 88, 0.12);
- border-color: rgba(48, 209, 88, 0.28);
+ background: var(--dq-success-surface);
+ border-color: var(--dq-success-surface-border);
 }
 
 html.dark .settings-page--macos .settings-inspector-callout--warn {
- background: rgba(255, 69, 58, 0.12);
- border-color: rgba(255, 69, 58, 0.28);
+ background: var(--dq-danger-surface);
+ border-color: var(--dq-danger-surface-border);
 }
 
 html.dark .settings-page--macos .settings-model-tab--macos .settings-mac-row--slider .param-control-row {
@@ -527,11 +500,11 @@ html.dark .settings-page--macos .settings-model-tab--macos .settings-param-label
 }
 
 html.dark .settings-version-item--pickable:hover {
- background: rgba(120, 120, 128, 0.2);
+ background: var(--dq-fill-muted-row);
 }
 
 html.dark .settings-version-item--pickable:active {
- background: rgba(120, 120, 128, 0.28);
+ background: var(--dq-tag-neutral-bg);
 }
 
 html.dark .settings-inset-alert.dq-alert {

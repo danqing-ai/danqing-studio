@@ -11,8 +11,7 @@ html.dark .gallery-page__toolbar {
   border-bottom: 0.5px solid var(--dq-glass-border);
 }
 
-html.dark .models-page__toolbar,
-html.dark .models-page .page-header {
+html.dark .models-page__toolbar {
   -webkit-backdrop-filter: var(--dq-glass-blur-light);
   backdrop-filter: var(--dq-glass-blur-light);
 }
@@ -70,12 +69,12 @@ html.dark .gallery-batch-bar-content {
   box-shadow: var(--dq-shadow-glass);
 }
 
-html.dark .download-queue-panel,
-html.dark .download-queue__panel {
+html.dark .download-queue {
   background: var(--dq-glass-floating-bar-bg);
   -webkit-backdrop-filter: var(--dq-glass-blur-heavy);
   backdrop-filter: var(--dq-glass-blur-heavy);
   border: 0.5px solid var(--dq-glass-border-strong);
+  border-radius: var(--dq-radius-group);
   box-shadow: var(--dq-shadow-glass);
 }
 
@@ -162,6 +161,7 @@ html.dark .settings-preset-tags--inset {
   background: var(--dq-fill-muted-surface);
   border: 0.5px solid var(--dq-separator);
   border-radius: var(--dq-radius-group);
+  overflow: hidden;
 }
 
 html.dark .settings-version-item.is-selected,
@@ -169,11 +169,85 @@ html.dark .settings-grouped-form--version-list .settings-list-row.is-selected {
   background: var(--dq-fill-muted-control-hover) !important;
 }
 
+/* —— Models: lists & panels —— */
+html.dark .models-page .disk-space-panel {
+  background: var(--dq-surface-inset);
+  border-color: var(--dq-glass-border);
+}
+
+html.dark .model-version-list,
+html.dark .models-installed-row {
+  border-color: var(--dq-glass-border);
+  background: var(--dq-surface-inset);
+}
+
+html.dark .model-version-row {
+  border-bottom-color: var(--dq-border-subtle);
+}
+
+html.dark .model-version-row.is-ready,
+html.dark .models-page .model-card.model-ready .model-card-header {
+  background: var(--dq-success-surface) !important;
+}
+
+html.dark .model-version-row.is-pending:hover,
+html.dark .models-installed-row:hover {
+  background: var(--dq-surface-inset-hover);
+}
+
+html.dark .models-page .model-card-header {
+  background: var(--dq-surface-inset) !important;
+}
+
+/* —— Scrollbar —— */
+html.dark ::-webkit-scrollbar-thumb {
+  background: var(--dq-scrollbar-thumb-hover);
+  border-radius: 100px;
+}
+
+html.dark ::-webkit-scrollbar-thumb:hover {
+  background: var(--dq-fill-muted-control);
+}
+
+/* —— Gallery lightbox —— */
+html.dark .gallery-lightbox {
+  background: var(--dq-overlay-scrim);
+  backdrop-filter: var(--dq-glass-blur-heavy);
+  -webkit-backdrop-filter: var(--dq-glass-blur-heavy);
+}
+
+html.dark .lightbox-close,
+html.dark .lightbox-nav {
+  background: var(--dq-scrollbar-thumb);
+  border: none;
+  color: var(--dq-label-primary);
+}
+
+html.dark .lightbox-close:hover,
+html.dark .lightbox-nav:hover {
+  background: var(--dq-fill-subtle);
+}
+
+html.dark .lightbox-info {
+  background: var(--dq-lightbox-info-bg);
+  backdrop-filter: var(--dq-glass-blur);
+  -webkit-backdrop-filter: var(--dq-glass-blur);
+  border-top: 0.5px solid var(--dq-glass-border);
+}
+
+html.dark .log-container,
+html.dark .studio-log-container--sm {
+  background: var(--dq-surface-inset);
+  border: 0.5px solid var(--dq-glass-border);
+  border-radius: var(--dq-radius-group);
+}
+
 @media (prefers-reduced-transparency: reduce) {
   html.dark .gallery-page__toolbar,
   html.dark .gallery-detail-panel,
   html.dark .preview-panel,
   html.dark .gallery-batch-bar-content,
+  html.dark .download-queue,
   html.dark .models-page .models-page__sidebar-card.studio-surface-card.dq-surface-card,
   html.dark .settings-page--macos .settings-inspector-stack {
     -webkit-backdrop-filter: none;

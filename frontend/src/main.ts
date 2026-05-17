@@ -6,7 +6,9 @@ import i18n, { $tt, $mn, $md, $mvn, $pn, sendShortcutHintText, applyTheme } from
 import { toast } from './utils/feedback';
 import App from './App.vue';
 import { installDanQingUi } from './plugins/dq-ui';
+import { installTauriMacosShell } from './utils/desktop';
 import '@danqing/dq-tokens/dq-mac.css';
+import '@danqing/dq-tokens/dq-tauri-macos.css';
 import '@danqing/dq-ui/style.css';
 import '@danqing/dq-shell/style.css';
 import './styles/theme.css';
@@ -17,6 +19,7 @@ import './styles/theme-apple-native.css';
 
 applyTheme();
 document.documentElement.classList.add('dq-mac-ui');
+installTauriMacosShell();
 
 const app = createApp(App);
 
