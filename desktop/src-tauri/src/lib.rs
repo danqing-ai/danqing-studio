@@ -193,13 +193,7 @@ fn pct_encode(s: &str) -> String {
 pub fn run() {
     let app = tauri::Builder::default()
         .manage(ApiProcess(Mutex::new(None)))
-        .setup(|app| {
-            #[cfg(debug_assertions)]
-            {
-                let _ = app;
-            }
-            Ok(())
-        })
+        .setup(|_app| Ok(()))
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 

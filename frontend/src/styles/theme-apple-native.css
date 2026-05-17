@@ -4,7 +4,6 @@
  */
 
 html.dark {
-
  --bg-primary: var(--dq-bg-page);
  --bg-secondary: var(--dq-bg-base);
  --bg-tertiary: var(--dq-fill-tertiary);
@@ -14,9 +13,6 @@ html.dark {
  --text-muted: var(--dq-label-tertiary);
  --border-color: var(--dq-border);
  --primary: var(--dq-accent);
-
- --dq-radius-group: 12px;
- --dq-separator: rgba(84, 84, 88, 0.45);
 }
 
 /* —— 壳层 —— */
@@ -48,10 +44,10 @@ html.dark .app-main {
 
 html.dark .app-header {
  padding-top: env(safe-area-inset-top, 0px);
- background: rgba(28, 28, 30, 0.82) !important;
+ background: var(--dq-glass-bar-bg-strong) !important;
  border-bottom: 0.5px solid var(--dq-separator);
- -webkit-backdrop-filter: saturate(180%) blur(20px);
- backdrop-filter: saturate(180%) blur(20px);
+ -webkit-backdrop-filter: var(--dq-glass-blur);
+ backdrop-filter: var(--dq-glass-blur);
 }
 
 html.dark .dq-top-nav-queue-btn.dq-btn {
@@ -114,13 +110,7 @@ html.dark .settings-tab-panel.studio-surface-card > .dq-surface-card__header {
  border-bottom: none;
 }
 
-html.dark .preview-panel {
- background: rgba(28, 28, 30, 0.75);
- border: 0.5px solid var(--dq-separator);
- border-radius: var(--dq-radius-group);
- backdrop-filter: saturate(180%) blur(20px);
- -webkit-backdrop-filter: saturate(180%) blur(20px);
-}
+/* preview-panel glass: theme-apple-chrome.css */
 
 html.dark .dq-input-number__btn {
  background: rgba(120, 120, 128, 0.32) !important;
@@ -315,58 +305,7 @@ html.dark .settings-preset-tag {
 }
 
 /* —— 图库：筛选 chip —— */
-html.dark .gallery-page__toolbar {
- border-bottom: 0.5px solid var(--dq-separator);
- background: transparent;
-}
-
-html.dark .gallery-pill {
- border: none;
- background: rgba(120, 120, 128, 0.24);
- color: rgba(235, 235, 245, 0.76);
- font-weight: 500;
- transition: background-color 0.15s ease, color 0.15s ease;
-}
-
-html.dark .gallery-pill:hover {
- background: rgba(120, 120, 128, 0.36);
- color: #ffffff;
- border: none;
-}
-
-html.dark .gallery-pill.active {
- background: rgba(120, 120, 128, 0.56);
- color: #ffffff;
- border: none;
-}
-
-html.dark .gallery-view-segmented {
- background: rgba(120, 120, 128, 0.24);
- padding: 2px;
- border-radius: 10px;
-}
-
-html.dark .gallery-view-segmented__btn {
- border: none;
- background: transparent;
- color: rgba(235, 235, 245, 0.6);
-}
-
-html.dark .gallery-view-segmented__btn.is-active {
- background: rgba(120, 120, 128, 0.56);
- color: #ffffff;
- box-shadow: none;
-}
-
-html.dark .gallery-detail-panel {
- background: #1c1c1e;
- border-left: 0.5px solid var(--dq-separator);
-}
-
-html.dark .gallery-batch-bar-content {
- background: rgba(44, 44, 46, 0.94);
- border: 0.5px solid var(--dq-separator);
-}
+/* gallery chrome + pills: theme-apple-chrome.css */
 
 html.dark .gallery-audio-tile,
 html.dark .gallery-audio-thumb-sm,
@@ -542,11 +481,7 @@ html.dark .settings-model-sidebar {
 
 /* 设置顶栏：macOS 工具栏 Tab（高对比、系统蓝指示条） */
 
-html.dark .settings-page--macos .settings-inspector-stack {
- background: rgba(30, 30, 32, 0.92);
- border-color: var(--dq-separator);
- box-shadow: none;
-}
+/* settings inspector glass: theme-apple-chrome.css */
 
 html.dark .settings-page--macos .settings-inspector-section {
  border-bottom-color: var(--dq-separator);

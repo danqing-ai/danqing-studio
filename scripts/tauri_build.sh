@@ -35,10 +35,31 @@ if ! rustup target list --installed | grep -q '^aarch64-apple-darwin$'; then
   rustup target add aarch64-apple-darwin
 fi
 
+# Stale DMG mounts / rw.* temps break create-dmg; AppleScript layout fails on macOS 15+.
+cleanup_dmg_artifacts() {
+  local bundle_root="$CARGO_TARGET_DIR/aarch64-apple-darwin/release/bundle"
+  [[ -d "$bundle_root" ]] || return 0
+  find "$bundle_root" -maxdepth 3 -name 'rw.*.dmg' -delete 2>/dev/null || true
+  while IFS= read -r dmg; do
+    [[ -n "$dmg" ]] && hdiutil detach "$dmg" -force 2>/dev/null || true
+  done < <(
+    hdiutil info 2>/dev/null | awk -v root="$bundle_root" '
+      /^image-path/ && index($0, root) {
+        sub(/^image-path[[:space:]]*:[[:space:]]*/, "")
+        print
+      }
+    '
+  )
+}
+
 echo "==> Tauri build (aarch64-apple-darwin)"
 echo "    CARGO_TARGET_DIR=$CARGO_TARGET_DIR"
+cleanup_dmg_artifacts
 npm install
+# Tauri passes --skip-jenkins to bundle_dmg.sh when CI=true (no Finder AppleScript).
+export CI=true
 npm exec tauri build -- --target aarch64-apple-darwin
+cleanup_dmg_artifacts
 
 "$PYTHON" "$ROOT/scripts/stage_desktop_bundle.py"
 

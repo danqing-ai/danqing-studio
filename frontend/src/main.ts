@@ -11,6 +11,7 @@ import '@danqing/dq-ui/style.css';
 import '@danqing/dq-shell/style.css';
 import './styles/theme.css';
 import './styles/theme-apple-dark.css';
+import './styles/theme-apple-chrome.css';
 import './styles/theme-apple-finish.css';
 import './styles/theme-apple-native.css';
 

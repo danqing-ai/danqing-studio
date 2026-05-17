@@ -1,59 +1,10 @@
 /*
- * Apple-style minimal dark — overrides `@danqing/dq-tokens` for Studio shell.
- * Studio shell overrides on `@danqing/dq-ui` components.
+ * Studio shell — product aliases + component tweaks.
+ * Color / glass tokens: `@danqing/dq-tokens/dq-mac.css` (do not duplicate --dq-* here).
  */
 
 html.dark {
  color-scheme: dark;
-
- --dq-font-sans:
- -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'SF Pro Display', ui-sans-serif, system-ui,
- 'Segoe UI', Roboto, 'Helvetica Neue', Arial, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
- sans-serif;
- --dq-font-weight-medium: 500;
-
- --dq-radius-control: 10px;
- --dq-radius-control-sm: 8px;
- --dq-radius-pill: 9999px;
-
- --dq-accent: #0a84ff;
- --dq-accent-muted: #339dff;
- --dq-accent-tint: rgba(10, 132, 255, 0.14);
- --dq-accent-tint-strong: rgba(10, 132, 255, 0.22);
-
- --dq-bg-page: #000000;
- --dq-bg-base: #1c1c1e;
- --dq-bg-elevated: #2c2c2e;
- --dq-surface-elevated: #242426;
- --dq-surface-grouped: #1c1c1e;
-
- --dq-fill-control: #1c1c1e;
- --dq-fill-secondary: #2c2c2e;
- --dq-fill-tertiary: #3a3a3c;
- --dq-fill-quaternary: #48484a;
- --dq-fill-dim: #161617;
- --dq-fill-dimmer: #0e0e0f;
-
- --dq-border: rgba(255, 255, 255, 0.1);
- --dq-border-subtle: rgba(255, 255, 255, 0.06);
- --dq-border-strong: rgba(255, 255, 255, 0.16);
-
- --dq-label-primary: rgba(255, 255, 255, 0.92);
- --dq-label-secondary: rgba(255, 255, 255, 0.72);
- --dq-label-tertiary: rgba(255, 255, 255, 0.48);
- --dq-label-quaternary: rgba(255, 255, 255, 0.32);
- --dq-label-disabled: rgba(255, 255, 255, 0.22);
-
- --dq-success: #32d74b;
- --dq-warning: #ff9f0a;
- --dq-danger: #ff453a;
- --dq-info: #64d2ff;
-
- --dq-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.28);
- --dq-shadow-md: 0 4px 16px rgba(0, 0, 0, 0.32);
- --dq-shadow-lg: 0 8px 28px rgba(0, 0, 0, 0.4);
- --dq-mask: rgba(0, 0, 0, 0.48);
- --dq-mask-light: rgba(0, 0, 0, 0.28);
 
  --primary: var(--dq-accent);
  --primary-light: var(--dq-accent-muted);
@@ -93,28 +44,24 @@ html.dark .card-title {
  letter-spacing: -0.02em;
 }
 
-/* 顶栏：半透明叠在纯黑页面上，细分割线 */
+/* 顶栏：Liquid Glass bar（token 见 dq-mac.css） */
 html.dark .app-header {
- background: rgba(28, 28, 30, 0.72);
- -webkit-backdrop-filter: saturate(180%) blur(16px);
- backdrop-filter: saturate(180%) blur(16px);
- border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+ background: var(--dq-glass-bar-bg);
+ -webkit-backdrop-filter: var(--dq-glass-blur-light);
+ backdrop-filter: var(--dq-glass-blur-light);
+ border-bottom: 0.5px solid var(--dq-glass-border);
 }
 
 /* 主内容：极弱顶光，保持接近纯黑 */
 html.dark .app-main {
  background-color: var(--dq-bg-page);
- background-image: radial-gradient(
- ellipse 130% 240px at 50% -4%,
- rgba(255, 255, 255, 0.03) 0%,
- transparent 58%
- );
+ background-image: var(--dq-bg-page-glow);
 }
 
 /* 创作页表面卡：扁平分组底（渐变由 theme-apple-native 压平） */
 html.dark .studio-surface-card.dq-surface-card {
- border: 1px solid rgba(84, 84, 88, 0.45);
- background: #1c1c1e;
+ border: 1px solid var(--dq-separator);
+ background: var(--dq-glass-grouped-bg-solid);
  box-shadow: none;
 }
 
@@ -130,13 +77,13 @@ html.dark .dq-btn--primary:hover:not(:disabled) {
 }
 
 html.dark .dq-btn--default {
- background: rgba(255, 255, 255, 0.1);
+ background: var(--dq-fill-on-glass);
  border-color: transparent;
  color: var(--dq-label-primary);
 }
 
 html.dark .dq-btn--default:hover:not(:disabled) {
- background: rgba(255, 255, 255, 0.14);
+ background: var(--dq-fill-on-glass-pressed);
 }
 
 html.dark .dq-btn--text {
@@ -144,11 +91,7 @@ html.dark .dq-btn--text {
 }
 
 html.dark .dq-segmented {
- background: rgba(255, 255, 255, 0.06);
-}
-
-html.dark .dq-drawer-panel {
- background: var(--dq-bg-base);
+ background: var(--dq-fill-on-glass-subtle);
 }
 
 html.dark .dq-btn {
@@ -323,43 +266,8 @@ html.dark .models-page .model-card-header {
  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 
-html.dark .models-page .models-page__sidebar-card.studio-surface-card.dq-surface-card {
- background: rgba(28, 28, 30, 0.92);
- backdrop-filter: blur(20px);
- -webkit-backdrop-filter: blur(20px);
-}
-
 html.dark .dq-task-queue-drawer .dq-drawer-body {
  padding: 16px 18px;
-}
-
-html.dark .queue-dialog-item {
- border-radius: 12px;
- border: 1px solid rgba(255, 255, 255, 0.08);
- background: rgba(255, 255, 255, 0.04);
-}
-
-html.dark .queue-dialog-item.running {
- border-color: rgba(10, 132, 255, 0.28);
- background: rgba(10, 132, 255, 0.08);
-}
-
-/* 图库 */
-html.dark .gallery-pill {
- border: none;
- background: rgba(255, 255, 255, 0.06);
- color: var(--dq-label-tertiary);
- font-weight: 500;
-}
-
-html.dark .gallery-pill:hover {
- background: rgba(255, 255, 255, 0.1);
- color: var(--dq-label-primary);
-}
-
-html.dark .gallery-pill.active {
- background: rgba(255, 255, 255, 0.16);
- color: var(--dq-label-primary);
 }
 
 html.dark .gallery-card {
@@ -447,12 +355,12 @@ html.dark .log-container {
  border-radius: 12px;
 }
 
-/* 下拉 / 弹出层 */
+/* 下拉 / 弹出层 — glass tokens from dq-mac.css */
 html.dark .dq-select__content,
 html.dark .dq-dropdown__content {
- border: 1px solid rgba(255, 255, 255, 0.1);
- border-radius: 12px;
- box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+ border: 0.5px solid var(--dq-glass-border-strong);
+ border-radius: var(--dq-radius-menu);
+ box-shadow: var(--dq-shadow-glass);
 }
 
 /* 图库灯箱 */
@@ -563,33 +471,8 @@ html.dark .preview-panel {
  scrollbar-color: rgba(255, 255, 255, 0.12) transparent;
 }
 
-/* 图库页 */
-html.dark .gallery-page__toolbar {
- background: rgba(28, 28, 30, 0.85);
- backdrop-filter: blur(16px);
- -webkit-backdrop-filter: blur(16px);
- border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-}
-
 html.dark .gallery-page__scroll {
  padding: 16px 20px 24px;
-}
-
-html.dark .gallery-detail-panel {
- background: #1c1c1e;
- border-left: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-html.dark .gallery-detail-panel__header {
- border-bottom-color: rgba(255, 255, 255, 0.08);
-}
-
-html.dark .gallery-batch-bar-content {
- background: rgba(44, 44, 46, 0.92);
- backdrop-filter: blur(20px);
- -webkit-backdrop-filter: blur(20px);
- border: 1px solid rgba(255, 255, 255, 0.12);
- box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
 }
 
 html.dark .gallery-card-overlay-gradient {
@@ -1119,29 +1002,6 @@ html.dark .gallery-page__toolbar-tail .dq-btn {
  border-radius: 10px;
 }
 
-/* 图库 iOS 列表行 */
-html.dark .gallery-ios-list {
- border-color: rgba(255, 255, 255, 0.08);
- background: rgba(255, 255, 255, 0.03);
-}
-
-html.dark .gallery-ios-row {
- border-bottom-color: rgba(255, 255, 255, 0.06);
-}
-
-html.dark .gallery-ios-row:hover {
- background: rgba(255, 255, 255, 0.05);
-}
-
-html.dark .gallery-ios-row.is-selected {
- background: rgba(10, 132, 255, 0.1);
-}
-
-html.dark .gallery-ios-row.is-active {
- background: rgba(10, 132, 255, 0.14);
- box-shadow: inset 3px 0 0 var(--dq-accent);
-}
-
 html.dark .gallery-ios-row__thumb {
  background: rgba(0, 0, 0, 0.35);
  border: 1px solid rgba(255, 255, 255, 0.08);
@@ -1152,11 +1012,6 @@ html.dark .gallery-ios-row__title {
  letter-spacing: -0.02em;
 }
 
-/* 图库详情侧栏 */
-html.dark .gallery-detail-panel {
- box-shadow: -8px 0 32px rgba(0, 0, 0, 0.35);
-}
-
 html.dark .gallery-detail-panel__header {
  padding: 14px 16px;
 }
@@ -1164,12 +1019,6 @@ html.dark .gallery-detail-panel__header {
 html.dark .gallery-detail-panel__title {
  font-weight: 600;
  letter-spacing: -0.02em;
-}
-
-html.dark .gallery-detail-prompt-box {
- border-radius: 12px;
- border: 1px solid rgba(255, 255, 255, 0.08);
- background: rgba(255, 255, 255, 0.03);
 }
 
 html.dark .gallery-detail-actions .dq-btn {
@@ -1189,28 +1038,6 @@ html.dark .models-page__sidebar-card .card-title {
  font-size: 17px;
  font-weight: 600;
  letter-spacing: -0.03em;
-}
-
-/* 设置 · 提示词模板列表 */
-html.dark .settings-preset-list {
- border-color: rgba(255, 255, 255, 0.08);
- background: rgba(255, 255, 255, 0.03);
-}
-
-html.dark .settings-preset-row {
- border-bottom-color: rgba(255, 255, 255, 0.06);
-}
-
-html.dark .settings-preset-row:hover {
- background: rgba(255, 255, 255, 0.04);
-}
-
-/* 创作页预览栏：浮起预览列 */
-html.dark .preview-panel {
- border-color: rgba(255, 255, 255, 0.08);
- background: rgba(255, 255, 255, 0.03);
- backdrop-filter: blur(12px);
- -webkit-backdrop-filter: blur(12px);
 }
 
 html.dark .preview-panel .studio-surface-card.dq-surface-card {

@@ -71,3 +71,15 @@ xattr -dr com.apple.quarantine "/Volumes/DanQing Studio/DanQing Studio.app"
 然后拖入「应用程序」再启动。
 
 发布构建会在 `make desktop-bundle` 末尾对 `.app` 做 **ad-hoc 签名**（`scripts/tauri_build.sh`），减轻该问题；正式分发仍建议配置 **Developer ID + 公证（notarize）**。
+
+## `bundle_dmg.sh` / DMG 打包失败
+
+若 Tauri 在 `Running bundle_dmg.sh` 处失败或长时间卡住（常见于 **macOS 15+**），多为 create-dmg 的 **Finder AppleScript** 与系统不兼容。`scripts/tauri_build.sh` 已设置 `CI=true`，让 Tauri 对 DMG 使用 `--skip-jenkins`（功能正常，窗口布局为默认样式）。
+
+若仍有残留挂载导致失败，可先执行：
+
+```bash
+hdiutil detach "/Volumes/DanQing Studio" -force 2>/dev/null || true
+find out/desktop/cargo -name 'rw.*.dmg' -delete
+make desktop-tauri
+```
