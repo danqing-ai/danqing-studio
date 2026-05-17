@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import re
 import subprocess
@@ -20,6 +19,7 @@ _VERSION_RE = re.compile(
     r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$"
 )
 _CARGO_VERSION_RE = re.compile(r'^(version\s*=\s*")[^"]+(")', re.MULTILINE)
+_TAURI_VERSION_RE = re.compile(r'^(\s*"version"\s*:\s*")[^"]+(")', re.MULTILINE)
 
 
 def normalize_version(raw: str) -> str:
@@ -56,12 +56,11 @@ def resolve_version(explicit: str | None) -> str:
 
 
 def set_desktop_version(version: str) -> None:
-    conf = json.loads(TAURI_CONF.read_text(encoding="utf-8"))
-    conf["version"] = version
-    TAURI_CONF.write_text(
-        json.dumps(conf, indent=2, ensure_ascii=False) + "\n",
-        encoding="utf-8",
-    )
+    conf = TAURI_CONF.read_text(encoding="utf-8")
+    conf_updated, conf_count = _TAURI_VERSION_RE.subn(rf"\g<1>{version}\2", conf, count=1)
+    if conf_count != 1:
+        raise SystemExit(f'Could not update "version" in {TAURI_CONF}')
+    TAURI_CONF.write_text(conf_updated, encoding="utf-8")
 
     cargo = CARGO_TOML.read_text(encoding="utf-8")
     updated, count = _CARGO_VERSION_RE.subn(rf"\g<1>{version}\2", cargo, count=1)
