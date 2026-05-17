@@ -40,6 +40,12 @@ jobs:
         with:
           node-version: '20'
 
+      # file:../../dq-ui symlinks; npm ci in frontend does not install ui/shell deps.
+      - name: Install dq-ui dependencies
+        run: |
+          npm install --prefix dq-ui/packages/ui
+          npm install --prefix dq-ui/packages/shell
+
       - name: Setup Rust
         run: |
           rustup target add aarch64-apple-darwin
