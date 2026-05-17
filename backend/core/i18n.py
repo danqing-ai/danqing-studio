@@ -1,29 +1,30 @@
 """Backend i18n translation service"""
 
 import json
-import os
 import sys
 from pathlib import Path
 from typing import Optional
 
+from backend.utils.config_paths import DEFAULT_CONFIG_DIRNAME
 
 _translations: dict = {}
 _current_locale: str = "zh"
 
 
-def _load_translations():
-    global _translations
-    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
-        # After PyInstaller packaging
+def _resolve_locales_dir() -> Path:
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
         exe_dir = Path(sys.executable).parent.resolve()
-        # macOS .app bundle: executable in Contents/MacOS/, data in Contents/Resources/
         if sys.platform == "darwin" and exe_dir.name == "MacOS" and (exe_dir.parent / "Resources").exists():
             base_dir = exe_dir.parent / "Resources"
         else:
             base_dir = Path(sys._MEIPASS)
-        locales_dir = base_dir / "config" / "locales"
-    else:
-        locales_dir = Path(__file__).parent.parent.parent / "config" / "locales"
+        return base_dir / DEFAULT_CONFIG_DIRNAME / "locales"
+    return Path(__file__).resolve().parents[2] / DEFAULT_CONFIG_DIRNAME / "locales"
+
+
+def _load_translations():
+    global _translations
+    locales_dir = _resolve_locales_dir()
     _translations = {}
     if locales_dir.exists():
         for f in locales_dir.iterdir():

@@ -32,6 +32,8 @@ node_modules/
 /tests/__pycache__/
 /tests/benchmark/__pycache__/
 /config/.download_tasks.json
+/config/workspace.pointer.json
+/config/.app_config.json
 /db/
 /ts.md
 /.pycache_tmp/

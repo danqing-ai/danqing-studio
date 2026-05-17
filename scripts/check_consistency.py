@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-REG = ROOT / "config" / "models_registry.json"
+REG = ROOT / "default_config" / "models_registry.json"
 KNOWN = {"danqing-image", "danqing-video", "danqing-audio"}
 REGISTRY_IMAGE_ACTION_KEYS = frozenset({"create", "rewrite", "retouch", "extend", "upscale"})
 REGISTRY_VIDEO_ACTION_KEYS = frozenset({"create", "animate", "upscale"})
@@ -15,12 +15,12 @@ I18N_EN = ROOT / "frontend" / "src" / "locales" / "en.json"
 TASKS_ROUTES = ROOT / "backend" / "api" / "routes" / "tasks.py"
 IMAGES_ROUTES = ROOT / "backend" / "api" / "routes" / "images.py"
 VIDEOS_ROUTES = ROOT / "backend" / "api" / "routes" / "videos.py"
-PRESETS_JSON = ROOT / "config" / "presets.json"
+PRESETS_JSON = ROOT / "default_config" / "presets.json"
 TASK_KINDS_PY = ROOT / "backend" / "core" / "task_kinds.py"
 ASSETS_ROUTES = ROOT / "backend" / "api" / "routes" / "assets.py"
 GALLERY_ROUTES = ROOT / "backend" / "api" / "routes" / "gallery.py"
 INTERFACES_PY = ROOT / "backend" / "core" / "interfaces.py"
-MODELS_REGISTRY_JSON = ROOT / "config" / "models_registry.json"
+MODELS_REGISTRY_JSON = ROOT / "default_config" / "models_registry.json"
 
 
 def _load_json(path):

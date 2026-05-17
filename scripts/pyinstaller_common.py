@@ -180,19 +180,9 @@ def get_data_files(project_root: Path | None = None, *, profile: str | None = No
         )
     data.append(f"{frontend_dist}{separator}frontend/dist")
 
-    config_dir = root / "config"
-    if config_dir.exists():
-        locales_dir = config_dir / "locales"
-        if locales_dir.exists():
-            data.append(f"{locales_dir}{separator}config/locales")
-
-        registry_file = config_dir / "models_registry.json"
-        if registry_file.exists():
-            data.append(f"{registry_file}{separator}config")
-
-        presets_file = config_dir / "presets.json"
-        if presets_file.exists():
-            data.append(f"{presets_file}{separator}config")
+    default_cfg = root / "default_config"
+    if default_cfg.is_dir():
+        data.append(f"{default_cfg}{separator}default_config")
 
     return data
 

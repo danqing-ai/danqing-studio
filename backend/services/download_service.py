@@ -40,7 +40,7 @@ class DownloadService(IDownloadService):
         self._progress: Dict[str, DownloadProgress] = {}
         self._conversions: Dict[str, ConversionTask] = {}
         self._conversion_events: Dict[str, asyncio.Event] = {}
-        self._persist_path = path_resolver.get_project_root() / "config" / ".download_tasks.json"
+        self._persist_path = path_resolver.get_workspace_config_dir() / ".download_tasks.json"
 
         # Read tokens from config
         hf_token = None
@@ -102,13 +102,10 @@ class DownloadService(IDownloadService):
             with open(self._persist_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             for task_id, item in data.items():
-                remapped_target = str(
-                    self._path_resolver.remap_legacy_data_path(item["target_path"])
-                )
                 task = DownloadTask(
                     id=item["id"],
                     url=item["url"],
-                    target_path=remapped_target,
+                    target_path=item["target_path"],
                 )
                 raw_status = item.get("status", "running")
                 # After process restart, tasks that were running become paused
@@ -144,7 +141,7 @@ class DownloadService(IDownloadService):
 
     def _load_registry(self) -> Dict[str, Any]:
         """Load model registry."""
-        registry_path = self._path_resolver.get_project_root() / "config" / "models_registry.json"
+        registry_path = self._path_resolver.get_models_registry_path()
         if not registry_path.exists():
             return {}
         try:

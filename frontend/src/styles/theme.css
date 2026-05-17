@@ -3458,6 +3458,112 @@ body {
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
+.settings-ep-header-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.settings-ep-group-footnote {
+    margin: 8px 4px 0;
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--el-text-color-secondary);
+}
+
+.settings-ep-group-footnote--intro {
+    margin-top: 0;
+    margin-bottom: 8px;
+}
+
+.settings-ep-group-footnote + .settings-ep-group-footnote {
+    margin-top: 4px;
+}
+
+.settings-ep-grouped-form--action-list {
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+}
+
+.settings-ep-action-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    width: 100%;
+    min-height: 44px;
+    padding: 11px 16px;
+    margin: 0;
+    border: none;
+    border-bottom: 1px solid var(--el-border-color-lighter);
+    background: transparent;
+    font-family: inherit;
+    font-size: 15px;
+    font-weight: 400;
+    letter-spacing: -0.01em;
+    line-height: 1.25;
+    color: var(--el-color-primary);
+    cursor: pointer;
+    text-align: left;
+    transition: background-color 0.15s ease;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.settings-ep-action-row:last-child {
+    border-bottom: none;
+}
+
+.settings-ep-action-row:hover:not(:disabled) {
+    background: var(--el-fill-color-light);
+}
+
+.settings-ep-action-row:active:not(:disabled) {
+    background: var(--el-fill-color);
+}
+
+.settings-ep-action-row:focus-visible {
+    outline: 2px solid var(--el-color-primary);
+    outline-offset: -2px;
+}
+
+.settings-ep-action-row:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+}
+
+.settings-ep-action-row--destructive {
+    color: #ff3b30;
+}
+
+.settings-ep-action-row__label {
+    flex: 1;
+    min-width: 0;
+}
+
+.settings-ep-action-row__chevron {
+    flex-shrink: 0;
+    font-size: 13px;
+    color: rgba(60, 60, 67, 0.3);
+}
+
+.settings-ep-action-row--destructive .settings-ep-action-row__chevron {
+    color: rgba(255, 59, 48, 0.45);
+}
+
+.settings-ep-link-destructive.el-button.is-text {
+    color: #ff3b30;
+    font-weight: 400;
+    letter-spacing: -0.01em;
+}
+
+.settings-ep-link-destructive.el-button.is-text:hover,
+.settings-ep-link-destructive.el-button.is-text:focus-visible {
+    color: #ff6961;
+    background: rgba(255, 59, 48, 0.1);
+}
+
 .settings-ep-slider-suffix {
     color: var(--el-text-color-secondary);
     white-space: nowrap;

@@ -432,6 +432,44 @@ html.dark .settings-ep-grouped-form .el-form-item {
     border-bottom-color: var(--dq-separator);
 }
 
+html.dark .settings-ep-action-row {
+    border-bottom-color: var(--dq-separator);
+}
+
+html.dark .settings-ep-action-row:hover:not(:disabled) {
+    background: rgba(120, 120, 128, 0.16);
+}
+
+html.dark .settings-ep-action-row:active:not(:disabled) {
+    background: rgba(120, 120, 128, 0.22);
+}
+
+html.dark .settings-ep-action-row--destructive {
+    color: #ff453a;
+}
+
+html.dark .settings-ep-action-row__chevron {
+    color: rgba(235, 235, 245, 0.28);
+}
+
+html.dark .settings-ep-action-row--destructive .settings-ep-action-row__chevron {
+    color: rgba(255, 69, 58, 0.42);
+}
+
+html.dark .settings-ep-group-footnote {
+    color: rgba(235, 235, 245, 0.45);
+}
+
+html.dark .settings-ep-link-destructive.el-button.is-text {
+    color: #ff453a;
+}
+
+html.dark .settings-ep-link-destructive.el-button.is-text:hover,
+html.dark .settings-ep-link-destructive.el-button.is-text:focus-visible {
+    color: #ff6961;
+    background: rgba(255, 69, 58, 0.12);
+}
+
 html.dark .settings-ep-cap-cell.is-active {
     background: rgba(50, 215, 75, 0.12);
 }

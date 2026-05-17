@@ -113,7 +113,7 @@ class SettingsService(ISettingsService):
 
     def get_model_registry(self) -> Dict[str, ModelConfig]:
         """Read models_registry.json to get all model configurations"""
-        registry_path = self._path_resolver.get_project_root() / "config" / "models_registry.json"
+        registry_path = self._path_resolver.get_models_registry_path()
         if not registry_path.exists():
             return {}
         try:

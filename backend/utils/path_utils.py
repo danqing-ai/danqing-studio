@@ -10,15 +10,18 @@ from pathlib import Path
 from typing import Optional
 
 from backend.core.interfaces import IPathResolver
-from backend.utils.workspace import (
-    prepare_data_directories,
-    seed_workspace_from_bootstrap,
+from backend.utils.config_paths import (
+    RESTORABLE_CONFIG_FILES,
+    WORKSPACE_SETTINGS_FILE,
+    resolve_default_config_root,
+    restore_workspace_config_from_defaults,
 )
+from backend.utils.workspace import prepare_data_directories
 
 
 class PathResolver(IPathResolver):
     """路径解析器实现"""
-    
+
     def __init__(self, project_root: Optional[Path] = None):
         bundle_root: Path | None = None
         if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
@@ -45,33 +48,60 @@ class PathResolver(IPathResolver):
 
         self._bundle_root = bundle_root
         self._bootstrap = bootstrap
-        self._root = prepare_data_directories(self._bootstrap)
-        if bundle_root is not None:
-            seed_workspace_from_bootstrap(bundle_root, self._root)
-    
+        self._default_config = resolve_default_config_root(
+            bootstrap_root=self._bootstrap,
+            bundle_root=self._bundle_root,
+        )
+        self._root = prepare_data_directories(
+            self._bootstrap,
+            default_config_root=self._default_config,
+        )
+
     def get_bootstrap_root(self) -> Path:
         return self._bootstrap
 
+    def get_default_config_root(self) -> Path:
+        return self._default_config
+
     def get_project_root(self) -> Path:
         return self._root
-    
+
+    def get_workspace_config_dir(self) -> Path:
+        return self._root / "config"
+
+    def get_models_registry_path(self) -> Path:
+        return self.get_workspace_config_dir() / "models_registry.json"
+
+    def get_presets_path(self) -> Path:
+        return self.get_workspace_config_dir() / "presets.json"
+
+    def get_locales_dir(self) -> Path:
+        return self._default_config / "locales"
+
     def get_models_dir(self) -> Path:
         return self._root / "models"
-    
+
     def get_loras_dir(self) -> Path:
         return self._root / "models" / "Lora"
-    
+
     def get_outputs_dir(self) -> Path:
         return self._root / "outputs"
-    
+
     def get_venv_python(self) -> Path:
         return self._root / ".venv" / "bin" / "python"
-    
+
     def get_config_path(self) -> Path:
-        return self._root / "config" / ".app_config.json"
-    
-    def get_presets_path(self) -> Path:
-        return self._root / "config" / "presets.json"
+        return self.get_workspace_config_dir() / WORKSPACE_SETTINGS_FILE
+
+    def restore_config_defaults(
+        self, *, names: tuple[str, ...] | None = None
+    ) -> list[str]:
+        """Restore workspace config files from ``default_config/`` (models_registry, presets)."""
+        return restore_workspace_config_from_defaults(
+            self._root,
+            self._default_config,
+            names=names if names is not None else RESTORABLE_CONFIG_FILES,
+        )
 
     def resolve_registry_local_path(self, local_path: str) -> Path:
         """Resolve registry paths against the effective workspace (never the repo bootstrap root)."""
@@ -85,26 +115,6 @@ class PathResolver(IPathResolver):
             return (self.get_models_dir() / text[len("models/") :]).resolve()
         return (self.get_project_root() / text).resolve()
 
-    def remap_legacy_data_path(self, path: str | Path) -> Path:
-        """Rewrite paths that still point at bootstrap ``models/`` / ``outputs/`` / ``db/`` after workspace migration."""
-        raw = Path(path).expanduser()
-        if not raw.is_absolute():
-            raw = (self.get_bootstrap_root() / raw).resolve()
-        else:
-            raw = raw.resolve()
-        workspace = self.get_project_root().resolve()
-        bootstrap = self.get_bootstrap_root().resolve()
-        if workspace == bootstrap:
-            return raw
-        try:
-            rel = raw.relative_to(bootstrap)
-        except ValueError:
-            return raw
-        if rel.parts and rel.parts[0] in ("models", "outputs", "db"):
-            return (workspace / rel).resolve()
-        return raw
-
-
 def get_system_info() -> dict:
     """获取系统信息"""
     info = {
@@ -113,38 +123,38 @@ def get_system_info() -> dict:
         "processor": platform.processor(),
         "python_version": platform.python_version(),
         "memory_gb": get_memory_gb(),
-        "dependencies": {}
+        "dependencies": {},
     }
-    
-    # 获取关键依赖版本
+
     deps = {
         "mlx": "mlx.core",
         "fastapi": "fastapi",
         "uvicorn": "uvicorn",
         "Pillow": "PIL",
-        "huggingface_hub": "huggingface_hub"
+        "huggingface_hub": "huggingface_hub",
     }
     for dep_name, import_name in deps.items():
         try:
             import importlib
+
             module = importlib.import_module(import_name)
             version = getattr(module, "__version__", "unknown")
             if version == "unknown" and import_name == "mlx.core":
-                # Try mlx.core specifically
                 import mlx.core
+
                 version = getattr(mlx.core, "__version__", "unknown")
             info["dependencies"][dep_name] = version
         except Exception:
             info["dependencies"][dep_name] = "not installed"
-        
-        # Fallback to importlib.metadata if module doesn't expose __version__
+
         if info["dependencies"][dep_name] == "unknown":
             try:
                 from importlib.metadata import version
+
                 info["dependencies"][dep_name] = version(dep_name)
             except Exception:
                 pass
-    
+
     return info
 
 
@@ -152,16 +162,19 @@ def get_memory_gb() -> float:
     """获取系统内存大小（GB）"""
     try:
         import psutil
-        return psutil.virtual_memory().total / (1024 ** 3)
+
+        return psutil.virtual_memory().total / (1024**3)
     except ImportError:
         if platform.system() == "Darwin":
             try:
                 result = subprocess.run(
                     ["sysctl", "-n", "hw.memsize"],
-                    capture_output=True, text=True, check=True
+                    capture_output=True,
+                    text=True,
+                    check=True,
                 )
-                return int(result.stdout.strip()) / (1024 ** 3)
-            except:
+                return int(result.stdout.strip()) / (1024**3)
+            except Exception:
                 return 0
         return 0
 
@@ -169,5 +182,3 @@ def get_memory_gb() -> float:
 def is_apple_silicon() -> bool:
     """检查是否为 Apple Silicon"""
     return platform.system() == "Darwin" and platform.machine() == "arm64"
-
-

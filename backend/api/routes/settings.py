@@ -37,6 +37,12 @@ class ApplyWorkspaceRequest(BaseModel):
     path: str
 
 
+class RestoreConfigDefaultsRequest(BaseModel):
+  """Restore workspace copies from ``default_config/`` (factory models_registry / presets)."""
+
+  files: Optional[List[str]] = None
+
+
 class SettingsUpdateRequest(BaseModel):
     language: Optional[str] = None
     theme: Optional[str] = None
@@ -145,6 +151,7 @@ def apply_workspace(request: ApplyWorkspaceRequest, req: Request):
     try:
         new_root = apply_workspace_relocation(
             bootstrap_root=bootstrap,
+            default_config_root=path_resolver.get_default_config_root(),
             old_root=old_root,
             new_path_raw=raw,
         )
@@ -168,6 +175,23 @@ def apply_workspace(request: ApplyWorkspaceRequest, req: Request):
         "success": True,
         "restart_required": restart_required,
         "workspace": str(new_root),
+    }
+
+
+@router.post("/restore-config-defaults")
+def restore_config_defaults(
+    request: RestoreConfigDefaultsRequest | None = None,
+):
+    """Overwrite workspace ``config/models_registry.json`` and/or ``presets.json`` from factory defaults."""
+    path_resolver = get_container().resolve(IPathResolver)
+    names: tuple[str, ...] | None = None
+    if request and request.files:
+        names = tuple(request.files)
+    restored = path_resolver.restore_config_defaults(names=names)
+    return {
+        "success": True,
+        "restored": restored,
+        "restart_required": "models_registry.json" in restored,
     }
 
 
@@ -376,7 +400,7 @@ def update_model_parameters(model_name: str, request: dict, req: Request = None)
     from backend.core.interfaces import IPathResolver
     
     path_resolver = get_container().resolve(IPathResolver)
-    registry_path = path_resolver.get_project_root() / "config" / "models_registry.json"
+    registry_path = path_resolver.get_models_registry_path()
     
     if not registry_path.exists():
         return {"success": False, "error": t("error.registry_not_found", locale)}

@@ -238,6 +238,16 @@ export const api = {
       return response.data;
     },
 
+    async restoreConfigDefaults(files?: string[]): Promise<{
+      success: boolean;
+      restored: string[];
+      restart_required: boolean;
+    }> {
+      const body = files && files.length > 0 ? { files } : {};
+      const response = await client.post('/api/settings/restore-config-defaults', body);
+      return response.data;
+    },
+
     async listModels(): Promise<unknown> {
       const response = await client.get('/api/settings/models');
       return response.data;

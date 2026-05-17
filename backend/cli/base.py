@@ -40,7 +40,7 @@ def build_engine_context(project_root: Path | None = None) -> EngineContext:
     path_resolver = PathResolver(project_root)
     root = path_resolver.get_project_root()
 
-    registry_json = root / "config" / "models_registry.json"
+    registry_json = path_resolver.get_models_registry_path()
     model_registry = ModelRegistry.load(registry_json)
 
     shared_cache = ModelCache(

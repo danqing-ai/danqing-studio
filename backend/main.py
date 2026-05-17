@@ -140,7 +140,7 @@ def _setup_dependencies():
     path_resolver = PathResolver(project_root)
     config_store = JsonConfigStore(path_resolver)
     preset_store = JsonPresetStore(path_resolver)
-    registry_json = path_resolver.get_project_root() / "config" / "models_registry.json"
+    registry_json = path_resolver.get_models_registry_path()
     model_registry = ModelRegistry.load(registry_json)
 
     # v4 模型缓存

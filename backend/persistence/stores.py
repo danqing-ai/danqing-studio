@@ -3,19 +3,21 @@
 """
 
 import json
-import os
-from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any
 
 from backend.core.interfaces import (
     IConfigStore, IPresetStore,
     AppSettings, IPathResolver
 )
-from backend.utils.workspace import (
-    ensure_workspace_layout,
-    normalize_workspace_path,
-    read_bootstrap_config,
-    write_bootstrap_workspace_pointer,
+from backend.utils.workspace import is_workspace_configured
+
+_SETTINGS_EXCLUDED_KEYS = frozenset(
+    {
+        "custom_workspace_dir",
+        "custom_models_dir",
+        "custom_loras_dir",
+        "custom_outputs_dir",
+    }
 )
 
 
@@ -26,45 +28,45 @@ class JsonConfigStore(IConfigStore):
         self._path_resolver = path_resolver
         self._path = path_resolver.get_config_path()
     
-    def load(self) -> AppSettings:
+    def _inject_workspace_dir(self, settings: AppSettings) -> AppSettings:
+        """Workspace path comes from bootstrap pointer only, not from ``.app_config.json``."""
         bootstrap = self._path_resolver.get_bootstrap_root()
-        boot = read_bootstrap_config(bootstrap)
+        if is_workspace_configured(bootstrap):
+            settings.custom_workspace_dir = str(self._path_resolver.get_project_root())
+        else:
+            settings.custom_workspace_dir = ""
+        return settings
+
+    def _settings_for_disk(self, settings: AppSettings) -> dict[str, Any]:
+        return {
+            k: v
+            for k, v in settings.__dict__.items()
+            if k in AppSettings.__dataclass_fields__ and k not in _SETTINGS_EXCLUDED_KEYS
+        }
+
+    def load(self) -> AppSettings:
         if not self._path.exists():
-            settings = AppSettings()
-            ws = (boot.get("custom_workspace_dir") or "").strip()
-            if ws:
-                settings.custom_workspace_dir = ws
-            return settings
-        
+            return self._inject_workspace_dir(AppSettings())
+
         try:
             with open(self._path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             if not isinstance(data, dict):
-                return AppSettings()
-            allowed = {k: v for k, v in data.items() if k in AppSettings.__dataclass_fields__}
-            settings = AppSettings(**allowed)
-            ws = (boot.get("custom_workspace_dir") or "").strip()
-            if ws:
-                settings.custom_workspace_dir = ws
-            return settings
+                return self._inject_workspace_dir(AppSettings())
+            allowed = {
+                k: v
+                for k, v in data.items()
+                if k in AppSettings.__dataclass_fields__ and k not in _SETTINGS_EXCLUDED_KEYS
+            }
+            return self._inject_workspace_dir(AppSettings(**allowed))
         except Exception:
-            return AppSettings()
+            return self._inject_workspace_dir(AppSettings())
     
     def save(self, settings: AppSettings) -> None:
-        bootstrap = self._path_resolver.get_bootstrap_root()
-        ws_raw = (settings.custom_workspace_dir or "").strip()
-        if ws_raw:
-            workspace = normalize_workspace_path(bootstrap, ws_raw)
-            settings.custom_workspace_dir = str(workspace)
-            ensure_workspace_layout(workspace)
-            cfg_path = workspace / "config" / ".app_config.json"
-        else:
-            write_bootstrap_workspace_pointer(bootstrap, "")
-            cfg_path = bootstrap / "config" / ".app_config.json"
-
+        cfg_path = self._path_resolver.get_config_path()
         cfg_path.parent.mkdir(parents=True, exist_ok=True)
         with open(cfg_path, "w", encoding="utf-8") as f:
-            json.dump(settings.__dict__, f, ensure_ascii=False, indent=2)
+            json.dump(self._settings_for_disk(settings), f, ensure_ascii=False, indent=2)
         self._path = cfg_path
 
 

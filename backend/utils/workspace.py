@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
-import json
 import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any
+
+from backend.utils.config_paths import (
+    read_bootstrap_workspace_pointer,
+    restore_workspace_config_from_defaults,
+    seed_workspace_config_from_defaults,
+    write_bootstrap_workspace_pointer,
+)
 
 _WORKSPACE_SUBDIRS = (
     "config",
@@ -18,43 +23,28 @@ _WORKSPACE_SUBDIRS = (
     "outputs/assets",
 )
 
-_LEGACY_DIR_KEYS = ("custom_models_dir", "custom_loras_dir", "custom_outputs_dir")
-
 _WORKSPACE_TOP_LEVEL = ("config", "db", "models", "outputs")
 
 _IGNORE_EMPTY_NAMES = frozenset({".DS_Store", "Thumbs.db", "desktop.ini"})
 
 
-def read_bootstrap_config(bootstrap_root: Path) -> dict[str, Any]:
-    path = bootstrap_root / "config" / ".app_config.json"
-    if not path.is_file():
-        return {}
+def sanitize_bootstrap_workspace_pointer(bootstrap_root: Path) -> None:
+    """Drop invalid bootstrap pointers (missing dir, dev paths shipped in desktop bundles)."""
+    raw = read_bootstrap_workspace_pointer(bootstrap_root)
+    if not raw:
+        return
     try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
-
-
-def write_bootstrap_workspace_pointer(bootstrap_root: Path, workspace_dir: str) -> None:
-    cfg_dir = bootstrap_root / "config"
-    cfg_dir.mkdir(parents=True, exist_ok=True)
-    path = cfg_dir / ".app_config.json"
-    data: dict[str, Any] = {}
-    if path.is_file():
-        data = read_bootstrap_config(bootstrap_root)
-    data["custom_workspace_dir"] = (workspace_dir or "").strip()
-    for key in _LEGACY_DIR_KEYS:
-        data.pop(key, None)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+        candidate = normalize_workspace_path(bootstrap_root, raw)
+    except ValueError:
+        write_bootstrap_workspace_pointer(bootstrap_root, "")
+        return
+    if not candidate.is_dir():
+        write_bootstrap_workspace_pointer(bootstrap_root, "")
 
 
 def is_workspace_configured(bootstrap_root: Path) -> bool:
-    """True when the user has explicitly chosen a custom workspace directory."""
-    raw = (read_bootstrap_config(bootstrap_root).get("custom_workspace_dir") or "").strip()
-    return bool(raw)
+    """True when bootstrap ``config/workspace.pointer.json`` names a workspace directory."""
+    return bool(read_bootstrap_workspace_pointer(bootstrap_root).strip())
 
 
 def normalize_workspace_path(bootstrap_root: Path, raw: str) -> Path:
@@ -122,6 +112,7 @@ def migrate_workspace_data(old_root: Path, new_root: Path) -> None:
 def apply_workspace_relocation(
     *,
     bootstrap_root: Path,
+    default_config_root: Path,
     old_root: Path,
     new_path_raw: str,
 ) -> Path:
@@ -133,7 +124,7 @@ def apply_workspace_relocation(
         raise RuntimeError(f"Target workspace directory is not empty: {new_root}")
     migrate_workspace_data(old_root, new_root)
     ensure_workspace_layout(new_root)
-    seed_workspace_from_bootstrap(bootstrap_root, new_root)
+    seed_workspace_config_from_defaults(default_config_root, new_root)
     write_bootstrap_workspace_pointer(bootstrap_root, str(new_root))
     db_path = new_root / "db" / "studio.db"
     if db_path.is_file():
@@ -149,7 +140,7 @@ def apply_workspace_relocation(
 
 def resolve_workspace_root(bootstrap_root: Path) -> Path:
     """Effective data root: custom workspace if configured, else install/dev root."""
-    raw = (read_bootstrap_config(bootstrap_root).get("custom_workspace_dir") or "").strip()
+    raw = read_bootstrap_workspace_pointer(bootstrap_root)
     if not raw:
         return bootstrap_root.resolve()
     candidate = Path(raw).expanduser()
@@ -189,18 +180,19 @@ def prune_obsolete_bootstrap_data_dirs(bootstrap_root: Path) -> None:
             shutil.rmtree(path)
 
 
-def prepare_data_directories(bootstrap_root: Path) -> Path:
-    """Create data layout under the effective workspace; keep bootstrap free of models/outputs/db when relocated.
-
-    Bootstrap always gets ``config/`` (workspace pointer). ``models/``, ``outputs/``, and ``db/`` are created
-    only under the resolved workspace root.
-    """
+def prepare_data_directories(
+    bootstrap_root: Path,
+    *,
+    default_config_root: Path | None = None,
+) -> Path:
+    """Create data layout under the effective workspace root."""
     bootstrap = bootstrap_root.resolve()
     (bootstrap / "config").mkdir(parents=True, exist_ok=True)
+    sanitize_bootstrap_workspace_pointer(bootstrap)
     root = resolve_workspace_root(bootstrap)
     ensure_workspace_layout(root)
-    if root != bootstrap and is_workspace_configured(bootstrap):
-        write_bootstrap_workspace_pointer(bootstrap, str(root))
+    if default_config_root is not None:
+        seed_workspace_config_from_defaults(default_config_root, root)
     prune_obsolete_bootstrap_data_dirs(bootstrap)
     return root
 
@@ -208,20 +200,6 @@ def prepare_data_directories(bootstrap_root: Path) -> Path:
 def ensure_workspace_layout(workspace_root: Path) -> None:
     for rel in _WORKSPACE_SUBDIRS:
         (workspace_root / rel).mkdir(parents=True, exist_ok=True)
-
-
-def seed_workspace_from_bootstrap(bootstrap_root: Path, workspace_root: Path) -> None:
-    """Copy default config assets into a new workspace (no overwrite)."""
-    src_cfg = bootstrap_root / "config"
-    dst_cfg = workspace_root / "config"
-    dst_cfg.mkdir(parents=True, exist_ok=True)
-    if not src_cfg.is_dir():
-        return
-    for name in (".app_config.json", "models_registry.json", "presets.json"):
-        src = src_cfg / name
-        dst = dst_cfg / name
-        if src.is_file() and not dst.exists():
-            shutil.copy2(src, dst)
 
 
 def workspace_layout_paths(workspace_root: Path) -> dict[str, str]:

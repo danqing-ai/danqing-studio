@@ -441,10 +441,21 @@
                   {{ $t('settings.promptTemplatesDesc') }}
                 </el-text>
               </span>
-              <el-button type="primary" size="small" @click="openPresetDialog()">
-                <el-icon><plus /></el-icon>
-                {{ $t('settings.addTemplate') }}
-              </el-button>
+              <div class="settings-ep-header-actions">
+                <el-button
+                  text
+                  size="small"
+                  class="settings-ep-link-destructive"
+                  :loading="restoreConfigBusy"
+                  @click="confirmRestorePromptTemplates"
+                >
+                  {{ $t('settings.restorePromptTemplates') }}
+                </el-button>
+                <el-button type="primary" size="small" @click="openPresetDialog()">
+                  <el-icon><plus /></el-icon>
+                  {{ $t('settings.addTemplate') }}
+                </el-button>
+              </div>
             </div>
           </template>
 
@@ -685,6 +696,39 @@
                   </div>
                     </el-form-item>
                   </div>
+                </section>
+
+                <section class="settings-ep-group-block">
+                  <h3 class="settings-ep-group-block-title">{{ $t('settings.systemGroupConfigMaintenance') }}</h3>
+                  <p class="settings-ep-group-footnote settings-ep-group-footnote--intro">
+                    {{ $t('settings.configMaintenanceDesc') }}
+                  </p>
+                  <div
+                    class="settings-ep-grouped-form settings-ep-grouped-form--system settings-ep-grouped-form--action-list"
+                    role="group"
+                    :aria-label="$t('settings.systemGroupConfigMaintenance')"
+                  >
+                    <button
+                      type="button"
+                      class="settings-ep-action-row settings-ep-action-row--destructive"
+                      :disabled="restoreConfigBusy"
+                      @click="confirmRestoreModelRegistry"
+                    >
+                      <span class="settings-ep-action-row__label">{{ $t('settings.restoreModelRegistry') }}</span>
+                      <el-icon class="settings-ep-action-row__chevron"><arrow-right /></el-icon>
+                    </button>
+                    <button
+                      type="button"
+                      class="settings-ep-action-row settings-ep-action-row--destructive"
+                      :disabled="restoreConfigBusy"
+                      @click="confirmRestorePromptTemplates"
+                    >
+                      <span class="settings-ep-action-row__label">{{ $t('settings.restorePromptTemplates') }}</span>
+                      <el-icon class="settings-ep-action-row__chevron"><arrow-right /></el-icon>
+                    </button>
+                  </div>
+                  <p class="settings-ep-group-footnote">{{ $t('settings.restoreModelRegistryDesc') }}</p>
+                  <p class="settings-ep-group-footnote">{{ $t('settings.restorePromptTemplatesDesc') }}</p>
                 </section>
 
                 <section class="settings-ep-group-block">
@@ -1069,6 +1113,7 @@ const cacheStatus = reactive<{ cache: Record<string, unknown> | null; mlx: Recor
 });
 const cacheLoading = ref(false);
 const cacheError = ref('');
+const restoreConfigBusy = ref(false);
 
 /* ------------------------------------------------------------------ */
 /*  Computed                                                           */
@@ -1733,6 +1778,70 @@ const loadInstalledModels = async () => {
 const handleLanguageChange = (lang: string) => {
   settings.language = lang;
 };
+
+// ----- Config file restore (factory defaults) -----
+
+async function runRestoreConfigDefaults(files: string[]) {
+  if (restoreConfigBusy.value) return;
+  restoreConfigBusy.value = true;
+  try {
+    const res = await api.settings.restoreConfigDefaults(files);
+    const restored = res.restored || [];
+    if (!restored.length) {
+      ElMessage.warning($tt('settings.restoreConfigNothing'));
+      return;
+    }
+    if (restored.includes('presets.json')) {
+      await loadPresets();
+    }
+    if (restored.includes('models_registry.json')) {
+      await loadModelRegistry();
+      await registryStore.load(true);
+    }
+    ElMessage.success($tt('settings.restoreConfigSuccess'));
+    if (res.restart_required) {
+      ElMessage.warning($tt('settings.restoreRegistryRestartHint'));
+    }
+  } catch (e) {
+    ElMessage.error(extractApiError(e) || $tt('settings.restoreConfigFailed'));
+  } finally {
+    restoreConfigBusy.value = false;
+  }
+}
+
+async function confirmRestoreModelRegistry() {
+  try {
+    await ElMessageBox.confirm(
+      $tt('settings.restoreModelRegistryConfirm'),
+      $tt('settings.restoreModelRegistryTitle'),
+      {
+        type: 'warning',
+        confirmButtonText: $tt('settings.restoreConfirm'),
+        cancelButtonText: $tt('settings.deleteCancel'),
+      },
+    );
+    await runRestoreConfigDefaults(['models_registry.json']);
+  } catch {
+    /* cancelled */
+  }
+}
+
+async function confirmRestorePromptTemplates() {
+  try {
+    await ElMessageBox.confirm(
+      $tt('settings.restorePromptTemplatesConfirm'),
+      $tt('settings.restorePromptTemplatesTitle'),
+      {
+        type: 'warning',
+        confirmButtonText: $tt('settings.restoreConfirm'),
+        cancelButtonText: $tt('settings.deleteCancel'),
+      },
+    );
+    await runRestoreConfigDefaults(['presets.json']);
+  } catch {
+    /* cancelled */
+  }
+}
 
 // ----- Presets (prompt templates) -----
 
