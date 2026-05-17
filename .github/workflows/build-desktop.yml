@@ -6,6 +6,10 @@ on:
       - 'v*'
   workflow_dispatch:
 
+# Required to attach .dmg files to GitHub Releases (not only Actions artifacts).
+permissions:
+  contents: write
+
 jobs:
   build-desktop:
     runs-on: macos-latest
@@ -40,9 +44,24 @@ jobs:
           source .venv/bin/activate
           make desktop-bundle
 
-      - name: Upload artifacts
+      - name: Verify DMG was produced
+        run: |
+          ls -la out/desktop/bundle/
+          ls -la out/desktop/bundle/dmg/
+          test -n "$(find out/desktop/bundle/dmg -maxdepth 1 -name '*.dmg' -print -quit)"
+
+      - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
         with:
           name: danqing-desktop-macos
-          path: out/desktop/bundle/
+          path: |
+            out/desktop/bundle/dmg/*.dmg
+            out/desktop/bundle/macos/*.app
           if-no-files-found: error
+
+      - name: Attach DMG to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: out/desktop/bundle/dmg/*.dmg
+          fail_on_unmatched_files: true
