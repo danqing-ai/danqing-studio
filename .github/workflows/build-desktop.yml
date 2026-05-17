@@ -5,6 +5,11 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      version:
+        description: Desktop bundle semver (e.g. 0.2.0). Leave empty to keep repo default.
+        required: false
+        type: string
 
 # Required to attach .dmg files to GitHub Releases (not only Actions artifacts).
 permissions:
@@ -38,6 +43,14 @@ jobs:
           pip install --upgrade pip
           pip install -r requirements.txt
           pip install pyinstaller
+
+      - name: Set desktop version from tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: python3 scripts/set_desktop_version.py "${GITHUB_REF_NAME#v}"
+
+      - name: Set desktop version (manual dispatch)
+        if: github.event_name == 'workflow_dispatch' && inputs.version != ''
+        run: python3 scripts/set_desktop_version.py "${{ inputs.version }}"
 
       - name: Build desktop bundle
         run: |

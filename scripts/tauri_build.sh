@@ -16,6 +16,18 @@ fi
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/out/desktop/cargo}"
 mkdir -p "$CARGO_TARGET_DIR"
 
+PYTHON="${PYTHON:-python3}"
+if [[ -x "$ROOT/.venv/bin/python3" ]]; then
+  PYTHON="$ROOT/.venv/bin/python3"
+fi
+
+if [[ -n "${DANQING_DESKTOP_VERSION:-}" ]]; then
+  "$PYTHON" "$ROOT/scripts/set_desktop_version.py" "$DANQING_DESKTOP_VERSION"
+elif git -C "$ROOT" describe --exact-match --tags HEAD >/dev/null 2>&1; then
+  echo "==> Desktop version from git tag"
+  "$PYTHON" "$ROOT/scripts/set_desktop_version.py"
+fi
+
 "$ROOT/scripts/prepare_tauri_resources.sh"
 
 if ! rustup target list --installed | grep -q '^aarch64-apple-darwin$'; then
@@ -28,10 +40,6 @@ echo "    CARGO_TARGET_DIR=$CARGO_TARGET_DIR"
 npm install
 npm exec tauri build -- --target aarch64-apple-darwin
 
-PYTHON="${PYTHON:-python3}"
-if [[ -x "$ROOT/.venv/bin/python3" ]]; then
-  PYTHON="$ROOT/.venv/bin/python3"
-fi
 "$PYTHON" "$ROOT/scripts/stage_desktop_bundle.py"
 
 # Ad-hoc sign embedded sidecar so Gatekeeper allows spawn from the .app
