@@ -75,34 +75,12 @@
       >
         <!-- Category title -->
         <div class="page-header models-page__page-header">
-          <div class="models-page__header-row models-page__header-row--title">
-            <h2 class="page-title models-page__category-title">
-              <DqIcon v-if="categoryPageIcon" class="models-page__title-icon" aria-hidden="true">
-                <component :is="categoryPageIcon" />
-              </DqIcon>
-              <span>{{ categoryTitleText }}</span>
-            </h2>
-            <div class="page-actions models-page__actions">
-              <DqButton
-                v-if="
-                  activeCategory !== 'loras' && activeCategory !== 'installed'
-                "
-                class="models-toolbar-btn models-page__import-btn"
-                @click="showImportDialog"
-              >
-                <DqIcon class="models-toolbar-btn__icon"><upload /></DqIcon>
-                <span class="models-toolbar-btn__label">{{ $t('download.importLocal') }}</span>
-              </DqButton>
-              <DqButton
-                class="models-toolbar-btn models-page__refresh-btn"
-                :loading="refreshing"
-                @click="refreshStatus"
-              >
-                <DqIcon class="models-toolbar-btn__icon"><refresh /></DqIcon>
-                <span class="models-toolbar-btn__label">{{ $t('gallery.refresh') }}</span>
-              </DqButton>
-            </div>
-          </div>
+          <h2 class="page-title models-page__category-title">
+            <DqIcon v-if="categoryPageIcon" class="models-page__title-icon" aria-hidden="true">
+              <component :is="categoryPageIcon" />
+            </DqIcon>
+            <span>{{ categoryTitleText }}</span>
+          </h2>
           <div
             v-if="
               [
@@ -116,7 +94,7 @@
                 'loras',
               ].includes(activeCategory)
             "
-            class="models-page__header-row models-page__header-row--filters"
+            class="models-page__header-center"
           >
             <DqInput
               v-model="filterQuery"
@@ -132,6 +110,26 @@
               v-model:installed-only="modelFilterInstalledOnly"
               v-model:commercial-only="modelFilterCommercialOnly"
             />
+          </div>
+          <div class="page-actions models-page__actions">
+            <DqButton
+              v-if="
+                activeCategory !== 'loras' && activeCategory !== 'installed'
+              "
+              class="models-toolbar-btn models-page__import-btn"
+              @click="showImportDialog"
+            >
+              <DqIcon class="models-toolbar-btn__icon"><upload /></DqIcon>
+              <span class="models-toolbar-btn__label">{{ $t('download.importLocal') }}</span>
+            </DqButton>
+            <DqButton
+              class="models-toolbar-btn models-page__refresh-btn"
+              :loading="refreshing"
+              @click="refreshStatus"
+            >
+              <DqIcon class="models-toolbar-btn__icon"><refresh /></DqIcon>
+              <span class="models-toolbar-btn__label">{{ $t('gallery.refresh') }}</span>
+            </DqButton>
           </div>
         </div>
 
