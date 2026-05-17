@@ -42,15 +42,23 @@ npm exec tauri build -- --target aarch64-apple-darwin
 
 "$PYTHON" "$ROOT/scripts/stage_desktop_bundle.py"
 
-# Ad-hoc sign embedded sidecar so Gatekeeper allows spawn from the .app
+# Ad-hoc sign .app (CI/GitHub DMG is unsigned; without this macOS shows「已损坏，无法打开」).
 if APP=$(find "$ROOT/out/desktop/bundle" -name "*.app" -print -quit); then
+  echo "==> codesign .app (ad-hoc)"
   SC_DIR="$APP/Contents/Resources/danqing-api"
-  if [[ -f "$SC_DIR/danqing-api" ]]; then
-    echo "==> codesign sidecar in .app"
-    for f in danqing-api libmlx.dylib libjaccl.dylib; do
-      [[ -f "$SC_DIR/$f" ]] && codesign -s - --force "$SC_DIR/$f" || true
-    done
+  if [[ -d "$SC_DIR" ]]; then
+    while IFS= read -r -d '' bin; do
+      codesign -s - --force "$bin" 2>/dev/null || true
+    done < <(find "$SC_DIR" -type f \( -perm -111 -o -name '*.dylib' -o -name '*.so' \) -print0 2>/dev/null)
   else
-    echo "Warning: sidecar not at $SC_DIR/danqing-api (check prepare_tauri_resources.sh)" >&2
+    echo "Warning: sidecar not at $SC_DIR (check prepare_tauri_resources.sh)" >&2
   fi
+  if [[ -d "$APP/Contents/MacOS" ]]; then
+    for bin in "$APP/Contents/MacOS"/*; do
+      [[ -f "$bin" ]] && codesign -s - --force "$bin" || true
+    done
+  fi
+  codesign -s - --force --deep "$APP"
+  codesign --verify --deep --strict "$APP" 2>/dev/null || \
+    echo "Warning: codesign verify reported issues (app may still run after clearing quarantine)" >&2
 fi
