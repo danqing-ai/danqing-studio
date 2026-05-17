@@ -243,23 +243,6 @@ html.dark .dq-tag.dq-tag--warning {
 
 /* 表格：发丝线 + 无重网格 */
 
-html.dark .models-page .model-card {
- background: var(--dq-bg-elevated);
- border: 1px solid var(--dq-fill-on-glass);
- box-shadow: 0 8px 28px var(--dq-shadow-sm);
-}
-
-html.dark .models-page .model-card:hover {
- transform: none;
- border-color: var(--dq-fill-on-glass-pressed);
- box-shadow: 0 12px 32px var(--dq-shadow-md);
-}
-
-html.dark .models-page .model-card-header {
- background: var(--dq-surface-inset);
- border-bottom: 1px solid var(--dq-fill-on-glass-subtle);
-}
-
 html.dark .dq-task-queue-drawer .dq-drawer-body {
  padding: 16px 18px;
 }
@@ -473,10 +456,6 @@ html.dark .models-page .page-title {
  font-size: 22px;
  font-weight: 700;
  letter-spacing: -0.04em;
-}
-
-html.dark .models-page .model-card:hover {
- transform: none;
 }
 
 html.dark .models-page .model-card-content {
@@ -829,12 +808,13 @@ html.dark .models-page__page-header {
  padding-bottom: 16px;
 }
 
-html.dark .models-page__page-header .page-title {
- flex: 1 1 auto;
+html.dark .models-page__header-top .page-title {
+ flex: 0 1 auto;
  min-width: 0;
 }
 
-html.dark .models-page__toolbar .models-page__import-btn.dq-btn {
+html.dark .models-page__toolbar .models-page__import-btn.dq-btn,
+html.dark .models-page__actions .models-page__import-btn.dq-btn {
  height: 36px;
  padding: 0 14px;
  border-radius: 10px;

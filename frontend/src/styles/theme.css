@@ -1700,33 +1700,65 @@ body {
  margin-bottom: 16px;
 }
 
-.models-page__page-header {
+.models-page__header-top {
+ display: flex;
  flex-wrap: wrap;
  align-items: center;
- gap: 12px 20px;
+ justify-content: space-between;
+ gap: 12px 16px;
+ width: 100%;
 }
 
-.models-page__toolbar {
+.models-page__actions {
  display: flex;
- flex: 1 1 360px;
- min-width: 0;
- max-width: 100%;
+ flex-shrink: 0;
  align-items: center;
  justify-content: flex-end;
- flex-wrap: nowrap;
+ flex-wrap: wrap;
  gap: 10px;
 }
 
-.models-page__toolbar .models-toolbar-btn {
- flex-shrink: 0;
+.models-page__header-tools {
+ display: flex;
+ flex-wrap: wrap;
+ align-items: center;
+ gap: 12px 20px;
+ width: 100%;
+ min-width: 0;
 }
 
-/* 避免 dq-input width:100% 在换行时独占一整行 */
-.models-page__search-input.dq-input {
- flex: 1 1 0;
- min-width: 140px;
- max-width: 280px;
- width: auto;
+.models-page__header-tools .models-page__search-input.dq-input {
+ flex: 1 1 200px;
+ min-width: 160px;
+ max-width: 360px;
+}
+
+.models-page__header-tools .model-picker-filters {
+ flex: 0 0 auto;
+ margin-left: auto;
+}
+
+.model-picker-filters {
+ display: flex;
+ flex-wrap: wrap;
+ align-items: center;
+ column-gap: 28px;
+ row-gap: 10px;
+}
+
+.model-picker-filters__item {
+ flex: 0 0 auto;
+ margin: 0;
+ white-space: nowrap;
+}
+
+.studio-model-toolbar .model-picker-filters {
+ flex: 1 1 100%;
+ column-gap: 20px;
+}
+
+.models-page__actions .models-toolbar-btn {
+ flex-shrink: 0;
 }
 
 .models-import-model-type {
@@ -4573,7 +4605,7 @@ body {
 }
 
 .settings-action-row--destructive {
- color: #ff3b30;
+ color: var(--dq-danger);
 }
 
 .settings-action-row__label {
@@ -4592,14 +4624,14 @@ body {
 }
 
 .settings-link-destructive.dq-btn.is-text {
- color: #ff3b30;
+ color: var(--dq-danger);
  font-weight: 400;
  letter-spacing: -0.01em;
 }
 
 .settings-link-destructive.dq-btn.is-text:hover,
 .settings-link-destructive.dq-btn.is-text:focus-visible {
- color: #ff6961;
+ color: var(--dq-danger-hover);
  background: var(--dq-danger-surface);
 }
 
@@ -5070,9 +5102,9 @@ body {
 }
 
 /* =============================================================================
- * 模型页（下载中心）视觉 — 仅 `.models-page` 内生效，深浅主题分别柔化对比与层次
+ * 模型页（下载中心）— 布局与排版；深色玻璃/阴影见 theme-apple-chrome.css
  * ============================================================================= */
-/* 页面背景由 theme-apple-native 接管，此处不再叠气氛光 */
+/* 布局与排版；深色玻璃/阴影见 theme-apple-chrome.css */
 .models-page {
  position: relative;
  isolation: isolate;
@@ -5082,53 +5114,25 @@ body {
  padding-right: 6px;
 }
 
-/* 侧栏：浮起表面 + 轻描边 */
 .models-page .models-page__sidebar-card.studio-surface-card.dq-surface-card {
- border-radius: 14px;
- border: 1px solid var(--dq-border-subtle);
- box-shadow:
- 0 1px 2px color-mix(in srgb, var(--dq-label-primary) 6%, transparent),
- 0 14px 36px color-mix(in srgb, var(--dq-label-primary) 5%, transparent);
+ border-radius: var(--dq-radius-group);
 }
 
-html.dark .models-page .models-page__sidebar-card.studio-surface-card.dq-surface-card {
- border-color: color-mix(in srgb, var(--dq-border) 55%, transparent);
- box-shadow: 0 18px 46px var(--dq-shadow-lg);
-}
-
-/* 侧栏菜单：活跃项左侧色条 + 柔和填充 */
 .models-page .dq-download-menu__item {
  margin-bottom: 2px;
 }
 
-.models-page .dq-download-menu__item:hover {
- background-color: color-mix(in srgb, var(--dq-accent) 7%, var(--dq-fill-control));
-}
-
-html.dark .models-page .dq-download-menu__item:hover {
- background-color: color-mix(in srgb, var(--dq-accent) 9%, transparent);
-}
-
 .models-page .dq-download-menu__item.is-active {
- background: color-mix(in srgb, var(--dq-accent) 11%, var(--dq-fill-control));
- color: var(--dq-label-primary);
  font-weight: 600;
 }
 
-html.dark .models-page .dq-download-menu__item.is-active {
- background: color-mix(in srgb, var(--dq-accent) 14%, transparent);
- color: var(--dq-label-primary);
-}
-
-.models-page .disk-space-panel {
- border-radius: 12px;
- border: 1px solid color-mix(in srgb, var(--dq-border) 70%, transparent);
- background: color-mix(in srgb, var(--dq-fill-tertiary) 55%, transparent);
- backdrop-filter: blur(10px);
-}
-
-/* 标题区：渐变细分隔线替代硬横线 */
-.models-page .page-header {
+/* 标题区：渐变细分隔线替代硬横线（覆盖全站 .page-header 的居中/space-between） */
+.models-page .page-header.models-page__page-header {
+ display: flex;
+ flex-direction: column;
+ align-items: stretch;
+ justify-content: flex-start;
+ width: 100%;
  border-bottom: none;
  padding-bottom: 18px;
  margin-bottom: 22px;
@@ -5162,6 +5166,8 @@ html.dark .models-page .dq-download-menu__item.is-active {
  display: inline-flex;
  align-items: center;
  gap: 8px;
+ flex: 0 1 auto;
+ text-align: left;
 }
 
 .models-page__title-icon {
@@ -5169,73 +5175,14 @@ html.dark .models-page .dq-download-menu__item.is-active {
  color: var(--dq-label-primary);
 }
 
-/* —— 模型卡片 —— */
+/* —— 模型卡片（结构；表面/悬停见 theme-apple-chrome.css）—— */
 .models-page .model-card {
- border-radius: 14px;
- border: 1px solid color-mix(in srgb, var(--dq-border) 72%, transparent);
- box-shadow: 0 2px 10px color-mix(in srgb, var(--dq-label-primary) 4%, transparent);
- background: var(--dq-bg-base);
+ border-radius: var(--dq-radius-group);
 }
 
-html.dark .models-page .model-card {
- background: var(--dq-bg-base);
- box-shadow: 0 10px 30px var(--dq-shadow-md);
-}
-
-.models-page .model-card:hover {
- border-color: color-mix(in srgb, var(--dq-accent) 32%, var(--dq-border));
- box-shadow:
- 0 14px 36px color-mix(in srgb, var(--dq-accent) 8%, transparent),
- 0 2px 8px color-mix(in srgb, var(--dq-label-primary) 5%, transparent);
-}
-
-html.dark .models-page .model-card:hover {
- box-shadow:
- 0 22px 48px var(--dq-shadow-lg),
- 0 0 0 1px color-mix(in srgb, var(--dq-accent) 38%, transparent);
-}
-
-html.dark .models-page .model-card {
- background: linear-gradient(
- 168deg,
- color-mix(in srgb, var(--dq-bg-base) 82%, var(--dq-fill-dim)) 0%,
- var(--dq-bg-base) 38%,
- var(--dq-bg-base) 100%
- );
- box-shadow: 0 10px 30px var(--dq-shadow-md);
-}
-
-.models-page .model-card:hover {
- transform: translateY(-3px);
- border-color: color-mix(in srgb, var(--dq-accent) 32%, var(--dq-border));
- box-shadow:
- 0 14px 36px color-mix(in srgb, var(--dq-accent) 12%, var(--dq-accent-ring-subtle)),
- 0 2px 8px color-mix(in srgb, var(--dq-label-primary) 5%, transparent);
-}
-
-html.dark .models-page .model-card:hover {
- box-shadow:
- 0 22px 48px var(--dq-shadow-lg),
- 0 0 0 1px color-mix(in srgb, var(--dq-accent) 38%, transparent);
-}
-
-.models-page .model-card.model-ready {
- border-color: color-mix(in srgb, var(--dq-success) 28%, var(--dq-border));
-}
-
-/* 卡片头图：柔和纯色底 */
 .models-page .model-card-header {
  height: 108px;
  border-bottom: none;
- background: var(--dq-fill-secondary);
-}
-
-html.dark .models-page .model-card-header {
- background: var(--dq-fill-dim);
-}
-
-.models-page .model-card.model-ready .model-card-header {
- background: color-mix(in srgb, var(--dq-success) 6%, var(--dq-fill-secondary));
 }
 
 /* 模型缩写徽标：pill + 轻高光 */

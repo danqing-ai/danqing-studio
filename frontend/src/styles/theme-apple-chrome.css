@@ -11,7 +11,8 @@ html.dark .gallery-page__toolbar {
   border-bottom: 0.5px solid var(--dq-glass-border);
 }
 
-html.dark .models-page__toolbar {
+html.dark .models-page__toolbar,
+html.dark .models-page__actions {
   -webkit-backdrop-filter: var(--dq-glass-blur-light);
   backdrop-filter: var(--dq-glass-blur-light);
 }
@@ -33,7 +34,8 @@ html.dark .models-page .models-page__sidebar-card.studio-surface-card.dq-surface
   background: var(--dq-glass-grouped-bg);
   -webkit-backdrop-filter: var(--dq-glass-blur);
   backdrop-filter: var(--dq-glass-blur);
-  border: 0.5px solid var(--dq-separator);
+  border: 0.5px solid color-mix(in srgb, var(--dq-border) 55%, transparent);
+  box-shadow: 0 18px 46px var(--dq-shadow-lg);
 }
 
 html.dark .settings-page--macos .settings-inspector-stack,
@@ -170,9 +172,44 @@ html.dark .settings-grouped-form--version-list .settings-list-row.is-selected {
 }
 
 /* —— Models: lists & panels —— */
+html.dark .models-page .dq-download-menu__item:hover {
+  background-color: color-mix(in srgb, var(--dq-accent) 9%, transparent);
+}
+
+html.dark .models-page .dq-download-menu__item.is-active {
+  background: color-mix(in srgb, var(--dq-accent) 14%, transparent);
+  color: var(--dq-label-primary);
+}
+
 html.dark .models-page .disk-space-panel {
+  border-radius: var(--dq-radius-group);
+  border: 0.5px solid var(--dq-glass-border);
   background: var(--dq-surface-inset);
-  border-color: var(--dq-glass-border);
+  -webkit-backdrop-filter: var(--dq-glass-blur-light);
+  backdrop-filter: var(--dq-glass-blur-light);
+}
+
+html.dark .models-page .model-card {
+  border: 0.5px solid var(--dq-glass-border);
+  background: linear-gradient(
+    168deg,
+    color-mix(in srgb, var(--dq-bg-base) 82%, var(--dq-fill-dim)) 0%,
+    var(--dq-bg-base) 38%,
+    var(--dq-bg-base) 100%
+  );
+  box-shadow: 0 10px 30px var(--dq-shadow-md);
+}
+
+html.dark .models-page .model-card:hover {
+  transform: translateY(-3px);
+  border-color: color-mix(in srgb, var(--dq-accent) 32%, var(--dq-border));
+  box-shadow:
+    0 22px 48px var(--dq-shadow-lg),
+    0 0 0 1px color-mix(in srgb, var(--dq-accent) 38%, transparent);
+}
+
+html.dark .models-page .model-card.model-ready {
+  border-color: color-mix(in srgb, var(--dq-success) 28%, var(--dq-border));
 }
 
 html.dark .model-version-list,
