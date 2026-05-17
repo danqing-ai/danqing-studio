@@ -10,16 +10,34 @@
       <div class="gallery-page__toolbar">
         <div class="gallery-page__toolbar-inner">
           <!-- View toggle -->
-          <el-radio-group v-model="viewMode" size="small" class="gallery-view-segmented">
-            <el-radio-button label="grid">
-              <el-icon><Menu /></el-icon>
-            </el-radio-button>
-            <el-radio-button label="list">
-              <el-icon><Document /></el-icon>
-            </el-radio-button>
-          </el-radio-group>
+          <div
+            class="gallery-view-segmented"
+            role="radiogroup"
+            :aria-label="$t('gallery.viewMode')"
+          >
+            <button
+              type="button"
+              class="gallery-view-segmented__btn"
+              :class="{ 'is-active': viewMode === 'grid' }"
+              role="radio"
+              :aria-checked="viewMode === 'grid'"
+              @click="viewMode = 'grid'"
+            >
+              <DqIcon><Menu /></DqIcon>
+            </button>
+            <button
+              type="button"
+              class="gallery-view-segmented__btn"
+              :class="{ 'is-active': viewMode === 'list' }"
+              role="radio"
+              :aria-checked="viewMode === 'list'"
+              @click="viewMode = 'list'"
+            >
+              <DqIcon><Document /></DqIcon>
+            </button>
+          </div>
 
-          <el-divider direction="vertical" class="gallery-ep-divider--zero" />
+          <span class="dq-vdivider dq-vdivider--zero" aria-hidden="true" />
 
           <!-- Type filter pills -->
           <div class="gallery-filter-pills">
@@ -34,7 +52,7 @@
             </button>
           </div>
 
-          <el-divider direction="vertical" class="gallery-ep-divider--zero" />
+          <span class="dq-vdivider dq-vdivider--zero" aria-hidden="true" />
 
           <!-- Time filter pills -->
           <div class="gallery-filter-pills">
@@ -51,7 +69,7 @@
 
           <!-- 右侧：与左侧筛选同排；窄屏时整组换行，避免 spacer 单独占一行把模型筛选挤到下一行 -->
           <div class="gallery-page__toolbar-tail">
-            <el-select
+            <DqSelect
               v-model="filterModels"
               size="small"
               multiple
@@ -59,16 +77,16 @@
               :placeholder="$t('gallery.filterModel')"
               class="gallery-page__model-filter"
             >
-              <el-option v-for="m in allModelOptions" :key="m" :label="m" :value="m" />
-            </el-select>
+              <DqOption v-for="m in allModelOptions" :key="m" :label="m" :value="m" />
+            </DqSelect>
 
-            <el-button size="small" @click="showAdvancedFilter = true">
-              <el-icon><Filter /></el-icon>
-            </el-button>
+            <DqButton size="sm" @click="showAdvancedFilter = true" :title="$t('gallery.advancedFilter')">
+              <DqIcon><Filter /></DqIcon>
+            </DqButton>
 
-            <el-button @click="refresh" type="primary" plain size="small">
-              <el-icon><Refresh /></el-icon>
-            </el-button>
+            <DqButton type="primary" size="sm" @click="refresh">
+              <DqIcon><Refresh /></DqIcon>
+            </DqButton>
           </div>
         </div>
       </div>
@@ -77,10 +95,10 @@
       <div class="gallery-scroll-area gallery-page__scroll" @scroll="onScroll">
         <!-- Empty state -->
         <div v-if="items.length === 0 && !loading" class="gallery-page__empty">
-          <el-empty :description="emptyMessage" />
-          <el-button v-if="hasActiveFilters" @click="resetFilters" type="primary">
+          <DqEmpty :description="emptyMessage" />
+          <DqButton v-if="hasActiveFilters" type="primary" @click="resetFilters">
             {{ $t('gallery.clearFilters') }}
-          </el-button>
+          </DqButton>
         </div>
 
         <!-- Grid view -->
@@ -97,7 +115,12 @@
               >
                 <!-- Selection checkbox -->
                 <div class="gallery-checkbox" @click.stop="toggleSelect(item)">
-                  <el-checkbox :model-value="isSelected(item)" size="small" />
+                  <span
+                    class="dq-gallery-check"
+                    :class="{ 'is-checked': isSelected(item) }"
+                    role="checkbox"
+                    :aria-checked="isSelected(item)"
+                  />
                 </div>
 
                 <!-- Media container -->
@@ -111,12 +134,12 @@
                       @error="markGalleryImageFailed(item.path)"
                     />
                     <div v-else class="gallery-thumb-fallback">
-                      <el-icon :size="48"><Picture /></el-icon>
+                      <DqIcon :size="48"><Picture /></DqIcon>
                     </div>
                   </template>
                   <template v-else-if="isAudio(item)">
                     <div class="gallery-audio-tile">
-                      <el-icon class="gallery-audio-tile-icon" :size="42"><Headset /></el-icon>
+                      <DqIcon class="gallery-audio-tile-icon" :size="42"><Headset /></DqIcon>
                       <span class="gallery-audio-tile-label">{{ $t('gallery.audioLabel') }}</span>
                       <span v-if="formatVideoDuration(item)" class="gallery-audio-tile-dur">{{ formatVideoDuration(item) }}</span>
                     </div>
@@ -131,12 +154,12 @@
                       @mouseleave="handleVideoLeave"
                     ></video>
                     <div class="video-overlay">
-                      <el-icon size="28" color="var(--el-text-color-primary)"><VideoPlay /></el-icon>
+                      <DqIcon size="28" color="var(--dq-label-primary)"><VideoPlay /></DqIcon>
                     </div>
                   </template>
                   <template v-else>
                     <div class="gallery-audio-tile">
-                      <el-icon class="gallery-audio-tile-icon" :size="36"><Document /></el-icon>
+                      <DqIcon class="gallery-audio-tile-icon" :size="36"><Document /></DqIcon>
                     </div>
                   </template>
                 </div>
@@ -154,34 +177,39 @@
 
                 <!-- 操作入口：右上角胶囊（el-dropdown 自带 relative，须外包一层做 absolute） -->
                 <div class="gallery-card-more" @click.stop>
-                  <el-dropdown
+                  <DqDropdown
                     trigger="click"
                     @command="handleCommand($event, item)"
                   >
-                    <el-button text size="small" class="gallery-card-more-btn" :title="$t('gallery.moreActions')">
-                      <el-icon><MoreFilled /></el-icon>
-                    </el-button>
+                    <DqIconButton
+                      type="text"
+                      size="sm"
+                      class="gallery-card-more-btn"
+                      :label="$t('gallery.moreActions')"
+                    >
+                      <DqIcon><MoreFilled /></DqIcon>
+                    </DqIconButton>
                     <template #dropdown>
-                      <el-dropdown-menu>
-                        <el-dropdown-item command="download">
-                          <el-icon><Download /></el-icon>
+                      <DqDropdownMenu>
+                        <DqDropdownItem command="download">
+                          <DqIcon><Download /></DqIcon>
                           {{ $t('gallery.download') }}
-                        </el-dropdown-item>
-                        <el-dropdown-item command="copyPrompt" v-if="item.prompt">
-                          <el-icon><CopyDocument /></el-icon>
+                        </DqDropdownItem>
+                        <DqDropdownItem command="copyPrompt" v-if="item.prompt">
+                          <DqIcon><CopyDocument /></DqIcon>
                           {{ $t('gallery.copyPrompt') }}
-                        </el-dropdown-item>
-                        <el-dropdown-item command="useForImg2Img" v-if="isImage(item)">
-                          <el-icon><Brush /></el-icon>
+                        </DqDropdownItem>
+                        <DqDropdownItem command="useForImg2Img" v-if="isImage(item)">
+                          <DqIcon><Brush /></DqIcon>
                           {{ $t('gallery.useForImg2Img') }}
-                        </el-dropdown-item>
-                        <el-dropdown-item command="delete" divided>
-                          <el-icon color="var(--el-color-danger)"><Delete /></el-icon>
-                          <el-text type="danger" size="small">{{ $t('gallery.delete') }}</el-text>
-                        </el-dropdown-item>
-                      </el-dropdown-menu>
+                        </DqDropdownItem>
+                        <DqDropdownItem command="delete" divided>
+                          <DqIcon color="var(--dq-danger)"><Delete /></DqIcon>
+                          <DqText type="danger" size="small">{{ $t('gallery.delete') }}</DqText>
+                        </DqDropdownItem>
+                      </DqDropdownMenu>
                     </template>
-                  </el-dropdown>
+                  </DqDropdown>
                 </div>
 
                 <!-- Footer info (only shown when not hovering) -->
@@ -190,9 +218,9 @@
                     {{ formatVideoDuration(item) }}
                   </span>
                   <span class="gallery-card-type-icon" :class="{ 'is-video': isVideo(item), 'is-audio': isAudio(item) }">
-                    <el-icon v-if="isVideo(item)" size="12"><VideoPlay /></el-icon>
-                    <el-icon v-else-if="isAudio(item)" size="12"><Headset /></el-icon>
-                    <el-icon v-else size="12"><Picture /></el-icon>
+                    <DqIcon v-if="isVideo(item)" size="12"><VideoPlay /></DqIcon>
+                    <DqIcon v-else-if="isAudio(item)" size="12"><Headset /></DqIcon>
+                    <DqIcon v-else size="12"><Picture /></DqIcon>
                   </span>
                 </div>
               </div>
@@ -219,7 +247,12 @@
                 class="gallery-ios-row__check"
                 @click.stop="toggleSelect(row)"
               >
-                <el-checkbox :model-value="isSelected(row)" />
+                <span
+                  class="dq-gallery-check"
+                  :class="{ 'is-checked': isSelected(row) }"
+                  role="checkbox"
+                  :aria-checked="isSelected(row)"
+                />
               </button>
               <button
                 type="button"
@@ -236,19 +269,19 @@
                   v-else-if="isImage(row)"
                   class="gallery-list-thumb-fallback"
                 >
-                  <el-icon size="20"><Picture /></el-icon>
+                  <DqIcon size="20"><Picture /></DqIcon>
                 </div>
                 <div v-else-if="isAudio(row)" class="gallery-audio-thumb-sm">
-                  <el-icon size="20"><Headset /></el-icon>
+                  <DqIcon size="20"><Headset /></DqIcon>
                 </div>
                 <div v-else class="gallery-list-thumb-center">
-                  <el-icon size="20"><VideoPlay /></el-icon>
+                  <DqIcon size="20"><VideoPlay /></DqIcon>
                 </div>
               </button>
               <div class="gallery-ios-row__body">
                 <p class="gallery-ios-row__title">{{ truncatePrompt(row.prompt) }}</p>
                 <div class="gallery-ios-row__meta">
-                  <el-tag v-if="row.model" size="small" effect="plain">{{ row.model }}</el-tag>
+                  <span v-if="row.model" class="gallery-list-tag">{{ row.model }}</span>
                   <span v-if="row.width && row.height" class="gallery-list-meta">
                     {{ row.width }}×{{ row.height }}
                   </span>
@@ -259,12 +292,12 @@
                 </div>
               </div>
               <div class="gallery-ios-row__actions" @click.stop>
-                <el-button circle text @click="downloadImage(row)">
-                  <el-icon><Download /></el-icon>
-                </el-button>
-                <el-button circle text type="danger" @click="deleteImage(row)">
-                  <el-icon><Delete /></el-icon>
-                </el-button>
+                <DqIconButton type="text" size="sm" :label="$t('gallery.download')" @click="downloadImage(row)">
+                  <DqIcon><Download /></DqIcon>
+                </DqIconButton>
+                <DqIconButton type="danger" size="sm" :label="$t('common.delete')" @click="deleteImage(row)">
+                  <DqIcon><Delete /></DqIcon>
+                </DqIconButton>
               </div>
             </li>
           </ul>
@@ -272,7 +305,7 @@
 
         <!-- Loading -->
         <div v-if="loading" class="gallery-page__loading">
-          <el-icon class="is-loading" size="28"><Loading /></el-icon>
+          <DqIcon class="is-loading" size="28"><Loading /></DqIcon>
         </div>
 
         <!-- End-of-list hint -->
@@ -286,9 +319,9 @@
     <div v-if="detailItem" class="gallery-detail-panel">
       <div class="gallery-detail-panel__header">
         <span class="gallery-detail-panel__title">{{ $t('gallery.details') }}</span>
-        <el-button text size="small" @click="detailItem = null">
-          <el-icon><Close /></el-icon>
-        </el-button>
+        <DqIconButton type="text" size="sm" :label="$t('gallery.close')" @click="detailItem = null">
+          <DqIcon><Close /></DqIcon>
+        </DqIconButton>
       </div>
 
       <div class="gallery-detail-panel__body">
@@ -302,7 +335,7 @@
               @error="markGalleryImageFailed(detailItem.path)"
             />
             <div v-else class="gallery-detail-panel__preview-fallback" @click="showPreview(detailItem)">
-              <el-icon :size="48"><Picture /></el-icon>
+              <DqIcon :size="48"><Picture /></DqIcon>
             </div>
           </template>
           <video v-else :src="getImageUrl(detailItem)" controls></video>
@@ -310,23 +343,29 @@
 
         <!-- Action buttons -->
         <div class="gallery-detail-actions">
-          <el-button size="small" @click="downloadImage(detailItem)">
-            <el-icon><Download /></el-icon>
+          <DqButton size="sm" @click="downloadImage(detailItem)">
+            <DqIcon><Download /></DqIcon>
             {{ $t('gallery.download') }}
-          </el-button>
-          <el-button size="small" @click="useForImg2Img(detailItem)" v-if="isImage(detailItem)">
-            <el-icon><Brush /></el-icon>
+          </DqButton>
+          <DqButton v-if="isImage(detailItem)" size="sm" @click="useForImg2Img(detailItem)">
+            <DqIcon><Brush /></DqIcon>
             {{ $t('gallery.useForImg2Img') }}
-          </el-button>
+          </DqButton>
         </div>
 
         <!-- Prompt -->
         <div class="gallery-detail-prompt-box">
           <div class="gallery-detail-prompt-head">
             <span class="gallery-detail-prompt-label">{{ $t('gallery.prompt') }}</span>
-            <el-button v-if="detailItem.prompt" size="small" text type="primary" @click="copyText(detailItem.prompt)">
-              <el-icon><CopyDocument /></el-icon>
-            </el-button>
+            <DqIconButton
+              v-if="detailItem.prompt"
+              type="text"
+              size="sm"
+              :label="$t('gallery.copy')"
+              @click="copyText(detailItem.prompt)"
+            >
+              <DqIcon><CopyDocument /></DqIcon>
+            </DqIconButton>
           </div>
           <div class="gallery-detail-prompt-text">
             {{ detailItem.prompt || $t('gallery.noPrompt') }}
@@ -380,29 +419,28 @@
             <span class="gallery-batch-count">
               {{ $tt('gallery.selectedCount', { count: selectedItems.length }) }}
             </span>
-            <el-button class="gallery-batch-bar__select-all" size="small" text @click="selectAllPage">
+            <DqButton class="gallery-batch-bar__select-all" type="text" size="sm" @click="selectAllPage">
               {{ allPageSelected ? $t('gallery.deselectAll') : $t('gallery.selectAll') }}
-            </el-button>
+            </DqButton>
           </div>
           <div class="gallery-batch-bar__actions">
-            <el-button size="small" type="primary" round @click="batchDownload">
-              <el-icon><Download /></el-icon>
+            <DqButton type="primary" size="sm" round @click="batchDownload">
+              <DqIcon><Download /></DqIcon>
               {{ $t('gallery.batchDownload') }}
-            </el-button>
-            <el-button size="small" type="danger" round plain @click="batchDelete">
-              <el-icon><Delete /></el-icon>
+            </DqButton>
+            <DqButton type="danger" size="sm" round @click="batchDelete">
+              <DqIcon><Delete /></DqIcon>
               {{ $t('gallery.batchDelete') }}
-            </el-button>
+            </DqButton>
           </div>
-          <el-button
-            class="gallery-batch-bar__dismiss"
-            circle
-            text
+          <DqButton
+            class="gallery-batch-bar__dismiss dq-btn--icon-circle"
+            type="text"
             :aria-label="$t('common.close')"
             @click="selectedItems = []"
           >
-            <el-icon><Close /></el-icon>
-          </el-button>
+            <DqIcon><Close /></DqIcon>
+          </DqButton>
         </div>
       </div>
     </teleport>
@@ -411,29 +449,37 @@
     <teleport to="body">
       <div v-if="previewVisible" class="gallery-lightbox" @click="previewVisible = false">
         <div class="lightbox-content" @click.stop>
-          <el-button class="lightbox-close" circle text size="large" @click="previewVisible = false">
-            <el-icon size="24"><Close /></el-icon>
-          </el-button>
+          <DqIconButton
+            class="lightbox-close"
+            type="text"
+            size="lg"
+            :label="$t('gallery.close')"
+            @click="previewVisible = false"
+          >
+            <DqIcon size="24"><Close /></DqIcon>
+          </DqIconButton>
 
-          <el-button
+          <DqIconButton
             class="lightbox-nav lightbox-prev"
-            circle
-            size="large"
+            type="text"
+            size="lg"
+            :label="$t('gallery.prev')"
             :disabled="selectedIndex <= 0"
             @click="showPrev"
           >
-            <el-icon size="24"><ArrowLeft /></el-icon>
-          </el-button>
+            <DqIcon size="24"><ArrowLeft /></DqIcon>
+          </DqIconButton>
 
-          <el-button
+          <DqIconButton
             class="lightbox-nav lightbox-next"
-            circle
-            size="large"
+            type="text"
+            size="lg"
+            :label="$t('gallery.next')"
             :disabled="selectedIndex >= flatItems.length - 1"
             @click="showNext"
           >
-            <el-icon size="24"><ArrowRight /></el-icon>
-          </el-button>
+            <DqIcon size="24"><ArrowRight /></DqIcon>
+          </DqIconButton>
 
           <div class="lightbox-media-wrapper">
             <img
@@ -446,7 +492,7 @@
               v-else-if="selectedItem && isImage(selectedItem)"
               class="gallery-lightbox-image-fallback"
             >
-              <el-icon :size="64"><Picture /></el-icon>
+              <DqIcon :size="64"><Picture /></DqIcon>
             </div>
             <audio
               v-else-if="selectedItem && isAudio(selectedItem)"
@@ -478,47 +524,14 @@
       </div>
     </teleport>
 
-    <!-- Advanced filter drawer -->
-    <el-drawer
-      v-model="showAdvancedFilter"
-      class="gallery-filter-drawer"
-      :title="$t('gallery.advancedFilter')"
-      direction="rtl"
-      size="min(360px, 92vw)"
-    >
-      <div class="gallery-drawer-stack">
-        <div>
-          <div class="gallery-drawer-section-title">{{ $t('gallery.dateRange') }}</div>
-          <el-date-picker
-            v-model="filterDateRange"
-            type="daterange"
-            size="small"
-            class="studio-ep-w-full"
-            :start-placeholder="$t('gallery.startDate')"
-            :end-placeholder="$t('gallery.endDate')"
-          />
-        </div>
-        <div>
-          <div class="gallery-drawer-section-title">{{ $t('gallery.minResolution') }}</div>
-          <el-slider v-model="filterMinWidth" :min="256" :max="2048" :step="64" show-stops />
-          <div class="gallery-drawer-hint">≥ {{ filterMinWidth }}px</div>
-        </div>
-        <div>
-          <div class="gallery-drawer-section-title">{{ $t('gallery.actionType') }}</div>
-          <el-checkbox-group v-model="filterActions">
-            <el-checkbox label="create">{{ $t('gallery.actionCreate') }}</el-checkbox>
-            <el-checkbox label="rewrite">{{ $t('gallery.actionRewrite') }}</el-checkbox>
-            <el-checkbox label="upscale">{{ $t('gallery.actionUpscale') }}</el-checkbox>
-          </el-checkbox-group>
-        </div>
-      </div>
-      <template #footer>
-        <div class="gallery-drawer-footer">
-          <el-button @click="resetAdvancedFilters" size="small">{{ $t('gallery.resetFilters') }}</el-button>
-          <el-button type="primary" @click="applyAdvancedFilters" size="small">{{ $t('gallery.apply') }}</el-button>
-        </div>
-      </template>
-    </el-drawer>
+    <GalleryAdvancedFilterDrawer
+      v-model:visible="showAdvancedFilter"
+      v-model:filter-date-range="filterDateRange"
+      v-model:filter-min-width="filterMinWidth"
+      v-model:filter-actions="filterActions"
+      @reset="resetAdvancedFilters"
+      @apply="applyAdvancedFilters"
+    />
   </div>
 </template>
 
@@ -526,7 +539,7 @@
 // @ts-nocheck
 import { ref, computed, onMounted, watch, nextTick } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { ElMessage, ElMessageBox } from 'element-plus';
+import { toast, confirm } from '@/utils/feedback';
 import {
   Menu,
   Document,
@@ -544,12 +557,13 @@ import {
   ArrowLeft,
   ArrowRight,
   Loading,
-} from '@element-plus/icons-vue';
+} from '@danqing/dq-shell';
 import { api } from '@/utils/api';
 import { $tt } from '@/utils/i18n';
 import { DQ_STORAGE } from '@/utils/storage';
 import type { GalleryItem } from '@/types';
 import { useDocumentEvent } from '@/composables/useDocumentEvent';
+import GalleryAdvancedFilterDrawer from '@/components/gallery/GalleryAdvancedFilterDrawer.vue';
 
 const { t: $t } = useI18n();
 
@@ -745,7 +759,7 @@ const loadImages = async (reset = false) => {
     }
   } catch (e) {
     console.error('Failed to load gallery:', e);
-    ElMessage.error($tt('gallery.loadFailed'));
+    toast.error($tt('gallery.loadFailed'));
   } finally {
     loading.value = false;
     // Auto-load next page if content doesn't fill the scroll area
@@ -810,7 +824,7 @@ const handleCardClick = (item: GalleryItem, event: MouseEvent) => {
 const batchDelete = async () => {
   if (selectedItems.value.length === 0) return;
   try {
-    await ElMessageBox.confirm(
+    await confirm(
       $tt('gallery.batchDeleteConfirm', { count: selectedItems.value.length }),
       $tt('gallery.confirmDeleteTitle'),
       { type: 'warning' }
@@ -818,13 +832,13 @@ const batchDelete = async () => {
 
     const paths = selectedItems.value.map((it) => it.path);
     await api.gallery.batchDeleteImages(paths);
-    ElMessage.success($tt('gallery.batchDeleted', { count: selectedItems.value.length }));
+    toast.success($tt('gallery.batchDeleted', { count: selectedItems.value.length }));
     selectedItems.value = [];
     loadImages(true);
   } catch (e) {
     if (e !== 'cancel') {
       console.error('Batch delete failed:', e);
-      ElMessage.error($tt('gallery.batchDeleteFailed'));
+      toast.error($tt('gallery.batchDeleteFailed'));
     }
   }
 };
@@ -904,14 +918,14 @@ const showNext = () => {
 
 const deleteImage = async (item: GalleryItem) => {
   try {
-    await ElMessageBox.confirm(
+    await confirm(
       $tt('gallery.confirmDelete'),
       $tt('gallery.confirmDeleteTitle'),
       { type: 'warning' }
     );
 
     await api.gallery.deleteImage(item.path);
-    ElMessage.success($tt('gallery.deleted'));
+    toast.success($tt('gallery.deleted'));
 
     const idx = items.value.findIndex((it) => it.path === item.path);
     if (idx >= 0) {
@@ -929,7 +943,7 @@ const deleteImage = async (item: GalleryItem) => {
 
 const useForImg2Img = (item: GalleryItem) => {
   localStorage.setItem(DQ_STORAGE.IMG2IMG_REF, item.path);
-  ElMessage.success($tt('gallery.img2imgSet'));
+  toast.success($tt('gallery.img2imgSet'));
 };
 
 const downloadImage = (item: GalleryItem) => {
@@ -940,7 +954,7 @@ const downloadImage = (item: GalleryItem) => {
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
-  ElMessage.success($tt('gallery.startDownload'));
+  toast.success($tt('gallery.startDownload'));
 };
 
 const handleCommand = (command: string, item: GalleryItem) => {
@@ -1020,7 +1034,7 @@ const copyText = async (text: string | undefined) => {
   if (!text) return;
   try {
     await navigator.clipboard.writeText(text);
-    ElMessage.success($tt('gallery.copied'));
+    toast.success($tt('gallery.copied'));
   } catch (e) {
     const ta = document.createElement('textarea');
     ta.value = text;
@@ -1028,7 +1042,7 @@ const copyText = async (text: string | undefined) => {
     ta.select();
     document.execCommand('copy');
     document.body.removeChild(ta);
-    ElMessage.success($tt('gallery.copied'));
+    toast.success($tt('gallery.copied'));
   }
 };
 

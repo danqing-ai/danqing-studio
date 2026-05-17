@@ -19,8 +19,16 @@ jobs:
   build-desktop:
     runs-on: macos-latest
     steps:
-      - name: Checkout
+      - name: Checkout Studio
         uses: actions/checkout@v4
+        with:
+          path: danqing-studio
+
+      - name: Checkout dq-ui
+        uses: actions/checkout@v4
+        with:
+          repository: danqing-ai/dq-ui
+          path: dq-ui
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -37,6 +45,7 @@ jobs:
           rustup target add aarch64-apple-darwin
 
       - name: Create venv & install dependencies
+        working-directory: danqing-studio
         run: |
           python3 -m venv .venv
           source .venv/bin/activate
@@ -46,18 +55,22 @@ jobs:
 
       - name: Set desktop version from tag
         if: startsWith(github.ref, 'refs/tags/')
+        working-directory: danqing-studio
         run: python3 scripts/set_desktop_version.py "${GITHUB_REF_NAME#v}"
 
       - name: Set desktop version (manual dispatch)
         if: github.event_name == 'workflow_dispatch' && inputs.version != ''
+        working-directory: danqing-studio
         run: python3 scripts/set_desktop_version.py "${{ inputs.version }}"
 
       - name: Build desktop bundle
+        working-directory: danqing-studio
         run: |
           source .venv/bin/activate
           make desktop-bundle
 
       - name: Verify DMG was produced
+        working-directory: danqing-studio
         run: |
           ls -la out/desktop/bundle/
           ls -la out/desktop/bundle/dmg/
@@ -68,13 +81,13 @@ jobs:
         with:
           name: danqing-desktop-macos
           path: |
-            out/desktop/bundle/dmg/*.dmg
-            out/desktop/bundle/macos/*.app
+            danqing-studio/out/desktop/bundle/dmg/*.dmg
+            danqing-studio/out/desktop/bundle/macos/*.app
           if-no-files-found: error
 
       - name: Attach DMG to GitHub Release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: out/desktop/bundle/dmg/*.dmg
+          files: danqing-studio/out/desktop/bundle/dmg/*.dmg
           fail_on_unmatched_files: true

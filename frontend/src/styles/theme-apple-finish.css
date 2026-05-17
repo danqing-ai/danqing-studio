@@ -1,9 +1,9 @@
 /*
- * Apple 深色收尾层 — 在 theme-apple-dark.css 之后加载，压掉残留「后台」交互与 EP 默认。
+ * Apple 深色收尾层 — 在 theme-apple-dark.css 之后加载，压掉残留「后台」交互与 默认。
  */
 
 /* —— 禁止卡片悬停上浮（创作 / 模型 / 图库 / 旧 .card） —— */
-html.dark .studio-ep-surface-card.el-card:hover,
+html.dark .studio-surface-card.dq-surface-card:hover,
 html.dark .card:hover,
 html.dark .model-card:hover,
 html.dark .gallery-card:hover,
@@ -11,258 +11,175 @@ html.dark .civitai-card:hover,
 html.dark .image-preview:hover,
 html.dark .recent-actions .rewrite-btn:hover,
 html.dark .recent-actions .upscale-btn:hover {
-    transform: none !important;
-}
-
-/* —— 媒体预览弹窗（大图 / 视频） —— */
-html.dark .dq-media-dialog.el-dialog {
-    --el-dialog-bg-color: #1c1c1e;
-    border-radius: 16px;
-    overflow: hidden;
-    max-width: min(920px, 94vw);
-}
-
-html.dark .dq-media-dialog .el-dialog__body {
-    padding: 12px 16px 20px;
-    text-align: center;
-}
-
-html.dark .dq-media-dialog .el-dialog__body img,
-html.dark .dq-media-dialog .el-dialog__body video {
-    max-width: 100%;
-    max-height: min(72vh, 720px);
-    border-radius: 12px;
-    object-fit: contain;
+ transform: none !important;
 }
 
 /* —— 下拉 / 弹出层 —— */
-html.dark .el-popper.is-light,
-html.dark .el-popper.is-pure,
-html.dark .el-select__popper.el-popper,
-html.dark .el-dropdown__popper.el-popper {
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 12px;
-    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
-    background: #2c2c2e;
+
+html.dark .dq-select__option[data-highlighted],
+html.dark .dq-dropdown-item[data-highlighted]:not([data-disabled]) {
+ background: rgba(255, 255, 255, 0.08);
 }
 
-html.dark .el-select-dropdown__item.is-hovering,
-html.dark .el-dropdown-menu__item:not(.is-disabled):hover {
-    background: rgba(255, 255, 255, 0.08);
-}
-
-html.dark .el-dropdown-menu__item {
-    border-radius: 8px;
-    margin: 2px 6px;
-    padding: 8px 12px;
-}
-
-/* —— 通知 / 消息 —— */
-html.dark .el-notification {
-    border-radius: 14px;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    background: rgba(44, 44, 46, 0.95);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
-}
-
-html.dark .el-notification__title {
-    font-weight: 600;
-    letter-spacing: -0.02em;
+html.dark .dq-dropdown-item {
+ border-radius: 8px;
+ margin: 2px 6px;
+ padding: 8px 12px;
 }
 
 /* —— 图库高级筛选抽屉 —— */
-html.dark .gallery-filter-drawer.el-drawer {
-    --el-drawer-bg-color: #1c1c1e;
+html.dark .gallery-filter-drawer.dq-drawer-panel {
+ background: #1c1c1e;
 }
 
-html.dark .gallery-filter-drawer .el-drawer__footer {
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
-    padding: 12px 16px 16px;
+html.dark .gallery-filter-drawer .dq-drawer-footer {
+ border-top: 1px solid rgba(255, 255, 255, 0.08);
+ padding: 12px 16px 16px;
 }
 
 html.dark .gallery-filter-drawer .gallery-drawer-footer {
-    display: flex;
-    gap: 10px;
-    justify-content: flex-end;
-}
-
-html.dark .gallery-filter-drawer .gallery-drawer-footer .el-button {
-    min-height: 36px;
-    border-radius: 10px;
-    font-weight: 500;
+ display: flex;
+ gap: 10px;
+ justify-content: flex-end;
+ width: 100%;
 }
 
 html.dark .gallery-drawer-section-title {
-    font-size: 11px;
-    font-weight: 600;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    color: var(--el-text-color-secondary);
-    margin-bottom: 8px;
+ font-size: 11px;
+ font-weight: 600;
+ letter-spacing: 0.04em;
+ text-transform: uppercase;
+ color: var(--dq-label-tertiary);
+ margin-bottom: 8px;
 }
 
 html.dark .gallery-drawer-stack {
-    display: flex;
-    flex-direction: column;
-    gap: 20px;
+ display: flex;
+ flex-direction: column;
+ gap: 20px;
 }
 
 /* —— 资产库弹窗网格 —— */
 html.dark .asset-picker__library-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
-    gap: 8px;
+ display: grid;
+ grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
+ gap: 8px;
 }
 
 html.dark .asset-picker__library-cell {
-    aspect-ratio: 1;
-    padding: 0;
-    border-radius: 12px;
-    overflow: hidden;
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    background: rgba(0, 0, 0, 0.25);
-    cursor: pointer;
-    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+ aspect-ratio: 1;
+ padding: 0;
+ border-radius: 12px;
+ overflow: hidden;
+ border: 1px solid rgba(255, 255, 255, 0.1);
+ background: rgba(0, 0, 0, 0.25);
+ cursor: pointer;
+ transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 html.dark .asset-picker__library-cell:hover {
-    border-color: rgba(10, 132, 255, 0.45);
-    box-shadow: 0 0 0 2px rgba(10, 132, 255, 0.2);
+ border-color: rgba(10, 132, 255, 0.45);
+ box-shadow: 0 0 0 2px rgba(10, 132, 255, 0.2);
 }
 
 html.dark .asset-picker__library-img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    display: block;
+ width: 100%;
+ height: 100%;
+ object-fit: cover;
+ display: block;
 }
 
 html.dark .asset-picker__library-badge {
-    position: absolute;
-    right: 4px;
-    bottom: 4px;
-    font-size: 9px;
-    padding: 2px 5px;
-    border-radius: 4px;
-    background: rgba(0, 0, 0, 0.65);
-    color: #fff;
+ position: absolute;
+ right: 4px;
+ bottom: 4px;
+ font-size: 9px;
+ padding: 2px 5px;
+ border-radius: 4px;
+ background: rgba(0, 0, 0, 0.65);
+ color: #fff;
 }
 
 html.dark .asset-picker__library-cell {
-    position: relative;
+ position: relative;
 }
 
 /* —— 设置：版本行可点 —— */
-html.dark .settings-ep-version-item {
-    cursor: pointer;
-    user-select: none;
+html.dark .settings-version-item {
+ cursor: pointer;
+ user-select: none;
 }
 
-html.dark .settings-ep-version-item:focus-visible {
-    outline: 2px solid rgba(10, 132, 255, 0.55);
-    outline-offset: 2px;
+html.dark .settings-version-item:focus-visible {
+ outline: 2px solid rgba(10, 132, 255, 0.55);
+ outline-offset: 2px;
 }
 
 /* —— 模型页导入弹窗表单 —— */
-html.dark .models-import-dialog .el-form-item__label {
-    font-weight: 500;
-    color: var(--el-text-color-secondary);
-}
 
 /* —— 模型卡片操作区：小屏换行 —— */
-html.dark .model-version-row__actions .el-button {
-    border-radius: 9px;
+html.dark .model-version-row__actions .dq-btn {
+ border-radius: 9px;
 }
 
 @media (max-width: 640px) {
-    html.dark .model-version-row {
-        flex-direction: column;
-        align-items: stretch;
-    }
+ html.dark .model-version-row {
+ flex-direction: column;
+ align-items: stretch;
+ }
 
-    html.dark .model-version-row__actions {
-        justify-content: flex-start;
-    }
+ html.dark .model-version-row__actions {
+ justify-content: flex-start;
+ }
 }
 
-/* —— 创作页：生成区底栏 —— */
-html.dark .create-page .studio-ep-surface-card .el-card__header .card-title {
-    font-size: 15px;
-}
-
-html.dark .create-page .el-textarea__inner {
-    border-radius: 12px;
-    min-height: 120px;
-    line-height: 1.5;
-}
-
-html.dark .create-page .studio-ep-primary-cta.el-button--primary {
-    width: 100%;
-    max-width: none;
+html.dark .create-page .studio-primary-cta.dq-btn--primary {
+ width: 100%;
+ max-width: none;
 }
 
 /* —— 图库 lightbox —— */
 html.dark .gallery-lightbox {
-    background: rgba(0, 0, 0, 0.88);
-    backdrop-filter: blur(8px);
-    -webkit-backdrop-filter: blur(8px);
+ background: rgba(0, 0, 0, 0.88);
+ backdrop-filter: blur(8px);
+ -webkit-backdrop-filter: blur(8px);
 }
 
-html.dark .lightbox-close.el-button {
-    background: rgba(255, 255, 255, 0.12);
-    border: none;
+html.dark .lightbox-close.dq-btn {
+ background: rgba(255, 255, 255, 0.12);
+ border: none;
 }
 
 html.dark .lightbox-nav {
-    background: rgba(255, 255, 255, 0.12);
-    border: 1px solid rgba(255, 255, 255, 0.1);
+ background: rgba(255, 255, 255, 0.12);
+ border: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 /* —— 任务队列抽屉 —— */
-html.dark .dq-task-queue-drawer.el-drawer {
-    --el-drawer-bg-color: #1c1c1e;
+html.dark .dq-task-queue-drawer.dq-drawer,
+html.dark .dq-task-queue-drawer.dq-drawer-panel {
+ background: #1c1c1e;
 }
 
 html.dark .dq-task-queue-drawer .queue-dialog-item {
-    transition: background 0.15s ease;
+ transition: background 0.15s ease;
 }
 
 /* —— 系统：路径输入等宽提示 —— */
-html.dark .settings-ep-grouped-form--system .el-input__wrapper {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    font-size: 12px;
-}
-
-html.dark .settings-ep-grouped-form--system .el-form-item:has(.el-select) .el-input__wrapper,
-html.dark .settings-ep-grouped-form--system .el-form-item:has(.el-slider) .el-input__wrapper {
-    font-family: var(--el-font-family);
-    font-size: 14px;
-}
 
 /* —— 滚动条全站 —— */
 html.dark ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+ width: 8px;
+ height: 8px;
 }
 
 html.dark ::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.14);
-    border-radius: 8px;
+ background: rgba(255, 255, 255, 0.14);
+ border-radius: 8px;
 }
 
 html.dark ::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.22);
-}
-
-/* —— Popconfirm / Tooltip —— */
-html.dark .el-popconfirm {
-    border-radius: 12px;
-}
-
-html.dark .el-tooltip__popper {
-    border-radius: 8px;
+ background: rgba(255, 255, 255, 0.22);
 }
 
 /* =============================================================================
@@ -271,181 +188,207 @@ html.dark .el-tooltip__popper {
 
 html.dark .main-container,
 html.dark .app-main {
-    width: 100%;
-    max-width: none;
-    box-sizing: border-box;
+ width: 100%;
+ max-width: none;
+ box-sizing: border-box;
 }
 
 html.dark .create-page,
 html.dark .gallery-page,
 html.dark .models-page,
 html.dark .settings-page {
-    width: 100%;
-    max-width: none;
-    margin: 0;
+ width: 100%;
+ max-width: none;
+ margin: 0;
 }
 
 html.dark .models-page {
-    height: calc(100vh - 100px);
-    min-height: 480px;
+ height: calc(100vh - 100px);
+ min-height: 480px;
 }
 
 html.dark .models-page__main {
-    flex: 1;
-    min-width: 0;
+ flex: 1;
+ min-width: 0;
 }
 
 /* 超宽屏：模型卡片自适应列数 */
 .model-grid--fluid {
-    width: 100%;
+ width: 100%;
 }
 
 @media (min-width: 1920px) {
-    .model-grid--fluid > .models-page__col-mb.el-col {
-        flex: 0 0 20%;
-        max-width: 20%;
-    }
+ .model-grid--fluid > .models-page__col-mb.dq-col {
+ flex: 0 0 20%;
+ max-width: 20%;
+ }
 }
 
 @media (min-width: 2560px) {
-    .model-grid--fluid > .models-page__col-mb.el-col {
-        flex: 0 0 16.666%;
-        max-width: 16.666%;
-    }
+ .model-grid--fluid > .models-page__col-mb.dq-col {
+ flex: 0 0 16.666%;
+ max-width: 16.666%;
+ }
 }
 
-/* 模型版本操作：弱化「量化」等主按钮突兀感 */
-html.dark .model-version-row__actions .el-space {
-    gap: 6px !important;
+html.dark .model-ver-btn.dq-btn,
+html.dark .model-ver-btn.dq-btn {
+ height: 30px;
+ padding: 0 10px;
+ font-size: 12px;
+ font-weight: 500;
+ border-radius: 8px;
+ display: inline-flex;
+ align-items: center;
+ justify-content: center;
+ gap: 0;
 }
 
-html.dark .model-ver-btn.el-button {
-    height: 30px;
-    padding: 0 10px;
-    font-size: 12px;
-    font-weight: 500;
-    border-radius: 8px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0;
+html.dark .model-ver-btn.dq-btn > span,
+html.dark .model-ver-btn.dq-btn {
+ display: inline-flex;
+ align-items: center;
+ gap: 5px;
+ line-height: 1;
 }
 
-html.dark .model-ver-btn.el-button > span {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    line-height: 1;
-}
-
-html.dark .model-ver-btn__icon.el-icon {
-    font-size: 14px;
-    margin: 0;
+html.dark .model-ver-btn__icon.dq-icon {
+ font-size: 14px;
+ margin: 0;
 }
 
 html.dark .model-ver-btn__label {
-    line-height: 1.2;
-    white-space: nowrap;
+ line-height: 1.2;
+ white-space: nowrap;
 }
 
-html.dark .model-ver-btn--download.el-button.is-plain {
-    --el-button-bg-color: rgba(255, 255, 255, 0.06);
-    --el-button-border-color: rgba(255, 255, 255, 0.12);
-    --el-button-text-color: var(--el-text-color-primary);
-    --el-button-hover-bg-color: rgba(255, 255, 255, 0.1);
-    --el-button-hover-border-color: rgba(255, 255, 255, 0.18);
+html.dark .model-ver-btn--download.dq-btn .dq-icon {
+ color: var(--dq-accent);
 }
 
-html.dark .model-ver-btn--download.el-button.is-plain .el-icon {
-    color: var(--el-color-primary);
+html.dark .model-ver-btn--force.dq-btn .model-ver-btn__icon {
+ color: #ffb340;
 }
 
-html.dark .model-ver-btn--quantize.el-button.is-plain {
-    --el-button-bg-color: rgba(255, 159, 10, 0.1);
-    --el-button-border-color: rgba(255, 159, 10, 0.22);
-    --el-button-text-color: #ffb340;
-    --el-button-hover-bg-color: rgba(255, 159, 10, 0.16);
-    --el-button-hover-border-color: rgba(255, 159, 10, 0.35);
+html.dark .model-ver-btn--delete.dq-btn .model-ver-btn__icon {
+ color: #ff6b63;
 }
 
-html.dark .model-ver-btn--force.el-button.is-plain {
-    --el-button-bg-color: rgba(255, 159, 10, 0.08);
-    --el-button-border-color: rgba(255, 159, 10, 0.22);
-    --el-button-text-color: #ffb340;
-    --el-button-hover-bg-color: rgba(255, 159, 10, 0.14);
-    --el-button-hover-border-color: rgba(255, 159, 10, 0.35);
+html.dark .model-ver-btn--quantize.dq-btn .model-ver-btn__icon {
+ color: #ffb340;
 }
 
-html.dark .model-ver-btn--force.el-button.is-plain .model-ver-btn__icon {
-    color: #ffb340;
+html.dark .model-ver-btn--download.dq-btn {
+ background: rgba(255, 255, 255, 0.06);
+ border: 1px solid rgba(255, 255, 255, 0.12);
+ color: var(--dq-label-primary);
 }
 
-html.dark .model-ver-btn--delete.el-button.is-plain {
-    --el-button-bg-color: rgba(255, 69, 58, 0.08);
-    --el-button-border-color: rgba(255, 69, 58, 0.22);
-    --el-button-text-color: #ff6b63;
-    --el-button-hover-bg-color: rgba(255, 69, 58, 0.14);
-    --el-button-hover-border-color: rgba(255, 69, 58, 0.35);
+html.dark .model-ver-btn--download.dq-btn:hover:not(:disabled) {
+ background: rgba(255, 255, 255, 0.1);
+ border-color: rgba(255, 255, 255, 0.18);
 }
 
-html.dark .model-ver-btn--delete.el-button.is-plain .model-ver-btn__icon {
-    color: #ff6b63;
+html.dark .model-ver-btn--download.dq-btn .model-ver-btn__icon {
+ color: var(--dq-accent);
 }
 
-html.dark .model-ver-btn--neutral.el-button.is-plain {
-    --el-button-bg-color: rgba(255, 255, 255, 0.06);
-    --el-button-border-color: rgba(255, 255, 255, 0.12);
-    --el-button-text-color: var(--el-text-color-regular);
-    --el-button-hover-bg-color: rgba(255, 255, 255, 0.1);
-    --el-button-hover-border-color: rgba(255, 255, 255, 0.18);
+html.dark .model-ver-btn--quantize.dq-btn {
+ background: rgba(255, 159, 10, 0.1);
+ border: 1px solid rgba(255, 159, 10, 0.22);
+ color: #ffb340;
 }
 
-html.dark .model-ver-btn--quantize.el-button.is-plain .model-ver-btn__icon {
-    color: #ffb340;
+html.dark .model-ver-btn--quantize.dq-btn:hover:not(:disabled) {
+ background: rgba(255, 159, 10, 0.16);
+ border-color: rgba(255, 159, 10, 0.35);
+}
+
+html.dark .model-ver-btn--quantize.dq-btn .model-ver-btn__icon {
+ color: #ffb340;
+}
+
+html.dark .model-ver-btn--force.dq-btn {
+ background: rgba(255, 159, 10, 0.08);
+ border: 1px solid rgba(255, 159, 10, 0.22);
+ color: #ffb340;
+}
+
+html.dark .model-ver-btn--force.dq-btn:hover:not(:disabled) {
+ background: rgba(255, 159, 10, 0.14);
+ border-color: rgba(255, 159, 10, 0.35);
+}
+
+html.dark .model-ver-btn--force.dq-btn .model-ver-btn__icon {
+ color: #ffb340;
+}
+
+html.dark .model-ver-btn--delete.dq-btn {
+ background: rgba(255, 69, 58, 0.08);
+ border: 1px solid rgba(255, 69, 58, 0.22);
+ color: #ff6b63;
+}
+
+html.dark .model-ver-btn--delete.dq-btn:hover:not(:disabled) {
+ background: rgba(255, 69, 58, 0.14);
+ border-color: rgba(255, 69, 58, 0.35);
+}
+
+html.dark .model-ver-btn--delete.dq-btn .model-ver-btn__icon {
+ color: #ff6b63;
+}
+
+html.dark .model-ver-btn--neutral.dq-btn {
+ background: rgba(255, 255, 255, 0.06);
+ border: 1px solid rgba(255, 255, 255, 0.12);
+ color: var(--dq-label-secondary);
+}
+
+html.dark .model-ver-btn--neutral.dq-btn:hover:not(:disabled) {
+ background: rgba(255, 255, 255, 0.1);
+ border-color: rgba(255, 255, 255, 0.18);
 }
 
 /* 模型页顶栏：与卡片内操作按钮同一套 icon + 文字 */
-html.dark .models-toolbar-btn.el-button {
-    height: 34px;
-    padding: 0 12px;
-    font-size: 13px;
-    font-weight: 500;
-    border-radius: 9px;
-    display: inline-flex;
-    align-items: center;
+html.dark .models-toolbar-btn.dq-btn,
+html.dark .models-toolbar-btn.dq-btn {
+ height: 34px;
+ padding: 0 12px;
+ font-size: 13px;
+ font-weight: 500;
+ border-radius: 9px;
+ display: inline-flex;
+ align-items: center;
 }
 
-html.dark .models-toolbar-btn.el-button > span {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
+html.dark .models-toolbar-btn.dq-btn > span {
+ display: inline-flex;
+ align-items: center;
+ gap: 6px;
 }
 
-html.dark .models-toolbar-btn__icon.el-icon {
-    font-size: 15px;
-    margin: 0;
+html.dark .models-toolbar-btn__icon.dq-icon {
+ font-size: 15px;
+ margin: 0;
 }
 
-html.dark .models-page__import-btn.el-button.is-plain,
-html.dark .models-page__refresh-btn.el-button.is-plain {
-    --el-button-bg-color: rgba(255, 255, 255, 0.06);
-    --el-button-border-color: rgba(255, 255, 255, 0.12);
-    --el-button-text-color: var(--el-text-color-primary);
-    --el-button-hover-bg-color: rgba(255, 255, 255, 0.1);
-    --el-button-hover-border-color: rgba(255, 255, 255, 0.18);
+html.dark .models-page__import-btn.dq-btn,
+html.dark .models-page__refresh-btn.dq-btn {
+ background: rgba(255, 255, 255, 0.06);
+ border: 1px solid rgba(255, 255, 255, 0.12);
+ color: var(--dq-label-primary);
 }
 
-html.dark .models-toolbar-btn--primary.el-button {
-    --el-button-bg-color: color-mix(in srgb, var(--el-color-primary) 88%, #000);
-    --el-button-border-color: transparent;
-    --el-button-text-color: #fff;
+html.dark .models-page__import-btn.dq-btn:hover:not(:disabled),
+html.dark .models-page__refresh-btn.dq-btn:hover:not(:disabled) {
+ background: rgba(255, 255, 255, 0.1);
+ border-color: rgba(255, 255, 255, 0.18);
 }
 
-/* 预量化标签勿用系统蓝 */
-html.dark .model-version-cell-row .el-tag.el-tag--primary {
-    --el-tag-bg-color: rgba(255, 255, 255, 0.1);
-    --el-tag-border-color: transparent;
-    --el-tag-text-color: var(--el-text-color-secondary);
+html.dark .models-toolbar-btn--primary.dq-btn {
+ background: color-mix(in srgb, var(--dq-accent) 88%, #000);
+ border-color: transparent;
+ color: #fff;
 }
 
 /* =============================================================================
@@ -453,132 +396,71 @@ html.dark .model-version-cell-row .el-tag.el-tag--primary {
  * ============================================================================= */
 
 /* 仅主 CTA（生成）保留实心系统蓝 */
-html.dark .el-button--primary:not(.studio-ep-primary-cta):not(.studio-ep-primary-cta--simple) {
-    --el-button-bg-color: rgba(255, 255, 255, 0.1);
-    --el-button-border-color: rgba(255, 255, 255, 0.14);
-    --el-button-text-color: var(--el-text-color-primary);
-    --el-button-hover-bg-color: rgba(255, 255, 255, 0.14);
-    --el-button-hover-border-color: rgba(255, 255, 255, 0.2);
-    --el-button-active-bg-color: rgba(255, 255, 255, 0.08);
-    font-weight: 500;
-    box-shadow: none;
+html.dark .dq-btn--primary:not(.studio-primary-cta):not(.studio-primary-cta--simple) {
+ font-weight: 500;
+ box-shadow: none;
 }
 
-html.dark .el-button--primary.is-plain:not(.studio-ep-primary-cta) {
-    --el-button-bg-color: rgba(255, 255, 255, 0.06);
-    --el-button-border-color: rgba(255, 255, 255, 0.12);
-    --el-button-text-color: var(--el-text-color-primary);
-    --el-button-hover-bg-color: rgba(255, 255, 255, 0.1);
-}
-
-html.dark .el-button--primary.is-plain:not(.studio-ep-primary-cta) .el-icon {
-    color: var(--el-color-primary);
+html.dark .dq-btn--primary.dq-btn--plain:not(.studio-primary-cta) .dq-icon {
+ color: var(--dq-accent);
 }
 
 /* 弹窗/设置内保存仍用系统蓝 */
-html.dark .el-dialog__footer .el-button--primary,
-html.dark .settings-ep-tab-panel .save-button.el-button--primary {
-    --el-button-bg-color: #0a84ff;
-    --el-button-border-color: transparent;
-    --el-button-text-color: #fff;
-    --el-button-hover-bg-color: #409cff;
-    font-weight: 600;
+html.dark .settings-tab-panel .save-button.dq-btn--primary {
+ font-weight: 600;
 }
 
-html.dark .studio-ep-alert-inline-btn.el-button--primary {
-    --el-button-bg-color: rgba(255, 255, 255, 0.1);
-    --el-button-border-color: rgba(255, 255, 255, 0.14);
-    --el-button-text-color: var(--el-text-color-primary);
-    font-weight: 500;
+html.dark .studio-alert-inline-btn.dq-btn--primary {
+ font-weight: 500;
 }
 
-/* 资产选择器：上传/资产库 — 灰底 + 图标点缀 */
-html.dark .asset-picker__actions .el-button--primary {
-    --el-button-bg-color: rgba(255, 255, 255, 0.1);
-    --el-button-border-color: rgba(255, 255, 255, 0.12);
-    --el-button-text-color: var(--el-text-color-primary);
-}
-
-html.dark .asset-picker__actions .el-button--default {
-    --el-button-bg-color: rgba(255, 255, 255, 0.06);
-    --el-button-border-color: rgba(255, 255, 255, 0.1);
-}
-
-html.dark .asset-picker__actions .el-button .el-icon {
-    color: var(--el-color-primary);
+html.dark .asset-picker__actions .dq-btn .dq-icon {
+ color: var(--dq-accent);
 }
 
 /* 图库 · 音频占位：中性灰阶，去掉电蓝渐变 */
 html.dark .gallery-audio-tile,
 html.dark .gallery-audio-thumb-sm,
 html.dark .dq-audio-recent-cover {
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    color: var(--el-text-color-secondary);
+ background: rgba(255, 255, 255, 0.05);
+ border: 1px solid rgba(255, 255, 255, 0.08);
+ color: var(--dq-label-tertiary);
 }
 
 html.dark .gallery-audio-tile-icon,
 html.dark .gallery-card-type-icon.is-audio {
-    color: rgba(255, 255, 255, 0.45);
-    opacity: 1;
+ color: rgba(255, 255, 255, 0.45);
+ opacity: 1;
 }
 
 html.dark .gallery-audio-tile-label {
-    color: var(--el-text-color-secondary);
-    text-transform: none;
-    letter-spacing: -0.01em;
-    font-weight: 500;
+ color: var(--dq-label-tertiary);
+ text-transform: none;
+ letter-spacing: -0.01em;
+ font-weight: 500;
 }
 
 /* 最近生成 · 编辑/放大：灰胶囊 + 蓝图标 */
 html.dark .recent-actions .rewrite-btn,
 html.dark .recent-actions .upscale-btn {
-    background: rgba(255, 255, 255, 0.07);
-    border-color: rgba(255, 255, 255, 0.1);
-    color: var(--el-text-color-primary);
+ background: rgba(255, 255, 255, 0.07);
+ border-color: rgba(255, 255, 255, 0.1);
+ color: var(--dq-label-primary);
 }
 
 html.dark .recent-actions .rewrite-btn:hover,
 html.dark .recent-actions .upscale-btn:hover {
-    background: rgba(255, 255, 255, 0.11);
-    border-color: rgba(255, 255, 255, 0.16);
-    transform: none;
+ background: rgba(255, 255, 255, 0.11);
+ border-color: rgba(255, 255, 255, 0.16);
+ transform: none;
 }
 
-html.dark .recent-actions .rewrite-btn .el-icon,
-html.dark .recent-actions .upscale-btn .el-icon {
-    color: var(--el-color-primary);
-}
-
-/* 全局 primary 标签 → 中性胶囊 */
-html.dark .el-tag.el-tag--primary:not(.el-tag--dark) {
-    --el-tag-bg-color: rgba(255, 255, 255, 0.1);
-    --el-tag-border-color: transparent;
-    --el-tag-text-color: var(--el-text-color-secondary);
-}
-
-/* 图库筛选 · 批量条：primary 用 tint */
-html.dark .gallery-page__toolbar .el-button--primary.is-plain,
-html.dark .gallery-batch-bar .el-button--primary {
-    --el-button-bg-color: rgba(255, 255, 255, 0.1);
-    --el-button-border-color: rgba(255, 255, 255, 0.14);
-    --el-button-text-color: var(--el-text-color-primary);
-}
-
-html.dark .gallery-batch-bar .el-button--primary {
-    --el-button-bg-color: #0a84ff;
-    --el-button-text-color: #fff;
-}
-
-/* 模型页顶栏搜索仍用 tint primary */
-html.dark .models-toolbar-btn--primary.el-button {
-    --el-button-bg-color: rgba(10, 132, 255, 0.2);
-    --el-button-border-color: rgba(10, 132, 255, 0.35);
-    --el-button-text-color: #7db8ff;
-    --el-button-hover-bg-color: rgba(10, 132, 255, 0.28);
+html.dark .recent-actions .rewrite-btn .dq-icon,
+html.dark .recent-actions .upscale-btn .dq-icon {
+ color: var(--dq-accent);
 }
 
 /* 顶栏品牌图标：略降饱和 */
 html.dark .dq-top-nav-brand-icon {
-    color: rgba(255, 255, 255, 0.88);
+ color: rgba(255, 255, 255, 0.88);
 }

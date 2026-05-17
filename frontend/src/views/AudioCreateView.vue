@@ -1,13 +1,13 @@
 <!-- @ts-nocheck -->
 <template>
   <div class="create-page">
-    <el-row :gutter="24">
+    <DqRow :gutter="24">
       <!-- Left panel: creation area -->
-      <el-col :xs="24" :md="16" :lg="17" :xl="18">
+      <DqCol :xs="24" :md="16" :lg="17" :xl="18">
         <div class="creation-panel">
 
           <!-- Tab bar -->
-          <el-segmented
+          <DqSegmented
             class="dq-work-segmented dq-work-segmented--sm"
             v-model="audioWorkTab"
             :options="audioWorkSegmentOptions"
@@ -15,68 +15,67 @@
           />
 
           <!-- Model selector -->
-          <el-card shadow="never" class="studio-ep-surface-card studio-ep-card-mb studio-ep-model-card">
+          <DqSurfaceCard class="studio-surface-card studio-card-mb studio-model-card">
             <template #header>
               <div class="card-title">
-                <el-icon><cpu /></el-icon>
+                <DqIcon><cpu /></DqIcon>
                 {{ $t('create.modelSelectTitle') }}
               </div>
             </template>
-            <div class="studio-ep-model-toolbar">
-              <el-select
+            <div class="studio-model-toolbar">
+              <DqSelect
                 v-model="selectedModelVersion"
-                size="large"
                 filterable
                 @change="onModelChange"
                 :placeholder="$t('studio.selectModel')"
               >
-                <el-option
+                <DqOption
                   v-for="mv in filteredModelPickerVersions"
                   :key="mv.key"
                   :label="mv.label"
                   :value="mv.key"
                   :disabled="!mv.ready"
                 >
-                  <div class="studio-ep-picker-option">
-                    <span class="studio-ep-picker-option__name" :class="{ 'is-disabled': !mv.ready }">{{ mv.label }}</span>
+                  <div class="studio-picker-option">
+                    <span class="studio-picker-option__name" :class="{ 'is-disabled': !mv.ready }">{{ mv.label }}</span>
                     <ModelLicenseBadges
                       :recommended="mv.isRec"
                       :commercial-use-allowed="mv.commercialUseAllowed"
                       effect="plain"
                     />
-                    <el-tag v-if="mv.ready" size="small" type="success">{{ $t('studio.ready') }}</el-tag>
-                    <el-tag v-else size="small" type="warning">{{ $t('studio.notDownloaded') }}</el-tag>
-                    <span v-if="mv.size" class="studio-ep-picker-option__meta">{{ mv.size }}</span>
+                    <DqTag v-if="mv.ready" size="small" type="success">{{ $t('studio.ready') }}</DqTag>
+                    <DqTag v-else size="small" type="warning">{{ $t('studio.notDownloaded') }}</DqTag>
+                    <span v-if="mv.size" class="studio-picker-option__meta">{{ mv.size }}</span>
                   </div>
-                </el-option>
-              </el-select>
+                </DqOption>
+              </DqSelect>
             </div>
-            <el-alert
+            <DqAlert
               v-if="selectedModelNotReady"
               :title="$t('studio.modelNotReady', { name: currentModelDisplayName })"
               type="warning"
               :closable="false"
-              class="studio-ep-alert-mt"
+              class="studio-alert-mt"
             >
               <template #default>
                 <span>{{ $t('studio.notDownloadedMsg') }}</span>
-                <el-button size="small" type="primary" class="studio-ep-alert-inline-btn" @click="goToDownload">
+                <DqButton type="primary" size="sm" class="studio-alert-inline-btn" @click="goToDownload">
                   {{ $t('studio.goDownload') }}
-                </el-button>
+                </DqButton>
               </template>
-            </el-alert>
-          </el-card>
+            </DqAlert>
+          </DqSurfaceCard>
           <template v-if="audioWorkTab === 'create'">
 
             <!-- Prompt input -->
-            <el-card shadow="never" class="studio-ep-surface-card studio-ep-card-mb">
+            <DqSurfaceCard class="studio-surface-card studio-card-mb">
               <template #header>
                 <div class="card-title">
-                  <el-icon><edit-pen /></el-icon>
+                  <DqIcon><edit-pen /></DqIcon>
                   {{ $t('studio.prompt') }}
                 </div>
               </template>
-              <el-input
+              <DqInput
                 v-model="params.prompt"
                 type="textarea"
                 :rows="4"
@@ -85,219 +84,150 @@
                 @keydown.meta.enter.prevent="startGeneration"
                 @keydown.ctrl.enter.prevent="startGeneration"
               />
-              <el-collapse v-if="supportsNegativePrompt" class="studio-ep-collapse-plain">
-                <el-collapse-item :title="$t('audio.negativePrompt')" name="negative">
-                  <el-input
+              <DqCollapse v-if="supportsNegativePrompt" class="studio-collapse-plain">
+                <DqCollapseItem :title="$t('audio.negativePrompt')" name="negative">
+                  <DqInput
                     v-model="params.negative_prompt"
                     type="textarea"
                     :rows="2"
                     :placeholder="$t('studio.optional')"
                   />
-                </el-collapse-item>
-              </el-collapse>
-            </el-card>
+                </DqCollapseItem>
+              </DqCollapse>
+            </DqSurfaceCard>
 
             <!-- Lyrics -->
-            <el-card shadow="never" class="studio-ep-surface-card studio-ep-card-mb studio-ep-audio-lyrics-card">
+            <DqSurfaceCard class="studio-surface-card studio-card-mb studio-audio-lyrics-card">
               <template #header>
                 <div class="card-title">
-                  <el-icon><document /></el-icon>
+                  <DqIcon><document /></DqIcon>
                   {{ $t('audio.lyrics') }}
                 </div>
               </template>
-              <el-input
+              <DqInput
                 v-model="params.lyrics"
                 type="textarea"
                 :rows="4"
                 :placeholder="$t('audio.lyricsPlaceholder')"
                 resize="none"
               />
-              <p class="studio-ep-field-footnote">{{ $t('studio.optional') }}</p>
-              <div class="studio-ep-audio-meta-row">
-                <div class="studio-ep-audio-meta-item studio-ep-audio-meta-item--switch">
-                  <span class="studio-ep-audio-meta-label">{{ $t('audio.instrumental') }}</span>
-                  <el-switch v-model="params.instrumental" size="small" />
+              <p class="studio-field-footnote">{{ $t('studio.optional') }}</p>
+              <div class="studio-audio-meta-row">
+                <div class="studio-audio-meta-item studio-audio-meta-item--switch">
+                  <span class="studio-audio-meta-label">{{ $t('audio.instrumental') }}</span>
+                  <DqSwitch v-model="params.instrumental" size="small" />
                 </div>
-                <div class="studio-ep-audio-meta-item studio-ep-audio-meta-item--vocal">
-                  <span class="studio-ep-audio-meta-label">{{ $t('audio.vocalLanguage') }}</span>
-                  <el-select
+                <div class="studio-audio-meta-item studio-audio-meta-item--vocal">
+                  <span class="studio-audio-meta-label">{{ $t('audio.vocalLanguage') }}</span>
+                  <DqSelect
                     v-model="params.vocal_language"
                     size="small"
-                    class="studio-ep-audio-vocal-lang-select"
+                    class="studio-audio-vocal-lang-select"
                     clearable
                     :placeholder="$t('audio.vocalLanguageAuto')"
                   >
-                    <el-option v-for="l in vocalLanguages" :key="l.value" :label="l.label" :value="l.value" />
-                  </el-select>
+                    <DqOption v-for="l in vocalLanguages" :key="l.value" :label="l.label" :value="l.value" />
+                  </DqSelect>
                 </div>
               </div>
-            </el-card>
+            </DqSurfaceCard>
 
             <!-- Music params -->
-            <el-card shadow="never" class="studio-ep-surface-card studio-ep-card-mb">
+            <DqSurfaceCard class="studio-surface-card studio-card-mb">
               <template #header>
                 <div class="card-title">
-                  <el-icon><setting /></el-icon>
+                  <DqIcon><setting /></DqIcon>
                   {{ $t('audio.musicParams') }}
                 </div>
               </template>
-              <el-form label-position="top" size="small">
-                <el-form-item :label="$t('audio.duration')">
-                  <el-radio-group v-model="params.duration" size="small">
-                    <el-radio-button :value="30">30s</el-radio-button>
-                    <el-radio-button :value="60">60s</el-radio-button>
-                    <el-radio-button :value="90">90s</el-radio-button>
-                    <el-radio-button :value="120">120s</el-radio-button>
-                  </el-radio-group>
-                </el-form-item>
-                <el-row :gutter="12">
-                  <el-col :span="8">
-                    <el-form-item :label="$t('audio.bpm')">
-                      <el-input-number v-model="params.bpm" :min="30" :max="300" controls-position="right" class="studio-ep-w-full" :placeholder="$t('audio.bpmAuto')" />
-                    </el-form-item>
-                  </el-col>
-                  <el-col :span="8">
-                    <el-form-item :label="$t('audio.keyScale')">
-                      <el-select v-model="params.key_scale" class="studio-ep-w-full" clearable :placeholder="$t('audio.keyScaleAuto')">
-                        <el-option v-for="k in musicalKeys" :key="k" :label="k" :value="k" />
-                      </el-select>
-                    </el-form-item>
-                  </el-col>
-                  <el-col :span="8">
-                    <el-form-item :label="$t('audio.timeSignature')">
-                      <el-select v-model="params.time_signature" class="studio-ep-w-full" clearable :placeholder="$t('audio.timeSignatureAuto')">
-                        <el-option v-for="ts in timeSignatures" :key="ts.value" :label="ts.label" :value="ts.value" />
-                      </el-select>
-                    </el-form-item>
-                  </el-col>
-                </el-row>
-              </el-form>
-            </el-card>
+              <AudioCreateMusicParams
+                :params="params"
+                :musical-keys="musicalKeys"
+                :time-signatures="timeSignatures"
+              />
+            </DqSurfaceCard>
 
             <!-- Advanced params -->
-            <el-card shadow="never" class="studio-ep-surface-card studio-ep-card-mb">
-              <el-collapse v-model="advancedOpen" class="studio-ep-collapse-plain">
-                <el-collapse-item name="advanced">
+            <DqSurfaceCard class="studio-surface-card studio-card-mb">
+              <DqCollapse v-model="advancedOpen" class="studio-collapse-plain">
+                <DqCollapseItem name="advanced">
                   <template #title>
-                    <div class="studio-ep-collapse-title-row">
-                      <el-icon><setting /></el-icon>
+                    <div class="studio-collapse-title-row">
+                      <DqIcon><setting /></DqIcon>
                       <span>{{ $t('studio.advancedParams') }}</span>
-                      <el-tag v-if="hasCustomParams" size="small" type="warning">{{ $t('studio.hasCustom') }}</el-tag>
+                      <DqTag v-if="hasCustomParams" size="small" type="warning">{{ $t('studio.hasCustom') }}</DqTag>
                     </div>
                   </template>
-                  <el-form label-position="top" size="small" class="studio-ep-form-pt">
-                    <el-form-item v-if="currentModelConfig?.parameters?.steps" :label="$t('audio.sampleQuality')">
-                      <div class="param-control-row">
-                        <div class="param-slider">
-                          <el-slider
-                            v-model="params.steps"
-                            :min="currentModelConfig.parameters.steps.min"
-                            :max="currentModelConfig.parameters.steps.max"
-                          />
-                        </div>
-                        <el-input-number v-model="params.steps" :min="1" :max="200" class="param-input-number" />
-                      </div>
-                    </el-form-item>
-                    <el-form-item v-if="currentModelConfig?.parameters?.guidance" :label="$t('audio.guidance')">
-                      <div class="param-control-row">
-                        <div class="param-slider">
-                          <el-slider
-                            v-model="params.guidance"
-                            :min="currentModelConfig.parameters.guidance.min"
-                            :max="currentModelConfig.parameters.guidance.max"
-                            :step="0.5"
-                          />
-                        </div>
-                        <el-input-number v-model="params.guidance" :step="0.5" class="param-input-number" />
-                      </div>
-                    </el-form-item>
-                    <el-form-item :label="$t('audio.seed')">
-                      <div class="studio-ep-seed-row">
-                        <el-input v-model="params.seed" :placeholder="$t('audio.randomSeed')" />
-                        <el-button @click="randomizeSeed">
-                          <el-icon><refresh /></el-icon>
-                        </el-button>
-                      </div>
-                    </el-form-item>
-                    <el-form-item :label="$t('audio.batchCount')">
-                      <el-input-number v-model="params.n" :min="1" :max="8" controls-position="right" class="studio-ep-w-full" />
-                    </el-form-item>
-                    <el-form-item :label="$t('audio.audioFormat')">
-                      <el-select v-model="params.audio_format" class="studio-ep-w-full">
-                        <el-option v-for="f in audioFormats" :key="f" :label="f" :value="f" />
-                      </el-select>
-                    </el-form-item>
-                    <el-form-item>
-                      <el-button text type="primary" @click="restoreDefaults" size="small">
-                        <el-icon><refresh /></el-icon>
-                        {{ $t('studio.restoreDefaults') }}
-                      </el-button>
-                    </el-form-item>
-                  </el-form>
-                </el-collapse-item>
-              </el-collapse>
-            </el-card>
+                  <AudioCreateAdvancedParams
+                    :params="params"
+                    :current-model-config="currentModelConfig"
+                    :audio-formats="audioFormats"
+                    @restore-defaults="restoreDefaults"
+                    @randomize-seed="randomizeSeed"
+                  />
+                </DqCollapseItem>
+              </DqCollapse>
+            </DqSurfaceCard>
           </template>
 
           <!-- 同声翻唱 占位 -->
           <template v-if="audioWorkTab === 'cover'">
-            <el-card shadow="never" class="studio-ep-surface-card studio-ep-cover-placeholder">
-              <el-icon class="studio-ep-cover-placeholder-icon" :size="40"><clock /></el-icon>
+            <DqSurfaceCard class="studio-surface-card studio-cover-placeholder">
+              <DqIcon class="studio-cover-placeholder-icon" :size="40"><clock /></DqIcon>
               <p>{{ $t('audio.coverComingSoon') }}</p>
-            </el-card>
+            </DqSurfaceCard>
           </template>
 
           <!-- Generate button -->
-          <el-card shadow="never" class="studio-ep-surface-card studio-ep-card-mb">
-            <el-button
+          <DqSurfaceCard class="studio-surface-card studio-card-mb">
+            <DqButton
               v-if="audioWorkTab === 'create'"
               type="primary"
-              size="large"
-              class="studio-ep-primary-cta studio-ep-primary-cta--simple"
+              class="studio-primary-cta studio-primary-cta--simple dq-btn--cta"
               :disabled="submitDisabled"
               @click="startGeneration"
             >
-              <el-icon size="20"><headset /></el-icon>
-              <span class="studio-ep-cta-gap">
+              <DqIcon size="20"><headset /></DqIcon>
+              <span class="studio-cta-gap">
                 {{ generating ? $t('audio.generating') : $t('audio.generate') }}
               </span>
-            </el-button>
-            <div class="studio-ep-micro-hint">
+            </DqButton>
+            <div class="studio-micro-hint">
               {{ $sendShortcutHint() }}
             </div>
 
             <!-- Progress display -->
-            <div v-if="currentTask.id" class="studio-ep-task-wrap">
-              <el-progress
+            <div v-if="currentTask.id" class="studio-task-wrap">
+              <DqProgress
                 :percentage="Math.round(currentTask.progress * 100)"
                 :status="currentTask.status === 'failed' ? 'exception' : ''"
               />
-              <div class="studio-ep-task-status">
+              <div class="studio-task-status">
                 <template v-if="currentTask.total > 0 && currentTask.status === 'running'">
                   Step {{ currentTask.step }}/{{ currentTask.total }} &nbsp;
                 </template>
-                <el-tag :type="TSU.tagType(currentTask.status)" size="small">
+                <DqTag :type="TSU.tagType(currentTask.status)" size="small">
                   {{ TSU.statusText(currentTask.status) }}
-                </el-tag>
+                </DqTag>
               </div>
             </div>
-          </el-card>
+          </DqSurfaceCard>
 
           <!-- Logs -->
-          <el-card shadow="never" class="studio-ep-surface-card">
+          <DqSurfaceCard class="studio-surface-card">
             <template #header>
               <div class="card-title card-title--split">
                 <span>
-                  <el-icon><document /></el-icon>
+                  <DqIcon><document /></DqIcon>
                   {{ $t('studio.logs') }}
                 </span>
-                <el-button size="small" text @click="clearLogs">
-                  <el-icon><delete /></el-icon>
-                </el-button>
+                <DqIconButton type="text" size="sm" :label="$t('common.delete')" @click="clearLogs">
+                  <DqIcon><delete /></DqIcon>
+                </DqIconButton>
               </div>
             </template>
-            <div class="log-container studio-ep-log-container--sm" ref="logContainer">
-              <div v-if="logs.length === 0" class="studio-ep-log-empty">
+            <div class="log-container studio-log-container--sm" ref="logContainer">
+              <div v-if="logs.length === 0" class="studio-log-empty">
                 {{ $t('studio.logsEmpty') }}
               </div>
               <div v-for="(log, index) in logs" :key="index" class="log-line">
@@ -305,25 +235,25 @@
                 <span :class="'log-' + log.level">{{ log.message }}</span>
               </div>
             </div>
-          </el-card>
+          </DqSurfaceCard>
 
         </div>
-      </el-col>
+      </DqCol>
 
       <!-- Right panel: preview + recent -->
-      <el-col :xs="24" :md="8" :lg="7" :xl="6">
+      <DqCol :xs="24" :md="8" :lg="7" :xl="6">
         <div class="preview-panel">
 
           <!-- Current generation preview -->
-          <el-card shadow="never" class="studio-ep-surface-card studio-ep-card-mb">
+          <DqSurfaceCard class="studio-surface-card studio-card-mb">
             <template #header>
               <div class="card-title">
-                <el-icon><headset /></el-icon>
+                <DqIcon><headset /></DqIcon>
                 {{ $t('studio.currentPreview') }}
               </div>
             </template>
             <div v-if="previewAudioSrc" class="dq-audio-create-cover">
-              <el-icon :size="34"><headset /></el-icon>
+              <DqIcon :size="34"><headset /></DqIcon>
               <span class="dq-audio-create-cover-title">{{ $t('audio.previewListen') }}</span>
               <audio
                 :key="previewAudioKey"
@@ -333,53 +263,59 @@
                 playsinline
                 preload="metadata"
               ></audio>
-              <div class="studio-ep-audio-caption">
+              <div class="studio-audio-caption">
                 {{ previewPrompt }}
               </div>
             </div>
-            <el-empty v-else :description="$t('studio.noPreview')" />
-          </el-card>
+            <DqEmpty v-else :description="$t('studio.noPreview')" />
+          </DqSurfaceCard>
 
           <!-- Recent generations -->
-          <el-card shadow="never" class="studio-ep-surface-card">
+          <DqSurfaceCard class="studio-surface-card">
             <template #header>
               <div class="card-title card-title--split">
                 <span>
-                  <el-icon><clock /></el-icon>
+                  <DqIcon><clock /></DqIcon>
                   {{ $t('audio.recentTitle') }}
                 </span>
-                <el-button size="small" text @click="loadRecentAudio">
-                  <el-icon><refresh /></el-icon>
-                </el-button>
+                <DqIconButton type="text" size="sm" :label="$t('gallery.refresh')" @click="loadRecentAudio">
+                  <DqIcon><refresh /></DqIcon>
+                </DqIconButton>
               </div>
             </template>
-            <el-empty v-if="recentAudio.length === 0" :description="$t('gallery.empty')" />
+            <DqEmpty v-if="recentAudio.length === 0" :description="$t('gallery.empty')" />
             <div v-else>
               <div
                 v-for="ra in recentAudio"
                 :key="ra.id"
-                class="gallery-card dq-audio-recent-card studio-ep-recent-card-mb"
+                class="gallery-card dq-audio-recent-card studio-recent-card-mb"
                 @click="previewAudio(ra)"
               >
-                <div class="studio-ep-audio-recent-row">
+                <div class="studio-audio-recent-row">
                   <div class="dq-audio-recent-cover" @click.stop="previewAudio(ra)">
-                    <el-icon :size="26"><headset /></el-icon>
+                    <DqIcon :size="26"><headset /></DqIcon>
                   </div>
-                  <div class="studio-ep-audio-recent-main">
-                    <div class="studio-ep-audio-recent-title">
+                  <div class="studio-audio-recent-main">
+                    <div class="studio-audio-recent-title">
                       {{ ra.prompt || ra.name || 'Audio' }}
                     </div>
-                    <div class="studio-ep-audio-recent-meta">
+                    <div class="studio-audio-recent-meta">
                       {{ ra.duration ? formatTime(ra.duration) : '' }}
                     </div>
                   </div>
-                  <div class="studio-ep-audio-recent-actions">
-                    <el-button circle size="small" @click.stop="toggleRecentPlay(ra)">
-                      <span class="studio-ep-play-icon">{{ ra.playing ? '⏸' : '▶' }}</span>
-                    </el-button>
-                    <el-button size="small" text @click.stop="downloadAudioUrl(ra.url)">
-                      <el-icon><download /></el-icon>
-                    </el-button>
+                  <div class="studio-audio-recent-actions">
+                    <DqIconButton
+                      type="text"
+                      size="sm"
+                      class="dq-icon-btn--circle"
+                      :label="$t('audio.previewListen')"
+                      @click.stop="toggleRecentPlay(ra)"
+                    >
+                      <span class="studio-play-icon">{{ ra.playing ? '⏸' : '▶' }}</span>
+                    </DqIconButton>
+                    <DqIconButton type="text" size="sm" :label="$t('gallery.download')" @click.stop="downloadAudioUrl(ra.url)">
+                      <DqIcon><download /></DqIcon>
+                    </DqIconButton>
                   </div>
                 </div>
                 <audio
@@ -388,15 +324,15 @@
                   preload="metadata"
                   @ended="ra.playing = false"
                   @loadedmetadata="onRecentMeta(ra, $event)"
-                  class="studio-ep-hidden-audio"
+                  class="studio-hidden-audio"
                 />
               </div>
             </div>
-          </el-card>
+          </DqSurfaceCard>
 
         </div>
-      </el-col>
-    </el-row>
+      </DqCol>
+    </DqRow>
   </div>
 </template>
 
@@ -404,13 +340,16 @@
 // @ts-nocheck
 import { ref, reactive, computed, watch, onMounted, nextTick } from 'vue';
 import { useRouter } from 'vue-router';
-import { ElMessage } from 'element-plus';
+import { toast } from '@/utils/feedback';
 import { api, taskIdFromSubmitResponse } from '@/utils/api';
 import { formatGenLogMessage, isDuplicateDenoiseStepLog } from '@/utils/genTaskLog';
 import { $tt } from '@/utils/i18n';
 import { useTasksStore } from '@/stores/tasks';
 import { useRegistryStore } from '@/stores/registry';
+import { pickDefaultVersionKey, resolveDefaultModelRegistryKey } from '@/utils/defaultModelSettings';
 import ModelLicenseBadges from '@/components/model/ModelLicenseBadges.vue';
+import AudioCreateMusicParams from '@/components/audio/AudioCreateMusicParams.vue';
+import AudioCreateAdvancedParams from '@/components/audio/AudioCreateAdvancedParams.vue';
 
 const tasksStore = useTasksStore();
 const registryStore = useRegistryStore();
@@ -613,16 +552,19 @@ const submitDisabled = computed(() => {
 async function loadModelRegistry() {
   modelsLoading.value = true;
   try {
-    const data = await registryStore.getRegistry();
-    modelRegistry.value = data?.models || {};
-  } catch (e) { /* ignore */ }
-  try {
-    const statusData = await registryStore.getModelsDetailedStatus?.() || await api.settings.getModelsDetailedStatus();
-    if (statusData && typeof statusData === 'object') {
-      modelsDetailedStatus.value = statusData;
+    const [registryData, detailedStatusData] = await Promise.all([
+      registryStore.load(),
+      api.settings.getModelsDetailedStatus(),
+    ]);
+    modelRegistry.value = registryData?.models || {};
+    if (detailedStatusData && typeof detailedStatusData === 'object') {
+      modelsDetailedStatus.value = detailedStatusData as Record<string, unknown>;
     }
-  } catch (e) { /* ignore */ }
-  modelsLoading.value = false;
+  } catch (e) {
+    console.error('Failed to load audio model registry:', e);
+  } finally {
+    modelsLoading.value = false;
+  }
 }
 
 function applyDefaults(modelConfig: any) {
@@ -695,9 +637,9 @@ function clearLogs() {
 
 async function startGeneration() {
   if (generating.value) return;
-  if (!params.model) { ElMessage.warning('Please select a model'); return; }
-  if (!modelReady.value) { ElMessage.warning('Model is not ready'); return; }
-  if (!params.prompt.trim()) { ElMessage.warning('Please enter a prompt'); return; }
+  if (!params.model) { toast.warning('Please select a model'); return; }
+  if (!modelReady.value) { toast.warning('Model is not ready'); return; }
+  if (!params.prompt.trim()) { toast.warning('Please enter a prompt'); return; }
 
   generating.value = true;
   currentTask.id = '';
@@ -729,7 +671,7 @@ async function startGeneration() {
     const resp = await api.audios.createGeneration(body);
     const tid = taskIdFromSubmitResponse(resp);
     if (!tid) {
-      ElMessage.error($tt('studio.error', { msg: 'missing task id in submit response' }));
+      toast.error($tt('studio.error', { msg: 'missing task id in submit response' }));
       generating.value = false;
       return;
     }
@@ -808,17 +750,17 @@ async function startGeneration() {
             (row.result as Record<string, unknown>).primary_asset_id;
           if (pid) pushPreviewFromAsset(String(pid));
         } else if (row.status === 'failed') {
-          ElMessage.error($tt('studio.genFailed', { msg: String(row.error || '') }));
+          toast.error($tt('studio.genFailed', { msg: String(row.error || '') }));
         }
         generating.value = false;
       },
       onError: () => {
-        ElMessage.error($tt('studio.connectionLost'));
+        toast.error($tt('studio.connectionLost'));
         generating.value = false;
       },
     });
   } catch (e: any) {
-    ElMessage.error((e.response && e.response.data && e.response.data.detail) || e.message || 'Generation failed');
+    toast.error((e.response && e.response.data && e.response.data.detail) || e.message || 'Generation failed');
     generating.value = false;
   }
 }
@@ -898,14 +840,37 @@ function loadRecentAudio() {
   }).catch(() => {});
 }
 
+async function applyAudioAppSettingsDefaults() {
+  try {
+    const st = await api.settings.getSettings() as {
+      default_model_audio?: string;
+      default_model?: string;
+    };
+    const dm = String(st.default_model_audio || st.default_model || '').trim();
+    const mk = resolveDefaultModelRegistryKey(dm, modelRegistry.value, 'audio');
+    if (!mk || !modelRegistry.value[mk]) return;
+    const detailed = (modelsDetailedStatus.value[mk] || {}) as { versions?: Record<string, { ready?: boolean }> };
+    const vers = detailed.versions || {};
+    const defaultVK = pickDefaultVersionKey(mk, modelRegistry.value, vers);
+    if (!defaultVK) return;
+    selectedModelVersion.value = mk + '|' + defaultVK;
+    onModelChange(selectedModelVersion.value);
+  } catch (_) {
+    /* ignore */
+  }
+}
+
 // ---- Lifecycle ----
 onMounted(async () => {
   await loadModelRegistry();
-  const versions = filteredModelPickerVersions.value;
-  if (versions.length > 0) {
-    const rec = versions.find((v: any) => v.ready && v.isRec) || versions.find((v: any) => v.ready) || versions[0];
-    selectedModelVersion.value = rec.key;
-    onModelChange(rec.key);
+  await applyAudioAppSettingsDefaults();
+  if (!params.model) {
+    const versions = filteredModelPickerVersions.value;
+    if (versions.length > 0) {
+      const rec = versions.find((v: any) => v.ready && v.isRec) || versions.find((v: any) => v.ready) || versions[0];
+      selectedModelVersion.value = rec.key;
+      onModelChange(rec.key);
+    }
   }
   if (!params.model) {
     loadPromptDraft();

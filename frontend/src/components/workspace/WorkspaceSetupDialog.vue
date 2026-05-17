@@ -1,41 +1,38 @@
 <template>
-  <el-dialog
-    v-model="visibleModel"
+  <DqDialog
+    v-model:open="visibleModel"
     class="dq-workspace-setup-dialog"
     :title="$t('settings.workspaceSetupTitle')"
     width="520px"
-    :close-on-click-modal="false"
-    :close-on-press-escape="false"
-    :show-close="false"
-    align-center
+    :closable="false"
   >
     <p class="dq-workspace-setup-intro">{{ $t('settings.workspaceSetupIntro') }}</p>
     <p class="dq-workspace-setup-hint">{{ $t('settings.workspaceSetupEmptyHint') }}</p>
-    <div class="settings-ep-workspace-input-row dq-workspace-setup-input-row">
-      <el-input
+    <div class="settings-workspace-input-row dq-workspace-setup-input-row">
+      <DqInput
         v-model="pickedPath"
         :placeholder="$t('settings.customWorkspacePlaceholder')"
         readonly
       />
-      <el-button class="settings-ep-workspace-pick-btn" :loading="picking" @click="pickDirectory">
+      <DqButton size="sm" class="settings-workspace-pick-btn" :loading="picking" @click="pickDirectory">
         {{ $t('settings.workspaceSetupPick') }}
-      </el-button>
+      </DqButton>
     </div>
     <p v-if="effectiveRoot" class="dq-workspace-setup-from">
       <span class="dq-workspace-setup-from-label">{{ $t('settings.workspaceLayoutTitle') }}</span>
       <span class="dq-workspace-setup-from-path">{{ effectiveRoot }}</span>
     </p>
     <template #footer>
-      <el-button type="primary" :loading="applying" :disabled="!pickedPath.trim()" @click="confirm">
+      <DqButton type="primary" :loading="applying" :disabled="!pickedPath.trim()" @click="confirm">
         {{ $t('settings.workspaceSetupConfirm') }}
-      </el-button>
+      </DqButton>
     </template>
-  </el-dialog>
+  </DqDialog>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
-import { ElMessage } from 'element-plus';
+import { toast } from '@/utils/feedback';
 import { api } from '@/utils/api';
 import { $tt } from '@/utils/i18n';
 
@@ -86,7 +83,7 @@ async function pickDirectory() {
       pickedPath.value = path;
     }
   } catch (e) {
-    ElMessage.error(extractApiError(e));
+    toast.error(extractApiError(e));
   } finally {
     picking.value = false;
   }
@@ -95,7 +92,7 @@ async function pickDirectory() {
 async function confirm() {
   const path = pickedPath.value.trim();
   if (!path) {
-    ElMessage.warning($tt('settings.workspaceRequired'));
+    toast.warning($tt('settings.workspaceRequired'));
     return;
   }
   applying.value = true;
@@ -104,12 +101,12 @@ async function confirm() {
     emit('completed');
     visibleModel.value = false;
     if (res.restart_required) {
-      ElMessage.warning($tt('settings.customWorkspaceRestartHint'));
+      toast.warning($tt('settings.customWorkspaceRestartHint'));
     } else {
-      ElMessage.success($tt('settings.saved'));
+      toast.success($tt('settings.saved'));
     }
   } catch (e) {
-    ElMessage.error(extractApiError(e) || $tt('settings.workspaceApplyFailed'));
+    toast.error(extractApiError(e) || $tt('settings.workspaceApplyFailed'));
   } finally {
     applying.value = false;
   }

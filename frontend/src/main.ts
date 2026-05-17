@@ -1,26 +1,25 @@
 import { createApp } from 'vue';
 import { createPinia } from 'pinia';
-import ElementPlus, { ElNotification } from 'element-plus';
-import * as ElementPlusIconsVue from '@element-plus/icons-vue';
+import { registerDqIcons } from '@danqing/dq-shell';
 import router from './router';
 import i18n, { $tt, $mn, $md, $mvn, $pn, sendShortcutHintText, applyTheme } from './utils/i18n';
+import { toast } from './utils/feedback';
 import App from './App.vue';
-/* Element Plus + 固定深色（index.html class="dark"，见 applyTheme / theme-apple-dark.css）。 */
-import 'element-plus/dist/index.css';
-import 'element-plus/theme-chalk/dark/css-vars.css';
+import { installDanQingUi } from './plugins/dq-ui';
+import '@danqing/dq-tokens/dq-mac.css';
+import '@danqing/dq-ui/style.css';
+import '@danqing/dq-shell/style.css';
 import './styles/theme.css';
 import './styles/theme-apple-dark.css';
 import './styles/theme-apple-finish.css';
 import './styles/theme-apple-native.css';
 
 applyTheme();
+document.documentElement.classList.add('dq-mac-ui');
 
 const app = createApp(App);
 
-// Register all Element Plus icons
-for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
-  app.component(key, component);
-}
+registerDqIcons(app);
 
 // Global properties
 app.config.globalProperties.$tt = $tt;
@@ -32,44 +31,30 @@ app.config.globalProperties.$sendShortcutHint = sendShortcutHintText;
 
 app.use(createPinia());
 app.use(router);
-app.use(ElementPlus);
+installDanQingUi(app);
 app.use(i18n);
 
 app.mount('#app');
 
+function notifyGlobalError(title: string, message: string) {
+  toast.notify({ title, message, type: 'error', duration: 6000 });
+}
+
 // Global error handlers
 app.config.errorHandler = (err) => {
   console.error('Vue error:', err);
-  ElNotification({
-    title: 'Error',
-    message: String((err as Error)?.message || err).substring(0, 200),
-    type: 'error',
-    duration: 6000,
-    position: 'bottom-right',
-  });
+  notifyGlobalError('Error', String((err as Error)?.message || err).substring(0, 200));
 };
 
 window.onerror = function (msg, _source, _line, _col, error) {
   const message = (error && error.message) || String(msg);
   if (message.indexOf('ResizeObserver loop') !== -1) return true;
-  ElNotification({
-    title: 'JS Error',
-    message: String(message).substring(0, 200),
-    type: 'error',
-    duration: 6000,
-    position: 'bottom-right',
-  });
+  notifyGlobalError('JS Error', String(message).substring(0, 200));
   return false;
 };
 
 window.addEventListener('unhandledrejection', function (event) {
   const reason =
     (event.reason && event.reason.message) || event.reason || 'Unknown Promise error';
-  ElNotification({
-    title: 'Unhandled Promise',
-    message: String(reason).substring(0, 200),
-    type: 'error',
-    duration: 6000,
-    position: 'bottom-right',
-  });
+  notifyGlobalError('Unhandled Promise', String(reason).substring(0, 200));
 });

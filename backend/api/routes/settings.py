@@ -22,6 +22,9 @@ class SettingsResponse(BaseModel):
     language: str
     theme: str
     default_model: str
+    default_model_image: str = ""
+    default_model_video: str = ""
+    default_model_audio: str = ""
     auto_save_prompts: bool
     output_format: str
     mlx_memory_limit: int
@@ -47,6 +50,9 @@ class SettingsUpdateRequest(BaseModel):
     language: Optional[str] = None
     theme: Optional[str] = None
     default_model: Optional[str] = None
+    default_model_image: Optional[str] = None
+    default_model_video: Optional[str] = None
+    default_model_audio: Optional[str] = None
     auto_save_prompts: Optional[bool] = None
     output_format: Optional[str] = None
     mlx_memory_limit: Optional[int] = None

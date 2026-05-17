@@ -306,9 +306,11 @@ make frontend-build      # → out/frontend/dist/
 - Navigation: Vue Router `router.push({ name: '…' })` — no `window.DQStudioNav`
 - Global task queue: `App.vue` + `TopNav.vue` + `useTasksStore`; `openGlobalTaskQueue()` from `@/utils/appEvents`
 
-### Element Plus layout constraint
+### Frontend UI (`@danqing/dq-ui`)
 
-`<el-header>` and `<el-main>` must be **direct** children of `<el-container>`. `TopNav` renders inner content only; `<el-header>` wrapper stays in `index.html`. `TaskDrawer` may use Teleport (`el-drawer`).
+- No Element Plus: templates use `Dq*` only; tokens from `@danqing/dq-tokens` (`--dq-*`).
+- Shell layout: `App.vue` → `.dq-app-header` + `.dq-app-main`; `TopNav` is native `<nav class="dq-top-nav-menu">`.
+- Governance: `make check-ep-boundary`, `make check-theme-legacy`. See `frontend/DQ-UI.md`.
 
 ### App.vue routing
 

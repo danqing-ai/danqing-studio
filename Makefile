@@ -1,4 +1,4 @@
-.PHONY: bench-setup bench-src bench-mflux bench-mflux-case bench-sanity bench-sanity-case test-engine-unit check-consistency check-engine-imports lint start stop help clean frontend-install frontend-dev frontend-build frontend-typecheck desktop-prereqs desktop-sidecar desktop-tauri desktop-bundle
+.PHONY: bench-setup bench-src bench-mflux bench-mflux-case bench-sanity bench-sanity-case test-engine-unit check-consistency check-ep-boundary check-theme-legacy check-engine-imports lint start stop help clean frontend-install frontend-dev frontend-build frontend-typecheck desktop-prereqs desktop-sidecar desktop-tauri desktop-bundle
 
 PYTHON := .venv/bin/python3
 BENCH_PY := tests/benchmark/venv/bin/python3
@@ -81,6 +81,19 @@ stop:
 
 check-consistency:
 	$(PYTHON) scripts/check_consistency.py
+
+check-ep-boundary:
+	$(PYTHON) scripts/check_ep_boundary.py
+
+check-theme-legacy:
+	$(PYTHON) scripts/check_theme_legacy.py
+
+check-ui-compat:
+	$(PYTHON) scripts/check_ui_compat.py
+
+# Optional one-shot cleanup if legacy --el-* creeps back into theme CSS
+strip-el-tokens:
+	$(PYTHON) scripts/strip_el_tokens.py
 
 check-engine-imports:
 	$(PYTHON) scripts/check_engine_backend_imports.py

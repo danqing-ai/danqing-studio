@@ -1,12 +1,12 @@
 <!-- @ts-nocheck -->
 <template>
   <div class="create-page">
-    <el-row :gutter="24">
+    <DqRow :gutter="24">
       <!-- Left panel: creation area -->
-      <el-col :xs="24" :md="16" :lg="17" :xl="18">
+      <DqCol :xs="24" :md="16" :lg="17" :xl="18">
         <div class="creation-panel">
           <!-- Plan §3.1: text-to-video / image-to-video sub-tabs -->
-          <el-segmented
+          <DqSegmented
             class="dq-work-segmented dq-work-segmented--sm"
             :model-value="videoWorkMode"
             :options="videoWorkSegmentOptions"
@@ -15,94 +15,97 @@
           />
 
           <!-- Model selector: single-level dropdown -->
-          <el-card shadow="never" class="studio-ep-surface-card studio-ep-card-mb studio-ep-model-card">
+          <DqSurfaceCard class="studio-surface-card studio-card-mb studio-model-card">
             <template #header>
               <div class="card-title">
-                <el-icon><cpu /></el-icon>
+                <DqIcon><cpu /></DqIcon>
                 {{ $t('create.modelSelectTitle') }}
               </div>
             </template>
-            <div class="studio-ep-model-toolbar">
-              <el-select
+            <div class="studio-model-toolbar">
+              <DqSelect
                 v-model="selectedModelVersion"
-                size="large"
                 filterable
                 @change="onModelVersionChange"
                 :placeholder="$t('studio.selectModel')"
               >
-                <el-option
+                <template v-if="selectedModelPickerItem" #value>
+                  <div class="studio-picker-option studio-picker-option--value">
+                    <span class="studio-picker-option__name">{{ selectedModelPickerItem.name }}</span>
+                    <ModelVersionPickerExtras
+                      :recommended="selectedModelPickerItem.recommended"
+                      :commercial-use-allowed="selectedModelPickerItem.commercialUseAllowed"
+                      :status="String(selectedModelPickerItem.status || '')"
+                      :size="String(selectedModelPickerItem.size || '')"
+                    />
+                  </div>
+                </template>
+                <DqOption
                   v-for="item in videoModelPickerVersions"
                   :key="item.modelKey + '|' + item.versionKey"
-                  :label="item.name"
+                  :label="String(item.name)"
                   :value="item.modelKey + '|' + item.versionKey"
                   :disabled="!item.ready"
                 >
-                  <div class="studio-ep-picker-option">
-                    <span class="studio-ep-picker-option__name" :class="{ 'is-disabled': !item.ready }">{{ item.name }}</span>
-                    <ModelLicenseBadges
-                      :recommended="item.recommended"
-                      :commercial-use-allowed="item.commercialUseAllowed"
-                      effect="plain"
-                    />
-                    <el-tag v-if="item.status === 'ready'" size="small" type="success">{{ $t('studio.ready') }}</el-tag>
-                    <el-tag v-else size="small" type="warning">{{ $t('studio.notDownloaded') }}</el-tag>
-                    <span v-if="item.size" class="studio-ep-picker-option__meta">
-                      {{ item.size }}
-                    </span>
-                  </div>
-                </el-option>
-              </el-select>
+                  <ModelVersionPickerExtras
+                    :recommended="item.recommended"
+                    :commercial-use-allowed="item.commercialUseAllowed"
+                    :status="String(item.status || '')"
+                    :size="String(item.size || '')"
+                  />
+                </DqOption>
+              </DqSelect>
             </div>
-            <el-alert
+            <DqAlert
               v-if="selectedModelNotReady"
               :title="$tt('studio.modelNotReady', { name: currentModelDisplayName })"
               type="warning"
               :closable="false"
-              class="studio-ep-alert-mt"
+              class="studio-alert-mt"
             >
               <template #default>
                 <span>{{ $t('studio.notDownloadedMsg') }}</span>
-                <el-button size="small" type="primary" class="studio-ep-alert-inline-btn" @click="goToDownload">
+                <DqButton type="primary" size="sm" class="studio-alert-inline-btn" @click="goToDownload">
                   {{ $t('studio.goDownload') }}
-                </el-button>
+                </DqButton>
               </template>
-            </el-alert>
-          </el-card>
+            </DqAlert>
+          </DqSurfaceCard>
 
-          <el-alert
+          <DqAlert
             v-if="videoWorkMode !== 'upscale'"
             type="info"
             :closable="false"
             show-icon
-            class="studio-ep-alert-mb studio-ep-runtime-alert"
+            class="studio-alert-mb studio-runtime-alert"
           >
             <template #title>{{ $t('video.runtimeCardTitle') }}</template>
-            <div class="studio-ep-alert-body">
+            <div class="studio-alert-body">
               <p>{{ $tt('video.runtimeClipSecs', { sec: outputClipSecRounded }) }}</p>
               <p>{{ $t('video.runtimeGenWarning') }}</p>
               <p v-if="currentVersionDiskSize">{{ $tt('video.runtimeModelSize', { size: currentVersionDiskSize }) }}</p>
             </div>
-          </el-alert>
-          <el-alert
+          </DqAlert>
+          <DqAlert
             v-else
             type="warning"
             :closable="false"
             show-icon
-            class="studio-ep-alert-mb studio-ep-runtime-alert"
+            class="studio-alert-mb studio-runtime-alert"
           >
             <template #title>{{ $t('video.runtimeCardTitle') }}</template>
-            <div class="studio-ep-alert-body">
+            <div class="studio-alert-body">
               <p>{{ $t('video.runtimeUpscaleNote') }}</p>
               <p v-if="currentVersionDiskSize">{{ $tt('video.runtimeModelSize', { size: currentVersionDiskSize }) }}</p>
             </div>
-          </el-alert>
+          </DqAlert>
 
           <!-- Animate: start image (required) -->
-          <el-card v-if="videoWorkMode === 'animate'" shadow="never" class="studio-ep-surface-card studio-ep-card-mb">
+          <DqSurfaceCard v-if="videoWorkMode === 'animate'" class="studio-surface-card studio-card-mb">
             <template #header>
               <div class="card-title card-title--split">
                 <span>
-                  <el-icon><PictureFilled /></el-icon>
+                  <DqIcon><PictureFilled /></DqIcon>
                   {{ $t('action.video.startImage') }}
                 </span>
               </div>
@@ -111,12 +114,24 @@
             <div v-if="startImageSrc" class="ref-image-thumb" @click="showStartImagePreview">
               <img :src="startImageSrc" alt="start" />
               <div class="ref-image-actions">
-                <el-button size="small" circle @click.stop="showStartImagePreview" :title="$t('studio.zoomIn')">
-                  <el-icon><ZoomIn /></el-icon>
-                </el-button>
-                <el-button size="small" circle type="danger" @click.stop="removeStartImage" :title="$t('studio.delete')">
-                  <el-icon><Delete /></el-icon>
-                </el-button>
+                <DqIconButton
+                  type="text"
+                  size="sm"
+                  class="dq-icon-btn--circle"
+                  :label="$t('studio.zoomIn')"
+                  @click.stop="showStartImagePreview"
+                >
+                  <DqIcon><ZoomIn /></DqIcon>
+                </DqIconButton>
+                <DqIconButton
+                  type="danger"
+                  size="sm"
+                  class="dq-icon-btn--circle"
+                  :label="$t('studio.delete')"
+                  @click.stop="removeStartImage"
+                >
+                  <DqIcon><Delete /></DqIcon>
+                </DqIconButton>
               </div>
             </div>
             <div v-else class="ref-image-placeholder">
@@ -126,28 +141,40 @@
                 @pick="onStartAssetPick"
               />
             </div>
-          </el-card>
+          </DqSurfaceCard>
 
-          <el-card v-if="videoWorkMode === 'animate'" shadow="never" class="studio-ep-surface-card studio-ep-card-mb">
+          <DqSurfaceCard v-if="videoWorkMode === 'animate'" class="studio-surface-card studio-card-mb">
             <template #header>
               <div class="card-title card-title--split">
                 <span>
-                  <el-icon><PictureFilled /></el-icon>
+                  <DqIcon><PictureFilled /></DqIcon>
                   {{ $t('video.tailFrameTitle') }}
                 </span>
               </div>
             </template>
-            <div class="studio-ep-placeholder-hint">{{ $t('video.tailFrameHint') }}</div>
-            <p class="studio-ep-field-footnote">{{ $t('studio.optional') }}</p>
+            <div class="studio-placeholder-hint">{{ $t('video.tailFrameHint') }}</div>
+            <p class="studio-field-footnote">{{ $t('studio.optional') }}</p>
             <div v-if="tailImageSrc" class="ref-image-thumb" @click="showTailImagePreview">
               <img :src="tailImageSrc" alt="tail" />
               <div class="ref-image-actions">
-                <el-button size="small" circle @click.stop="showTailImagePreview" :title="$t('studio.zoomIn')">
-                  <el-icon><ZoomIn /></el-icon>
-                </el-button>
-                <el-button size="small" circle type="danger" @click.stop="removeTailImage" :title="$t('studio.delete')">
-                  <el-icon><Delete /></el-icon>
-                </el-button>
+                <DqIconButton
+                  type="text"
+                  size="sm"
+                  class="dq-icon-btn--circle"
+                  :label="$t('studio.zoomIn')"
+                  @click.stop="showTailImagePreview"
+                >
+                  <DqIcon><ZoomIn /></DqIcon>
+                </DqIconButton>
+                <DqIconButton
+                  type="danger"
+                  size="sm"
+                  class="dq-icon-btn--circle"
+                  :label="$t('studio.delete')"
+                  @click.stop="removeTailImage"
+                >
+                  <DqIcon><Delete /></DqIcon>
+                </DqIconButton>
               </div>
             </div>
             <div v-else class="ref-image-placeholder">
@@ -157,21 +184,27 @@
                 @pick="onTailAssetPick"
               />
             </div>
-          </el-card>
+          </DqSurfaceCard>
 
-          <el-card v-if="videoWorkMode === 'upscale'" shadow="never" class="studio-ep-surface-card studio-ep-card-mb">
+          <DqSurfaceCard v-if="videoWorkMode === 'upscale'" class="studio-surface-card studio-card-mb">
             <template #header>
               <div class="card-title">
-                <el-icon><video-camera /></el-icon>
+                <DqIcon><video-camera /></DqIcon>
                 {{ $t('video.videoSourceTitle') }}
               </div>
             </template>
             <div v-if="sourceVideoSrc" class="ref-image-thumb ref-image-thumb--169">
               <video :src="sourceVideoSrc" controls></video>
               <div class="ref-image-actions">
-                <el-button size="small" circle type="danger" @click.stop="removeSourceVideo" :title="$t('studio.delete')">
-                  <el-icon><Delete /></el-icon>
-                </el-button>
+                <DqIconButton
+                  type="danger"
+                  size="sm"
+                  class="dq-icon-btn--circle"
+                  :label="$t('studio.delete')"
+                  @click.stop="removeSourceVideo"
+                >
+                  <DqIcon><Delete /></DqIcon>
+                </DqIconButton>
               </div>
             </div>
             <div v-else class="ref-image-placeholder">
@@ -181,79 +214,53 @@
                 @pick="onSourceVideoPick"
               />
             </div>
-          </el-card>
+          </DqSurfaceCard>
 
-          <el-card v-if="videoWorkMode === 'upscale'" shadow="never" class="studio-ep-surface-card studio-ep-card-mb">
+          <DqSurfaceCard v-if="videoWorkMode === 'upscale'" class="studio-surface-card studio-card-mb">
             <template #header>
               <div class="card-title">
-                <el-icon><zoom-in /></el-icon>
+                <DqIcon><zoom-in /></DqIcon>
                 {{ $t('action.video.upscale') }}
               </div>
             </template>
-            <el-form label-position="top" size="small">
-              <el-form-item :label="$t('create.upscaleScale')">
-                <el-select v-model="params.upscale_scale" class="studio-ep-w-full">
-                  <el-option label="2×" :value="2" />
-                  <el-option label="4×" :value="4" />
-                </el-select>
-              </el-form-item>
-              <el-form-item :label="$t('create.upscaleDenoise')">
-                <div class="studio-ep-slider-inline">
-                  <el-slider v-model="params.upscale_denoise" :min="0" :max="1" :step="0.05" />
-                  <el-input-number v-model="params.upscale_denoise" :min="0" :max="1" :step="0.05" class="param-input-number" />
-                </div>
-              </el-form-item>
-              <el-form-item :label="$t('video.maxFramesLabel')">
-                <el-input-number v-model="params.upscale_max_frames" :min="1" :max="4000" :step="1" class="studio-ep-w-full" />
-              </el-form-item>
-              <el-form-item :label="$t('studio.seed')">
-                <div class="studio-ep-seed-row">
-                  <el-input v-model="params.seed" :placeholder="$t('studio.seedPlaceholder')" />
-                  <el-button @click="params.seed = String(Math.floor(Math.random() * 1000000))">
-                    <el-icon><refresh /></el-icon>
-                  </el-button>
-                </div>
-              </el-form-item>
-            </el-form>
-          </el-card>
+            <CreateUpscaleParams :params="params" media="video" />
+          </DqSurfaceCard>
 
           <!-- Prompt input -->
-          <el-card
-            v-if="videoWorkMode !== 'upscale'"
-            shadow="never"
-            class="studio-ep-surface-card studio-ep-card-mb"
+          <DqSurfaceCard v-if="videoWorkMode !== 'upscale'"
+            class="studio-surface-card studio-card-mb"
           >
             <template #header>
               <div class="card-title">
-                <el-icon><edit-pen /></el-icon>
+                <DqIcon><edit-pen /></DqIcon>
                 {{ $t('studio.prompt') }}
               </div>
             </template>
 
-            <el-row :gutter="8" class="studio-ep-presets-row">
-              <el-col :span="18">
-                <el-select
+            <DqRow :gutter="8" class="studio-presets-row">
+              <DqCol :span="18" class="studio-presets-row__select">
+                <DqSelect
                   v-model="selectedPreset"
                   :placeholder="$t('create.preset')"
-                  class="studio-ep-w-full"
+                  class="studio-presets-row__control"
                   clearable
                 >
-                  <el-option
+                  <DqOption
                     v-for="(preset, name) in filteredPresets"
                     :key="name"
                     :label="presetSelectLabel(name, preset)"
                     :value="name"
                   />
-                </el-select>
-              </el-col>
-              <el-col :span="6">
-                <el-button class="studio-ep-w-full" @click="loadPreset">
+                </DqSelect>
+              </DqCol>
+              <DqCol :span="6" class="studio-presets-row__action">
+                <DqButton class="studio-presets-row__control" @click="loadPreset">
                   {{ $t('create.loadPreset') }}
-                </el-button>
-              </el-col>
-            </el-row>
+                </DqButton>
+              </DqCol>
+            </DqRow>
 
-            <el-input
+            <DqInput
               v-model="params.prompt"
               type="textarea"
               :rows="5"
@@ -264,265 +271,152 @@
             />
 
             <!-- Negative prompt -->
-            <el-collapse v-if="currentModelConfig?.parameters?.negative_prompt_support" class="studio-ep-collapse-plain">
-              <el-collapse-item :title="$t('studio.negativePrompt')" name="negative">
-                <el-input
+            <DqCollapse v-if="currentModelConfig?.parameters?.negative_prompt_support" class="studio-collapse-plain">
+              <DqCollapseItem :title="$t('studio.negativePrompt')" name="negative">
+                <DqInput
                   v-model="params.negative_prompt"
                   type="textarea"
                   :rows="2"
                   :placeholder="$t('video.negativePlaceholder')"
                 />
-              </el-collapse-item>
-            </el-collapse>
-          </el-card>
+              </DqCollapseItem>
+            </DqCollapse>
+          </DqSurfaceCard>
 
           <!-- Advanced params -->
-          <el-card
-            v-if="videoWorkMode !== 'upscale'"
-            shadow="never"
-            class="studio-ep-surface-card studio-ep-card-mb"
+          <DqSurfaceCard v-if="videoWorkMode !== 'upscale'"
+            class="studio-surface-card studio-card-mb"
           >
-            <el-collapse v-model="advancedParamsOpen" class="studio-ep-collapse-plain">
-              <el-collapse-item name="advanced">
+            <DqCollapse v-model="advancedParamsOpen" class="studio-collapse-plain">
+              <DqCollapseItem name="advanced">
                 <template #title>
-                  <div class="studio-ep-collapse-title-row">
-                    <el-icon><setting /></el-icon>
+                  <div class="studio-collapse-title-row">
+                    <DqIcon><setting /></DqIcon>
                     <span>{{ $t('studio.advancedParams') }}</span>
-                    <el-tag v-if="hasCustomParams" size="small" type="warning">{{ $t('studio.hasCustom') }}</el-tag>
+                    <DqTag v-if="hasCustomParams" size="small" type="warning">{{ $t('studio.hasCustom') }}</DqTag>
                   </div>
                 </template>
 
-                <el-form label-position="top" size="small" class="studio-ep-form-pt">
-                  <!-- Steps -->
-                  <el-form-item v-if="currentModelConfig?.parameters?.steps" :label="$t('studio.steps')">
-                    <div class="param-control-row">
-                      <div class="param-slider">
-                        <el-slider
-                          v-model="params.steps"
-                          :min="currentModelConfig.parameters.steps.min"
-                          :max="currentModelConfig.parameters.steps.max"
-                        />
-                      </div>
-                      <el-input-number v-model="params.steps" :min="1" :max="100" class="param-input-number" />
-                    </div>
-                  </el-form-item>
-
-                  <!-- CFG -->
-                  <el-form-item v-if="currentModelConfig?.parameters?.guide_scale" :label="$t('video.guideScaleLabel')">
-                    <div class="param-control-row">
-                      <div class="param-slider">
-                        <el-slider
-                          v-model="params.guide_scale"
-                          :min="currentModelConfig.parameters.guide_scale.min"
-                          :max="currentModelConfig.parameters.guide_scale.max"
-                          :step="0.1"
-                        />
-                      </div>
-                      <el-input-number v-model="params.guide_scale" :step="0.1" class="param-input-number" />
-                    </div>
-                  </el-form-item>
-
-                  <!-- Shift (Wan only) -->
-                  <el-form-item v-if="currentModelConfig?.parameters?.shift" :label="$t('video.shiftLabel')">
-                    <div class="param-control-row">
-                      <div class="param-slider">
-                        <el-slider
-                          v-model="params.shift"
-                          :min="currentModelConfig.parameters.shift.min"
-                          :max="currentModelConfig.parameters.shift.max"
-                          :step="0.5"
-                        />
-                      </div>
-                      <el-input-number v-model="params.shift" :step="0.5" class="param-input-number" />
-                    </div>
-                  </el-form-item>
-
-                  <!-- Resolution -->
-                  <el-form-item v-if="currentModelConfig?.parameters?.width" :label="$t('studio.resolution')">
-                    <div class="studio-ep-res-row">
-                      <el-select v-model="params.width" class="studio-ep-select-w120">
-                        <el-option
-                          v-for="w in currentModelConfig.parameters.width.options"
-                          :key="w"
-                          :label="w"
-                          :value="w"
-                        />
-                      </el-select>
-                      <span class="studio-ep-res-x">x</span>
-                      <el-select v-model="params.height" class="studio-ep-select-w120">
-                        <el-option
-                          v-for="h in currentModelConfig.parameters.height.options"
-                          :key="h"
-                          :label="h"
-                          :value="h"
-                        />
-                      </el-select>
-                    </div>
-                  </el-form-item>
-
-                  <!-- Num frames -->
-                  <el-form-item v-if="currentModelConfig?.parameters?.num_frames" :label="$t('video.numFramesLabel')">
-                    <div class="param-control-row">
-                      <div class="param-slider">
-                        <el-slider
-                          v-model="params.num_frames"
-                          :min="currentModelConfig.parameters.num_frames.min"
-                          :max="currentModelConfig.parameters.num_frames.max"
-                          :step="currentModelConfig.parameters.num_frames.step || 1"
-                        />
-                      </div>
-                      <el-input-number v-model="params.num_frames" :min="1" :max="257" class="param-input-number" />
-                    </div>
-                    <div v-if="currentModelConfig.parameters.num_frames.note" class="studio-ep-param-note">
-                      {{ currentModelConfig.parameters.num_frames.note }}
-                    </div>
-                  </el-form-item>
-
-                  <!-- FPS -->
-                  <el-form-item v-if="currentModelConfig?.parameters?.fps" :label="$t('video.fpsLabel')">
-                    <div class="param-control-row">
-                      <div class="param-slider">
-                        <el-slider
-                          v-model="params.fps"
-                          :min="currentModelConfig.parameters.fps.min"
-                          :max="currentModelConfig.parameters.fps.max"
-                        />
-                      </div>
-                      <el-input-number v-model="params.fps" :min="1" :max="60" class="param-input-number" />
-                    </div>
-                  </el-form-item>
-
-                  <!-- Seed -->
-                  <el-form-item v-if="currentModelConfig?.parameters?.seed_support" :label="$t('studio.seed')">
-                    <div class="studio-ep-seed-row">
-                      <el-input v-model="params.seed" :placeholder="$t('studio.seedPlaceholder')" />
-                  <el-button @click="params.seed = String(Math.floor(Math.random() * 1000000))">
-                    <el-icon><refresh /></el-icon>
-                  </el-button>
-                    </div>
-                  </el-form-item>
-
-                  <!-- Restore defaults -->
-                  <el-form-item>
-                    <el-button text type="primary" @click="resetToDefaults" size="small">
-                      <el-icon><refresh /></el-icon>
-                      {{ $t('studio.restoreDefaults') }}
-                    </el-button>
-                  </el-form-item>
-                </el-form>
-              </el-collapse-item>
-            </el-collapse>
-          </el-card>
+                <VideoCreateAdvancedParams
+                  :params="params"
+                  :current-model-config="currentModelConfig"
+                  @reset-to-defaults="resetToDefaults"
+                />
+              </DqCollapseItem>
+            </DqCollapse>
+          </DqSurfaceCard>
 
           <!-- LoRA selector -->
-          <el-card
-            v-if="videoWorkMode !== 'upscale' && currentModelConfig?.parameters?.lora_support"
-            shadow="never"
-            class="studio-ep-surface-card studio-ep-card-mb"
+          <DqSurfaceCard v-if="videoWorkMode !== 'upscale' && currentModelConfig?.parameters?.lora_support"
+            class="studio-surface-card studio-card-mb"
           >
-            <div class="studio-ep-lora-section-title">
-              <el-icon><collection-tag /></el-icon>
+            <div class="studio-lora-section-title">
+              <DqIcon><collection-tag /></DqIcon>
               <span>{{ $t('studio.loraLabel') }}</span>
             </div>
 
             <!-- Selected LoRA list -->
-            <div v-if="selectedLoras.length > 0" class="studio-ep-lora-stack">
+            <div v-if="selectedLoras.length > 0" class="studio-lora-stack">
               <div
                 v-for="(lora, index) in selectedLoras"
                 :key="lora.id"
-                class="studio-ep-lora-row"
+                class="studio-lora-row"
               >
-                <span class="studio-ep-lora-name">
+                <span class="studio-lora-name">
                   {{ compatibleLoras.find(c => c.id === lora.id)?.name || lora.id }}
                 </span>
-                <el-slider
+                <DqSlider
                   v-model="lora.weight"
                   :min="0"
                   :max="2"
                   :step="0.1"
-                  class="studio-ep-lora-slider"
+                  class="studio-lora-slider"
                 />
-                <span class="studio-ep-lora-weight-num">{{ lora.weight.toFixed(1) }}</span>
-                <el-button size="small" text @click="moveLoraUp(index)" :disabled="index === 0">
-                  <el-icon><arrow-up /></el-icon>
-                </el-button>
-                <el-button size="small" text @click="moveLoraDown(index)" :disabled="index === selectedLoras.length - 1">
-                  <el-icon><arrow-down /></el-icon>
-                </el-button>
-                <el-button size="small" text type="danger" @click="removeLora(index)">
-                  <el-icon><delete /></el-icon>
-                </el-button>
+                <span class="studio-lora-weight-num">{{ lora.weight.toFixed(1) }}</span>
+                <DqIconButton type="text" size="sm" :label="$t('studio.moveUp')" :disabled="index === 0" @click="moveLoraUp(index)">
+                  <DqIcon><arrow-up /></DqIcon>
+                </DqIconButton>
+                <DqIconButton
+                  type="text"
+                  size="sm"
+                  :label="$t('studio.moveDown')"
+                  :disabled="index === selectedLoras.length - 1"
+                  @click="moveLoraDown(index)"
+                >
+                  <DqIcon><arrow-down /></DqIcon>
+                </DqIconButton>
+                <DqIconButton type="danger" size="sm" :label="$t('common.delete')" @click="removeLora(index)">
+                  <DqIcon><delete /></DqIcon>
+                </DqIconButton>
               </div>
             </div>
 
             <!-- Add LoRA -->
-            <el-select
-              :model-value="''"
-              class="studio-ep-w-full"
-              :placeholder="$t('studio.noLora')"
-              @update:model-value="addLora($event)"
+            <DqSelect
+              :model-value="undefined"
+              class="studio-w-full"
+              :placeholder="$t('studio.pickLoraToAdd')"
+              @update:model-value="onAddLoraPick"
             >
-              <el-option :label="$t('studio.noLora')" value="" />
-              <el-option
+              <DqOption
                 v-for="lora in compatibleLoras.filter(c => !selectedLoras.find(s => s.id === c.id))"
                 :key="lora.id"
                 :label="lora.name || lora.id"
                 :value="lora.id"
               />
-            </el-select>
-          </el-card>
+            </DqSelect>
+          </DqSurfaceCard>
 
           <!-- Generate button -->
-          <el-card shadow="never" class="studio-ep-surface-card studio-ep-card-mb">
-            <el-button
+          <DqSurfaceCard class="studio-surface-card studio-card-mb">
+            <DqButton
               type="primary"
-              size="large"
-              class="studio-ep-primary-cta studio-ep-primary-cta--simple"
+              class="studio-primary-cta studio-primary-cta--simple dq-btn--cta"
               :disabled="submitDisabled || !systemInfo?.env_ready"
               @click="startGeneration"
             >
-              <el-icon size="20"><video-camera /></el-icon>
-              <span class="studio-ep-cta-gap">
+              <DqIcon size="20"><video-camera /></DqIcon>
+              <span class="studio-cta-gap">
                 {{ primaryCtaLabel }}
               </span>
-            </el-button>
-            <div class="studio-ep-micro-hint">
+            </DqButton>
+            <div class="studio-micro-hint">
               {{ $sendShortcutHint() }}
             </div>
 
             <!-- Progress display -->
-            <div v-if="currentTask" class="studio-ep-task-wrap">
-              <el-progress
+            <div v-if="currentTask" class="studio-task-wrap">
+              <DqProgress
                 :percentage="Math.round(currentTask.progress * 100)"
                 :status="currentTask.status === 'failed' ? 'exception' : ''"
               />
-              <div class="studio-ep-task-status">
+              <div class="studio-task-status">
                 <template v-if="currentTask.total > 0 && currentTask.status === 'running'">
                   Step {{ currentTask.step }}/{{ currentTask.total }} &nbsp;
                 </template>
-                <el-tag :type="getStatusType(currentTask.status)" size="small">
+                <DqTag :type="getStatusType(currentTask.status)" size="small">
                   {{ getStatusText(currentTask.status) }}
-                </el-tag>
+                </DqTag>
               </div>
             </div>
-          </el-card>
+          </DqSurfaceCard>
 
           <!-- Logs -->
-          <el-card shadow="never" class="studio-ep-surface-card">
+          <DqSurfaceCard class="studio-surface-card">
             <template #header>
               <div class="card-title card-title--split">
                 <span>
-                  <el-icon><document /></el-icon>
+                  <DqIcon><document /></DqIcon>
                   {{ $t('studio.logs') }}
                 </span>
-                <el-button size="small" text @click="clearLogs">
-                  <el-icon><delete /></el-icon>
-                </el-button>
+                <DqIconButton type="text" size="sm" :label="$t('common.delete')" @click="clearLogs">
+                  <DqIcon><delete /></DqIcon>
+                </DqIconButton>
               </div>
             </template>
 
-            <div class="log-container studio-ep-log-container--sm" ref="logContainer">
-              <div v-if="logs.length === 0" class="studio-ep-log-empty">
+            <div class="log-container studio-log-container--sm" ref="logContainer">
+              <div v-if="logs.length === 0" class="studio-log-empty">
                 {{ $t('studio.logsEmpty') }}
               </div>
               <div v-for="(log, index) in logs" :key="index" class="log-line">
@@ -530,82 +424,88 @@
                 <span :class="'log-' + log.level">{{ log.message }}</span>
               </div>
             </div>
-          </el-card>
+          </DqSurfaceCard>
         </div>
-      </el-col>
+      </DqCol>
 
       <!-- Right panel -->
-      <el-col :xs="24" :md="8" :lg="7" :xl="6">
+      <DqCol :xs="24" :md="8" :lg="7" :xl="6">
         <div class="preview-panel">
           <!-- Current generation preview -->
-          <el-card shadow="never" class="studio-ep-surface-card studio-ep-card-mb">
+          <DqSurfaceCard class="studio-surface-card studio-card-mb">
             <template #header>
               <div class="card-title">
-                <el-icon><video-camera /></el-icon>
+                <DqIcon><video-camera /></DqIcon>
                 {{ $t('studio.currentPreview') }}
               </div>
             </template>
 
-            <div v-if="previewVideo" class="video-preview studio-ep-video-preview">
+            <div v-if="previewVideo" class="video-preview studio-video-preview">
               <video :src="previewVideo" controls></video>
             </div>
-            <el-empty v-else :description="$t('studio.noPreview')" />
-          </el-card>
+            <DqEmpty v-else :description="$t('studio.noPreview')" />
+          </DqSurfaceCard>
 
           <!-- Recent generations -->
-          <el-card shadow="never" class="studio-ep-surface-card">
+          <DqSurfaceCard class="studio-surface-card">
             <template #header>
               <div class="card-title card-title--split">
                 <span>
-                  <el-icon><clock /></el-icon>
+                  <DqIcon><clock /></DqIcon>
                   {{ $t('studio.recent') }}
                 </span>
-                <el-button size="small" text @click="loadRecentVideos">
-                  <el-icon><refresh /></el-icon>
-                </el-button>
+                <DqIconButton type="text" size="sm" :label="$t('gallery.refresh')" @click="loadRecentVideos">
+                  <DqIcon><refresh /></DqIcon>
+                </DqIconButton>
               </div>
             </template>
 
-            <el-empty v-if="recentVideos.length === 0" :description="$t('gallery.empty')" />
+            <DqEmpty v-if="recentVideos.length === 0" :description="$t('gallery.empty')" />
 
-            <el-row v-else :gutter="8">
-              <el-col
+            <DqRow v-else :gutter="8">
+              <DqCol
                 v-for="video in recentVideos"
                 :key="video.path"
                 :span="12"
-                class="studio-ep-gallery-col"
+                class="studio-gallery-col"
               >
                 <div class="gallery-card" @click="showVideoPreview(video)">
-                  <div class="gallery-image-wrapper studio-ep-recent-video-wrap">
+                  <div class="gallery-image-wrapper studio-recent-video-wrap">
                     <video :src="getVideoUrl(video)" preload="metadata"></video>
                   </div>
                 </div>
-              </el-col>
-            </el-row>
-          </el-card>
+              </DqCol>
+            </DqRow>
+          </DqSurfaceCard>
         </div>
-      </el-col>
-    </el-row>
+      </DqCol>
+    </DqRow>
 
     <!-- Start image preview dialog -->
-    <el-dialog v-model="startImageViewerVisible" :title="$t('action.video.startImage')" width="70%" center>
-      <div v-if="startImageSrc" class="studio-ep-dialog-center">
-        <img class="studio-ep-dialog-img-tall" :src="startImageSrc" />
+    <DqDialog v-model:open="startImageViewerVisible" :title="$t('action.video.startImage')" width="70%" center>
+      <div v-if="startImageSrc" class="studio-dialog-center">
+        <img class="studio-dialog-img-tall" :src="startImageSrc" />
       </div>
-    </el-dialog>
+    </DqDialog>
 
-    <el-dialog v-model="tailImageViewerVisible" :title="$t('video.tailFrameTitle')" width="70%" center>
-      <div v-if="tailImageSrc" class="studio-ep-dialog-center">
-        <img class="studio-ep-dialog-img-tall" :src="tailImageSrc" />
+    <DqDialog v-model:open="tailImageViewerVisible" :title="$t('video.tailFrameTitle')" width="70%" center>
+      <div v-if="tailImageSrc" class="studio-dialog-center">
+        <img class="studio-dialog-img-tall" :src="tailImageSrc" />
       </div>
-    </el-dialog>
+    </DqDialog>
 
     <!-- Video preview dialog -->
-    <el-dialog v-model="videoPreviewVisible" :title="selectedVideo?.name" width="80%" center destroy-on-close>
-      <div v-if="selectedVideo" class="studio-ep-dialog-center">
-        <video class="studio-ep-dialog-video" :src="getVideoUrl(selectedVideo)" controls></video>
+    <DqDialog
+      v-model:open="videoPreviewVisible"
+      :title="selectedVideo?.name ?? ''"
+      width="80%"
+      center
+      destroy-on-close
+    >
+      <div v-if="selectedVideo" class="studio-dialog-center">
+        <video class="studio-dialog-video" :src="getVideoUrl(selectedVideo)" controls></video>
       </div>
-    </el-dialog>
+    </DqDialog>
   </div>
 </template>
 
@@ -613,15 +513,20 @@
 import { ref, reactive, computed, watch, onMounted, inject, nextTick } from 'vue';
 import type { Ref } from 'vue';
 import { useRouter } from 'vue-router';
-import { ElMessage } from 'element-plus';
+import { toast } from '@/utils/feedback';
 import { api } from '@/utils/api';
 import { $tt, $mn, $mvn, $pn } from '@/utils/i18n';
 import { useRegistryStore } from '@/stores/registry';
 import { DQ_STORAGE } from '@/utils/storage';
 import type { SystemInfo, GalleryItem } from '@/types';
 import { warnIfRiskyMemory } from '@/composables/memoryHint';
+import { pickDefaultVersionKey, resolveDefaultModelRegistryKey } from '@/utils/defaultModelSettings';
 import { formatGenLogMessage, isDuplicateDenoiseStepLog } from '@/utils/genTaskLog';
 import ModelLicenseBadges from '@/components/model/ModelLicenseBadges.vue';
+import ModelVersionPickerExtras from '@/components/model/ModelVersionPickerExtras.vue';
+import AssetPicker from '@/components/asset/AssetPicker.vue';
+import VideoCreateAdvancedParams from '@/components/create/VideoCreateAdvancedParams.vue';
+import CreateUpscaleParams from '@/components/create/CreateUpscaleParams.vue';
 
 const router = useRouter();
 const registryStore = useRegistryStore();
@@ -769,6 +674,11 @@ const loadCompatibleLoras = async () => {
   }
 };
 
+const onAddLoraPick = (loraId: string | number | undefined) => {
+  if (loraId == null || loraId === '') return;
+  addLora(String(loraId));
+};
+
 const addLora = (loraId: string) => {
   if (!loraId) return;
   if (selectedLoras.value.find((l) => l.id === loraId)) return;
@@ -847,6 +757,12 @@ const videoVersionsForMode = computed(() => {
 
 const videoRecommendedForMode = computed(() => {
   return videoVersionsForMode.value.filter((v) => v.recommended);
+});
+
+const selectedModelPickerItem = computed(() => {
+  const key = selectedModelVersion.value;
+  if (!key) return null;
+  return allVersions.value.find((item) => `${item.modelKey}|${item.versionKey}` === key) ?? null;
 });
 
 const videoModelPickerVersions = computed(() => {
@@ -997,7 +913,7 @@ const loadModelDefaults = () => {
 // Reset to default config
 const resetToDefaults = () => {
   loadModelDefaults();
-  ElMessage.success($tt('studio.restoredDefaults'));
+  toast.success($tt('studio.restoredDefaults'));
 };
 
 // Check if custom params exist
@@ -1107,7 +1023,7 @@ const loadPreset = () => {
   const app = preset.applies_to;
   const animateOnly = app.includes('animate') && !app.includes('create');
   if (animateOnly && (videoWorkMode.value === 'create' || !startImageSrc.value)) {
-    ElMessage.warning($tt('video.presetNeedsStartImage'));
+    toast.warning($tt('video.presetNeedsStartImage'));
   }
   if (preset.positive) {
     params.prompt = params.prompt
@@ -1156,14 +1072,14 @@ const clearLogs = () => {
 // Start generation
 const startGeneration = async () => {
   if (videoWorkMode.value !== 'upscale' && !String(params.prompt || '').trim()) {
-    ElMessage.warning($tt('studio.enterPrompt'));
+    toast.warning($tt('studio.enterPrompt'));
     return;
   }
 
   const detailed = modelsDetailedStatus.value[params.model];
   const versionStatus = detailed?.versions?.[params.version];
   if (!versionStatus?.ready) {
-    ElMessage.warning(
+    toast.warning(
       $tt('studio.modelNotReadyDesc', {
         name: currentModelConfig.value?.name || params.model,
         version: params.version,
@@ -1187,7 +1103,7 @@ const startGeneration = async () => {
     let submitRes: any;
     if (videoWorkMode.value === 'animate') {
       if (!startImageSrc.value) {
-        ElMessage.warning($tt('video.needStartImage'));
+        toast.warning($tt('video.needStartImage'));
         return;
       }
       let source_asset_id: string;
@@ -1238,7 +1154,7 @@ const startGeneration = async () => {
       submitRes = await api.gen.createVideoEdit(animateBody);
     } else if (videoWorkMode.value === 'upscale') {
       if (!sourceVideoSrc.value) {
-        ElMessage.warning($tt('video.upscaleNeedSource'));
+        toast.warning($tt('video.upscaleNeedSource'));
         return;
       }
       let source_asset_id: string;
@@ -1491,36 +1407,13 @@ const applyVideoAppSettingsDefaults = async () => {
       const draft = localStorage.getItem(DQ_STORAGE.VIDEO_CREATE_PROMPT_DRAFT);
       if (draft) params.prompt = draft;
     }
-    const dm = ((st as any).default_model || '').trim();
-    if (!dm || !modelRegistry.value || !Object.keys(modelRegistry.value).length) return;
-    let mk: string | null = null;
-    if (modelRegistry.value[dm]) {
-      mk = dm;
-    } else {
-      for (const [k, cfg] of Object.entries(modelRegistry.value)) {
-        const media = cfg && cfg.media;
-        if (media !== 'video') continue;
-        const n = cfg && cfg.name;
-        if (typeof n === 'string' && n === dm) {
-          mk = k;
-          break;
-        }
-        if (n && typeof n === 'object' && (n.zh === dm || n.en === dm)) {
-          mk = k;
-          break;
-        }
-      }
-    }
+    const dm = String((st as { default_model_video?: string; default_model?: string }).default_model_video || (st as { default_model?: string }).default_model || '').trim();
+    const mk = resolveDefaultModelRegistryKey(dm, modelRegistry.value, 'video');
     if (!mk || !modelRegistry.value[mk]) return;
     const detailed = modelsDetailedStatus.value[mk] || {};
     const vers = detailed.versions || {};
-    const cfg = modelRegistry.value[mk];
-    const versionKeys = Object.keys(cfg.versions || {});
-    const defaultVK =
-      versionKeys.find((vk) => cfg.versions[vk] && cfg.versions[vk].default) || versionKeys[0];
+    const defaultVK = pickDefaultVersionKey(mk, modelRegistry.value, vers);
     if (!defaultVK) return;
-    const stRow = vers[defaultVK];
-    if (stRow && stRow.ready === false) return;
     params.model = mk;
     params.version = defaultVK;
     selectedModelVersion.value = mk + '|' + defaultVK;

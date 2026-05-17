@@ -8,14 +8,14 @@
         :accept="acceptAttr"
         @change="onFileChange"
       />
-      <el-button type="primary" size="small" @click="triggerUpload">
-        <el-icon><upload /></el-icon>
+      <DqButton type="primary" size="sm" @click="triggerUpload">
+        <DqIcon><upload /></DqIcon>
         {{ $t('assetPicker.upload') }}
-      </el-button>
-      <el-button size="small" @click="openLibrary">
-        <el-icon><folder-opened /></el-icon>
+      </DqButton>
+      <DqButton size="sm" @click="openLibrary">
+        <DqIcon><folder-opened /></DqIcon>
         {{ $t('assetPicker.library') }}
-      </el-button>
+      </DqButton>
     </div>
 
     <div v-if="recentFiltered.length" class="asset-picker__recent">
@@ -27,7 +27,7 @@
           class="asset-picker__thumb"
           role="button"
           tabindex="0"
-          @click="emitPickFromRecent(item)"
+          @click.stop="emitPickFromRecent(item)"
           @keydown.enter.prevent="emitPickFromRecent(item)"
         >
           <img
@@ -41,16 +41,16 @@
       </div>
     </div>
 
-    <el-dialog
-      v-model="libraryOpen"
+    <DqDialog
+      v-model:open="libraryOpen"
+      class="asset-picker-library-dialog"
       :title="$t('assetPicker.dialogTitle')"
       width="min(640px, 92vw)"
       destroy-on-close
-      append-to-body
-      @opened="onLibraryOpened"
+      @update:open="(v: boolean) => { if (v) onLibraryOpened(); }"
     >
-      <div v-loading="libraryLoading" class="asset-picker__library">
-        <el-empty
+      <div v-dq-loading="libraryLoading" class="asset-picker__library">
+        <DqEmpty
           v-if="!libraryLoading && libraryExhausted && libraryRows.length === 0"
           :description="$t('assetPicker.emptyLibrary')"
         />
@@ -70,25 +70,25 @@
           </button>
         </div>
         <div v-if="!libraryExhausted || libraryRows.length" class="asset-picker__library-more">
-          <el-button
+          <DqButton
             v-if="!libraryExhausted"
-            size="small"
+            size="sm"
             :loading="libraryLoading"
             @click="fetchLibraryPage(false)"
           >
             {{ $t('assetPicker.loadMore') }}
-          </el-button>
+          </DqButton>
           <span v-else-if="libraryRows.length" class="asset-picker__library-end">{{ $t('assetPicker.noMore') }}</span>
         </div>
       </div>
-    </el-dialog>
+    </DqDialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { ElMessage } from 'element-plus';
+import { toast } from '@/utils/feedback';
 import { api } from '@/utils/api';
 import type { AssetRow } from '@/types';
 
@@ -168,7 +168,7 @@ function thumbUrlForRecent(item: Record<string, unknown>): string {
 function emitPickFromRecent(item: Record<string, unknown>) {
   const path = String(item.path || '');
   if (!path.startsWith('asset:')) {
-    ElMessage.warning(props.acceptKind === 'video' ? $t('assetPicker.needVideo') : $t('assetPicker.needImage'));
+    toast.warning(props.acceptKind === 'video' ? $t('assetPicker.needVideo') : $t('assetPicker.needImage'));
     return;
   }
   emit('pick', {
@@ -194,11 +194,11 @@ async function onFileChange(ev: Event) {
   if (!file) return;
 
   if (props.acceptKind === 'image' && !file.type.startsWith('image/')) {
-    ElMessage.warning($t('assetPicker.needImage'));
+    toast.warning($t('assetPicker.needImage'));
     return;
   }
   if (props.acceptKind === 'video' && !file.type.startsWith('video/')) {
-    ElMessage.warning($t('assetPicker.needVideo'));
+    toast.warning($t('assetPicker.needVideo'));
     return;
   }
 
@@ -208,7 +208,7 @@ async function onFileChange(ev: Event) {
     emit('pick', { path, previewUrl: api.gallery.getImageUrl(path) });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
-    ElMessage.error($t('studio.uploadFailed', { msg }));
+    toast.error($t('studio.uploadFailed', { msg }));
   }
 }
 
@@ -258,7 +258,7 @@ async function fetchLibraryPage(reset: boolean) {
     if (items.length === 0) libraryExhausted.value = true;
   } catch (e: unknown) {
     console.error(e);
-    ElMessage.error($t('gallery.loadFailed'));
+    toast.error($t('gallery.loadFailed'));
     libraryExhausted.value = true;
   } finally {
     libraryLoading.value = false;
@@ -292,7 +292,7 @@ function selectLibraryRow(row: { id: string; previewUrl: string }) {
 .asset-picker__thumb-fallback {
   width: 100%;
   height: 100%;
-  background: var(--bg-secondary, var(--el-bg-color));
+  background: var(--bg-secondary, var(--dq-bg-base));
 }
 
 .asset-picker__library {
@@ -310,15 +310,15 @@ function selectLibraryRow(row: { id: string; previewUrl: string }) {
   width: 72px;
   height: 72px;
   padding: 0;
-  border: 1px solid var(--border-color, var(--el-border-color));
+  border: 1px solid var(--border-color, var(--dq-border));
   border-radius: 8px;
   overflow: hidden;
   cursor: pointer;
-  background: var(--bg-secondary, var(--el-bg-color));
+  background: var(--bg-secondary, var(--dq-bg-base));
 }
 
 .asset-picker__library-cell:focus-visible {
-  outline: 2px solid var(--el-color-primary);
+  outline: 2px solid var(--dq-accent);
   outline-offset: 2px;
 }
 
@@ -336,8 +336,8 @@ function selectLibraryRow(row: { id: string; previewUrl: string }) {
   font-size: 10px;
   padding: 1px 4px;
   border-radius: 4px;
-  background: var(--el-mask-color);
-  color: var(--el-text-color-primary);
+  background: var(--dq-mask);
+  color: var(--dq-label-primary);
 }
 
 .asset-picker__library-more {

@@ -1,31 +1,32 @@
 <template>
-  <el-container class="main-container">
-    <el-header class="app-header" height="60">
+  <div class="main-container dq-app-shell">
+    <header class="app-header dq-app-header">
       <TopNav
         :active-page="activePage"
         :queue-count="globalQueueCount"
         @navigate="handleNavSelect"
         @open-queue="openTaskQueue"
       />
-    </el-header>
+    </header>
 
-    <el-main class="app-main">
+    <main class="app-main dq-app-main">
       <router-view />
-    </el-main>
-  </el-container>
+    </main>
+  </div>
 
-  <el-drawer
-    v-model="showGlobalQueueDrawer"
+  <DqDrawer
+    v-model:open="showGlobalQueueDrawer"
     class="dq-task-queue-drawer"
     :title="$tt('studio.queueDialogTitle')"
     direction="rtl"
     size="420px"
   >
-    <el-empty
+    <DqInspectorEmpty
       v-if="globalTaskQueue.running.length === 0 && globalTaskQueue.queued.length === 0"
       class="dq-task-queue-empty"
-      :description="$tt('studio.queueEmpty')"
-    />
+    >
+      {{ $tt('studio.queueEmpty') }}
+    </DqInspectorEmpty>
     <div v-else>
       <div v-if="globalTaskQueue.running.length > 0" class="dq-task-queue-section">
         <div class="dq-task-queue-heading dq-task-queue-heading--primary">
@@ -46,18 +47,17 @@
               </div>
               <div class="dq-queue-prompt-line">{{ queueTruncate(task.params?.prompt || '', 40) }}</div>
             </div>
-            <el-button
-              size="small"
-              circle
+            <DqIconButton
               type="danger"
-              class="dq-task-queue-cancel-btn"
+              size="sm"
+              class="dq-task-queue-cancel-btn dq-icon-btn--circle"
+              :label="$tt('studio.cancelTask')"
               @click="cancelGlobalTask(task.id)"
-              :title="$tt('studio.cancelTask')"
             >
-              <el-icon><delete /></el-icon>
-            </el-button>
+              <DqIcon><delete /></DqIcon>
+            </DqIconButton>
           </div>
-          <el-progress
+          <DqProgress
             class="dq-queue-progress"
             :percentage="Math.round((task.progress || 0) * 100)"
             :stroke-width="4"
@@ -97,15 +97,15 @@
               <div class="dq-task-queue-queued-main">
                 <div class="dq-task-queue-row-meta">
                   <span>{{ taskKindLabel(task.kind) }}</span>
-                  <el-tag
+                  <DqTag
                     v-if="(task.priority ?? 100) <= 50"
-                    size="small"
                     type="warning"
                     effect="plain"
+                    size="small"
                     class="dq-task-queue-priority-tag"
                   >
                     {{ $tt('studio.queuePriorityHigh') }}
-                  </el-tag>
+                  </DqTag>
                 </div>
                 <div class="dq-task-queue-row-model">
                   {{ task.params?.model || $tt('queue.unspecifiedModel') }}
@@ -120,36 +120,35 @@
               </div>
             </div>
             <div class="dq-task-queue-side-actions">
-              <el-button
-                size="small"
+              <DqButton
+                size="sm"
                 @click="setQueuedPriority(task.id, 'high')"
                 :disabled="(task.priority ?? 100) <= 50"
               >
                 {{ $tt('studio.queueSetHigh') }}
-              </el-button>
-              <el-button
-                size="small"
+              </DqButton>
+              <DqButton
+                size="sm"
                 @click="setQueuedPriority(task.id, 'normal')"
                 :disabled="(task.priority ?? 100) > 50"
               >
                 {{ $tt('studio.queueSetNormal') }}
-              </el-button>
-              <el-button
-                size="small"
-                circle
+              </DqButton>
+              <DqIconButton
                 type="danger"
-                class="dq-task-queue-cancel-end"
+                size="sm"
+                class="dq-task-queue-cancel-end dq-icon-btn--circle"
+                :label="$tt('studio.cancelTask')"
                 @click="cancelGlobalTask(task.id)"
-                :title="$tt('studio.cancelTask')"
               >
-                <el-icon><delete /></el-icon>
-              </el-button>
+                <DqIcon><delete /></DqIcon>
+              </DqIconButton>
             </div>
           </div>
         </div>
       </div>
     </div>
-  </el-drawer>
+  </DqDrawer>
 
   <WorkspaceSetupDialog
     v-model:visible="showWorkspaceSetup"
@@ -161,7 +160,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount, watch, provide } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
-import { ElMessage } from 'element-plus';
+import { toast } from '@/utils/feedback';
 import TopNav from '@/components/shell/TopNav.vue';
 import WorkspaceSetupDialog from '@/components/workspace/WorkspaceSetupDialog.vue';
 import { useTasksStore } from '@/stores/tasks';
@@ -227,11 +226,11 @@ async function cancelGlobalTask(taskId: string) {
   try {
     await api.gen.cancelMediaTask(taskId);
     await tasksStore.pollQueueOnce();
-    ElMessage.success($tt('studio.cancelled'));
+    toast.success($tt('studio.cancelled'));
   } catch (e: unknown) {
     console.error('cancelGlobalTask', e);
     const msg = e instanceof Error ? e.message : String(e);
-    ElMessage.error($tt('studio.error', { msg }));
+    toast.error($tt('studio.error', { msg }));
   }
 }
 
@@ -239,7 +238,7 @@ async function setQueuedPriority(taskId: string, priority: string) {
   try {
     await api.gen.patchMediaTaskPriority(taskId, { priority });
     await tasksStore.pollQueueOnce();
-    ElMessage.success($tt('studio.priorityUpdated'));
+    toast.success($tt('studio.priorityUpdated'));
   } catch (e: unknown) {
     console.error('setQueuedPriority', e);
     let msg = '';
@@ -248,7 +247,7 @@ async function setQueuedPriority(taskId: string, priority: string) {
       msg = err.response?.data?.detail || '';
     }
     if (!msg && e instanceof Error) msg = e.message;
-    ElMessage.error($tt('studio.error', { msg: msg || String(e) }));
+    toast.error($tt('studio.error', { msg: msg || String(e) }));
   }
 }
 

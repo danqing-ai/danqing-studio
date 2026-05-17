@@ -1,59 +1,51 @@
 <template>
   <div class="dq-top-nav-bar">
     <div class="header-brand">
-      <el-icon class="dq-top-nav-brand-icon" :size="28"><magic-stick /></el-icon>
+      <DqIcon class="dq-top-nav-brand-icon" :size="28"><MagicStick /></DqIcon>
       <span class="brand-title">DanQing Studio</span>
       <span class="brand-subtitle">v4</span>
     </div>
 
-    <el-menu
-      ref="navMenuRef"
-      :default-active="activePage"
-      mode="horizontal"
-      class="nav-menu"
-      @select="onNavSelect"
-    >
-      <el-menu-item index="image_create">
-        <el-icon><brush /></el-icon>
-        <span>{{ $t('nav.image_create') }}</span>
-      </el-menu-item>
-      <el-menu-item index="video_create">
-        <el-icon><video-camera /></el-icon>
-        <span>{{ $t('nav.video_create') }}</span>
-      </el-menu-item>
-      <el-menu-item index="audio_create">
-        <el-icon><microphone /></el-icon>
-        <span>{{ $t('nav.audio_create') }}</span>
-      </el-menu-item>
-      <el-menu-item index="gallery">
-        <el-icon><picture-filled /></el-icon>
-        <span>{{ $t('nav.gallery') }}</span>
-      </el-menu-item>
-      <el-menu-item index="models">
-        <el-icon><download /></el-icon>
-        <span>{{ $t('nav.models') }}</span>
-      </el-menu-item>
-      <el-menu-item index="settings">
-        <el-icon><setting /></el-icon>
-        <span>{{ $t('nav.settings') }}</span>
-      </el-menu-item>
-    </el-menu>
+    <nav class="nav-menu dq-top-nav-menu" role="navigation" :aria-label="$t('nav.main')">
+      <button
+        v-for="item in navItems"
+        :key="item.id"
+        type="button"
+        class="dq-top-nav-menu__item"
+        :class="{ 'is-active': activePage === item.id }"
+        @click="onNavSelect(item.id)"
+      >
+        <DqIcon><component :is="item.icon" /></DqIcon>
+        <span>{{ item.label }}</span>
+      </button>
+    </nav>
 
     <div class="header-actions">
-      <el-badge :value="queueCount" :hidden="queueCount === 0" class="queue-badge">
-        <el-button class="dq-top-nav-queue-btn" @click="openQueue" :title="$tt('studio.taskQueue')">
-          <el-icon><document-copy /></el-icon>
+      <DqCountBadge :value="queueCount" :hidden="queueCount === 0" class="queue-badge">
+        <DqButton class="dq-top-nav-queue-btn" @click="openQueue" :title="$tt('studio.taskQueue')">
+          <DqIcon><DocumentCopy /></DqIcon>
           <span class="dq-top-nav-queue-label">{{ $tt('studio.taskQueue') }}</span>
-        </el-button>
-      </el-badge>
+        </DqButton>
+      </DqCountBadge>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, watch, nextTick } from 'vue';
+import { computed } from 'vue';
+import { useI18n } from 'vue-i18n';
+import {
+  Brush,
+  DocumentCopy,
+  Download,
+  MagicStick,
+  Microphone,
+  PictureFilled,
+  Setting,
+  VideoCamera,
+} from '@danqing/dq-shell';
 
-const props = defineProps<{
+defineProps<{
   activePage: string;
   queueCount: number;
 }>();
@@ -63,7 +55,16 @@ const emit = defineEmits<{
   (e: 'open-queue'): void;
 }>();
 
-const navMenuRef = ref<{ activeIndex: string } | null>(null);
+const { t } = useI18n();
+
+const navItems = computed(() => [
+  { id: 'image_create', icon: Brush, label: t('nav.image_create') },
+  { id: 'video_create', icon: VideoCamera, label: t('nav.video_create') },
+  { id: 'audio_create', icon: Microphone, label: t('nav.audio_create') },
+  { id: 'gallery', icon: PictureFilled, label: t('nav.gallery') },
+  { id: 'models', icon: Download, label: t('nav.models') },
+  { id: 'settings', icon: Setting, label: t('nav.settings') },
+]);
 
 function onNavSelect(index: string) {
   emit('navigate', index);
@@ -72,15 +73,4 @@ function onNavSelect(index: string) {
 function openQueue() {
   emit('open-queue');
 }
-
-watch(
-  () => props.activePage,
-  (newVal) => {
-    nextTick(() => {
-      if (navMenuRef.value) {
-        navMenuRef.value.activeIndex = newVal;
-      }
-    });
-  }
-);
 </script>

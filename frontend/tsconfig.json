@@ -17,7 +17,10 @@
     "noFallthroughCasesInSwitch": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["src/*"],
+      "@danqing/dq-ui": ["../../dq-ui/packages/ui/src/index.ts"],
+      "@danqing/dq-shell": ["../../dq-ui/packages/shell/src/index.ts"],
+      "@danqing/dq-tokens/*": ["../../dq-ui/packages/tokens/src/*"]
     },
     "types": ["vite/client"]
   },

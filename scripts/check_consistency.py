@@ -154,6 +154,13 @@ def main():
     if "/api/gallery" not in gallery_body:
         failures.append("FAIL: gallery.py missing /api/gallery route")
 
+    import subprocess
+
+    for script in ("check_ep_boundary.py", "check_theme_legacy.py", "check_ui_compat.py"):
+        rc = subprocess.call([sys.executable, str(ROOT / "scripts" / script)], cwd=ROOT)
+        if rc != 0:
+            failures.append(f"{script} failed (exit {rc})")
+
     if failures:
         print(f"Consistency check failed ({len(failures)} errors):")
         for f in failures:

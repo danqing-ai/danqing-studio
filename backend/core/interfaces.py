@@ -64,6 +64,9 @@ class AppSettings:
     language: str = "zh"
     theme: str = "dark"
     default_model: str = ""
+    default_model_image: str = ""
+    default_model_video: str = ""
+    default_model_audio: str = ""
     auto_save_prompts: bool = True
     output_format: str = "png"
     civitai_token: str = ""

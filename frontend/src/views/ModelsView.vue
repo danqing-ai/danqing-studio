@@ -3,88 +3,27 @@
   <div class="models-page">
     <!-- Left sidebar: category navigation -->
     <div class="models-page__sidebar">
-      <el-card shadow="never" class="studio-ep-surface-card models-page__sidebar-card">
+      <DqSurfaceCard class="models-page__sidebar-card">
         <div class="card-title">
-          <el-icon><box /></el-icon>
+          <DqIcon><box /></DqIcon>
           {{ $t('download.downloadCenter') }}
         </div>
         <div class="models-page__sidebar-intro">
           {{ $t('models.pageSubtitle') }}
         </div>
 
-        <el-menu
-          class="dq-download-menu models-page__menu"
-          :default-active="activeCategory"
+        <ModelsCategoryNav
+          :active-category="activeCategory"
+          :total-model-count="totalModelCount"
+          :active-download-count="activeDownloadCount"
           @select="handleCategorySelect"
-        >
-          <el-menu-item index="all">
-            <el-icon><grid /></el-icon>
-            <span>{{ $t('download.allModels') }}</span>
-            <el-tag size="small" type="info" class="dq-menu-end-tag">
-              {{ totalModelCount }}
-            </el-tag>
-          </el-menu-item>
+        />
 
-          <el-menu-item index="image_models">
-            <el-icon><picture-filled /></el-icon>
-            <span>{{ $t('download.imageModels') }}</span>
-          </el-menu-item>
-
-          <el-menu-item index="video_models">
-            <el-icon><video-camera /></el-icon>
-            <span>{{ $t('download.videoModels') }}</span>
-          </el-menu-item>
-
-          <el-menu-item index="music_models">
-            <el-icon><headset /></el-icon>
-            <span>{{ $t('download.audioModels') }}</span>
-          </el-menu-item>
-
-          <el-menu-item index="controlnets">
-            <el-icon><aim /></el-icon>
-            <span>{{ $t('download.controlNet') }}</span>
-          </el-menu-item>
-
-          <el-menu-item index="upscalers">
-            <el-icon><zoom-in /></el-icon>
-            <span>{{ $t('download.upscalers') }}</span>
-          </el-menu-item>
-
-          <el-menu-item index="tools">
-            <el-icon><tools /></el-icon>
-            <span>{{ $t('download.tools') }}</span>
-          </el-menu-item>
-
-          <el-menu-item index="loras">
-            <el-icon><magic-stick /></el-icon>
-            <span>{{ $t('download.loraModels') }}</span>
-          </el-menu-item>
-
-          <el-divider />
-
-          <el-menu-item index="downloading">
-            <el-icon><download /></el-icon>
-            <span>{{ $t('download.downloadingTab') }}</span>
-            <el-tag
-              v-if="activeDownloadCount > 0"
-              size="small"
-              type="primary"
-              class="dq-menu-end-tag"
-            >
-              {{ activeDownloadCount }}
-            </el-tag>
-          </el-menu-item>
-
-          <el-menu-item index="installed">
-            <el-icon><folder-checked /></el-icon>
-            <span>{{ $t('download.installed') }}</span>
-          </el-menu-item>
-        </el-menu>
 
         <!-- Disk space -->
         <div v-if="diskSpace" class="disk-space-panel">
           <div class="disk-space-title">
-            <el-icon><monitor /></el-icon>
+            <DqIcon><monitor /></DqIcon>
             {{ $t('download.diskSpace') }}
           </div>
           <div class="disk-space-item">
@@ -92,7 +31,7 @@
               <span>{{ $t('download.modelLabel') }}</span>
               <span class="disk-space-value">{{ diskSpace.models?.size_human }}</span>
             </div>
-            <el-progress
+            <DqProgress
               :percentage="getDiskPercent('models')"
               :show-text="false"
               :stroke-width="4"
@@ -103,18 +42,18 @@
               <span>{{ $t('download.loraLabel') }}</span>
               <span class="disk-space-value">{{ diskSpace.loras?.size_human }}</span>
             </div>
-            <el-progress
+            <DqProgress
               :percentage="getDiskPercent('loras')"
               :show-text="false"
               :stroke-width="4"
-              color="var(--el-color-success)"
+              color="var(--dq-success)"
             />
           </div>
           <div class="disk-space-footer">
             {{ $t('download.free') }}: {{ diskSpace.models?.free_human }}
           </div>
         </div>
-      </el-card>
+      </DqSurfaceCard>
     </div>
 
     <!-- Right content area -->
@@ -137,98 +76,56 @@
         <!-- Category title -->
         <div class="page-header models-page__page-header">
           <h2 class="page-title models-page__category-title">
-            <el-icon v-if="categoryPageIcon" class="models-page__title-icon" aria-hidden="true">
+            <DqIcon v-if="categoryPageIcon" class="models-page__title-icon" aria-hidden="true">
               <component :is="categoryPageIcon" />
-            </el-icon>
+            </DqIcon>
             <span>{{ categoryTitleText }}</span>
           </h2>
           <div class="page-actions models-page__toolbar">
-            <el-button
+            <DqButton
               v-if="
                 activeCategory !== 'loras' && activeCategory !== 'installed'
               "
               class="models-toolbar-btn models-page__import-btn"
-              plain
               @click="showImportDialog"
             >
-              <el-icon class="models-toolbar-btn__icon"><upload /></el-icon>
+              <DqIcon class="models-toolbar-btn__icon"><upload /></DqIcon>
               <span class="models-toolbar-btn__label">{{ $t('download.importLocal') }}</span>
-            </el-button>
-            <el-input
+            </DqButton>
+            <DqInput
               v-model="filterQuery"
               :placeholder="$t('download.searchModel')"
               class="models-page__search-input"
               clearable
             >
               <template #prefix>
-                <el-icon><search /></el-icon>
+                <DqIcon><search /></DqIcon>
               </template>
-            </el-input>
-            <el-button
+            </DqInput>
+            <DqButton
               class="models-toolbar-btn models-page__refresh-btn"
-              plain
               :loading="refreshing"
               @click="refreshStatus"
             >
-              <el-icon class="models-toolbar-btn__icon"><refresh /></el-icon>
+              <DqIcon class="models-toolbar-btn__icon"><refresh /></DqIcon>
               <span class="models-toolbar-btn__label">{{ $t('gallery.refresh') }}</span>
-            </el-button>
+            </DqButton>
           </div>
         </div>
 
-        <!-- Import local model dialog -->
-        <el-dialog
-          v-model="importDialogVisible"
-          :title="$t('download.importTitle')"
-          width="500px"
-        >
-          <el-form label-position="top">
-            <el-form-item :label="$t('download.modelName')">
-              <el-input
-                v-model="importModelName"
-                :placeholder="$t('download.modelNamePlaceholder')"
-              />
-            </el-form-item>
-            <el-form-item :label="$t('download.modelPath')">
-              <el-input
-                v-model="importModelPath"
-                :placeholder="$t('download.modelPathPlaceholder')"
-              />
-            </el-form-item>
-            <el-form-item :label="$t('download.modelType')">
-              <el-select v-model="importModelType" class="models-import-model-type">
-                <el-option
-                  :label="$t('download.baseModel')"
-                  value="base"
-                />
-                <el-option
-                  :label="$t('download.loraType')"
-                  value="lora"
-                />
-                <el-option
-                  :label="$t('download.controlnetType')"
-                  value="controlnet"
-                />
-              </el-select>
-            </el-form-item>
-          </el-form>
-          <template #footer>
-            <el-button @click="importDialogVisible = false">
-              {{ $t('download.cancel') }}
-            </el-button>
-            <el-button
-              type="primary"
-              :loading="importing"
-              @click="importLocalModel"
-            >
-              {{ $t('download.import_') }}
-            </el-button>
-          </template>
-        </el-dialog>
+        <ModelsImportDialog
+          v-model:open="importDialogVisible"
+          v-model:import-model-name="importModelName"
+          v-model:import-model-path="importModelPath"
+          v-model:import-model-type="importModelType"
+          :importing="importing"
+          @submit="importLocalModel"
+          @cancel="importDialogVisible = false"
+        />
 
         <!-- Model card grid -->
-        <el-row :gutter="16" class="model-grid model-grid--fluid">
-          <el-col
+        <DqRow :gutter="16" class="model-grid model-grid--fluid">
+          <DqCol
             v-for="model in filteredModels"
             :key="model.id"
             :xs="24"
@@ -238,7 +135,7 @@
             :xl="4"
             class="models-page__col-mb"
           >
-            <el-card
+            <DqSurfaceCard
               class="model-card"
               :class="{ 'model-ready': model.ready }"
             >
@@ -254,25 +151,25 @@
                   stacked
                 />
                 <div class="model-status">
-                  <el-tag
+                  <DqTag
                     v-if="modelsDetailedStatus[model.id]?.status === 'ready'"
-                    size="small"
+                   
                     type="success"
                   >
                     {{ $t('download.readyTag') }}
-                  </el-tag>
-                  <el-tag
+                  </DqTag>
+                  <DqTag
                     v-else-if="
                       modelsDetailedStatus[model.id]?.status === 'incomplete'
                     "
-                    size="small"
+                   
                     type="danger"
                   >
                     {{ $t('download.incompleteTag') }}
-                  </el-tag>
-                  <el-tag v-else size="small" type="warning">
+                  </DqTag>
+                  <DqTag v-else type="warning">
                     {{ $t('download.notDownloadedTag') }}
-                  </el-tag>
+                  </DqTag>
                 </div>
               </div>
 
@@ -281,58 +178,57 @@
                 <div class="model-card-name">
                   {{ $mn(model) }}
                 </div>
-                <el-tooltip
+                <DqTooltip
                   :content="$md(model)"
                   placement="top"
-                  effect="dark"
                 >
                   <div class="model-card-desc">
                     {{ $md(model) }}
                   </div>
-                </el-tooltip>
+                </DqTooltip>
 
                 <!-- Meta info -->
                 <div class="model-card-meta">
-                  <el-tag
+                  <DqTag
                     v-if="model.size"
-                    size="small"
+                   
                     type="info"
                     effect="plain"
                   >
                     {{ model.size }}
-                  </el-tag>
-                  <el-tag
+                  </DqTag>
+                  <DqTag
                     v-if="model.source === 'huggingface'"
-                    size="small"
+                   
                     type="primary"
                     effect="plain"
                   >
                     HF
-                  </el-tag>
-                  <el-tag
+                  </DqTag>
+                  <DqTag
                     v-else-if="model.source === 'modelscope'"
-                    size="small"
+                   
                     type="info"
                     effect="plain"
                   >
                     ModelScope
-                  </el-tag>
-                  <el-tag
+                  </DqTag>
+                  <DqTag
                     v-else-if="model.source === 'civitai'"
-                    size="small"
+                   
                     type="warning"
                     effect="plain"
                   >
                     CivitAI
-                  </el-tag>
-                  <el-tag
+                  </DqTag>
+                  <DqTag
                     v-if="model.base_model"
-                    size="small"
+                   
                     type="success"
                     effect="plain"
                   >
                     {{ model.base_model }}
-                  </el-tag>
+                  </DqTag>
                 </div>
 
                 <ul
@@ -353,31 +249,31 @@
                     <div class="model-version-row__info">
                       <div class="model-version-cell-row">
                         <span class="model-version-name">{{ row.ver.name }}</span>
-                        <el-tag v-if="row.ver.size" size="small" type="info" effect="plain">{{ row.ver.size }}</el-tag>
-                        <el-tag
+                        <DqTag v-if="row.ver.size" type="info" effect="plain">{{ row.ver.size }}</DqTag>
+                        <DqTag
                           v-if="row.ver.source_type === 'derived'"
-                          size="small"
+                         
                           type="warning"
                           effect="plain"
                         >
                           {{ $t('download.derivedTag') }}
-                        </el-tag>
-                        <el-tag
+                        </DqTag>
+                        <DqTag
                           v-else-if="row.ver.source_type === 'prequantized'"
-                          size="small"
+                         
                           type="info"
                           effect="plain"
                         >
                           {{ $t('download.prequantized') }}
-                        </el-tag>
-                        <el-tag
+                        </DqTag>
+                        <DqTag
                           v-if="row.vstatus === 'ready'"
-                          size="small"
+                         
                           type="success"
                           effect="plain"
                         >
                           {{ $t('studio.ready') }}
-                        </el-tag>
+                        </DqTag>
                       </div>
                       <div
                         v-if="row.ver.source_type === 'derived'"
@@ -393,45 +289,39 @@
                       </div>
                     </div>
                     <div class="model-version-row__actions">
-                      <el-space wrap :size="6" justify="end">
+                      <DqStack wrap :gap="6" justify="end">
                         <template v-if="row.vstatus === 'ready'">
-                          <el-button
-                            size="small"
-                            plain
+                          <DqButton size="sm"
                             class="model-ver-btn model-ver-btn--force"
                             @click="downloadVersion(row.model, row.verKey)"
                           >
-                            <el-icon class="model-ver-btn__icon"><download /></el-icon>
+                            <DqIcon class="model-ver-btn__icon"><download /></DqIcon>
                             <span class="model-ver-btn__label">{{ $t('download.forceDownload') }}</span>
-                          </el-button>
-                          <el-button
-                            size="small"
-                            plain
+                          </DqButton>
+                          <DqButton size="sm"
                             class="model-ver-btn model-ver-btn--delete"
                             @click="deleteVersion(row.model, row.verKey)"
                           >
-                            <el-icon class="model-ver-btn__icon"><delete /></el-icon>
+                            <DqIcon class="model-ver-btn__icon"><delete /></DqIcon>
                             <span class="model-ver-btn__label">{{ $t('common.delete') }}</span>
-                          </el-button>
+                          </DqButton>
                         </template>
                         <template v-else-if="row.vstatus === 'parent_missing'">
-                          <el-tooltip
+                          <DqTooltip
                             v-if="!canDownload(row.model)"
                             :content="getDependencyHint(row.model)"
                             placement="top"
                           >
                             <span>
-                              <el-button class="model-ver-btn model-ver-btn--download" size="small" plain disabled>
-                                <el-icon class="model-ver-btn__icon"><download /></el-icon>
+                              <DqButton size="sm" class="model-ver-btn model-ver-btn--download" disabled>
+                                <DqIcon class="model-ver-btn__icon"><download /></DqIcon>
                                 <span class="model-ver-btn__label">{{ $t('download.downloadVersion') }}</span>
-                              </el-button>
+                              </DqButton>
                             </span>
-                          </el-tooltip>
-                          <el-button
+                          </DqTooltip>
+                          <DqButton size="sm"
                             v-else
                             class="model-ver-btn model-ver-btn--download"
-                            size="small"
-                            plain
                             :loading="downloadingModels[row.model.id + '-' + row.verKey]"
                             @click="
                               downloadVersion(row.model, row.ver.from_version, {
@@ -439,71 +329,67 @@
                               })
                             "
                           >
-                            <el-icon class="model-ver-btn__icon"><download /></el-icon>
+                            <DqIcon class="model-ver-btn__icon"><download /></DqIcon>
                             <span class="model-ver-btn__label">{{ $t('download.downloadVersion') }}</span>
-                          </el-button>
+                          </DqButton>
                         </template>
                         <template v-else-if="row.vstatus === 'quantize'">
-                          <el-tooltip
+                          <DqTooltip
                             v-if="!canDownload(row.model)"
                             :content="getDependencyHint(row.model)"
                             placement="top"
                           >
                             <span>
-                              <el-button class="model-ver-btn model-ver-btn--quantize" size="small" plain disabled>
-                                <el-icon class="model-ver-btn__icon"><cpu /></el-icon>
+                              <DqButton size="sm" class="model-ver-btn model-ver-btn--quantize" disabled>
+                                <DqIcon class="model-ver-btn__icon"><cpu /></DqIcon>
                                 <span class="model-ver-btn__label">{{ $t('download.quantizeVersion') }}</span>
-                              </el-button>
+                              </DqButton>
                             </span>
-                          </el-tooltip>
-                          <el-button
+                          </DqTooltip>
+                          <DqButton size="sm"
                             v-else
                             class="model-ver-btn model-ver-btn--quantize"
-                            size="small"
-                            plain
                             :loading="downloadingModels[row.model.id + '-' + row.verKey]"
                             @click="quantizeVersion(row.model, row.verKey)"
                           >
-                            <el-icon class="model-ver-btn__icon"><cpu /></el-icon>
+                            <DqIcon class="model-ver-btn__icon"><cpu /></DqIcon>
                             <span class="model-ver-btn__label">{{ $t('download.quantizeVersion') }}</span>
-                          </el-button>
+                          </DqButton>
                         </template>
                         <template v-else>
-                          <el-tooltip
+                          <DqTooltip
                             v-if="!canDownload(row.model)"
                             :content="getDependencyHint(row.model)"
                             placement="top"
                           >
                             <span>
-                              <el-button class="model-ver-btn model-ver-btn--download" size="small" plain disabled>
-                                <el-icon class="model-ver-btn__icon"><download /></el-icon>
+                              <DqButton size="sm" class="model-ver-btn model-ver-btn--download" disabled>
+                                <DqIcon class="model-ver-btn__icon"><download /></DqIcon>
                                 <span class="model-ver-btn__label">{{ $t('download.downloadVersion') }}</span>
-                              </el-button>
+                              </DqButton>
                             </span>
-                          </el-tooltip>
-                          <el-button
+                          </DqTooltip>
+                          <DqButton size="sm"
                             v-else
                             class="model-ver-btn model-ver-btn--download"
-                            size="small"
-                            plain
                             :loading="downloadingModels[row.model.id + '-' + row.verKey]"
                             @click="downloadVersion(row.model, row.verKey)"
                           >
-                            <el-icon class="model-ver-btn__icon"><download /></el-icon>
+                            <DqIcon class="model-ver-btn__icon"><download /></DqIcon>
                             <span class="model-ver-btn__label">{{ $t('download.downloadVersion') }}</span>
-                          </el-button>
+                          </DqButton>
                         </template>
-                      </el-space>
+                      </DqStack>
                     </div>
                   </li>
                 </ul>
 
               </div>
-            </el-card>
-          </el-col>
-        </el-row>
+            </DqSurfaceCard>
+          </DqCol>
+        </DqRow>
 
-        <el-empty
+        <DqEmpty
           v-if="filteredModels.length === 0 && activeCategory !== 'loras'"
           :description="$t('download.noModelsInCategory')"
         />
@@ -517,36 +403,38 @@
             <h2 class="page-title">{{ $t('download.civitaiSearch') }}</h2>
           </div>
 
-          <el-card shadow="never" class="studio-ep-surface-card models-page__col-mb">
+          <DqSurfaceCard class="studio-surface-card models-page__col-mb">
             <div class="models-civit-search-row">
-              <el-input
+              <DqInput
                 v-model="searchQuery"
                 :placeholder="$t('download.searchCivitai')"
                 clearable
                 @keyup.enter="searchCivitai"
               >
                 <template #prefix>
-                  <el-icon><search /></el-icon>
+                  <DqIcon><search /></DqIcon>
                 </template>
-              </el-input>
-              <el-select v-model="searchType" class="models-civit-search-type">
-                <el-option label="LoRA" value="LORA" />
-                <el-option label="Checkpoint" value="Checkpoint" />
-                <el-option :label="$t('download.all')" value="LORA,Checkpoint" />
-              </el-select>
-              <el-button
+              </DqInput>
+              <DqSelect v-model="searchType" class="models-civit-search-type">
+                <DqOption label="LoRA" value="LORA" />
+                <DqOption label="Checkpoint" value="Checkpoint" />
+                <DqOption :label="$t('download.all')" value="LORA,Checkpoint" />
+              </DqSelect>
+              <DqButton
+                type="primary"
+                size="sm"
                 class="models-toolbar-btn models-toolbar-btn--primary"
                 :loading="searching"
                 @click="searchCivitai"
               >
-                <el-icon class="models-toolbar-btn__icon"><search /></el-icon>
+                <DqIcon class="models-toolbar-btn__icon"><search /></DqIcon>
                 <span class="models-toolbar-btn__label">{{ $t('download.search') }}</span>
-              </el-button>
+              </DqButton>
             </div>
-          </el-card>
+          </DqSurfaceCard>
 
-          <el-row v-if="searchResults.length > 0" :gutter="16">
-            <el-col
+          <DqRow v-if="searchResults.length > 0" :gutter="16">
+            <DqCol
               v-for="model in searchResults"
               :key="model.id"
               :xs="24"
@@ -554,7 +442,7 @@
               :md="8"
               class="models-page__col-mb"
             >
-              <el-card class="civitai-card">
+              <DqSurfaceCard class="civitai-card">
                 <div class="models-civit-card-inner">
                   <div class="civitai-preview">
                     <img
@@ -571,7 +459,7 @@
                       v-else
                       class="no-preview"
                     >
-                      <el-icon><picture-filled /></el-icon>
+                      <DqIcon><picture-filled /></DqIcon>
                     </div>
                   </div>
 
@@ -588,51 +476,49 @@
                       }}
                     </div>
                     <div class="models-civit-tags-row">
-                      <el-tag
+                      <DqTag
                         v-if="model.nsfw"
-                        size="small"
+                       
                         type="danger"
                       >
                         {{ $t('download.nsfwTag') }}
-                      </el-tag>
-                      <el-tag size="small" type="info">
-                        <el-icon><download /></el-icon>
+                      </DqTag>
+                      <DqTag type="info">
+                        <DqIcon><download /></DqIcon>
                         {{ formatNumber(model.stats?.downloadCount || 0) }}
-                      </el-tag>
+                      </DqTag>
                     </div>
                   </div>
                 </div>
 
                 <div class="models-civit-footer-actions">
-                  <el-select
+                  <DqSelect
                     v-model="selectedVersions[model.id]"
-                    size="small"
+                   
                     class="models-civit-version-select"
                     :placeholder="$t('download.selectVersion')"
                   >
-                    <el-option
+                    <DqOption
                       v-for="v in model.model_versions"
                       :key="v.id"
                       :label="v.name"
                       :value="v.id"
                     />
-                  </el-select>
-                  <el-button
+                  </DqSelect>
+                  <DqButton size="sm"
                     class="model-ver-btn model-ver-btn--download"
-                    size="small"
-                    plain
                     :loading="downloadingLoras[model.id]"
                     @click="downloadCivitaiModel(model)"
                   >
-                    <el-icon class="model-ver-btn__icon"><download /></el-icon>
+                    <DqIcon class="model-ver-btn__icon"><download /></DqIcon>
                     <span class="model-ver-btn__label">{{ $t('download.download_') }}</span>
-                  </el-button>
+                  </DqButton>
                 </div>
-              </el-card>
-            </el-col>
-          </el-row>
+              </DqSurfaceCard>
+            </DqCol>
+          </DqRow>
 
-          <el-empty
+          <DqEmpty
             v-else-if="!searching && hasSearched"
             :description="$t('download.noResults')"
           />
@@ -654,15 +540,15 @@
           >
             <div class="models-installed-row__main">
               <span class="models-installed-row__name">{{ row.name }}</span>
-              <el-tag size="small" :type="getModelTypeTagType(row.type)">
+              <DqTag :type="getModelTypeTagType(row.type)">
                 {{ row.type || 'unknown' }}
-              </el-tag>
+              </DqTag>
             </div>
             <span class="models-installed-row__size">{{ row.size_human }}</span>
             <span class="models-installed-row__path" :title="row.path">{{ row.path }}</span>
           </article>
         </div>
-        <el-empty v-else :description="$t('download.noModels')" />
+        <DqEmpty v-else :description="$t('download.noModels')" />
       </div>
 
       <!-- Downloading -->
@@ -673,11 +559,11 @@
           </h2>
         </div>
 
-        <el-card v-if="activeDownloadCount === 0" shadow="never" class="studio-ep-surface-card">
-          <el-empty :description="$t('download.noTasks')" />
-        </el-card>
+        <DqSurfaceCard v-if="activeDownloadCount === 0" class="studio-surface-card">
+          <DqEmpty :description="$t('download.noTasks')" />
+        </DqSurfaceCard>
 
-        <el-card v-else shadow="never" class="studio-ep-surface-card">
+        <DqSurfaceCard v-else class="studio-surface-card">
           <div
             v-for="(item, taskId) in activeDownloads"
             :key="taskId"
@@ -697,39 +583,33 @@
                   </span>
                   <span v-else>{{ $t('download.preparing') }}</span>
                 </span>
-                <el-button
+                <DqButton size="sm"
                   v-if="item.status === 'paused'"
                   class="model-ver-btn model-ver-btn--download"
-                  size="small"
-                  plain
                   @click="resumeDownload(taskId)"
                 >
-                  <el-icon class="model-ver-btn__icon"><video-play /></el-icon>
+                  <DqIcon class="model-ver-btn__icon"><video-play /></DqIcon>
                   <span class="model-ver-btn__label">{{ $t('download.resume') }}</span>
-                </el-button>
-                <el-button
+                </DqButton>
+                <DqButton size="sm"
                   v-else-if="item.status === 'running'"
                   class="model-ver-btn model-ver-btn--neutral"
-                  size="small"
-                  plain
                   @click="cancelDownload(taskId)"
                 >
-                  <el-icon class="model-ver-btn__icon"><close /></el-icon>
+                  <DqIcon class="model-ver-btn__icon"><close /></DqIcon>
                   <span class="model-ver-btn__label">{{ $t('download.cancelDownload') }}</span>
-                </el-button>
-                <el-button
+                </DqButton>
+                <DqButton size="sm"
                   v-else-if="item.status === 'failed'"
                   class="model-ver-btn model-ver-btn--delete"
-                  size="small"
-                  plain
                   @click="deleteDownload(taskId)"
                 >
-                  <el-icon class="model-ver-btn__icon"><delete /></el-icon>
+                  <DqIcon class="model-ver-btn__icon"><delete /></DqIcon>
                   <span class="model-ver-btn__label">{{ $t('download.deleteTask') }}</span>
-                </el-button>
+                </DqButton>
               </div>
             </div>
-            <el-progress
+            <DqProgress
               :percentage="
                 item.total_size > 0 ? Math.round(item.progress * 100) : 0
               "
@@ -744,7 +624,7 @@
               {{ item.error }}
             </div>
           </div>
-        </el-card>
+        </DqSurfaceCard>
       </div>
     </div>
   </div>
@@ -754,12 +634,14 @@
 // @ts-nocheck
 import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
 import { onBeforeRouteLeave } from 'vue-router';
-import { ElMessage, ElMessageBox } from 'element-plus';
+import { toast, confirm } from '@/utils/feedback';
 import { api } from '@/utils/api';
 import { $tt, $mn, $md } from '@/utils/i18n';
 import { useRegistryStore } from '@/stores/registry';
 import { DQ_STORAGE, getItem, setItem } from '@/utils/storage';
 import ModelLicenseBadges from '@/components/model/ModelLicenseBadges.vue';
+import ModelsImportDialog from '@/components/models/ModelsImportDialog.vue';
+import ModelsCategoryNav from '@/components/models/ModelsCategoryNav.vue';
 
 /* ───── Types ───── */
 
@@ -852,7 +734,7 @@ const importing = ref(false);
 
 /* ───── Helpers ───── */
 
-/** Same Element Plus icons as left sidebar `el-menu-item`. */
+/** Icons aligned with ModelsCategoryNav sidebar items. */
 const categoryPageIcon = computed(() => {
   const icons: Record<string, string> = {
     all: 'Grid',
@@ -1114,7 +996,7 @@ async function downloadVersion(
     connectProgressSSE(data.task_id, label, uiKey);
   } catch (e: any) {
     console.error('Download failed:', e);
-    ElMessage.error($tt('download.downloadFailed', { msg: e.message }));
+    toast.error($tt('download.downloadFailed', { msg: e.message }));
     delete downloadingModels.value[uiKey];
   }
 }
@@ -1123,7 +1005,7 @@ async function quantizeVersion(model: ModelRow, versionKey: string) {
   const ver = model.versions?.[versionKey];
   const fromV = ver?.from_version;
   if (!fromV) {
-    ElMessage.error($tt('download.versionConfigError'));
+    toast.error($tt('download.versionConfigError'));
     return;
   }
   const uiKey = `${model.id}-${versionKey}`;
@@ -1143,7 +1025,7 @@ async function quantizeVersion(model: ModelRow, versionKey: string) {
     connectConversionSSE(taskId, label, uiKey);
   } catch (e: any) {
     console.error('Quantize failed:', e);
-    ElMessage.error($tt('download.quantizeFailed', { msg: e.message || String(e) }));
+    toast.error($tt('download.quantizeFailed', { msg: e.message || String(e) }));
     delete downloadingModels.value[uiKey];
   }
 }
@@ -1151,7 +1033,7 @@ async function quantizeVersion(model: ModelRow, versionKey: string) {
 async function deleteVersion(model: ModelRow, versionKey: string) {
   try {
     const version = model.versions?.[versionKey];
-    await ElMessageBox.confirm(
+    await confirm(
       $tt('download.deleteConfirm', {
         name: `${$mn(model, model.id)} ${version?.name || versionKey}`,
       }),
@@ -1164,19 +1046,19 @@ async function deleteVersion(model: ModelRow, versionKey: string) {
     );
     const result = (await api.models.deleteVersion(model.id, versionKey)) as any;
     if (result.success) {
-      ElMessage.success(
+      toast.success(
         $tt('download.deletedMsg', {
           name: `${$mn(model, model.id)} ${version?.name || versionKey}`,
         })
       );
     } else {
-      ElMessage.error(result.error || $tt('download.deleteFailed'));
+      toast.error(result.error || $tt('download.deleteFailed'));
     }
     refreshStatus();
   } catch (e: any) {
     if (e !== 'cancel') {
       console.error('Delete failed:', e);
-      ElMessage.error($tt('download.deleteFailed') + ': ' + (e.message || e));
+      toast.error($tt('download.deleteFailed') + ': ' + (e.message || e));
     }
   }
 }
@@ -1218,13 +1100,13 @@ function connectProgressSSE(
           delete activeDownloads.value[taskId];
           delete downloadingModels.value[dmKey];
         }, 2000);
-        ElMessage.success($tt('download.downloadComplete', { name }));
+        toast.success($tt('download.downloadComplete', { name }));
         refreshStatus();
       } else if (data.status === 'failed') {
         eventSource.close();
         delete sseConnections.value[taskId];
         delete downloadingModels.value[dmKey];
-        ElMessage.error(
+        toast.error(
           $tt('download.downloadFailed', { name, msg: data.error_message })
         );
       } else if (data.status === 'cancelled') {
@@ -1232,7 +1114,7 @@ function connectProgressSSE(
         delete sseConnections.value[taskId];
         delete activeDownloads.value[taskId];
         delete downloadingModels.value[dmKey];
-        ElMessage.info($tt('download.downloadCancelled', { name }));
+        toast.info($tt('download.downloadCancelled', { name }));
       }
     } catch (e) {
       console.error('SSE parse error:', e);
@@ -1285,13 +1167,13 @@ function connectConversionSSE(
           delete activeDownloads.value[taskId];
           delete downloadingModels.value[rowKey];
         }, 2000);
-        ElMessage.success($tt('download.quantizeComplete', { name }));
+        toast.success($tt('download.quantizeComplete', { name }));
         refreshStatus();
       } else if (data.status === 'failed') {
         eventSource.close();
         delete sseConnections.value[taskId];
         delete downloadingModels.value[rowKey];
-        ElMessage.error(
+        toast.error(
           $tt('download.quantizeFailed', { msg: data.error_message || '' })
         );
       } else if (data.status === 'cancelled') {
@@ -1299,7 +1181,7 @@ function connectConversionSSE(
         delete sseConnections.value[taskId];
         delete activeDownloads.value[taskId];
         delete downloadingModels.value[rowKey];
-        ElMessage.info($tt('download.genCancelled', { name }));
+        toast.info($tt('download.genCancelled', { name }));
       }
     } catch (e) {
       console.error('Conversion SSE parse error:', e);
@@ -1342,10 +1224,10 @@ async function resumeDownload(taskId: string) {
     item.status = 'running';
     connectProgressSSE(taskId, item.name);
 
-    ElMessage.success($tt('download.resumeStart', { name: item.name }));
+    toast.success($tt('download.resumeStart', { name: item.name }));
   } catch (e: any) {
     console.error('Resume failed:', e);
-    ElMessage.error($tt('download.resumeFailed', { msg: e.message }));
+    toast.error($tt('download.resumeFailed', { msg: e.message }));
   }
 }
 
@@ -1356,10 +1238,10 @@ async function deleteDownload(taskId: string) {
       await api.download.delete(taskId);
     }
     delete activeDownloads.value[taskId];
-    ElMessage.success($tt('download.deleteSuccess'));
+    toast.success($tt('download.deleteSuccess'));
   } catch (e) {
     console.error('Delete download failed:', e);
-    ElMessage.error($tt('download.deleteFailed'));
+    toast.error($tt('download.deleteFailed'));
   }
 }
 
@@ -1399,7 +1281,7 @@ async function searchCivitai() {
     });
   } catch (e) {
     console.error('Search failed:', e);
-    ElMessage.error($tt('download.searchFailed'));
+    toast.error($tt('download.searchFailed'));
   } finally {
     searching.value = false;
   }
@@ -1408,13 +1290,13 @@ async function searchCivitai() {
 async function downloadCivitaiModel(model: any) {
   const versionId = selectedVersions.value[model.id];
   if (!versionId) {
-    ElMessage.warning($tt('download.selectVersionWarn'));
+    toast.warning($tt('download.selectVersionWarn'));
     return;
   }
 
   const version = model.model_versions.find((v: any) => v.id === versionId);
   if (!version || !version.files.length) {
-    ElMessage.error($tt('download.noDownloadableFile'));
+    toast.error($tt('download.noDownloadableFile'));
     return;
   }
 
@@ -1429,7 +1311,7 @@ async function downloadCivitaiModel(model: any) {
     connectProgressSSE(data.task_id, model.name);
   } catch (e: any) {
     console.error('Download failed:', e);
-    ElMessage.error($tt('download.downloadFailed', { msg: e.message }));
+    toast.error($tt('download.downloadFailed', { msg: e.message }));
   } finally {
     downloadingLoras.value[model.id] = false;
   }
@@ -1452,7 +1334,7 @@ function showImportDialog() {
 
 async function importLocalModel() {
   if (!importModelName.value || !importModelPath.value) {
-    ElMessage.warning($tt('download.importWarn'));
+    toast.warning($tt('download.importWarn'));
     return;
   }
 
@@ -1474,13 +1356,13 @@ async function importLocalModel() {
     });
     setItem(DQ_STORAGE.IMPORTED_MODELS, JSON.stringify(importedModels));
 
-    ElMessage.success(
+    toast.success(
       $tt('download.importSuccess', { name: importModelName.value })
     );
     importDialogVisible.value = false;
   } catch (e) {
     console.error('Import failed:', e);
-    ElMessage.error($tt('download.importFailed'));
+    toast.error($tt('download.importFailed'));
   } finally {
     importing.value = false;
   }

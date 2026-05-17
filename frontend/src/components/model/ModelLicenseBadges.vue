@@ -29,7 +29,7 @@ const showAny = computed(() => props.recommended || showCommercial.value);
     class="model-license-badges"
     :class="{ 'model-license-badges--stacked': stacked }"
   >
-    <el-tag
+    <DqTag
       v-if="recommended"
       :size="size"
       type="success"
@@ -37,21 +37,16 @@ const showAny = computed(() => props.recommended || showCommercial.value);
       class="model-license-badges__recommended"
     >
       {{ $t('download.recommendedBadge') }}
-    </el-tag>
-    <el-tooltip
+    </DqTag>
+    <DqTag
       v-if="showCommercial"
-      :content="$t('download.commercialUseBadgeTip')"
-      placement="top"
-      :show-after="400"
+      :size="size"
+      :effect="effect"
+      class="model-license-badges__commercial commercial-badge"
+      :title="$t('download.commercialUseBadgeTip')"
     >
-      <el-tag
-        :size="size"
-        :effect="effect"
-        class="model-license-badges__commercial commercial-badge"
-      >
-        {{ $t('download.commercialUseBadge') }}
-      </el-tag>
-    </el-tooltip>
+      {{ $t('download.commercialUseBadge') }}
+    </DqTag>
   </span>
 </template>
 
@@ -69,9 +64,9 @@ const showAny = computed(() => props.recommended || showCommercial.value);
   gap: 4px;
 }
 
-.commercial-badge {
-  --el-tag-bg-color: color-mix(in srgb, #4f6ef7 88%, #000);
-  --el-tag-border-color: color-mix(in srgb, #4f6ef7 70%, transparent);
-  --el-tag-text-color: #fff;
+.commercial-badge.dq-tag {
+  color: #fff;
+  background: color-mix(in srgb, #4f6ef7 88%, #000);
+  border-color: color-mix(in srgb, #4f6ef7 70%, transparent);
 }
 </style>

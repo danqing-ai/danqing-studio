@@ -20,7 +20,7 @@ Plugin-style image and video generation studio with **MLX** (Apple Silicon) and 
 - **Models as plugins** — New families touch registry JSON, config, `families/<family>/`, and `_transformer_registry.py`; the pipeline skeleton stays family-agnostic.
 - **Contract-driven API** — Routes and CLI go through `backend/core/contracts.py` and `IImageEngine` / `IVideoEngine`; no per-model branches in route handlers.
 - **Global task queue** — One worker, image/video (and audio placeholders) serialized; SSE progress, priority, queue position, persistent logs.
-- **Studio UI** — Vue 3 + Vite + TypeScript + Element Plus + Pinia; dark theme; model names and presets are bilingual in the registry.
+- **Studio UI** — Vue 3 + Vite + TypeScript + `@danqing/dq-ui` + Pinia; macOS-native dark theme; model names and presets are bilingual in the registry.
 - **Four modules** — **Create** (image/video tabs filtered by model `actions`), **Gallery** (SQLite `assets`), **Models** (install/delete weights), **Settings** (presets, queue policy, system health).
 
 ### Studio tabs ↔ model `actions`

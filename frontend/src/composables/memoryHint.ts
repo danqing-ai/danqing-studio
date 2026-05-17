@@ -2,7 +2,7 @@
  * Pre-submit memory risk soft hint (non-blocking).
  * Heuristic: registry version `size` vs system RAM / MLX limit.
  */
-import { ElMessage } from 'element-plus';
+import { toast } from '@/utils/feedback';
 import type { SystemInfo } from '@/types';
 
 export function parseHumanSizeToGb(s: unknown): number | null {
@@ -47,7 +47,7 @@ export function warnIfRiskyMemory(opts: {
   if (modelGb == null || modelGb <= 0) return;
 
   if (modelGb > refGb * 0.88) {
-    ElMessage.warning(
+    toast.warning(
       $tt('studio.submitOomHint', {
         modelGb: modelGb.toFixed(1),
         refGb: refGb.toFixed(1),

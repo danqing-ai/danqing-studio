@@ -1,265 +1,278 @@
 <!-- @ts-nocheck -->
 <template>
-  <div class="settings-page">
-    <el-tabs v-model="activeTab" class="settings-ep-tabs settings-ep-tabs--segmented">
-    <el-tab-pane :label="$t('settings.modelConfig')" name="models">
-        <el-card shadow="never" class="studio-ep-surface-card settings-ep-tab-panel">
-          <template #header>
-            <div class="card-title">
-              <el-icon><box /></el-icon>
-              {{ $t('settings.modelConfig') }}
-              <el-text class="settings-ep-title-desc" size="small" type="info">
-                {{ $t('settings.modelConfigDesc') }}
-              </el-text>
-            </div>
-          </template>
-
-          <el-select
-            v-model="selectedModel"
-            class="settings-ep-model-picker"
-            size="large"
-            @change="onModelSelect"
-            filterable
-          >
-            <el-option
+  <div class="settings-page settings-page--macos">
+    <DqSectionTabs v-model="activeTab" class="settings-dq-section-tabs">
+      <template #tabs>
+        <DqSectionTabTrigger name="models" :label="$t('settings.modelConfig')" />
+        <DqSectionTabTrigger name="presets" :label="$t('settings.promptTemplates')" />
+        <DqSectionTabTrigger name="system" :label="$t('settings.systemConfig')" />
+      </template>
+      <DqSectionTabPanel name="models">
+        <div class="settings-model-tab settings-model-tab--macos">
+          <section class="settings-group-block settings-group-block--model-picker">
+            <h3 class="settings-group-block-title">{{ $t('settings.modelConfig') }}</h3>
+            <p class="settings-group-footnote settings-group-footnote--intro">
+              {{ $t('settings.modelConfigDesc') }}
+            </p>
+            <DqPrefPane class="settings-grouped-form settings-grouped-form--model settings-grouped-form--mac-rows settings-pref-pane-form">
+              <DqPrefRow :label="$t('studio.modelSettings')" class="settings-mac-row--chevron">
+                <DqSelect
+                  v-model="selectedModel"
+                  class="settings-model-picker settings-model-picker--inline"
+                  @change="onModelSelect"
+                  filterable
+                >
+            <DqOption
               v-for="(config, key) in sortedModelRegistry"
               :key="key"
               :label="$mn(config)"
               :value="key"
             >
-              <div class="settings-ep-select-option">
-                <span class="settings-ep-select-option__name">{{ $mn(config) }}</span>
+              <div class="settings-select-option">
+                <span class="settings-select-option__name">{{ $mn(config) }}</span>
                 <ModelLicenseBadges
                   :recommended="config.recommended"
                   :commercial-use-allowed="config.commercial_use_allowed"
                 />
-                <el-tag size="small" type="info">{{ config.engine }}</el-tag>
-                <el-tag v-if="config.category" size="small" type="warning">{{ categoryLabel(config.category) }}</el-tag>
-                <span class="settings-ep-select-option__meta">
+                <DqTag size="small" type="info">{{ config.engine }}</DqTag>
+                <DqTag v-if="config.category" size="small" type="warning">{{ categoryLabel(config.category) }}</DqTag>
+                <span class="settings-select-option__meta">
                   {{ installedVersionCount(key) }}/{{ versionCount(config) }} {{ $t('settings.versionsInstalled') }}
                 </span>
               </div>
-            </el-option>
-          </el-select>
+            </DqOption>
+                </DqSelect>
+              </DqPrefRow>
+            </DqPrefPane>
+          </section>
 
-          <div v-if="currentModelConfig">
-            <el-card class="settings-ep-overview-card" shadow="never">
-              <div class="settings-ep-overview">
-                <div class="settings-ep-overview__avatar">
+          <template v-if="currentModelConfig">
+            <section class="settings-group-block settings-model-hero-block">
+              <div class="settings-grouped-form settings-grouped-form--model settings-model-hero-panel">
+              <div class="settings-overview settings-overview--inset">
+                <div class="settings-overview__avatar">
                   {{ modelInitials(currentModelConfig) }}
                 </div>
-                <div class="settings-ep-overview__body">
-                  <div class="settings-ep-overview__title-row">
-                    <span class="settings-ep-overview__title">{{ $mn(currentModelConfig) }}</span>
+                <div class="settings-overview__body">
+                  <div class="settings-overview__title-row">
+                    <span class="settings-overview__title">{{ $mn(currentModelConfig) }}</span>
                     <ModelLicenseBadges
                       :recommended="currentModelConfig.recommended"
                       :commercial-use-allowed="currentModelConfig.commercial_use_allowed"
                     />
                   </div>
-                  <el-text class="settings-ep-overview__desc" size="small" type="info" tag="p">
-                    {{ $md(currentModelConfig) }}
-                  </el-text>
-                  <div class="settings-ep-overview__tags">
-                    <el-tag size="small" type="info">{{ currentModelConfig.engine }}</el-tag>
-                    <el-tag v-if="currentModelConfig.category" size="small" type="warning">{{ categoryLabel(currentModelConfig.category) }}</el-tag>
-                    <el-tag size="small" type="info" effect="plain">{{ currentModelConfig.type }}</el-tag>
-                    <el-tag
+                  <p class="settings-overview__desc">{{ $md(currentModelConfig) }}</p>
+                  <div class="settings-overview__tags">
+                    <DqTag size="small" type="info">{{ currentModelConfig.engine }}</DqTag>
+                    <DqTag v-if="currentModelConfig.category" size="small" type="warning">{{ categoryLabel(currentModelConfig.category) }}</DqTag>
+                    <DqTag size="small" type="info" effect="plain">{{ currentModelConfig.type }}</DqTag>
+                    <DqTag
                       v-for="ak in modelActionKeyList"
                       :key="ak"
                       size="small"
                       effect="plain"
                     >
                       {{ actionTagLabel(ak) }}
-                    </el-tag>
+                    </DqTag>
                   </div>
                 </div>
               </div>
-            </el-card>
+              </div>
+            </section>
 
-            <!-- Two-column layout: param config + model info -->
-            <el-row :gutter="20" class="settings-ep-layout-row">
-              <el-col :xs="24" :md="16" :lg="17" :xl="18">
-                <div v-if="currentModelConfig.versions" class="settings-ep-section">
-                  <div class="settings-ep-section-head">
-                    <el-icon><collection /></el-icon>
-                    {{ $t('settings.defaultVersion') }}
-                  </div>
-                  <el-select v-model="selectedDefaultVersion" class="settings-ep-default-version-select" @change="onDefaultVersionChange">
-                    <el-option
+            <DqRow :gutter="20" class="settings-layout-row settings-model-layout-row">
+              <DqCol :xs="24" :md="16" :lg="17" :xl="17" class="settings-model-main">
+                <section v-if="currentModelConfig.versions" class="settings-group-block">
+                  <h3 class="settings-group-block-title">{{ $t('settings.defaultVersion') }}</h3>
+                  <DqPrefPane class="settings-grouped-form settings-grouped-form--model settings-grouped-form--mac-rows settings-pref-pane-form">
+                    <DqPrefRow no-label class="settings-mac-row--chevron">
+                      <DqSelect v-model="selectedDefaultVersion" class="settings-default-version-select settings-mac-chevron-select" @change="onDefaultVersionChange">
+                    <DqOption
                       v-for="(ver, verKey) in currentModelConfig.versions"
                       :key="verKey"
+                      :label="String(ver.name || verKey)"
                       :value="verKey"
                     >
-                      <div class="settings-ep-select-option">
+                      <div class="settings-select-option">
                         <span>{{ ver.name }}</span>
-                        <el-tag size="small" type="info">{{ ver.size }}</el-tag>
-                        <el-tag
+                        <DqTag size="small" type="info">{{ ver.size }}</DqTag>
+                        <DqTag
                           v-if="versionStatus(selectedModel, verKey) === 'ready'"
                           size="small"
                           type="success"
-                        >{{ $t('settings.installed') }}</el-tag>
-                        <el-tag
+                        >{{ $t('settings.installed') }}</DqTag>
+                        <DqTag
                           v-else-if="versionStatus(selectedModel, verKey) === 'generatable'"
                           size="small"
                           type="info"
                           effect="plain"
-                        >{{ versionStatusLabel(selectedModel, verKey) }}</el-tag>
-                        <el-tag
+                        >{{ versionStatusLabel(selectedModel, verKey) }}</DqTag>
+                        <DqTag
                           v-else
                           size="small"
                           type="info"
-                        >{{ $t('settings.notInstalled') }}</el-tag>
+                        >{{ $t('settings.notInstalled') }}</DqTag>
                         <span
                           v-if="isRecommendedVersion(verKey)"
-                          class="settings-ep-version-option-rec"
+                          class="settings-version-option-rec"
                         >{{ $t('settings.recommendedForYourHardware') }}</span>
                       </div>
-                    </el-option>
-                  </el-select>
-                  <el-alert
+                    </DqOption>
+                      </DqSelect>
+                    </DqPrefRow>
+                  </DqPrefPane>
+                  <DqAlert
                     v-if="hardwareAdvice"
+                    class="settings-hardware-alert settings-inset-alert"
                     :type="hardwareAdviceAlertType"
                     :closable="false"
                     show-icon
-                    class="settings-ep-hardware-alert"
                   >
                     {{ hardwareAdvice.message }}
-                  </el-alert>
-                </div>
+                  </DqAlert>
+                </section>
 
-                <div class="settings-ep-section">
-                  <div class="settings-ep-section-head settings-ep-section-head--toolbar">
-                    <span class="settings-ep-card-header">
-                      <el-icon><magic-stick /></el-icon>
-                      {{ $t('settings.paramPresets') }}
-                    </span>
-                    <el-button size="small" plain class="settings-ep-tool-btn" @click="openParamPresetDialog">
-                      <el-icon><plus /></el-icon>
+                <section class="settings-group-block">
+                  <div class="settings-group-block-title-row">
+                    <h3 class="settings-group-block-title">{{ $t('settings.paramPresets') }}</h3>
+                    <DqButton type="primary" size="sm" class="settings-tool-btn" @click="openParamPresetDialog">
+                      <DqIcon><plus /></DqIcon>
                       {{ $t('settings.saveAsPreset') }}
-                    </el-button>
+                    </DqButton>
                   </div>
-                  <el-alert
+                  <div
                     v-if="paramPresetsForModel.length === 0"
-                    type="info"
-                    :closable="false"
-                    show-icon
+                    class="settings-grouped-form settings-grouped-form--model settings-grouped-form--empty-hint"
                   >
-                    {{ $t('settings.noParamPresets') }}
-                  </el-alert>
-                  <div v-else class="settings-ep-preset-tags">
-                    <el-tag
+                    <p class="settings-empty-hint">{{ $t('settings.noParamPresets') }}</p>
+                  </div>
+                  <div v-else class="settings-preset-tags settings-preset-tags--inset">
+                    <DqTag
                       v-for="preset in paramPresetsForModel"
                       :key="preset.id"
                       size="small"
                       effect="plain"
                       closable
-                      class="settings-ep-preset-tag"
+                      class="settings-preset-tag"
                       @close="deleteParamPreset(preset.id)"
                       @click="loadParamPreset(preset)"
                       :type="preset.isDefault ? 'success' : ''"
                     >
                       {{ preset.name }}
-                      <span v-if="preset.isDefault" class="settings-ep-preset-tag-default-note">({{ $t('settings.default') }})</span>
-                    </el-tag>
+                      <span v-if="preset.isDefault" class="settings-preset-tag-default-note">({{ $t('settings.default') }})</span>
+                    </DqTag>
                   </div>
-                </div>
+                </section>
 
-                <div class="model-params-section">
-                  <div class="settings-ep-params-toolbar">
-                    <h4 class="section-title">
-                      <el-icon><sliders /></el-icon>
-                      {{ $t('settings.parameters') }}
-                    </h4>
-                    <el-button text type="primary" size="small" @click="onSettingsModelRestoreDefaults">
-                      <el-icon><refresh /></el-icon>
+                <section class="settings-group-block model-params-section">
+                  <div class="settings-group-block-title-row">
+                    <h3 class="settings-group-block-title">{{ $t('settings.parameters') }}</h3>
+                    <DqButton type="text" size="sm" class="settings-restore-btn" @click="onSettingsModelRestoreDefaults">
+                      <DqIcon><refresh /></DqIcon>
                       {{ $t('studio.restoreDefaults') }}
-                    </el-button>
+                    </DqButton>
                   </div>
 
-                  <!-- Custom param form (replaces RegistryParamsForm, adds note display and reset buttons) -->
-                  <el-form label-position="top" size="small" v-if="currentModelConfig">
+                  <DqPrefPane
+                    v-if="currentModelConfig"
+                    class="settings-grouped-form settings-grouped-form--model settings-model-params-form settings-pref-pane-form"
+                  >
                     <!-- Resolution -->
-                    <el-form-item v-if="resPair" :label="$t('studio.resolution')">
-                      <div class="settings-ep-res-row">
-                        <el-select v-model="modelParams.width" class="settings-ep-select--w120">
-                          <el-option v-for="w in resPair.width.options" :key="w" :label="String(w)" :value="w" />
-                        </el-select>
-                        <span class="settings-ep-res-x">x</span>
-                        <el-select v-model="modelParams.height" class="settings-ep-select--w120">
-                          <el-option v-for="h in resPair.height.options" :key="h" :label="String(h)" :value="h" />
-                        </el-select>
+                    <DqPrefRow v-if="resPair" :label="$t('studio.resolution')">
+                      <div class="settings-res-row settings-pref-control">
+                        <DqSelect v-model="modelParams.width" class="settings-select--w120">
+                          <DqOption v-for="w in resPair.width.options" :key="w" :label="String(w)" :value="w" />
+                        </DqSelect>
+                        <span class="settings-res-x">x</span>
+                        <DqSelect v-model="modelParams.height" class="settings-select--w120">
+                          <DqOption v-for="h in resPair.height.options" :key="h" :label="String(h)" :value="h" />
+                        </DqSelect>
                       </div>
-                    </el-form-item>
+                    </DqPrefRow>
 
                     <template v-for="key in scalarKeys" :key="key">
-                      <el-form-item v-if="specOf(key)">
-                        <template #label>
-                          <div class="settings-ep-param-label-row">
-                            <span>{{ paramLabel(key, specOf(key)) }}</span>
-                            <el-tooltip v-if="specOf(key).note" :content="specOf(key).note" placement="top">
-                              <el-icon class="settings-ep-help-icon"><question-filled /></el-icon>
-                            </el-tooltip>
-                            <el-tag v-if="isParamChanged(key)" size="small" type="warning" effect="plain">{{ $t('settings.modified') }}</el-tag>
-                          </div>
-                        </template>
-                        <!-- int / float slider -->
-                        <template v-if="specOf(key).type === 'int' || specOf(key).type === 'float'">
-                          <div class="param-control-row">
+                      <DqPrefRow
+                        v-if="specOf(key)"
+                        :label="paramLabel(key, specOf(key))"
+                        :class="(specOf(key).type === 'int' || specOf(key).type === 'float') ? 'settings-pref-row--slider' : ''"
+                      >
+                        <div class="settings-pref-control">
+                          <div
+                            v-if="specOf(key).type === 'int' || specOf(key).type === 'float'"
+                            class="param-control-row settings-pref-slider-row"
+                          >
                             <div class="param-slider">
-                              <el-slider
+                              <DqSlider
                                 v-model="modelParams[key]"
                                 :min="specOf(key).min"
                                 :max="specOf(key).max"
                                 :step="numStep(key, specOf(key))"
                               />
                             </div>
-                            <el-input-number
+                            <DqInputNumber
                               v-model="modelParams[key]"
                               :min="specOf(key).min"
                               :max="specOf(key).max"
                               :step="numStep(key, specOf(key))"
+                              :precision="specOf(key).type === 'float' ? 2 : 0"
+                              controls-position="right"
                               class="param-input-number"
                             />
-                            <el-button
+                            <DqIconButton
                               v-if="isParamChanged(key)"
-                              size="small"
-                              text
+                              type="text"
+                              size="sm"
+                              class="settings-pref-reset-btn"
+                              :label="$t('settings.resetToDefault')"
                               @click="resetParam(key)"
-                              :title="$t('settings.resetToDefault')"
                             >
-                              <el-icon><refresh-left /></el-icon>
-                            </el-button>
+                              <DqIcon><refresh-left /></DqIcon>
+                            </DqIconButton>
                           </div>
-                        </template>
-                        <!-- enum -->
-                        <div v-else-if="specOf(key).type === 'enum'" class="settings-ep-enum-row">
-                          <el-select v-model="modelParams[key]" class="settings-ep-select--flex">
-                            <el-option v-for="opt in specOf(key).options" :key="String(opt)" :label="String(opt)" :value="opt" />
-                          </el-select>
-                          <el-button
-                            v-if="isParamChanged(key)"
-                            size="small"
-                            text
-                            @click="resetParam(key)"
-                            :title="$t('settings.resetToDefault')"
+                          <div v-else-if="specOf(key).type === 'enum'" class="settings-enum-row settings-pref-inline-control">
+                            <DqSelect v-model="modelParams[key]" class="settings-select--flex">
+                              <DqOption v-for="opt in specOf(key).options" :key="String(opt)" :label="String(opt)" :value="opt" />
+                            </DqSelect>
+                            <DqIconButton
+                              v-if="isParamChanged(key)"
+                              type="text"
+                              size="sm"
+                              class="settings-pref-reset-btn"
+                              :label="$t('settings.resetToDefault')"
+                              @click="resetParam(key)"
+                            >
+                              <DqIcon><refresh-left /></DqIcon>
+                            </DqIconButton>
+                          </div>
+                          <div v-else-if="specOf(key).type === 'bool'" class="settings-bool-row settings-pref-inline-control">
+                            <DqSwitch v-model="modelParams[key]" />
+                            <DqIconButton
+                              v-if="isParamChanged(key)"
+                              type="text"
+                              size="sm"
+                              class="settings-pref-reset-btn"
+                              :label="$t('settings.resetToDefault')"
+                              @click="resetParam(key)"
+                            >
+                              <DqIcon><refresh-left /></DqIcon>
+                            </DqIconButton>
+                          </div>
+                          <div
+                            v-if="specOf(key).note || (isParamChanged(key) && specOf(key).type !== 'int' && specOf(key).type !== 'float')"
+                            class="settings-pref-control-meta"
                           >
-                            <el-icon><refresh-left /></el-icon>
-                          </el-button>
+                            <DqTooltip v-if="specOf(key).note" :content="specOf(key).note" placement="top">
+                              <DqIcon class="settings-help-icon"><question-filled /></DqIcon>
+                            </DqTooltip>
+                            <DqTag
+                              v-if="isParamChanged(key) && specOf(key).type !== 'int' && specOf(key).type !== 'float'"
+                              size="small"
+                              type="warning"
+                              effect="plain"
+                            >{{ $t('settings.modified') }}</DqTag>
+                          </div>
                         </div>
-                        <!-- bool -->
-                        <div v-else-if="specOf(key).type === 'bool'" class="settings-ep-bool-row">
-                          <el-switch v-model="modelParams[key]" />
-                          <el-button
-                            v-if="isParamChanged(key)"
-                            size="small"
-                            text
-                            @click="resetParam(key)"
-                            :title="$t('settings.resetToDefault')"
-                          >
-                            <el-icon><refresh-left /></el-icon>
-                          </el-button>
-                        </div>
-                      </el-form-item>
+                      </DqPrefRow>
                     </template>
 
                     <!-- LoRA -->
@@ -274,695 +287,131 @@
                     />
 
                     <!-- Seed -->
-                    <el-form-item v-if="seedSupport" :label="$t('studio.seed')">
-                      <div class="settings-ep-seed-row">
-                        <el-input v-model="modelParams.seed" :placeholder="$t('studio.seedPlaceholder')" />
-                        <el-button @click="modelParams.seed = String(Math.floor(Math.random() * 1_000_000))">
-                          <el-icon><refresh /></el-icon>
-                        </el-button>
-                      </div>
-                    </el-form-item>
-                  </el-form>
-
-                  <div class="save-button-wrapper settings-ep-form-mt">
-                    <el-button type="primary" @click="saveModelConfig" class="save-button">
-                      <el-icon><check /></el-icon>
-                      {{ $t('common.save') }}
-                    </el-button>
-                  </div>
-                </div>
-              </el-col>
-
-              <!-- Right column: model info reference -->
-              <el-col :xs="24" :md="8" :lg="7" :xl="6">
-                <el-card class="settings-ep-side-card" shadow="never">
-                  <template #header>
-                    <div class="settings-ep-card-header">
-                      <el-icon><collection /></el-icon>
-                      <span>{{ $t('settings.versionStatus') }}</span>
-                    </div>
-                  </template>
-                  <el-text v-if="!currentModelConfig.versions" size="small" type="info">
-                    {{ $t('settings.noVersions') }}
-                  </el-text>
-                  <div v-else class="settings-ep-version-stack">
-                    <div
-                      v-for="(ver, verKey) in currentModelConfig.versions"
-                      :key="verKey"
-                      class="settings-ep-version-item"
-                      :class="{ 'is-selected': selectedDefaultVersion === verKey }"
-                    >
-                      <div class="settings-ep-version-item__row">
-                        <span class="settings-ep-version-item__name">{{ ver.name }}</span>
-                        <el-tag size="small" type="info">{{ ver.size }}</el-tag>
-                      </div>
-                      <div class="settings-ep-version-item__meta">
-                        <el-tag
-                          :type="versionStatusType(selectedModel, verKey)"
-                          size="small"
-                          effect="plain"
+                    <DqPrefRow v-if="seedSupport" :label="$t('studio.seed')">
+                      <div class="settings-seed-row settings-pref-control">
+                        <DqInput v-model="modelParams.seed" :placeholder="$t('studio.seedPlaceholder')" />
+                        <DqIconButton
+                          type="text"
+                          size="sm"
+                          class="settings-seed-dice-btn dq-icon-btn--circle"
+                          :label="$t('studio.seed')"
+                          @click="modelParams.seed = String(Math.floor(Math.random() * 1_000_000))"
                         >
-                          {{ versionStatusLabel(selectedModel, verKey) }}
-                        </el-tag>
-                        <span v-if="ver.source_type === 'derived'" class="settings-ep-version-derived">
-                          {{ $t('settings.from') }} {{ currentModelConfig.versions[ver.from_version]?.name || ver.from_version }}
-                        </span>
+                          <DqIcon><refresh /></DqIcon>
+                        </DqIconButton>
                       </div>
-                      <div v-if="isRecommendedVersion(verKey)" class="settings-ep-version-recommended">
-                        <el-icon><star-filled /></el-icon>
-                        {{ $t('settings.recommendedForYourHardware') }}
-                      </div>
-                    </div>
-                  </div>
-                </el-card>
+                    </DqPrefRow>
+                  </DqPrefPane>
 
-                <el-card class="settings-ep-side-card" shadow="never">
-                  <template #header>
-                    <div class="settings-ep-card-header">
-                      <el-icon><check /></el-icon>
-                      <span>{{ $t('settings.capabilities') }}</span>
-                    </div>
-                  </template>
-                  <div class="settings-ep-cap-grid">
-                    <div
-                      v-for="cap in capabilityList"
-                      :key="cap.key"
-                      class="settings-ep-cap-cell"
-                      :class="cap.value ? 'is-active' : 'is-inactive'"
-                    >
-                      <el-icon :size="14" :color="cap.value ? 'var(--el-color-success)' : 'var(--el-text-color-secondary)'">
-                        <component :is="cap.value ? 'check' : 'close'" />
-                      </el-icon>
-                      <span class="settings-ep-cap-label">{{ cap.label }}</span>
-                    </div>
+                  <div class="settings-model-save-row">
+                    <DqButton type="primary" class="save-button settings-model-save-btn" @click="saveModelConfig">
+                      <DqIcon><check /></DqIcon>
+                      {{ $t('common.save') }}
+                    </DqButton>
                   </div>
-                </el-card>
+                </section>
+              </DqCol>
 
-                <el-card class="settings-ep-side-card" shadow="never">
-                  <template #header>
-                    <div class="settings-ep-card-header">
-                      <el-icon><cpu /></el-icon>
-                      <span>{{ $t('settings.hardwareCompatibility') }}</span>
-                    </div>
-                  </template>
-                  <div v-if="systemInfo.memory_gb" class="settings-ep-memory-row">
-                    <div class="settings-ep-memory-row-head">
-                      <span>{{ $t('settings.systemMemory') }}</span>
-                      <span class="settings-ep-memory-val">{{ systemInfo.memory_gb.toFixed(1) }} GB</span>
-                    </div>
-                    <el-progress :percentage="Math.min(100, (minVersionSizeGB / systemInfo.memory_gb * 100))" :show-text="false" :stroke-width="6" :color="memoryProgressColor" />
-                  </div>
-                  <el-alert
-                    v-if="recommendedVersion"
-                    type="success"
-                    :closable="false"
-                    show-icon
-                  >
-                    <template #title>{{ $t('settings.recommendedVersion') }}</template>
-                    {{ recommendedVersion.name }} ({{ recommendedVersion.size }})
-                  </el-alert>
-                  <el-alert
-                    v-else-if="currentModelConfig.versions"
-                    type="error"
-                    :closable="false"
-                    show-icon
-                  >
-                    {{ $t('settings.memoryInsufficient') }}
-                  </el-alert>
-                </el-card>
+              <DqCol :xs="24" :md="8" :lg="7" :xl="7" class="settings-model-sidebar">
+                <ModelConfigInspector
+                  :current-model-config="currentModelConfig"
+                  :selected-model="selectedModel"
+                  :selected-default-version="selectedDefaultVersion"
+                  :capability-list="capabilityList"
+                  :system-info="systemInfo"
+                  :min-version-size-g-b="minVersionSizeGB"
+                  :memory-progress-color="memoryProgressColor"
+                  :recommended-version="recommendedVersion"
+                  :hardware-advice="hardwareAdvice"
+                  :has-param-notes="hasParamNotes"
+                  :param-notes-list="paramNotesList"
+                  :version-status-type="versionStatusType"
+                  :version-status-label="versionStatusLabel"
+                  :is-recommended-version="isRecommendedVersion"
+                />
+              </DqCol>
 
-                <el-card class="settings-ep-side-card settings-ep-side-card--last" shadow="never">
-                  <template #header>
-                    <div class="settings-ep-card-header">
-                      <el-icon><info-filled /></el-icon>
-                      <span>{{ $t('settings.paramNotes') }}</span>
-                    </div>
-                  </template>
-                  <el-text v-if="!hasParamNotes" size="small" type="info">
-                    {{ $t('settings.noParamNotes') }}
-                  </el-text>
-                  <div v-else class="settings-ep-notes-stack">
-                    <div v-for="note in paramNotesList" :key="note.key" class="settings-ep-note-item">
-                      <div class="settings-ep-note-label">{{ note.label }}</div>
-                      <div class="settings-ep-note-body">{{ note.note }}</div>
-                    </div>
-                  </div>
-                </el-card>
-              </el-col>
-            </el-row>
-          </div>
-        </el-card>
+            </DqRow>
+          </template>
+        </div>
 
         <!-- Parameter preset save dialog -->
-        <el-dialog v-model="paramPresetDialogVisible" :title="$t('settings.saveParamPreset')" width="400px">
-          <el-form label-position="top">
-            <el-form-item :label="$t('settings.presetName')" required>
-              <el-input v-model="paramPresetForm.name" :placeholder="$t('settings.presetNamePlaceholder')" />
-            </el-form-item>
-            <el-form-item>
-              <el-checkbox v-model="paramPresetForm.isDefault">{{ $t('settings.setAsDefaultPreset') }}</el-checkbox>
-            </el-form-item>
-          </el-form>
+        <DqDialog v-model:open="paramPresetDialogVisible" :title="$t('settings.saveParamPreset')" width="400px">
+          <DqPrefPane class="settings-pref-pane-form settings-pref-pane-form--dialog">
+            <DqPrefRow :label="$t('settings.presetName')" stacked>
+              <DqInput v-model="paramPresetForm.name" :placeholder="$t('settings.presetNamePlaceholder')" />
+            </DqPrefRow>
+            <DqPrefRow no-label stacked>
+              <DqCheckbox v-model="paramPresetForm.isDefault">{{ $t('settings.setAsDefaultPreset') }}</DqCheckbox>
+            </DqPrefRow>
+          </DqPrefPane>
           <template #footer>
-            <el-button @click="paramPresetDialogVisible = false">{{ $t('common.cancel') }}</el-button>
-            <el-button type="primary" @click="saveParamPreset">{{ $t('common.save') }}</el-button>
+            <DqButton @click="paramPresetDialogVisible = false">{{ $t('common.cancel') }}</DqButton>
+            <DqButton type="primary" @click="saveParamPreset">{{ $t('common.save') }}</DqButton>
           </template>
-        </el-dialog>
-    </el-tab-pane>
+        </DqDialog>
+      </DqSectionTabPanel>
 
-    <el-tab-pane :label="$t('settings.promptTemplates')" name="presets">
-        <el-card shadow="never" class="studio-ep-surface-card settings-ep-tab-panel">
-          <template #header>
-            <div class="card-title card-title--split">
-              <span class="settings-ep-card-header">
-                <el-icon><collection /></el-icon>
-                {{ $t('settings.promptTemplates') }}
-                <el-text class="settings-ep-title-desc" size="small" type="info">
-                  {{ $t('settings.promptTemplatesDesc') }}
-                </el-text>
-              </span>
-              <div class="settings-ep-header-actions">
-                <el-button
-                  text
-                  size="small"
-                  class="settings-ep-link-destructive"
-                  :loading="restoreConfigBusy"
-                  @click="confirmRestorePromptTemplates"
-                >
-                  {{ $t('settings.restorePromptTemplates') }}
-                </el-button>
-                <el-button type="primary" size="small" @click="openPresetDialog()">
-                  <el-icon><plus /></el-icon>
-                  {{ $t('settings.addTemplate') }}
-                </el-button>
-              </div>
-            </div>
-          </template>
+      <DqSectionTabPanel name="presets">
+        <PromptTemplatesPanel
+          v-model:dialog-open="presetDialogVisible"
+          :presets="presets"
+          :restore-config-busy="restoreConfigBusy"
+          :editing-preset-name="editingPresetName"
+          :preset-form="presetForm"
+          @add="openPresetDialog()"
+          @edit="(name, preset) => openPresetDialog(name, preset)"
+          @delete="confirmDeletePreset"
+          @save="savePreset"
+          @restore="confirmRestorePromptTemplates"
+        />
+      </DqSectionTabPanel>
 
-          <el-empty v-if="Object.keys(presets).length === 0" :description="$t('settings.noTemplates')" />
-
-          <el-table v-else :data="presetList" class="settings-ep-table-full">
-            <el-table-column :label="$t('settings.templateName')" prop="name" min-width="150" />
-            <el-table-column :label="$t('settings.presetMediaScope')" width="140">
-              <template #default="{ row }">
-                <el-text size="small">{{ presetMediaLabel(row.preset) }}</el-text>
-              </template>
-            </el-table-column>
-            <el-table-column :label="$t('settings.positivePrompt')" min-width="250">
-              <template #default="{ row }">
-                <div class="settings-ep-table-ellipsis">
-                  {{ row.preset.positive || '-' }}
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column :label="$t('settings.negativePrompt')" min-width="250">
-              <template #default="{ row }">
-                <div class="settings-ep-table-ellipsis">
-                  {{ row.preset.negative || '-' }}
-                </div>
-              </template>
-            </el-table-column>
-            <el-table-column :label="$t('settings.presetAppliesTo')" min-width="160">
-              <template #default="{ row }">
-                <span class="settings-ep-table-muted">{{ presetAppliesSummary(row.preset) }}</span>
-              </template>
-            </el-table-column>
-            <el-table-column :label="$t('common.action')" width="150" fixed="right">
-              <template #default="{ row }">
-                <el-button size="small" text type="primary" @click="openPresetDialog(row.name, row.preset)">
-                  <el-icon><edit /></el-icon>
-                </el-button>
-                <el-button size="small" text type="danger" @click="confirmDeletePreset(row.name)">
-                  <el-icon><delete /></el-icon>
-                </el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-        </el-card>
-
-        <!-- Add/Edit template dialog -->
-        <el-dialog
-          v-model="presetDialogVisible"
-          :title="editingPresetName ? $t('settings.editTemplate') : $t('settings.addTemplate')"
-          width="600px"
-        >
-          <el-form :model="presetForm" label-position="top">
-            <el-form-item :label="$t('settings.templateName')" required>
-              <el-input v-model="presetForm.name" :placeholder="$t('settings.presetNamePlaceholder')" />
-            </el-form-item>
-            <el-form-item :label="$t('settings.presetMediaScope')">
-              <div class="settings-ep-stacked-control">
-                <el-radio-group v-model="presetForm.media_scope" class="settings-ep-media-scope-group">
-                  <el-radio-button label="image">{{ $t('settings.presetMediaImage') }}</el-radio-button>
-                  <el-radio-button label="video">{{ $t('settings.presetMediaVideo') }}</el-radio-button>
-                </el-radio-group>
-                <p class="settings-ep-form-hint settings-ep-form-hint--below-control">
-                  {{ $t('settings.presetMediaScopeHint') }}
-                </p>
-              </div>
-            </el-form-item>
-            <el-form-item :label="$t('settings.positivePrompt')">
-              <el-input
-                v-model="presetForm.positive"
-                type="textarea"
-                :rows="4"
-                :placeholder="$t('settings.positivePlaceholder')"
-              />
-            </el-form-item>
-            <el-form-item :label="$t('settings.negativePrompt')">
-              <div class="settings-ep-stacked-control">
-                <el-input
-                  v-model="presetForm.negative"
-                  type="textarea"
-                  :rows="2"
-                  :placeholder="$t('settings.negativePlaceholder')"
-                />
-                <p class="studio-ep-field-footnote">{{ $t('studio.optional') }}</p>
-              </div>
-            </el-form-item>
-            <el-form-item :label="$t('settings.presetAppliesTo')">
-              <el-checkbox-group v-model="presetForm.applies_to">
-                <el-checkbox label="create">{{ $t('action.image.create') }}</el-checkbox>
-                <el-checkbox label="rewrite">{{ $t('action.image.rewrite') }}</el-checkbox>
-                <el-checkbox label="retouch">{{ $t('action.image.retouch') }}</el-checkbox>
-                <el-checkbox label="extend">{{ $t('action.image.extend') }}</el-checkbox>
-                <el-checkbox label="upscale">{{ $t('action.image.upscale') }}</el-checkbox>
-                <el-checkbox label="animate">{{ $t('action.video.animate') }}</el-checkbox>
-              </el-checkbox-group>
-            </el-form-item>
-          </el-form>
-          <template #footer>
-            <el-button @click="presetDialogVisible = false">{{ $t('common.cancel') }}</el-button>
-            <el-button type="primary" @click="savePreset">{{ $t('common.save') }}</el-button>
-          </template>
-        </el-dialog>
-    </el-tab-pane>
-
-    <el-tab-pane :label="$t('settings.systemConfig')" name="system">
-        <el-row :gutter="20" class="settings-ep-system-layout-row">
+      <DqSectionTabPanel name="system">
+        <DqRow :gutter="20" class="settings-system-layout-row">
           <!-- Left: public config + model list + LoRA list -->
-          <el-col :xs="24" :md="16" :lg="17" :xl="18">
+          <DqCol :xs="24" :md="16" :lg="17" :xl="18">
             <!-- Public config -->
-            <el-card shadow="never" class="studio-ep-surface-card settings-ep-tab-panel">
+            <DqSurfaceCard class="settings-tab-panel">
               <template #header>
                 <div class="card-title">
-                  <el-icon><setting /></el-icon>
+                  <DqIcon><setting /></DqIcon>
                   {{ $t('settings.publicConfig') }}
-                  <el-text class="settings-ep-title-desc" size="small" type="info">
+                  <DqText class="settings-title-desc" size="small" type="info">
                     {{ $t('settings.publicConfigDesc') }}
-                  </el-text>
+                  </DqText>
                 </div>
               </template>
 
-              <el-form :model="settings" label-position="top" class="settings-ep-system-form">
-                <section class="settings-ep-group-block">
-                  <h3 class="settings-ep-group-block-title">{{ $t('settings.systemGroupGeneral') }}</h3>
-                  <div class="settings-ep-grouped-form settings-ep-grouped-form--system">
-                    <el-form-item :label="$t('settings.defaultModel')">
-                      <div class="settings-ep-stacked-control">
-                        <el-select
-                          v-model="settings.default_model"
-                          class="settings-ep-default-version-select"
-                          :placeholder="$t('settings.selectDefaultModel')"
-                        >
-                          <el-option
-                            v-for="model in installedModels"
-                            :key="model.name"
-                            :label="model.name"
-                            :value="model.name"
-                          />
-                        </el-select>
-                        <p class="settings-ep-form-hint settings-ep-form-hint--below-control">
-                          {{ $t('settings.defaultModelDesc') }}
-                        </p>
-                      </div>
-                    </el-form-item>
+              <SystemSettingsForm
+                :settings="settings"
+                :default-model-options-by-media="defaultModelOptionsByMedia"
+                :workspace-paths="workspacePaths"
+                :restore-config-busy="restoreConfigBusy"
+                @save="saveSettings"
+                @language-change="handleLanguageChange"
+                @pick-workspace="pickWorkspaceDirectory"
+                @restore-model-registry="confirmRestoreModelRegistry"
+                @restore-prompt-templates="confirmRestorePromptTemplates"
+              />
+            </DqSurfaceCard>
 
-                    <el-form-item :label="$t('settings.language')">
-                      <el-select v-model="settings.language" @change="handleLanguageChange">
-                        <el-option :label="$t('settings.label_zh')" value="zh" />
-                        <el-option :label="$t('settings.label_en')" value="en" />
-                      </el-select>
-                    </el-form-item>
+          </DqCol>
 
-                    <el-form-item :label="$t('settings.outputFormat')">
-                      <el-select v-model="settings.output_format">
-                        <el-option label="PNG" value="png" />
-                        <el-option label="JPEG" value="jpg" />
-                        <el-option label="WebP" value="webp" />
-                      </el-select>
-                    </el-form-item>
-                  </div>
-                </section>
-
-                <section class="settings-ep-group-block">
-                  <h3 class="settings-ep-group-block-title">{{ $t('settings.systemGroupPerformance') }}</h3>
-                  <div class="settings-ep-grouped-form settings-ep-grouped-form--system">
-                    <el-form-item :label="$t('settings.memoryLimit')">
-                      <div class="param-control-row">
-                        <div class="param-slider">
-                          <el-slider v-model="settings.mlx_memory_limit" :min="32" :max="256" :step="8" />
-                        </div>
-                        <span class="settings-ep-slider-suffix">{{ settings.mlx_memory_limit }} GB</span>
-                      </div>
-                    </el-form-item>
-
-                    <el-form-item :label="$t('settings.modelCacheTtl')">
-                      <div class="settings-ep-stacked-control">
-                        <div class="param-control-row">
-                          <div class="param-slider">
-                            <el-slider v-model="settings.model_cache_ttl_minutes" :min="5" :max="120" :step="5" />
-                          </div>
-                          <span class="settings-ep-slider-suffix">{{ settings.model_cache_ttl_minutes }} min</span>
-                        </div>
-                        <p class="settings-ep-form-hint settings-ep-form-hint--below-control">
-                          {{ $t('settings.modelCacheTtlDesc') }}
-                        </p>
-                      </div>
-                    </el-form-item>
-
-                    <el-form-item :label="$t('settings.queueImageFirst')">
-                      <div class="settings-ep-stacked-control">
-                        <el-switch v-model="settings.queue_image_first" />
-                        <p class="settings-ep-form-hint settings-ep-form-hint--below-control">
-                          {{ $t('settings.queueImageFirstDesc') }}
-                        </p>
-                      </div>
-                    </el-form-item>
-
-                    <el-form-item :label="$t('settings.autoSavePrompts')">
-                      <div class="settings-ep-stacked-control">
-                        <el-switch v-model="settings.auto_save_prompts" />
-                        <p class="settings-ep-form-hint settings-ep-form-hint--below-control">
-                          {{ $t('settings.autoSavePromptsDesc') }}
-                        </p>
-                      </div>
-                    </el-form-item>
-                  </div>
-                </section>
-
-                <section class="settings-ep-group-block">
-                  <h3 class="settings-ep-group-block-title">{{ $t('settings.systemGroupWorkspace') }}</h3>
-                  <div class="settings-ep-grouped-form settings-ep-grouped-form--system">
-                    <el-form-item :label="$t('settings.customWorkspace')">
-                  <div class="settings-ep-stacked-control settings-ep-workspace-picker">
-                    <div class="settings-ep-workspace-input-row">
-                      <el-input
-                        v-model="settings.custom_workspace_dir"
-                        :placeholder="$t('settings.customWorkspacePlaceholder')"
-                      />
-                      <el-button class="settings-ep-workspace-pick-btn" @click="pickWorkspaceDirectory">
-                        {{ $t('settings.pickWorkspace') }}
-                      </el-button>
-                    </div>
-                    <p class="settings-ep-form-hint settings-ep-form-hint--below-control">
-                      {{ $t('settings.workspaceSetupEmptyHint') }}
-                    </p>
-                    <p class="settings-ep-form-hint settings-ep-form-hint--below-control">
-                      {{ $t('settings.customWorkspaceHint') }}
-                    </p>
-                    <p class="settings-ep-form-hint settings-ep-form-hint--below-control">
-                      {{ $t('settings.customWorkspaceRestartHint') }}
-                    </p>
-                    <div v-if="workspacePaths" class="settings-ep-workspace-paths">
-                      <div class="settings-ep-workspace-paths-title">{{ $t('settings.workspaceLayoutTitle') }}</div>
-                      <ul class="settings-ep-workspace-paths-list">
-                        <li v-for="(p, key) in workspacePaths" :key="key">
-                          <span class="settings-ep-workspace-paths-key">{{ key }}</span>
-                          <span class="settings-ep-workspace-paths-val">{{ p }}</span>
-                        </li>
-                      </ul>
-                    </div>
-                  </div>
-                    </el-form-item>
-                  </div>
-                </section>
-
-                <section class="settings-ep-group-block">
-                  <h3 class="settings-ep-group-block-title">{{ $t('settings.systemGroupConfigMaintenance') }}</h3>
-                  <p class="settings-ep-group-footnote settings-ep-group-footnote--intro">
-                    {{ $t('settings.configMaintenanceDesc') }}
-                  </p>
-                  <div
-                    class="settings-ep-grouped-form settings-ep-grouped-form--system settings-ep-grouped-form--action-list"
-                    role="group"
-                    :aria-label="$t('settings.systemGroupConfigMaintenance')"
-                  >
-                    <button
-                      type="button"
-                      class="settings-ep-action-row settings-ep-action-row--destructive"
-                      :disabled="restoreConfigBusy"
-                      @click="confirmRestoreModelRegistry"
-                    >
-                      <span class="settings-ep-action-row__label">{{ $t('settings.restoreModelRegistry') }}</span>
-                      <el-icon class="settings-ep-action-row__chevron"><arrow-right /></el-icon>
-                    </button>
-                    <button
-                      type="button"
-                      class="settings-ep-action-row settings-ep-action-row--destructive"
-                      :disabled="restoreConfigBusy"
-                      @click="confirmRestorePromptTemplates"
-                    >
-                      <span class="settings-ep-action-row__label">{{ $t('settings.restorePromptTemplates') }}</span>
-                      <el-icon class="settings-ep-action-row__chevron"><arrow-right /></el-icon>
-                    </button>
-                  </div>
-                  <p class="settings-ep-group-footnote">{{ $t('settings.restoreModelRegistryDesc') }}</p>
-                  <p class="settings-ep-group-footnote">{{ $t('settings.restorePromptTemplatesDesc') }}</p>
-                </section>
-
-                <section class="settings-ep-group-block">
-                  <h3 class="settings-ep-group-block-title">{{ $t('settings.systemGroupHuggingface') }}</h3>
-                  <div class="settings-ep-grouped-form settings-ep-grouped-form--system">
-                    <el-form-item :label="$t('settings.huggingfaceToken')">
-                      <div class="settings-ep-stacked-control">
-                        <el-input
-                          v-model="settings.huggingface_token"
-                          type="password"
-                          show-password
-                          :placeholder="$t('settings.huggingfaceTokenPlaceholder')"
-                        >
-                          <template #prefix>
-                            <el-icon><key /></el-icon>
-                          </template>
-                        </el-input>
-                        <p class="studio-ep-field-footnote">{{ $t('studio.optional') }}</p>
-                        <p class="settings-ep-form-hint settings-ep-form-hint--below-control">
-                          {{ $t('settings.huggingfaceTokenDesc') }}
-                        </p>
-                      </div>
-                    </el-form-item>
-                  </div>
-                </section>
-
-                <section class="settings-ep-group-block">
-                  <h3 class="settings-ep-group-block-title">{{ $t('settings.systemGroupCivitai') }}</h3>
-                  <div class="settings-ep-grouped-form settings-ep-grouped-form--system">
-                    <el-form-item :label="$t('settings.civitaiToken')">
-                      <div class="settings-ep-stacked-control">
-                        <el-input
-                          v-model="settings.civitai_token"
-                          type="password"
-                          show-password
-                          :placeholder="$t('settings.civitaiTokenPlaceholder')"
-                        >
-                          <template #prefix>
-                            <el-icon><key /></el-icon>
-                          </template>
-                        </el-input>
-                        <p class="studio-ep-field-footnote">{{ $t('studio.optional') }}</p>
-                        <p class="settings-ep-form-hint settings-ep-form-hint--below-control">
-                          {{ $t('settings.civitaiTokenDesc') }}
-                        </p>
-                      </div>
-                    </el-form-item>
-
-                    <el-form-item v-if="settings.civitai_token">
-                      <div class="settings-ep-stacked-control">
-                        <el-checkbox v-model="settings.nsfw_enabled" size="large">
-                          <el-text type="danger">{{ $t('settings.nsfwContent') }}</el-text>
-                        </el-checkbox>
-                        <p class="settings-ep-form-hint settings-ep-form-hint--below-control">
-                          {{ $t('settings.nsfwDesc') }}
-                        </p>
-                      </div>
-                    </el-form-item>
-                  </div>
-                </section>
-
-                <el-form-item class="settings-ep-system-save-row">
-                  <el-button type="primary" @click="saveSettings">
-                    <el-icon><check /></el-icon>
-                    {{ $t('common.save') }}
-                  </el-button>
-                </el-form-item>
-              </el-form>
-            </el-card>
-
-          </el-col>
-
-          <!-- Right: system info + real-time resource monitor -->
-          <el-col :xs="24" :md="8" :lg="7" :xl="6">
-            <!-- System info -->
-            <el-card shadow="never" class="studio-ep-surface-card settings-ep-tab-panel">
-              <template #header>
-                <div class="card-title">
-                  <el-icon><cpu /></el-icon>
-                  {{ $t('settings.systemInfo') }}
-                </div>
-              </template>
-
-              <div class="system-info-grid">
-                <div class="info-item">
-                  <div class="info-icon">
-                    <el-icon class="settings-ep-info-icon-lg"><monitor /></el-icon>
-                  </div>
-                  <div class="info-content">
-                    <div class="info-label">{{ $t('settings.platform') }}</div>
-                    <div class="info-value">{{ systemInfo.platform }} {{ systemInfo.architecture }}</div>
-                  </div>
-                </div>
-                <div class="info-item">
-                  <div class="info-icon">
-                    <el-icon class="settings-ep-info-icon-lg"><cpu /></el-icon>
-                  </div>
-                  <div class="info-content">
-                    <div class="info-label">{{ $t('settings.memory') }}</div>
-                    <div class="info-value">{{ systemInfo.memory_gb?.toFixed(1) }} GB</div>
-                  </div>
-                </div>
-                <div class="info-item">
-                  <div class="info-icon">
-                    <el-icon class="settings-ep-info-icon-lg"><document /></el-icon>
-                  </div>
-                  <div class="info-content">
-                    <div class="info-label">{{ $t('settings.pythonVersion') }}</div>
-                    <div class="info-value">{{ systemInfo.python_version }}</div>
-                  </div>
-                </div>
-              </div>
-
-              <div v-if="systemInfo.dependencies" class="settings-ep-dependencies">
-                <div class="settings-ep-dependencies-title">{{ $t('settings.dependencies') }}</div>
-                <div class="settings-ep-dep-tags">
-                  <el-tag v-for="(version, name) in systemInfo.dependencies" :key="name" size="small" type="info" effect="plain">
-                    {{ name }} {{ version }}
-                  </el-tag>
-                </div>
-              </div>
-            </el-card>
-
-            <el-card shadow="never" class="studio-ep-surface-card settings-ep-tab-panel">
-              <template #header>
-                <div class="card-title card-title--split">
-                  <span class="settings-ep-card-header">
-                    <el-icon class="settings-ep-cache-title-icon"><collection /></el-icon>
-                    {{ $t('settings.modelCacheTitle') }}
-                  </span>
-                  <el-button size="small" text @click="refreshCacheStatus" :loading="cacheLoading">
-                    <el-icon><refresh /></el-icon>
-                  </el-button>
-                </div>
-              </template>
-              <el-alert v-if="cacheError" type="error" :closable="false" :title="cacheError" class="settings-ep-hardware-alert" />
-              <template v-else>
-                <div v-if="cacheStatus && cacheStatus.cache" class="settings-ep-cache-summary">
-                  {{ $tt('settings.modelCacheTotal', {
-                    count: cacheStatus.cache.cached_models,
-                    total: cacheStatus.cache.total_gb,
-                    limit: cacheStatus.cache.limit_gb
-                  }) }}
-                </div>
-                <div v-if="cacheStatus && cacheStatus.cache && cacheStatus.cache.models && cacheStatus.cache.models.length" class="cache-list">
-                  <div v-for="m in cacheStatus.cache.models" :key="m.key" class="cache-item">
-                    <div class="cache-item-icon">
-                      <el-icon><cpu /></el-icon>
-                    </div>
-                    <div class="cache-item-info">
-                      <div class="cache-item-name">{{ m.key }}</div>
-                      <div class="cache-item-meta">
-                        {{ $tt('settings.modelCacheIdle', { minutes: m.idle_minutes }) }}
-                      </div>
-                    </div>
-                    <div class="cache-item-size">{{ m.size_gb }} GB</div>
-                  </div>
-                </div>
-                <el-empty
-                  v-else-if="!cacheStatus || !cacheStatus.cache || !cacheStatus.cache.models || !cacheStatus.cache.models.length"
-                  :description="$t('settings.modelCacheEmpty')"
-                />
-              </template>
-            </el-card>
-
-            <!-- Real-time resource monitor -->
-            <el-card shadow="never" class="studio-ep-surface-card system-monitor-card">
-              <template #header>
-                <div class="card-title">
-                  <el-icon><monitor /></el-icon>
-                  {{ $t('settings.resourceMonitor') }}
-                  <span class="settings-ep-monitor-sub">
-                    {{ $t('settings.realtime') }}
-                  </span>
-                </div>
-              </template>
-
-              <!-- CPU -->
-              <div class="monitor-item">
-                <div class="monitor-label">
-                  <el-icon><cpu /></el-icon>
-                  <span>{{ $t('settings.cpu') }}</span>
-                  <span class="monitor-value">{{ monitorData.cpu_percent }}%</span>
-                </div>
-                <el-progress
-                  :percentage="monitorData.cpu_percent"
-                  :color="getProgressColor(monitorData.cpu_percent)"
-                  :show-text="false"
-                  :stroke-width="8"
-                />
-              </div>
-
-              <!-- Memory -->
-              <div class="monitor-item">
-                <div class="monitor-label">
-                  <el-icon><menu /></el-icon>
-                  <span>{{ $t('settings.memoryLabel') }}</span>
-                  <span class="monitor-value">
-                    {{ monitorData.memory.used_gb }} / {{ monitorData.memory.total_gb }} GB
-                  </span>
-                </div>
-                <el-progress
-                  :percentage="monitorData.memory.percent"
-                  :color="getProgressColor(monitorData.memory.percent)"
-                  :show-text="false"
-                  :stroke-width="8"
-                />
-              </div>
-
-              <!-- GPU -->
-              <div v-if="monitorData.gpu" class="monitor-item">
-                <div class="monitor-label">
-                  <el-icon><odometer /></el-icon>
-                  <span>{{ $t('settings.gpu') }}</span>
-                  <span v-if="monitorData.gpu.model" class="monitor-value">
-                    {{ monitorData.gpu.model }}
-                  </span>
-                </div>
-                <div class="settings-ep-monitor-gpu-meta">
-                  <span v-if="monitorData.gpu.memory_gb">{{ monitorData.gpu.memory_gb }} {{ $t('settings.unifiedMemory') }}</span>
-                  <span v-if="monitorData.gpu.note">{{ monitorData.gpu.note }}</span>
-                </div>
-              </div>
-
-              <div class="settings-ep-monitor-foot">
-                <el-tag size="small" type="info" effect="plain">
-                  {{ $t('settings.refreshInterval') }}
-                </el-tag>
-              </div>
-            </el-card>
-          </el-col>
-        </el-row>
-    </el-tab-pane>
-    </el-tabs>
+          <!-- Right: system info + cache + monitor (inspector) -->
+          <DqCol :xs="24" :md="8" :lg="7" :xl="6">
+            <SystemSettingsSidebar
+              :system-info="systemInfo"
+              :cache-status="cacheStatus"
+              :cache-loading="cacheLoading"
+              :cache-error="cacheError"
+              :monitor-data="monitorData"
+              @refresh-cache="refreshCacheStatus"
+            />
+          </DqCol>
+        </DqRow>
+      </DqSectionTabPanel>
+    </DqSectionTabs>
   </div>
 </template>
 
@@ -970,7 +419,7 @@
 // @ts-nocheck
 import { ref, reactive, computed, watch, onMounted, onUnmounted, inject, type Ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { ElMessage, ElMessageBox } from 'element-plus';
+import { toast, confirm } from '@/utils/feedback';
 import { api } from '@/utils/api';
 import { $tt, $mn, $md } from '@/utils/i18n';
 import { DQ_STORAGE, getItem, setItem } from '@/utils/storage';
@@ -978,6 +427,10 @@ import { useRegistryStore } from '@/stores/registry';
 import type { SystemInfo } from '@/types';
 import * as RegistryParamSchema from '@/utils/registryParamSchema';
 import ModelLicenseBadges from '@/components/model/ModelLicenseBadges.vue';
+import ModelConfigInspector from '@/components/settings/ModelConfigInspector.vue';
+import SystemSettingsForm from '@/components/settings/SystemSettingsForm.vue';
+import PromptTemplatesPanel from '@/components/settings/PromptTemplatesPanel.vue';
+import SystemSettingsSidebar from '@/components/settings/SystemSettingsSidebar.vue';
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -1041,6 +494,9 @@ const activeTab = ref<string>(getItem(DQ_STORAGE.SETTINGS_TAB) || 'models');
 const settings = reactive<Record<string, unknown>>({
   language: 'zh',
   default_model: '',
+  default_model_image: '',
+  default_model_video: '',
+  default_model_audio: '',
   auto_save_prompts: true,
   output_format: 'png',
   mlx_memory_limit: 120,
@@ -1087,7 +543,6 @@ const modelParams = reactive<Record<string, unknown>>({
 });
 
 const settingsCompatibleLoras = ref<Record<string, unknown>[]>([]);
-const installedModels = ref<Record<string, unknown>[]>([]);
 
 const presets = ref<Record<string, Record<string, unknown>>>({});
 const presetDialogVisible = ref(false);
@@ -1134,18 +589,22 @@ const currentModelConfig = computed<ModelConfig | null>(() => {
   return modelRegistry.value[selectedModel.value] || null;
 });
 
-const presetList = computed(() => {
-  return Object.entries(presets.value).map(([name, preset]) => ({
-    name,
-    preset,
-  }));
+const defaultModelOptionsByMedia = computed(() => {
+  const buckets: { image: { id: string; label: string }[]; video: { id: string; label: string }[]; audio: { id: string; label: string }[] } = {
+    image: [],
+    video: [],
+    audio: [],
+  };
+  for (const [id, cfg] of Object.entries(modelRegistry.value)) {
+    const media = String(cfg.media || 'image').toLowerCase();
+    if (media !== 'image' && media !== 'video' && media !== 'audio') continue;
+    buckets[media].push({ id, label: $mn(cfg, id) });
+  }
+  for (const key of ['image', 'video', 'audio'] as const) {
+    buckets[key].sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }));
+  }
+  return buckets;
 });
-
-const presetAppliesSummary = (preset: Record<string, unknown>) =>
-  (preset.applies_to as string[]).join(', ');
-
-const presetMediaLabel = (preset: Record<string, unknown>) =>
-  preset.media_scope === 'video' ? $tt('settings.presetMediaVideo') : $tt('settings.presetMediaImage');
 
 const versionCount = (config: ModelConfig) => {
   return config.versions ? Object.keys(config.versions).length : 0;
@@ -1217,9 +676,9 @@ const minVersionSizeGB = computed(() => {
 const memoryProgressColor = computed(() => {
   const memoryGB = systemInfo?.value.memory_gb ?? 0;
   const ratio = memoryGB ? minVersionSizeGB.value / memoryGB : 0;
-  if (ratio < 0.5) return 'var(--el-color-success)';
-  if (ratio < 0.8) return 'var(--el-color-warning)';
-  return 'var(--el-color-danger)';
+  if (ratio < 0.5) return 'var(--dq-success)';
+  if (ratio < 0.8) return 'var(--dq-warning)';
+  return 'var(--dq-danger)';
 });
 
 const isRecommendedVersion = (verKey: string) => {
@@ -1316,7 +775,7 @@ const normalizedParams = computed(() => {
 
 const resPair = computed(() => RegistryParamSchema.resolutionPair(normalizedParams.value));
 
-/** el-select 用 === 匹配 value：预设/存储里的字符串需对齐到 registry 枚举的原始类型，否则选中项不显示 */
+/** DqSelect 用 === 匹配 value：预设/存储里的字符串需对齐到 registry 枚举的原始类型，否则选中项不显示 */
 const snapModelResolutionEnums = () => {
   const pair = resPair.value;
   if (!pair) return;
@@ -1368,18 +827,20 @@ const numStep = (key: string, spec: Record<string, unknown>) => {
 };
 
 const paramLabel = (key: string, spec: Record<string, unknown>) => {
-  const map: Record<string, string> = {
-    steps: 'create.stepsLabel',
-    guidance: 'create.guidanceLabel',
-    scheduler: 'create.schedulerLabel',
-    strength: 'create.strengthLabel',
+  /* 设置页用短标签，避免「CFG 引导 (Guidance)」在窄列换行导致行错位 */
+  const settingsShort: Record<string, string> = {
+    steps: 'settings.steps',
+    guidance: 'settings.guidance',
+    scheduler: 'settings.scheduler',
+    strength: 'create.strength',
     controlnet_strength: 'create.controlNetStrengthLabel',
     redux_strength: 'create.reduxStrengthLabel',
   };
-  const i18nKey = map[key];
-  if (i18nKey) {
+  const shortKey = settingsShort[key];
+  if (shortKey) {
     try {
-      return $tt(i18nKey);
+      const text = $tt(shortKey);
+      return text.replace(/\s*[(（][^)）]+[)）]\s*$/, '').trim();
     } catch {
       /* fall through */
     }
@@ -1473,12 +934,6 @@ const modelInitials = (config: ModelConfig) => {
   }
   if (endIndex !== -1) return name.slice(0, endIndex);
   return name.slice(0, 3);
-};
-
-const getProgressColor = (percent: number) => {
-  if (percent < 50) return 'var(--el-color-success)';
-  if (percent < 80) return 'var(--el-color-warning)';
-  return 'var(--el-color-danger)';
 };
 
 /* ------------------------------------------------------------------ */
@@ -1591,7 +1046,13 @@ const selectDefaultVersionKey = (verKey: string) => {
 };
 
 const onDefaultVersionChange = () => {
-  console.log('Default version changed to:', selectedDefaultVersion.value);
+  const modelKey = selectedModel.value;
+  const verKey = selectedDefaultVersion.value;
+  const config = modelRegistry.value[modelKey];
+  if (!config?.versions || !verKey) return;
+  for (const [k, ver] of Object.entries(config.versions)) {
+    ver.default = k === verKey;
+  }
 };
 
 const onSettingsModelRestoreDefaults = () => {
@@ -1599,7 +1060,7 @@ const onSettingsModelRestoreDefaults = () => {
   if (config && config.parameters) {
     RegistryParamSchema.applyDefaults(config.parameters, modelParams);
     snapModelResolutionEnums();
-    ElMessage.success($tt('studio.restoredDefaults'));
+    toast.success($tt('studio.restoredDefaults'));
   }
 };
 
@@ -1621,15 +1082,15 @@ const saveModelConfig = async () => {
 
     const result = await api.settings.updateModelParameters(selectedModel.value, params) as { success?: boolean; error?: string };
     if (result.success) {
-      ElMessage.success($tt('settings.modelConfigSaved'));
+      toast.success($tt('settings.modelConfigSaved'));
       await loadModelRegistry();
       await registryStore.load();
     } else {
-      ElMessage.error(result.error || $tt('settings.saveFailed'));
+      toast.error(result.error || $tt('settings.saveFailed'));
     }
   } catch (e) {
     console.error('Failed to save model config:', e);
-    ElMessage.error($tt('settings.saveFailed'));
+    toast.error($tt('settings.saveFailed'));
   }
 };
 
@@ -1648,7 +1109,7 @@ function extractApiError(e: unknown): string {
 
 async function confirmWorkspaceRelocation(fromPath: string, toPath: string): Promise<boolean> {
   try {
-    await ElMessageBox.confirm(
+    await confirm(
       $tt('settings.workspaceChangeConfirm', { from: fromPath, to: toPath }),
       $tt('settings.workspaceChangeTitle'),
       {
@@ -1657,7 +1118,7 @@ async function confirmWorkspaceRelocation(fromPath: string, toPath: string): Pro
         cancelButtonText: $tt('settings.deleteCancel'),
       },
     );
-    await ElMessageBox.confirm(
+    await confirm(
       $tt('settings.workspaceChangeConfirmFinal'),
       $tt('settings.workspaceChangeTitle'),
       {
@@ -1676,6 +1137,9 @@ const loadSettings = async () => {
   try {
     const data = await api.settings.getSettings();
     Object.assign(settings, data);
+    if (!String(settings.default_model_image || '').trim() && String(settings.default_model || '').trim()) {
+      settings.default_model_image = settings.default_model;
+    }
     delete settings.theme;
     delete settings.custom_models_dir;
     delete settings.custom_loras_dir;
@@ -1712,7 +1176,7 @@ const pickWorkspaceDirectory = async () => {
       settings.custom_workspace_dir = path;
     }
   } catch (e) {
-    ElMessage.error((e as Error).message || String(e));
+    toast.error((e as Error).message || String(e));
   }
 };
 
@@ -1722,7 +1186,7 @@ const saveSettings = async () => {
 
   if (newWs !== oldWs) {
     if (!newWs) {
-      ElMessage.warning($tt('settings.workspaceRequired'));
+      toast.warning($tt('settings.workspaceRequired'));
       settings.custom_workspace_dir = oldWs;
       return;
     }
@@ -1737,12 +1201,12 @@ const saveSettings = async () => {
       initialWorkspaceDir.value = String(wsRes.workspace || newWs).trim();
       settings.custom_workspace_dir = initialWorkspaceDir.value;
       if (wsRes.restart_required) {
-        ElMessage.warning($tt('settings.customWorkspaceRestartHint'));
+        toast.warning($tt('settings.customWorkspaceRestartHint'));
       }
       await loadWorkspacePaths();
     } catch (e) {
       settings.custom_workspace_dir = oldWs;
-      ElMessage.error(extractApiError(e) || $tt('settings.workspaceApplyFailed'));
+      toast.error(extractApiError(e) || $tt('settings.workspaceApplyFailed'));
       return;
     }
   }
@@ -1755,23 +1219,17 @@ const saveSettings = async () => {
       model_cache_ttl_minutes: settings.model_cache_ttl_minutes,
       queue_image_first: settings.queue_image_first,
       auto_save_prompts: settings.auto_save_prompts,
-      default_model: settings.default_model,
+      default_model: String(settings.default_model_image || settings.default_model || ''),
+      default_model_image: settings.default_model_image || '',
+      default_model_video: settings.default_model_video || '',
+      default_model_audio: settings.default_model_audio || '',
       civitai_token: settings.civitai_token || '',
       huggingface_token: settings.huggingface_token || '',
       nsfw_enabled: settings.nsfw_enabled,
     });
-    ElMessage.success($tt('settings.saved'));
+    toast.success($tt('settings.saved'));
   } catch (e) {
-    ElMessage.error($tt('settings.saveFailed'));
-  }
-};
-
-const loadInstalledModels = async () => {
-  try {
-    const models = await api.settings.listModels();
-    installedModels.value = (models as Record<string, unknown>[]) || [];
-  } catch (e) {
-    console.error('Failed to load models:', e);
+    toast.error($tt('settings.saveFailed'));
   }
 };
 
@@ -1788,7 +1246,7 @@ async function runRestoreConfigDefaults(files: string[]) {
     const res = await api.settings.restoreConfigDefaults(files);
     const restored = res.restored || [];
     if (!restored.length) {
-      ElMessage.warning($tt('settings.restoreConfigNothing'));
+      toast.warning($tt('settings.restoreConfigNothing'));
       return;
     }
     if (restored.includes('presets.json')) {
@@ -1798,12 +1256,12 @@ async function runRestoreConfigDefaults(files: string[]) {
       await loadModelRegistry();
       await registryStore.load(true);
     }
-    ElMessage.success($tt('settings.restoreConfigSuccess'));
+    toast.success($tt('settings.restoreConfigSuccess'));
     if (res.restart_required) {
-      ElMessage.warning($tt('settings.restoreRegistryRestartHint'));
+      toast.warning($tt('settings.restoreRegistryRestartHint'));
     }
   } catch (e) {
-    ElMessage.error(extractApiError(e) || $tt('settings.restoreConfigFailed'));
+    toast.error(extractApiError(e) || $tt('settings.restoreConfigFailed'));
   } finally {
     restoreConfigBusy.value = false;
   }
@@ -1811,7 +1269,7 @@ async function runRestoreConfigDefaults(files: string[]) {
 
 async function confirmRestoreModelRegistry() {
   try {
-    await ElMessageBox.confirm(
+    await confirm(
       $tt('settings.restoreModelRegistryConfirm'),
       $tt('settings.restoreModelRegistryTitle'),
       {
@@ -1828,7 +1286,7 @@ async function confirmRestoreModelRegistry() {
 
 async function confirmRestorePromptTemplates() {
   try {
-    await ElMessageBox.confirm(
+    await confirm(
       $tt('settings.restorePromptTemplatesConfirm'),
       $tt('settings.restorePromptTemplatesTitle'),
       {
@@ -1874,12 +1332,12 @@ const openPresetDialog = (name = '', preset: Record<string, unknown> | null = nu
 
 const savePreset = async () => {
   if (!presetForm.name.trim()) {
-    ElMessage.warning($tt('settings.enterTemplateName'));
+    toast.warning($tt('settings.enterTemplateName'));
     return;
   }
   try {
     if (!Array.isArray(presetForm.applies_to) || !presetForm.applies_to.length) {
-      ElMessage.warning($tt('settings.presetAppliesRequired'));
+      toast.warning($tt('settings.presetAppliesRequired'));
       return;
     }
     const applies = [...presetForm.applies_to];
@@ -1889,17 +1347,17 @@ const savePreset = async () => {
       media_scope: presetForm.media_scope,
       applies_to: applies,
     });
-    ElMessage.success($tt('settings.templateSaved'));
+    toast.success($tt('settings.templateSaved'));
     presetDialogVisible.value = false;
     await loadPresets();
   } catch (e) {
     console.error('Failed to save preset:', e);
-    ElMessage.error($tt('settings.saveFailed'));
+    toast.error($tt('settings.saveFailed'));
   }
 };
 
 const confirmDeletePreset = (name: string) => {
-  ElMessageBox.confirm(
+  confirm(
     $tt('settings.deletePresetConfirm', { name }),
     $tt('settings.deletePresetTitle'),
     {
@@ -1915,11 +1373,11 @@ const confirmDeletePreset = (name: string) => {
 const deletePreset = async (name: string) => {
   try {
     await api.settings.deletePreset(name);
-    ElMessage.success($tt('settings.templateDeleted'));
+    toast.success($tt('settings.templateDeleted'));
     await loadPresets();
   } catch (e) {
     console.error('Failed to delete preset:', e);
-    ElMessage.error($tt('settings.saveFailed'));
+    toast.error($tt('settings.saveFailed'));
   }
 };
 
@@ -1946,7 +1404,7 @@ const openParamPresetDialog = () => {
 
 const saveParamPreset = () => {
   if (!paramPresetForm.name.trim()) {
-    ElMessage.warning($tt('settings.enterPresetName'));
+    toast.warning($tt('settings.enterPresetName'));
     return;
   }
   const mk = selectedModel.value;
@@ -1977,14 +1435,14 @@ const saveParamPreset = () => {
   });
   saveParamPresetsToStorage();
   paramPresetDialogVisible.value = false;
-  ElMessage.success($tt('settings.presetSaved'));
+  toast.success($tt('settings.presetSaved'));
 };
 
 const loadParamPreset = (preset: ParamPreset) => {
   if (!preset || !preset.params) return;
   Object.assign(modelParams, preset.params);
   snapModelResolutionEnums();
-  ElMessage.success($tt('settings.presetLoaded', { name: preset.name }));
+  toast.success($tt('settings.presetLoaded', { name: preset.name }));
 };
 
 const deleteParamPreset = (id: string) => {
@@ -2040,7 +1498,6 @@ onMounted(() => {
   loadModelRegistry();
   loadSettings();
   loadWorkspacePaths();
-  loadInstalledModels();
   loadPresets();
   loadParamPresets();
   startMonitor();
