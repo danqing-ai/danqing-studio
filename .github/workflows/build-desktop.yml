@@ -43,6 +43,7 @@ jobs:
 
       - name: Install dq-ui dependencies
         run: |
+          npm install --prefix dq-ui/packages/tokens
           npm install --prefix dq-ui/packages/ui
           npm install --prefix dq-ui/packages/shell
 
@@ -128,6 +129,7 @@ jobs:
 
       - name: Install dq-ui dependencies
         run: |
+          npm install --prefix dq-ui/packages/tokens
           npm install --prefix dq-ui/packages/ui
           npm install --prefix dq-ui/packages/shell
 
@@ -197,9 +199,10 @@ jobs:
         with:
           node-version: '20'
 
+      # Use default shell (pwsh) for npm — Git Bash on windows-latest often drops setup-node PATH.
       - name: Install dq-ui dependencies
-        shell: bash
         run: |
+          npm install --prefix dq-ui/packages/tokens
           npm install --prefix dq-ui/packages/ui
           npm install --prefix dq-ui/packages/shell
 
@@ -250,18 +253,16 @@ jobs:
 
       - name: Build frontend
         working-directory: danqing-studio/frontend
-        shell: bash
         run: |
           npm install
           npm run build
 
       - name: Build Windows desktop bundle
         working-directory: danqing-studio
-        shell: bash
         env:
           DANQING_PYINSTALLER_PROFILE: full
         run: |
-          source .venv/Scripts/activate
+          .\.venv\Scripts\Activate.ps1
           python scripts/build_sidecar.py
           python scripts/tauri_build.py --platform windows
 
