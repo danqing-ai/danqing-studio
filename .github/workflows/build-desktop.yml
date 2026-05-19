@@ -199,6 +199,7 @@ jobs:
           path: dq-ui
 
       - name: Setup Python
+        id: setup-python
         uses: actions/setup-python@v6
         with:
           python-version: '3.11'
@@ -222,43 +223,46 @@ jobs:
           targets: x86_64-pc-windows-msvc
 
       - name: Set release version
-        shell: bash
         working-directory: danqing-studio
         run: |
-          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            echo "RELEASE_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
-          elif [[ -n "${{ inputs.version }}" ]]; then
-            echo "RELEASE_VERSION=${{ inputs.version }}" >> "$GITHUB_ENV"
-          else
-            echo "RELEASE_VERSION=$(git describe --tags --always --dirty)" >> "$GITHUB_ENV"
-          fi
+          if ($env:GITHUB_REF -like 'refs/tags/v*') {
+            $ver = $env:GITHUB_REF_NAME.TrimStart('v')
+          } elseif ('${{ inputs.version }}' -ne '') {
+            $ver = '${{ inputs.version }}'
+          } else {
+            $ver = (git describe --tags --always --dirty).TrimStart('v')
+          }
+          "RELEASE_VERSION=$ver" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-      - name: Create venv and install CUDA dependencies
+      - name: Create Python venv
         working-directory: danqing-studio
+        run: |
+          & "${{ steps.setup-python.outputs.python-path }}" -m venv .venv
+          .\.venv\Scripts\python.exe -V
+
+      - name: Install CUDA Python dependencies
+        working-directory: danqing-studio
+        timeout-minutes: 45
         env:
           TORCH_INDEX_URL: https://download.pytorch.org/whl/cu124
-        shell: bash
         run: |
-          python -m venv .venv
-          source .venv/Scripts/activate
-          pip install --upgrade pip
-          pip install torch torchvision --index-url "$TORCH_INDEX_URL"
-          pip install -r requirements-linux-cuda.txt pyinstaller
+          .\.venv\Scripts\Activate.ps1
+          python -m pip install --upgrade pip
+          python -m pip install torch torchvision --index-url $env:TORCH_INDEX_URL
+          python -m pip install -r requirements-linux-cuda.txt pyinstaller
 
       - name: Set desktop version from tag
         if: startsWith(github.ref, 'refs/tags/')
-        shell: bash
         working-directory: danqing-studio
         run: |
-          source .venv/Scripts/activate
-          python scripts/set_desktop_version.py "${GITHUB_REF_NAME#v}"
+          .\.venv\Scripts\Activate.ps1
+          python scripts/set_desktop_version.py "$($env:GITHUB_REF_NAME.TrimStart('v'))"
 
       - name: Set desktop version (manual dispatch)
         if: github.event_name == 'workflow_dispatch' && inputs.version != ''
-        shell: bash
         working-directory: danqing-studio
         run: |
-          source .venv/Scripts/activate
+          .\.venv\Scripts\Activate.ps1
           python scripts/set_desktop_version.py "${{ inputs.version }}"
 
       - name: Build frontend
@@ -277,12 +281,11 @@ jobs:
           python scripts/tauri_build.py --platform windows
 
       - name: Verify NSIS installer was produced
-        shell: bash
         working-directory: danqing-studio
         run: |
-          ls -la out/desktop/bundle/
-          ls -la out/desktop/bundle/nsis/ || ls -laR out/desktop/bundle/
-          test -n "$(find out/desktop/bundle -name '*-setup.exe' -o -name '*.exe' | head -1)"
+          Get-ChildItem out/desktop/bundle -ErrorAction SilentlyContinue | Format-Table Name
+          $exe = Get-ChildItem out/desktop/bundle -Recurse -Include '*-setup.exe','*.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $exe) { throw 'No installer .exe under out/desktop/bundle' }
 
       - name: Upload Windows desktop artifact
         uses: actions/upload-artifact@v6
