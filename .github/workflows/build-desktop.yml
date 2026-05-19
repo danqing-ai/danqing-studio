@@ -43,9 +43,14 @@ jobs:
 
       - name: Install dq-ui dependencies
         run: |
-          npm install --prefix dq-ui/packages/tokens
-          npm install --prefix dq-ui/packages/ui
-          npm install --prefix dq-ui/packages/shell
+          npm install
+        working-directory: ${{ github.workspace }}/dq-ui/packages/tokens
+      - name: Install dq-ui ui
+        run: npm install
+        working-directory: ${{ github.workspace }}/dq-ui/packages/ui
+      - name: Install dq-ui shell
+        run: npm install
+        working-directory: ${{ github.workspace }}/dq-ui/packages/shell
 
       - name: Setup Rust
         run: rustup target add aarch64-apple-darwin
@@ -128,10 +133,14 @@ jobs:
           node-version: '20'
 
       - name: Install dq-ui dependencies
-        run: |
-          npm install --prefix dq-ui/packages/tokens
-          npm install --prefix dq-ui/packages/ui
-          npm install --prefix dq-ui/packages/shell
+        run: npm install
+        working-directory: ${{ github.workspace }}/dq-ui/packages/tokens
+      - name: Install dq-ui ui
+        run: npm install
+        working-directory: ${{ github.workspace }}/dq-ui/packages/ui
+      - name: Install dq-ui shell
+        run: npm install
+        working-directory: ${{ github.workspace }}/dq-ui/packages/shell
 
       - name: Set release version
         working-directory: danqing-studio
@@ -199,12 +208,13 @@ jobs:
         with:
           node-version: '20'
 
-      # Use default shell (pwsh) for npm — Git Bash on windows-latest often drops setup-node PATH.
-      - name: Install dq-ui dependencies
+      # dq-ui deps: installed in "Build frontend" via file:../../dq-ui (npm --prefix is flaky on Windows).
+      - name: Verify dq-ui checkout
         run: |
-          npm install --prefix dq-ui/packages/tokens
-          npm install --prefix dq-ui/packages/ui
-          npm install --prefix dq-ui/packages/shell
+          if (-not (Test-Path "${{ github.workspace }}/dq-ui/packages/ui/package.json")) {
+            Get-ChildItem "${{ github.workspace }}" | Format-Table Name
+            throw "dq-ui checkout missing"
+          }
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -254,7 +264,7 @@ jobs:
       - name: Build frontend
         working-directory: danqing-studio/frontend
         run: |
-          npm install
+          npm install --no-audit --no-fund
           npm run build
 
       - name: Build Windows desktop bundle
