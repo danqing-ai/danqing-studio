@@ -21,23 +21,23 @@ jobs:
     runs-on: macos-latest
     steps:
       - name: Checkout Studio
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           path: danqing-studio
 
       - name: Checkout dq-ui
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: danqing-ai/dq-ui
           path: dq-ui
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '20'
 
@@ -93,7 +93,7 @@ jobs:
           test -n "$(find out/desktop/bundle/dmg -maxdepth 1 -name '*.dmg' -print -quit)"
 
       - name: Upload macOS artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: danqing-desktop-macos
           path: |
@@ -106,23 +106,23 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Studio
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           path: danqing-studio
 
       - name: Checkout dq-ui
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: danqing-ai/dq-ui
           path: dq-ui
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '20'
 
@@ -166,7 +166,7 @@ jobs:
           test -f "out/dist/danqing-studio-linux-cuda-x86_64-${RELEASE_VERSION}.tar.gz"
 
       - name: Upload Linux CUDA artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: danqing-linux-cuda
           path: danqing-studio/out/dist/danqing-studio-linux-cuda-x86_64-*.tar.gz
@@ -177,23 +177,23 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout Studio
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           path: danqing-studio
 
       - name: Checkout dq-ui
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           repository: danqing-ai/dq-ui
           path: dq-ui
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: '20'
 
@@ -274,7 +274,7 @@ jobs:
           test -n "$(find out/desktop/bundle -name '*-setup.exe' -o -name '*.exe' | head -1)"
 
       - name: Upload Windows desktop artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: danqing-desktop-windows
           path: |
@@ -288,19 +288,19 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download macOS artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: danqing-desktop-macos
           path: release-assets/macos
 
       - name: Download Linux CUDA artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: danqing-linux-cuda
           path: release-assets/linux
 
       - name: Download Windows desktop artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v6
         with:
           name: danqing-desktop-windows
           path: release-assets/windows
