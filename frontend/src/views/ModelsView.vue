@@ -195,9 +195,11 @@
 
               <!-- Card content -->
               <div class="model-card-content">
-                <div class="model-card-name">
-                  {{ $mn(model) }}
-                </div>
+                <DqTooltip :content="$mn(model)" placement="top">
+                  <div class="model-card-name">
+                    {{ $mn(model) }}
+                  </div>
+                </DqTooltip>
                 <DqTooltip
                   :content="$md(model)"
                   placement="top"

@@ -3760,6 +3760,20 @@ body {
  max-width: none;
 }
 
+/* 弹窗内勿再套 pref-pane 线框（与 dq-dialog-content 重复） */
+.settings-pref-pane-form--dialog.dq-pref-pane {
+ border: none;
+ border-radius: 0;
+ background: transparent;
+ -webkit-backdrop-filter: none;
+ backdrop-filter: none;
+ box-shadow: none;
+}
+
+.settings-pref-pane-form--dialog.dq-pref-pane .dq-pref-row + .dq-pref-row {
+ border-top: none;
+}
+
 /* 提示词模板弹窗：全宽堆叠表单 + 大文本区 */
 .dq-dialog-content:has(.settings-pref-pane-form--preset-template) {
  max-height: min(92vh, 900px);
@@ -4919,6 +4933,10 @@ body {
  color: var(--text-primary);
  margin-bottom: 6px;
  line-height: 1.4;
+ white-space: nowrap;
+ overflow: hidden;
+ text-overflow: ellipsis;
+ cursor: default;
 }
 
 .model-card-desc {
@@ -5231,6 +5249,7 @@ body {
  font-weight: 600;
  letter-spacing: -0.025em;
  line-height: 1.35;
+ display: block;
 }
 
 /* 描述单行省略，完整文案见 DqTooltip */
