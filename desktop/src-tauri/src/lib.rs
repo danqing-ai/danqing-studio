@@ -16,13 +16,19 @@ static BOOTSTRAP_STARTED: AtomicBool = AtomicBool::new(false);
 
 fn sidecar_exe(app: &AppHandle) -> Result<PathBuf, String> {
     let res = app.path().resource_dir().map_err(|e| e.to_string())?;
-    let exe = res.join("danqing-api").join("danqing-api");
-    if exe.is_file() {
-        return Ok(exe);
+    let base = res.join("danqing-api");
+    #[cfg(windows)]
+    let candidates = [base.join("danqing-api.exe"), base.join("danqing-api")];
+    #[cfg(not(windows))]
+    let candidates = [base.join("danqing-api")];
+    for exe in candidates {
+        if exe.is_file() {
+            return Ok(exe);
+        }
     }
     Err(format!(
-        "Sidecar not found at {} (run: make desktop-bundle)",
-        exe.display()
+        "Sidecar not found under {} (run pack-*-sidecar / pack-*-desktop for this platform)",
+        base.display()
     ))
 }
 

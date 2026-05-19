@@ -27,7 +27,7 @@ DanQing Studio — plugin-style **image / video** generation on **MLX** (Apple S
 | Task kinds | `backend/core/task_kinds.py` (do not hardcode kind strings) |
 | Cursor rules | `.cursor/rules/model-migration.mdc`, `.cursor/rules/no-silent-degrade.mdc` |
 | Dual-platform design | `docs/dual_platform_architecture.md` |
-| Desktop | `desktop/`, `make desktop-bundle` |
+| Desktop | `desktop/`, `make pack-macos-desktop` |
 
 ### Hardcoded paths
 
@@ -288,10 +288,12 @@ make frontend-build      # → out/frontend/dist/
 | `check-engine-imports` | mlx/torch gate |
 | `lint` | Python syntax |
 | `frontend-install` / `frontend-dev` / `frontend-build` / `frontend-typecheck` | frontend |
-| `desktop-bundle` | `out/frontend/dist` + sidecar + Tauri → `out/desktop/bundle/` |
-| `linux-cuda-sidecar` | PyInstaller CUDA API → `out/sidecar/danqing-api` (Linux, `DANQING_PYINSTALLER_PROFILE=full`) |
-| `release-linux-cuda-tar` | Sidecar + `out/dist/danqing-studio-linux-cuda-x86_64-<ver>.tar.gz` (no Tauri) |
-| `release-linux-cuda` | `linux-cuda-venv` + sidecar + tar.gz (Linux CI/local) |
+| `pack-macos-desktop` | macOS Tauri `.app` / `.dmg` (MLX sidecar) |
+| `pack-linux-server` | Linux CUDA `.tar.gz` server bundle (venv + sidecar + archive) |
+| `pack-windows-desktop-release` | Windows CUDA NSIS installer (venv + Tauri; on Windows) |
+| `pack-windows-server` | Windows CUDA `.zip` headless server (optional) |
+
+Makefile pattern: `pack-<platform>-<product>-<step>` (`desktop` \| `server`; `venv` \| `sidecar` \| `shell` \| `archive`). Legacy names (`desktop-bundle`, `release-linux-cuda`, …) remain as aliases.
 | `clean` | `scripts/clean_build.py` |
 
 ---
@@ -331,10 +333,10 @@ make frontend-build      # → out/frontend/dist/
 
 ## Desktop packaging
 
-- Build: `make desktop-bundle` or `scripts/build_desktop.sh`
+- Build: `make pack-macos-desktop` or `scripts/build_desktop.sh`
 - Artifacts: `out/frontend/dist/`, `out/sidecar/danqing-api/`, `out/desktop/bundle/`, `out/dist/*.tar.gz` (Linux CUDA server)
 - macOS default: `DANQING_PYINSTALLER_PROFILE=mlx` (no torch / `*_cuda`)
-- Full CUDA sidecar: `DANQING_PYINSTALLER_PROFILE=full` — `make release-linux-cuda-tar` on Linux; CI job `build-linux-cuda` in `.github/workflows/build-desktop.yml`
+- CUDA server/desktop: `make pack-linux-server` / `make pack-windows-desktop-release`; CI in `.github/workflows/build-desktop.yml`
 - Sidecar env: `DANQING_HTTP_HOST`, `DANQING_HTTP_PORT`, `DANQING_USER_DATA_DIR`
 - New engine modules must be reachable from `scripts/build_desktop.py` / PyInstaller hooks
 

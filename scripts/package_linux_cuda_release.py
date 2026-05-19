@@ -84,8 +84,7 @@ def package(*, version: str | None = None) -> Path:
     if not sidecar.is_dir():
         raise SystemExit(
             f"Missing sidecar at {sidecar}. Build first:\n"
-            "  make linux-cuda-sidecar\n"
-            "  # or: DANQING_PYINSTALLER_PROFILE=full make desktop-sidecar"
+            "  make pack-linux-server-sidecar\n"
         )
     exe = sidecar / "danqing-api"
     if not exe.is_file():

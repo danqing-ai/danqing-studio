@@ -83,7 +83,7 @@ jobs:
         working-directory: danqing-studio
         run: |
           source .venv/bin/activate
-          make desktop-bundle
+          make pack-macos-desktop
 
       - name: Verify DMG was produced
         working-directory: danqing-studio
@@ -149,7 +149,7 @@ jobs:
         run: |
           python3 -m venv .venv
           source .venv/bin/activate
-          make linux-cuda-venv TORCH_INDEX_URL="$TORCH_INDEX_URL"
+          make pack-linux-server-venv TORCH_INDEX_URL="$TORCH_INDEX_URL"
 
       - name: Build Linux CUDA tar.gz
         working-directory: danqing-studio
@@ -157,7 +157,7 @@ jobs:
           RELEASE_VERSION: ${{ env.RELEASE_VERSION }}
         run: |
           source .venv/bin/activate
-          make release-linux-cuda-tar RELEASE_VERSION="$RELEASE_VERSION"
+          make pack-linux-server-archive RELEASE_VERSION="$RELEASE_VERSION"
 
       - name: Verify tar.gz was produced
         working-directory: danqing-studio
@@ -172,10 +172,119 @@ jobs:
           path: danqing-studio/out/dist/danqing-studio-linux-cuda-x86_64-*.tar.gz
           if-no-files-found: error
 
+  build-windows-desktop:
+    name: Windows desktop (CUDA)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout Studio
+        uses: actions/checkout@v4
+        with:
+          path: danqing-studio
+
+      - name: Checkout dq-ui
+        uses: actions/checkout@v4
+        with:
+          repository: danqing-ai/dq-ui
+          path: dq-ui
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dq-ui dependencies
+        shell: bash
+        run: |
+          npm install --prefix dq-ui/packages/ui
+          npm install --prefix dq-ui/packages/shell
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Set release version
+        shell: bash
+        working-directory: danqing-studio
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            echo "RELEASE_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+          elif [[ -n "${{ inputs.version }}" ]]; then
+            echo "RELEASE_VERSION=${{ inputs.version }}" >> "$GITHUB_ENV"
+          else
+            echo "RELEASE_VERSION=$(git describe --tags --always --dirty)" >> "$GITHUB_ENV"
+          fi
+
+      - name: Create venv and install CUDA dependencies
+        working-directory: danqing-studio
+        env:
+          TORCH_INDEX_URL: https://download.pytorch.org/whl/cu124
+        shell: bash
+        run: |
+          python -m venv .venv
+          source .venv/Scripts/activate
+          pip install --upgrade pip
+          pip install torch torchvision --index-url "$TORCH_INDEX_URL"
+          pip install -r requirements-linux-cuda.txt pyinstaller
+
+      - name: Set desktop version from tag
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        working-directory: danqing-studio
+        run: |
+          source .venv/Scripts/activate
+          python scripts/set_desktop_version.py "${GITHUB_REF_NAME#v}"
+
+      - name: Set desktop version (manual dispatch)
+        if: github.event_name == 'workflow_dispatch' && inputs.version != ''
+        shell: bash
+        working-directory: danqing-studio
+        run: |
+          source .venv/Scripts/activate
+          python scripts/set_desktop_version.py "${{ inputs.version }}"
+
+      - name: Build frontend
+        working-directory: danqing-studio/frontend
+        shell: bash
+        run: |
+          npm install
+          npm run build
+
+      - name: Build Windows desktop bundle
+        working-directory: danqing-studio
+        shell: bash
+        env:
+          DANQING_PYINSTALLER_PROFILE: full
+        run: |
+          source .venv/Scripts/activate
+          python scripts/build_sidecar.py
+          python scripts/tauri_build.py --platform windows
+
+      - name: Verify NSIS installer was produced
+        shell: bash
+        working-directory: danqing-studio
+        run: |
+          ls -la out/desktop/bundle/
+          ls -la out/desktop/bundle/nsis/ || ls -laR out/desktop/bundle/
+          test -n "$(find out/desktop/bundle -name '*-setup.exe' -o -name '*.exe' | head -1)"
+
+      - name: Upload Windows desktop artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: danqing-desktop-windows
+          path: |
+            danqing-studio/out/desktop/bundle/nsis/*.exe
+          if-no-files-found: error
+
   publish-release:
     name: Publish GitHub Release
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [build-desktop, build-linux-cuda]
+    needs: [build-desktop, build-linux-cuda, build-windows-desktop]
     runs-on: ubuntu-latest
     steps:
       - name: Download macOS artifact
@@ -190,10 +299,17 @@ jobs:
           name: danqing-linux-cuda
           path: release-assets/linux
 
+      - name: Download Windows desktop artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: danqing-desktop-windows
+          path: release-assets/windows
+
       - name: Attach assets to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             release-assets/macos/**/*.dmg
             release-assets/linux/**/*.tar.gz
+            release-assets/windows/**/*.exe
           fail_on_unmatched_files: true

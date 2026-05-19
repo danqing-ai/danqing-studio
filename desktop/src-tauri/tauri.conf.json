@@ -10,7 +10,6 @@
     "frontendDist": "../loader"
   },
   "app": {
-    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",
@@ -18,9 +17,6 @@
         "width": 1280,
         "height": 800,
         "resizable": true,
-        "transparent": true,
-        "titleBarStyle": "Overlay",
-        "hiddenTitle": true,
         "url": "index.html"
       }
     ],
@@ -31,7 +27,6 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "dmg"],
     "category": "DeveloperTool",
     "shortDescription": "DanQing Studio desktop",
     "longDescription": "Native shell for the DanQing Studio FastAPI server (REST).",

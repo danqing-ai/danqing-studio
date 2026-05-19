@@ -191,11 +191,14 @@ V3TaskStore + SQLiteAssetStore
 Tauri 2 wraps the same API as a native app (PyInstaller sidecar on macOS defaults to **MLX-only**):
 
 ```bash
-make desktop-bundle
-# Full CUDA sidecar: make desktop-bundle DANQING_PYINSTALLER_PROFILE=full
+make pack-macos-desktop
 ```
 
-**Linux CUDA server** (API + web UI, no Tauri desktop): on Linux x86_64, `make release-linux-cuda` → `out/dist/danqing-studio-linux-cuda-x86_64-<version>.tar.gz`. GitHub tag builds upload the same archive to Releases (workflow `Build Release Artifacts`).
+**Linux CUDA server**: `make pack-linux-server` → `out/dist/danqing-studio-linux-cuda-x86_64-<version>.tar.gz`.
+
+**Windows desktop (CUDA)**: `make pack-windows-desktop-release` → NSIS under `out/desktop/bundle/nsis/`. Optional headless: `make pack-windows-server`.
+
+GitHub tag builds: macOS `.dmg`, Linux CUDA `.tar.gz`, Windows CUDA NSIS `.exe` (workflow `Build Release Artifacts`).
 
 See [desktop/README.md](desktop/README.md).
 
@@ -341,7 +344,7 @@ REST / CLI → TaskScheduler → DanQing*Engine → Pipeline → RuntimeContext 
 ### 桌面版
 
 ```bash
-make desktop-bundle
+make pack-macos-desktop
 ```
 
 说明见 [desktop/README.md](desktop/README.md)。macOS 默认 MLX 精简 sidecar；完整 CUDA：`DANQING_PYINSTALLER_PROFILE=full`。
@@ -361,7 +364,7 @@ make desktop-bundle
 | `make check-consistency` | 注册表与路由一致性 |
 | `make check-engine-imports` | mlx/torch 导入边界检查 |
 | `make bench-mflux` / `bench-sanity` | 基准与成片健全性 |
-| `make desktop-bundle` | 完整桌面安装包 |
+| `make pack-macos-desktop` | 完整桌面安装包 |
 
 ### 许可证
 

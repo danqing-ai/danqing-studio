@@ -25,13 +25,10 @@ cd "$ROOT/frontend"
 npm install
 npm run build
 
-echo "==> Sidecar -> out/sidecar/danqing-api (MLX profile on macOS)"
+echo "==> pack-macos-desktop (MLX sidecar + Tauri)"
 cd "$ROOT"
 export DANQING_PYINSTALLER_PROFILE="${DANQING_PYINSTALLER_PROFILE:-mlx}"
-"$PYTHON" scripts/build_sidecar.py
-
-echo "==> Tauri (aarch64) -> out/desktop/bundle/"
-"$ROOT/scripts/tauri_build.sh"
+make pack-macos-desktop
 
 echo "Done."
 echo "  Sidecar:  $ROOT/out/sidecar/danqing-api"

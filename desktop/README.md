@@ -29,17 +29,20 @@
 ## 发布构建
 
 ```bash
-make desktop-bundle
+make pack-macos-desktop
 # 或: ./scripts/build_desktop.sh
 ```
 
 顺序：`out/frontend/dist` → `out/sidecar/danqing-api` → Tauri bundle。
 
-macOS 默认 **MLX 精简 sidecar**（无 torch / `*_cuda`）。完整 CUDA 包：
+macOS 默认 **MLX 精简 sidecar**（无 torch / `*_cuda`）。
 
-```bash
-make desktop-bundle DANQING_PYINSTALLER_PROFILE=full
-```
+| 平台 | 命令 | Sidecar |
+|------|------|---------|
+| macOS (Apple Silicon) | `make pack-macos-desktop` | MLX（精简） |
+| Windows x64 | `make pack-windows-desktop-release` | CUDA only（`full` + prune，无 MLX） |
+
+Windows 需在 **Windows 本机** 构建；产物为 `out/desktop/bundle/nsis/*-setup.exe`。
 
 ## 运行时环境变量（sidecar）
 
@@ -70,7 +73,7 @@ xattr -dr com.apple.quarantine "/Volumes/DanQing Studio/DanQing Studio.app"
 
 然后拖入「应用程序」再启动。
 
-发布构建会在 `make desktop-bundle` 末尾对 `.app` 做 **ad-hoc 签名**（`scripts/tauri_build.sh`），减轻该问题；正式分发仍建议配置 **Developer ID + 公证（notarize）**。
+发布构建会在 `make pack-macos-desktop` 末尾对 `.app` 做 **ad-hoc 签名**（`scripts/tauri_build.sh`），减轻该问题；正式分发仍建议配置 **Developer ID + 公证（notarize）**。
 
 ## `bundle_dmg.sh` / DMG 打包失败
 

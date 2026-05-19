@@ -6,7 +6,7 @@ Output: ``out/sidecar/danqing-api/`` (bundled by Tauri; see ``desktop/src-tauri/
 
 Usage:
     python scripts/build_sidecar.py
-    make desktop-sidecar
+    make pack-macos-desktop-sidecar  # or pack-linux-server-sidecar / pack-windows-sidecar
 """
 
 from __future__ import annotations
@@ -95,6 +95,12 @@ def build(*, clean: bool = True) -> Path:
                 print(f"Pruned sidecar ({len(removed)} entries)")
             if placed:
                 print(f"MLX layout: {', '.join(placed)} next to danqing-api")
+        elif profile == "full":
+            import prune_sidecar_cuda as prune_cuda  # noqa: E402
+
+            removed = prune_cuda.finalize_cuda_sidecar(out)
+            if removed:
+                print(f"Pruned CUDA sidecar ({len(removed)} entries)")
         print("Sidecar bundle:", out)
     return out
 

@@ -35,10 +35,13 @@ def find_cargo_bundle_dir() -> Path:
 
 
 def _rm_rf(path: Path) -> None:
-    """Remove a tree on macOS (shutil.rmtree can fail on .app / .DS_Store)."""
+    """Remove a tree (prefer ``/bin/rm`` on macOS for stubborn .app bundles)."""
     if not path.exists():
         return
-    subprocess.run(["/bin/rm", "-rf", str(path)], check=True)
+    if sys.platform == "darwin":
+        subprocess.run(["/bin/rm", "-rf", str(path)], check=True)
+    else:
+        shutil.rmtree(path)
 
 
 def stage_desktop_bundle() -> Path:
