@@ -23,6 +23,7 @@ _WEIGHT_REMAP = {
 
 # encoder_type → (模块路径, 类名)
 _TEXT_ENCODER = {
+    "flux1":    ("backend.engine.families.flux1.text_encoder",     "Flux1TextEncoder"),
     "flux2":    ("backend.engine.families.flux2.text_encoder",     "Flux2TextEncoder"),
     "z_image":  ("backend.engine.families.z_image.text_encoder",   "ZImageTextEncoder"),
     "qwen_image": ("backend.engine.families.qwen.text_encoder", "QwenImageTextEncoder"),
@@ -60,38 +61,52 @@ def encode_prompt_with_image_text_encoder(
     encoder_type: str,
     bundle_root: Path,
     config: Any,
-) -> tuple[Any, Any | None]:
+) -> tuple[Any, Any | None, Any | None]:
     """Instantiate registry text encoder for ``encoder_type`` and encode one prompt.
 
     Centralizes bundle path resolution and ``config`` → encoder kwargs mapping so
     ``ImagePipeline`` does not branch on ``encoder_type`` for construction.
 
     Returns:
-        ``(embeddings, attention_mask)`` where mask may be ``None`` (non-qwen_image paths).
+        ``(embeddings, attention_mask, pooled_embeds)``.
+        * mask is set for ``qwen_image``;
+        * ``pooled_embeds`` for ``flux1`` (CLIP pooled, not a mask).
     """
-    enc_dir = bundle_root / "text_encoder"
-    tok_dir = bundle_root / "tokenizer"
-    if not tok_dir.exists():
-        tok_dir = enc_dir
-    if not enc_dir.exists():
-        enc_dir = bundle_root
-        tok_dir = bundle_root
-
     enc_cls = get_text_encoder(encoder_type)
     enc_kwargs: dict[str, Any] = {}
     out_layers = getattr(config, "text_encoder_out_layers", None)
     if out_layers is not None:
         enc_kwargs["hidden_state_layers"] = tuple(out_layers)
     enc_kwargs["enable_thinking"] = getattr(config, "enable_thinking", False)
-    enc = enc_cls(ctx, str(enc_dir), tokenizer_path=str(tok_dir), **enc_kwargs)
+
+    if encoder_type == "flux1":
+        enc = enc_cls(
+            ctx,
+            bundle_root,
+            max_seq_len=getattr(config, "max_seq_len", 512),
+            text_dim=getattr(config, "text_dim", 4096),
+            pooled_dim=getattr(config, "pooled_dim", 768),
+        )
+    else:
+        enc_dir = bundle_root / "text_encoder"
+        tok_dir = bundle_root / "tokenizer"
+        if not tok_dir.exists():
+            tok_dir = enc_dir
+        if not enc_dir.exists():
+            enc_dir = bundle_root
+            tok_dir = bundle_root
+        enc = enc_cls(ctx, str(enc_dir), tokenizer_path=str(tok_dir), **enc_kwargs)
+
     out = enc.encode([text])
     if isinstance(out, tuple):
+        if len(out) == 2 and encoder_type == "flux1":
+            return out[0], None, out[1]
         if len(out) != 2:
             raise RuntimeError(
-                f"Text encoder {encoder_type!r} returned a tuple of len {len(out)}; expected 2 (embeds, mask)."
+                f"Text encoder {encoder_type!r} returned a tuple of len {len(out)}; expected 2."
             )
-        return out[0], out[1]
-    return out, None
+        return out[0], out[1], None
+    return out, None, None
 
 
 # =========================================================================

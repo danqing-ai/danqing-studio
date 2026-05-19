@@ -422,6 +422,7 @@ class ImagePipeline:
             "vae_scale",
             "enable_thinking",
             "latent_noise_dtype",
+            "max_seq_len",
             # Flux2 Klein 4B / 9B 等：架构超参由注册表声明（避免全家用 9B 默认）
             "inner_dim",
             "num_heads",
@@ -465,6 +466,8 @@ class ImagePipeline:
         neg_embeds = None
         txt_attn_mask = None
         neg_attn_mask = None
+        pooled_embeds = None
+        neg_pooled_embeds = None
         encoder_type = getattr(config, "encoder_type", "t5")
         if request.prompt and encoder_type != "t5":
             if bundle_root is None:
@@ -472,16 +475,21 @@ class ImagePipeline:
                     f"Model {model_key!r} has no installed bundle at local_path "
                     f"(version={version_key or 'default'}); cannot load text encoder."
                 )
-            txt_embeds, txt_attn_mask = _encode_prompt_image_text(
+            txt_embeds, txt_attn_mask, pooled_embeds = _encode_prompt_image_text(
                 self.ctx,
                 request.prompt,
                 encoder_type=encoder_type,
                 bundle_root=bundle_root,
                 config=config,
             )
-            if getattr(config, "supports_guidance", False) and guidance > 1.0:
+            # Flux.1: guidance via ``guidance_in`` + time embed (mflux), not dual-pass CFG.
+            if (
+                family != "flux1"
+                and getattr(config, "supports_guidance", False)
+                and guidance > 1.0
+            ):
                 neg_txt = (request.negative_prompt or "").strip() or " "
-                neg_embeds, neg_attn_mask = _encode_prompt_image_text(
+                neg_embeds, neg_attn_mask, neg_pooled_embeds = _encode_prompt_image_text(
                     self.ctx,
                     neg_txt,
                     encoder_type=encoder_type,
@@ -511,7 +519,7 @@ class ImagePipeline:
         # 3. Scheduler (registry default + request params, zero family branching)
         scheduler = get_scheduler(scheduler_default, ctx=self.ctx)
         vae_scale = getattr(config, "vae_scale", 8)
-        # image_seq_len for sigma shift, matching reference implementation: fixed //16
+        # FlowMatch μ：Flux 系 packed token 数 = (H//16)×(W//16)（与 mflux / diffusers 一致）
         image_seq_len = (h // 16) * (w // 16)
         sched_extra: dict[str, Any] = {}
         _mu = self._registry_scalar_default(entry, "scheduler_mu", None)
@@ -534,13 +542,20 @@ class ImagePipeline:
             sched_extra["sigmas"] = np.linspace(
                 1.0, 1.0 / float(steps), steps, dtype=np.float64
             ).tolist()
+        _req_sigma_shift = bool(
+            self._registry_scalar_default(entry, "requires_sigma_shift", False)
+        )
+        _use_emu_reg = self._registry_scalar_default(entry, "use_empirical_mu", None)
+        _use_empirical_mu = (
+            bool(_use_emu_reg) if _use_emu_reg is not None else _req_sigma_shift
+        )
         timesteps = scheduler.set_timesteps(
             steps,
             image_seq_len=image_seq_len,
             image_width=int(w),
             image_height=int(h),
-            use_empirical_mu=self._registry_scalar_default(entry, "use_empirical_mu", True),
-            requires_sigma_shift=self._registry_scalar_default(entry, "requires_sigma_shift", False),
+            use_empirical_mu=_use_empirical_mu,
+            requires_sigma_shift=_req_sigma_shift,
             **sched_extra,
         )
         sigmas = getattr(scheduler, 'sigmas', None)
@@ -568,8 +583,8 @@ class ImagePipeline:
             ]
             if _sigma_sched is not None:
                 parts.append(f"sigma_schedule={_sigma_sched}")
-            _emu = self._registry_scalar_default(entry, "use_empirical_mu", True)
-            parts.append(f"use_empirical_mu={_emu}")
+            parts.append(f"use_empirical_mu={_use_empirical_mu}")
+            parts.append(f"requires_sigma_shift={_req_sigma_shift}")
             if sched_extra.get("mu") is not None:
                 parts.append(f"scheduler_mu={sched_extra['mu']}")
             if timestep_embed_schedule and len(timestep_embed_schedule) >= 2:
@@ -583,15 +598,41 @@ class ImagePipeline:
             on_log("info", " ".join(parts))
 
         # Create deterministic latent using seed
-        latent_shape = (1, config.in_channels, h // vae_scale, w // vae_scale)
         _lnd = _denoise_latent_noise_dtype(self.ctx, config)
-        if seed is not None:
-            latents = self.ctx.seeded_randn(latent_shape, seed, dtype=_lnd)
+        _packed_denoise = getattr(config, "latent_noise_packed", False)
+        _flux_pack = _flux_unpack = None
+        _lh = _lw = 0
+        if _packed_denoise:
+            from backend.engine.families.flux1.transformer_mlx import (
+                _pack_flux1_latents,
+                _unpack_flux1_latents,
+            )
+
+            _flux_pack = _pack_flux1_latents
+            _flux_unpack = _unpack_flux1_latents
+            seq_len = (h // 16) * (w // 16)
+            _lh, _lw = h // vae_scale, w // vae_scale
+            packed_shape = (1, seq_len, 64)
+            if seed is not None:
+                latents = self.ctx.seeded_randn(packed_shape, seed, dtype=_lnd)
+            else:
+                latents = self.ctx.randn(packed_shape, dtype=_lnd)
         else:
-            latents = self.ctx.randn(latent_shape, dtype=_lnd)
+            latent_shape = (1, config.in_channels, h // vae_scale, w // vae_scale)
+            if seed is not None:
+                latents = self.ctx.seeded_randn(latent_shape, seed, dtype=_lnd)
+            else:
+                latents = self.ctx.randn(latent_shape, dtype=_lnd)
 
         # ── Hook ③: before denoise (ControlNet signal injection / latent modification) ──
-        latents, extra_cond = model.before_denoise(latents, timesteps, sigmas, **extra_cond)
+        if _packed_denoise:
+            latents_nchw = _flux_unpack(self.ctx, latents, _lh, _lw)
+            latents_nchw, extra_cond = model.before_denoise(
+                latents_nchw, timesteps, sigmas, **extra_cond,
+            )
+            latents = _flux_pack(self.ctx, latents_nchw)
+        else:
+            latents, extra_cond = model.before_denoise(latents, timesteps, sigmas, **extra_cond)
 
         # ------------------------------------------------------------------
         # 4. Denoising loop — fully generic: model handles timestep conversion and special params
@@ -602,6 +643,10 @@ class ImagePipeline:
 
             # Unified model call interface: pass raw timestep index + sigmas, model converts internally
             model_kwargs = {"txt_embeds": txt_embeds} if txt_embeds is not None else {}
+            if pooled_embeds is not None:
+                model_kwargs["pooled_embeds"] = pooled_embeds
+            if family == "flux1":
+                model_kwargs["guidance_scale"] = float(guidance)
             model_kwargs.update(extra_cond)
             if sigmas is not None:
                 model_kwargs["sigmas"] = sigmas
@@ -614,7 +659,10 @@ class ImagePipeline:
                 if txt_attn_mask is not None:
                     model_kwargs["encoder_hidden_states_mask"] = txt_attn_mask
 
-            noise_cond = model(latents, t, **model_kwargs)
+            latents_model = (
+                _flux_unpack(self.ctx, latents, _lh, _lw) if _packed_denoise else latents
+            )
+            noise_cond = model(latents_model, t, **model_kwargs)
 
             # CFG — default diffusers-style; optional ``combine_cfg_noise`` on the model.
             # MLX: materialize conditional output before the unconditional forward to avoid
@@ -622,6 +670,10 @@ class ImagePipeline:
             if neg_embeds is not None and getattr(config, "supports_guidance", False):
                 self.ctx.eval(noise_cond)
                 uncond_kwargs = {"txt_embeds": neg_embeds}
+                if neg_pooled_embeds is not None:
+                    uncond_kwargs["pooled_embeds"] = neg_pooled_embeds
+                if family == "flux1":
+                    uncond_kwargs["guidance_scale"] = float(guidance)
                 uncond_kwargs.update(extra_cond)
                 if sigmas is not None:
                     uncond_kwargs["sigmas"] = sigmas
@@ -633,7 +685,7 @@ class ImagePipeline:
                     uncond_kwargs["scheduler_timesteps"] = sched_ts
                     if neg_attn_mask is not None:
                         uncond_kwargs["encoder_hidden_states_mask"] = neg_attn_mask
-                noise_uncond = model(latents, t, **uncond_kwargs)
+                noise_uncond = model(latents_model, t, **uncond_kwargs)
                 self.ctx.eval(noise_uncond)
                 noise_pred = model.combine_cfg_noise(noise_cond, noise_uncond, guidance)
                 if _cfg_renorm and getattr(config, "supports_guidance", False):
@@ -643,6 +695,8 @@ class ImagePipeline:
             else:
                 noise_pred = noise_cond
 
+            if _packed_denoise:
+                noise_pred = _flux_pack(self.ctx, noise_pred)
             latents = scheduler.step(noise_pred, t, latents)
             if getattr(self.ctx, "backend", None) == "mlx":
                 self.ctx.eval(latents)
@@ -659,6 +713,9 @@ class ImagePipeline:
 
         if ctx_exec.cancel_token.is_cancelled():
             return None
+
+        if _packed_denoise:
+            latents = _flux_unpack(self.ctx, latents, _lh, _lw)
 
         # 5. VAE decode
         image = self._vae_decode(latents, entry, version_key or None, on_log=on_log)
@@ -725,6 +782,7 @@ class ImagePipeline:
             "vae_scale",
             "enable_thinking",
             "latent_noise_dtype",
+            "max_seq_len",
             "inner_dim",
             "num_heads",
             "attn_head_dim",
@@ -827,6 +885,8 @@ class ImagePipeline:
         neg_embeds = None
         txt_attn_mask = None
         neg_attn_mask = None
+        pooled_embeds = None
+        neg_pooled_embeds = None
         encoder_type = getattr(config, "encoder_type", "t5")
         if request.prompt and encoder_type != "t5":
             if bundle_root is None:
@@ -834,16 +894,21 @@ class ImagePipeline:
                     f"Model {model_key!r} has no installed bundle at local_path "
                     f"(version={version_key or 'default'}); cannot load text encoder."
                 )
-            txt_embeds, txt_attn_mask = _encode_prompt_image_text(
+            txt_embeds, txt_attn_mask, pooled_embeds = _encode_prompt_image_text(
                 self.ctx,
                 request.prompt,
                 encoder_type=encoder_type,
                 bundle_root=bundle_root,
                 config=config,
             )
-            if getattr(config, "supports_guidance", False) and guidance > 1.0:
+            # Flux.1: guidance via ``guidance_in`` + time embed (mflux), not dual-pass CFG.
+            if (
+                family != "flux1"
+                and getattr(config, "supports_guidance", False)
+                and guidance > 1.0
+            ):
                 neg_txt = (request.negative_prompt or "").strip() or " "
-                neg_embeds, neg_attn_mask = _encode_prompt_image_text(
+                neg_embeds, neg_attn_mask, neg_pooled_embeds = _encode_prompt_image_text(
                     self.ctx,
                     neg_txt,
                     encoder_type=encoder_type,
@@ -887,14 +952,21 @@ class ImagePipeline:
             sched_extra["sigmas"] = np.linspace(
                 1.0, 1.0 / float(steps), steps, dtype=np.float64
             ).tolist()
+        _req_sigma_shift = bool(
+            self._registry_scalar_default(entry, "requires_sigma_shift", False)
+        )
+        _use_emu_reg = self._registry_scalar_default(entry, "use_empirical_mu", None)
+        _use_empirical_mu = (
+            bool(_use_emu_reg) if _use_emu_reg is not None else _req_sigma_shift
+        )
         timesteps = scheduler.set_timesteps(
             steps,
             init_timestep=init_timestep,
             image_seq_len=image_seq_len,
             image_width=int(w),
             image_height=int(h),
-            use_empirical_mu=self._registry_scalar_default(entry, "use_empirical_mu", True),
-            requires_sigma_shift=self._registry_scalar_default(entry, "requires_sigma_shift", False),
+            use_empirical_mu=_use_empirical_mu,
+            requires_sigma_shift=_req_sigma_shift,
             **sched_extra,
         )
         sigmas = getattr(scheduler, "sigmas", None)
@@ -916,7 +988,16 @@ class ImagePipeline:
                 f">= steps={steps}; no denoising steps remain (mflux would also skip the loop)."
             )
 
-        noise = self.ctx.seeded_randn(encoded.shape, seed, dtype=_denoise_latent_noise_dtype(self.ctx, config))
+        _lnd_edit = _denoise_latent_noise_dtype(self.ctx, config)
+        if getattr(config, "latent_noise_packed", False):
+            from backend.engine.families.flux1.transformer_mlx import _unpack_flux1_latents
+
+            _, _, lh, lw = encoded.shape
+            seq_len = (lh // 2) * (lw // 2)
+            packed = self.ctx.seeded_randn((1, seq_len, 64), seed, dtype=_lnd_edit)
+            noise = _unpack_flux1_latents(self.ctx, packed, lh, lw)
+        else:
+            noise = self.ctx.seeded_randn(encoded.shape, seed, dtype=_lnd_edit)
         if init_timestep == 0:
             latents = noise
         else:
@@ -944,6 +1025,10 @@ class ImagePipeline:
                 return None
             te_idx = init_timestep + i
             model_kwargs = {"txt_embeds": txt_embeds} if txt_embeds is not None else {}
+            if pooled_embeds is not None:
+                model_kwargs["pooled_embeds"] = pooled_embeds
+            if family == "flux1":
+                model_kwargs["guidance_scale"] = float(guidance)
             model_kwargs.update(extra_cond)
             if sigmas is not None:
                 model_kwargs["sigmas"] = sigmas
@@ -961,6 +1046,8 @@ class ImagePipeline:
             if neg_embeds is not None and getattr(config, "supports_guidance", False):
                 self.ctx.eval(noise_cond)
                 uncond_kwargs = {"txt_embeds": neg_embeds}
+                if neg_pooled_embeds is not None:
+                    uncond_kwargs["pooled_embeds"] = neg_pooled_embeds
                 uncond_kwargs.update(extra_cond)
                 if sigmas is not None:
                     uncond_kwargs["sigmas"] = sigmas
@@ -1037,20 +1124,33 @@ class ImagePipeline:
         adapters = getattr(request, "adapters", None) or []
         if not adapters:
             return
-        if family not in ("flux2", "z_image", "qwen_image"):
+        if family not in ("flux1", "flux2", "z_image", "qwen_image"):
             raise RuntimeError(
                 "LoRA adapters require in-engine merging; supported image families on MLX are "
-                f"flux2, z_image, and qwen_image (this model is family={family!r}). Remove adapters or switch model."
+                f"flux1, flux2, z_image, and qwen_image (this model is family={family!r}). "
+                "Remove adapters or switch model."
             )
         from backend.engine.runtime.mlx import MLXContext
 
         if not isinstance(self.ctx, MLXContext):
             raise RuntimeError(
-                "LoRA merging for Flux2 / Z-Image / Qwen Image is only implemented on the MLX runtime; "
+                "LoRA merging for Flux.1 / Flux2 / Z-Image / Qwen Image is only implemented on the MLX runtime; "
                 f"current runtime is {type(self.ctx).__name__}."
             )
         base_model_id, _ = parse_model_version(request.model)
-        if family == "flux2":
+        if family == "flux1":
+            from backend.engine.families.flux1.lora_mlx import merge_flux1_lora_adapters
+
+            merge_flux1_lora_adapters(
+                model,
+                adapters,
+                base_model_id=base_model_id,
+                project_root=self._project_root,
+                registry=self._registry,
+                ctx=self.ctx,
+                on_log=on_log,
+            )
+        elif family == "flux2":
             from backend.engine.families.flux2.lora_mlx import merge_flux2_lora_adapters
 
             merge_flux2_lora_adapters(

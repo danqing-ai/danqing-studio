@@ -60,36 +60,41 @@ class CudaContext(RuntimeContext):
     def device(self):
         return self._device
 
+    def _on_device(self, module: nn.Module) -> nn.Module:
+        return module.to(self._device)
+
     # ------------------------------------------------------------------
     # Module factories
     # ------------------------------------------------------------------
 
     def Linear(self, in_features: int, out_features: int, bias: bool = True) -> Any:
-        return nn.Linear(in_features, out_features, bias=bias)
+        return self._on_device(nn.Linear(in_features, out_features, bias=bias))
 
     def LayerNorm(self, dims: int, eps: float = 1e-5, affine: bool = True, bias: bool = True) -> Any:
-        return nn.LayerNorm(dims, eps=eps, elementwise_affine=affine, bias=bias)
+        return self._on_device(nn.LayerNorm(dims, eps=eps, elementwise_affine=affine, bias=bias))
 
     def RMSNorm(self, dims: int, eps: float = 1e-6) -> Any:
-        return _CudaRMSNorm(dims, eps=eps)
+        return self._on_device(_CudaRMSNorm(dims, eps=eps))
 
     def GroupNorm(self, num_groups: int, num_channels: int, eps: float = 1e-5,
                   pytorch_compatible: bool = False, **_kwargs: Any) -> Any:
         del pytorch_compatible  # NCHW path (CUDA VAE) / MLX NHWC handled in ``common.vae.decoder`` per backend.
-        return nn.GroupNorm(num_groups, num_channels, eps=eps)
+        return self._on_device(nn.GroupNorm(num_groups, num_channels, eps=eps))
 
     def SiLU(self) -> Any:
-        return nn.SiLU()
+        return self._on_device(nn.SiLU())
 
     def GELU(self, approximate: str = "tanh") -> Any:
-        return nn.GELU(approximate)
+        return self._on_device(nn.GELU(approximate))
 
     def Embedding(self, num_embeddings: int, dim: int) -> Any:
-        return nn.Embedding(num_embeddings, dim)
+        return self._on_device(nn.Embedding(num_embeddings, dim))
 
     def Conv1d(self, in_channels: int, out_channels: int, kernel_size: int,
                stride: int = 1, padding: int = 0, bias: bool = True) -> Any:
-        return nn.Conv1d(in_channels, out_channels, kernel_size, stride=stride, padding=padding, bias=bias)
+        return self._on_device(
+            nn.Conv1d(in_channels, out_channels, kernel_size, stride=stride, padding=padding, bias=bias)
+        )
 
     def Conv2d(self, in_channels: int, out_channels: int, kernel_size: int | tuple,
                stride: int | tuple = 1, padding: int | tuple = 0, bias: bool = True) -> Any:
@@ -99,7 +104,9 @@ class CudaContext(RuntimeContext):
             stride = (stride, stride)
         if isinstance(padding, int):
             padding = (padding, padding)
-        return nn.Conv2d(in_channels, out_channels, kernel_size, stride=stride, padding=padding, bias=bias)
+        return self._on_device(
+            nn.Conv2d(in_channels, out_channels, kernel_size, stride=stride, padding=padding, bias=bias)
+        )
 
     def Conv3d(self, in_channels: int, out_channels: int, kernel_size: int | tuple,
                stride: int | tuple = 1, padding: int | tuple = 0, bias: bool = True) -> Any:
@@ -109,13 +116,15 @@ class CudaContext(RuntimeContext):
             stride = (stride, stride, stride)
         if isinstance(padding, int):
             padding = (padding, padding, padding)
-        return nn.Conv3d(in_channels, out_channels, kernel_size, stride=stride, padding=padding, bias=bias)
+        return self._on_device(
+            nn.Conv3d(in_channels, out_channels, kernel_size, stride=stride, padding=padding, bias=bias)
+        )
 
     def Sequential(self, *layers) -> Any:
-        return nn.Sequential(*layers)
+        return self._on_device(nn.Sequential(*layers))
 
     def ModuleList(self, layers: list) -> Any:
-        return nn.ModuleList(layers)
+        return self._on_device(nn.ModuleList(layers))
 
     def Dropout(self, p: float = 0.0) -> Any:
         return nn.Dropout(p)

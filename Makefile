@@ -1,4 +1,4 @@
-.PHONY: bench-setup bench-src bench-mflux bench-mflux-case bench-sanity bench-sanity-case test-engine-unit check-consistency check-ep-boundary check-theme-legacy check-engine-imports lint start stop help clean frontend-install frontend-dev frontend-build frontend-typecheck desktop-prereqs desktop-sidecar desktop-tauri desktop-bundle
+.PHONY: bench-setup bench-src bench-mflux bench-mflux-case bench-sanity bench-sanity-case test-engine-unit check-consistency check-ep-boundary check-theme-legacy check-engine-imports lint start stop help clean frontend-install frontend-dev frontend-build frontend-typecheck desktop-prereqs desktop-sidecar desktop-tauri desktop-bundle linux-cuda-sidecar release-linux-cuda-tar
 
 PYTHON := .venv/bin/python3
 BENCH_PY := tests/benchmark/venv/bin/python3
@@ -11,10 +11,13 @@ SRC_IMG := $(BENCH_OUT)/rewrite_src.png
 # Off-channel benchmark tests (independent venv, no project dep pollution)
 # ============================================================================
 
-# mflux reference CLI venv (``make bench-setup`` once)
+# mflux reference CLI venv (``make bench-setup`` once; needs Python >=3.10)
+BENCH_PYTHON ?= $(shell command -v python3.11 >/dev/null 2>&1 && echo python3.11 || echo python3)
+
 bench-setup:
-	python3 -m venv tests/benchmark/venv
-	$(BENCH_PIP) install -r tests/benchmark/requirements.txt
+	$(BENCH_PYTHON) -m venv tests/benchmark/venv
+	$(BENCH_PIP) install 'mflux>=0.15.0' 'transformers>=5.0,<6' 'huggingface-hub>=1.1.6,<2.0'
+	@echo "Optional video deps: pip install -r tests/benchmark/requirements.txt (LTX git packages)"
 
 $(SRC_IMG):
 	@mkdir -p $(BENCH_OUT)
@@ -145,6 +148,32 @@ desktop-bundle: frontend-build desktop-sidecar desktop-tauri
 	@echo "Desktop bundle: $(OUT_DIR)/desktop/bundle/"
 
 # ============================================================================
+# Linux CUDA server release (PyInstaller sidecar + tar.gz, no Tauri)
+# ============================================================================
+
+RELEASE_VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LINUX_CUDA_TAR := $(OUT_DIR)/dist/danqing-studio-linux-cuda-x86_64-$(RELEASE_VERSION).tar.gz
+
+# PyTorch CUDA wheels: override index when building (CI sets TORCH_INDEX_URL).
+TORCH_INDEX_URL ?= https://download.pytorch.org/whl/cu124
+
+linux-cuda-venv:
+	@test -d .venv || python3.11 -m venv .venv || python3 -m venv .venv
+	$(PYTHON) -m pip install --upgrade pip
+	$(PYTHON) -m pip install torch torchvision --index-url $(TORCH_INDEX_URL)
+	$(PYTHON) -m pip install -r requirements-linux-cuda.txt pyinstaller
+
+linux-cuda-sidecar: frontend-build
+	DANQING_PYINSTALLER_PROFILE=full $(PYTHON) scripts/build_sidecar.py
+
+release-linux-cuda-tar: linux-cuda-sidecar
+	RELEASE_VERSION=$(RELEASE_VERSION) $(PYTHON) scripts/package_linux_cuda_release.py --version $(RELEASE_VERSION)
+	@echo "Linux CUDA release: $(LINUX_CUDA_TAR)"
+
+# One-shot: venv deps (if needed) + sidecar + tar.gz
+release-linux-cuda: linux-cuda-venv release-linux-cuda-tar
+
+# ============================================================================
 # Help
 # ============================================================================
 
@@ -172,3 +201,6 @@ help:
 	@echo "  make desktop-tauri   Tauri aarch64 bundle -> out/desktop/bundle/"
 	@echo "  make desktop-bundle  Full desktop build (recommended)"
 	@echo "  ./scripts/build_desktop.sh  Same as desktop-bundle (shell entry)"
+	@echo "  make linux-cuda-sidecar     PyInstaller CUDA API -> out/sidecar/danqing-api (Linux)"
+	@echo "  make release-linux-cuda-tar out/dist/danqing-studio-linux-cuda-x86_64-<ver>.tar.gz"
+	@echo "  make release-linux-cuda     venv CUDA deps + sidecar + tar.gz (Linux CI/local)"

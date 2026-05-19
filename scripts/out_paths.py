@@ -23,6 +23,7 @@ OUT_ROOT = PROJECT_ROOT / "out"
 FRONTEND_DIST = OUT_ROOT / "frontend" / "dist"
 SIDECAR_ROOT = OUT_ROOT / "sidecar"
 SIDECAR_DIR = SIDECAR_ROOT / "danqing-api"
+RELEASE_DIST = OUT_ROOT / "dist"
 PYINSTALLER_WORK = OUT_ROOT / "pyinstaller" / "work"
 PYINSTALLER_SPEC = OUT_ROOT / "pyinstaller" / "spec"
 DESKTOP_CARGO_TARGET = OUT_ROOT / "desktop" / "cargo"
@@ -35,6 +36,7 @@ def ensure_out_layout() -> None:
         OUT_ROOT,
         FRONTEND_DIST.parent,
         SIDECAR_ROOT,
+        RELEASE_DIST,
         PYINSTALLER_WORK,
         PYINSTALLER_SPEC,
         DESKTOP_CARGO_TARGET,

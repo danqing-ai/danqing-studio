@@ -318,7 +318,7 @@ class TransformerBase:
             if key in self._param_map:
                 param = self._param_map[key]
                 if param.shape == tensor.shape:
-                    param[:] = tensor
+                    _assign_param_tensor(param, tensor)
                     loaded.append(key)
                 else:
                     skipped.append(f"{key} shape_mismatch: {param.shape} vs {tensor.shape}")
@@ -361,6 +361,26 @@ class TransformerBase:
         else:
             self._param_map = {}
         _collect_params(self, "", self._param_map)
+
+
+def _assign_param_tensor(param: Any, tensor: Any) -> None:
+    """In-place assign checkpoint tensor into a model parameter (MLX array or torch Tensor)."""
+    try:
+        import torch
+    except ImportError:
+        torch = None  # type: ignore
+
+    if torch is not None and isinstance(param, torch.Tensor):
+        if not isinstance(tensor, torch.Tensor):
+            tensor = torch.as_tensor(tensor)
+        if tensor.shape != param.shape:
+            raise RuntimeError(f"shape mismatch: param {tuple(param.shape)} vs tensor {tuple(tensor.shape)}")
+        if tensor.device != param.device or tensor.dtype != param.dtype:
+            tensor = tensor.to(device=param.device, dtype=param.dtype)
+        param.copy_(tensor)
+        return
+
+    param[:] = tensor
 
 
 def _collect_params(obj, prefix: str, result: dict):

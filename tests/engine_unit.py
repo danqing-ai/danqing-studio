@@ -49,6 +49,33 @@ class LtxWeightTests(unittest.TestCase):
         self.assertEqual(LTXTransformer.__name__, "LTXTransformer")
 
 
+class ZImageCudaTests(unittest.TestCase):
+    def test_transformer_param_map_on_cuda_context(self) -> None:
+        from backend.engine.config.model_configs import ZImageConfig
+        from backend.engine.families.z_image.transformer import ZImageTransformer
+        from backend.engine.runtime.cuda import CudaContext
+
+        ctx = CudaContext("cpu")
+        model = ZImageTransformer(ZImageConfig(), ctx)
+        self.assertGreater(len(model._param_map), 100)
+        self.assertIn("x_embedder.weight", model._param_map)
+        import torch
+
+        w = model._param_map["x_embedder.weight"]
+        self.assertIsInstance(w, torch.Tensor)
+
+    def test_combine_cfg_noise_matches_mflux(self) -> None:
+        from backend.engine.config.model_configs import ZImageConfig
+        from backend.engine.families.z_image.transformer import ZImageTransformer
+        from backend.engine.runtime.cuda import CudaContext
+
+        model = ZImageTransformer(ZImageConfig(), CudaContext("cpu"))
+        cond, uncond = 2.0, 1.0
+        g = 4.0
+        out = model.combine_cfg_noise(cond, uncond, g)
+        self.assertEqual(out, cond + g * (cond - uncond))
+
+
 class BenchmarkMetadataTests(unittest.TestCase):
     def test_exit_exempt_nonempty(self) -> None:
         self.assertIn("z-image-create", BENCHMARK_EXIT_EXEMPT_MISMATCH_VS_MFLUX)

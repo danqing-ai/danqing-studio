@@ -289,6 +289,9 @@ make frontend-build      # → out/frontend/dist/
 | `lint` | Python syntax |
 | `frontend-install` / `frontend-dev` / `frontend-build` / `frontend-typecheck` | frontend |
 | `desktop-bundle` | `out/frontend/dist` + sidecar + Tauri → `out/desktop/bundle/` |
+| `linux-cuda-sidecar` | PyInstaller CUDA API → `out/sidecar/danqing-api` (Linux, `DANQING_PYINSTALLER_PROFILE=full`) |
+| `release-linux-cuda-tar` | Sidecar + `out/dist/danqing-studio-linux-cuda-x86_64-<ver>.tar.gz` (no Tauri) |
+| `release-linux-cuda` | `linux-cuda-venv` + sidecar + tar.gz (Linux CI/local) |
 | `clean` | `scripts/clean_build.py` |
 
 ---
@@ -329,9 +332,9 @@ make frontend-build      # → out/frontend/dist/
 ## Desktop packaging
 
 - Build: `make desktop-bundle` or `scripts/build_desktop.sh`
-- Artifacts: `out/frontend/dist/`, `out/sidecar/danqing-api/`, `out/desktop/bundle/`
+- Artifacts: `out/frontend/dist/`, `out/sidecar/danqing-api/`, `out/desktop/bundle/`, `out/dist/*.tar.gz` (Linux CUDA server)
 - macOS default: `DANQING_PYINSTALLER_PROFILE=mlx` (no torch / `*_cuda`)
-- Full CUDA sidecar: `DANQING_PYINSTALLER_PROFILE=full`
+- Full CUDA sidecar: `DANQING_PYINSTALLER_PROFILE=full` — `make release-linux-cuda-tar` on Linux; CI job `build-linux-cuda` in `.github/workflows/build-desktop.yml`
 - Sidecar env: `DANQING_HTTP_HOST`, `DANQING_HTTP_PORT`, `DANQING_USER_DATA_DIR`
 - New engine modules must be reachable from `scripts/build_desktop.py` / PyInstaller hooks
 

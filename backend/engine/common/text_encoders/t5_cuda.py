@@ -26,8 +26,11 @@ def t5_forward_torch(encoder: Any, input_ids, attention_mask) -> Any:
             encoder.model_path, dtype=torch.float32
         ).to(dev)
         encoder._model.eval()
+    enc_kwargs: dict[str, Any] = {"input_ids": input_ids}
+    if attention_mask is not None:
+        enc_kwargs["attention_mask"] = attention_mask
     with torch.no_grad():
-        outputs = encoder._model(input_ids=input_ids, attention_mask=attention_mask)
+        outputs = encoder._model(**enc_kwargs)
     return outputs.last_hidden_state
 
 
@@ -42,9 +45,13 @@ def t5_cpu_torch_bridge_hidden_numpy(encoder: Any, input_ids, attention_mask) ->
         ).to("cpu").eval()
     ii = np.asarray(input_ids)
     am = np.asarray(attention_mask)
-    with torch.no_grad():
-        outputs = encoder._torch_bridge_model(
-            input_ids=torch.tensor(ii, dtype=torch.long, device="cpu"),
-            attention_mask=torch.tensor(am, dtype=torch.float32, device="cpu"),
+    enc_kwargs: dict[str, Any] = {
+        "input_ids": torch.tensor(ii, dtype=torch.long, device="cpu"),
+    }
+    if attention_mask is not None:
+        enc_kwargs["attention_mask"] = torch.tensor(
+            np.asarray(attention_mask), dtype=torch.float32, device="cpu"
         )
+    with torch.no_grad():
+        outputs = encoder._torch_bridge_model(**enc_kwargs)
     return outputs.last_hidden_state.numpy()

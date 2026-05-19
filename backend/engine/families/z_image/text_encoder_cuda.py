@@ -7,8 +7,8 @@ from typing import Any
 def zimage_prepare_torch_ids(ctx: Any, input_ids_np, attention_mask_np):
     import torch
 
-    input_ids = torch.tensor(input_ids_np, dtype=torch.int32, device=ctx._device)
-    attention_mask = torch.tensor(attention_mask_np, dtype=torch.float32, device=ctx._device)
+    input_ids = torch.tensor(input_ids_np, dtype=torch.long, device=ctx._device)
+    attention_mask = torch.tensor(attention_mask_np, dtype=torch.long, device=ctx._device)
     return input_ids, attention_mask
 
 

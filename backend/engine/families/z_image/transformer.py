@@ -391,6 +391,10 @@ class ZImageTransformer(TransformerBase):
         self._param_map["x_pad_token"] = self.x_pad_token
         self._param_map["cap_pad_token"] = self.cap_pad_token
 
+    def combine_cfg_noise(self, noise_cond, noise_uncond, guidance: float):
+        """mflux Z-Image convention: ``eps_c + g * (eps_c - eps_u)``."""
+        return noise_cond + guidance * (noise_cond - noise_uncond)
+
     def __call__(self, *args, **kwargs):
         return self.forward(*args, **kwargs)
 
@@ -584,37 +588,62 @@ class ZImageTransformer(TransformerBase):
         return ctx.stack(grids, axis=-1)
 
 
-def _collect_nn_params(obj, prefix: str, result: dict):
-    """递归收集子模块 ``parameters()`` / 属性树中的叶子参数到 ``result``。"""
-    # 检查当前对象是否有 parameters()
-    if hasattr(obj, 'parameters') and callable(obj.parameters):
+def _collect_nn_params(obj, prefix: str, result: dict) -> None:
+    """递归收集 MLX dict 参数树或 PyTorch ``nn.Module`` 子树中的叶子参数。"""
+    if obj is None or isinstance(obj, (int, float, str, bool, type)):
+        return
+
+    try:
+        import torch
+
+        if isinstance(obj, torch.Tensor):
+            return
+    except ImportError:
+        pass
+
+    try:
+        import mlx.core as mx
+
+        if isinstance(obj, mx.array):
+            return
+    except ImportError:
+        pass
+
+    try:
+        import torch.nn as tn
+
+        if isinstance(obj, tn.Module):
+            for name, param in obj.named_parameters():
+                key = f"{prefix}.{name}" if prefix else name
+                result[key] = param
+            return
+    except ImportError:
+        pass
+
+    if hasattr(obj, "parameters") and callable(obj.parameters):
         try:
             params = obj.parameters()
             if isinstance(params, dict):
                 for pname, ptensor in params.items():
-                    full_key = f"{prefix}.{pname}" if prefix else pname
-                    result[full_key] = ptensor
-                return  # parameters() 已返回所有叶子参数
+                    key = f"{prefix}.{pname}" if prefix else pname
+                    result[key] = ptensor
+                return
         except Exception:
             pass
 
-    # 遍历属性
-    for attr_name in sorted(dir(obj)):
-        if attr_name.startswith('_') or attr_name in ('ctx', 'config', 'freqs_cis', '_param_map'):
-            continue
-        try:
-            attr = getattr(obj, attr_name)
-        except Exception:
-            continue
-        if attr is None or isinstance(attr, (int, float, str, bool, type)):
-            continue
+    if isinstance(obj, (list, tuple)):
+        for i, item in enumerate(obj):
+            item_prefix = f"{prefix}.{i}" if prefix else str(i)
+            _collect_nn_params(item, item_prefix, result)
+        return
 
-        new_prefix = f"{prefix}.{attr_name}" if prefix else attr_name
-
-        if hasattr(attr, 'parameters') and callable(attr.parameters):
-            _collect_nn_params(attr, new_prefix, result)
-        elif isinstance(attr, (list, tuple)):
-            for i, item in enumerate(attr):
-                _collect_nn_params(item, f"{new_prefix}.{i}", result)
-        elif hasattr(attr, '__dict__') and not isinstance(attr, type):
+    if hasattr(obj, "__dict__") and not isinstance(obj, type):
+        for attr_name, attr in sorted(vars(obj).items()):
+            if attr_name.startswith("_"):
+                continue
+            if attr_name in ("ctx", "config", "freqs_cis", "_param_map"):
+                continue
+            if attr is None or isinstance(attr, (int, float, str, bool, type)):
+                continue
+            new_prefix = f"{prefix}.{attr_name}" if prefix else attr_name
             _collect_nn_params(attr, new_prefix, result)

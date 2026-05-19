@@ -20,21 +20,23 @@ class Flux1Config:
     
     Architecture: MM-DiT (dual-stream / joint attention) + T5 + CLIP
     """
-    in_channels: int = 64            # VAE latent channels
-    out_channels: int = 64
+    in_channels: int = 16            # VAE latent channels（DiT 内 2×2 pack 后为 64 维 token）
+    out_channels: int = 64           # ``proj_out`` 每 token 维度，unpack 回 16ch 空间格
     hidden_dim: int = 3072           # hidden dimension
     num_heads: int = 24
     num_joint_layers: int = 19       # diffusers ``num_layers`` (FluxTransformerBlock)
     num_single_layers: int = 38      # diffusers ``num_single_layers`` (FluxSingleTransformerBlock)
     text_dim: int = 4096             # T5 output dim
-    clip_dim: int = 768              # CLIP output dim
-    pooled_dim: int = 768            # CLIP pooled
+    clip_dim: int = 0                # diffusers DiT 无 CLIP token 支路（pooled 见 pooled_dim）
+    pooled_dim: int = 768            # CLIP pooled → time_text_embed.text_embedder
+    encoder_type: str = "flux1"      # T5 + CLIP pooled（见 families/flux1/text_encoder.py）
+    latent_noise_packed: bool = True  # 初始噪声在 packed [B, (H//16)*(W//16), 64] 上采样（对齐 mflux）
     max_seq_len: int = 512           # max text token count
     rope_dim: int = 64
     mlp_ratio: float = 4.0
     qk_norm: bool = True
     # Variant flags
-    supports_guidance: bool = True    # schnell=False, dev=True
+    supports_guidance: bool = False   # schnell=False; dev/krea 由 registry 置 True
     supports_img2img: bool = True
     supports_mask: bool = False       # Fill / Depth need this
     supports_controlnet: bool = False

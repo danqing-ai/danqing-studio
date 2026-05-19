@@ -148,7 +148,10 @@
         },
         "lora_support": true,
         "seed_support": true,
-        "negative_prompt_support": true
+        "negative_prompt_support": true,
+        "supports_guidance": false,
+        "requires_sigma_shift": false,
+        "max_seq_len": 256
       },
       "recommended": true,
       "source": "modelscope",
@@ -258,7 +261,9 @@
         },
         "lora_support": true,
         "seed_support": true,
-        "negative_prompt_support": true
+        "negative_prompt_support": true,
+        "supports_guidance": true,
+        "requires_sigma_shift": true
       },
       "recommended": false,
       "source": "modelscope",
@@ -366,7 +371,9 @@
         },
         "lora_support": true,
         "seed_support": true,
-        "negative_prompt_support": true
+        "negative_prompt_support": true,
+        "supports_guidance": true,
+        "requires_sigma_shift": true
       },
       "recommended": false,
       "source": "modelscope",
@@ -3984,13 +3991,9 @@
           "name": "XL SFT (4B)",
           "size": "20GB",
           "default": true,
-          "repo_id": "ACE-Step/Ace-Step1.5",
+          "repo_id": "ACE-Step/Audio/Ace-Step1.5",
           "local_path": "models/acestep-v15-xl-sft",
-          "source_type": "full",
-          "companion_repo_id": "Qwen/Qwen3-Embedding-0.6B",
-          "companion_local_path": "models/Qwen3-Embedding-0.6B",
-          "companion_name": "Qwen3 Embedding 0.6B",
-          "companion_size": "2.4GB"
+          "source_type": "full"
         }
       },
       "name": {

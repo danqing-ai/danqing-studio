@@ -13,12 +13,15 @@ from .cases import (
     ALL_SANITY_CASES,
     BENCHMARK_EXIT_EXEMPT_MISMATCH_VS_MFLUX,
     BenchmarkCase,
-    MFLUX_FP16_MODEL_ROOT,
     SanityCase,
     get_case,
     get_sanity_case,
+    iter_mflux_cases,
     list_cases,
     list_sanity_cases,
+    list_skipped_mflux_cases,
+    resolve_benchmark_data_root,
+    resolve_fp16_bundle_dir,
 )
 from .metrics import CompareResult, SanityResult, check_output_image, compare_images, hash_image
 
@@ -40,10 +43,10 @@ STDERR_HEAD_CHARS = 4000
 def _seedvr2_flat_bundle_ready(model_id: str) -> bool:
     """与 ``job_mlx.validate_seedvr2_bundle`` 一致：扁平目录下两份 safetensors 齐全。"""
     base = model_id.split(":", 1)[0].strip()
-    rel = MFLUX_FP16_MODEL_ROOT.get(base)
-    if not rel:
+    try:
+        root = resolve_fp16_bundle_dir(base)
+    except KeyError:
         return False
-    root = PROJECT_ROOT / rel
     if not root.is_dir():
         return False
     try:
@@ -111,6 +114,16 @@ class BenchmarkRunner:
                  run_ours: bool = True,
                  run_ref: bool = True) -> CompareResult:
         """执行单个用例对比。"""
+        base = case.model.split(":", 1)[0].strip()
+        try:
+            bundle = resolve_fp16_bundle_dir(base)
+        except KeyError:
+            bundle = None
+        if bundle is None or not bundle.is_dir():
+            print(f"  [SKIP] {case.id}: fp16 bundle not installed ({base})")
+            result = CompareResult()
+            self.results.append((case, result))
+            return result
         if case.action in ("rewrite", "upscale") or case.source_image:
             ensure_benchmark_source_image()
         our_path = self.output_dir / f"{case.id}_danqing.png"
@@ -153,13 +166,20 @@ class BenchmarkRunner:
         return result
 
     def run_all(self, run_ours: bool = True) -> None:
-        """执行全部已注册用例。"""
+        """执行全部已注册用例（跳过 workspace 中未安装的 fp16 bundle）。"""
         ensure_benchmark_source_image()
+        cases = iter_mflux_cases()
+        skipped = list_skipped_mflux_cases()
         print(f"\n{'='*60}")
-        print(f"DanQing Benchmark — {len(ALL_CASES)} cases")
+        print(f"DanQing Benchmark — {len(cases)} runnable / {len(ALL_CASES)} registered")
+        print(f"Data root: {resolve_benchmark_data_root()}")
+        if skipped:
+            print(f"Skipped (no local bundle): {len(skipped)}")
         print(f"{'='*60}\n")
+        for case_id, reason in skipped:
+            print(f"  [SKIP] {case_id}: {reason}")
 
-        for case in ALL_CASES:
+        for case in cases:
             print(f"[{case.id}] {case.description}")
             print(f"  model={case.model} seed={case.seed} steps={case.steps} "
                   f"size={case.width}x{case.height}")

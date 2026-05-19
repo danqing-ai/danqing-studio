@@ -29,12 +29,29 @@ SeedVR2 超分健全性：若 ``models/Upscaler/seedvr2-*-fp16`` 下缺少 ``job
 ``BENCHMARK_EXIT_EXEMPT_MISMATCH_VS_MFLUX``（与 mflux 像素级尚未对齐、但仍保留对照输出的用例）。
 
 小分辨率 (256px) 快速对比。
+
+模型目录：读取仓库 ``config/workspace.pointer.json`` 的 ``custom_workspace_dir``（见
+``resolve_benchmark_data_root()``）；未配置时回退仓库根 ``models/``。
+
+最近一次全量对照（2026-05-18，本机 studio-workspace）：
+
+| 状态 | 用例 |
+|------|------|
+| PASS | seedvr2-7b-upscale；flux2-klein 全系 rewrite + base 文生图；flux2-klein-9b create；z-image-turbo create/rewrite；z-image-rewrite |
+| WARN | flux2-klein-4b-create；z-image-create（豁免退出码）；qwen-image-rewrite（豁免） |
+| SKIP 无权重 | seedvr2-3b；flux1-kontext；fibo-lite；fibo-edit |
+| PASS | flux1-schnell/dev/krea-dev create（2026-05-19；RMSNorm eps + registry max_seq_len + 禁用 Flux.1 双路 CFG） |
+| SKIP 丹青未跑通 | fibo create/rewrite；fibo-edit-rmbg（VAE encoder） |
 """
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
+
+# 仓库根（``tests/benchmark/cases.py`` → 上三级）
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 SRC_IMAGE = "tests/benchmark/outputs/rewrite_src.png"
 
@@ -91,7 +108,73 @@ MFLUX_FP16_MODEL_ROOT: dict[str, str] = {
     "seedvr2-7b": "models/Upscaler/seedvr2-7b-fp16",
 }
 
+# 可选 bundle：未安装时 ``iter_mflux_cases()`` 自动 SKIP（不删用例，便于回归）
+MFLUX_OPTIONAL_FP16_MODELS: frozenset[str] = frozenset({
+    "fibo-lite",
+    "fibo-edit",
+    "flux1-kontext",
+    "seedvr2-3b",
+})
+
 # 视频权重目录为 ``models/Video/``（见注册表）；``ALL_CASES`` 尚无视频 PSNR 行，故未建 mflux 路径映射表。
+
+
+def resolve_benchmark_data_root() -> Path:
+    """``config/workspace.pointer.json`` 的 ``custom_workspace_dir``，否则仓库根。"""
+    pointer = _REPO_ROOT / "config" / "workspace.pointer.json"
+    if pointer.is_file():
+        try:
+            data = json.loads(pointer.read_text(encoding="utf-8"))
+            raw = (data.get("custom_workspace_dir") or "").strip()
+            if raw:
+                candidate = Path(raw).expanduser()
+                if not candidate.is_absolute():
+                    candidate = (_REPO_ROOT / candidate).resolve()
+                else:
+                    candidate = candidate.resolve()
+                if candidate.is_dir():
+                    return candidate
+        except (OSError, json.JSONDecodeError, TypeError):
+            pass
+    return _REPO_ROOT
+
+
+def resolve_fp16_bundle_dir(model_key: str) -> Path:
+    """将 ``MFLUX_FP16_MODEL_ROOT`` 相对路径解析到有效数据根（workspace 或仓库）。"""
+    rel = MFLUX_FP16_MODEL_ROOT.get(model_key)
+    if not rel:
+        raise KeyError(f"No fp16 bundle path for model {model_key!r}")
+    text = rel.strip()
+    if text.startswith("models/"):
+        return (resolve_benchmark_data_root() / text).resolve()
+    root = resolve_benchmark_data_root()
+    return (root / text).resolve()
+
+
+def fp16_bundle_installed(model_key: str) -> bool:
+    return resolve_fp16_bundle_dir(model_key).is_dir()
+
+
+def iter_mflux_cases() -> list[BenchmarkCase]:
+    """仅返回本地 fp16 bundle 已存在的用例（见 ``config/workspace.pointer.json``）。"""
+    runnable: list[BenchmarkCase] = []
+    for case in ALL_CASES:
+        base = case.model.split(":", 1)[0].strip()
+        if fp16_bundle_installed(base):
+            runnable.append(case)
+    return runnable
+
+
+def list_skipped_mflux_cases() -> list[tuple[str, str]]:
+    """(case_id, reason) — bundle 目录缺失。"""
+    skipped: list[tuple[str, str]] = []
+    for case in ALL_CASES:
+        base = case.model.split(":", 1)[0].strip()
+        if fp16_bundle_installed(base):
+            continue
+        rel = MFLUX_FP16_MODEL_ROOT.get(base, "?")
+        skipped.append((case.id, f"missing bundle {rel}"))
+    return skipped
 
 # ``python -m tests.benchmark mflux --all`` 退出码：以下用例仍打印 FAIL/WARN，但不计入失败总数
 BENCHMARK_EXIT_EXEMPT_MISMATCH_VS_MFLUX: frozenset[str] = frozenset({
@@ -138,7 +221,7 @@ class BenchmarkCase:
             )
         key = base.strip()
         if key in MFLUX_FP16_MODEL_ROOT:
-            return MFLUX_FP16_MODEL_ROOT[key]
+            return str(resolve_fp16_bundle_dir(key))
         raise KeyError(f"No fp16 bundle path registered for benchmark model {self.model!r}")
 
 

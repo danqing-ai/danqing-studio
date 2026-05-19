@@ -195,6 +195,8 @@ make desktop-bundle
 # Full CUDA sidecar: make desktop-bundle DANQING_PYINSTALLER_PROFILE=full
 ```
 
+**Linux CUDA server** (API + web UI, no Tauri desktop): on Linux x86_64, `make release-linux-cuda` → `out/dist/danqing-studio-linux-cuda-x86_64-<version>.tar.gz`. GitHub tag builds upload the same archive to Releases (workflow `Build Release Artifacts`).
+
 See [desktop/README.md](desktop/README.md).
 
 ---
