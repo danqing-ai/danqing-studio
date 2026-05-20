@@ -94,15 +94,27 @@ class DanQingAudioEngine(IAudioEngine):
         return action in e.actions
 
     def _resolve_runtime(self, entry: Any) -> Any:
-        """Select the appropriate RuntimeContext for this model."""
+        """Select the appropriate RuntimeContext for this model (fail loud if none match)."""
+        import os
+
+        forced = (os.environ.get("DANQING_FORCE_AUDIO_BACKEND") or "").strip().lower()
+        if forced:
+            rt = self._runtimes.get(forced)
+            if rt is None:
+                raise RuntimeError(
+                    f"DANQING_FORCE_AUDIO_BACKEND={forced!r} but runtime not available "
+                    f"(active: {list(self._runtimes.keys())!r})"
+                )
+            return rt
         backends = getattr(entry, "backends", None) or entry.raw.get("backends", ["mlx"])
         for b in backends:
             rt = self._runtimes.get(b)
             if rt is not None:
                 return rt
-        if self._runtimes:
-            return next(iter(self._runtimes.values()))
-        raise RuntimeError("No runtime available")
+        raise RuntimeError(
+            f"No runtime available for model backends {list(backends)!r}; "
+            f"active runtimes: {list(self._runtimes.keys())!r}"
+        )
 
     async def generate(
         self, request: AudioGenerationRequest, ctx: ExecutionContext
@@ -114,7 +126,8 @@ class DanQingAudioEngine(IAudioEngine):
                 "see config/models_registry.json actions."
             )
 
-        entry = self._registry.get(request.model)
+        mid, _ver = parse_model_version(request.model)
+        entry = self._registry.get(mid)
         if entry is None:
             raise RuntimeError(f"Model {request.model!r} not found in registry")
 

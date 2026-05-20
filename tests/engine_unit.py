@@ -76,6 +76,63 @@ class ZImageCudaTests(unittest.TestCase):
         self.assertEqual(out, cond + g * (cond - uncond))
 
 
+class TaskKindMappingTests(unittest.TestCase):
+    def test_registry_action_maps_to_audio_generation(self) -> None:
+        from backend.core.task_kinds import AUDIO_GENERATION, task_kind_for_registry_action
+
+        self.assertEqual(task_kind_for_registry_action("audio", "create"), AUDIO_GENERATION)
+
+    def test_registry_action_maps_to_image_generation(self) -> None:
+        from backend.core.task_kinds import IMAGE_GENERATION, task_kind_for_registry_action
+
+        self.assertEqual(task_kind_for_registry_action("image", "create"), IMAGE_GENERATION)
+
+
+class AceStepGenerationTests(unittest.TestCase):
+    def test_prepare_music_request_auto_zh_and_turbo_steps(self) -> None:
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from backend.core.contracts import AudioGenerationRequest
+        from backend.engine.config.model_configs import AceStepConfig
+        from backend.engine.families.ace_step.generation import (
+            prepare_music_request,
+            resolve_bundle_is_turbo,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle = Path(tmp)
+            dit = bundle / "acestep-v15-turbo"
+            dit.mkdir()
+            (dit / "config.json").write_text(
+                json.dumps({"is_turbo": True}),
+                encoding="utf-8",
+            )
+            (dit / "model.safetensors").write_bytes(b"")
+
+            self.assertTrue(resolve_bundle_is_turbo(bundle))
+
+            req = AudioGenerationRequest(
+                model="ace-step-xl-sft",
+                prompt="piano",
+                lyrics="[verse]\n月光洒在窗前",
+                duration=10,
+                steps=24,
+            )
+            prepared = prepare_music_request(req, AceStepConfig(), bundle)
+            self.assertEqual(prepared.vocal_language, "zh")
+            self.assertEqual(prepared.steps, 8)
+            self.assertEqual(prepared.shift, 1.0)
+            self.assertTrue(prepared.is_turbo)
+
+    def test_import_public_generation_entry(self) -> None:
+        from backend.engine.families.ace_step import generation
+
+        self.assertTrue(callable(generation.create_ace_step_generator))
+        self.assertTrue(callable(generation.prepare_music_request))
+
+
 class BenchmarkMetadataTests(unittest.TestCase):
     def test_exit_exempt_nonempty(self) -> None:
         self.assertIn("z-image-create", BENCHMARK_EXIT_EXEMPT_MISMATCH_VS_MFLUX)

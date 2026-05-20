@@ -103,19 +103,24 @@
             <!-- Lyrics -->
             <DqSurfaceCard class="studio-surface-card studio-card-mb studio-audio-lyrics-card">
               <template #header>
-                <div class="card-title">
-                  <DqIcon><document /></DqIcon>
-                  {{ $t('audio.lyrics') }}
+                <div class="card-title card-title--split">
+                  <span>
+                    <DqIcon><document /></DqIcon>
+                    {{ $t('audio.lyrics') }}
+                  </span>
+                  <DqTag size="small" type="info">{{ $t('studio.optional') }}</DqTag>
                 </div>
               </template>
               <DqInput
                 v-model="params.lyrics"
                 type="textarea"
-                :rows="4"
-                :placeholder="$t('audio.lyricsPlaceholder')"
-                resize="none"
+                class="studio-audio-lyrics-input"
+                :rows="10"
+                :placeholder="params.instrumental ? $t('audio.lyricsPlaceholderInstrumental') : $t('audio.lyricsPlaceholder')"
+                resize="vertical"
+                :disabled="params.instrumental"
               />
-              <p class="studio-field-footnote">{{ $t('studio.optional') }}</p>
+              <p class="studio-field-footnote">{{ $t('audio.lyricsHint') }}</p>
               <div class="studio-audio-meta-row">
                 <div class="studio-audio-meta-item studio-audio-meta-item--switch">
                   <span class="studio-audio-meta-label">{{ $t('audio.instrumental') }}</span>
@@ -148,6 +153,8 @@
                 :params="params"
                 :musical-keys="musicalKeys"
                 :time-signatures="timeSignatures"
+                :duration-min="currentModelConfig?.parameters?.duration?.min ?? 10"
+                :duration-max="currentModelConfig?.parameters?.duration?.max ?? 600"
               />
             </DqSurfaceCard>
 
@@ -249,7 +256,7 @@
         <div class="preview-panel">
 
           <!-- Current generation preview -->
-          <DqSurfaceCard class="studio-surface-card studio-card-mb">
+          <DqSurfaceCard class="studio-surface-card studio-card-mb studio-audio-preview-card">
             <template #header>
               <div class="card-title">
                 <DqIcon><headset /></DqIcon>
@@ -257,21 +264,27 @@
               </div>
             </template>
             <div v-if="previewAudioSrc" class="dq-audio-create-cover">
-              <DqIcon :size="34"><headset /></DqIcon>
               <span class="dq-audio-create-cover-title">{{ $t('audio.previewListen') }}</span>
               <audio
                 :key="previewAudioKey"
                 ref="previewAudioEl"
+                class="studio-audio-preview-player"
                 :src="previewAudioSrc"
                 controls
                 playsinline
                 preload="metadata"
               ></audio>
-              <div class="studio-audio-caption">
+              <div
+                v-if="previewPrompt"
+                class="studio-audio-caption"
+                :title="previewPrompt"
+              >
                 {{ previewPrompt }}
               </div>
             </div>
-            <DqEmpty v-else :description="$t('studio.noPreview')" />
+            <div v-else class="studio-audio-preview-empty">
+              <DqEmpty :description="$t('studio.noPreview')" />
+            </div>
           </DqSurfaceCard>
 
           <!-- Recent generations -->
@@ -426,7 +439,7 @@ const params = reactive({
   model: '',
   prompt: '',
   negative_prompt: '',
-  duration: 60,
+  duration: 30,
   instrumental: false,
   lyrics: '',
   vocal_language: '',
@@ -434,9 +447,9 @@ const params = reactive({
   key_scale: '',
   time_signature: '',
   steps: 8,
-  guidance: 7.0,
+  guidance: 3.0,
   seed: null as number | null,
-  n: 2,
+  n: 1,
   audio_format: 'wav',
 });
 
@@ -485,8 +498,13 @@ const supportsNegativePrompt = computed(() => {
 });
 
 const hasCustomParams = computed(() => {
-  return params.steps !== 8 || params.guidance !== 7.0 || params.seed !== null
-    || params.n !== 2 || params.audio_format !== 'wav';
+  const p = currentModelConfig.value?.parameters || {};
+  const stepsDef = p.steps?.default ?? 8;
+  const guidanceDef = p.guidance?.default ?? 3.0;
+  const durationDef = p.duration?.default ?? 30;
+  const formatDef = (p.audio_formats && p.audio_formats[0]) || 'wav';
+  return params.steps !== stepsDef || params.guidance !== guidanceDef || params.seed !== null
+    || params.n !== 1 || params.duration !== durationDef || params.audio_format !== formatDef;
 });
 
 // ---- Audio formats ----
@@ -584,7 +602,13 @@ function applyDefaults(modelConfig: any) {
   const p = modelConfig.parameters;
   if (p.steps && p.steps.default != null) params.steps = p.steps.default;
   if (p.guidance && p.guidance.default != null) params.guidance = p.guidance.default;
-  if (p.duration && p.duration.default != null) params.duration = p.duration.default;
+  if (p.duration) {
+    if (p.duration.default != null) params.duration = p.duration.default;
+    const dmin = p.duration.min ?? 10;
+    const dmax = p.duration.max ?? 600;
+    if (params.duration < dmin) params.duration = dmin;
+    if (params.duration > dmax) params.duration = dmax;
+  }
   if (p.audio_formats && Array.isArray(p.audio_formats) && p.audio_formats.length > 0) {
     params.audio_format = p.audio_formats[0];
   }
@@ -613,9 +637,7 @@ function randomizeSeed() {
 function restoreDefaults() {
   const mc = currentModelConfig.value;
   applyDefaults(mc);
-  params.guidance = 7.0;
-  params.n = 2;
-  params.audio_format = 'wav';
+  params.n = 1;
   params.seed = null;
 }
 
@@ -664,19 +686,20 @@ async function startGeneration() {
   try {
     const body = {
       model: params.model,
-      prompt: params.prompt,
+      prompt: params.prompt.trim(),
       negative_prompt: params.negative_prompt || '',
-      duration: params.duration || null,
-      instrumental: params.instrumental || false,
-      lyrics: params.lyrics || '',
-      vocal_language: params.vocal_language || '',
-      bpm: params.bpm || null,
+      duration: params.duration ?? null,
+      instrumental: !!params.instrumental,
+      // Empty lyrics → backend uses [Instrumental] (same as ACE-Step handler text2music default).
+      lyrics: params.lyrics?.trim() || '',
+      vocal_language: params.vocal_language?.trim() || '',
+      bpm: params.bpm ?? null,
       key_scale: params.key_scale || '',
       time_signature: params.time_signature || '',
-      steps: params.steps || null,
-      guidance: params.guidance || null,
-      seed: params.seed || null,
-      n: params.n || 2,
+      steps: params.steps ?? null,
+      guidance: params.guidance ?? null,
+      seed: params.seed ?? null,
+      n: params.n ?? 1,
       audio_format: params.audio_format || 'wav',
     };
 
@@ -693,12 +716,18 @@ async function startGeneration() {
       return;
     }
 
-    const pushPreviewFromAsset = (aid: string) => {
-      const url = api.gallery?.getImageUrl
+    const assetFileUrl = (aid: string) =>
+      api.gallery?.getImageUrl
         ? api.gallery.getImageUrl('asset:' + aid)
         : '/api/assets/' + aid + '/file';
+
+    const addRecentFromAsset = (aid: string) => {
+      const url = assetFileUrl(aid);
       recentAudio.unshift({ id: aid, url, prompt: params.prompt, duration: 0, playing: false });
-      previewAudioSrc.value = url;
+    };
+
+    const setPreviewFromAsset = (aid: string) => {
+      previewAudioSrc.value = assetFileUrl(aid);
       previewPrompt.value = params.prompt;
       previewAudioKey.value += 1;
       nextTick(() => {
@@ -751,7 +780,8 @@ async function startGeneration() {
         const row = resultData as Record<string, unknown>;
         const ids = row.asset_ids as string[] | undefined;
         if (ids?.length) {
-          ids.forEach((aid) => pushPreviewFromAsset(aid));
+          ids.forEach((aid) => addRecentFromAsset(aid));
+          setPreviewFromAsset(ids[0]);
         }
       },
       onDone: (doneData: unknown) => {
@@ -760,7 +790,7 @@ async function startGeneration() {
           const pid =
             row.result &&
             (row.result as Record<string, unknown>).primary_asset_id;
-          if (pid) pushPreviewFromAsset(String(pid));
+          if (pid) setPreviewFromAsset(String(pid));
         } else if (row.status === 'failed') {
           toast.error($tt('studio.genFailed', { msg: String(row.error || '') }));
         }

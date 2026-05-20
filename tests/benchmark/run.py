@@ -14,6 +14,8 @@ from .cases import (
     BENCHMARK_EXIT_EXEMPT_MISMATCH_VS_MFLUX,
     BenchmarkCase,
     SanityCase,
+    ace_step_bundle_installed,
+    cuda_runtime_available,
     get_case,
     get_sanity_case,
     iter_mflux_cases,
@@ -23,7 +25,14 @@ from .cases import (
     resolve_benchmark_data_root,
     resolve_fp16_bundle_dir,
 )
-from .metrics import CompareResult, SanityResult, check_output_image, compare_images, hash_image
+from .metrics import (
+    CompareResult,
+    SanityResult,
+    check_output_audio,
+    check_output_image,
+    compare_images,
+    hash_image,
+)
 
 # 与参考图对比：PSNR 档位 + SSIM 下限（纯噪声 / 完全跑崩时相对参考图 SSIM 极低）
 MIN_PSNR_PASS = 30.0
@@ -512,11 +521,133 @@ class SanitySuiteRunner(BenchmarkRunner):
         super().__init__(output_dir=output_dir)
         self.sanity_results: list[tuple[SanityCase, SanityResult]] = []
 
+    def _run_danqing_audio_generate(
+        self, case: SanityCase, output_path: Path, *, timeout_sec: int | None = None
+    ) -> bool:
+        cli = PROJECT_ROOT / "bin" / "danqing-audio-generate"
+        cmd = [
+            sys.executable,
+            str(cli),
+            "--model",
+            case.model,
+            "--prompt",
+            case.prompt,
+            "--lyrics",
+            case.lyrics or "[Instrumental]",
+            "--duration",
+            str(int(case.duration)),
+            "--steps",
+            str(int(case.steps)),
+            "--guidance",
+            str(float(case.guidance)),
+            "--seed",
+            str(case.seed),
+            "--n",
+            "1",
+            "--audio-format",
+            case.audio_format or "wav",
+            "--output",
+            str(output_path),
+        ]
+        try:
+            t0 = time.time()
+            env = os.environ.copy()
+            env.setdefault("MLX_METAL_DEVICE_ONLY", "1")
+            env.setdefault("MLX_METAL_MEMORY_LIMIT", "120")
+            env["PYTHONUNBUFFERED"] = "1"
+            if case.id.endswith("-cuda-sanity"):
+                env["DANQING_FORCE_AUDIO_BACKEND"] = "cuda"
+            if not case.ace_step_use_lm:
+                env["ACESTEP_USE_LM"] = "0"
+            else:
+                env.setdefault("ACESTEP_USE_LM", "1")
+            tout = int(timeout_sec) if timeout_sec is not None else DEFAULT_DANQING_CLI_TIMEOUT_SEC
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=tout,
+                env=env,
+                cwd=str(PROJECT_ROOT),
+            )
+            elapsed = time.time() - t0
+            if proc.returncode != 0:
+                print(f"    [danqing-audio] 失败 (exit={proc.returncode})")
+                if proc.stderr:
+                    print(f"    [danqing-audio] stderr: {proc.stderr[:STDERR_HEAD_CHARS]}")
+                return False
+            print(f"    [danqing-audio] 生成完成 ({elapsed:.1f}s)")
+            print(f"    [danqing-audio] 输出: {output_path}")
+            return True
+        except subprocess.TimeoutExpired:
+            print(f"    [danqing-audio] 超时 ({tout}s)")
+            return False
+        except FileNotFoundError:
+            print(f"    [danqing-audio] 未找到 CLI: {cli}")
+            return False
+
     def run_one_sanity(self, case: SanityCase) -> SanityResult:
-        out_path = self.output_dir / f"{case.id}_sanity.png"
+        media = (case.media or "image").strip().lower()
+        ext = "wav" if media == "audio" else "png"
+        out_path = self.output_dir / f"{case.id}_sanity.{ext}"
+        tout = case.timeout_sec if case.timeout_sec is not None else DEFAULT_DANQING_CLI_TIMEOUT_SEC
+
+        if media == "audio":
+            if case.id.endswith("-cuda-sanity") and not cuda_runtime_available():
+                print("    [SKIP] CUDA 不可用，跳过 ACE-Step CUDA 健全性")
+                res = SanityResult(
+                    ok=True,
+                    reason="skip_no_cuda",
+                    mean_luma=0.0,
+                    std_luma=0.0,
+                    entropy_bits=0.0,
+                    laplacian_var=0.0,
+                    skipped=True,
+                )
+                self.sanity_results.append((case, res))
+                print(f"  SKIP: {res.reason}")
+                return res
+            if not ace_step_bundle_installed():
+                print("    [SKIP] ACE-Step bundle 未安装（见 models/Audio/acestep-v15-xl-sft）")
+                res = SanityResult(
+                    ok=True,
+                    reason="skip_missing_ace_step_bundle",
+                    mean_luma=0.0,
+                    std_luma=0.0,
+                    entropy_bits=0.0,
+                    laplacian_var=0.0,
+                    skipped=True,
+                )
+                self.sanity_results.append((case, res))
+                print(f"  SKIP: {res.reason}")
+                return res
+            t0 = time.time()
+            ok = self._run_danqing_audio_generate(case, out_path, timeout_sec=tout)
+            elapsed = time.time() - t0
+            if not ok:
+                res = SanityResult(
+                    ok=False,
+                    reason="danqing_audio_cli_failed",
+                    mean_luma=0.0,
+                    std_luma=0.0,
+                    entropy_bits=0.0,
+                    laplacian_var=0.0,
+                )
+                self.sanity_results.append((case, res))
+                print(f"  FAIL: {res.reason} ({elapsed:.1f}s)")
+                return res
+            res = check_output_audio(out_path)
+            self.sanity_results.append((case, res))
+            status = "PASS" if res.ok else "FAIL"
+            detail = res.reason if not res.ok else (
+                f"rms={res.mean_luma:.4f} peak={res.std_luma:.4f}"
+            )
+            print(f"  {status}: {detail} ({elapsed:.1f}s)")
+            print(f"    output: {out_path}")
+            return res
+
         bc = case.as_benchmark_case()
         ensure_benchmark_source_image()
-        tout = case.timeout_sec if case.timeout_sec is not None else DEFAULT_DANQING_CLI_TIMEOUT_SEC
 
         if bc.action == "upscale" and str(bc.model).startswith("seedvr2"):
             if not _seedvr2_flat_bundle_ready(bc.model):
@@ -570,8 +701,16 @@ class SanitySuiteRunner(BenchmarkRunner):
         print(f"{'='*60}\n")
         for case in ALL_SANITY_CASES:
             print(f"[{case.id}] {case.description}")
-            print(f"  model={case.model} seed={case.seed} steps={case.steps} "
-                  f"size={case.width}x{case.height} guidance={case.guidance}")
+            if (case.media or "image").strip().lower() == "audio":
+                print(
+                    f"  model={case.model} seed={case.seed} steps={case.steps} "
+                    f"duration={case.duration}s guidance={case.guidance} lm={case.ace_step_use_lm}"
+                )
+            else:
+                print(
+                    f"  model={case.model} seed={case.seed} steps={case.steps} "
+                    f"size={case.width}x{case.height} guidance={case.guidance}"
+                )
             self.run_one_sanity(case)
         self._print_sanity_summary()
 

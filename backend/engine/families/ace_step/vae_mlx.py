@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import math
 import logging
-from typing import List, Optional
+from pathlib import Path
+from typing import Any, List, Optional
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -262,16 +263,19 @@ def _fuse_weight_norm(weight_g, weight_v, eps: float = 1e-9):
     return g * v / (norm + eps)
 
 
-def convert_vae_weights_from_pytorch(pytorch_vae) -> list:
-    """Extract PyTorch ``AutoencoderOobleck`` weights and convert to MLX format.
+def _state_dict_value_to_numpy(val: Any) -> Any:
+    import numpy as np
 
-    Handles: (1) weight_norm fusion, (2) Conv1d axis swap PT→MLX,
-    (3) ConvTranspose1d axis swap, (4) Snake1d squeeze.
-    """
+    if hasattr(val, "detach"):
+        return val.detach().cpu().float().numpy()
+    return np.asarray(val, dtype=np.float32)
+
+
+def convert_vae_weights_from_state_dict(state_dict: dict) -> list:
+    """Convert Oobleck checkpoint ``state_dict`` (numpy or torch tensors) to MLX weights."""
     import mlx.core as mx
     import numpy as np
 
-    state_dict = pytorch_vae.state_dict()
     weights: list[tuple[str, mx.array]] = []
     all_keys = sorted(state_dict.keys())
     processed: set[str] = set()
@@ -280,7 +284,6 @@ def convert_vae_weights_from_pytorch(pytorch_vae) -> list:
         if key in processed:
             continue
 
-        # --- weight_norm fusion: weight_g + weight_v → weight ---
         if key.endswith(".weight_g"):
             base = key[: -len(".weight_g")]
             v_key = base + ".weight_v"
@@ -288,12 +291,15 @@ def convert_vae_weights_from_pytorch(pytorch_vae) -> list:
                 processed.add(key)
                 continue
 
-            w = _fuse_weight_norm(state_dict[key], state_dict[v_key])
+            w = _fuse_weight_norm(
+                _state_dict_value_to_numpy(state_dict[key]),
+                _state_dict_value_to_numpy(state_dict[v_key]),
+            )
 
             if "conv_t1" in base:
-                w = w.transpose(1, 2, 0)     # ConvTranspose1d: PT [in,out,K] → MLX [out,K,in]
+                w = w.transpose(1, 2, 0)
             else:
-                w = w.swapaxes(1, 2)         # Conv1d: PT [out,in,K] → MLX [out,K,in]
+                w = w.swapaxes(1, 2)
 
             weights.append((base + ".weight", mx.array(w)))
             processed.add(key)
@@ -301,25 +307,49 @@ def convert_vae_weights_from_pytorch(pytorch_vae) -> list:
             continue
 
         if key.endswith(".weight_v"):
-            continue  # handled above
+            continue
 
-        # --- Snake1d: PT [1, C, 1] → MLX [C] ---
         if key.endswith(".alpha") or key.endswith(".beta"):
-            val = state_dict[key].detach().cpu().float().numpy().squeeze()
+            val = np.asarray(_state_dict_value_to_numpy(state_dict[key])).squeeze()
             weights.append((key, mx.array(val)))
             processed.add(key)
             continue
 
-        # --- bias / other: pass-through ---
-        val = state_dict[key].detach().cpu().float().numpy()
+        val = _state_dict_value_to_numpy(state_dict[key])
         weights.append((key, mx.array(val)))
         processed.add(key)
 
     return weights
 
 
+def convert_vae_weights_from_pytorch(pytorch_vae) -> list:
+    """Extract PyTorch ``AutoencoderOobleck`` weights and convert to MLX format."""
+    return convert_vae_weights_from_state_dict(pytorch_vae.state_dict())
+
+
+def load_vae_weights_from_bundle(vae_dir: str, mlx_vae: AceStepVAEMLX) -> None:
+    """Load VAE from bundle ``diffusion_pytorch_model.safetensors`` (no diffusers on MLX path)."""
+    import mlx.core as mx
+    from safetensors import safe_open
+
+    st_path = Path(vae_dir) / "diffusion_pytorch_model.safetensors"
+    if not st_path.is_file():
+        raise RuntimeError(
+            f"ACE-Step VAE weights not found: {st_path}. "
+            "Expected diffusers Oobleck safetensors under bundle vae/."
+        )
+    state_dict: dict[str, Any] = {}
+    # Checkpoint may be bfloat16; read via PyTorch bridge then cast to float32 numpy.
+    with safe_open(str(st_path), framework="pt", device="cpu") as handle:
+        for key in handle.keys():
+            state_dict[key] = handle.get_tensor(key).detach().cpu().float().numpy()
+    weights = convert_vae_weights_from_state_dict(state_dict)
+    mlx_vae.load_weights(weights)
+    mx.eval(mlx_vae.parameters())
+
+
 def load_vae_weights_from_pytorch(pytorch_vae, mlx_vae: AceStepVAEMLX) -> None:
-    """Load weights from a PyTorch VAE into an MLX VAE (convert + update)."""
+    """Load weights from a PyTorch VAE into an MLX VAE (CUDA-only helper)."""
     weights = convert_vae_weights_from_pytorch(pytorch_vae)
     mlx_vae.load_weights(weights)
     mx.eval(mlx_vae.parameters())

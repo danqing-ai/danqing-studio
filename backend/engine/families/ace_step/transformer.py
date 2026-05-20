@@ -63,11 +63,7 @@ class AceStepTransformer(TransformerBase):
         return self._model.parameters()
 
     def _build_param_map(self):
+        from backend.engine.common.vae.decoder import _collect_nn_params
+
         self._param_map = {}
-        for name, param in self._model.named_parameters():
-            self._param_map[name] = param
-        # Collect buffers if available (torch.nn.Module has named_buffers; mlx.nn.Module does not)
-        if hasattr(self._model, "named_buffers"):
-            for name, buf in self._model.named_buffers():
-                if name not in self._param_map:
-                    self._param_map[name] = buf
+        _collect_nn_params(self._model, "", self._param_map)

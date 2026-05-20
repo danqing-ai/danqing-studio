@@ -255,14 +255,21 @@ class SQLiteAssetStore(IAssetStore):
                     meta.setdefault("height", h)
             except Exception:
                 pass
-        elif kind == "video":
+        elif kind in ("video", "audio"):
             duration = _ffprobe_duration(dest)
-            if duration is None:
+            if duration is None and kind == "video":
                 try:
                     nf = float(meta.get("num_frames") or 0)
                     fps = float(meta.get("fps") or 0)
                     if nf > 0 and fps > 0:
                         duration = nf / fps
+                except (TypeError, ValueError):
+                    duration = None
+            if duration is None and kind == "audio":
+                try:
+                    ds = meta.get("duration_seconds")
+                    if ds is not None:
+                        duration = float(ds)
                 except (TypeError, ValueError):
                     duration = None
             if duration is not None:

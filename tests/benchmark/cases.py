@@ -109,6 +109,18 @@ MFLUX_FP16_MODEL_ROOT: dict[str, str] = {
 }
 
 # 可选 bundle：未安装时 ``iter_mflux_cases()`` 自动 SKIP（不删用例，便于回归）
+ACE_STEP_AUDIO_BUNDLE = "models/Audio/acestep-v15-xl-sft"
+
+
+def ace_step_bundle_installed() -> bool:
+    """ACE-Step audio weights (turbo DiT + VAE safetensors) under workspace models/."""
+    root = resolve_benchmark_data_root() / ACE_STEP_AUDIO_BUNDLE
+    dit = root / "acestep-v15-turbo" / "model.safetensors"
+    vae = root / "vae" / "diffusion_pytorch_model.safetensors"
+    enc = root / "Qwen3-Embedding-0.6B" / "config.json"
+    return dit.is_file() and vae.is_file() and enc.is_file()
+
+
 MFLUX_OPTIONAL_FP16_MODELS: frozenset[str] = frozenset({
     "fibo-lite",
     "fibo-edit",
@@ -245,6 +257,12 @@ class SanityCase:
     upscale_scale: int = 2
     # ``danqing-*`` 子进程超时（秒）；首包 FIBO 冷启动可能 >10min
     timeout_sec: Optional[int] = None
+    # audio (``danqing-audio-generate``)
+    media: str = "image"  # image | audio
+    duration: int = 10
+    lyrics: str = ""
+    audio_format: str = "wav"
+    ace_step_use_lm: bool = False
 
     def __post_init__(self):
         if not self.description:
@@ -324,7 +342,61 @@ ALL_SANITY_CASES: list[SanityCase] = [
         upscale_scale=2,
         description="SeedVR2-3B 2× upscale — 健全性",
     ),
+    SanityCase(
+        id="ace-step-xl-sft-sanity",
+        model="ace-step-xl-sft",
+        media="audio",
+        prompt="warm piano ballad with gentle lead vocals",
+        lyrics="[verse]\n月光洒在窗前\n静静听风的声音",
+        duration=10,
+        steps=8,
+        guidance=3.0,
+        seed=42,
+        audio_format="wav",
+        ace_step_use_lm=False,
+        timeout_sec=300,
+        description="ACE-Step MLX 10s audio — reject near-silent output (no mflux ref)",
+    ),
+    SanityCase(
+        id="ace-step-xl-sft-cuda-sanity",
+        model="ace-step-xl-sft",
+        media="audio",
+        prompt="warm piano ballad",
+        lyrics="[Instrumental]",
+        duration=10,
+        steps=8,
+        guidance=3.0,
+        seed=44,
+        audio_format="wav",
+        ace_step_use_lm=False,
+        timeout_sec=600,
+        description="ACE-Step CUDA 10s audio — skip when torch.cuda unavailable",
+    ),
+    SanityCase(
+        id="ace-step-xl-sft-sanity-lm",
+        model="ace-step-xl-sft",
+        media="audio",
+        prompt="warm piano ballad",
+        lyrics="[verse]\n月光洒在窗前",
+        duration=10,
+        steps=8,
+        guidance=3.0,
+        seed=43,
+        audio_format="wav",
+        ace_step_use_lm=True,
+        timeout_sec=420,
+        description="ACE-Step MLX 10s + 5Hz LM expansion — audio sanity",
+    ),
 ]
+
+
+def cuda_runtime_available() -> bool:
+    try:
+        import torch
+
+        return bool(torch.cuda.is_available())
+    except ImportError:
+        return False
 
 
 def get_sanity_case(case_id: str) -> Optional[SanityCase]:

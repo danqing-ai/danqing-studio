@@ -133,3 +133,31 @@ def check_output_image(path: str | Path) -> SanityResult:
     if ent < min_ent:
         return SanityResult(False, f"low_entropy(bits={ent:.2f})", mean_l, std_l, ent, lap_var)
     return SanityResult(True, "", mean_l, std_l, ent, lap_var)
+
+
+def check_output_audio(
+    path: str | Path,
+    *,
+    min_rms: float = 0.01,
+    min_peak: float = 0.02,
+) -> SanityResult:
+    """Reject near-silent or flat ACE-Step wav/mp3 outputs (no reference upstream)."""
+    path = Path(path)
+    try:
+        import soundfile as sf
+    except ImportError as e:
+        return SanityResult(False, f"soundfile_missing:{e!r}", 0.0, 0.0, 0.0, 0.0)
+
+    try:
+        data, _sr = sf.read(str(path), dtype="float32", always_2d=True)
+    except Exception as e:
+        return SanityResult(False, f"load_error:{e!r}", 0.0, 0.0, 0.0, 0.0)
+
+    mono = data.mean(axis=1) if data.ndim == 2 else data
+    rms = float(np.sqrt(np.mean(mono**2)))
+    peak = float(np.max(np.abs(mono)))
+    if rms < min_rms:
+        return SanityResult(False, f"near_silent(rms={rms:.5f})", rms, peak, 0.0, 0.0)
+    if peak < min_peak:
+        return SanityResult(False, f"low_peak(peak={peak:.5f})", rms, peak, 0.0, 0.0)
+    return SanityResult(True, "", rms, peak, 0.0, 0.0)

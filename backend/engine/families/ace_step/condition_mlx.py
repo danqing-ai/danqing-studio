@@ -1,0 +1,524 @@
+"""
+ACE-Step condition encoder + Qwen3 embedding + ``prepare_condition`` (MLX only).
+
+For text2music (``is_covers`` all zero) tokenize/detokenize is skipped — identical to
+upstream when cover hints are unused.
+"""
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Optional, Sequence, Tuple
+
+import mlx.core as mx
+import mlx.nn as nn
+
+from backend.engine.families.ace_step.weights_mlx import load_prefix_weights_for_mlx
+from backend.engine.families.z_image.text_encoder_mlx import (
+    _ZImageEncoderLayer,
+    _ZImageEncoderRotaryEmbedding,
+)
+
+
+def _pack_sequences(
+    hidden1: mx.array,
+    hidden2: mx.array,
+    mask1: mx.array,
+    mask2: mx.array,
+) -> Tuple[mx.array, mx.array]:
+    hidden_cat = mx.concatenate([hidden1, hidden2], axis=1)
+    mask_cat = mx.concatenate([mask1, mask2], axis=1)
+    bsz, length, dim = hidden_cat.shape
+    sort_idx = mx.argsort(-mask_cat, axis=1)
+    idx_exp = mx.expand_dims(sort_idx, axis=-1)
+    idx_exp = mx.broadcast_to(idx_exp, (bsz, length, dim))
+    hidden_left = mx.take_along_axis(hidden_cat, idx_exp, axis=1)
+    lengths = mask_cat.sum(axis=1).astype(mx.int32)
+    positions = mx.arange(length, dtype=mx.int32)[None, :]
+    new_mask = (positions < lengths[:, None]).astype(mx.float32)
+    return hidden_left, new_mask
+
+
+def _create_4d_mask(
+    seq_len: int,
+    dtype: mx.Dtype,
+    attention_mask: Optional[mx.array],
+    *,
+    sliding_window: Optional[int] = None,
+    is_sliding_window: bool = False,
+) -> mx.array:
+    idx = mx.arange(seq_len, dtype=mx.int32)
+    diff = idx[:, None] - idx[None, :]
+    valid = mx.ones((seq_len, seq_len), dtype=mx.bool_)
+    if is_sliding_window and sliding_window is not None:
+        valid = valid & (mx.abs(diff) <= sliding_window)
+    valid = mx.expand_dims(mx.expand_dims(valid, 0), 0)
+    min_val = mx.array(-1e9, dtype=dtype)
+    mask = mx.where(valid, mx.zeros(valid.shape, dtype=dtype), min_val)
+    if attention_mask is not None:
+        pad = mx.where(
+            attention_mask[:, None, None, :] > 0,
+            mx.zeros((attention_mask.shape[0], 1, 1, seq_len), dtype=dtype),
+            min_val,
+        )
+        mask = mask + pad
+    return mask
+
+
+class _ConditionEncoderLayer(nn.Module):
+    def __init__(
+        self,
+        hidden_size: int,
+        num_attention_heads: int,
+        num_key_value_heads: int,
+        intermediate_size: int,
+        head_dim: int,
+        rms_norm_eps: float,
+        attention_type: str,
+        sliding_window: int,
+    ):
+        super().__init__()
+        self.attention_type = attention_type
+        self.input_layernorm = nn.RMSNorm(hidden_size, eps=rms_norm_eps)
+        self.post_attention_layernorm = nn.RMSNorm(hidden_size, eps=rms_norm_eps)
+        self.self_attn = _ConditionSelfAttention(
+            hidden_size,
+            num_attention_heads,
+            num_key_value_heads,
+            head_dim,
+            rms_norm_eps,
+        )
+        self.mlp = _SwiGLU(hidden_size, intermediate_size)
+
+    def __call__(
+        self,
+        hidden_states: mx.array,
+        position_embeddings: Tuple[mx.array, mx.array],
+        attn_mask_map: dict[str, Optional[mx.array]],
+    ) -> mx.array:
+        residual = hidden_states
+        hidden_states = self.input_layernorm(hidden_states)
+        hidden_states = self.self_attn(
+            hidden_states,
+            position_embeddings,
+            attn_mask_map.get(self.attention_type),
+        )
+        hidden_states = residual + hidden_states
+        residual = hidden_states
+        hidden_states = self.mlp(self.post_attention_layernorm(hidden_states))
+        return residual + hidden_states
+
+
+class _SwiGLU(nn.Module):
+    def __init__(self, hidden_size: int, intermediate_size: int):
+        super().__init__()
+        self.gate_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
+        self.up_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
+        self.down_proj = nn.Linear(intermediate_size, hidden_size, bias=False)
+
+    def __call__(self, x: mx.array) -> mx.array:
+        return self.down_proj(nn.silu(self.gate_proj(x)) * self.up_proj(x))
+
+
+class _ConditionSelfAttention(nn.Module):
+    def __init__(
+        self,
+        hidden_size: int,
+        num_heads: int,
+        num_kv_heads: int,
+        head_dim: int,
+        rms_norm_eps: float,
+    ):
+        super().__init__()
+        self.num_heads = num_heads
+        self.num_kv_heads = num_kv_heads
+        self.head_dim = head_dim
+        self.n_rep = num_heads // num_kv_heads
+        self.scale = head_dim**-0.5
+        self.q_proj = nn.Linear(hidden_size, num_heads * head_dim, bias=False)
+        self.k_proj = nn.Linear(hidden_size, num_kv_heads * head_dim, bias=False)
+        self.v_proj = nn.Linear(hidden_size, num_kv_heads * head_dim, bias=False)
+        self.o_proj = nn.Linear(num_heads * head_dim, hidden_size, bias=False)
+        self.q_norm = nn.RMSNorm(head_dim, eps=rms_norm_eps)
+        self.k_norm = nn.RMSNorm(head_dim, eps=rms_norm_eps)
+
+    @staticmethod
+    def _rotate_half(x: mx.array) -> mx.array:
+        half = x.shape[-1] // 2
+        return mx.concatenate([-x[..., half:], x[..., :half]], axis=-1)
+
+    @staticmethod
+    def _repeat_kv(x: mx.array, n_rep: int) -> mx.array:
+        if n_rep == 1:
+            return x
+        b, n_kv, length, d = x.shape
+        x = mx.expand_dims(x, axis=2)
+        x = mx.broadcast_to(x, (b, n_kv, n_rep, length, d))
+        return x.reshape(b, n_kv * n_rep, length, d)
+
+    def __call__(
+        self,
+        hidden_states: mx.array,
+        position_embeddings: Tuple[mx.array, mx.array],
+        attention_mask: Optional[mx.array],
+    ) -> mx.array:
+        from mlx.core.fast import scaled_dot_product_attention
+
+        bsz, seq_len, _ = hidden_states.shape
+        q = self.q_norm(self.q_proj(hidden_states).reshape(bsz, seq_len, self.num_heads, self.head_dim))
+        k = self.k_norm(self.k_proj(hidden_states).reshape(bsz, seq_len, self.num_kv_heads, self.head_dim))
+        v = self.v_proj(hidden_states).reshape(bsz, seq_len, self.num_kv_heads, self.head_dim)
+        cos, sin = position_embeddings
+        cos = mx.expand_dims(cos, axis=2)
+        sin = mx.expand_dims(sin, axis=2)
+        q = (q * cos) + (self._rotate_half(q) * sin)
+        k = (k * cos) + (self._rotate_half(k) * sin)
+        q = mx.transpose(q, (0, 2, 1, 3))
+        k = self._repeat_kv(mx.transpose(k, (0, 2, 1, 3)), self.n_rep)
+        v = self._repeat_kv(mx.transpose(v, (0, 2, 1, 3)), self.n_rep)
+        out = scaled_dot_product_attention(
+            q.astype(mx.float32),
+            k.astype(mx.float32),
+            v.astype(mx.float32),
+            scale=self.scale,
+            mask=attention_mask,
+        )
+        out = mx.transpose(out.astype(hidden_states.dtype), (0, 2, 1, 3))
+        return self.o_proj(out.reshape(bsz, seq_len, -1))
+
+
+class _LyricEncoderMLX(nn.Module):
+    def __init__(self, config: dict):
+        super().__init__()
+        self._cfg = config
+        hidden = config["hidden_size"]
+        self.embed_tokens = nn.Linear(config["text_hidden_dim"], hidden, bias=True)
+        self.norm = nn.RMSNorm(hidden, eps=config["rms_norm_eps"])
+        self.rotary_emb = _ZImageEncoderRotaryEmbedding(
+            dim=config["head_dim"], base=config["rope_theta"]
+        )
+        layer_types: Sequence[str] = config["layer_types"]
+        n_layers = config["num_lyric_encoder_hidden_layers"]
+        self.layers = [
+            _ConditionEncoderLayer(
+                hidden,
+                config["num_attention_heads"],
+                config["num_key_value_heads"],
+                config["intermediate_size"],
+                config["head_dim"],
+                config["rms_norm_eps"],
+                layer_types[i],
+                config["sliding_window"],
+            )
+            for i in range(n_layers)
+        ]
+
+    def __call__(self, inputs_embeds: mx.array, attention_mask: mx.array) -> mx.array:
+        bsz, seq_len, _ = inputs_embeds.shape
+        hidden_states = self.embed_tokens(inputs_embeds)
+        position_ids = mx.broadcast_to(mx.arange(seq_len, dtype=mx.int32)[None, :], (bsz, seq_len))
+        position_embeddings = self.rotary_emb(hidden_states, position_ids)
+        full_mask = _create_4d_mask(seq_len, hidden_states.dtype, attention_mask)
+        slide_mask = (
+            _create_4d_mask(
+                seq_len,
+                hidden_states.dtype,
+                attention_mask,
+                sliding_window=self._cfg["sliding_window"],
+                is_sliding_window=True,
+            )
+            if self._cfg["use_sliding_window"]
+            else None
+        )
+        attn_map = {"full_attention": full_mask, "sliding_attention": slide_mask}
+        for layer in self.layers:
+            hidden_states = layer(hidden_states, position_embeddings, attn_map)
+        return self.norm(hidden_states)
+
+
+class _TimbreEncoderMLX(nn.Module):
+    def __init__(self, config: dict):
+        super().__init__()
+        self._cfg = config
+        hidden = config["hidden_size"]
+        self.embed_tokens = nn.Linear(config["timbre_hidden_dim"], hidden, bias=True)
+        self.norm = nn.RMSNorm(hidden, eps=config["rms_norm_eps"])
+        self.rotary_emb = _ZImageEncoderRotaryEmbedding(
+            dim=config["head_dim"], base=config["rope_theta"]
+        )
+        layer_types: Sequence[str] = config["layer_types"]
+        n_layers = config["num_timbre_encoder_hidden_layers"]
+        self.layers = [
+            _ConditionEncoderLayer(
+                hidden,
+                config["num_attention_heads"],
+                config["num_key_value_heads"],
+                config["intermediate_size"],
+                config["head_dim"],
+                config["rms_norm_eps"],
+                layer_types[i],
+                config["sliding_window"],
+            )
+            for i in range(n_layers)
+        ]
+
+    def __call__(self, refer_packed: mx.array, refer_order: mx.array) -> Tuple[mx.array, mx.array]:
+        del refer_order  # text2music uses one reference per batch row
+        bsz, seq_len, _ = refer_packed.shape
+        hidden_states = self.embed_tokens(refer_packed)
+        position_ids = mx.broadcast_to(mx.arange(seq_len, dtype=mx.int32)[None, :], (bsz, seq_len))
+        position_embeddings = self.rotary_emb(hidden_states, position_ids)
+        attn_mask = mx.ones((bsz, seq_len), dtype=mx.float32)
+        full_mask = _create_4d_mask(seq_len, hidden_states.dtype, attn_mask)
+        slide_mask = (
+            _create_4d_mask(
+                seq_len,
+                hidden_states.dtype,
+                attn_mask,
+                sliding_window=self._cfg["sliding_window"],
+                is_sliding_window=True,
+            )
+            if self._cfg["use_sliding_window"]
+            else None
+        )
+        attn_map = {"full_attention": full_mask, "sliding_attention": slide_mask}
+        for layer in self.layers:
+            hidden_states = layer(hidden_states, position_embeddings, attn_map)
+        hidden_states = self.norm(hidden_states)[:, 0, :]
+        timbre = mx.expand_dims(hidden_states, axis=1)
+        mask = mx.ones((bsz, 1), dtype=mx.float32)
+        return timbre, mask
+
+
+class AceStepConditionEncoderMLX(nn.Module):
+    def __init__(self, config: dict):
+        super().__init__()
+        self.config = config
+        self.text_projector = nn.Linear(config["text_hidden_dim"], config["hidden_size"], bias=False)
+        self.lyric_encoder = _LyricEncoderMLX(config)
+        self.timbre_encoder = _TimbreEncoderMLX(config)
+
+    def __call__(
+        self,
+        text_hidden_states: mx.array,
+        text_attention_mask: mx.array,
+        lyric_hidden_states: mx.array,
+        lyric_attention_mask: mx.array,
+        refer_packed: mx.array,
+        refer_order: mx.array,
+    ) -> Tuple[mx.array, mx.array]:
+        text_hidden_states = self.text_projector(text_hidden_states)
+        lyric_hidden_states = self.lyric_encoder(lyric_hidden_states, lyric_attention_mask)
+        timbre_hidden, timbre_mask = self.timbre_encoder(refer_packed, refer_order)
+        enc_hs, enc_mask = _pack_sequences(
+            lyric_hidden_states, timbre_hidden, lyric_attention_mask, timbre_mask
+        )
+        return _pack_sequences(enc_hs, text_hidden_states, enc_mask, text_attention_mask)
+
+
+@dataclass
+class ConditionMlxConfig:
+    hidden_size: int
+    text_hidden_dim: int
+    timbre_hidden_dim: int
+    audio_acoustic_hidden_dim: int
+    num_lyric_encoder_hidden_layers: int
+    num_timbre_encoder_hidden_layers: int
+    num_attention_heads: int
+    num_key_value_heads: int
+    intermediate_size: int
+    head_dim: int
+    rms_norm_eps: float
+    rope_theta: float
+    sliding_window: int
+    use_sliding_window: bool
+    layer_types: Tuple[str, ...]
+
+    @classmethod
+    def from_json(cls, path: Path) -> "ConditionMlxConfig":
+        with open(path, encoding="utf-8") as f:
+            raw = json.load(f)
+        layer_types = tuple(raw["layer_types"])
+        return cls(
+            hidden_size=raw["hidden_size"],
+            text_hidden_dim=raw["text_hidden_dim"],
+            timbre_hidden_dim=raw["timbre_hidden_dim"],
+            audio_acoustic_hidden_dim=raw["audio_acoustic_hidden_dim"],
+            num_lyric_encoder_hidden_layers=raw["num_lyric_encoder_hidden_layers"],
+            num_timbre_encoder_hidden_layers=raw["num_timbre_encoder_hidden_layers"],
+            num_attention_heads=raw["num_attention_heads"],
+            num_key_value_heads=raw["num_key_value_heads"],
+            intermediate_size=raw["intermediate_size"],
+            head_dim=raw["head_dim"],
+            rms_norm_eps=raw["rms_norm_eps"],
+            rope_theta=raw["rope_theta"],
+            sliding_window=raw["sliding_window"],
+            use_sliding_window=raw.get("use_sliding_window", True),
+            layer_types=layer_types,
+        )
+
+    def as_dict(self) -> dict:
+        return {
+            "hidden_size": self.hidden_size,
+            "text_hidden_dim": self.text_hidden_dim,
+            "timbre_hidden_dim": self.timbre_hidden_dim,
+            "audio_acoustic_hidden_dim": self.audio_acoustic_hidden_dim,
+            "num_lyric_encoder_hidden_layers": self.num_lyric_encoder_hidden_layers,
+            "num_timbre_encoder_hidden_layers": self.num_timbre_encoder_hidden_layers,
+            "num_attention_heads": self.num_attention_heads,
+            "num_key_value_heads": self.num_key_value_heads,
+            "intermediate_size": self.intermediate_size,
+            "head_dim": self.head_dim,
+            "rms_norm_eps": self.rms_norm_eps,
+            "rope_theta": self.rope_theta,
+            "sliding_window": self.sliding_window,
+            "use_sliding_window": self.use_sliding_window,
+            "layer_types": self.layer_types,
+        }
+
+
+def load_condition_encoder_mlx(dit_bundle: Path) -> AceStepConditionEncoderMLX:
+    cfg = ConditionMlxConfig.from_json(dit_bundle / "config.json")
+    model = AceStepConditionEncoderMLX(cfg.as_dict())
+    weights_path = dit_bundle / "model.safetensors"
+    weights = load_prefix_weights_for_mlx(str(weights_path), "encoder.", strip_prefix=True)
+    model.load_weights(weights, strict=False)
+    mx.eval(model.parameters())
+    return model
+
+
+def prepare_condition_mlx(
+    encoder: AceStepConditionEncoderMLX,
+    *,
+    text_hidden_states: mx.array,
+    text_attention_mask: mx.array,
+    lyric_hidden_states: mx.array,
+    lyric_attention_mask: mx.array,
+    refer_packed: mx.array,
+    refer_order: mx.array,
+    src_latents: mx.array,
+    chunk_masks: mx.array,
+    is_covers: mx.array,
+) -> Tuple[mx.array, mx.array, mx.array]:
+    """Text2music path: skip tokenizer when ``is_covers`` is all zero."""
+    enc_hs, enc_mask = encoder(
+        text_hidden_states,
+        text_attention_mask,
+        lyric_hidden_states,
+        lyric_attention_mask,
+        refer_packed,
+        refer_order,
+    )
+    if bool(mx.any(is_covers > 0).item()):
+        raise RuntimeError(
+            "ACE-Step MLX prepare_condition does not support cover mode (is_covers>0) yet"
+        )
+    context_latents = mx.concatenate([src_latents, chunk_masks.astype(src_latents.dtype)], axis=-1)
+    return enc_hs, enc_mask, context_latents
+
+
+# --- Qwen3-Embedding-0.6B (merged from embedding_encoder_mlx) ---
+
+
+class Qwen3EmbeddingMLX(nn.Module):
+    """Qwen3 embedding model — full forward + ``embed_tokens`` for lyrics."""
+
+    def __init__(
+        self,
+        vocab_size: int,
+        hidden_size: int,
+        num_hidden_layers: int,
+        num_attention_heads: int,
+        num_key_value_heads: int,
+        intermediate_size: int,
+        head_dim: int,
+        rope_theta: float,
+        rms_norm_eps: float,
+    ):
+        super().__init__()
+        self.embed_tokens = nn.Embedding(vocab_size, hidden_size)
+        self.layers = [
+            _ZImageEncoderLayer(
+                hidden_size,
+                num_attention_heads,
+                num_key_value_heads,
+                intermediate_size,
+                head_dim,
+                rms_norm_eps,
+            )
+            for _ in range(num_hidden_layers)
+        ]
+        self.norm = nn.RMSNorm(hidden_size, eps=rms_norm_eps)
+        self.rotary_emb = _ZImageEncoderRotaryEmbedding(dim=head_dim, base=rope_theta)
+
+    def encode(self, input_ids: mx.array, attention_mask: mx.array | None = None) -> mx.array:
+        batch_size, seq_len = input_ids.shape
+        hidden_states = self.embed_tokens(input_ids).astype(mx.float32)
+        position_ids = mx.broadcast_to(
+            mx.arange(seq_len, dtype=mx.int32)[None, :], (batch_size, seq_len)
+        )
+        position_embeddings = self.rotary_emb(hidden_states, position_ids)
+        causal_mask = _causal_mask(attention_mask, batch_size, hidden_states, seq_len)
+        for layer in self.layers:
+            hidden_states = layer(
+                hidden_states=hidden_states,
+                attention_mask=causal_mask,
+                position_embeddings=position_embeddings,
+            )
+        return self.norm(hidden_states).astype(mx.float32)
+
+    def token_embed(self, input_ids: mx.array) -> mx.array:
+        return self.embed_tokens(input_ids).astype(mx.float32)
+
+
+def _causal_mask(attention_mask, batch_size, hidden_states, seq_len):
+    idx = mx.arange(seq_len, dtype=mx.int32)
+    mask = idx[:, None] >= idx[None, :]
+    causal_mask = mx.where(
+        mask,
+        mx.zeros((seq_len, seq_len), dtype=hidden_states.dtype),
+        mx.full((seq_len, seq_len), float("-inf"), dtype=hidden_states.dtype),
+    )
+    causal_mask = causal_mask[None, None, :, :]
+    if attention_mask is not None:
+        padding_mask = mx.where(
+            attention_mask[:, None, None, :] > 0,
+            mx.zeros((batch_size, 1, 1, seq_len), dtype=hidden_states.dtype),
+            mx.full((batch_size, 1, 1, seq_len), float("-inf"), dtype=hidden_states.dtype),
+        )
+        causal_mask = causal_mask + padding_mask
+    return causal_mask
+
+
+def load_qwen3_embedding_mlx(model_dir: str | Path) -> Qwen3EmbeddingMLX:
+    model_path = Path(model_dir)
+    weights: dict[str, mx.array] = {}
+    for sf in sorted(model_path.glob("*.safetensors")):
+        weights.update(dict(mx.load(str(sf))))
+
+    config: dict = {}
+    cfg_path = model_path / "config.json"
+    if cfg_path.is_file():
+        with open(cfg_path, encoding="utf-8") as f:
+            config = json.load(f)
+
+    model = Qwen3EmbeddingMLX(
+        vocab_size=config.get("vocab_size", 151669),
+        hidden_size=config.get("hidden_size", 1024),
+        num_hidden_layers=config.get("num_hidden_layers", 28),
+        num_attention_heads=config.get("num_attention_heads", 16),
+        num_key_value_heads=config.get("num_key_value_heads", 8),
+        intermediate_size=config.get("intermediate_size", 3072),
+        head_dim=config.get("head_dim", 128),
+        rope_theta=config.get("rope_theta", 1_000_000.0),
+        rms_norm_eps=config.get("rms_norm_eps", 1e-6),
+    )
+    remapped: list[tuple[str, mx.array]] = []
+    for key, tensor in weights.items():
+        new_key = key[6:] if key.startswith("model.") else key
+        remapped.append((new_key, tensor))
+    model.load_weights(remapped, strict=False)
+    mx.eval(model.parameters())
+    return model
+

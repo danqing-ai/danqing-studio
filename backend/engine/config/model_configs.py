@@ -190,12 +190,14 @@ class AceStepConfig:
 
     Architecture: Qwen3-based decoder-only DiT (sliding-window self-attn +
     cross-attn) + AdaLN modulation + Oobleck VAE.
+
+    Defaults target XL SFT (4B); bundle config.json is authoritative at load time.
     """
-    # DiT decoder
-    hidden_size: int = 2048                  # 2B: 2048; 4B XL: 2560
-    intermediate_size: int = 6144            # 2B: 6144; 4B XL: 9728
-    num_hidden_layers: int = 24             # 2B: 24; 4B XL: 32
-    num_attention_heads: int = 16           # 2B: 16; 4B XL: 32
+    # DiT decoder (XL SFT defaults; 2B base uses 2048 / 24 / 16)
+    hidden_size: int = 2560
+    intermediate_size: int = 9728
+    num_hidden_layers: int = 32
+    num_attention_heads: int = 32
     num_key_value_heads: int = 8
     head_dim: int = 128
     rms_norm_eps: float = 1e-6
@@ -208,6 +210,8 @@ class AceStepConfig:
     rope_theta: float = 1_000_000.0
     max_position_embeddings: int = 32768
     is_turbo: bool = False                  # turbo: 8-step, no CFG
+    turbo_infer_steps: int = 8
+    turbo_shift: float = 1.0
 
     # VAE
     vae_encoder_hidden_size: int = 128

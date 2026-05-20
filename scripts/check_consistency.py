@@ -20,6 +20,7 @@ TASK_KINDS_PY = ROOT / "backend" / "core" / "task_kinds.py"
 ASSETS_ROUTES = ROOT / "backend" / "api" / "routes" / "assets.py"
 GALLERY_ROUTES = ROOT / "backend" / "api" / "routes" / "gallery.py"
 INTERFACES_PY = ROOT / "backend" / "core" / "interfaces.py"
+MEDIA_INTERFACES_PY = ROOT / "backend" / "core" / "media_interfaces.py"
 MODELS_REGISTRY_JSON = ROOT / "default_config" / "models_registry.json"
 
 
@@ -104,8 +105,10 @@ def main():
     vgen_pos = videos_body.find("/generations")
     vedit_pos = videos_body.find("/edits")
     vupscale_pos = videos_body.find("/upscales")
-    if not (vgen_pos < vedit_pos < vupscale_pos):
-        failures.append("FAIL: videos.py routes order must be generations/edits/upscales")
+    if vgen_pos == -1 or vedit_pos == -1 or not (vgen_pos < vedit_pos):
+        failures.append("FAIL: videos.py routes order must be generations before edits")
+    if vupscale_pos != -1 and not (vedit_pos < vupscale_pos):
+        failures.append("FAIL: videos.py /upscales must follow /edits when present")
 
     # =========================================================================
     # 7. 国际化键一致性
@@ -127,22 +130,33 @@ def main():
     # =========================================================================
     # 8. task_kinds.py 与 models_registry.json 对齐
     # =========================================================================
-    task_kinds_body = _load_text(TASK_KINDS_PY)
+    sys.path.insert(0, str(ROOT))
+    from backend.core.task_kinds import ALL_KINDS, task_kind_for_registry_action
+
     registry = _load_json(MODELS_REGISTRY_JSON)
     for model_id, model in registry.get("models", {}).items():
-        actions = model.get("actions", [])
+        actions = model.get("actions", {})
+        if not isinstance(actions, dict):
+            continue
         media = model.get("media", "image")
         for action in actions:
-            kind = f"{media}.{action}"
-            if kind not in task_kinds_body:
-                failures.append(f"FAIL: task kind '{kind}' not found in task_kinds.py")
+            kind = task_kind_for_registry_action(media, action)
+            if kind is None:
+                failures.append(
+                    f"FAIL: no task kind mapping for {model_id!r} media={media!r} action={action!r}"
+                )
+            elif kind not in ALL_KINDS:
+                failures.append(f"FAIL: task kind {kind!r} not in ALL_KINDS")
 
     # =========================================================================
-    # 9. interfaces.py 中 IImageEngine / IVideoEngine 能力声明
+    # 9. interfaces.py 中 IImageEngine / IVideoEngine / IAudioEngine 能力声明
     # =========================================================================
-    interfaces_body = _load_text(INTERFACES_PY)
-    if "generate" not in interfaces_body or "edit" not in interfaces_body:
-        failures.append("FAIL: interfaces.py must define generate/edit methods")
+    media_ifaces_body = _load_text(MEDIA_INTERFACES_PY)
+    for iface in ("IImageEngine", "IVideoEngine", "IAudioEngine"):
+        if iface not in media_ifaces_body:
+            failures.append(f"FAIL: media_interfaces.py must define {iface}")
+    if "async def generate" not in media_ifaces_body or "async def edit" not in media_ifaces_body:
+        failures.append("FAIL: media_interfaces.py must define generate/edit methods")
 
     # =========================================================================
     # 10. assets.py 与 gallery.py 路由一致性

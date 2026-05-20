@@ -495,6 +495,11 @@ html.dark .dq-audio-create-cover {
  background: var(--dq-surface-inset);
  border: 1px dashed var(--dq-scrollbar-thumb);
  border-radius: 14px;
+ overflow: visible;
+}
+
+html.dark .studio-audio-preview-empty {
+ min-height: 10rem;
 }
 
 html.dark .studio-audio-recent-row {

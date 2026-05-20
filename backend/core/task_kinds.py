@@ -20,6 +20,31 @@ ALL_KINDS: frozenset[str] = frozenset(
     }
 )
 
+# Registry ``actions`` keys → scheduler / API task ``kind`` strings.
+REGISTRY_ACTION_TO_TASK_KIND: dict[str, dict[str, str]] = {
+    "image": {
+        "create": IMAGE_GENERATION,
+        "rewrite": IMAGE_EDIT,
+        "retouch": IMAGE_EDIT,
+        "extend": IMAGE_EDIT,
+        "upscale": IMAGE_UPSCALE,
+    },
+    "video": {
+        "create": VIDEO_GENERATION,
+        "animate": VIDEO_EDIT,
+    },
+    "audio": {
+        "create": AUDIO_GENERATION,
+        "cover": AUDIO_EDIT,
+        "repaint": AUDIO_EDIT,
+    },
+}
+
+
+def task_kind_for_registry_action(media: str, action: str) -> str | None:
+    """Map ``models_registry.json`` action name to ``task_kinds`` constant."""
+    return REGISTRY_ACTION_TO_TASK_KIND.get(media, {}).get(action)
+
 
 def is_image_kind(kind: str) -> bool:
     return kind.startswith("image.")

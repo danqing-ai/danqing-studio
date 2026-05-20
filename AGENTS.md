@@ -75,10 +75,10 @@ No silent degradation on generation, load, or registry parse failures. Use `Runt
 REST API / CLI
     ↓  contracts + interfaces only
 TaskScheduler (global single queue, serial worker)
-    ↓  IImageEngine / IVideoEngine / (audio placeholder)
+    ↓  IImageEngine / IVideoEngine / IAudioEngine
 DanQingImageEngine / DanQingVideoEngine / DanQingAudioEngine
     ↓  Pipeline + RuntimeContext
-ImagePipeline / VideoPipeline / …
+ImagePipeline / VideoPipeline / MusicPipeline (ACE-Step) / …
     ↓  RuntimeContext + TransformerBase + common/
 V3TaskStore + SQLiteAssetStore
 ```
@@ -159,15 +159,19 @@ Default per family: `transformer.py`, `text_encoder.py` (if needed), `weights.py
 2. **`backend/engine/config/model_configs.py`** — dataclass + `FAMILY_CONFIG_MAP`
 3. **`backend/engine/families/<family>/transformer.py`** — `TransformerBase`, inject `RuntimeContext`
 4. **`backend/engine/families/<family>/weights.py`** — `remap_<family>_weights` (if needed)
-5. **`backend/engine/_transformer_registry.py`** — `_TRANSFORMER`, `_WEIGHT_REMAP`, `_TEXT_ENCODER` as needed
+5. **`backend/engine/_transformer_registry.py`** — `_TRANSFORMER`, `_WEIGHT_REMAP`, `_TEXT_ENCODER` as needed (image/video DiT)
+
+**Audio (ACE-Step)** — no `ImagePipeline` / `_TRANSFORMER` row: use `MusicPipeline` + `backend/engine/families/ace_step/generation.py` (public entry; MLX/CUDA dispatch inside family). Register `AceStepConfig` in `model_configs.py`; map registry `actions.create` → `task_kinds.AUDIO_GENERATION` via `task_kind_for_registry_action()`.
 
 **Verify**
 
 ```bash
 python -m py_compile <touched files>
-bin/danqing-generate --model <id> --prompt "test"
+bin/danqing-generate --model <id> --prompt "test"    # image
+bin/danqing-audio-generate --model ace-step-xl-sft --prompt "test" --duration 10 --output /tmp/t.wav
 make bench-mflux          # when mflux reference exists
 make bench-sanity         # no reference CLI
+make bench-audio-sanity   # ACE-Step MLX 10s RMS gate
 make test-engine-unit
 make check-engine-imports
 ```
@@ -253,9 +257,10 @@ Engines: `ModelRegistry` + `EngineRegistry` → `DanQingImageEngine` / `DanQingV
 - `GET /api/system/health` — `mlx` / `cuda` probe, GPU memory
 - `GET /api/system/metrics` | `GET /api/settings/system`
 
-### Audio (placeholder)
+### Audio
 
-- `POST /api/audios/generations` | `edits` — enqueued; **no inference backend** → explicit failure in task log
+- `POST /api/audios/generations` — `AUDIO_GENERATION` → `DanQingAudioEngine` → `MusicPipeline` (ACE-Step `ace-step-xl-sft`, MLX + CUDA)
+- `POST /api/audios/edits` — `AUDIO_EDIT` (registry actions `cover` / `repaint`; engine must declare support)
 
 Route sources: `backend/api/routes/*.py`. Live docs: `http://localhost:7860/docs`.
 

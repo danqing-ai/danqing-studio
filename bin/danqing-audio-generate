@@ -5,8 +5,7 @@ danqing-audio-generate — 文生音乐 CLI。
 对应 REST API: POST /api/audios/generations → IAudioEngine.generate()
 
 用法:
-    danqing-audio-generate --model audio-stub --prompt "demo" --duration 30 --output out.mp3
-    # 当前仓库无音频推理后端，任务会显式失败；此 CLI 仅用于对齐 API 契约。
+    danqing-audio-generate --model ace-step-xl-sft --prompt "piano jazz" --duration 30 --output out.wav
 """
 from __future__ import annotations
 

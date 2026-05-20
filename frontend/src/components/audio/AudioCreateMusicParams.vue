@@ -1,25 +1,44 @@
 <script setup lang="ts">
 // @ts-nocheck
-defineProps<{
+import { computed } from 'vue';
+
+const props = defineProps<{
   params: Record<string, unknown>;
   musicalKeys: string[];
   timeSignatures: { value: string; label: string }[];
+  durationMin?: number;
+  durationMax?: number;
 }>();
+
+const durationPresets = [30, 60, 90, 120, 180, 240, 300];
+
+const durationSegmentOptions = computed(() => {
+  const min = props.durationMin ?? 10;
+  const max = props.durationMax ?? 600;
+  return durationPresets
+    .filter((s) => s >= min && s <= max)
+    .map((s) => ({ label: `${s}s`, value: s }));
+});
 </script>
 
 <template>
   <DqPrefPane class="studio-create-pref-pane">
     <DqPrefRow :label="$t('audio.duration')" stacked>
       <DqSegmented
+        v-if="durationSegmentOptions.length > 0"
         v-model="params.duration"
-        class="dq-segmented--sm"
-        :options="[
-          { label: '30s', value: 30 },
-          { label: '60s', value: 60 },
-          { label: '90s', value: 90 },
-          { label: '120s', value: 120 },
-        ]"
+        class="dq-segmented--sm studio-audio-duration-segmented"
+        :options="durationSegmentOptions"
       />
+      <DqInputNumber
+        v-model="params.duration"
+        :min="durationMin ?? 10"
+        :max="durationMax ?? 600"
+        :step="10"
+        controls-position="right"
+        class="studio-w-full studio-audio-duration-input"
+      />
+      <p class="studio-field-footnote">{{ $t('audio.durationHint', { max: durationMax ?? 600 }) }}</p>
     </DqPrefRow>
 
     <DqPrefRow :label="$t('audio.bpm')" stacked>

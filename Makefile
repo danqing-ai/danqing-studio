@@ -1,6 +1,6 @@
 .PHONY: help clean lint start stop \
 	frontend-install frontend-dev frontend-build frontend-typecheck \
-	bench-setup bench-src bench-mflux bench-mflux-case bench-sanity bench-sanity-case \
+	bench-setup bench-src bench-mflux bench-mflux-case bench-sanity bench-sanity-case bench-audio-sanity bench-audio-sanity-lm \
 	check-consistency check-ep-boundary check-theme-legacy check-ui-compat check-engine-imports \
 	strip-el-tokens test-engine-unit \
 	pack-prereqs \
@@ -70,6 +70,12 @@ bench-sanity-case:
 		exit 2; \
 	fi
 	$(PYTHON) -m tests.benchmark sanity --case $(ID)
+
+bench-audio-sanity:
+	$(PYTHON) -m tests.benchmark sanity --case ace-step-xl-sft-sanity
+
+bench-audio-sanity-lm:
+	$(PYTHON) -m tests.benchmark sanity --case ace-step-xl-sft-sanity-lm
 
 # ============================================================================
 # Frontend
@@ -228,7 +234,7 @@ help:
 	@echo ""
 	@echo "Benchmark:"
 	@echo "  bench-setup / bench-src / bench-mflux / bench-mflux-case"
-	@echo "  bench-sanity / bench-sanity-case"
+	@echo "  bench-sanity / bench-sanity-case / bench-audio-sanity"
 	@echo ""
 	@echo "Frontend:  frontend-install | frontend-dev | frontend-build | frontend-typecheck"
 	@echo "Dev:       start | stop"
