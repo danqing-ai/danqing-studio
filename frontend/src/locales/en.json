@@ -5,7 +5,7 @@
     "image_create": "Image Create",
     "video_create": "Video Create",
     "audio_create": "Audio Create",
-    "gallery": "Gallery",
+    "gallery": "Works",
     "models": "Models",
     "settings": "Settings"
   },
@@ -200,6 +200,9 @@
     "noResult": "No results yet",
     "recentTitle": "Recent Generations",
     "previewListen": "Listen",
+    "effectiveLyrics": "Effective lyrics (model conditioning)",
+    "effectiveLyricsHint": "Full lyric text sent to ACE-Step (including 5Hz LM rewrite). Not word-synced to the waveform; sung words may differ.",
+    "downloadLyrics": "Download lyrics",
     "coverComingSoon": "Voice Clone Cover coming soon"
   },
   "create": {
@@ -236,7 +239,7 @@
     "uploadImage": "Upload Image",
     "selectImage": "Select Image",
     "refImage": "Ref Image",
-    "img2imgFromGallery": "Source image loaded from gallery; switched to Edit image.",
+    "img2imgFromGallery": "Source image loaded from Works; switched to Edit image.",
     "optional": "(optional)",
     "addRefImage": "Add Ref Image",
     "delete": "Delete",
@@ -381,7 +384,7 @@
     "runtimeUpscaleNote": "Output frame rate comes only from ffprobe on the source; if probing fails the task errors (no fps fallback). Restoration time grows with frame count and chunk size; trim long clips or lower max frames."
   },
   "gallery": {
-    "title": "Gallery",
+    "title": "Works",
     "empty": "No generated images yet",
     "refresh": "Refresh",
     "delete": "Delete",
@@ -406,7 +409,7 @@
     "img2imgSet": "Set as Img2Img input",
     "startDownload": "Starting download",
     "copied": "Copied to clipboard",
-    "loadFailed": "Failed to load gallery",
+    "loadFailed": "Failed to load works",
     "durationLabel": "Duration",
     "durationSecs": "~{sec}s",
     "prev": "Previous",

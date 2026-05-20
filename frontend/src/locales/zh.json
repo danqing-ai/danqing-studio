@@ -5,7 +5,7 @@
     "image_create": "图像创作",
     "video_create": "视频创作",
     "audio_create": "音频创作",
-    "gallery": "图库",
+    "gallery": "作品库",
     "models": "模型",
     "settings": "设置"
   },
@@ -145,7 +145,7 @@
     "error": "错误: {msg}",
     "outputFile": "输出文件: {name}",
     "noOutputAsset": "已完成但无成片资产：{msg}",
-    "noOutputAssetHint": "常见为中途取消或任务未写入图库；成功时成片在 outputs/assets/ 下。",
+    "noOutputAssetHint": "常见为中途取消或任务未写入作品库；成功时成片在 outputs/assets/ 下。",
     "needControlImage": "使用 ControlNet 时请上传控制图",
     "drawMask": "请先绘制遮罩区域",
     "startImageAdded": "已添加起始图片: {name}",
@@ -200,6 +200,9 @@
     "noResult": "暂无生成结果",
     "recentTitle": "最近生成",
     "previewListen": "试听",
+    "effectiveLyrics": "最终歌词（模型条件）",
+    "effectiveLyricsHint": "为送入 ACE-Step 的整段歌词（含 5Hz LM 扩写）；与音频非逐字时间轴对齐，实际演唱可能省略或改写部分字句。",
+    "downloadLyrics": "下载歌词",
     "coverComingSoon": "同声翻唱功能即将推出"
   },
   "create": {
@@ -236,7 +239,7 @@
     "uploadImage": "上传图片",
     "selectImage": "选择图片",
     "refImage": "参考图",
-    "img2imgFromGallery": "已从图库载入源图，并切换到「改图」",
+    "img2imgFromGallery": "已从作品库载入源图，并切换到「改图」",
     "optional": "（可选）",
     "addRefImage": "添加参考图",
     "delete": "删除",
@@ -381,7 +384,7 @@
     "runtimeUpscaleNote": "成片帧率仅由 ffprobe 从源视频读取；探测失败会直接报错（不使用请求默认值）。视频修复耗时与帧数、分块长度相关；超长视频可调低「最多处理帧数」或先剪辑。"
   },
   "gallery": {
-    "title": "图库",
+    "title": "作品库",
     "empty": "暂无生成记录",
     "refresh": "刷新",
     "delete": "删除",
@@ -406,7 +409,7 @@
     "img2imgSet": "已设置为图生图输入",
     "startDownload": "开始下载",
     "copied": "已复制到剪贴板",
-    "loadFailed": "加载图库失败",
+    "loadFailed": "加载作品库失败",
     "durationLabel": "时长",
     "durationSecs": "约 {sec} 秒",
     "prev": "上一个",
