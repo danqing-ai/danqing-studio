@@ -3973,6 +3973,7 @@
         "supports_lyrics": true,
         "supports_instrumental": true,
         "supports_vocal_language": true,
+        "supports_vocal_type": true,
         "supports_bpm": true,
         "supports_key_scale": true,
         "supports_time_signature": true,

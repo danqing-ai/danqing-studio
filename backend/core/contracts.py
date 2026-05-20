@@ -177,6 +177,7 @@ class AudioGenerationRequest(BaseModel):
     instrumental: bool = False
     lyrics: str = ""
     vocal_language: str = ""
+    vocal_type: str = ""  # male | female | chorus | duet | auto (caption template, not a DiT knob)
     bpm: Optional[int] = None  # auto-detect if None
     key_scale: str = ""  # e.g. "C Major", empty=auto-detect
     time_signature: str = ""  # "2","3","4","6", empty=auto-detect

@@ -126,6 +126,27 @@
                   <span class="studio-audio-meta-label">{{ $t('audio.instrumental') }}</span>
                   <DqSwitch v-model="params.instrumental" size="small" />
                 </div>
+                <div
+                  v-if="supportsVocalType"
+                  class="studio-audio-meta-item studio-audio-meta-item--vocal"
+                >
+                  <span class="studio-audio-meta-label">{{ $t('audio.vocalType') }}</span>
+                  <DqSelect
+                    v-model="params.vocal_type"
+                    size="small"
+                    class="studio-audio-vocal-type-select"
+                    clearable
+                    :disabled="params.instrumental"
+                    :placeholder="$t('audio.vocalTypeAuto')"
+                  >
+                    <DqOption
+                      v-for="vt in vocalTypes"
+                      :key="vt.value"
+                      :label="vt.label"
+                      :value="vt.value"
+                    />
+                  </DqSelect>
+                </div>
                 <div class="studio-audio-meta-item studio-audio-meta-item--vocal">
                   <span class="studio-audio-meta-label">{{ $t('audio.vocalLanguage') }}</span>
                   <DqSelect
@@ -133,12 +154,16 @@
                     size="small"
                     class="studio-audio-vocal-lang-select"
                     clearable
+                    :disabled="params.instrumental"
                     :placeholder="$t('audio.vocalLanguageAuto')"
                   >
                     <DqOption v-for="l in vocalLanguages" :key="l.value" :label="l.label" :value="l.value" />
                   </DqSelect>
                 </div>
               </div>
+              <p v-if="supportsVocalType && !params.instrumental" class="studio-field-footnote">
+                {{ $t('audio.vocalTypeHint') }}
+              </p>
             </DqSurfaceCard>
 
             <!-- Music params -->
@@ -443,6 +468,7 @@ const params = reactive({
   instrumental: false,
   lyrics: '',
   vocal_language: '',
+  vocal_type: '',
   bpm: null as number | null,
   key_scale: '',
   time_signature: '',
@@ -514,6 +540,17 @@ const vocalLanguages = [
   { label: '한국어', value: 'ko' }, { label: 'Français', value: 'fr' }, { label: 'Deutsch', value: 'de' },
   { label: 'Español', value: 'es' }, { label: 'Português', value: 'pt' },
 ];
+
+const supportsVocalType = computed(() => {
+  return currentModelConfig.value?.parameters?.supports_vocal_type === true;
+});
+
+const vocalTypes = computed(() => [
+  { label: $tt('audio.vocalTypeMale'), value: 'male' },
+  { label: $tt('audio.vocalTypeFemale'), value: 'female' },
+  { label: $tt('audio.vocalTypeChorus'), value: 'chorus' },
+  { label: $tt('audio.vocalTypeDuet'), value: 'duet' },
+]);
 const musicalKeys = [
   'C Major', 'C# Major', 'D Major', 'D# Major', 'E Major', 'F Major', 'F# Major',
   'G Major', 'G# Major', 'A Major', 'A# Major', 'B Major',
@@ -618,6 +655,7 @@ function applyDefaults(modelConfig: any) {
   params.key_scale = '';
   params.time_signature = '';
   params.vocal_language = '';
+  params.vocal_type = '';
 }
 
 function onModelChange(val: string) {
@@ -693,6 +731,7 @@ async function startGeneration() {
       // Empty lyrics → backend uses [Instrumental] (same as ACE-Step handler text2music default).
       lyrics: params.lyrics?.trim() || '',
       vocal_language: params.vocal_language?.trim() || '',
+      vocal_type: params.vocal_type?.trim() || '',
       bpm: params.bpm ?? null,
       key_scale: params.key_scale || '',
       time_signature: params.time_signature || '',

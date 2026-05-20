@@ -165,7 +165,7 @@ class MusicPipeline:
             t_gen = time.monotonic()
             try:
                 waveform = generator.generate_waveform(
-                    prompt=request.prompt or "",
+                    prompt=prepared.effective_prompt or request.prompt or "",
                     lyrics=lyrics,
                     vocal_language=vocal_lang,
                     duration=duration,

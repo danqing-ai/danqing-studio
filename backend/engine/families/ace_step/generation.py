@@ -16,6 +16,7 @@ import numpy as np
 from backend.core.contracts import AudioGenerationRequest
 from backend.engine.config.model_configs import AceStepConfig
 from backend.engine.families.ace_step.lm_format import is_instrumental_lyrics
+from backend.engine.families.ace_step.vocal_prompt import apply_vocal_type_to_prompt
 
 SFT_GEN_PROMPT = """# Instruction
 {instruction}
@@ -207,7 +208,10 @@ def ensure_vocal_caption_hint(caption: str, lyrics: str, language: str = "en") -
     lang = (language or "en").lower()
     vocal_in_cap = any(
         k in lower
-        for k in ("vocal", "singing", "singer", "voice", "人声", "演唱", "歌声", "主唱")
+        for k in (
+            "vocal", "singing", "singer", "voice", "人声", "演唱", "歌声", "主唱",
+            "male", "female", "choir", "chorus", "duet", "男声", "女声", "合唱", "对唱",
+        )
     )
     if vocal_in_cap:
         return cap
@@ -350,6 +354,7 @@ class AceStepPreparedRequest:
 
     lyrics: str
     vocal_language: str
+    effective_prompt: str
     steps: int
     shift: float
     is_turbo: bool
@@ -422,6 +427,15 @@ def prepare_music_request(
                 ("info", f"人声语言未指定，已根据歌词自动设为 {vocal_lang!r}"),
             )
 
+    effective_prompt, vocal_tpl_log = apply_vocal_type_to_prompt(
+        request.prompt or "",
+        request.vocal_type or "",
+        language=vocal_lang,
+        instrumental=request.instrumental or is_instrumental_lyrics(lyrics),
+    )
+    if vocal_tpl_log:
+        events.append(("info", vocal_tpl_log))
+
     is_turbo = resolve_bundle_is_turbo(bundle_root)
     steps = request.steps or config.default_infer_steps
     shift = float(config.default_shift)
@@ -439,6 +453,7 @@ def prepare_music_request(
     return AceStepPreparedRequest(
         lyrics=lyrics,
         vocal_language=vocal_lang,
+        effective_prompt=effective_prompt,
         steps=steps,
         shift=shift,
         is_turbo=is_turbo,
