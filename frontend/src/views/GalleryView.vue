@@ -195,6 +195,10 @@
                           <DqIcon><Download /></DqIcon>
                           {{ $t('gallery.download') }}
                         </DqDropdownItem>
+                        <DqDropdownItem v-if="isAudio(item)" command="viewLyrics">
+                          <DqIcon><Document /></DqIcon>
+                          {{ $t('gallery.viewLyrics') }}
+                        </DqDropdownItem>
                         <DqDropdownItem command="copyPrompt" v-if="item.prompt">
                           <DqIcon><CopyDocument /></DqIcon>
                           {{ $t('gallery.copyPrompt') }}
@@ -338,7 +342,15 @@
               <DqIcon :size="48"><Picture /></DqIcon>
             </div>
           </template>
-          <video v-else :src="getImageUrl(detailItem)" controls></video>
+          <GalleryAudioDetail
+            v-else-if="isAudio(detailItem)"
+            :item="detailItem"
+            :src="getImageUrl(detailItem)"
+            :duration-label="formatVideoDuration(detailItem)"
+            variant="sidebar"
+            @download="downloadImage(detailItem)"
+          />
+          <video v-else-if="isVideo(detailItem)" :src="getImageUrl(detailItem)" controls></video>
         </div>
 
         <!-- Action buttons -->
@@ -378,9 +390,13 @@
             <span class="detail-param-label">{{ $t('gallery.model') }}</span>
             <span class="detail-param-value">{{ detailItem.model || 'N/A' }}</span>
           </div>
-          <div class="detail-param">
+          <div v-if="!isAudio(detailItem)" class="detail-param">
             <span class="detail-param-label">{{ $t('gallery.resolution') }}</span>
             <span class="detail-param-value">{{ detailItem.width }}×{{ detailItem.height }}</span>
+          </div>
+          <div v-if="isAudio(detailItem) && formatVideoDuration(detailItem)" class="detail-param">
+            <span class="detail-param-label">{{ $t('gallery.durationLabel') }}</span>
+            <span class="detail-param-value">{{ formatVideoDuration(detailItem) }}</span>
           </div>
           <div class="detail-param">
             <span class="detail-param-label">{{ $t('gallery.createdAt') }}</span>
@@ -447,79 +463,87 @@
 
     <!-- Lightbox full-screen preview -->
     <teleport to="body">
-      <div v-if="previewVisible" class="gallery-lightbox" @click="previewVisible = false">
+      <div
+        v-if="previewVisible"
+        class="gallery-lightbox"
+        :class="{ 'gallery-lightbox--audio': selectedItem && isAudio(selectedItem) }"
+        @click="previewVisible = false"
+      >
+        <DqIconButton
+          class="lightbox-close"
+          type="text"
+          size="lg"
+          :label="$t('gallery.close')"
+          @click.stop="previewVisible = false"
+        >
+          <DqIcon size="24"><Close /></DqIcon>
+        </DqIconButton>
+
+        <DqIconButton
+          class="lightbox-nav lightbox-prev"
+          type="text"
+          size="lg"
+          :label="$t('gallery.prev')"
+          :disabled="selectedIndex <= 0"
+          @click.stop="showPrev"
+        >
+          <DqIcon size="24"><ArrowLeft /></DqIcon>
+        </DqIconButton>
+
+        <DqIconButton
+          class="lightbox-nav lightbox-next"
+          type="text"
+          size="lg"
+          :label="$t('gallery.next')"
+          :disabled="selectedIndex >= flatItems.length - 1"
+          @click.stop="showNext"
+        >
+          <DqIcon size="24"><ArrowRight /></DqIcon>
+        </DqIconButton>
+
         <div class="lightbox-content" @click.stop>
-          <DqIconButton
-            class="lightbox-close"
-            type="text"
-            size="lg"
-            :label="$t('gallery.close')"
-            @click="previewVisible = false"
-          >
-            <DqIcon size="24"><Close /></DqIcon>
-          </DqIconButton>
-
-          <DqIconButton
-            class="lightbox-nav lightbox-prev"
-            type="text"
-            size="lg"
-            :label="$t('gallery.prev')"
-            :disabled="selectedIndex <= 0"
-            @click="showPrev"
-          >
-            <DqIcon size="24"><ArrowLeft /></DqIcon>
-          </DqIconButton>
-
-          <DqIconButton
-            class="lightbox-nav lightbox-next"
-            type="text"
-            size="lg"
-            :label="$t('gallery.next')"
-            :disabled="selectedIndex >= flatItems.length - 1"
-            @click="showNext"
-          >
-            <DqIcon size="24"><ArrowRight /></DqIcon>
-          </DqIconButton>
-
-          <div class="lightbox-media-wrapper">
-            <img
-              v-if="selectedItem && isImage(selectedItem) && !galleryImageLoadFailed[selectedItem.path]"
+          <div v-if="selectedItem && isAudio(selectedItem)" class="gallery-lightbox-audio-stage">
+            <GalleryAudioDetail
+              :item="selectedItem"
               :src="getImageUrl(selectedItem)"
-              :alt="selectedItem.name"
-              @error="markGalleryImageFailed(selectedItem.path)"
+              :duration-label="formatVideoDuration(selectedItem)"
+              :index-label="`${selectedIndex + 1} / ${flatItems.length}`"
+              variant="lightbox"
+              @download="downloadImage(selectedItem)"
             />
-            <div
-              v-else-if="selectedItem && isImage(selectedItem)"
-              class="gallery-lightbox-image-fallback"
-            >
-              <DqIcon :size="64"><Picture /></DqIcon>
-            </div>
-            <audio
-              v-else-if="selectedItem && isAudio(selectedItem)"
-              :key="selectedItem.path"
-              :src="getImageUrl(selectedItem)"
-              controls
-              autoplay
-              playsinline
-              class="gallery-lightbox-audio"
-            ></audio>
-            <video
-              v-else-if="selectedItem"
-              :src="getImageUrl(selectedItem)"
-              controls
-              autoplay
-              playsinline
-            ></video>
           </div>
 
-          <div class="lightbox-info" v-if="selectedItem">
-            <span>{{ selectedItem.name }}</span>
-            <span class="gallery-lightbox-muted">
-              <template v-if="isAudio(selectedItem)">{{ formatVideoDuration(selectedItem) || '—' }}</template>
-              <template v-else>{{ selectedItem.width }}×{{ selectedItem.height }}</template>
-              · {{ selectedIndex + 1 }} / {{ flatItems.length }}
-            </span>
-          </div>
+          <template v-else>
+            <div class="lightbox-media-wrapper">
+              <img
+                v-if="selectedItem && isImage(selectedItem) && !galleryImageLoadFailed[selectedItem.path]"
+                :src="getImageUrl(selectedItem)"
+                :alt="selectedItem.name"
+                @error="markGalleryImageFailed(selectedItem.path)"
+              />
+              <div
+                v-else-if="selectedItem && isImage(selectedItem)"
+                class="gallery-lightbox-image-fallback"
+              >
+                <DqIcon :size="64"><Picture /></DqIcon>
+              </div>
+              <video
+                v-else-if="selectedItem"
+                :src="getImageUrl(selectedItem)"
+                controls
+                autoplay
+                playsinline
+              ></video>
+            </div>
+
+            <div v-if="selectedItem" class="lightbox-info">
+              <span>{{ selectedItem.name }}</span>
+              <span class="gallery-lightbox-muted">
+                {{ selectedItem.width }}×{{ selectedItem.height }}
+                · {{ selectedIndex + 1 }} / {{ flatItems.length }}
+              </span>
+            </div>
+          </template>
         </div>
       </div>
     </teleport>
@@ -564,6 +588,7 @@ import { DQ_STORAGE } from '@/utils/storage';
 import type { GalleryItem } from '@/types';
 import { useDocumentEvent } from '@/composables/useDocumentEvent';
 import GalleryAdvancedFilterDrawer from '@/components/gallery/GalleryAdvancedFilterDrawer.vue';
+import GalleryAudioDetail from '@/components/gallery/GalleryAudioDetail.vue';
 
 const { t: $t } = useI18n();
 
@@ -959,6 +984,10 @@ const downloadImage = (item: GalleryItem) => {
 
 const handleCommand = (command: string, item: GalleryItem) => {
   switch (command) {
+    case 'viewLyrics':
+      showDetail(item);
+      showPreview(item);
+      break;
     case 'download':
       downloadImage(item);
       break;

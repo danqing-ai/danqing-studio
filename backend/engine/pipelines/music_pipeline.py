@@ -32,8 +32,12 @@ from backend.engine.common.pipeline_registry import (
 )
 from backend.engine.config.model_configs import AceStepConfig, get_config_class
 from backend.engine.families.ace_step.generation import (
+    AceStepLyricsCapture,
     create_ace_step_generator,
+    lyrics_capture_log_message,
+    lyrics_capture_metadata,
     prepare_music_request,
+    write_lyrics_sidecar,
 )
 from backend.engine.runtime._base import RuntimeContext
 
@@ -145,6 +149,7 @@ class MusicPipeline:
 
         output_paths: List[str] = []
         output_durations: List[float] = []
+        lyrics_capture: AceStepLyricsCapture | None = None
         for i in range(n):
             batch_seed = seed + i
             exec_ctx.on_progress(
@@ -200,6 +205,13 @@ class MusicPipeline:
             latent_cos = getattr(generator, "last_latent_cos", 0.0)
             latent_diff = getattr(generator, "last_latent_diff_mean", 0.0)
             lm_expanded = getattr(generator, "last_lm_expanded", False)
+            cap = getattr(generator, "last_lyrics_capture", None)
+            if cap is not None:
+                lyrics_capture = cap
+                if i == 0:
+                    log_msg = lyrics_capture_log_message(cap)
+                    if log_msg:
+                        exec_ctx.on_log(LogEvent(level="info", message=log_msg))
             nominal_frames = max(128, int(round(duration * 48_000 / 1920)))
             if latent_frames == nominal_frames - 1 and nominal_frames % 2 == 1:
                 exec_ctx.on_log(
@@ -243,6 +255,15 @@ class MusicPipeline:
             )
 
             out_path = self._save_audio(waveform, model_id, batch_seed)
+            if lyrics_capture is not None:
+                sidecar = write_lyrics_sidecar(out_path, lyrics_capture.lyrics_effective)
+                if sidecar is not None:
+                    exec_ctx.on_log(
+                        LogEvent(
+                            level="info",
+                            message=f"歌词已写入: {sidecar.name}",
+                        )
+                    )
             n_samples = int(waveform.shape[0]) if hasattr(waveform, "shape") else 0
             dur_written = n_samples / 48_000.0 if n_samples else 0.0
             exec_ctx.on_log(
@@ -274,19 +295,24 @@ class MusicPipeline:
             elapsed,
             exec_ctx.task_id,
             output_durations,
+            lyrics_capture=lyrics_capture,
         )
+
+        result_meta: dict[str, Any] = {
+            "model": model_id,
+            "seed": seed,
+            "steps": steps,
+            "guidance": guidance,
+            "duration_seconds": duration,
+        }
+        if lyrics_capture is not None:
+            result_meta.update(lyrics_capture_metadata(lyrics_capture))
 
         return EngineResult(
             primary_asset_id=asset_ids[0] if asset_ids else "",
             asset_ids=asset_ids,
             output_paths=output_paths,
-            metadata={
-                "model": model_id,
-                "seed": seed,
-                "steps": steps,
-                "guidance": guidance,
-                "duration_seconds": duration,
-            },
+            metadata=result_meta,
         )
 
     def _save_audio(self, waveform: Any, model_id: str, seed: int) -> Path:
@@ -313,6 +339,7 @@ class MusicPipeline:
         elapsed: float,
         task_id: str,
         durations: List[float] | None = None,
+        lyrics_capture: AceStepLyricsCapture | None = None,
     ) -> List[str]:
         ids = []
         fmt = (request.audio_format or "wav").lower()
@@ -321,19 +348,25 @@ class MusicPipeline:
             dur = None
             if durations and idx < len(durations):
                 dur = durations[idx]
+            asset_meta: dict[str, Any] = {
+                "model": model_id,
+                "prompt": request.prompt,
+                "duration_seconds": dur if dur is not None else request.duration,
+                "format": fmt,
+                "elapsed_seconds": elapsed,
+                "output_path": str(p),
+            }
+            if lyrics_capture is not None:
+                asset_meta.update(lyrics_capture_metadata(lyrics_capture))
+                sidecar = Path(p).with_name(f"{Path(p).stem}_lyrics.txt")
+                if sidecar.is_file():
+                    asset_meta["lyrics_sidecar"] = str(sidecar)
             aid = self._asset_store.create_from_file(
                 Path(p),
                 kind="audio",
                 mime_type=mime,
                 source_task_id=task_id,
-                metadata={
-                    "model": model_id,
-                    "prompt": request.prompt,
-                    "duration_seconds": dur if dur is not None else request.duration,
-                    "format": fmt,
-                    "elapsed_seconds": elapsed,
-                    "output_path": str(p),
-                },
+                metadata=asset_meta,
                 source_action="create",
             )
             ids.append(aid)

@@ -257,25 +257,22 @@
 
       <!-- Right panel -->
       <DqCol :xs="24" :md="8" :lg="7" :xl="6">
-        <div class="preview-panel">
+        <div class="preview-panel preview-panel--flat">
 
-          <!-- Editing (rewrite / retouch / extend): image editor -->
-          <DqSurfaceCard v-if="editMode === 'image_editing'"
-            class="studio-surface-card studio-card-mb"
+          <StudioPreviewPane
+            v-if="editMode === 'image_editing'"
+            class="studio-preview-pane--source"
+            :title="$t('create.imageInput')"
+            icon="picture-filled"
+            split-head
           >
-            <div class="source-input-card-head">
-              <div class="card-title">
-                <span>
-                  <DqIcon><picture-filled /></DqIcon>
-                  {{ $t('create.imageInput') }}
-                </span>
-              </div>
+            <template #actions>
               <asset-picker
                 accept-kind="image"
                 :recent-gallery="recentImages"
                 @pick="onEditAssetPick"
               />
-            </div>
+            </template>
             <image-editor
               ref="imageEditorRef"
               :src="editImageSrc"
@@ -283,95 +280,81 @@
               mode="inpainting"
               @pick-edit-source="onEditAssetPick"
             />
-          </DqSurfaceCard>
-          <!-- Upscale: source image only -->
-          <DqSurfaceCard v-else-if="editMode === 'image_upscale'"
-            class="studio-surface-card studio-card-mb"
+          </StudioPreviewPane>
+
+          <StudioPreviewPane
+            v-else-if="editMode === 'image_upscale'"
+            class="studio-preview-pane--source"
+            :title="$t('create.imageInput')"
+            icon="picture-filled"
+            split-head
           >
-            <div class="source-input-card-head">
-              <div class="card-title">
-                <span>
-                  <DqIcon><picture-filled /></DqIcon>
-                  {{ $t('create.imageInput') }}
-                </span>
-              </div>
+            <template #actions>
               <asset-picker
                 accept-kind="image"
                 :recent-gallery="recentImages"
                 @pick="onEditAssetPick"
               />
-            </div>
-            <div v-if="editImageSrc" class="image-preview studio-preview-sq studio-preview-sq--mt">
+            </template>
+            <div v-if="editImageSrc" class="image-preview studio-preview-sq">
               <img class="studio-preview-media" :src="editImageSrc" alt="upscale source" />
             </div>
             <DqEmpty v-else :description="$t('studio.uploadEditImage')" />
-          </DqSurfaceCard>
+          </StudioPreviewPane>
 
-          <!-- Current generation preview -->
-          <DqSurfaceCard class="studio-surface-card studio-card-mb">
-            <template #header>
-              <div class="card-title">
-                <DqIcon><picture-filled /></DqIcon>
-                {{ $t('studio.currentPreview') }}
-              </div>
+          <StudioPreviewPane :title="$t('studio.currentPreview')" icon="picture-filled">
+            <CreateImagePreview
+              v-if="previewImage"
+              :src="previewImage"
+              :hue="previewImageHue"
+              :alt="previewCaption"
+              @download="downloadPreviewImage"
+              @expand="openCurrentPreviewDialog"
+            />
+            <DqEmpty v-else class="studio-preview-pane__empty" :description="$t('studio.noPreview')" />
+            <p v-if="previewImage && previewCaption" class="studio-preview-pane__caption" :title="previewCaption">
+              {{ previewCaption }}
+            </p>
+          </StudioPreviewPane>
+
+          <StudioPreviewPane :title="$t('studio.recent')" icon="clock" split-head recent>
+            <template #actions>
+              <DqIconButton type="text" size="sm" :label="$t('gallery.refresh')" @click="loadRecentImages">
+                <DqIcon><refresh /></DqIcon>
+              </DqIconButton>
             </template>
-
-            <div v-if="previewImage" class="image-preview studio-preview-sq">
-              <img class="studio-preview-media" :src="previewImage" alt="Preview" />
-            </div>
-            <DqEmpty v-else :description="$t('studio.noPreview')" />
-          </DqSurfaceCard>
-
-          <!-- Recent generations -->
-          <DqSurfaceCard class="studio-surface-card">
-            <template #header>
-              <div class="card-title card-title--split">
-                <span>
-                  <DqIcon><clock /></DqIcon>
-                  {{ $t('studio.recent') }}
-                </span>
-                <DqIconButton type="text" size="sm" :label="$t('gallery.refresh')" @click="loadRecentImages">
-                  <DqIcon><refresh /></DqIcon>
-                </DqIconButton>
-              </div>
-            </template>
-
             <DqEmpty v-if="recentImages.length === 0" :description="$t('gallery.empty')" />
-
-            <DqRow v-else :gutter="8">
-              <DqCol
+            <div v-else class="studio-recent-grid">
+              <div
                 v-for="image in recentImages"
                 :key="image.path"
-                :span="12"
-                class="studio-gallery-col"
+                class="studio-recent-grid__item gallery-card"
               >
-                <div class="gallery-card">
-                  <div class="gallery-image-wrapper studio-preview-sq" @click="showPreview(image)">
-                    <img
-                      v-if="!recentGalleryThumbFailed[String(image.path)]"
-                      :src="getImageUrl(image)"
-                      :alt="String(image.name || '')"
-                      loading="lazy"
-                      @error="markRecentGalleryThumbFailed(image)"
-                    />
-                    <div v-else class="gallery-thumb-fallback studio-recent-thumb-fallback">
-                      <DqIcon :size="44"><Picture /></DqIcon>
-                    </div>
-                  </div>
-                  <div class="recent-actions">
-                    <DqButton class="action-btn rewrite-btn" size="sm" @click.stop="quickFromGallery(image, 'rewrite')">
-                      <DqIcon :size="12"><brush /></DqIcon>
-                      <span>{{ $t('studio.quickRewrite') }}</span>
-                    </DqButton>
-                    <DqButton class="action-btn upscale-btn" size="sm" @click.stop="quickFromGallery(image, 'upscale')">
-                      <DqIcon :size="12"><zoom-in /></DqIcon>
-                      <span>{{ $t('studio.quickUpscale') }}</span>
-                    </DqButton>
+                <div class="gallery-image-wrapper studio-preview-sq" @click="showPreview(image)">
+                  <img
+                    v-if="!recentGalleryThumbFailed[String(image.path)]"
+                    :src="getImageUrl(image)"
+                    :alt="String(image.name || '')"
+                    loading="lazy"
+                    @error="markRecentGalleryThumbFailed(image)"
+                  />
+                  <div v-else class="gallery-thumb-fallback studio-recent-thumb-fallback">
+                    <DqIcon :size="44"><Picture /></DqIcon>
                   </div>
                 </div>
-              </DqCol>
-            </DqRow>
-          </DqSurfaceCard>
+                <div class="recent-actions">
+                  <DqButton class="action-btn rewrite-btn" size="sm" @click.stop="quickFromGallery(image, 'rewrite')">
+                    <DqIcon :size="12"><brush /></DqIcon>
+                    <span>{{ $t('studio.quickRewrite') }}</span>
+                  </DqButton>
+                  <DqButton class="action-btn upscale-btn" size="sm" @click.stop="quickFromGallery(image, 'upscale')">
+                    <DqIcon :size="12"><zoom-in /></DqIcon>
+                    <span>{{ $t('studio.quickUpscale') }}</span>
+                  </DqButton>
+                </div>
+              </div>
+            </div>
+          </StudioPreviewPane>
         </div>
       </DqCol>
     </DqRow>
@@ -380,6 +363,11 @@
     <DqDialog v-model:open="previewVisible" :title="selectedImage?.name ?? ''" width="70%" center>
       <div v-if="selectedImage" class="studio-dialog-center">
         <img class="studio-dialog-img" :src="getImageUrl(selectedImage)" />
+      </div>
+    </DqDialog>
+    <DqDialog v-model:open="currentPreviewDialogOpen" :title="$t('studio.currentPreview')" width="78%" center>
+      <div v-if="previewImage" class="studio-dialog-center">
+        <img class="studio-dialog-img-tall" :src="previewImage" :alt="previewCaption" />
       </div>
     </DqDialog>
   </div>
@@ -411,6 +399,9 @@ import ImageEditor from '@/components/image/ImageEditor.vue';
 import ImageCreateAdvancedParams from '@/components/create/ImageCreateAdvancedParams.vue';
 import CreateUpscaleParams from '@/components/create/CreateUpscaleParams.vue';
 import CreateExtendParams from '@/components/create/CreateExtendParams.vue';
+import StudioPreviewPane from '@/components/create/StudioPreviewPane.vue';
+import CreateImagePreview from '@/components/create/CreateImagePreview.vue';
+import { Picture } from '@danqing/dq-shell';
 
 /* ------------------------------------------------------------------ */
 /*  Injected / External                                                */
@@ -531,6 +522,31 @@ const genLogLastStep = ref(0);
 /** 'denoise' | 'post' — log post-phase line once when SSE reports message post */
 const genLogLastPhase = ref('');
 const previewImage = ref('');
+const currentPreviewDialogOpen = ref(false);
+
+const previewCaption = computed(() => (params.prompt || '').trim());
+
+const previewImageHue = computed(() => {
+  let h = 0;
+  const s = previewCaption.value || 'image';
+  for (let i = 0; i < s.length; i += 1) {
+    h = (h * 31 + s.charCodeAt(i)) % 360;
+  }
+  return h;
+});
+
+function openCurrentPreviewDialog() {
+  if (!previewImage.value) return;
+  currentPreviewDialogOpen.value = true;
+}
+
+function downloadPreviewImage() {
+  if (!previewImage.value) return;
+  const a = document.createElement('a');
+  a.href = previewImage.value;
+  a.download = 'image.png';
+  a.click();
+}
 const recentImages = ref<Array<Record<string, unknown>>>([]);
 /** 最近生成缩略图加载失败时避免浏览器默认裂图，改为统一占位 */
 const recentGalleryThumbFailed = ref<Record<string, boolean>>({});

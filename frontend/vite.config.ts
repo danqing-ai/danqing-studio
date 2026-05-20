@@ -26,5 +26,12 @@ export default defineConfig({
     outDir: resolve(__dirname, '../out/frontend/dist'),
     emptyOutDir: true,
     sourcemap: true,
+    rollupOptions: {
+      onwarn(warning, warn) {
+        // @vueuse/core (via dq-ui): harmless PURE annotation placement noise
+        if (warning.message?.includes('__PURE__')) return;
+        warn(warning);
+      },
+    },
   },
 });

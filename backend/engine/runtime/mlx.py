@@ -177,7 +177,14 @@ class MLXContext(RuntimeContext):
         return mx.transpose(x, dims)
 
     def flip(self, x: Any, axis: int = 0) -> Any:
-        return mx.flip(x, axis)
+        ndim = len(x.shape)
+        if axis < 0:
+            axis += ndim
+        if axis < 0 or axis >= ndim:
+            raise ValueError(f"flip axis {axis} out of range for ndim {ndim}")
+        sl = [slice(None)] * ndim
+        sl[axis] = slice(None, None, -1)
+        return x[tuple(sl)]
 
     def sin(self, x: Any) -> Any:
         return mx.sin(x)

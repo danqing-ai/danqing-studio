@@ -434,53 +434,49 @@
 
       <!-- Right panel -->
       <DqCol :xs="24" :md="8" :lg="7" :xl="6">
-        <div class="preview-panel">
-          <!-- Current generation preview -->
-          <DqSurfaceCard class="studio-surface-card studio-card-mb">
-            <template #header>
-              <div class="card-title">
-                <DqIcon><video-camera /></DqIcon>
-                {{ $t('studio.currentPreview') }}
-              </div>
+        <div class="preview-panel preview-panel--flat">
+          <StudioPreviewPane :title="$t('studio.currentPreview')" icon="video-camera" split-head>
+            <template #actions>
+              <DqTag v-if="previewVideoPlaying" size="small" type="primary">{{ $t('studio.previewNow') }}</DqTag>
             </template>
+            <CreateVideoPlayer
+              v-if="previewVideo"
+              :key="previewVideoKey"
+              ref="previewVideoPlayerRef"
+              :src="previewVideo"
+              :title="previewCaption"
+              :subtitle="previewVideoSubtitle"
+              @download="downloadPreviewVideo"
+              @play="previewVideoPlaying = true"
+              @pause="previewVideoPlaying = false"
+              @duration="previewVideoDurationSec = $event"
+            />
+            <DqEmpty v-else class="studio-preview-pane__empty" :description="$t('studio.noPreview')" />
+            <p v-if="previewVideo && previewCaption" class="studio-preview-pane__caption" :title="previewCaption">
+              {{ previewCaption }}
+            </p>
+          </StudioPreviewPane>
 
-            <div v-if="previewVideo" class="video-preview studio-video-preview">
-              <video :src="previewVideo" controls></video>
-            </div>
-            <DqEmpty v-else :description="$t('studio.noPreview')" />
-          </DqSurfaceCard>
-
-          <!-- Recent generations -->
-          <DqSurfaceCard class="studio-surface-card">
-            <template #header>
-              <div class="card-title card-title--split">
-                <span>
-                  <DqIcon><clock /></DqIcon>
-                  {{ $t('studio.recent') }}
-                </span>
-                <DqIconButton type="text" size="sm" :label="$t('gallery.refresh')" @click="loadRecentVideos">
-                  <DqIcon><refresh /></DqIcon>
-                </DqIconButton>
-              </div>
+          <StudioPreviewPane :title="$t('studio.recent')" icon="clock" split-head recent>
+            <template #actions>
+              <DqIconButton type="text" size="sm" :label="$t('gallery.refresh')" @click="loadRecentVideos">
+                <DqIcon><refresh /></DqIcon>
+              </DqIconButton>
             </template>
-
             <DqEmpty v-if="recentVideos.length === 0" :description="$t('gallery.empty')" />
-
-            <DqRow v-else :gutter="8">
-              <DqCol
+            <div v-else class="studio-recent-grid">
+              <div
                 v-for="video in recentVideos"
                 :key="video.path"
-                :span="12"
-                class="studio-gallery-col"
+                class="studio-recent-grid__item gallery-card"
+                @click="showVideoPreview(video)"
               >
-                <div class="gallery-card" @click="showVideoPreview(video)">
-                  <div class="gallery-image-wrapper studio-recent-video-wrap">
-                    <video :src="getVideoUrl(video)" preload="metadata"></video>
-                  </div>
+                <div class="gallery-image-wrapper studio-recent-video-wrap">
+                  <video :src="getVideoUrl(video)" preload="metadata" muted></video>
                 </div>
-              </DqCol>
-            </DqRow>
-          </DqSurfaceCard>
+              </div>
+            </div>
+          </StudioPreviewPane>
         </div>
       </DqCol>
     </DqRow>
@@ -534,6 +530,8 @@ import { applyModelVersionFilters } from '@/utils/modelPickerFilters';
 import AssetPicker from '@/components/asset/AssetPicker.vue';
 import VideoCreateAdvancedParams from '@/components/create/VideoCreateAdvancedParams.vue';
 import CreateUpscaleParams from '@/components/create/CreateUpscaleParams.vue';
+import StudioPreviewPane from '@/components/create/StudioPreviewPane.vue';
+import CreateVideoPlayer from '@/components/create/CreateVideoPlayer.vue';
 
 const router = useRouter();
 const registryStore = useRegistryStore();
@@ -615,6 +613,37 @@ const currentTask = ref<any>(null);
 const logs = ref<{ time: string; message: string; level: string }[]>([]);
 const genLogLastStep = ref(0);
 const previewVideo = ref('');
+const previewVideoKey = ref(0);
+const previewVideoPlayerRef = ref<{ load?: () => void; togglePlay?: () => void } | null>(null);
+const previewVideoPlaying = ref(false);
+const previewVideoDurationSec = ref(0);
+
+const previewCaption = computed(() => (params.prompt || '').trim());
+
+function formatPreviewClock(sec: number) {
+  const s = Math.max(0, Math.floor(sec || 0));
+  const m = Math.floor(s / 60);
+  return m + ':' + String(s % 60).padStart(2, '0');
+}
+
+const previewVideoSubtitle = computed(() => {
+  const parts: string[] = [];
+  if (currentModelDisplayName.value) parts.push(currentModelDisplayName.value);
+  if (previewVideoDurationSec.value > 0) {
+    parts.push(formatPreviewClock(previewVideoDurationSec.value));
+  } else if (params.num_frames > 0 && params.fps > 0) {
+    parts.push(formatPreviewClock(params.num_frames / params.fps));
+  }
+  return parts.join(' · ');
+});
+
+function downloadPreviewVideo() {
+  if (!previewVideo.value) return;
+  const a = document.createElement('a');
+  a.href = previewVideo.value;
+  a.download = 'video.mp4';
+  a.click();
+}
 const recentVideos = ref<GalleryItem[]>([]);
 const recentStartImages = ref<GalleryItem[]>([]);
 const advancedParamsOpen = ref<string[]>(['advanced']);
@@ -1246,6 +1275,10 @@ const startGeneration = async () => {
           const pid = updated.result && updated.result.primary_asset_id;
           if (pid) {
             previewVideo.value = api.gallery.getImageUrl(`asset:${pid}`);
+            previewVideoKey.value += 1;
+            previewVideoPlaying.value = false;
+            previewVideoDurationSec.value = 0;
+            nextTick(() => previewVideoPlayerRef.value?.load?.());
             addLog($tt('studio.outputFile', { name: pid }), 'info');
           } else {
             addLog(

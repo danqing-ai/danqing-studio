@@ -321,9 +321,14 @@ html.dark .dq-dropdown__content {
  box-shadow: var(--dq-shadow-glass);
 }
 
-html.dark .lightbox-content {
- border-radius: 14px;
- overflow: hidden;
+html.dark .gallery-lightbox .lightbox-content {
+ overflow: visible;
+}
+
+html.dark .gallery-lightbox-audio-stage {
+ background: var(--dq-surface-elevated, var(--dq-bg-elevated));
+ border-color: var(--dq-fill-on-glass);
+ box-shadow: var(--dq-shadow-glass);
 }
 
 /* —— 设置页：去 border-card 后台风，改为轻量顶栏 Tab —— */
@@ -490,7 +495,26 @@ html.dark .models-lora-section {
  border-top-color: var(--dq-fill-on-glass);
 }
 
-/* 音频创作 */
+/* 音频创作 — 与侧栏 inset 一致，无额外光晕 */
+html.dark .dq-music-player__art:not(.dq-music-player__art--featured) {
+ background: var(--dq-surface-inset);
+ border-color: var(--dq-fill-on-glass);
+ box-shadow: none;
+ color: var(--dq-label-secondary);
+}
+
+html.dark .studio-audio-preview-shell {
+ background:
+  radial-gradient(120% 90% at 50% -20%, color-mix(in srgb, var(--dq-accent) 10%, transparent), transparent 58%),
+  var(--dq-surface-inset);
+ border-color: var(--dq-fill-on-glass);
+}
+
+html.dark .dq-audio-recent-card.is-active {
+ background: var(--dq-surface-inset-hover);
+ border-color: var(--dq-fill-on-glass);
+}
+
 html.dark .dq-audio-create-cover {
  background: var(--dq-surface-inset);
  border: 1px dashed var(--dq-scrollbar-thumb);
@@ -502,10 +526,18 @@ html.dark .studio-audio-preview-empty {
  min-height: 10rem;
 }
 
-html.dark .studio-audio-recent-row {
- border-radius: 12px;
- border: 1px solid var(--dq-fill-on-glass);
- background: var(--dq-surface-inset);
+html.dark .preview-panel .dq-audio-recent-card.gallery-card:hover,
+html.dark .preview-panel .dq-audio-recent-card.is-active {
+ background: var(--dq-surface-inset-hover);
+ border: none;
+ transform: none;
+ box-shadow: none;
+}
+
+html.dark .preview-panel .studio-audio-recent-row {
+ border: none;
+ background: transparent;
+ border-radius: 0;
 }
 
 html.dark .studio-lora-row {

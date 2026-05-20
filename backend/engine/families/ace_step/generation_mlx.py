@@ -28,6 +28,7 @@ from backend.engine.families.ace_step.generation import (
     duration_to_latent_frames,
     estimate_hum_ratio,
     estimate_mains_correlation,
+    capture_inference_lyrics,
     ensure_vocal_caption_hint,
     resolve_vocal_language,
     vocal_language_mismatch_warning,
@@ -71,6 +72,7 @@ class AceStepMlxGenerator:
         self.last_latent_diff_mean: float = 0.0
         self.last_decode_mode: str = "mlx_vae"
         self.last_lm_expanded: bool = False
+        self.last_lyrics_capture: Any = None
         self._lm_formatter: Any = None
 
     @property
@@ -250,6 +252,7 @@ class AceStepMlxGenerator:
             instruction = instruction + ":"
         caption = (prompt or "").strip()
         lyrics_use = (lyrics or "").strip() or "[Instrumental]"
+        lyrics_input = lyrics_use
         bpm_use = bpm
         key_use = key_scale or ""
         ts_use = time_signature or ""
@@ -291,6 +294,12 @@ class AceStepMlxGenerator:
                     ) from exc
 
         caption = ensure_vocal_caption_hint(caption, lyrics_use, lang_use)
+        self.last_lyrics_capture = capture_inference_lyrics(
+            lyrics_input=lyrics_input,
+            lyrics_effective=lyrics_use,
+            caption_effective=caption,
+            lm_expanded=self.last_lm_expanded,
+        )
         from backend.engine.families.ace_step.lm_format import is_instrumental_lyrics
 
         vocal_warn = warn_weak_vocal_lyrics(lyrics_use)

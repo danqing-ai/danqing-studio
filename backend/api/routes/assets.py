@@ -118,6 +118,18 @@ async def get_asset_thumbnail(asset_id: str, store: SQLiteAssetStore = Depends(g
     raise HTTPException(404, "no thumbnail")
 
 
+_AUDIO_MEDIA = {
+    ".wav": "audio/wav",
+    ".mp3": "audio/mpeg",
+    ".flac": "audio/flac",
+    ".ogg": "audio/ogg",
+    ".m4a": "audio/mp4",
+    ".aac": "audio/aac",
+    ".opus": "audio/opus",
+}
+
+
+@router.head("/{asset_id}/file")
 @router.get("/{asset_id}/file")
 async def get_asset_file(asset_id: str, store: SQLiteAssetStore = Depends(get_asset_store)):
     try:
@@ -126,6 +138,9 @@ async def get_asset_file(asset_id: str, store: SQLiteAssetStore = Depends(get_as
         raise HTTPException(404, "asset not found") from e
     if not p.exists():
         raise HTTPException(404, "file missing")
+    media = _AUDIO_MEDIA.get(p.suffix.lower())
+    if media:
+        return FileResponse(str(p), media_type=media)
     return FileResponse(str(p))
 
 

@@ -108,6 +108,87 @@ def format_lyrics(lyrics: str, language: str) -> str:
     return f"# Languages\n{language}\n\n# Lyric\n{lyrics}<|endoftext|>"
 
 
+@dataclass
+class AceStepLyricsCapture:
+    """Lyrics/caption actually fed to DiT after optional 5Hz LM rewrite."""
+
+    lyrics_input: str = ""
+    lyrics_effective: str = ""
+    caption_effective: str = ""
+    lm_expanded: bool = False
+    lyrics_changed: bool = False
+
+
+def capture_inference_lyrics(
+    *,
+    lyrics_input: str,
+    lyrics_effective: str,
+    caption_effective: str,
+    lm_expanded: bool,
+) -> AceStepLyricsCapture:
+    inp = (lyrics_input or "").strip()
+    eff = (lyrics_effective or "").strip()
+    return AceStepLyricsCapture(
+        lyrics_input=inp,
+        lyrics_effective=eff,
+        caption_effective=(caption_effective or "").strip(),
+        lm_expanded=bool(lm_expanded),
+        lyrics_changed=bool(lm_expanded) and eff != inp,
+    )
+
+
+def lyrics_capture_log_message(
+    cap: AceStepLyricsCapture,
+    *,
+    preview_chars: int = 500,
+) -> Optional[str]:
+    """User-facing task log for effective lyrics (not word-level timed)."""
+    if is_instrumental_lyrics(cap.lyrics_effective):
+        return None
+    text = (cap.lyrics_effective or "").strip()
+    if not text:
+        return None
+    preview = text if len(text) <= preview_chars else text[:preview_chars] + "…"
+    header = (
+        "5Hz LM 扩写后歌词（送入模型的条件文本）"
+        if cap.lyrics_changed
+        else "最终歌词（送入模型的条件文本）"
+    )
+    return (
+        f"{header}；与音频非逐字时间轴对齐，仅作演唱条件。\n"
+        f"{preview}"
+    )
+
+
+def lyrics_capture_metadata(cap: AceStepLyricsCapture) -> dict[str, Any]:
+    """Serializable fields for task result / asset metadata."""
+    if is_instrumental_lyrics(cap.lyrics_effective):
+        return {
+            "lyrics_alignment": "instrumental",
+            "lm_expanded": cap.lm_expanded,
+        }
+    return {
+        "lyrics_input": cap.lyrics_input,
+        "lyrics_effective": cap.lyrics_effective,
+        "lyrics_changed_by_lm": cap.lyrics_changed,
+        "caption_effective": cap.caption_effective,
+        "lyrics_alignment": "conditioning_only",
+        "lm_expanded": cap.lm_expanded,
+    }
+
+
+def write_lyrics_sidecar(audio_path: Path, lyrics: str) -> Optional[Path]:
+    """Write ``<stem>_lyrics.txt`` next to the audio file."""
+    if is_instrumental_lyrics(lyrics):
+        return None
+    text = (lyrics or "").strip()
+    if not text:
+        return None
+    sidecar = audio_path.with_name(f"{audio_path.stem}_lyrics.txt")
+    sidecar.write_text(text + "\n", encoding="utf-8")
+    return sidecar
+
+
 LYRIC_TOKEN_MAX_LENGTH = 2048
 
 

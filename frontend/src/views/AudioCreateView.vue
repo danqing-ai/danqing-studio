@@ -278,99 +278,96 @@
 
       <!-- Right panel: preview + recent -->
       <DqCol :xs="24" :md="8" :lg="7" :xl="6">
-        <div class="preview-panel">
+        <div class="preview-panel preview-panel--flat">
 
-          <!-- Current generation preview -->
-          <DqSurfaceCard class="studio-surface-card studio-card-mb studio-audio-preview-card">
-            <template #header>
-              <div class="card-title">
-                <DqIcon><headset /></DqIcon>
-                {{ $t('studio.currentPreview') }}
+          <StudioPreviewPane :title="$t('studio.currentPreview')" icon="headset">
+            <AudioMusicPlayer
+              v-if="previewAudioSrc"
+              :key="previewAudioKey"
+              ref="previewPlayerRef"
+              layout="featured"
+              :src="previewAudioSrc"
+              :title="previewPrompt"
+              :subtitle="previewPlayerSubtitle"
+              :hue="previewArtHue"
+              @download="downloadPreviewAudio"
+              @play="previewIsPlaying = true"
+              @pause="previewIsPlaying = false"
+              @duration="previewDurationSec = $event"
+            >
+              <div v-if="previewLyrics" class="studio-audio-effective-lyrics">
+                <div class="studio-audio-effective-lyrics__head">
+                  <span class="studio-audio-effective-lyrics__label">{{ $t('audio.effectiveLyrics') }}</span>
+                  <DqButton
+                    v-if="previewLyricsDownload"
+                    type="text"
+                    size="sm"
+                    @click="downloadLyricsText"
+                  >
+                    {{ $t('audio.downloadLyrics') }}
+                  </DqButton>
+                </div>
+                <pre class="studio-audio-effective-lyrics__body">{{ previewLyrics }}</pre>
+                <p class="studio-field-footnote studio-audio-effective-lyrics__hint">
+                  {{ $t('audio.effectiveLyricsHint') }}
+                </p>
               </div>
-            </template>
-            <div v-if="previewAudioSrc" class="dq-audio-create-cover">
-              <span class="dq-audio-create-cover-title">{{ $t('audio.previewListen') }}</span>
-              <audio
-                :key="previewAudioKey"
-                ref="previewAudioEl"
-                class="studio-audio-preview-player"
-                :src="previewAudioSrc"
-                controls
-                playsinline
-                preload="metadata"
-              ></audio>
-              <div
-                v-if="previewPrompt"
-                class="studio-audio-caption"
-                :title="previewPrompt"
-              >
-                {{ previewPrompt }}
-              </div>
-            </div>
-            <div v-else class="studio-audio-preview-empty">
-              <DqEmpty :description="$t('studio.noPreview')" />
-            </div>
-          </DqSurfaceCard>
+            </AudioMusicPlayer>
+            <DqEmpty v-else class="studio-preview-pane__empty" :description="$t('studio.noPreview')" />
+          </StudioPreviewPane>
 
-          <!-- Recent generations -->
-          <DqSurfaceCard class="studio-surface-card">
-            <template #header>
-              <div class="card-title card-title--split">
-                <span>
-                  <DqIcon><clock /></DqIcon>
-                  {{ $t('audio.recentTitle') }}
-                </span>
-                <DqIconButton type="text" size="sm" :label="$t('gallery.refresh')" @click="loadRecentAudio">
-                  <DqIcon><refresh /></DqIcon>
-                </DqIconButton>
-              </div>
+          <StudioPreviewPane :title="$t('audio.recentTitle')" icon="clock" split-head recent>
+            <template #actions>
+              <DqIconButton type="text" size="sm" :label="$t('gallery.refresh')" @click="loadRecentAudio">
+                <DqIcon><refresh /></DqIcon>
+              </DqIconButton>
             </template>
             <DqEmpty v-if="recentAudio.length === 0" :description="$t('gallery.empty')" />
-            <div v-else>
-              <div
+            <ul v-else class="studio-audio-recent-list">
+              <li
                 v-for="ra in recentAudio"
                 :key="ra.id"
-                class="gallery-card dq-audio-recent-card studio-recent-card-mb"
-                @click="previewAudio(ra)"
+                class="studio-audio-recent-item"
+                :class="{ 'is-active': isRecentActive(ra) }"
               >
-                <div class="studio-audio-recent-row">
-                  <div class="dq-audio-recent-cover" @click.stop="previewAudio(ra)">
-                    <DqIcon :size="26"><headset /></DqIcon>
-                  </div>
-                  <div class="studio-audio-recent-main">
-                    <div class="studio-audio-recent-title">
-                      {{ ra.prompt || ra.name || 'Audio' }}
-                    </div>
-                    <div class="studio-audio-recent-meta">
-                      {{ ra.duration ? formatTime(ra.duration) : '' }}
-                    </div>
-                  </div>
-                  <div class="studio-audio-recent-actions">
-                    <DqIconButton
-                      type="text"
-                      size="sm"
-                      class="dq-icon-btn--circle"
-                      :label="$t('audio.previewListen')"
-                      @click.stop="toggleRecentPlay(ra)"
-                    >
-                      <span class="studio-play-icon">{{ ra.playing ? '⏸' : '▶' }}</span>
-                    </DqIconButton>
-                    <DqIconButton type="text" size="sm" :label="$t('gallery.download')" @click.stop="downloadAudioUrl(ra.url)">
-                      <DqIcon><download /></DqIcon>
-                    </DqIconButton>
-                  </div>
+                <button
+                  type="button"
+                  class="studio-audio-recent-item__main"
+                  @click="selectRecent(ra)"
+                >
+                  <span
+                    class="studio-audio-recent-item__art"
+                    :style="{ '--dq-music-hue': String(artHueForPrompt(ra.prompt)) }"
+                  >
+                    <DqIcon :size="18"><Headset /></DqIcon>
+                  </span>
+                  <span class="studio-audio-recent-item__text">
+                    <span class="studio-audio-recent-title">{{ ra.prompt || ra.name || 'Audio' }}</span>
+                    <span class="studio-audio-recent-meta">
+                      <template v-if="isRecentActive(ra) && previewIsPlaying">{{ $t('audio.nowPlaying') }}</template>
+                      <template v-else-if="ra.duration">{{ formatTime(ra.duration) }}</template>
+                    </span>
+                  </span>
+                </button>
+                <div class="studio-audio-recent-item__actions">
+                  <button
+                    type="button"
+                    class="dq-music-player__btn-play dq-music-player__btn-play--sm"
+                    :aria-label="isRecentActive(ra) && previewIsPlaying ? $t('audio.pause') : $t('audio.play')"
+                    @click="toggleRecentPlay(ra)"
+                  >
+                    <DqIcon :size="16">
+                      <pause v-if="isRecentActive(ra) && previewIsPlaying" />
+                      <play v-else />
+                    </DqIcon>
+                  </button>
+                  <DqIconButton type="text" size="sm" :label="$t('gallery.download')" @click="downloadAudioUrl(ra.url)">
+                    <DqIcon><Download /></DqIcon>
+                  </DqIconButton>
                 </div>
-                <audio
-                  :ref="(el: any) => setRecentAudioRef(el, ra.id)"
-                  :src="ra.url"
-                  preload="metadata"
-                  @ended="ra.playing = false"
-                  @loadedmetadata="onRecentMeta(ra, $event)"
-                  class="studio-hidden-audio"
-                />
-              </div>
-            </div>
-          </DqSurfaceCard>
+              </li>
+            </ul>
+          </StudioPreviewPane>
 
         </div>
       </DqCol>
@@ -395,6 +392,9 @@ import { useModelRegistryFilters } from '@/composables/useModelRegistryFilters';
 import { applyModelVersionFilters } from '@/utils/modelPickerFilters';
 import AudioCreateMusicParams from '@/components/audio/AudioCreateMusicParams.vue';
 import AudioCreateAdvancedParams from '@/components/audio/AudioCreateAdvancedParams.vue';
+import AudioMusicPlayer from '@/components/audio/AudioMusicPlayer.vue';
+import StudioPreviewPane from '@/components/create/StudioPreviewPane.vue';
+import { Download } from '@danqing/dq-shell';
 
 const tasksStore = useTasksStore();
 const registryStore = useRegistryStore();
@@ -455,7 +455,9 @@ const generating = ref(false);
 const modelsLoading = ref(false);
 const advancedOpen = ref<string[]>(['advanced']);
 const logContainer = ref<HTMLElement | null>(null);
-const previewAudioEl = ref<HTMLAudioElement | null>(null);
+const previewPlayerRef = ref(null);
+const previewIsPlaying = ref(false);
+const previewDurationSec = ref(0);
 
 const modelRegistry = ref<Record<string, any>>({});
 const modelsDetailedStatus = ref<Record<string, any>>({});
@@ -483,9 +485,28 @@ const currentTask = reactive({ id: '', progress: 0, step: null as number | null,
 const logs = reactive<Array<{ level: string; message: string; time: string }>>([]);
 const previewAudioSrc = ref('');
 const previewPrompt = ref('');
+const previewLyrics = ref('');
+const previewLyricsDownload = ref('');
 const previewAudioKey = ref(0);
 const recentAudio = reactive<Array<any>>([]);
-const recentAudioElById: Record<string, HTMLAudioElement> = {};
+const previewArtHue = computed(() => artHueForPrompt(previewPrompt.value));
+
+const previewPlayerSubtitle = computed(() => {
+  const parts: string[] = [];
+  if (currentModelDisplayName.value) parts.push(currentModelDisplayName.value);
+  if (previewDurationSec.value > 0) parts.push(formatTime(previewDurationSec.value));
+  else if (params.duration) parts.push(formatTime(params.duration));
+  return parts.join(' · ');
+});
+
+function artHueForPrompt(text: string) {
+  let h = 0;
+  const s = String(text || 'audio');
+  for (let i = 0; i < s.length; i += 1) {
+    h = (h * 31 + s.charCodeAt(i)) % 360;
+  }
+  return h;
+}
 
 // ---- Model display name ----
 const currentModelKey = computed(() => {
@@ -720,6 +741,8 @@ async function startGeneration() {
   currentTask.total = null;
   currentTask.status = '';
   logs.length = 0;
+  previewLyrics.value = '';
+  previewLyricsDownload.value = '';
 
   try {
     const body = {
@@ -760,22 +783,34 @@ async function startGeneration() {
         ? api.gallery.getImageUrl('asset:' + aid)
         : '/api/assets/' + aid + '/file';
 
-    const addRecentFromAsset = (aid: string) => {
-      const url = assetFileUrl(aid);
-      recentAudio.unshift({ id: aid, url, prompt: params.prompt, duration: 0, playing: false });
+    const applyResultMeta = (meta: Record<string, unknown> | undefined) => {
+      const m = meta || {};
+      const eff = String(m.lyrics_effective || '').trim();
+      previewLyrics.value = eff;
+      previewLyricsDownload.value = eff;
     };
 
-    const setPreviewFromAsset = (aid: string) => {
-      previewAudioSrc.value = assetFileUrl(aid);
-      previewPrompt.value = params.prompt;
-      previewAudioKey.value += 1;
-      nextTick(() => {
-        try {
-          previewAudioEl.value?.load?.();
-        } catch {
-          /* ignore */
-        }
+    const addRecentFromAsset = (aid: string, meta?: Record<string, unknown>) => {
+      const url = assetFileUrl(aid);
+      const eff = meta ? String(meta.lyrics_effective || '').trim() : '';
+      recentAudio.unshift({
+        id: aid,
+        url,
+        prompt: params.prompt,
+        lyrics: eff,
+        duration: 0,
+        playing: false,
       });
+    };
+
+    const setPreviewFromAsset = (aid: string, meta?: Record<string, unknown>) => {
+      const url = assetFileUrl(aid);
+      const changed = previewAudioSrc.value !== url;
+      previewAudioSrc.value = url;
+      previewPrompt.value = params.prompt;
+      applyResultMeta(meta);
+      previewIsPlaying.value = false;
+      if (changed) previewAudioKey.value += 1;
     };
 
     api.gen.streamMediaTask(tid, {
@@ -817,19 +852,22 @@ async function startGeneration() {
       },
       onResult: (resultData: unknown) => {
         const row = resultData as Record<string, unknown>;
+        const meta = row.metadata as Record<string, unknown> | undefined;
+        applyResultMeta(meta);
         const ids = row.asset_ids as string[] | undefined;
         if (ids?.length) {
-          ids.forEach((aid) => addRecentFromAsset(aid));
-          setPreviewFromAsset(ids[0]);
+          ids.forEach((aid) => addRecentFromAsset(aid, meta));
+          setPreviewFromAsset(ids[0], meta);
         }
       },
       onDone: (doneData: unknown) => {
         const row = doneData as Record<string, unknown>;
         if (row.status === 'completed') {
-          const pid =
-            row.result &&
-            (row.result as Record<string, unknown>).primary_asset_id;
-          if (pid) setPreviewFromAsset(String(pid));
+          const res = row.result as Record<string, unknown> | undefined;
+          const meta = res?.metadata as Record<string, unknown> | undefined;
+          applyResultMeta(meta);
+          const pid = res?.primary_asset_id;
+          if (pid) setPreviewFromAsset(String(pid), meta);
         } else if (row.status === 'failed') {
           toast.error($tt('studio.genFailed', { msg: String(row.error || '') }));
         }
@@ -846,49 +884,39 @@ async function startGeneration() {
   }
 }
 
-function setRecentAudioRef(el: any, id: string) {
-  if (!id) return;
-  if (el) recentAudioElById[id] = el;
-  else delete recentAudioElById[id];
+function isRecentActive(ra: any) {
+  return !!ra?.url && ra.url === previewAudioSrc.value;
+}
+
+function selectRecent(item: any) {
+  if (!item?.url) return;
+  const same = isRecentActive(item);
+  previewAudio(item);
 }
 
 function previewAudio(item: any) {
-  previewAudioSrc.value = item.url;
+  const nextUrl = String(item?.url || '');
+  const changed = previewAudioSrc.value !== nextUrl;
+  previewAudioSrc.value = nextUrl;
   previewPrompt.value = item.prompt || '';
-  previewAudioKey.value += 1;
-  nextTick(() => {
-    try {
-      previewAudioEl.value?.load?.();
-    } catch (e) { /* ignore */ }
-  });
+  previewLyrics.value = item.lyrics || '';
+  previewLyricsDownload.value = item.lyrics || '';
+  previewDurationSec.value = item.duration || 0;
+  previewIsPlaying.value = false;
+  if (changed) previewAudioKey.value += 1;
 }
 
 function toggleRecentPlay(ra: any) {
-  const el = recentAudioElById[ra.id];
-  if (!el) return;
-  if (ra.playing) {
-    el.pause();
-    ra.playing = false;
-  } else {
-    recentAudio.forEach((x: any) => {
-      if (x.id !== ra.id && x.playing) {
-        const o = recentAudioElById[x.id];
-        if (o) {
-          try { o.pause(); } catch (e) { /* ignore */ }
-        }
-        x.playing = false;
-      }
-    });
-    el.play().catch(() => {});
-    ra.playing = true;
+  if (!ra?.url) return;
+  if (!isRecentActive(ra)) {
+    previewAudio(ra);
+    return;
   }
+  previewPlayerRef.value?.togglePlay?.();
 }
 
-function onRecentMeta(ra: any, event: Event) {
-  const el = event.target as HTMLAudioElement;
-  if (el && el.duration && Number.isFinite(el.duration)) {
-    ra.duration = el.duration;
-  }
+function downloadPreviewAudio() {
+  downloadAudioUrl(previewAudioSrc.value);
 }
 
 function downloadAudioUrl(url: string) {
@@ -899,11 +927,22 @@ function downloadAudioUrl(url: string) {
   a.click();
 }
 
+function downloadLyricsText() {
+  const text = previewLyricsDownload.value || previewLyrics.value;
+  if (!text) return;
+  const blob = new Blob([text + '\n'], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'lyrics.txt';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 function loadRecentAudio() {
   api.gen.listAssets('audio', 20, 0).then((data: any) => {
     const items = (data && data.items) || [];
     recentAudio.length = 0;
-    Object.keys(recentAudioElById).forEach((k) => delete recentAudioElById[k]);
     items.forEach((item: any) => {
       const aid = item.id || '';
       if (!aid) return;
@@ -913,9 +952,9 @@ function loadRecentAudio() {
         id: aid,
         url,
         prompt: String(meta.prompt || ''),
+        lyrics: String(meta.lyrics_effective || '').trim(),
         name: item.name || '',
         duration: item.duration_seconds != null ? Number(item.duration_seconds) : (meta.duration_seconds != null ? Number(meta.duration_seconds) : 0),
-        playing: false,
       });
     });
   }).catch(() => {});
