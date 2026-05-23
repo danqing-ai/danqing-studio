@@ -8,11 +8,19 @@ def _is_diffusers_wan(weights: dict) -> bool:
     return any("attn1" in k or "patch_embedding" in k for k in weights)
 
 
-def _conv3d_weight_to_mlx(key: str, tensor) -> tuple[str, object]:
-    """PyTorch Conv3d ``[O,I,T,H,W]`` → MLX ``[O,T,H,W,I]`` for ``patch_embedding``."""
-    if key.endswith(".weight") and "patch_embedding" in key and getattr(tensor, "ndim", 0) == 5:
-        return key, tensor.transpose(0, 2, 3, 4, 1)
-    return key, tensor
+def _patch_embedding_weight_to_linear(key: str, tensor) -> tuple[str, object]:
+    """Conv3d patch kernel → ``Linear`` weight for mlx-video-compatible patchify.
+
+    Checkpoints store ``patch_embedding`` as 3D conv. We run a ``Linear`` whose columns
+    match input flatten order ``[C, pt, ph, pw]`` (see ``WanModelMLX._patchify``).
+    """
+    if not (key.endswith(".weight") and "patch_embedding" in key and getattr(tensor, "ndim", 0) == 5):
+        return key, tensor
+    t = tensor
+    # PyTorch / safetensors: ``[O, I, T, H, W]``; older MLX ports used ``[O, T, H, W, I]``.
+    if int(t.shape[1]) <= 4 and int(t.shape[-1]) > 4:
+        t = t.transpose(0, 4, 1, 2, 3)
+    return key, t.reshape(int(t.shape[0]), -1)
 
 
 def _remap_diffusers_to_wan(key: str) -> str:
@@ -48,6 +56,6 @@ def remap_wan_weights(weights: dict) -> dict:
         new_key = new_key.replace(".ffn.2.weight", ".ffn.layer_2.weight")
         new_key = new_key.replace(".ffn.2.bias", ".ffn.layer_2.bias")
         new_key = new_key.replace(".norm_q.weight", ".norm_q.weight")
-        new_key, tensor = _conv3d_weight_to_mlx(new_key, tensor)
+        new_key, tensor = _patch_embedding_weight_to_linear(new_key, tensor)
         remapped[new_key] = tensor
     return remapped

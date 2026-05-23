@@ -231,13 +231,10 @@ class WanModelMLX(TransformerBase):
         self.ctx = ctx
         self._num_frames = num_frames
         pt, ph, pw = config.patch_size
+        patch_dim = int(config.dim_in) * int(pt) * int(ph) * int(pw)
 
-        self.patch_embedding = nn.Conv3d(
-            config.dim_in,
-            config.dim,
-            kernel_size=config.patch_size,
-            stride=config.patch_size,
-        )
+        self.patch_embedding = nn.Linear(patch_dim, config.dim)
+        self._patch_size = config.patch_size
         self.text_embedding = ctx.ModuleList([
             nn.Linear(config.text_dim, config.dim),
             nn.Linear(config.dim, config.dim),
@@ -256,7 +253,7 @@ class WanModelMLX(TransformerBase):
         ])
         self.head = nn.Linear(config.dim, ph * pw * pt * config.dim_out)
         self.head_modulation = mx.zeros((1, 2, config.dim))
-        self.patch_size = config.patch_size
+        self.patch_size = self._patch_size
         self.text_len = config.text_len
         self.out_dim = config.dim_out
 
@@ -362,10 +359,6 @@ class WanModelMLX(TransformerBase):
         from .conditioning import prepare_ti2v_i2v_latents
         return prepare_ti2v_i2v_latents(self.ctx, latents, self._i2v_cond, self._i2v_mask)
 
-    def _ncthw_to_conv_input(self, sample: Any) -> Any:
-        """``[C,T,H,W]`` → ``[1,T,H,W,C]`` for MLX Conv3d."""
-        return self.ctx.expand_dims(self.ctx.permute(sample, (1, 2, 3, 0)), 0)
-
     def _apply_text_embed(self, txt_embeds: Any) -> Any:
         ctx = self.ctx
         cfg = self.config
@@ -381,6 +374,17 @@ class WanModelMLX(TransformerBase):
                 padded.append(ctx.concat([u, pad], axis=0))
         batch = ctx.stack(padded)
         return self.text_embedding[1](nn.gelu(self.text_embedding[0](batch)))
+
+    def _patchify(self, sample: Any) -> tuple[Any, tuple[int, int, int]]:
+        """``[C,T,H,W]`` latent → patch tokens ``[L, dim]`` and patch grid ``(F',H',W')``."""
+        c, f, h, w = (int(sample.shape[i]) for i in range(4))
+        pt, ph, pw = self._patch_size
+        f_out, h_out, w_out = f // pt, h // ph, w // pw
+        x = sample.reshape(c, f_out, pt, h_out, ph, w_out, pw)
+        x = x.transpose(1, 3, 5, 0, 2, 4, 6)
+        x = x.reshape(f_out * h_out * w_out, -1)
+        patches = self.patch_embedding(x)
+        return patches, (f_out, h_out, w_out)
 
     def _time_paths(self, t: Any, seq_len: int) -> tuple[Any, Any]:
         ctx = self.ctx
@@ -454,13 +458,9 @@ class WanModelMLX(TransformerBase):
         patches = []
         grids = []
         for i in range(b):
-            inp = self._ncthw_to_conv_input(latents[i])
-            pe = self.patch_embedding(inp)
-            pe = ctx.squeeze(pe, 0)
-            grid = ctx.array([pe.shape[0], pe.shape[1], pe.shape[2]], dtype=ctx.int64())
-            flat = ctx.reshape(pe, (-1, pe.shape[-1]))
+            flat, grid = self._patchify(latents[i])
             patches.append(flat)
-            grids.append(grid)
+            grids.append(ctx.array([grid[0], grid[1], grid[2]], dtype=ctx.int64()))
         grid_sizes = ctx.stack(grids)
         if seq_len is None:
             seq_len = max(int(p.shape[0]) for p in patches)

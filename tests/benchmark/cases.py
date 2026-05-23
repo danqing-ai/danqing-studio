@@ -149,7 +149,11 @@ def wan_video_bundle_installed() -> bool:
     vae_ok = (
         (root / "Wan2.2_VAE.pth").is_file()
         or (root / "Wan2_2_VAE.pth").is_file()
-        or any((root / "vae").glob("*.safetensors")) if (root / "vae").is_dir() else False
+        or (
+            any((root / "vae").glob("*.safetensors"))
+            if (root / "vae").is_dir()
+            else False
+        )
     )
     t5_ok = any(root.glob("models_t5*.pth"))
     dit_ok = any(root.rglob("*.safetensors")) or any(root.rglob("*.pth"))
