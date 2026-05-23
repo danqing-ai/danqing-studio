@@ -30,8 +30,7 @@ class JsonConfigStore(IConfigStore):
     
     def _inject_workspace_dir(self, settings: AppSettings) -> AppSettings:
         """Workspace path comes from bootstrap pointer only, not from ``.app_config.json``."""
-        bootstrap = self._path_resolver.get_bootstrap_root()
-        if is_workspace_configured(bootstrap):
+        if is_workspace_configured(self._path_resolver.get_default_config_root()):
             settings.custom_workspace_dir = str(self._path_resolver.get_project_root())
         else:
             settings.custom_workspace_dir = ""

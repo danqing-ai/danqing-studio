@@ -1,39 +1,53 @@
-"""Wan 视频模型权重映射 — diffusers → DanQing 键名转换。"""
+"""Wan video model weight mapping — original Wan keys + diffusers fallback."""
 from __future__ import annotations
+
+import re
+
+
+def _is_diffusers_wan(weights: dict) -> bool:
+    return any("attn1" in k or "patch_embedding" in k for k in weights)
+
+
+def _conv3d_weight_to_mlx(key: str, tensor) -> tuple[str, object]:
+    """PyTorch Conv3d ``[O,I,T,H,W]`` → MLX ``[O,T,H,W,I]`` for ``patch_embedding``."""
+    if key.endswith(".weight") and "patch_embedding" in key and getattr(tensor, "ndim", 0) == 5:
+        return key, tensor.transpose(0, 2, 3, 4, 1)
+    return key, tensor
+
+
+def _remap_diffusers_to_wan(key: str) -> str:
+    new_key = key
+    new_key = new_key.replace("patch_embedding.", "patch_embedding.")
+    new_key = re.sub(r"\.attn1\.to_q\.", ".self_attn.q.", new_key)
+    new_key = re.sub(r"\.attn1\.to_k\.", ".self_attn.k.", new_key)
+    new_key = re.sub(r"\.attn1\.to_v\.", ".self_attn.v.", new_key)
+    new_key = re.sub(r"\.attn1\.to_out\.0\.", ".self_attn.o.", new_key)
+    new_key = re.sub(r"\.attn2\.to_q\.", ".cross_attn.q.", new_key)
+    new_key = re.sub(r"\.attn2\.to_k\.", ".cross_attn.k.", new_key)
+    new_key = re.sub(r"\.attn2\.to_v\.", ".cross_attn.v.", new_key)
+    new_key = re.sub(r"\.attn2\.to_out\.0\.", ".cross_attn.o.", new_key)
+    new_key = new_key.replace(".ffn.net.0.proj.", ".ffn.layer_0.")
+    new_key = new_key.replace(".ffn.net.2.", ".ffn.layer_2.")
+    new_key = new_key.replace("scale_shift_table", "modulation")
+    new_key = new_key.replace("proj_out.", "head.1.")
+    return new_key
 
 
 def remap_wan_weights(weights: dict) -> dict:
-    """将 diffusers Wan 权重键映射为 DanQing 引擎键名。
-
-    DanQing WanTransformer 使用与 diffusers 兼容的键名结构，仅需处理：
-    - patch_embedding → patch_embed.proj
-    - time_embedding.linear_* → time_embed.mlp.layers.*
-    - ffn.net.N.proj → mlp.layers.N (移除 Sequential 包装)
-    - norm → final_norm
-    - head → proj_out
-    """
-    remapped = {}
+    """Map checkpoint keys to ``WanModelMLX._param_map`` flat names."""
+    diffusers = _is_diffusers_wan(weights)
+    remapped: dict = {}
     for key, tensor in weights.items():
         new_key = key
-
-        # patch_embedding.weight/bias → patch_embed.proj.weight/bias
-        new_key = new_key.replace("patch_embedding.", "patch_embed.proj.")
-
-        # time_embedding.linear_1.* → time_embed.mlp.layers.0.*
-        new_key = new_key.replace("time_embedding.linear_1.", "time_embed.mlp.layers.0.")
-        # time_embedding.linear_2.* → time_embed.mlp.layers.2.*
-        new_key = new_key.replace("time_embedding.linear_2.", "time_embed.mlp.layers.2.")
-
-        # ffn.net.0.proj → mlp.layers.0
-        new_key = new_key.replace(".ffn.net.0.proj.", ".mlp.layers.0.")
-        # ffn.net.2 → mlp.layers.2
-        new_key = new_key.replace(".ffn.net.2.", ".mlp.layers.2.")
-
-        # norm.weight → final_norm.weight
-        new_key = new_key.replace("norm.weight", "final_norm.weight")
-
-        # head.weight/bias → proj_out.weight/bias
-        new_key = new_key.replace("head.", "proj_out.")
-
+        if new_key.startswith("transformer."):
+            new_key = new_key[len("transformer.") :]
+        new_key = _remap_diffusers_to_wan(new_key) if diffusers else new_key
+        # Original Wan FFN keys
+        new_key = new_key.replace(".ffn.0.weight", ".ffn.layer_0.weight")
+        new_key = new_key.replace(".ffn.0.bias", ".ffn.layer_0.bias")
+        new_key = new_key.replace(".ffn.2.weight", ".ffn.layer_2.weight")
+        new_key = new_key.replace(".ffn.2.bias", ".ffn.layer_2.bias")
+        new_key = new_key.replace(".norm_q.weight", ".norm_q.weight")
+        new_key, tensor = _conv3d_weight_to_mlx(new_key, tensor)
         remapped[new_key] = tensor
     return remapped

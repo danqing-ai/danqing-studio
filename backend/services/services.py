@@ -194,10 +194,13 @@ class SettingsService(ISettingsService):
         version_key: str,
         version_config: Any,
     ) -> Path:
-        """Resolve bundle path from registry only: ``versions.*.local_path`` or ``models/{id}-{version_key}``."""
+        """Resolve bundle path: ``bundle_repos[0].local_path``, ``local_path``, or fallback id."""
+        from backend.core.bundle_repos import version_primary_local_path
+
         vc = version_config if isinstance(version_config, dict) else {}
-        local_path = vc.get("local_path")
-        if not local_path:
+        try:
+            local_path = version_primary_local_path(vc)
+        except ValueError:
             local_path = f"models/{model_name}-{version_key}"
         return self._path_resolver.resolve_registry_local_path(local_path)
 

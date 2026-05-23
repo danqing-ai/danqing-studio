@@ -117,8 +117,8 @@ const emit = defineEmits<{
         </div>
         <DqInputNumber
           v-model="params.num_frames"
-          :min="1"
-          :max="257"
+          :min="currentModelConfig.parameters.num_frames.min"
+          :max="currentModelConfig.parameters.num_frames.max"
           controls-position="right"
           class="param-input-number"
         />

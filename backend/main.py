@@ -143,9 +143,9 @@ def _setup_dependencies():
     registry_json = path_resolver.get_models_registry_path()
     model_registry = ModelRegistry.load(registry_json)
 
-    # v4 模型缓存
+    # v4 模型缓存 — honor user ``mlx_memory_limit`` (GB)
     shared_cache = ModelCache(
-        get_memory_limit=lambda: 120.0,
+        get_memory_limit=lambda: float(config_store.load().mlx_memory_limit),
         reserve_gb=20.0,
     )
 

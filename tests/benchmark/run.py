@@ -16,6 +16,8 @@ from .cases import (
     SanityCase,
     ace_step_bundle_installed,
     cuda_runtime_available,
+    heartmula_bundle_installed,
+    mlx_runtime_available,
     get_case,
     get_sanity_case,
     iter_mflux_cases,
@@ -24,12 +26,15 @@ from .cases import (
     list_skipped_mflux_cases,
     resolve_benchmark_data_root,
     resolve_fp16_bundle_dir,
+    wan_video_bundle_installed,
+    WAN_VIDEO_BUNDLE,
 )
 from .metrics import (
     CompareResult,
     SanityResult,
     check_output_audio,
     check_output_image,
+    check_output_video,
     compare_images,
     hash_image,
 )
@@ -521,10 +526,75 @@ class SanitySuiteRunner(BenchmarkRunner):
         super().__init__(output_dir=output_dir)
         self.sanity_results: list[tuple[SanityCase, SanityResult]] = []
 
+    @staticmethod
+    def _audio_model_base(case: SanityCase) -> str:
+        return case.model.split(":", 1)[0].strip()
+
+    def _run_danqing_video_generate(
+        self, case: SanityCase, output_path: Path, *, timeout_sec: int | None = None
+    ) -> bool:
+        cli = PROJECT_ROOT / "bin" / "danqing-video-generate"
+        cmd = [
+            sys.executable,
+            str(cli),
+            "--model",
+            case.model,
+            "--prompt",
+            case.prompt,
+            "--size",
+            case.video_size,
+            "--num-frames",
+            str(int(case.video_num_frames)),
+            "--fps",
+            str(int(case.video_fps)),
+            "--steps",
+            str(int(case.steps)),
+            "--guidance",
+            str(float(case.guidance)),
+            "--seed",
+            str(case.seed),
+            "--output",
+            str(output_path),
+        ]
+        if case.negative_prompt:
+            cmd.extend(["--negative-prompt", case.negative_prompt])
+        try:
+            t0 = time.time()
+            env = os.environ.copy()
+            env.setdefault("MLX_METAL_DEVICE_ONLY", "1")
+            env.setdefault("MLX_METAL_MEMORY_LIMIT", "120")
+            env["PYTHONUNBUFFERED"] = "1"
+            tout = int(timeout_sec) if timeout_sec is not None else DEFAULT_DANQING_CLI_TIMEOUT_SEC
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=tout,
+                env=env,
+                cwd=str(PROJECT_ROOT),
+            )
+            elapsed = time.time() - t0
+            if proc.returncode != 0:
+                print(f"    [danqing-video] 失败 (exit={proc.returncode})")
+                if proc.stderr:
+                    print(f"    [danqing-video] stderr: {proc.stderr[:STDERR_HEAD_CHARS]}")
+                return False
+            print(f"    [danqing-video] 生成完成 ({elapsed:.1f}s)")
+            print(f"    [danqing-video] 输出: {output_path}")
+            return True
+        except subprocess.TimeoutExpired:
+            print(f"    [danqing-video] 超时 ({tout}s)")
+            return False
+        except FileNotFoundError:
+            print(f"    [danqing-video] 未找到 CLI: {cli}")
+            return False
+
     def _run_danqing_audio_generate(
         self, case: SanityCase, output_path: Path, *, timeout_sec: int | None = None
     ) -> bool:
         cli = PROJECT_ROOT / "bin" / "danqing-audio-generate"
+        base = self._audio_model_base(case)
+        is_heartmula = base.startswith("heartmula")
         cmd = [
             sys.executable,
             str(cli),
@@ -536,8 +606,6 @@ class SanitySuiteRunner(BenchmarkRunner):
             case.lyrics or "[Instrumental]",
             "--duration",
             str(int(case.duration)),
-            "--steps",
-            str(int(case.steps)),
             "--guidance",
             str(float(case.guidance)),
             "--seed",
@@ -549,6 +617,16 @@ class SanitySuiteRunner(BenchmarkRunner):
             "--output",
             str(output_path),
         ]
+        if not is_heartmula and case.steps is not None:
+            cmd.extend(["--steps", str(int(case.steps))])
+        if case.temperature is not None:
+            cmd.extend(["--temperature", str(float(case.temperature))])
+        if case.top_k is not None:
+            cmd.extend(["--top-k", str(int(case.top_k))])
+        if case.codec_steps is not None:
+            cmd.extend(["--codec-steps", str(int(case.codec_steps))])
+        if case.codec_guidance is not None:
+            cmd.extend(["--codec-guidance", str(float(case.codec_guidance))])
         try:
             t0 = time.time()
             env = os.environ.copy()
@@ -557,10 +635,11 @@ class SanitySuiteRunner(BenchmarkRunner):
             env["PYTHONUNBUFFERED"] = "1"
             if case.id.endswith("-cuda-sanity"):
                 env["DANQING_FORCE_AUDIO_BACKEND"] = "cuda"
-            if not case.ace_step_use_lm:
-                env["ACESTEP_USE_LM"] = "0"
-            else:
-                env.setdefault("ACESTEP_USE_LM", "1")
+            if not is_heartmula:
+                if not case.ace_step_use_lm:
+                    env["ACESTEP_USE_LM"] = "0"
+                else:
+                    env.setdefault("ACESTEP_USE_LM", "1")
             tout = int(timeout_sec) if timeout_sec is not None else DEFAULT_DANQING_CLI_TIMEOUT_SEC
             proc = subprocess.run(
                 cmd,
@@ -588,9 +667,73 @@ class SanitySuiteRunner(BenchmarkRunner):
 
     def run_one_sanity(self, case: SanityCase) -> SanityResult:
         media = (case.media or "image").strip().lower()
-        ext = "wav" if media == "audio" else "png"
+        ext = "mp4" if media == "video" else ("wav" if media == "audio" else "png")
         out_path = self.output_dir / f"{case.id}_sanity.{ext}"
         tout = case.timeout_sec if case.timeout_sec is not None else DEFAULT_DANQING_CLI_TIMEOUT_SEC
+
+        if media == "video":
+            if not mlx_runtime_available():
+                print("    [SKIP] MLX 不可用，跳过 Wan 视频健全性")
+                res = SanityResult(
+                    ok=True,
+                    reason="skip_no_mlx",
+                    mean_luma=0.0,
+                    std_luma=0.0,
+                    entropy_bits=0.0,
+                    laplacian_var=0.0,
+                    skipped=True,
+                )
+                self.sanity_results.append((case, res))
+                print(f"  SKIP: {res.reason}")
+                return res
+            if not wan_video_bundle_installed():
+                print(
+                    "    [SKIP] Wan bundle 未安装"
+                    f"（见 {WAN_VIDEO_BUNDLE}）"
+                )
+                res = SanityResult(
+                    ok=True,
+                    reason="skip_missing_wan_bundle",
+                    mean_luma=0.0,
+                    std_luma=0.0,
+                    entropy_bits=0.0,
+                    laplacian_var=0.0,
+                    skipped=True,
+                )
+                self.sanity_results.append((case, res))
+                print(f"  SKIP: {res.reason}")
+                return res
+            t0 = time.time()
+            ok = self._run_danqing_video_generate(case, out_path, timeout_sec=tout)
+            elapsed = time.time() - t0
+            if not ok:
+                res = SanityResult(
+                    ok=False,
+                    reason="danqing_video_cli_failed",
+                    mean_luma=0.0,
+                    std_luma=0.0,
+                    entropy_bits=0.0,
+                    laplacian_var=0.0,
+                )
+                self.sanity_results.append((case, res))
+                print(f"  FAIL: {res.reason} ({elapsed:.1f}s)")
+                return res
+            res = check_output_video(out_path)
+            self.sanity_results.append((case, res))
+            status = "PASS" if res.ok else "FAIL"
+            detail = res.reason if not res.ok else (
+                f"frame_std={res.std_luma:.4f} mean_luma={res.mean_luma:.3f}"
+            )
+            label = "BASELINE" if case.is_timing_baseline else status
+            print(f"  {label}: {detail} ({elapsed:.1f}s)")
+            if case.is_timing_baseline:
+                print(
+                    f"    [BASELINE] model={case.model} steps={case.steps} "
+                    f"frames={case.video_num_frames} size={case.video_size} "
+                    f"total_sec={elapsed:.1f}"
+                )
+            print(f"    output: {out_path}")
+            return res
 
         if media == "audio":
             if case.id.endswith("-cuda-sanity") and not cuda_runtime_available():
@@ -607,11 +750,59 @@ class SanitySuiteRunner(BenchmarkRunner):
                 self.sanity_results.append((case, res))
                 print(f"  SKIP: {res.reason}")
                 return res
-            if not ace_step_bundle_installed():
-                print("    [SKIP] ACE-Step bundle 未安装（见 models/Audio/acestep-v15-xl-sft）")
+            base = self._audio_model_base(case)
+            if base.startswith("heartmula"):
+                if not mlx_runtime_available():
+                    print("    [SKIP] MLX 不可用，跳过 HeartMuLa 健全性")
+                    res = SanityResult(
+                        ok=True,
+                        reason="skip_no_mlx",
+                        mean_luma=0.0,
+                        std_luma=0.0,
+                        entropy_bits=0.0,
+                        laplacian_var=0.0,
+                        skipped=True,
+                    )
+                    self.sanity_results.append((case, res))
+                    print(f"  SKIP: {res.reason}")
+                    return res
+                if not heartmula_bundle_installed():
+                    print(
+                        "    [SKIP] HeartMuLa bundle 未安装"
+                        "（见 models/Audio/heartmula-oss-3b-happy-new-year）"
+                    )
+                    res = SanityResult(
+                        ok=True,
+                        reason="skip_missing_heartmula_bundle",
+                        mean_luma=0.0,
+                        std_luma=0.0,
+                        entropy_bits=0.0,
+                        laplacian_var=0.0,
+                        skipped=True,
+                    )
+                    self.sanity_results.append((case, res))
+                    print(f"  SKIP: {res.reason}")
+                    return res
+            elif base.startswith("ace-step"):
+                if not ace_step_bundle_installed():
+                    print("    [SKIP] ACE-Step bundle 未安装（见 models/Audio/acestep-v15-xl-sft）")
+                    res = SanityResult(
+                        ok=True,
+                        reason="skip_missing_ace_step_bundle",
+                        mean_luma=0.0,
+                        std_luma=0.0,
+                        entropy_bits=0.0,
+                        laplacian_var=0.0,
+                        skipped=True,
+                    )
+                    self.sanity_results.append((case, res))
+                    print(f"  SKIP: {res.reason}")
+                    return res
+            else:
+                print(f"    [SKIP] 未知音频模型 {base!r}")
                 res = SanityResult(
                     ok=True,
-                    reason="skip_missing_ace_step_bundle",
+                    reason="skip_unknown_audio_model",
                     mean_luma=0.0,
                     std_luma=0.0,
                     entropy_bits=0.0,
@@ -701,11 +892,25 @@ class SanitySuiteRunner(BenchmarkRunner):
         print(f"{'='*60}\n")
         for case in ALL_SANITY_CASES:
             print(f"[{case.id}] {case.description}")
-            if (case.media or "image").strip().lower() == "audio":
+            media = (case.media or "image").strip().lower()
+            if media == "video":
                 print(
                     f"  model={case.model} seed={case.seed} steps={case.steps} "
-                    f"duration={case.duration}s guidance={case.guidance} lm={case.ace_step_use_lm}"
+                    f"frames={case.video_num_frames} size={case.video_size} "
+                    f"baseline={case.is_timing_baseline}"
                 )
+            elif media == "audio":
+                base = self._audio_model_base(case)
+                if base.startswith("heartmula"):
+                    print(
+                        f"  model={case.model} seed={case.seed} duration={case.duration}s "
+                        f"guidance={case.guidance} temperature={case.temperature} top_k={case.top_k}"
+                    )
+                else:
+                    print(
+                        f"  model={case.model} seed={case.seed} steps={case.steps} "
+                        f"duration={case.duration}s guidance={case.guidance} lm={case.ace_step_use_lm}"
+                    )
             else:
                 print(
                     f"  model={case.model} seed={case.seed} steps={case.steps} "

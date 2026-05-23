@@ -25,7 +25,7 @@ Plugin-style image and video generation studio with **MLX** (Apple Silicon) and 
 
 ### Studio tabs ↔ model `actions`
 
-Creation tabs only list models that declare the required `action` in `config/models_registry.json`.
+Creation tabs only list models that declare the required `action` in the workspace `config/models_registry.json` (seeded from `default_config/`).
 
 #### Image create
 
@@ -153,7 +153,7 @@ DanQing-Studio/
 ├── frontend/                # Vue 3 + Vite + TypeScript
 ├── desktop/                 # Tauri 2 shell
 ├── bin/                     # launch.sh, stop.sh, danqing-*
-├── config/                  # models_registry.json, presets, locales
+├── default_config/          # factory models_registry, presets, locales, workspace.pointer
 ├── scripts/                 # build, lint gates, desktop packaging
 ├── tests/benchmark/         # mflux + sanity harness
 ├── docs/                    # dual_platform_architecture.md
@@ -206,7 +206,7 @@ See [desktop/README.md](desktop/README.md).
 
 ## Configuration
 
-**App settings** — `config/.app_config.json`:
+**App settings** — `{workspace}/config/.app_config.json`:
 
 ```json
 {
@@ -218,7 +218,7 @@ See [desktop/README.md](desktop/README.md).
 }
 ```
 
-**Model registry** — `config/models_registry.json` (`schema_version: 2`): `engines`, `actions`, `parameters`, `versions`, bilingual `name` / `description`.
+**Model registry** — `{workspace}/config/models_registry.json` (`schema_version: 2`; factory copy in `default_config/`): `engines`, `actions`, `parameters`, `versions`, bilingual `name` / `description`.
 
 **Environment** (optional `.env`):
 
@@ -293,7 +293,7 @@ MIT
 
 ### 创作页 ↔ 模型 `actions`
 
-与上文英文表格一致：文生图 `create`；改图 `rewrite`；局部修饰 `retouch`；扩展 `extend`；放大 `upscale`；文生视频 `create`；图生视频 `animate`。完整列表见 `config/models_registry.json`。
+与上文英文表格一致：文生图 `create`；改图 `rewrite`；局部修饰 `retouch`；扩展 `extend`；放大 `upscale`；文生视频 `create`；图生视频 `animate`。完整列表见工作区 `config/models_registry.json`（出厂默认在 `default_config/`）。
 
 音频接口已入队，但**无推理后端**时会在任务日志中**显式失败**（不静默降级）。
 
@@ -351,9 +351,10 @@ make pack-macos-desktop
 
 ### 配置
 
-- `config/.app_config.json` — 语言、主题、默认模型、`mlx_memory_limit`、`queue_image_first` 等
-- `config/models_registry.json` — 模型能力、`actions`、`parameters`、双语名称
-- `config/presets.json` — 提示词预设（须含 `applies_to`、`media_scope`）
+- `default_config/workspace.pointer.json` — 自定义工作区路径（本地，不进 git）
+- `{workspace}/config/.app_config.json` — 语言、主题、默认模型、`mlx_memory_limit`、`queue_image_first` 等
+- `{workspace}/config/models_registry.json` — 模型能力、`actions`、`parameters`、双语名称
+- `{workspace}/config/presets.json` — 提示词预设（须含 `applies_to`、`media_scope`）
 
 ### 常用 Make 目标
 

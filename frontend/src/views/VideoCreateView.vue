@@ -395,8 +395,13 @@
                 :status="currentTask.status === 'failed' ? 'exception' : ''"
               />
               <div class="studio-task-status">
-                <template v-if="currentTask.total > 0 && currentTask.status === 'running'">
-                  Step {{ currentTask.step }}/{{ currentTask.total }} &nbsp;
+                <template v-if="currentTask.status === 'running'">
+                  <template v-if="currentTask.progressMessage === 'post'">
+                    {{ $tt('studio.queuePostProcessHint') }} &nbsp;
+                  </template>
+                  <template v-else-if="currentTask.total > 0">
+                    Step {{ currentTask.step }}/{{ currentTask.total }} &nbsp;
+                  </template>
                 </template>
                 <DqTag :type="getStatusType(currentTask.status)" size="small">
                   {{ getStatusText(currentTask.status) }}
@@ -514,7 +519,7 @@ import { ref, reactive, computed, watch, onMounted, inject, nextTick } from 'vue
 import type { Ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { toast } from '@/utils/feedback';
-import { api } from '@/utils/api';
+import { api, taskIdFromSubmitResponse } from '@/utils/api';
 import { $tt, $mn, $mvn, $pn } from '@/utils/i18n';
 import { useRegistryStore } from '@/stores/registry';
 import { DQ_STORAGE } from '@/utils/storage';
@@ -592,13 +597,13 @@ const params = reactive({
   negative_prompt: '',
   model: '',
   version: '',
-  width: 768,
-  height: 512,
-  num_frames: 97,
-  fps: 24,
-  steps: 4,
-  guide_scale: 3.0,
-  shift: 0.0,
+  width: 720,
+  height: 480,
+  num_frames: 49,
+  fps: 8,
+  steps: 50,
+  guide_scale: 5.0,
+  shift: 5.0,
   seed: '',
   image_path: '',
   upscale_scale: 4,
@@ -610,8 +615,10 @@ const selectedModelVersion = ref('');
 
 // State
 const currentTask = ref<any>(null);
+const generating = ref(false);
 const logs = ref<{ time: string; message: string; level: string }[]>([]);
 const genLogLastStep = ref(0);
+const genLogLastPhase = ref<'denoise' | 'post' | null>(null);
 const previewVideo = ref('');
 const previewVideoKey = ref(0);
 const previewVideoPlayerRef = ref<{ load?: () => void; togglePlay?: () => void } | null>(null);
@@ -650,11 +657,27 @@ const advancedParamsOpen = ref<string[]>(['advanced']);
 
 /** Plan §3.1: Create (text-to-video) and Animate (image-to-video) */
 const videoWorkMode = ref('create');
-const videoWorkSegmentOptions = computed(() => [
-  { label: $tt('action.video.create'), value: 'create' },
-  { label: $tt('action.video.animate'), value: 'animate' },
-  { label: $tt('action.video.upscale'), value: 'upscale' },
-]);
+const videoWorkSegmentOptions = computed(() => {
+  const acts = currentModelConfig.value?.actions || {};
+  const opts: { label: string; value: string }[] = [];
+  if (videoSupportsCreate(acts)) {
+    opts.push({ label: $tt('action.video.create'), value: 'create' });
+  }
+  if (videoSupportsAnimate(acts)) {
+    opts.push({ label: $tt('action.video.animate'), value: 'animate' });
+  }
+  if (videoSupportsUpscale(acts)) {
+    opts.push({ label: $tt('action.video.upscale'), value: 'upscale' });
+  }
+  if (opts.length === 0) {
+    return [
+      { label: $tt('action.video.create'), value: 'create' },
+      { label: $tt('action.video.animate'), value: 'animate' },
+      { label: $tt('action.video.upscale'), value: 'upscale' },
+    ];
+  }
+  return opts;
+});
 const setVideoWorkMode = (mode: string) => {
   if (mode === 'animate') {
     videoWorkMode.value = 'animate';
@@ -843,6 +866,7 @@ const selectedModelNotReady = computed(() => {
 });
 
 const submitDisabled = computed(() => {
+  if (generating.value) return true;
   if (selectedModelNotReady.value) return true;
   if (videoWorkMode.value === 'upscale') {
     return !sourceVideoSrc.value;
@@ -876,9 +900,7 @@ const currentVersionDiskSize = computed(() => {
 // Load model registry and status
 const loadModelRegistry = async () => {
   try {
-    const regPromise = registryStore.registry
-      ? Promise.resolve(registryStore.registry)
-      : registryStore.load().then((r) => r || { models: {} });
+    const regPromise = registryStore.load(true);
     const [registryData, detailedStatusData] = await Promise.all([
       regPromise,
       api.settings.getModelsDetailedStatus(),
@@ -1135,7 +1157,33 @@ const startGeneration = async () => {
       currentModelConfig.value.versions[params.version]) ||
     null;
   const sizeHuman = verCfg && verCfg.size ? String(verCfg.size) : '';
-  warnIfRiskyMemory({ systemInfo: systemInfo?.value, versionSizeHuman: sizeHuman, $tt });
+  const minMemRaw = currentModelConfig.value?.parameters?.min_unified_memory_gb;
+  const minUnifiedMemoryGb =
+    minMemRaw != null && Number(minMemRaw) > 0 ? Number(minMemRaw) : null;
+  warnIfRiskyMemory({
+    systemInfo: systemInfo?.value,
+    versionSizeHuman: sizeHuman,
+    minUnifiedMemoryGb,
+    $tt,
+  });
+
+  if (videoWorkMode.value === 'animate' && !startImageSrc.value) {
+    toast.warning($tt('video.needStartImage'));
+    return;
+  }
+  if (videoWorkMode.value === 'upscale' && !sourceVideoSrc.value) {
+    toast.warning($tt('video.upscaleNeedSource'));
+    return;
+  }
+
+  generating.value = true;
+  currentTask.value = {
+    id: '',
+    progress: 0,
+    step: 0,
+    total: 0,
+    status: 'submitting',
+  };
 
   addLog($tt('studio.startingGen'), 'info');
 
@@ -1143,10 +1191,6 @@ const startGeneration = async () => {
     const modelStr = params.version ? `${params.model}:${params.version}` : params.model;
     let submitRes: any;
     if (videoWorkMode.value === 'animate') {
-      if (!startImageSrc.value) {
-        toast.warning($tt('video.needStartImage'));
-        return;
-      }
       let source_asset_id: string;
       const sp = startImagePath.value;
       if (typeof sp === 'string' && sp.startsWith('asset:')) {
@@ -1194,10 +1238,6 @@ const startGeneration = async () => {
       }
       submitRes = await api.gen.createVideoEdit(animateBody);
     } else if (videoWorkMode.value === 'upscale') {
-      if (!sourceVideoSrc.value) {
-        toast.warning($tt('video.upscaleNeedSource'));
-        return;
-      }
       let source_asset_id: string;
       const vp = sourceVideoPath.value;
       if (typeof vp === 'string' && vp.startsWith('asset:')) {
@@ -1249,14 +1289,19 @@ const startGeneration = async () => {
       }
       submitRes = await api.gen.createVideoGeneration(body);
     }
-    const tid = submitRes.task.id;
+    const tid = taskIdFromSubmitResponse(submitRes);
+    if (!tid) {
+      throw new Error('missing task id in submit response');
+    }
     genLogLastStep.value = 0;
+    genLogLastPhase.value = null;
     currentTask.value = {
       id: tid,
       progress: 0,
       step: 0,
       total: 0,
       status: 'queued',
+      progressMessage: null,
       params: { model: modelStr },
     };
     api.gen.streamMediaTask(tid, {
@@ -1268,6 +1313,7 @@ const startGeneration = async () => {
         }
       },
       onDone: async (doneData: any) => {
+        generating.value = false;
         if (doneData.status === 'completed') {
           addLog($tt('studio.genComplete'), 'success');
           const updated = await api.gen.getMediaTask(tid) as any;
@@ -1313,12 +1359,26 @@ const startGeneration = async () => {
             : currentTask.value.total;
         currentTask.value.step = nextStep;
         currentTask.value.total = nextTotal;
+        if (progressData.message != null) {
+          currentTask.value.progressMessage = progressData.message;
+        }
+        if (progressData.message === 'post') {
+          if (genLogLastPhase.value !== 'post') {
+            genLogLastPhase.value = 'post';
+            addLog($tt('studio.queuePostProcessHint'), 'info');
+          }
+        } else if (progressData.message === 'denoise') {
+          genLogLastPhase.value = 'denoise';
+        }
         if (nextTotal > 0 && nextStep > 0) {
           genLogLastStep.value = nextStep;
         }
       },
     });
   } catch (e: any) {
+    generating.value = false;
+    currentTask.value = null;
+    toast.error($tt('studio.error', { msg: e.message || String(e) }));
     addLog($tt('studio.error', { msg: e.message }), 'error');
   }
 };
@@ -1497,6 +1557,17 @@ watch(videoWorkMode, () => {
     }
   }
 });
+
+watch(
+  () => currentModelConfig.value?.actions,
+  () => {
+    const values = videoWorkSegmentOptions.value.map((o) => o.value);
+    if (values.length > 0 && !values.includes(videoWorkMode.value)) {
+      videoWorkMode.value = values[0];
+    }
+  },
+  { deep: true },
+);
 
 watch(modelFilterCommercialOnly, () => {
   if (

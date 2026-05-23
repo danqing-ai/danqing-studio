@@ -130,7 +130,7 @@ def get_workspace_status():
     from backend.utils.workspace import is_workspace_configured
 
     return {
-        "configured": is_workspace_configured(bootstrap),
+        "configured": is_workspace_configured(path_resolver.get_default_config_root()),
         "effective_root": str(path_resolver.get_project_root()),
         "bootstrap_root": str(bootstrap),
     }

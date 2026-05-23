@@ -6,13 +6,17 @@ MLX Conv3d / Conv2d expect ``[out_c, kt, kh, kw, in_c]`` / ``[out_c, kh, kw, in_
 from __future__ import annotations
 
 import json
+import logging
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import mlx.core as mx
 import mlx.nn as nn
 
 from backend.engine.runtime._base import RuntimeContext
+
+logger = logging.getLogger(__name__)
 
 
 def _conv3d_weight_torch_to_mlx(w: mx.array) -> mx.array:
@@ -65,8 +69,24 @@ def _swish(x: mx.array) -> mx.array:
     return nn.silu(x)
 
 
+def _chunk_along_time_ndhwc(x: mx.array, parts: int) -> list[mx.array]:
+    """Split ``[B,T,H,W,C]`` along time (axis=1) into ``parts`` contiguous slices."""
+    t = int(x.shape[1])
+    n = max(1, int(parts))
+    if n <= 1 or t <= 1:
+        return [x]
+    chunk_size = (t + n - 1) // n
+    chunks: list[mx.array] = []
+    for start in range(0, t, chunk_size):
+        chunks.append(x[:, start : start + chunk_size, :, :, :])
+    return chunks
+
+
 class SafeConv3d(nn.Module):
-    """Maps to ``CogVideoXSafeConv3d`` — Conv3d on NDHWC without temporal chunking (MLX)."""
+    """Maps to ``CogVideoXSafeConv3d`` — Conv3d on NDHWC with temporal chunking to avoid OOM."""
+
+    _MEMORY_CHUNK_GB = 0.5
+    _MAX_PIXELS_PER_CHUNK = 13 * 120 * 180  # ~single-tile upper bound at late decoder stages
 
     def __init__(
         self,
@@ -98,7 +118,31 @@ class SafeConv3d(nn.Module):
         )
 
     def __call__(self, x_ndhwc: mx.array) -> mx.array:
-        return self.conv(x_ndhwc)
+        b, t, h, w, c = x_ndhwc.shape
+        memory_gb = (float(b) * float(t) * float(h) * float(w) * float(c) * 2.0) / (1024.0 ** 3)
+        pixel_volume = float(b) * float(t) * float(h) * float(w)
+        if memory_gb <= self._MEMORY_CHUNK_GB and pixel_volume <= float(self._MAX_PIXELS_PER_CHUNK):
+            return self.conv(x_ndhwc)
+
+        kt = int(self.conv.weight.shape[1])
+        part_num = int(memory_gb / self._MEMORY_CHUNK_GB) + 1
+        input_chunks = _chunk_along_time_ndhwc(x_ndhwc, part_num)
+
+        if kt > 1 and len(input_chunks) > 1:
+            overlapped = [input_chunks[0]]
+            for i in range(1, len(input_chunks)):
+                tail = input_chunks[i - 1][:, -(kt - 1) :, :, :, :]
+                overlapped.append(mx.concatenate([tail, input_chunks[i]], axis=1))
+            input_chunks = overlapped
+
+        output_chunks: list[mx.array] = []
+        for chunk in input_chunks:
+            out = self.conv(chunk)
+            mx.eval(out)
+            output_chunks.append(out)
+        if len(output_chunks) == 1:
+            return output_chunks[0]
+        return mx.concatenate(output_chunks, axis=1)
 
 
 class CausalConv3d(nn.Module):
@@ -182,10 +226,10 @@ class SpatialNorm3D(nn.Module):
             f_rest = f_ncthw[:, :, 1:, :, :]
             z_first = zq_ncthw[:, :, :1, :, :]
             z_rest = zq_ncthw[:, :, 1:, :, :]
-            _, _, _, hf, wf = f_first.shape
-            _, _, _, hr, wr = f_rest.shape
-            z_first = _interpolate_nearest_ncthw(z_first, 1, int(hf), int(wf))
-            z_rest = _interpolate_nearest_ncthw(z_rest, int(z_rest.shape[2]), int(hr), int(wr))
+            t_first, h_first, w_first = int(f_first.shape[2]), int(f_first.shape[3]), int(f_first.shape[4])
+            t_rest, h_rest, w_rest = int(f_rest.shape[2]), int(f_rest.shape[3]), int(f_rest.shape[4])
+            z_first = _interpolate_nearest_ncthw(z_first, t_first, h_first, w_first)
+            z_rest = _interpolate_nearest_ncthw(z_rest, t_rest, h_rest, w_rest)
             zq_ncthw = mx.concatenate([z_first, z_rest], axis=2)
         else:
             tt, th, tw = int(f_ncthw.shape[2]), int(f_ncthw.shape[3]), int(f_ncthw.shape[4])
@@ -544,7 +588,12 @@ class CogVideoXDecoder3DMlx(nn.Module):
         self,
         sample_ncthw: mx.array,
         conv_cache: dict[str, mx.array | None] | None = None,
+        on_stage: Callable[[float], None] | None = None,
     ) -> tuple[mx.array, dict[str, mx.array | None]]:
+        def _stage(frac: float) -> None:
+            if on_stage is not None:
+                on_stage(min(1.0, max(0.0, float(frac))))
+
         conv_cache = conv_cache or {}
         new_cache: dict[str, mx.array | None] = {}
 
@@ -552,19 +601,25 @@ class CogVideoXDecoder3DMlx(nn.Module):
         x_ndhwc = _ncthw_to_ndhwc(sample_ncthw)
         h, new_cache["conv_in"] = self.conv_in(x_ndhwc, conv_cache.get("conv_in"))
         hidden = _ndhwc_to_ncthw(h)
+        _stage(0.08)
 
         hidden, new_cache["mid_block"] = self.mid_block(hidden, None, zq, conv_cache.get("mid_block"))
+        _stage(0.22)
 
         for i in range(self._num_up_blocks):
             key = f"up_block_{i}"
             ub = getattr(self, key)
             hidden, new_cache[key] = ub(hidden, None, zq, conv_cache.get(key))
+            _stage(0.22 + 0.68 * ((i + 1) / max(self._num_up_blocks, 1)))
 
         hidden, new_cache["norm_out"] = self.norm_out(hidden, zq, conv_cache.get("norm_out"))
         hidden = nn.silu(hidden)
+        _stage(0.95)
         ho_ndhwc = _ncthw_to_ndhwc(hidden)
         ho2, new_cache["conv_out"] = self.conv_out(ho_ndhwc, conv_cache.get("conv_out"))
         out = _ndhwc_to_ncthw(ho2)
+        mx.eval(out)
+        _stage(1.0)
         return out, new_cache
 
 
@@ -646,14 +701,8 @@ def build_cogvideox_decoder_mlx(vae_cfg: dict[str, Any]) -> CogVideoXDecoder3DMl
 
 
 def load_vae_bundle_weights(bundle_root: Path) -> tuple[dict[str, mx.array], dict[str, Any]]:
+    vae_cfg = _read_vae_config(bundle_root)
     vae_dir = bundle_root / "vae"
-    if not vae_dir.is_dir():
-        raise RuntimeError(f"CogVideoX VAE directory missing: {vae_dir}")
-    cfg_path = vae_dir / "config.json"
-    if not cfg_path.is_file():
-        raise RuntimeError(f"CogVideoX VAE config missing: {cfg_path}")
-    with open(cfg_path, encoding="utf-8") as f:
-        vae_cfg = json.load(f)
 
     merged: dict[str, mx.array] = {}
     for sf in sorted(vae_dir.glob("*.safetensors")):
@@ -672,10 +721,246 @@ def load_vae_bundle_weights(bundle_root: Path) -> tuple[dict[str, mx.array], dic
     return dec_weights, vae_cfg
 
 
+def _read_vae_config(bundle_root: Path) -> dict[str, Any]:
+    vae_dir = bundle_root / "vae"
+    if not vae_dir.is_dir():
+        raise RuntimeError(f"CogVideoX VAE directory missing: {vae_dir}")
+    cfg_path = vae_dir / "config.json"
+    if not cfg_path.is_file():
+        raise RuntimeError(f"CogVideoX VAE config missing: {cfg_path}")
+    with open(cfg_path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+_decoder_cache: dict[str, CogVideoXDecoder3DMlx] = {}
+
+
+def _get_cogvideox_decoder(bundle_root: Path) -> CogVideoXDecoder3DMlx:
+    """Reuse loaded VAE decoder per bundle (avoid re-reading safetensors after each denoise run)."""
+    key = str(bundle_root.resolve())
+    cached = _decoder_cache.get(key)
+    if cached is not None:
+        return cached
+    weights, vae_cfg = load_vae_bundle_weights(bundle_root)
+    dec = build_cogvideox_decoder_mlx(vae_cfg)
+    _assign_decoder_weights(dec, weights)
+    _decoder_cache[key] = dec
+    return dec
+
+
+@dataclass(frozen=True)
+class _VaeTileParams:
+    tile_sample_min_height: int
+    tile_sample_min_width: int
+    tile_latent_min_height: int
+    tile_latent_min_width: int
+    overlap_h: float
+    overlap_w: float
+    frame_batch_size: int
+
+
+def _vae_tile_params(
+    vae_cfg: dict[str, Any], latent_h: int, latent_w: int, frame_batch_size: int = 2,
+) -> _VaeTileParams:
+    """Match diffusers ``AutoencoderKLCogVideoX`` tiling defaults (720×480 tested)."""
+    block_out = vae_cfg.get("block_out_channels", [128, 256, 256, 512])
+    spatial_up = 2 ** (len(block_out) - 1)
+    sample_h = int(vae_cfg.get("sample_height", latent_h * spatial_up))
+    sample_w = int(vae_cfg.get("sample_width", latent_w * spatial_up))
+    return _VaeTileParams(
+        tile_sample_min_height=sample_h // 2,
+        tile_sample_min_width=sample_w // 2,
+        tile_latent_min_height=max(1, sample_h // 2 // spatial_up),
+        tile_latent_min_width=max(1, sample_w // 2 // spatial_up),
+        overlap_h=1.0 / 6.0,
+        overlap_w=1.0 / 5.0,
+        frame_batch_size=max(1, int(frame_batch_size)),
+    )
+
+
+def _needs_tiled_vae_decode(latent_h: int, latent_w: int, params: _VaeTileParams) -> bool:
+    """Diffusers ``AutoencoderKLCogVideoX`` defaults to ``use_tiling=False`` (temporal batching only).
+
+    Spatial tiling is opt-in there; our MLX port matches that default because edge tiles and
+    row concatenation produce visible grid artifacts at 720×480 when stitching is imperfect.
+    """
+    del latent_h, latent_w, params
+    return False
+
+
+def _blend_v(a_ncthw: mx.array, b_ncthw: mx.array, blend_extent: int) -> mx.array:
+    """Vertical blend for tiled decode (diffusers ``blend_v``)."""
+    be = min(int(a_ncthw.shape[3]), int(b_ncthw.shape[3]), int(blend_extent))
+    if be <= 0:
+        return b_ncthw
+    rows: list[mx.array] = []
+    for y in range(int(b_ncthw.shape[3])):
+        if y < be:
+            alpha = float(y) / float(be)
+            merged = (
+                a_ncthw[:, :, :, -be + y, :] * (1.0 - alpha)
+                + b_ncthw[:, :, :, y, :] * alpha
+            )
+            rows.append(mx.expand_dims(merged, axis=3))
+        else:
+            rows.append(mx.expand_dims(b_ncthw[:, :, :, y, :], axis=3))
+    return mx.concatenate(rows, axis=3)
+
+
+def _blend_h(a_ncthw: mx.array, b_ncthw: mx.array, blend_extent: int) -> mx.array:
+    """Horizontal blend for tiled decode (diffusers ``blend_h``)."""
+    be = min(int(a_ncthw.shape[4]), int(b_ncthw.shape[4]), int(blend_extent))
+    if be <= 0:
+        return b_ncthw
+    cols: list[mx.array] = []
+    for x in range(int(b_ncthw.shape[4])):
+        if x < be:
+            alpha = float(x) / float(be)
+            merged = (
+                a_ncthw[:, :, :, :, -be + x] * (1.0 - alpha)
+                + b_ncthw[:, :, :, :, x] * alpha
+            )
+            cols.append(mx.expand_dims(merged, axis=4))
+        else:
+            cols.append(mx.expand_dims(b_ncthw[:, :, :, :, x], axis=4))
+    return mx.concatenate(cols, axis=4)
+
+
+def _decode_decoder_temporal_batched(
+    dec: CogVideoXDecoder3DMlx,
+    z_ncthw: mx.array,
+    *,
+    frame_batch_size: int = 2,
+    conv_cache: dict[str, mx.array | None] | None = None,
+    on_log: Callable[[str], None] | None = None,
+) -> mx.array:
+    """Temporal micro-batches with causal ``conv_cache`` (diffusers ``_decode``)."""
+    num_frames = int(z_ncthw.shape[2])
+    num_batches = max(num_frames // frame_batch_size, 1)
+    out_parts: list[mx.array] = []
+    cache = conv_cache
+    for i in range(num_batches):
+        remaining_frames = num_frames % frame_batch_size
+        start_frame = frame_batch_size * i + (0 if i == 0 else remaining_frames)
+        end_frame = frame_batch_size * (i + 1) + remaining_frames
+        z_slice = z_ncthw[:, :, start_frame:end_frame]
+        z_slice, cache = dec(z_slice, conv_cache=cache, on_stage=None)
+        mx.eval(z_slice)
+        out_parts.append(z_slice)
+        msg = (
+            f"CogVideoX VAE temporal batch {i + 1}/{num_batches} "
+            f"(latent frames {start_frame}..{end_frame - 1}, pixel T={int(z_slice.shape[2])})"
+        )
+        logger.info(msg)
+        if on_log is not None:
+            on_log(msg)
+    if len(out_parts) == 1:
+        return out_parts[0]
+    return mx.concatenate(out_parts, axis=2)
+
+
+def _tiled_decode_latents(
+    dec: CogVideoXDecoder3DMlx,
+    z_ncthw: mx.array,
+    params: _VaeTileParams,
+    on_stage: Callable[[float], None] | None,
+    on_log: Callable[[str], None] | None = None,
+) -> mx.array:
+    """Spatial tiling + temporal batching (diffusers ``tiled_decode``)."""
+    _, _, _, height, width = z_ncthw.shape
+    overlap_height = int(params.tile_latent_min_height * (1.0 - params.overlap_h))
+    overlap_width = int(params.tile_latent_min_width * (1.0 - params.overlap_w))
+    overlap_height = max(1, overlap_height)
+    overlap_width = max(1, overlap_width)
+    blend_extent_height = int(params.tile_sample_min_height * params.overlap_h)
+    blend_extent_width = int(params.tile_sample_min_width * params.overlap_w)
+    row_limit_height = params.tile_sample_min_height - blend_extent_height
+    row_limit_width = params.tile_sample_min_width - blend_extent_width
+
+    row_starts = list(range(0, int(height), overlap_height))
+    col_starts = list(range(0, int(width), overlap_width))
+    total_tiles = len(row_starts) * len(col_starts)
+    tile_idx = 0
+
+    rows: list[list[mx.array]] = []
+    for i in row_starts:
+        row: list[mx.array] = []
+        for j in col_starts:
+            tile_idx += 1
+            if on_stage is not None:
+                on_stage(0.05 + 0.9 * (tile_idx - 1) / max(total_tiles, 1))
+            msg = (
+                f"CogVideoX VAE spatial tile {tile_idx}/{total_tiles} "
+                f"(latent y={i}, x={j})"
+            )
+            logger.info(msg)
+            if on_log is not None:
+                on_log(msg)
+            z_tile = z_ncthw[
+                :,
+                :,
+                :,
+                i : i + params.tile_latent_min_height,
+                j : j + params.tile_latent_min_width,
+            ]
+            decoded = _decode_decoder_temporal_batched(
+                dec, z_tile, frame_batch_size=params.frame_batch_size, on_log=on_log,
+            )
+            row.append(decoded)
+        rows.append(row)
+
+    result_rows: list[mx.array] = []
+    for ri, row in enumerate(rows):
+        result_row: list[mx.array] = []
+        for ci, tile in enumerate(row):
+            if ri > 0:
+                tile = _blend_v(rows[ri - 1][ci], tile, blend_extent_height)
+            if ci > 0:
+                tile = _blend_h(row[ci - 1], tile, blend_extent_width)
+            result_row.append(tile[:, :, :, :row_limit_height, :row_limit_width])
+        result_rows.append(mx.concatenate(result_row, axis=4))
+
+    if on_stage is not None:
+        on_stage(0.98)
+    return mx.concatenate(result_rows, axis=3)
+
+
+def _decode_latents_batched(
+    dec: CogVideoXDecoder3DMlx,
+    z_ncthw: mx.array,
+    params: _VaeTileParams,
+    on_stage: Callable[[float], None] | None,
+    on_log: Callable[[str], None] | None = None,
+) -> mx.array:
+    num_batches = max(int(z_ncthw.shape[2]) // params.frame_batch_size, 1)
+    out_parts: list[mx.array] = []
+    cache: dict[str, mx.array | None] | None = None
+    for i in range(num_batches):
+        remaining_frames = int(z_ncthw.shape[2]) % params.frame_batch_size
+        start_frame = params.frame_batch_size * i + (0 if i == 0 else remaining_frames)
+        end_frame = params.frame_batch_size * (i + 1) + remaining_frames
+        z_slice = z_ncthw[:, :, start_frame:end_frame]
+        z_slice, cache = dec(z_slice, conv_cache=cache, on_stage=None)
+        mx.eval(z_slice)
+        out_parts.append(z_slice)
+        if on_stage is not None:
+            on_stage(min(0.98, (i + 1) / num_batches))
+        msg = f"CogVideoX VAE temporal batch {i + 1}/{num_batches} (latent frames {start_frame}..{end_frame - 1})"
+        logger.info(msg)
+        if on_log is not None:
+            on_log(msg)
+    if len(out_parts) == 1:
+        return out_parts[0]
+    return mx.concatenate(out_parts, axis=2)
+
+
 def decode_latents_ncthw(
     ctx: RuntimeContext,
     latents_bcthw: mx.array,
     bundle_root: Path,
+    on_stage: Callable[[float], None] | None = None,
+    on_log: Callable[[str], None] | None = None,
+    frame_batch_size: int = 2,
 ) -> mx.array:
     """Decode ``latents_bcthw`` (Pipeline layout ``[B,C,T,H,W]``) to pixels ``[B,C,T,H,W]`` float."""
     if getattr(ctx, "backend", None) != "mlx":
@@ -683,18 +968,42 @@ def decode_latents_ncthw(
             f"CogVideoX 3D VAE decode is implemented for MLX only; got backend={getattr(ctx, 'backend', None)!r}."
         )
 
-    weights, vae_cfg = load_vae_bundle_weights(bundle_root)
-    scaling_factor = float(vae_cfg.get("scaling_factor", 1.15258426))
+    vae_cfg = _read_vae_config(bundle_root)
+    scaling_factor = float(vae_cfg.get("scaling_factor", 0.7))
     shift_factor = vae_cfg.get("shift_factor", None)
     latents = latents_bcthw
     latents = latents / scaling_factor
     if shift_factor is not None:
         latents = latents + float(shift_factor)
 
-    dec = build_cogvideox_decoder_mlx(vae_cfg)
-    _assign_decoder_weights(dec, weights)
-    mx.eval(dec.parameters())
+    logger.info("CogVideoX VAE decode: latent shape=%s", tuple(latents.shape))
+    if on_log is not None:
+        on_log(f"CogVideoX VAE decode start (latent shape {tuple(latents.shape)})")
+    dec = _get_cogvideox_decoder(bundle_root)
+    mx.eval(latents)
 
-    # [B,C,T,H,W] — decoder expects NCTHW same as diffusers.
-    sample, _ = dec(latents)
-    return mx.clip(sample, -1.0, 1.0)
+    if on_stage is not None:
+        on_stage(0.02)
+
+    _, _, _, latent_h, latent_w = latents.shape
+    tile_params = _vae_tile_params(vae_cfg, int(latent_h), int(latent_w), frame_batch_size)
+    if _needs_tiled_vae_decode(int(latent_h), int(latent_w), tile_params):
+        msg = (
+            f"CogVideoX VAE tiled decode "
+            f"(latent {latent_w}x{latent_h}, tile {tile_params.tile_latent_min_width}x{tile_params.tile_latent_min_height})"
+        )
+        logger.info(msg)
+        if on_log is not None:
+            on_log(msg)
+        sample = _tiled_decode_latents(dec, latents, tile_params, on_stage=on_stage, on_log=on_log)
+    else:
+        if on_log is not None:
+            on_log("CogVideoX VAE temporal batched decode (diffusers default, no spatial tiling)")
+        sample = _decode_latents_batched(dec, latents, tile_params, on_stage=on_stage, on_log=on_log)
+
+    sample = mx.clip(sample, -1.0, 1.0)
+    mx.eval(sample)
+    if on_stage is not None:
+        on_stage(1.0)
+    logger.info("CogVideoX VAE decode done: pixel shape=%s", tuple(sample.shape))
+    return sample

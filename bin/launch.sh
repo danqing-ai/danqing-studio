@@ -74,13 +74,16 @@ else
     echo -e "${GREEN}✓ Dependencies ready${NC}"
 fi
 
-# Data dirs under custom workspace when configured (see config/.app_config.json)
+# Data dirs under custom workspace when configured (see default_config/workspace.pointer.json)
 "$VENV_PYTHON" -c "
 from pathlib import Path
 import sys
 sys.path.insert(0, '${PROJECT_ROOT}')
+from backend.utils.config_paths import resolve_default_config_root
 from backend.utils.workspace import prepare_data_directories
-prepare_data_directories(Path('${PROJECT_ROOT}').resolve())
+root = Path('${PROJECT_ROOT}').resolve()
+default_cfg = resolve_default_config_root(bootstrap_root=root, bundle_root=None)
+prepare_data_directories(root, default_config_root=default_cfg)
 "
 
 # Build frontend if needed (Vite -> out/frontend/dist/, see frontend/vite.config.ts)

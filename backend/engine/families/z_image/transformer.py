@@ -390,6 +390,125 @@ class ZImageTransformer(TransformerBase):
         # 手动注册非 nn.Module 张量
         self._param_map["x_pad_token"] = self.x_pad_token
         self._param_map["cap_pad_token"] = self.cap_pad_token
+        self._compiled_forward = None
+        self._compiled_cfg_forward = None
+
+    def _activation_dtype(self):
+        spec = getattr(self.config, "latent_noise_dtype", None)
+        if isinstance(spec, str) and spec.lower() in ("bfloat16", "bf16"):
+            return self.ctx.bfloat16()
+        return self.ctx.float32()
+
+    def after_load_weights(self, bundle_root=None) -> None:
+        super().after_load_weights(bundle_root)
+        self._refresh_compiled_forward()
+
+    def _refresh_compiled_forward(self) -> None:
+        self._compiled_forward = None
+        self._compiled_cfg_forward = None
+        if getattr(self.ctx, "backend", None) != "mlx":
+            return
+        if not getattr(self.config, "use_mlx_compile", True):
+            return
+        try:
+            self._compiled_forward = self.ctx.compile(self._forward_cached_compute)
+        except Exception:
+            self._compiled_forward = None
+        if not getattr(self.config, "use_mlx_cfg_fusion", True):
+            return
+        try:
+            self._compiled_cfg_forward = self.ctx.compile(self._forward_cfg_cached_compute)
+        except Exception:
+            self._compiled_cfg_forward = None
+
+    def before_denoise(self, latents, timesteps, sigmas, **cond):
+        if getattr(self.ctx, "backend", None) != "mlx":
+            return latents, cond
+        cond = dict(cond)
+        txt_embeds = cond.pop("txt_embeds", None)
+        neg_embeds = cond.pop("neg_embeds", None)
+        latents_n = self._normalize_latents(latents)
+        if txt_embeds is not None:
+            cap_feats = self._resolve_cap_feats(txt_embeds, cond)
+            cap_cache = self._encode_cap_branch(cap_feats)
+            geo_cache = self._encode_geo_cache(latents_n, cap_cache[2])
+            self.ctx.eval(cap_cache[0], cap_cache[1], geo_cache[0], geo_cache[1])
+            cond["zimage_cap_cache"] = cap_cache
+            cond["zimage_geo_cache"] = geo_cache
+        if neg_embeds is not None:
+            neg_feats = self._resolve_cap_feats(neg_embeds, cond)
+            neg_cap_cache = self._encode_cap_branch(neg_feats)
+            neg_geo_cache = self._encode_geo_cache(latents_n, neg_cap_cache[2])
+            self.ctx.eval(neg_cap_cache[0], neg_cap_cache[1], neg_geo_cache[0], neg_geo_cache[1])
+            cond["zimage_neg_cap_cache"] = neg_cap_cache
+            cond["zimage_neg_geo_cache"] = neg_geo_cache
+        return latents, cond
+
+    def forward_cfg(
+        self,
+        latents,
+        timestep,
+        txt_embeds,
+        neg_embeds,
+        guidance: float,
+        sigmas=None,
+        *,
+        cfg_renorm: bool = False,
+        cfg_renorm_min: float = 0.0,
+        **conditioning,
+    ):
+        """Single fused CFG forward (MLX fast path). Returns combined noise prediction."""
+        input_shape = latents.shape
+        input_ndim = latents.ndim
+        latents_n = self._normalize_latents(latents)
+        t = self._resolve_timestep(timestep, sigmas)
+
+        cap_cache = conditioning.get("zimage_cap_cache")
+        neg_cap_cache = conditioning.get("zimage_neg_cap_cache")
+        geo_cache = conditioning.get("zimage_geo_cache")
+        neg_geo_cache = conditioning.get("zimage_neg_geo_cache")
+        if cap_cache is None:
+            cap_cache = self._encode_cap_branch(self._resolve_cap_feats(txt_embeds, conditioning))
+        if neg_cap_cache is None:
+            neg_cap_cache = self._encode_cap_branch(self._resolve_cap_feats(neg_embeds, conditioning))
+        if geo_cache is None:
+            geo_cache = self._encode_geo_cache(latents_n, cap_cache[2])
+        if neg_geo_cache is None:
+            neg_geo_cache = self._encode_geo_cache(latents_n, neg_cap_cache[2])
+
+        cap_emb, cap_freqs, _ = cap_cache
+        neg_cap_emb, neg_cap_freqs, _ = neg_cap_cache
+        x_freqs, x_pad_mask, x_len, image_size, _ = geo_cache
+        nx_freqs, nx_pad_mask, nx_len, n_image_size, _ = neg_geo_cache
+
+        use_cfg_compile = (
+            self._compiled_cfg_forward is not None
+            and not cfg_renorm
+            and x_len == nx_len
+            and image_size == n_image_size
+        )
+        if use_cfg_compile:
+            tokens = self._compiled_cfg_forward(
+                latents_n, t,
+                cap_emb, cap_freqs, x_freqs, x_pad_mask, x_len,
+                neg_cap_emb, neg_cap_freqs, nx_freqs, nx_pad_mask, nx_len,
+                float(guidance),
+            )
+            output = self._unpatchify(tokens, image_size)
+            return self._reshape_output(-output, input_shape, input_ndim)
+
+        noise_cond = self._forward_from_caches(
+            latents_n, t, cap_emb, cap_freqs, x_freqs, x_pad_mask, x_len, image_size,
+        )
+        noise_uncond = self._forward_from_caches(
+            latents_n, t, neg_cap_emb, neg_cap_freqs, nx_freqs, nx_pad_mask, nx_len, n_image_size,
+        )
+        noise_pred = self.combine_cfg_noise(noise_cond, noise_uncond, guidance)
+        if cfg_renorm:
+            noise_pred = self.refine_cfg_noise(
+                noise_cond, noise_pred, cfg_renorm_min=cfg_renorm_min,
+            )
+        return self._reshape_output(-noise_pred, input_shape, input_ndim)
 
     def combine_cfg_noise(self, noise_cond, noise_uncond, guidance: float):
         """mflux Z-Image convention: ``eps_c + g * (eps_c - eps_u)``."""
@@ -419,33 +538,48 @@ class ZImageTransformer(TransformerBase):
         Returns:
             与输入 latents 同形状 — 预测速度场 / 噪声
         """
-        ctx = self.ctx
-
-        # 记录输入格式以便恢复
         input_shape = latents.shape
         input_ndim = latents.ndim
+        latents_n = self._normalize_latents(latents)
+        t = self._resolve_timestep(timestep, sigmas)
 
-        # 使用 cap_feats 作为文本条件（兼容 pipeline 统一接口）
+        cap_cache = conditioning.get("zimage_cap_cache")
+        geo_cache = conditioning.get("zimage_geo_cache")
+        if cap_cache is not None and geo_cache is not None:
+            cap_emb, cap_freqs, _ = cap_cache
+            x_freqs, x_pad_mask, x_len, image_size, _ = geo_cache
+            output = self._forward_from_caches(
+                latents_n, t, cap_emb, cap_freqs, x_freqs, x_pad_mask, x_len, image_size,
+                use_compile=True,
+            )
+        else:
+            cap_feats = self._resolve_cap_feats(txt_embeds, conditioning)
+            output = self._forward_compute(latents_n, t, cap_feats)
+
+        return self._reshape_output(-output, input_shape, input_ndim)
+
+    def _resolve_cap_feats(self, txt_embeds, conditioning):
         cap_feats = txt_embeds
         if cap_feats is None:
             cap_feats = conditioning.get("cap_feats")
         if cap_feats is None:
             raise ValueError("ZImageTransformer requires txt_embeds (Qwen3 cap_feats)")
-        # 去掉可能的 batch 维度 (1, seq, dim) → (seq, dim)
         if cap_feats.ndim == 3 and cap_feats.shape[0] == 1:
             cap_feats = cap_feats[0]
+        return cap_feats
 
-        # 去掉 batch 维度（模型内部处理 batch=1）
+    def _normalize_latents(self, latents):
+        ctx = self.ctx
         if latents.ndim == 5 and latents.shape[0] == 1:
-            latents = latents[0]  # [C, F, H, W]
+            latents = latents[0]
         elif latents.ndim == 4 and latents.shape[0] == 1:
-            latents = latents[0]  # [C, H, W]
-        # 确保有帧维度: [C, F=1, H, W]
+            latents = latents[0]
         if latents.ndim == 3:
             latents = ctx.reshape(latents, (latents.shape[0], 1, latents.shape[1], latents.shape[2]))
+        return latents
 
-        # Time embedding — reference ZImageTransformer.__call__
-        # Integer index timestep needs sigma lookup; scalar is treated as sigma value
+    def _resolve_timestep(self, timestep, sigmas):
+        ctx = self.ctx
         t = timestep
         idx = _coerce_timestep_index(t, ctx)
         if idx is not None:
@@ -458,61 +592,192 @@ class ZImageTransformer(TransformerBase):
                 t = ctx.array(t, dtype=ctx.float32())
             if hasattr(t, "ndim") and t.ndim == 0:
                 t = ctx.reshape(t, (1,))
-            # float timestep is already (1 - sigma), do not transform again
-        t_emb = self.t_embedder.forward(ctx.mul(ctx.cast(t, ctx.float32()), self.t_scale))
+        return t
 
-        # Patchify
-        x_emb, cap_emb, x_size, x_pos_ids, cap_pos_ids, x_pad_mask, cap_pad_mask = self._patchify(
-            image=latents, cap_feats=cap_feats,
-        )
-
-        # Image embedding
-        x_emb = self.x_embedder(x_emb)
-        x_emb = ctx.where(ctx.reshape(x_pad_mask, (-1, 1)), self.x_pad_token, x_emb)
-        x_freqs_cis = self.rope.forward(x_pos_ids)
-        x_attn_mask = ctx.ones((1, x_emb.shape[0]), dtype=ctx.float32()) > 0
-        x_emb = ctx.reshape(x_emb, (1, x_emb.shape[0], x_emb.shape[1]))
-
-        # Noise refiner
-        for layer in self.noise_refiner:
-            x_emb = layer.forward(x_emb, x_attn_mask, x_freqs_cis, t_emb)
-
-        # Caption embedding
-        cap_emb = self.cap_norm(cap_emb)
-        cap_emb = self.cap_embedder(cap_emb)
-        cap_emb = ctx.where(ctx.reshape(cap_pad_mask, (-1, 1)), self.cap_pad_token, cap_emb)
-        cap_freqs_cis = self.rope.forward(cap_pos_ids)
-        cap_attn_mask = ctx.ones((1, cap_emb.shape[0]), dtype=ctx.float32()) > 0
-        cap_emb = ctx.reshape(cap_emb, (1, cap_emb.shape[0], cap_emb.shape[1]))
-
-        # Context refiner
-        for layer in self.context_refiner:
-            cap_emb = layer.forward(cap_emb, cap_attn_mask, cap_freqs_cis)
-
-        # Unify
-        x_len = x_emb.shape[1]
-        unified = ctx.concat([x_emb, cap_emb], axis=1)
-        unified_freqs = ctx.concat([x_freqs_cis, cap_freqs_cis], axis=0)
-        unified_mask = ctx.ones((1, unified.shape[1]), dtype=ctx.float32()) > 0
-
-        # Main layers
-        for layer in self.layers:
-            unified = layer.forward(unified, unified_mask, unified_freqs, t_emb)
-
-        # Final layer + unpatchify
-        unified = self.final_layer.forward(unified, t_emb)
-        output = self._unpatchify(unified[0, :x_len], x_size)
-
-        # 恢复输入格式
+    def _reshape_output(self, output, input_shape, input_ndim):
+        ctx = self.ctx
         if input_ndim == 4:
-            # [C, F, H, W] → [B, C, H, W]（去掉帧维度）
-            output = output[:, 0, :, :]  # [C, H, W]
+            output = output[:, 0, :, :]
             output = ctx.reshape(output, (1, output.shape[0], output.shape[1], output.shape[2]))
         elif input_ndim == 5:
             output = ctx.reshape(output, input_shape)
         else:
             output = ctx.reshape(output, (1,) + output.shape)
-        return -output  # Z-Image 输出取负（速度预测方向）
+        return output
+
+    def _forward_from_caches(
+        self,
+        latents,
+        t,
+        cap_emb,
+        cap_freqs,
+        x_freqs,
+        x_pad_mask,
+        x_len,
+        image_size,
+        *,
+        use_compile: bool = False,
+    ):
+        if use_compile and self._compiled_forward is not None:
+            tokens = self._compiled_forward(
+                latents, t, cap_emb, cap_freqs, x_freqs, x_pad_mask, x_len,
+            )
+            return self._unpatchify(tokens, image_size)
+        tokens = self._forward_cached_compute(
+            latents, t, cap_emb, cap_freqs, x_freqs, x_pad_mask, x_len,
+        )
+        return self._unpatchify(tokens, image_size)
+
+    def _forward_cfg_cached_compute(
+        self,
+        latents,
+        t,
+        cap_emb,
+        cap_freqs,
+        x_freqs,
+        x_pad_mask,
+        x_len,
+        neg_cap_emb,
+        neg_cap_freqs,
+        neg_x_freqs,
+        neg_x_pad_mask,
+        neg_x_len,
+        guidance,
+    ):
+        noise_cond = self._forward_cached_compute(
+            latents, t, cap_emb, cap_freqs, x_freqs, x_pad_mask, x_len,
+        )
+        noise_uncond = self._forward_cached_compute(
+            latents, t, neg_cap_emb, neg_cap_freqs, neg_x_freqs, neg_x_pad_mask, neg_x_len,
+        )
+        return self.combine_cfg_noise(noise_cond, noise_uncond, guidance)
+
+    def _forward_cached_compute(
+        self, latents, t, cap_emb, cap_freqs, x_freqs, x_pad_mask, x_len,
+    ):
+        ctx = self.ctx
+        act = self._activation_dtype()
+        t_emb = self.t_embedder.forward(ctx.mul(ctx.cast(t, ctx.float32()), self.t_scale))
+
+        img = self._patchify_image_values(latents, x_pad_mask)
+        x_emb = self.x_embedder(img)
+        x_emb = ctx.cast(x_emb, act)
+        x_emb = ctx.where(ctx.reshape(x_pad_mask, (-1, 1)), self.x_pad_token, x_emb)
+        x_emb = ctx.reshape(x_emb, (1, x_emb.shape[0], x_emb.shape[1]))
+
+        for layer in self.noise_refiner:
+            x_emb = layer.forward(x_emb, None, x_freqs, t_emb)
+
+        unified = ctx.concat([x_emb, cap_emb], axis=1)
+        unified_freqs = ctx.concat([x_freqs, cap_freqs], axis=0)
+
+        for layer in self.layers:
+            unified = layer.forward(unified, None, unified_freqs, t_emb)
+
+        unified = self.final_layer.forward(unified, t_emb)
+        return unified[0, :x_len]
+
+    def _encode_cap_branch(self, cap_feats):
+        """Precompute caption embed + context refiner (constant across denoise steps)."""
+        ctx = self.ctx
+        cap_ori_len = cap_feats.shape[0]
+        cap_pad_len = (-cap_ori_len) % 32
+        cap_padded_len = cap_ori_len + cap_pad_len
+
+        if cap_pad_len > 0:
+            cap_feats = ctx.concat([cap_feats, ctx.repeat(cap_feats[-1:], cap_pad_len, axis=0)], axis=0)
+
+        cap_pos_ids = self._coord_grid((cap_padded_len, 1, 1), (1, 0, 0))
+        cap_pos_ids = ctx.reshape(cap_pos_ids, (-1, 3))
+        cap_pad_mask = ctx.concat([
+            ctx.zeros((cap_ori_len,), dtype=ctx.float32()) > 0,
+            ctx.ones((cap_pad_len,), dtype=ctx.float32()) > 0,
+        ], axis=0) if cap_pad_len > 0 else ctx.zeros((cap_ori_len,), dtype=ctx.float32()) > 0
+
+        cap_emb = self.cap_norm(cap_feats)
+        cap_emb = self.cap_embedder(cap_emb)
+        cap_emb = ctx.where(ctx.reshape(cap_pad_mask, (-1, 1)), self.cap_pad_token, cap_emb)
+        cap_freqs_cis = self.rope.forward(cap_pos_ids)
+        cap_emb = ctx.reshape(cap_emb, (1, cap_emb.shape[0], cap_emb.shape[1]))
+
+        for layer in self.context_refiner:
+            cap_emb = layer.forward(cap_emb, None, cap_freqs_cis)
+
+        return cap_emb, cap_freqs_cis, cap_padded_len
+
+    def _encode_geo_cache(self, latents, cap_padded_len: int):
+        """Precompute image RoPE / pad metadata (constant across denoise steps)."""
+        ctx = self.ctx
+        pH = pW = self.patch_size
+        pF = self.f_patch_size
+        _C, F, H, W = latents.shape
+        image_size = (F, H, W)
+        F_tok, H_tok, W_tok = F // pF, H // pH, W // pW
+        img_ori_len = F_tok * H_tok * W_tok
+        img_pad_len = (-img_ori_len) % 32
+        x_len = img_ori_len + img_pad_len
+
+        img_pos_ids = self._coord_grid((F_tok, H_tok, W_tok), (cap_padded_len + 1, 0, 0))
+        img_pos_ids = ctx.reshape(img_pos_ids, (-1, 3))
+        if img_pad_len > 0:
+            img_pos_ids = ctx.concat([img_pos_ids, ctx.zeros((img_pad_len, 3), dtype=ctx.int32())], axis=0)
+
+        x_freqs_cis = self.rope.forward(img_pos_ids)
+        x_pad_mask = ctx.concat([
+            ctx.zeros((img_ori_len,), dtype=ctx.float32()) > 0,
+            ctx.ones((img_pad_len,), dtype=ctx.float32()) > 0,
+        ], axis=0) if img_pad_len > 0 else ctx.zeros((img_ori_len,), dtype=ctx.float32()) > 0
+
+        return x_freqs_cis, x_pad_mask, x_len, image_size, img_ori_len
+
+    def _patchify_image_values(self, image, x_pad_mask):
+        ctx = self.ctx
+        pH = pW = self.patch_size
+        pF = self.f_patch_size
+        C, F, H, W = image.shape
+        F_tok, H_tok, W_tok = F // pF, H // pH, W // pW
+        img = ctx.reshape(image, (C, F_tok, pF, H_tok, pH, W_tok, pW))
+        img = ctx.permute(img, (1, 3, 5, 2, 4, 6, 0))
+        img = ctx.reshape(img, (F_tok * H_tok * W_tok, pF * pH * pW * C))
+        img_pad_len = int(x_pad_mask.shape[0]) - int(img.shape[0])
+        if img_pad_len > 0:
+            img = ctx.concat([img, ctx.repeat(img[-1:], img_pad_len, axis=0)], axis=0)
+        return img
+
+    def _forward_compute(self, latents, t, cap_feats):
+        ctx = self.ctx
+        t_emb = self.t_embedder.forward(ctx.mul(ctx.cast(t, ctx.float32()), self.t_scale))
+
+        x_emb, cap_emb, x_size, x_pos_ids, cap_pos_ids, x_pad_mask, cap_pad_mask = self._patchify(
+            image=latents, cap_feats=cap_feats,
+        )
+
+        x_emb = self.x_embedder(x_emb)
+        x_emb = ctx.where(ctx.reshape(x_pad_mask, (-1, 1)), self.x_pad_token, x_emb)
+        x_freqs_cis = self.rope.forward(x_pos_ids)
+        x_emb = ctx.reshape(x_emb, (1, x_emb.shape[0], x_emb.shape[1]))
+
+        for layer in self.noise_refiner:
+            x_emb = layer.forward(x_emb, None, x_freqs_cis, t_emb)
+
+        cap_emb = self.cap_norm(cap_emb)
+        cap_emb = self.cap_embedder(cap_emb)
+        cap_emb = ctx.where(ctx.reshape(cap_pad_mask, (-1, 1)), self.cap_pad_token, cap_emb)
+        cap_freqs_cis = self.rope.forward(cap_pos_ids)
+        cap_emb = ctx.reshape(cap_emb, (1, cap_emb.shape[0], cap_emb.shape[1]))
+
+        for layer in self.context_refiner:
+            cap_emb = layer.forward(cap_emb, None, cap_freqs_cis)
+
+        x_len = x_emb.shape[1]
+        unified = ctx.concat([x_emb, cap_emb], axis=1)
+        unified_freqs = ctx.concat([x_freqs_cis, cap_freqs_cis], axis=0)
+
+        for layer in self.layers:
+            unified = layer.forward(unified, None, unified_freqs, t_emb)
+
+        unified = self.final_layer.forward(unified, t_emb)
+        return self._unpatchify(unified[0, :x_len], x_size)
 
     # ------------------------------------------------------------------
     # Patchify / Unpatchify

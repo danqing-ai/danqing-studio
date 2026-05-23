@@ -25,6 +25,7 @@ export function parseHumanSizeToGb(s: unknown): number | null {
 export function warnIfRiskyMemory(opts: {
   systemInfo?: SystemInfo | null;
   versionSizeHuman: string;
+  minUnifiedMemoryGb?: number | null;
   $tt: (key: string, params?: Record<string, string | number>) => string;
 }): void {
   const $tt = opts.$tt;
@@ -44,12 +45,16 @@ export function warnIfRiskyMemory(opts: {
   if (!(refGb > 0)) return;
 
   const modelGb = parseHumanSizeToGb(opts.versionSizeHuman);
-  if (modelGb == null || modelGb <= 0) return;
+  const minGb = opts.minUnifiedMemoryGb != null && opts.minUnifiedMemoryGb > 0
+    ? Number(opts.minUnifiedMemoryGb)
+    : null;
+  const effectiveGb = minGb != null ? Math.max(modelGb ?? 0, minGb) : modelGb;
+  if (effectiveGb == null || effectiveGb <= 0) return;
 
-  if (modelGb > refGb * 0.88) {
+  if (effectiveGb > refGb * 0.88) {
     toast.warning(
       $tt('studio.submitOomHint', {
-        modelGb: modelGb.toFixed(1),
+        modelGb: effectiveGb.toFixed(1),
         refGb: refGb.toFixed(1),
       }),
     );

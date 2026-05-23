@@ -49,6 +49,65 @@ def _denoise_latent_noise_dtype(ctx: RuntimeContext, config: Any):
     return ctx.float32()
 
 
+def _image_pipeline_cfg_noise_pred(
+    ctx: RuntimeContext,
+    model: Any,
+    config: Any,
+    latents: Any,
+    t: Any,
+    guidance: float,
+    txt_embeds: Any,
+    neg_embeds: Any,
+    model_kwargs: dict[str, Any],
+    uncond_overrides: dict[str, Any],
+    *,
+    cfg_renorm: bool,
+    cfg_renorm_min: float,
+) -> Any:
+    """Classifier-free guidance merge — polymorphic ``forward_cfg`` when available (MLX Z-Image)."""
+    forward_cfg = getattr(model, "forward_cfg", None)
+    if (
+        neg_embeds is not None
+        and getattr(config, "supports_guidance", False)
+        and guidance > 0.0
+        and callable(forward_cfg)
+        and getattr(config, "use_mlx_cfg_fusion", True)
+        and getattr(ctx, "backend", None) == "mlx"
+    ):
+        cfg_kwargs = {
+            k: v for k, v in model_kwargs.items()
+            if k not in ("txt_embeds", "neg_embeds")
+        }
+        return forward_cfg(
+            latents,
+            t,
+            txt_embeds,
+            neg_embeds,
+            guidance,
+            cfg_renorm=cfg_renorm,
+            cfg_renorm_min=cfg_renorm_min,
+            **cfg_kwargs,
+        )
+
+    noise_cond = model(latents, t, **model_kwargs)
+    if neg_embeds is not None and getattr(config, "supports_guidance", False):
+        if getattr(ctx, "backend", None) == "mlx":
+            ctx.eval(noise_cond)
+        uncond_kwargs = {"txt_embeds": neg_embeds, **uncond_overrides}
+        uncond_kwargs.update(model_kwargs)
+        uncond_kwargs["txt_embeds"] = neg_embeds
+        noise_uncond = model(latents, t, **uncond_kwargs)
+        if getattr(ctx, "backend", None) == "mlx":
+            ctx.eval(noise_uncond)
+        noise_pred = model.combine_cfg_noise(noise_cond, noise_uncond, guidance)
+        if cfg_renorm and getattr(config, "supports_guidance", False):
+            noise_pred = model.refine_cfg_noise(
+                noise_cond, noise_pred, cfg_renorm_min=cfg_renorm_min,
+            )
+        return noise_pred
+    return noise_cond
+
+
 def _t5_encoder_bundle_paths(bundle_root: Path | None) -> tuple[str, str]:
     """从已安装的 Diffusers 风格 bundle 解析 T5 **权重**目录与 **tokenizer** 目录（须分离）。
 
@@ -628,11 +687,23 @@ class ImagePipeline:
         if _packed_denoise:
             latents_nchw = _flux_unpack(self.ctx, latents, _lh, _lw)
             latents_nchw, extra_cond = model.before_denoise(
-                latents_nchw, timesteps, sigmas, **extra_cond,
+                latents_nchw,
+                timesteps,
+                sigmas,
+                txt_embeds=txt_embeds,
+                neg_embeds=neg_embeds,
+                **extra_cond,
             )
             latents = _flux_pack(self.ctx, latents_nchw)
         else:
-            latents, extra_cond = model.before_denoise(latents, timesteps, sigmas, **extra_cond)
+            latents, extra_cond = model.before_denoise(
+                latents,
+                timesteps,
+                sigmas,
+                txt_embeds=txt_embeds,
+                neg_embeds=neg_embeds,
+                **extra_cond,
+            )
 
         # ------------------------------------------------------------------
         # 4. Denoising loop — fully generic: model handles timestep conversion and special params
@@ -662,38 +733,34 @@ class ImagePipeline:
             latents_model = (
                 _flux_unpack(self.ctx, latents, _lh, _lw) if _packed_denoise else latents
             )
-            noise_cond = model(latents_model, t, **model_kwargs)
-
-            # CFG — default diffusers-style; optional ``combine_cfg_noise`` on the model.
-            # MLX: materialize conditional output before the unconditional forward to avoid
-            # lazy-graph aliasing across two ``forward`` calls sharing ``latents``.
             if neg_embeds is not None and getattr(config, "supports_guidance", False):
-                self.ctx.eval(noise_cond)
-                uncond_kwargs = {"txt_embeds": neg_embeds}
+                uncond_overrides: dict[str, Any] = {}
                 if neg_pooled_embeds is not None:
-                    uncond_kwargs["pooled_embeds"] = neg_pooled_embeds
+                    uncond_overrides["pooled_embeds"] = neg_pooled_embeds
                 if family == "flux1":
-                    uncond_kwargs["guidance_scale"] = float(guidance)
-                uncond_kwargs.update(extra_cond)
-                if sigmas is not None:
-                    uncond_kwargs["sigmas"] = sigmas
-                if timestep_embed_schedule is not None and i < len(timestep_embed_schedule):
-                    uncond_kwargs["timestep_embed_value"] = timestep_embed_schedule[i]
+                    uncond_overrides["guidance_scale"] = float(guidance)
                 if encoder_type == "qwen_image":
-                    uncond_kwargs["image_height"] = h
-                    uncond_kwargs["image_width"] = w
-                    uncond_kwargs["scheduler_timesteps"] = sched_ts
+                    uncond_overrides["image_height"] = h
+                    uncond_overrides["image_width"] = w
+                    uncond_overrides["scheduler_timesteps"] = sched_ts
                     if neg_attn_mask is not None:
-                        uncond_kwargs["encoder_hidden_states_mask"] = neg_attn_mask
-                noise_uncond = model(latents_model, t, **uncond_kwargs)
-                self.ctx.eval(noise_uncond)
-                noise_pred = model.combine_cfg_noise(noise_cond, noise_uncond, guidance)
-                if _cfg_renorm and getattr(config, "supports_guidance", False):
-                    noise_pred = model.refine_cfg_noise(
-                        noise_cond, noise_pred, cfg_renorm_min=_cfg_renorm_min,
-                    )
+                        uncond_overrides["encoder_hidden_states_mask"] = neg_attn_mask
+                noise_pred = _image_pipeline_cfg_noise_pred(
+                    self.ctx,
+                    model,
+                    config,
+                    latents_model,
+                    t,
+                    guidance,
+                    txt_embeds,
+                    neg_embeds,
+                    model_kwargs,
+                    uncond_overrides,
+                    cfg_renorm=_cfg_renorm,
+                    cfg_renorm_min=_cfg_renorm_min,
+                )
             else:
-                noise_pred = noise_cond
+                noise_pred = model(latents_model, t, **model_kwargs)
 
             if _packed_denoise:
                 noise_pred = _flux_pack(self.ctx, noise_pred)
@@ -1018,7 +1085,14 @@ class ImagePipeline:
                 f"source_fidelity={fidelity}",
             )
 
-        latents, extra_cond = model.before_denoise(latents, timesteps, sigmas, **extra_cond)
+        latents, extra_cond = model.before_denoise(
+            latents,
+            timesteps,
+            sigmas,
+            txt_embeds=txt_embeds,
+            neg_embeds=neg_embeds,
+            **extra_cond,
+        )
 
         for i, t in enumerate(timesteps):
             if ctx_exec.cancel_token.is_cancelled():
@@ -1041,33 +1115,34 @@ class ImagePipeline:
                 if txt_attn_mask is not None:
                     model_kwargs["encoder_hidden_states_mask"] = txt_attn_mask
 
-            noise_cond = model(latents, t, **model_kwargs)
-
             if neg_embeds is not None and getattr(config, "supports_guidance", False):
-                self.ctx.eval(noise_cond)
-                uncond_kwargs = {"txt_embeds": neg_embeds}
+                uncond_overrides: dict[str, Any] = {}
                 if neg_pooled_embeds is not None:
-                    uncond_kwargs["pooled_embeds"] = neg_pooled_embeds
-                uncond_kwargs.update(extra_cond)
-                if sigmas is not None:
-                    uncond_kwargs["sigmas"] = sigmas
-                if timestep_embed_schedule is not None and te_idx < len(timestep_embed_schedule):
-                    uncond_kwargs["timestep_embed_value"] = timestep_embed_schedule[te_idx]
+                    uncond_overrides["pooled_embeds"] = neg_pooled_embeds
+                if family == "flux1":
+                    uncond_overrides["guidance_scale"] = float(guidance)
                 if encoder_type == "qwen_image":
-                    uncond_kwargs["image_height"] = h
-                    uncond_kwargs["image_width"] = w
-                    uncond_kwargs["scheduler_timesteps"] = sched_ts
+                    uncond_overrides["image_height"] = h
+                    uncond_overrides["image_width"] = w
+                    uncond_overrides["scheduler_timesteps"] = sched_ts
                     if neg_attn_mask is not None:
-                        uncond_kwargs["encoder_hidden_states_mask"] = neg_attn_mask
-                noise_uncond = model(latents, t, **uncond_kwargs)
-                self.ctx.eval(noise_uncond)
-                noise_pred = model.combine_cfg_noise(noise_cond, noise_uncond, guidance)
-                if _cfg_renorm and getattr(config, "supports_guidance", False):
-                    noise_pred = model.refine_cfg_noise(
-                        noise_cond, noise_pred, cfg_renorm_min=_cfg_renorm_min,
-                    )
+                        uncond_overrides["encoder_hidden_states_mask"] = neg_attn_mask
+                noise_pred = _image_pipeline_cfg_noise_pred(
+                    self.ctx,
+                    model,
+                    config,
+                    latents,
+                    t,
+                    guidance,
+                    txt_embeds,
+                    neg_embeds,
+                    model_kwargs,
+                    uncond_overrides,
+                    cfg_renorm=_cfg_renorm,
+                    cfg_renorm_min=_cfg_renorm_min,
+                )
             else:
-                noise_pred = noise_cond
+                noise_pred = model(latents, t, **model_kwargs)
 
             latents = scheduler.step(noise_pred, t, latents)
             if getattr(self.ctx, "backend", None) == "mlx":

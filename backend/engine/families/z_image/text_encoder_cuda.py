@@ -12,14 +12,14 @@ def zimage_prepare_torch_ids(ctx: Any, input_ids_np, attention_mask_np):
     return input_ids, attention_mask
 
 
-def zimage_text_encoder_forward_torch(encoder: Any, input_ids, attention_mask) -> Any:
+def zimage_text_encoder_forward_torch(encoder: Any, input_ids, attention_mask, num_valid: int) -> Any:
     import torch
     from transformers import AutoModel
 
     if encoder._model is None:
         encoder._model = AutoModel.from_pretrained(
             encoder.model_path,
-            torch_dtype=torch.float32,
+            torch_dtype=torch.bfloat16,
             trust_remote_code=True,
         ).to(encoder.ctx._device)
         encoder._model.eval()
@@ -45,6 +45,5 @@ def zimage_text_encoder_forward_torch(encoder: Any, input_ids, attention_mask) -
     else:
         result = hs[-2]
 
-    num_valid = int(attention_mask.sum().item())
     result = result[:, :num_valid, :]
     return result.to(dtype=torch.bfloat16)

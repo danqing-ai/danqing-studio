@@ -183,6 +183,10 @@ class AudioGenerationRequest(BaseModel):
     time_signature: str = ""  # "2","3","4","6", empty=auto-detect
     steps: Optional[int] = None
     guidance: Optional[float] = None
+    temperature: Optional[float] = None  # HeartMuLa LM sampling
+    top_k: Optional[int] = None  # HeartMuLa LM top-k
+    codec_steps: Optional[int] = None  # HeartMuLa codec ODE steps
+    codec_guidance: Optional[float] = None  # HeartMuLa codec CFG
     seed: Optional[int] = None
     n: int = Field(2, ge=1, le=8)
     audio_format: str = "mp3"

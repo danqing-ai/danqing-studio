@@ -153,6 +153,8 @@ class ZImageConfig:
     vae_scale: int = 8
     # Match mflux ``ZImageLatentCreator.create_noise`` (``ModelConfig.precision`` = bf16).
     latent_noise_dtype: str = "bfloat16"
+    use_mlx_compile: bool = True         # ``mx.compile`` DiT forward after weight load (MLX only)
+    use_mlx_cfg_fusion: bool = True      # fused compiled CFG step (MLX only, skips dual eval sync)
 
 
 @dataclass
@@ -238,6 +240,37 @@ class AceStepConfig:
             )
 
 
+@dataclass
+class HeartMulaConfig:
+    """HeartMuLa-oss-3B-happy-new-year — autoregressive LM + HeartCodec (12.5 Hz).
+
+    Registry model id: ``heartmula-oss-3b-happy-new-year``. Bundle layout matches
+    HeartMuLa/heartlib (HeartMuLaGen root + HeartMuLa-oss-3B/ + HeartCodec-oss/).
+    """
+    sample_rate: int = 48_000
+    frame_rate: float = 12.5
+    default_duration_seconds: float = 30.0
+    # Product cap (registry ``duration.max``); long MLX runs need large KV cache.
+    max_duration_seconds: float = 300.0
+    default_cfg_scale: float = 1.5
+    cfg_scale_min: float = 1.0
+    cfg_scale_max: float = 3.0
+    default_temperature: float = 1.0
+    temperature_min: float = 0.5
+    temperature_max: float = 1.5
+    default_topk: int = 50
+    topk_min: int = 10
+    topk_max: int = 100
+    codec_ode_steps: int = 10
+    codec_ode_steps_min: int = 4
+    codec_ode_steps_max: int = 24
+    codec_guidance_scale: float = 1.25
+    codec_guidance_min: float = 1.0
+    codec_guidance_max: float = 2.0
+    supports_guidance: bool = True
+    supports_img2img: bool = False
+
+
 # =========================================================================
 # Video models
 # =========================================================================
@@ -278,34 +311,127 @@ class LTXConfig:
 
 @dataclass
 class WanConfig:
-    """Wan Video series (Wan2.1 / Wan2.2)
-    
-    Architecture: dual-model (high/low noise) spatiotemporal DiT + T5
+    """Wan Video series (Wan2.1 / Wan2.2).
+
+    Defaults target **Wan2.2-TI2V-5B**; larger variants override via ``merge_wan_config_from_bundle``.
     """
-    dim: int = 3584                  # 14B; 1.3B = 1536
-    depth: int = 32                  # 14B; 1.3B = 24  
-    num_heads: int = 28              # 14B; 1.3B = 12
+    dim: int = 3072
+    depth: int = 30
+    num_heads: int = 24
+    ffn_dim: int = 14336
     mlp_ratio: float = 4.0
     qk_norm: bool = True
+    cross_attn_norm: bool = True
+    eps: float = 1e-6
+    freq_dim: int = 256
     # Input dimensions
-    dim_in: int = 128                # VAE latent channels (3D)
-    dim_out: int = 128
-    text_dim: int = 4096             # T5
+    dim_in: int = 48
+    dim_out: int = 48
+    text_dim: int = 4096
     max_seq_len: int = 512
+    text_len: int = 512
     # Spatiotemporal parameters
-    patch_size: tuple = (1, 2, 2)    # T, H, W patch
+    patch_size: tuple = (1, 2, 2)
+    window_size: tuple = (-1, -1)
     rope_dim: int = 64
     temporal_rope_dim: int = 32
-    # Temporal
     temporal_attn_every: int = 2
-    # Dual model
-    dual_model: bool = True          # high_noise + low_noise
-    # Pipeline
+    # Dual model (14B high/low noise); TI2V 5B is single-model
+    dual_model: bool = False
+    expand_timesteps: bool = True  # Wan2.2 TI2V feeds per-token timesteps (mask2); T2V uses all-ones mask
+    # Pipeline / VAE
+    vae_scale: int = 16
+    temporal_vae_scale: int = 4
+    vae_z_dim: int = 48
     supports_guidance: bool = True
     supports_img2img: bool = True
-    supports_lora: bool = True       # supports high/low noise LoRA tag routing
-    # Scheduler
-    default_scheduler: str = "unipc"
+    supports_lora: bool = True
+    default_scheduler: str = "wan_flow_unipc"
+    num_train_timesteps: int = 1000
+    use_mlx_compile: bool = True  # ``mx.compile`` DiT forward after weight load (MLX only)
+    vae_spatial_tiling: bool = False  # 默认整幅 decode；分块拼接在 TI2V 5B 分辨率下会出 seam
+
+
+def merge_wan_config_from_bundle(config: WanConfig, bundle_root: Path | None) -> None:
+    """Override ``WanConfig`` from ``config.json`` at bundle root or ``transformer/config.json``."""
+    if bundle_root is None:
+        return
+    candidates = [bundle_root / "config.json", bundle_root / "transformer" / "config.json"]
+    cfg_path = next((p for p in candidates if p.is_file()), None)
+    if cfg_path is None:
+        return
+    try:
+        data: dict[str, Any] = json.loads(cfg_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        raise RuntimeError(f"Wan: cannot read config {cfg_path}: {e}") from e
+
+    key_map = {
+        "dim": "dim",
+        "hidden_size": "dim",
+        "num_layers": "depth",
+        "num_heads": "num_heads",
+        "num_attention_heads": "num_heads",
+        "ffn_dim": "ffn_dim",
+        "in_dim": "dim_in",
+        "in_channels": "dim_in",
+        "out_dim": "dim_out",
+        "out_channels": "dim_out",
+        "text_dim": "text_dim",
+        "text_len": "text_len",
+        "freq_dim": "freq_dim",
+        "qk_norm": "qk_norm",
+        "cross_attn_norm": "cross_attn_norm",
+        "eps": "eps",
+        "dual_model": "dual_model",
+        "expand_timesteps": "expand_timesteps",
+        "vae_scale": "vae_scale",
+        "temporal_vae_scale": "temporal_vae_scale",
+    }
+    for src, dst in key_map.items():
+        if src in data:
+            val = data[src]
+            if isinstance(val, bool):
+                setattr(config, dst, bool(val))
+            elif isinstance(val, float):
+                setattr(config, dst, float(val))
+            else:
+                setattr(config, dst, int(val))
+    if "patch_size" in data:
+        ps = data["patch_size"]
+        if isinstance(ps, (list, tuple)) and len(ps) == 3:
+            object.__setattr__(config, "patch_size", tuple(int(x) for x in ps))
+    if "model_type" in data and str(data["model_type"]).lower() in ("ti2v", "t2v", "i2v"):
+        object.__setattr__(config, "model_type", str(data["model_type"]).lower())
+
+
+def merge_wan_vae_config_from_bundle(config: WanConfig, bundle_root: Path | None) -> None:
+    """Apply ``vae/config.json`` (diffusers layout) → ``WanConfig`` pipeline scalars."""
+    if bundle_root is None:
+        return
+    vae_cfg_path = bundle_root / "vae" / "config.json"
+    if not vae_cfg_path.is_file():
+        return
+    try:
+        data: dict[str, Any] = json.loads(vae_cfg_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        raise RuntimeError(f"Wan: cannot read VAE config {vae_cfg_path}: {e}") from e
+
+    if "scale_factor_spatial" in data:
+        config.vae_scale = int(data["scale_factor_spatial"])
+    if "scale_factor_temporal" in data:
+        config.temporal_vae_scale = int(data["scale_factor_temporal"])
+    z_dim = data.get("z_dim")
+    if z_dim is not None:
+        z = int(z_dim)
+        config.vae_z_dim = z
+        config.dim_in = z
+        config.dim_out = z
+
+
+def merge_wan_bundle_config(config: WanConfig, bundle_root: Path | None) -> None:
+    """Merge transformer + VAE JSON from a Wan model bundle."""
+    merge_wan_config_from_bundle(config, bundle_root)
+    merge_wan_vae_config_from_bundle(config, bundle_root)
 
 
 @dataclass
@@ -347,16 +473,109 @@ class CogVideoXConfig:
 
     dim_in: int = 16                     # latent channels (Pipeline noise shape)
     supports_guidance: bool = True
-    supports_img2img: bool = True
-    default_scheduler: str = "dpm++"
+    supports_img2img: bool = False
+    default_scheduler: str = "cogvideox_dpm"
 
     temporal_vae_scale: int = 4          # pixel_frames → latent_frames for VideoPipeline noise shape
     vae_scale: int = 8                   # spatial latent scaling vs pixels (registry may override)
-
+    latent_noise_dtype: str = "bfloat16" # MLX denoise activations (scheduler keeps FP32 updates)
+    use_mlx_compile: bool = True         # ``mx.compile`` DiT forward after weight load (MLX only)
 
     def __post_init__(self) -> None:
         if self.ff_inner_dim is None:
             object.__setattr__(self, "ff_inner_dim", int(self.inner_dim * 4))
+
+
+@dataclass
+class HunyuanVideoConfig:
+    """HunyuanVideo-1.5 — diffusers ``HunyuanVideo15Transformer3DModel`` / 480p T2V defaults."""
+
+    inner_dim: int = 2048
+    num_attention_heads: int = 16
+    attention_head_dim: int = 128
+    in_channels: int = 65
+    out_channels: int = 32
+    dim_in: int = 32
+    num_layers: int = 54
+    num_refiner_layers: int = 2
+    mlp_ratio: float = 4.0
+    patch_size: int = 1
+    patch_size_t: int = 1
+    qk_norm: str = "rms_norm"
+    text_embed_dim: int = 3584
+    text_embed_2_dim: int = 1472
+    image_embed_dim: int = 1152
+    rope_theta: float = 256.0
+    rope_axes_dim: tuple[int, ...] = (16, 56, 56)
+    target_size: int = 640
+    task_type: str = "t2v"
+    use_meanflow: bool = False
+
+    encoder_type: str = "hunyuan_video_dual"
+    text_dim: int = 3584
+    mllm_max_length: int = 1000
+    byt5_max_length: int = 256
+    prompt_template_crop_start: int = 108
+    vision_num_semantic_tokens: int = 256
+
+    supports_guidance: bool = True
+    supports_img2img: bool = True
+    default_scheduler: str = "flow_match_euler"
+    temporal_vae_scale: int = 4
+    vae_scale: int = 16
+    min_unified_memory_gb: int = 32
+    step_distill: bool = False
+    text_encoder_device: str = "auto"
+    text_encoder_qwen_local: str = ""
+    text_encoder_byt5_local: str = ""
+    text_encoder_release_after_encode: bool = True
+    vae_temporal_chunk_size: int = 8
+    vae_spatial_tiling: bool = False
+
+
+def merge_hunyuan_transformer_config_from_bundle(config: HunyuanVideoConfig, bundle_root: Path | None) -> None:
+    """Override ``HunyuanVideoConfig`` from ``<bundle>/transformer/config.json``."""
+    if bundle_root is None:
+        return
+    cfg_path = bundle_root / "transformer" / "config.json"
+    if not cfg_path.is_file():
+        raise RuntimeError(
+            f"HunyuanVideo: missing transformer config {cfg_path}. "
+            "Install the full diffusers bundle (transformer/config.json + weight shards)."
+        )
+    try:
+        data: dict[str, Any] = json.loads(cfg_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        raise RuntimeError(f"HunyuanVideo: cannot read transformer config {cfg_path}: {e}") from e
+
+    _INT_KEYS = (
+        "num_attention_heads", "attention_head_dim", "in_channels", "out_channels",
+        "num_layers", "num_refiner_layers", "patch_size", "patch_size_t",
+        "text_embed_dim", "text_embed_2_dim", "image_embed_dim", "target_size",
+    )
+    _FLOAT_KEYS = ("mlp_ratio", "rope_theta")
+    _STR_KEYS = ("qk_norm", "task_type")
+    _BOOL_KEYS = ("use_meanflow",)
+    for k in _INT_KEYS:
+        if k in data:
+            setattr(config, k, int(data[k]))
+    for k in _FLOAT_KEYS:
+        if k in data:
+            setattr(config, k, float(data[k]))
+    for k in _STR_KEYS:
+        if k in data:
+            setattr(config, k, str(data[k]))
+    for k in _BOOL_KEYS:
+        if k in data:
+            setattr(config, k, bool(data[k]))
+    if "rope_axes_dim" in data:
+        object.__setattr__(config, "rope_axes_dim", tuple(int(x) for x in data["rope_axes_dim"]))
+
+    na = int(getattr(config, "num_attention_heads", 16))
+    hd = int(getattr(config, "attention_head_dim", 128))
+    object.__setattr__(config, "inner_dim", na * hd)
+    object.__setattr__(config, "dim_in", int(getattr(config, "out_channels", 32)))
+    object.__setattr__(config, "text_dim", int(getattr(config, "text_embed_dim", 3584)))
 
 
 def merge_cogvideox_transformer_config_from_bundle(config: CogVideoXConfig, bundle_root: Path | None) -> None:
@@ -369,7 +588,10 @@ def merge_cogvideox_transformer_config_from_bundle(config: CogVideoXConfig, bund
         return
     cfg_path = bundle_root / "transformer" / "config.json"
     if not cfg_path.is_file():
-        return
+        raise RuntimeError(
+            f"CogVideoX: missing transformer config {cfg_path}. "
+            "Install the full diffusers bundle (transformer/config.json + weight shards)."
+        )
     try:
         data: dict[str, Any] = json.loads(cfg_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as e:
@@ -427,6 +649,42 @@ def merge_cogvideox_transformer_config_from_bundle(config: CogVideoXConfig, bund
     object.__setattr__(config, "dim_in", int(getattr(config, "in_channels", 16)))
 
 
+def cogvideox_scheduler_kwargs_from_bundle(bundle_root: Path) -> dict[str, Any]:
+    """Build ``CogVideoXDPMScheduler`` ctor kwargs from ``<bundle>/scheduler/scheduler_config.json``.
+
+    Official CogVideoX-5b bundles ship DDIM config (``v_prediction``, ``trailing``, ``snr_shift_scale=1``,
+    ``rescale_betas_zero_snr=true``). Diffusers swaps to ``CogVideoXDPMScheduler.from_config(...)`` — we must
+    pass the same fields or denoised latents are wrong (patch-grid VAE output).
+    """
+    cfg_path = bundle_root / "scheduler" / "scheduler_config.json"
+    if not cfg_path.is_file():
+        raise RuntimeError(
+            f"CogVideoX: missing scheduler config {cfg_path}. "
+            "Install the full diffusers bundle (scheduler/scheduler_config.json)."
+        )
+    try:
+        data: dict[str, Any] = json.loads(cfg_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        raise RuntimeError(f"CogVideoX: cannot read scheduler config {cfg_path}: {e}") from e
+
+    kwargs: dict[str, Any] = {}
+    for key in ("num_train_timesteps", "steps_offset"):
+        if key in data:
+            kwargs[key] = int(data[key])
+    for key in ("beta_start", "beta_end", "snr_shift_scale"):
+        if key in data:
+            kwargs[key] = float(data[key])
+    for key in ("beta_schedule", "prediction_type", "timestep_spacing"):
+        if key in data:
+            kwargs[key] = str(data[key])
+    for key in ("set_alpha_to_one", "rescale_betas_zero_snr"):
+        if key in data:
+            kwargs[key] = bool(data[key])
+    if "prediction_type" not in kwargs:
+        raise RuntimeError(f"CogVideoX: scheduler config {cfg_path} missing prediction_type")
+    return kwargs
+
+
 # =========================================================================
 # Config registry: family → config class
 # =========================================================================
@@ -441,10 +699,12 @@ FAMILY_CONFIG_MAP: dict[str, type] = {
     "seedvr2": SeedVR2Config,
     # Audio
     "ace_step": AceStepConfig,
+    "heartmula": HeartMulaConfig,
     # Video
     "ltx": LTXConfig,
     "wan": WanConfig,
     "cogvideox": CogVideoXConfig,
+    "hunyuan": HunyuanVideoConfig,
 }
 
 

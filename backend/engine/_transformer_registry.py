@@ -117,13 +117,59 @@ _VIDEO_TRANSFORMER = {
     "wan":       ("backend.engine.families.wan.transformer",       "WanTransformer"),
     "ltx":       ("backend.engine.families.ltx.transformer",       "LTXTransformer"),
     "cogvideox": ("backend.engine.families.cogvideox.transformer", "CogVideoXTransformer"),
+    "hunyuan":   ("backend.engine.families.hunyuan.transformer",   "HunyuanVideoTransformer"),
 }
 
 _VIDEO_WEIGHT_REMAP = {
     "wan":       ("backend.engine.families.wan.weights",       "remap_wan_weights"),
     "ltx":       ("backend.engine.families.ltx.weights",       "remap_ltx_weights"),
     "cogvideox": ("backend.engine.families.cogvideox.weights", "remap_cogvideox_weights"),
+    "hunyuan":   ("backend.engine.families.hunyuan.weights",   "remap_hunyuan_weights"),
 }
+
+_VIDEO_TEXT_ENCODER = {
+    "t5":              ("backend.engine.common.text_encoders", "T5Encoder"),
+    "hunyuan_video_dual": ("backend.engine.families.hunyuan.text_encoder", "HunyuanVideoTextEncoder"),
+}
+
+
+def get_video_text_encoder_class(encoder_type: str):
+    import importlib
+    entry = _VIDEO_TEXT_ENCODER.get(encoder_type)
+    if entry is None:
+        raise RuntimeError(f"Unknown video text encoder type: {encoder_type}")
+    return getattr(importlib.import_module(entry[0]), entry[1])
+
+
+def encode_video_prompt(
+    ctx: Any,
+    text: str,
+    *,
+    encoder_type: str,
+    bundle_root: Path,
+    config: Any,
+) -> tuple[Any, Any | None, Any | None, Any | None, Any | None, Any | None]:
+    """Encode one video prompt. Returns ``(e1, mask1, e2, mask2, pooled, extra)``.
+
+    T5: ``(embeds, None, None, None, None, None)``.
+    Hunyuan dual: ``(qwen_embeds, qwen_mask, byt5_embeds, byt5_mask, None, None)``.
+    """
+    enc_cls = get_video_text_encoder_class(encoder_type)
+    if encoder_type == "t5":
+        from backend.engine.pipelines.image_pipeline import _t5_encoder_bundle_paths
+        t5_dir, t5_tok_dir = _t5_encoder_bundle_paths(bundle_root)
+        max_seq = int(getattr(config, "max_text_seq_length", 512))
+        enc = enc_cls(ctx, t5_dir, max_seq_len=max_seq, tokenizer_path=t5_tok_dir)
+        return enc.encode([text]), None, None, None, None, None
+
+    if encoder_type == "hunyuan_video_dual":
+        from backend.engine.families.hunyuan.text_encoder import get_hunyuan_text_encoder
+
+        enc = get_hunyuan_text_encoder(ctx, bundle_root, config)
+        e1, m1, e2, m2 = enc.encode([text])
+        return e1, m1, e2, m2, None, None
+
+    raise RuntimeError(f"Unsupported video encoder_type: {encoder_type!r}")
 
 
 def get_video_transformer_class(family: str):

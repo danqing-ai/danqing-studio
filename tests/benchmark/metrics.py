@@ -161,3 +161,54 @@ def check_output_audio(
     if peak < min_peak:
         return SanityResult(False, f"low_peak(peak={peak:.5f})", rms, peak, 0.0, 0.0)
     return SanityResult(True, "", rms, peak, 0.0, 0.0)
+
+
+def check_output_video(path: str | Path, *, min_frame_std: float = 0.02) -> SanityResult:
+    """Reject blank / near-static MP4 outputs (sample a few frames)."""
+    path = Path(path)
+    if not path.is_file():
+        return SanityResult(False, "missing_file", 0.0, 0.0, 0.0, 0.0)
+    if path.stat().st_size < 8192:
+        return SanityResult(False, f"tiny_file(bytes={path.stat().st_size})", 0.0, 0.0, 0.0, 0.0)
+
+    frames: list[np.ndarray] = []
+    try:
+        import imageio.v3 as iio
+
+        meta = iio.immeta(path)
+        n = int(meta.get("n_images", 0) or 0)
+        if n < 1:
+            n = 1
+        indices = sorted({0, n // 2, max(0, n - 1)})
+        for idx in indices:
+            frame = np.asarray(iio.imread(path, index=idx), dtype=np.float32)
+            if frame.ndim == 3 and frame.shape[-1] >= 3:
+                frame = frame[..., :3] / 255.0
+            frames.append(frame)
+    except Exception as e:
+        return SanityResult(False, f"video_read_error:{e!r}", 0.0, 0.0, 0.0, 0.0)
+
+    if not frames:
+        return SanityResult(False, "no_frames", 0.0, 0.0, 0.0, 0.0)
+
+    stds: list[float] = []
+    means: list[float] = []
+    for arr in frames:
+        gray = 0.299 * arr[..., 0] + 0.587 * arr[..., 1] + 0.114 * arr[..., 2]
+        means.append(float(np.mean(gray)))
+        stds.append(float(np.std(gray)))
+
+    mean_l = float(np.mean(means))
+    std_l = float(np.mean(stds))
+    lap_var = float(np.mean(stds))
+    ent = float(len(frames))
+
+    if std_l < min_frame_std:
+        return SanityResult(
+            False, f"near_flat_frames(avg_std={std_l:.5f})", mean_l, std_l, ent, lap_var,
+        )
+    if mean_l >= 0.94 and std_l <= 0.04:
+        return SanityResult(False, f"blank_white(mean={mean_l:.3f})", mean_l, std_l, ent, lap_var)
+    if mean_l <= 0.06 and std_l <= 0.04:
+        return SanityResult(False, f"blank_black(mean={mean_l:.3f})", mean_l, std_l, ent, lap_var)
+    return SanityResult(True, "", mean_l, std_l, ent, lap_var)

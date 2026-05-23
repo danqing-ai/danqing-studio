@@ -120,6 +120,10 @@ class RuntimeContext(ABC):
         ...
 
     @abstractmethod
+    def squeeze(self, x: Any, axis: int) -> Any:
+        ...
+
+    @abstractmethod
     def zeros_like(self, x: Any) -> Any:
         ...
 
@@ -233,6 +237,10 @@ class RuntimeContext(ABC):
         ...
 
     @abstractmethod
+    def power(self, base: Any, exponent: Any) -> Any:
+        ...
+
+    @abstractmethod
     def mean(self, x: Any, axis: Any = None, keepdims: bool = False) -> Any:
         ...
 
@@ -332,6 +340,10 @@ class RuntimeContext(ABC):
         ...
 
     @abstractmethod
+    def float64(self) -> Any:
+        ...
+
+    @abstractmethod
     def float16(self) -> Any:
         ...
 
@@ -341,6 +353,10 @@ class RuntimeContext(ABC):
 
     @abstractmethod
     def int32(self) -> Any:
+        ...
+
+    @abstractmethod
+    def int64(self) -> Any:
         ...
 
     @abstractmethod

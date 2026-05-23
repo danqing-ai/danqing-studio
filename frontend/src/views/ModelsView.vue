@@ -999,7 +999,6 @@ function getVersionStatus(modelId: string, versionKey: string): string {
   return 'missing';
 }
 
-/** 供版本列表行展示（iOS 分组列表 + 操作区） */
 function modelVersionTableRows(model: ModelRow) {
   if (!model.versions) return [];
   return Object.entries(model.versions).map(([verKey, ver]) => ({

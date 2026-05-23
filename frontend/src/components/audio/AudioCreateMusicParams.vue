@@ -8,8 +8,12 @@ const props = defineProps<{
   timeSignatures: { value: string; label: string }[];
   durationMin?: number;
   durationMax?: number;
+  showBpm?: boolean;
+  showKeyScale?: boolean;
+  showTimeSignature?: boolean;
 }>();
 
+/** Presets capped by registry ``duration.max`` (HeartMuLa product limit). */
 const durationPresets = [30, 60, 90, 120, 180, 240, 300];
 
 const durationSegmentOptions = computed(() => {
@@ -41,7 +45,7 @@ const durationSegmentOptions = computed(() => {
       <p class="studio-field-footnote">{{ $t('audio.durationHint', { max: durationMax ?? 600 }) }}</p>
     </DqPrefRow>
 
-    <DqPrefRow :label="$t('audio.bpm')" stacked>
+    <DqPrefRow v-if="showBpm !== false" :label="$t('audio.bpm')" stacked>
       <DqInputNumber
         v-model="params.bpm"
         :min="30"
@@ -52,7 +56,7 @@ const durationSegmentOptions = computed(() => {
       />
     </DqPrefRow>
 
-    <DqPrefRow :label="$t('audio.keyScale')" stacked>
+    <DqPrefRow v-if="showKeyScale !== false" :label="$t('audio.keyScale')" stacked>
       <DqSelect
         v-model="params.key_scale"
         class="studio-w-full"
@@ -63,7 +67,7 @@ const durationSegmentOptions = computed(() => {
       </DqSelect>
     </DqPrefRow>
 
-    <DqPrefRow :label="$t('audio.timeSignature')" stacked>
+    <DqPrefRow v-if="showTimeSignature !== false" :label="$t('audio.timeSignature')" stacked>
       <DqSelect
         v-model="params.time_signature"
         class="studio-w-full"

@@ -18,14 +18,16 @@ DanQing Studio — plugin-style **image / video** generation on **MLX** (Apple S
 | Frontend entry | `frontend/index.html` → Vite → `frontend/src/` |
 | Production UI build | `out/frontend/dist/` (`frontend/vite.config.ts`) |
 | Launch / stop | `bin/launch.sh`, `bin/stop.sh` |
-| Model registry | `config/models_registry.json` |
+| Model registry (git / factory) | `default_config/models_registry.json` |
+| Workspace pointer (local, gitignored) | `default_config/workspace.pointer.json` |
+| Model registry (runtime) | `{workspace}/config/models_registry.json` — sync via `make sync-models-registry` |
 | Family configs | `backend/engine/config/model_configs.py` |
 | Transformer registry | `backend/engine/_transformer_registry.py` |
 | Contracts | `backend/core/contracts.py` |
 | Media interfaces | `backend/core/media_interfaces.py` (`IImageEngine`, `IVideoEngine`) |
 | Runtime | `backend/engine/runtime/` (`MLXContext`, `CudaContext`) |
 | Task kinds | `backend/core/task_kinds.py` (do not hardcode kind strings) |
-| Cursor rules | `.cursor/rules/model-migration.mdc`, `.cursor/rules/no-silent-degrade.mdc` |
+| Cursor rules | `.cursor/rules/model-migration.mdc`, `.cursor/rules/no-silent-degrade.mdc`, `.cursor/rules/models-registry-maintain.mdc` |
 | Dual-platform design | `docs/dual_platform_architecture.md` |
 | Desktop | `desktop/`, `make pack-macos-desktop` |
 
@@ -34,7 +36,7 @@ DanQing Studio — plugin-style **image / video** generation on **MLX** (Apple S
 - Models: `./models/`
 - LoRAs: `./models/Lora/`
 - Outputs: `./outputs/`
-- Config: `config/.app_config.json`, `config/presets.json`, `config/models_registry.json`
+- Factory / pointer: `default_config/` (`models_registry.json`, `presets.json`, `workspace.pointer.json`); runtime settings/registry under `{workspace}/config/`
 - DB: `db/studio.db` (WAL; no runtime `ALTER` — reset DB + `outputs/` if schema drifts)
 
 ### Environment
@@ -155,7 +157,7 @@ Default per family: `transformer.py`, `text_encoder.py` (if needed), `weights.py
 
 ## New model checklist
 
-1. **`config/models_registry.json`** — `family`, `engine`, `actions`, `parameters`, `versions`, `backends`, bilingual `name`/`description`
+1. **`default_config/models_registry.json`** — then `make sync-models-registry` to `{workspace}/config/models_registry.json`. Fields: `family`, `engine`, `actions`, `parameters`, `versions`, `backends`, bilingual `name`/`description`. First workspace setup copies from `default_config/` if missing; reset via settings only (no startup merge). See `.cursor/rules/models-registry-maintain.mdc`.
 2. **`backend/engine/config/model_configs.py`** — dataclass + `FAMILY_CONFIG_MAP`
 3. **`backend/engine/families/<family>/transformer.py`** — `TransformerBase`, inject `RuntimeContext`
 4. **`backend/engine/families/<family>/weights.py`** — `remap_<family>_weights` (if needed)
@@ -171,7 +173,8 @@ bin/danqing-generate --model <id> --prompt "test"    # image
 bin/danqing-audio-generate --model ace-step-xl-sft --prompt "test" --duration 10 --output /tmp/t.wav
 make bench-mflux          # when mflux reference exists
 make bench-sanity         # no reference CLI
-make bench-audio-sanity   # ACE-Step MLX 10s RMS gate
+make bench-audio-sanity   # ACE-Step + HeartMuLa MLX 10s RMS gate
+make bench-audio-sanity-heartmula   # HeartMuLa only
 make test-engine-unit
 make check-engine-imports
 ```
@@ -199,11 +202,11 @@ make check-engine-imports
 
 ### Presets
 
-`config/presets.json` — each preset needs **`applies_to`** and **`media_scope`** (`image` \| `video`). UI filters by tab + scope.
+`{workspace}/config/presets.json` (seeded from `default_config/presets.json`) — each preset needs **`applies_to`** and **`media_scope`** (`image` \| `video`). UI filters by tab + scope.
 
 ### App settings
 
-`config/.app_config.json` — `language`, `theme`, `default_model`, `mlx_memory_limit`, `queue_image_first`, …
+`{workspace}/config/.app_config.json` — `language`, `theme`, `default_model`, `mlx_memory_limit`, `queue_image_first`, …
 
 ---
 
@@ -331,7 +334,7 @@ Makefile pattern: `pack-<platform>-<product>-<step>` (`desktop` \| `server`; `ve
 ## Backend i18n
 
 - `backend/core/i18n.py` — `t(key, locale, **params)`, `resolve_locale(Accept-Language)`
-- Messages: `config/locales/zh.json`, `en.json`
+- Messages: `default_config/locales/zh.json`, `en.json`
 - Registry/presets: bilingual objects in JSON (not legacy `name_en` fields)
 
 ---
@@ -361,6 +364,6 @@ Makefile pattern: `pack-<platform>-<product>-<step>` (`desktop` \| `server`; `ve
 ## Reference
 
 - [README.md](README.md) — user documentation (EN + 中文)
-- [config/models_registry.json](config/models_registry.json)
+- [default_config/models_registry.json](default_config/models_registry.json)
 - [backend/core/interfaces.py](backend/core/interfaces.py)
 - [tests/benchmark/README.md](tests/benchmark/README.md)

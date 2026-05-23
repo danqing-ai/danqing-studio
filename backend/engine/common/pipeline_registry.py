@@ -7,6 +7,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from backend.core.bundle_repos import version_primary_local_path
+
 
 def resolve_project_path(project_root: Path, local_path: str) -> Path:
     p = Path(local_path)
@@ -41,6 +43,9 @@ def local_bundle_root(project_root: Path, entry: Any, version_key: str | None) -
         return None
     lp = (block.get("local_path") or "").strip()
     if not lp:
-        return None
+        try:
+            lp = version_primary_local_path(block)
+        except ValueError:
+            return None
     path = resolve_project_path(project_root, lp)
     return path if path.exists() else None

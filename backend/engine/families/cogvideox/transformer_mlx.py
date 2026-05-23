@@ -17,6 +17,10 @@ import numpy as np
 
 from backend.engine.common._base import TransformerBase
 from backend.engine.common.attention import apply_rope_interleaved_real
+from backend.engine.common.cfg_batch import (
+    TEXT_KEYS_MINIMAL,
+    predict_noise_cfg_batched,
+)
 from backend.engine.config.model_configs import CogVideoXConfig
 from backend.engine.runtime._base import RuntimeContext
 
@@ -351,19 +355,19 @@ class CogVideoXBlock:
 
 
 class AdaLayerNormLast:
-    """Final AdaLayerNorm (`norm_out`) — chunk_dim=1 branch in diffusers."""
+    """Final AdaLayerNorm (`norm_out`) — diffusers ``AdaLayerNorm`` with ``chunk_dim=1``."""
 
     def __init__(self, ctx: RuntimeContext, embedding_dim: int, output_dim: int,
                  eps: float = 1e-5, affine: bool = True):
-        self.inner = embedding_dim
         self.silu = nn.SiLU()
         self.linear = ctx.Linear(embedding_dim, output_dim, bias=True)
         self.norm = ctx.LayerNorm(output_dim // 2, eps=eps, affine=affine, bias=True)
 
     def __call__(self, x: Any, temb: Any) -> Any:
         t = self.linear(self.silu(temb))
-        shift = t[:, : self.inner]
-        scale = t[:, self.inner :]
+        half = t.shape[-1] // 2
+        shift = t[:, :half]
+        scale = t[:, half:]
         return self.norm(x) * (1 + scale)[:, None, :] + shift[:, None, :]
 
 
@@ -390,6 +394,25 @@ class CogVideoXTransformer3D(TransformerBase):
         self.proj_out = nn_ctx.Linear(cfg.inner_dim, out_dim, bias=True)
 
         self._init_num_frames = num_frames
+        self._compiled_forward = None
+
+    def _activation_dtype(self) -> Any:
+        spec = getattr(self.config, "latent_noise_dtype", None)
+        if isinstance(spec, str) and spec.lower() in ("bfloat16", "bf16"):
+            return self.ctx.bfloat16()
+        return self.ctx.float32()
+
+    def after_load_weights(self, bundle_root=None) -> None:
+        super().after_load_weights(bundle_root)
+        self._compiled_forward = None
+        if getattr(self.ctx, "backend", None) != "mlx":
+            return
+        if not getattr(self.config, "use_mlx_compile", True):
+            return
+        try:
+            self._compiled_forward = self.ctx.compile(self._forward_compute)
+        except Exception:
+            self._compiled_forward = None
 
     def _time_proj_sin(self, timestep: Any) -> Any:
         cfg = self.config
@@ -409,10 +432,29 @@ class CogVideoXTransformer3D(TransformerBase):
         image_rotary_emb: tuple[Any, Any] | None = None,
         **_: Any,
     ) -> Any:
+        if self._compiled_forward is not None:
+            return self._compiled_forward(
+                latents, timestep, txt_embeds, image_rotary_emb,
+            )
+        return self._forward_compute(latents, timestep, txt_embeds, image_rotary_emb)
+
+    def _forward_compute(
+        self,
+        latents: Any,
+        timestep: Any,
+        txt_embeds: Any | None,
+        image_rotary_emb: tuple[Any, Any] | None,
+    ) -> Any:
         ctx = self.ctx
         cfg = self.config
         if txt_embeds is None:
             raise RuntimeError("CogVideoX requires T5 embeddings (`txt_embeds`).")
+
+        act_dt = self._activation_dtype()
+        if latents.dtype != act_dt:
+            latents = latents.astype(act_dt)
+        if txt_embeds.dtype != act_dt:
+            txt_embeds = txt_embeds.astype(act_dt)
 
         # VideoPipeline stores latents as [B, C, T, H, W]; diffusers expects [B, T, C, H, W].
         if latents.ndim != 5:
@@ -451,7 +493,33 @@ class CogVideoXTransformer3D(TransformerBase):
         out = ctx.permute(out, (0, 1, 4, 2, 5, 3, 6))
         out = ctx.reshape(out, (batch_size, num_frames, cfg.out_channels, height, width))
         out = ctx.permute(out, (0, 2, 1, 3, 4))
-        return out
+        return out.astype(ctx.float32())
+
+    def predict_noise_cfg(
+        self,
+        latents_in: Any,
+        t: Any,
+        *,
+        guidance: float,
+        pos_kwargs: dict[str, Any],
+        neg_kwargs: dict[str, Any],
+        cfg_renorm: bool = False,
+        cfg_renorm_min: float = 0.0,
+    ) -> Any:
+        return predict_noise_cfg_batched(
+            self.forward,
+            self.ctx,
+            latents_in,
+            t,
+            guidance=guidance,
+            pos_kwargs=pos_kwargs,
+            neg_kwargs=neg_kwargs,
+            text_keys=TEXT_KEYS_MINIMAL,
+            combine_cfg_noise=self.combine_cfg_noise,
+            refine_cfg_noise=self.refine_cfg_noise,
+            cfg_renorm=cfg_renorm,
+            cfg_renorm_min=cfg_renorm_min,
+        )
 
 
 CogVideoXTransformer = CogVideoXTransformer3D

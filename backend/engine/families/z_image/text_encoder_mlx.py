@@ -83,15 +83,13 @@ class _ZImageEncoderModel(nn.Module):
         position_ids = mx.broadcast_to(mx.arange(seq_len, dtype=mx.int32)[None, :], (batch_size, seq_len))
         position_embeddings = self.rotary_emb(hidden_states, position_ids)
         causal_mask = _ZImageEncoderModel._get_causal_mask(attention_mask, batch_size, hidden_states, seq_len)
-        all_hidden_states = [hidden_states]
-        for layer in self.layers:
+        for layer in self.layers[:-1]:
             hidden_states = layer(
                 hidden_states=hidden_states,
                 attention_mask=causal_mask,
                 position_embeddings=position_embeddings,
             )
-            all_hidden_states.append(hidden_states)
-        return all_hidden_states[-2].astype(input_ids.dtype)
+        return hidden_states.astype(input_ids.dtype)
 
     @staticmethod
     def _get_causal_mask(attention_mask, batch_size, hidden_states, seq_len):
@@ -243,6 +241,27 @@ class ZImageTextEncoder:
         self.enable_thinking = enable_thinking
         self._tokenizer = None
         self._model = None
+        self._compiled_layers = None
+
+    def _refresh_compiled_layers(self) -> None:
+        self._compiled_layers = None
+        if getattr(self.ctx, "backend", None) != "mlx" or self._model is None:
+            return
+        penultimate_layers = self._model.layers[:-1]
+
+        def _run_penultimate(hidden_states, causal_mask, position_embeddings):
+            for layer in penultimate_layers:
+                hidden_states = layer(
+                    hidden_states=hidden_states,
+                    attention_mask=causal_mask,
+                    position_embeddings=position_embeddings,
+                )
+            return hidden_states
+
+        try:
+            self._compiled_layers = mx.compile(_run_penultimate)
+        except Exception:
+            self._compiled_layers = None
 
     @property
     def tokenizer(self):
@@ -287,46 +306,58 @@ class ZImageTextEncoder:
             )
         input_ids = tokens["input_ids"]
         attention_mask = tokens["attention_mask"]
+        num_valid = int(attention_mask.sum())
 
         if ctx.backend == "mlx":
             input_ids = mx.array(input_ids, dtype=mx.int32)
             attention_mask = mx.array(attention_mask, dtype=mx.float32)
-            return self._forward_mlx(input_ids, attention_mask)
+            return self._forward_mlx(input_ids, attention_mask, num_valid)
         from backend.engine.families.z_image.text_encoder_cuda import (
             zimage_prepare_torch_ids,
             zimage_text_encoder_forward_torch,
         )
 
         tid, tam = zimage_prepare_torch_ids(ctx, input_ids, attention_mask)
-        return zimage_text_encoder_forward_torch(self, tid, tam)
+        return zimage_text_encoder_forward_torch(self, tid, tam, num_valid)
 
-    def _forward_mlx(self, input_ids, attention_mask):
+    def _forward_mlx(self, input_ids, attention_mask, num_valid: int):
         if self._model is None:
             self._model = build_zimage_mlx_encoder(self.model_path)
+            self._refresh_compiled_layers()
 
         batch_size, seq_len = input_ids.shape
-        hidden_states = self._model.embed_tokens(input_ids).astype(mx.float32)
+        hidden_states = self._model.embed_tokens(input_ids).astype(mx.bfloat16)
         causal_mask = self._model._get_causal_mask(attention_mask, batch_size, hidden_states, seq_len)
         position_ids = mx.broadcast_to(mx.arange(seq_len, dtype=mx.int32)[None, :], (batch_size, seq_len))
         position_embeddings = self._model.rotary_emb(hidden_states, position_ids)
 
-        all_hidden_states = [hidden_states]
-        for layer in self._model.layers:
-            hidden_states = layer(
-                hidden_states=hidden_states,
-                attention_mask=causal_mask,
-                position_embeddings=position_embeddings,
-            )
-            all_hidden_states.append(hidden_states)
-
         if self.hidden_state_layers is not None:
+            all_hidden_states = [hidden_states]
+            for layer in self._model.layers:
+                hidden_states = layer(
+                    hidden_states=hidden_states,
+                    attention_mask=causal_mask,
+                    position_embeddings=position_embeddings,
+                )
+                all_hidden_states.append(hidden_states)
             layer_outputs = [all_hidden_states[i] for i in self.hidden_state_layers]
             stacked = mx.stack(layer_outputs, axis=1)
             B, L, S, D = stacked.shape
             result = mx.transpose(stacked, (0, 2, 1, 3)).reshape(B, S, L * D)
         else:
-            result = all_hidden_states[-2]
+            penultimate_layers = self._model.layers[:-1]
+            if self._compiled_layers is not None:
+                hidden_states = self._compiled_layers(
+                    hidden_states, causal_mask, position_embeddings,
+                )
+            else:
+                for layer in penultimate_layers:
+                    hidden_states = layer(
+                        hidden_states=hidden_states,
+                        attention_mask=causal_mask,
+                        position_embeddings=position_embeddings,
+                    )
+            result = hidden_states
 
-        num_valid = int(mx.sum(attention_mask).item())
         result = result[:, :num_valid, :]
         return result.astype(mx.bfloat16)

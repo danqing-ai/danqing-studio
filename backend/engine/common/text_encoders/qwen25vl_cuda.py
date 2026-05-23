@@ -159,7 +159,10 @@ def load_qwen25_vl_torch_model(text_encoder_path: Path | str, device: str = "cpu
 
     path_str = str(text_encoder_path)
     path = Path(path_str)
-    kw = dict(torch_dtype=torch.float16, low_cpu_mem_usage=True)
+    dev = (device or "cpu").strip().lower()
+    # MPS fp16 is unstable for Qwen2.5-VL hidden-state extraction on Apple Silicon.
+    dtype = torch.float32 if dev in ("mps", "cpu") else torch.float16
+    kw = dict(torch_dtype=dtype, low_cpu_mem_usage=True)
 
     filtered_sd = _load_filtered_safetensors_state_dict(path)
     if filtered_sd:
@@ -167,7 +170,7 @@ def load_qwen25_vl_torch_model(text_encoder_path: Path | str, device: str = "cpu
             m = Qwen2_5_VLModel.from_pretrained(
                 path_str,
                 state_dict=filtered_sd,
-                torch_dtype=torch.float16,
+                torch_dtype=dtype,
                 low_cpu_mem_usage=False,
                 trust_remote_code=False,
             )

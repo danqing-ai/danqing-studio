@@ -6,6 +6,7 @@ import os
 # Configure HF mirror site
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
+import logging
 import time
 import uuid
 import json
@@ -15,6 +16,13 @@ from typing import Any, Callable, Dict, List, Optional
 import asyncio
 import shutil
 
+from backend.core.bundle_repos import (
+    bundle_local_paths,
+    bundle_repos_from_version,
+    primary_and_follow_ups,
+    version_primary_local_path,
+)
+from backend.core.install_hooks import install_hooks_from_version, run_install_hooks
 from backend.core.interfaces import (
     IDownloadService, IPathResolver, IConfigStore,
     DownloadTask, DownloadProgress, TaskStatus, ConversionTask
@@ -22,6 +30,8 @@ from backend.core.interfaces import (
 from backend.core.i18n import t as tt, get_locale
 from backend.core.downloaders import HTTPDownloader
 from backend.services.hf_repo_resolve import resolve_huggingface_repo_id
+
+logger = logging.getLogger(__name__)
 
 
 class DownloadService(IDownloadService):
@@ -209,6 +219,120 @@ class DownloadService(IDownloadService):
                     return 0
         return 0
 
+    def _bundle_estimated_bytes(self, ver_config: dict[str, Any] | None) -> int:
+        entries = bundle_repos_from_version(ver_config)
+        if not entries:
+            return 0
+        total = 0
+        for spec in entries:
+            sz = spec.get("size")
+            if sz:
+                total += self._parse_size_to_bytes(str(sz))
+        return total
+
+    def _resolve_registry_path(self, local_path: str) -> Path:
+        return self._path_resolver.resolve_registry_local_path(local_path)
+
+    def _maybe_assemble_hunyuan_ms_bundle(self, target: Path, ver_config: dict[str, Any] | None) -> None:
+        if not ver_config:
+            return
+        variant = ver_config.get("hunyuan_ms_variant")
+        if not variant:
+            return
+        from backend.services.hunyuan_ms_bundle import assemble_hunyuan_modelscope_bundle
+
+        assemble_hunyuan_modelscope_bundle(target, str(variant))
+
+    async def _finalize_version_install(
+        self,
+        *,
+        model_name: str,
+        version: str | None,
+        ver_config: dict[str, Any] | None,
+        target: Path,
+        task_id: str,
+        display_name: str,
+        on_progress: Callable[[DownloadProgress], Any],
+    ) -> None:
+        """Post-download steps: Hunyuan MS assembly + registry ``install_hooks``."""
+        if ver_config and ver_config.get("hunyuan_ms_variant"):
+            self._maybe_assemble_hunyuan_ms_bundle(target, ver_config)
+
+        hooks = install_hooks_from_version(ver_config)
+        if not hooks:
+            return
+
+        logger.info(
+            "Running %d install hook(s) for %s:%s at %s",
+            len(hooks),
+            model_name,
+            version or "default",
+            target,
+        )
+        await on_progress(
+            DownloadProgress(
+                task_id=task_id,
+                status="running",
+                progress=0.99,
+                filename=display_name,
+                speed="",
+            )
+        )
+        loop = asyncio.get_event_loop()
+
+        def _run_hooks() -> None:
+            run_install_hooks(
+                model_name=model_name,
+                version_key=version,
+                ver_config=ver_config,
+                bundle_root=target,
+            )
+
+        await loop.run_in_executor(None, _run_hooks)
+
+    def _sync_download_bundle_repo(
+        self,
+        spec: dict[str, Any],
+        *,
+        default_source: str,
+    ) -> str:
+        """Download one ``bundle_repos`` follow-up entry."""
+        repo = str(spec["repo_id"]).strip()
+        dest = self._resolve_registry_path(str(spec["local_path"]).strip())
+        dest.mkdir(parents=True, exist_ok=True)
+        source = str(spec.get("source") or default_source).strip().lower()
+        patterns = spec.get("allow_patterns")
+
+        if source == "huggingface":
+            from huggingface_hub import snapshot_download as hf_snapshot
+
+            if not self._check_hf_connectivity():
+                raise ConnectionError(
+                    "Cannot connect to model download server (HF_ENDPOINT=%s), please check network connection"
+                    % os.environ.get("HF_ENDPOINT", "https://hf-mirror.com")
+                )
+            return hf_snapshot(
+                repo_id=resolve_huggingface_repo_id(repo),
+                local_dir=str(dest),
+                allow_patterns=patterns if patterns else None,
+                token=self._token,
+            )
+
+        if source == "modelscope":
+            from modelscope import snapshot_download as ms_snapshot
+
+            if not self._check_modelscope_connectivity():
+                raise ConnectionError(
+                    "Cannot connect to ModelScope, please check network connection"
+                )
+            return ms_snapshot(
+                model_id=repo,
+                local_dir=str(dest),
+                allow_patterns=patterns if patterns else None,
+            )
+
+        raise RuntimeError(f"Unsupported bundle repo source {source!r} for {repo!r}")
+
     async def download_model(self, model_name: str, version: Optional[str] = None,
                             progress_callback: Optional[Callable[[DownloadProgress], None]] = None,
                             existing_task_id: Optional[str] = None) -> str:
@@ -247,13 +371,22 @@ class DownloadService(IDownloadService):
                 vs = ver_config.get("source")
                 if isinstance(vs, str) and vs.strip():
                     source = vs.strip().lower()
+                primary_spec, _follow = primary_and_follow_ups(ver_config)
+                if primary_spec:
+                    repo_id = primary_spec["repo_id"]
+                    local_path = primary_spec["local_path"]
+                    if primary_spec.get("source"):
+                        source = str(primary_spec["source"]).strip().lower()
 
         if source == "huggingface" and repo_id:
             repo_id = resolve_huggingface_repo_id(repo_id)
 
         # Parse estimated size for this version from registry (fallback if HF API fails)
         estimated_size = 0
-        if ver_config and ver_config.get("size"):
+        bundle_bytes = self._bundle_estimated_bytes(ver_config)
+        if bundle_bytes > 0:
+            estimated_size = bundle_bytes
+        elif ver_config and ver_config.get("size"):
             estimated_size = self._parse_size_to_bytes(ver_config["size"])
         elif config.get("size"):
             estimated_size = self._parse_size_to_bytes(config["size"])
@@ -407,45 +540,27 @@ class DownloadService(IDownloadService):
 
                     result_path = await download_future
 
-                    companion_repo = None
-                    companion_target: Optional[Path] = None
-                    companion_label = display_name
-                    if ver_config:
-                        companion_repo = ver_config.get("companion_repo_id")
-                        clp = ver_config.get("companion_local_path")
-                        if companion_repo and clp:
-                            companion_repo = resolve_huggingface_repo_id(str(companion_repo))
-                            companion_target = self._path_resolver.resolve_registry_local_path(clp)
-                            companion_target.mkdir(parents=True, exist_ok=True)
-                            cname = ver_config.get("companion_name")
-                            if isinstance(cname, str) and cname:
-                                companion_label = f"{display_name} + {cname}"
-                            est_c = 0
-                            if ver_config.get("companion_size"):
-                                est_c = self._parse_size_to_bytes(str(ver_config["companion_size"]))
-                            total_both = total_size + est_c
-                            bytes_primary = calc_downloaded_for(target)
+                    _, follow_ups = primary_and_follow_ups(ver_config)
+                    if follow_ups:
+                        label_parts = [display_name]
+                        for spec in follow_ups:
+                            repo_label = str(spec.get("name") or str(spec["repo_id"]).split("/")[-1])
+                            label_parts.append(repo_label)
+                            companion_label = " + ".join(label_parts)
 
-                            def do_download_c():
-                                if not self._check_hf_connectivity():
-                                    raise ConnectionError(
-                                        "Cannot connect to model download server (HF_ENDPOINT=%s), please check network connection"
-                                        % os.environ.get("HF_ENDPOINT", "https://hf-mirror.com")
-                                    )
-                                return snapshot_download(
-                                    repo_id=companion_repo,
-                                    local_dir=str(companion_target),
-                                    token=self._token,
+                            def do_download_c(_spec=spec):
+                                return self._sync_download_bundle_repo(
+                                    _spec, default_source="huggingface",
                                 )
 
                             c_future = loop.run_in_executor(None, do_download_c)
-                            last_b = bytes_primary + calc_downloaded_for(companion_target)
+                            last_b = calc_downloaded_for(target)
                             last_report_time = time.time()
                             while not c_future.done():
                                 await asyncio.sleep(2)
                                 if task_id in self._cancelled_downloads:
                                     break
-                                cur = bytes_primary + calc_downloaded_for(companion_target)
+                                cur = calc_downloaded_for(target)
                                 now = time.time()
                                 dt = now - last_report_time
                                 speed_str = ""
@@ -454,42 +569,27 @@ class DownloadService(IDownloadService):
                                     speed_str = format_speed(speed_bytes)
                                     last_b = cur
                                     last_report_time = now
-                                prog = cur / total_both if total_both > 0 else 0.0
+                                prog = cur / total_size if total_size > 0 else 0.0
                                 await on_progress(DownloadProgress(
                                     task_id=task_id,
                                     status="running",
                                     progress=min(prog, 1.0),
-                                    total_size=total_both,
+                                    total_size=total_size,
                                     downloaded_size=cur,
                                     speed=speed_str,
                                     filename=companion_label,
                                 ))
                             await c_future
-                            final_downloaded = bytes_primary + calc_downloaded_for(companion_target)
-                            await on_progress(DownloadProgress(
-                                task_id=task_id,
-                                status="completed",
-                                progress=1.0,
-                                total_size=total_both,
-                                downloaded_size=final_downloaded,
-                                speed="",
-                                filename=companion_label,
-                            ))
-                            result = result_path
-                        else:
-                            final_downloaded = calc_downloaded_for(target)
-                            await on_progress(DownloadProgress(
-                                task_id=task_id,
-                                status="completed",
-                                progress=1.0,
-                                total_size=total_size,
-                                downloaded_size=final_downloaded,
-                                speed="",
-                                filename=display_name
-                            ))
-                            result = result_path
-                    else:
                         final_downloaded = calc_downloaded_for(target)
+                        await self._finalize_version_install(
+                            model_name=model_name,
+                            version=version,
+                            ver_config=ver_config,
+                            target=target,
+                            task_id=task_id,
+                            display_name=companion_label,
+                            on_progress=on_progress,
+                        )
                         await on_progress(DownloadProgress(
                             task_id=task_id,
                             status="completed",
@@ -497,7 +597,28 @@ class DownloadService(IDownloadService):
                             total_size=total_size,
                             downloaded_size=final_downloaded,
                             speed="",
-                            filename=display_name
+                            filename=companion_label,
+                        ))
+                        result = result_path
+                    else:
+                        final_downloaded = calc_downloaded_for(target)
+                        await self._finalize_version_install(
+                            model_name=model_name,
+                            version=version,
+                            ver_config=ver_config,
+                            target=target,
+                            task_id=task_id,
+                            display_name=display_name,
+                            on_progress=on_progress,
+                        )
+                        await on_progress(DownloadProgress(
+                            task_id=task_id,
+                            status="completed",
+                            progress=1.0,
+                            total_size=total_size,
+                            downloaded_size=final_downloaded,
+                            speed="",
+                            filename=display_name,
                         ))
                         result = result_path
 
@@ -564,9 +685,17 @@ class DownloadService(IDownloadService):
                         raise ConnectionError(
                             "Cannot connect to ModelScope, please check network connection"
                         )
+                    allow_patterns = None
+                    if ver_config:
+                        primary_spec, _ = primary_and_follow_ups(ver_config)
+                        if primary_spec and primary_spec.get("allow_patterns"):
+                            allow_patterns = primary_spec["allow_patterns"]
+                        else:
+                            allow_patterns = ver_config.get("allow_patterns")
                     return snapshot_download(
                         model_id=repo_id,
                         local_dir=str(target),
+                        allow_patterns=allow_patterns if allow_patterns else None,
                     )
 
                 download_future = loop.run_in_executor(None, do_download_ms)
@@ -607,43 +736,27 @@ class DownloadService(IDownloadService):
 
                     result_path = await download_future
 
-                    companion_repo = None
-                    companion_target: Optional[Path] = None
-                    companion_label = display_name
-                    if ver_config:
-                        companion_repo = ver_config.get("companion_repo_id")
-                        clp = ver_config.get("companion_local_path")
-                        if companion_repo and clp:
-                            companion_repo = str(companion_repo).strip()
-                            companion_target = self._path_resolver.resolve_registry_local_path(clp)
-                            companion_target.mkdir(parents=True, exist_ok=True)
-                            cname = ver_config.get("companion_name")
-                            if isinstance(cname, str) and cname:
-                                companion_label = f"{display_name} + {cname}"
-                            est_c = 0
-                            if ver_config.get("companion_size"):
-                                est_c = self._parse_size_to_bytes(str(ver_config["companion_size"]))
-                            total_both = total_size + est_c
-                            bytes_primary = calc_ms_tree(target)
+                    _, follow_ups = primary_and_follow_ups(ver_config)
+                    if follow_ups:
+                        label_parts = [display_name]
+                        for spec in follow_ups:
+                            repo_label = str(spec.get("name") or str(spec["repo_id"]).split("/")[-1])
+                            label_parts.append(repo_label)
+                            companion_label = " + ".join(label_parts)
 
-                            def do_download_ms_c():
-                                if not self._check_modelscope_connectivity():
-                                    raise ConnectionError(
-                                        "Cannot connect to ModelScope, please check network connection"
-                                    )
-                                return snapshot_download(
-                                    model_id=companion_repo,
-                                    local_dir=str(companion_target),
+                            def do_download_ms_c(_spec=spec):
+                                return self._sync_download_bundle_repo(
+                                    _spec, default_source="modelscope",
                                 )
 
                             c_future = loop.run_in_executor(None, do_download_ms_c)
-                            last_b = bytes_primary + calc_ms_tree(companion_target)
+                            last_b = calc_ms_tree(target)
                             last_report_time = time.time()
                             while not c_future.done():
                                 await asyncio.sleep(2)
                                 if task_id in self._cancelled_downloads:
                                     break
-                                cur = bytes_primary + calc_ms_tree(companion_target)
+                                cur = calc_ms_tree(target)
                                 now = time.time()
                                 dt = now - last_report_time
                                 speed_str = ""
@@ -652,42 +765,27 @@ class DownloadService(IDownloadService):
                                     speed_str = format_speed_ms(speed_bytes)
                                     last_b = cur
                                     last_report_time = now
-                                prog = cur / total_both if total_both > 0 else 0.0
+                                prog = cur / total_size if total_size > 0 else 0.0
                                 await on_progress(DownloadProgress(
                                     task_id=task_id,
                                     status="running",
                                     progress=min(prog, 1.0),
-                                    total_size=total_both,
+                                    total_size=total_size,
                                     downloaded_size=cur,
                                     speed=speed_str,
                                     filename=companion_label,
                                 ))
                             await c_future
-                            final_downloaded = bytes_primary + calc_ms_tree(companion_target)
-                            await on_progress(DownloadProgress(
-                                task_id=task_id,
-                                status="completed",
-                                progress=1.0,
-                                total_size=total_both,
-                                downloaded_size=final_downloaded,
-                                speed="",
-                                filename=companion_label,
-                            ))
-                            result = result_path
-                        else:
-                            final_downloaded = calc_ms_tree(target)
-                            await on_progress(DownloadProgress(
-                                task_id=task_id,
-                                status="completed",
-                                progress=1.0,
-                                total_size=total_size,
-                                downloaded_size=final_downloaded,
-                                speed="",
-                                filename=display_name
-                            ))
-                            result = result_path
-                    else:
                         final_downloaded = calc_ms_tree(target)
+                        await self._finalize_version_install(
+                            model_name=model_name,
+                            version=version,
+                            ver_config=ver_config,
+                            target=target,
+                            task_id=task_id,
+                            display_name=companion_label,
+                            on_progress=on_progress,
+                        )
                         await on_progress(DownloadProgress(
                             task_id=task_id,
                             status="completed",
@@ -695,7 +793,28 @@ class DownloadService(IDownloadService):
                             total_size=total_size,
                             downloaded_size=final_downloaded,
                             speed="",
-                            filename=display_name
+                            filename=companion_label,
+                        ))
+                        result = result_path
+                    else:
+                        final_downloaded = calc_ms_tree(target)
+                        await self._finalize_version_install(
+                            model_name=model_name,
+                            version=version,
+                            ver_config=ver_config,
+                            target=target,
+                            task_id=task_id,
+                            display_name=display_name,
+                            on_progress=on_progress,
+                        )
+                        await on_progress(DownloadProgress(
+                            task_id=task_id,
+                            status="completed",
+                            progress=1.0,
+                            total_size=total_size,
+                            downloaded_size=final_downloaded,
+                            speed="",
+                            filename=display_name,
                         ))
                         result = result_path
 
@@ -1117,11 +1236,10 @@ class DownloadService(IDownloadService):
             self._conversion_events.pop(task_id, None)
 
     def _resolve_version_path(self, version_config: Dict[str, Any]) -> Path:
-        """Resolve local path for a version."""
-        local_path = version_config.get("local_path", "")
-        if not local_path:
-            raise ValueError("version local_path is required")
-        return self._path_resolver.resolve_registry_local_path(local_path)
+        """Resolve install root for a version (bundle_repos[0] or local_path)."""
+        return self._path_resolver.resolve_registry_local_path(
+            version_primary_local_path(version_config)
+        )
 
     def list_conversions(self) -> List[ConversionTask]:
         """List all conversion tasks."""
@@ -1162,30 +1280,36 @@ class DownloadService(IDownloadService):
                 loc = get_locale()
                 return {"success": False, "deleted_paths": [], "error": tt("error.version_not_found", loc, version=version)}
 
-            ver_path = self._resolve_version_path(ver_config)
-            if ver_path.exists():
-                shutil.rmtree(ver_path)
-                deleted_paths.append(str(ver_path))
-            clp = ver_config.get("companion_local_path")
-            if isinstance(clp, str) and clp:
-                cpath = self._path_resolver.resolve_registry_local_path(clp)
+            deleted_set: set[str] = set()
+            paths = bundle_local_paths(ver_config)
+            if not paths:
+                paths = [version_primary_local_path(ver_config)]
+            for lp in paths:
+                cpath = self._path_resolver.resolve_registry_local_path(lp)
+                key = str(cpath)
+                if key in deleted_set:
+                    continue
+                deleted_set.add(key)
                 if cpath.exists():
                     shutil.rmtree(cpath)
-                    deleted_paths.append(str(cpath))
+                    deleted_paths.append(key)
         else:
             versions = config.get("versions", {})
             if versions:
+                deleted_set = set()
                 for ver_key, ver_config in versions.items():
-                    ver_path = self._resolve_version_path(ver_config)
-                    if ver_path.exists():
-                        shutil.rmtree(ver_path)
-                        deleted_paths.append(str(ver_path))
-                    clp = ver_config.get("companion_local_path")
-                    if isinstance(clp, str) and clp:
-                        cpath = self._path_resolver.resolve_registry_local_path(clp)
+                    paths = bundle_local_paths(ver_config)
+                    if not paths:
+                        paths = [version_primary_local_path(ver_config)]
+                    for lp in paths:
+                        cpath = self._path_resolver.resolve_registry_local_path(lp)
+                        key = str(cpath)
+                        if key in deleted_set:
+                            continue
+                        deleted_set.add(key)
                         if cpath.exists():
                             shutil.rmtree(cpath)
-                            deleted_paths.append(str(cpath))
+                            deleted_paths.append(key)
             else:
                 local_path = config.get("local_path", f"models/{model_name}")
                 target = self._path_resolver.resolve_registry_local_path(local_path)

@@ -7,6 +7,7 @@ from .schedulers import (
     LinearScheduler, 
     UniPCScheduler,
     DPMPlusPlusScheduler,
+    CogVideoXDPMScheduler,
     SeedVR2EulerScheduler,
     get_scheduler,
 )
@@ -31,7 +32,7 @@ from .text_encoders import T5Encoder, CLIPEncoder
 __all__ = [
     # Schedulers
     "Scheduler", "FlowMatchEulerScheduler", "LinearScheduler",
-    "UniPCScheduler", "DPMPlusPlusScheduler", "SeedVR2EulerScheduler",
+    "UniPCScheduler", "DPMPlusPlusScheduler", "CogVideoXDPMScheduler", "SeedVR2EulerScheduler",
     "get_scheduler",
     # Norm
     "RMSNorm", "LayerNorm", "GroupNorm", "AdaLayerNorm",

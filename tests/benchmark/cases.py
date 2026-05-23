@@ -1,7 +1,7 @@
 """
 基准测试用例 — (1) 上游 mflux 参考 CLI vs 丹青 PSNR/SSIM；(2) 无参考时的成片健全性。
 
-mflux 对比仅包含有 **真实 mflux 子命令** 的路径；用例按 ``config/models_registry.json`` 中
+mflux 对比仅包含有 **真实 mflux 子命令** 的路径；用例按 ``default_config/models_registry.json`` 中
 ``engine: danqing-image`` 基础模型的 **fp16 默认版本** 与 **actions** 展开（不单独为 int8/int4
 等量化变体建 PSNR 用例）。
 
@@ -30,7 +30,7 @@ SeedVR2 超分健全性：若 ``models/Upscaler/seedvr2-*-fp16`` 下缺少 ``job
 
 小分辨率 (256px) 快速对比。
 
-模型目录：读取仓库 ``config/workspace.pointer.json`` 的 ``custom_workspace_dir``（见
+模型目录：读取 ``default_config/workspace.pointer.json`` 的 ``custom_workspace_dir``（见
 ``resolve_benchmark_data_root()``）；未配置时回退仓库根 ``models/``。
 
 最近一次全量对照（2026-05-18，本机 studio-workspace）：
@@ -46,6 +46,7 @@ SeedVR2 超分健全性：若 ``models/Upscaler/seedvr2-*-fp16`` 下缺少 ``job
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -108,8 +109,10 @@ MFLUX_FP16_MODEL_ROOT: dict[str, str] = {
     "seedvr2-7b": "models/Upscaler/seedvr2-7b-fp16",
 }
 
-# 可选 bundle：未安装时 ``iter_mflux_cases()`` 自动 SKIP（不删用例，便于回归）
+# 可选 bundle：未安装时 sanity 音频用例 SKIP（不删用例，便于回归）
 ACE_STEP_AUDIO_BUNDLE = "models/Audio/acestep-v15-xl-sft"
+HEARTMULA_AUDIO_BUNDLE = "models/Audio/heartmula-oss-3b-happy-new-year"
+WAN_VIDEO_BUNDLE = "models/Video/wan-2.2-ti2v-5b-original"
 
 
 def ace_step_bundle_installed() -> bool:
@@ -119,6 +122,38 @@ def ace_step_bundle_installed() -> bool:
     vae = root / "vae" / "diffusion_pytorch_model.safetensors"
     enc = root / "Qwen3-Embedding-0.6B" / "config.json"
     return dit.is_file() and vae.is_file() and enc.is_file()
+
+
+def heartmula_bundle_installed() -> bool:
+    """HeartMuLa Gen + LM + Codec layout under workspace models/ (see ``bundle.py``)."""
+    from backend.engine.families.heartmula.bundle import bundle_is_ready
+
+    root = resolve_benchmark_data_root() / HEARTMULA_AUDIO_BUNDLE
+    return bundle_is_ready(root)
+
+
+def mlx_runtime_available() -> bool:
+    try:
+        import mlx.core  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+def wan_video_bundle_installed() -> bool:
+    """Wan 2.2 TI2V 5B original bundle (T5 + VAE + DiT shards)."""
+    root = resolve_benchmark_data_root() / WAN_VIDEO_BUNDLE
+    if not root.is_dir():
+        return False
+    vae_ok = (
+        (root / "Wan2.2_VAE.pth").is_file()
+        or (root / "Wan2_2_VAE.pth").is_file()
+        or any((root / "vae").glob("*.safetensors")) if (root / "vae").is_dir() else False
+    )
+    t5_ok = any(root.glob("models_t5*.pth"))
+    dit_ok = any(root.rglob("*.safetensors")) or any(root.rglob("*.pth"))
+    return bool(vae_ok and t5_ok and dit_ok)
 
 
 MFLUX_OPTIONAL_FP16_MODELS: frozenset[str] = frozenset({
@@ -132,22 +167,17 @@ MFLUX_OPTIONAL_FP16_MODELS: frozenset[str] = frozenset({
 
 
 def resolve_benchmark_data_root() -> Path:
-    """``config/workspace.pointer.json`` 的 ``custom_workspace_dir``，否则仓库根。"""
-    pointer = _REPO_ROOT / "config" / "workspace.pointer.json"
-    if pointer.is_file():
-        try:
-            data = json.loads(pointer.read_text(encoding="utf-8"))
-            raw = (data.get("custom_workspace_dir") or "").strip()
-            if raw:
-                candidate = Path(raw).expanduser()
-                if not candidate.is_absolute():
-                    candidate = (_REPO_ROOT / candidate).resolve()
-                else:
-                    candidate = candidate.resolve()
-                if candidate.is_dir():
-                    return candidate
-        except (OSError, json.JSONDecodeError, TypeError):
-            pass
+    """``default_config/workspace.pointer.json`` 的 ``custom_workspace_dir``，否则仓库根。"""
+    if str(_REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(_REPO_ROOT))
+    from backend.utils.config_paths import resolve_default_config_root
+    from backend.utils.workspace import resolve_workspace_root
+
+    default_cfg = resolve_default_config_root(bootstrap_root=_REPO_ROOT, bundle_root=None)
+    try:
+        return resolve_workspace_root(_REPO_ROOT, default_config_root=default_cfg)
+    except RuntimeError:
+        pass
     return _REPO_ROOT
 
 
@@ -168,7 +198,7 @@ def fp16_bundle_installed(model_key: str) -> bool:
 
 
 def iter_mflux_cases() -> list[BenchmarkCase]:
-    """仅返回本地 fp16 bundle 已存在的用例（见 ``config/workspace.pointer.json``）。"""
+    """仅返回本地 fp16 bundle 已存在的用例（见 ``default_config/workspace.pointer.json``）。"""
     runnable: list[BenchmarkCase] = []
     for case in ALL_CASES:
         base = case.model.split(":", 1)[0].strip()
@@ -257,12 +287,21 @@ class SanityCase:
     upscale_scale: int = 2
     # ``danqing-*`` 子进程超时（秒）；首包 FIBO 冷启动可能 >10min
     timeout_sec: Optional[int] = None
-    # audio (``danqing-audio-generate``)
-    media: str = "image"  # image | audio
+    # audio (``danqing-audio-generate``) / video (``danqing-video-generate``)
+    media: str = "image"  # image | audio | video
     duration: int = 10
+    video_size: str = "480x720"
+    video_num_frames: int = 17
+    video_fps: int = 16
+    is_timing_baseline: bool = False
     lyrics: str = ""
     audio_format: str = "wav"
     ace_step_use_lm: bool = False
+    # HeartMuLa (optional; appended to ``danqing-audio-generate`` when set)
+    temperature: Optional[float] = None
+    top_k: Optional[int] = None
+    codec_steps: Optional[int] = None
+    codec_guidance: Optional[float] = None
 
     def __post_init__(self):
         if not self.description:
@@ -386,6 +425,52 @@ ALL_SANITY_CASES: list[SanityCase] = [
         ace_step_use_lm=True,
         timeout_sec=420,
         description="ACE-Step MLX 10s + 5Hz LM expansion — audio sanity",
+    ),
+    SanityCase(
+        id="heartmula-oss-3b-happy-new-year-sanity",
+        model="heartmula-oss-3b-happy-new-year",
+        media="audio",
+        prompt="pop, female vocal, acoustic, melodic",
+        lyrics="[verse]\nHello world\n[chorus]\nSing along",
+        duration=10,
+        guidance=1.5,
+        temperature=1.0,
+        top_k=50,
+        codec_steps=10,
+        codec_guidance=1.25,
+        seed=42,
+        audio_format="wav",
+        timeout_sec=900,
+        description="HeartMuLa MLX 10s audio — reject near-silent output (no upstream ref)",
+    ),
+    SanityCase(
+        id="wan-2.2-ti2v-5b-sanity",
+        model="wan-2.2-ti2v-5b",
+        media="video",
+        prompt="a cat walking on green grass, soft daylight",
+        video_size="480x720",
+        video_num_frames=17,
+        video_fps=16,
+        steps=4,
+        guidance=5.0,
+        seed=42,
+        timeout_sec=2400,
+        description="Wan 2.2 TI2V 5B quick video sanity (4 steps, 17 frames)",
+    ),
+    SanityCase(
+        id="wan-2.2-ti2v-5b-baseline",
+        model="wan-2.2-ti2v-5b",
+        media="video",
+        prompt="a beautiful sunset over mountains, cinematic lighting",
+        video_size="480x720",
+        video_num_frames=81,
+        video_fps=16,
+        steps=8,
+        guidance=5.0,
+        seed=42,
+        timeout_sec=7200,
+        is_timing_baseline=True,
+        description="Wan 2.2 TI2V 5B timing baseline (8 steps, 81 frames @ 480x720)",
     ),
 ]
 

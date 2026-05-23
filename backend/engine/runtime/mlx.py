@@ -151,6 +151,9 @@ class MLXContext(RuntimeContext):
     def expand_dims(self, x: Any, axis: int) -> Any:
         return mx.expand_dims(x, axis=axis)
 
+    def squeeze(self, x: Any, axis: int) -> Any:
+        return mx.squeeze(x, axis=axis)
+
     def zeros_like(self, x: Any) -> Any:
         return mx.zeros_like(x)
 
@@ -242,6 +245,9 @@ class MLXContext(RuntimeContext):
 
     def rsqrt(self, x: Any) -> Any:
         return mx.rsqrt(x)
+
+    def power(self, base: Any, exponent: Any) -> Any:
+        return mx.power(base, exponent)
 
     def mean(self, x: Any, axis: Any = None, keepdims: bool = False) -> Any:
         return mx.mean(x, axis=axis, keepdims=keepdims)
@@ -338,6 +344,9 @@ class MLXContext(RuntimeContext):
     def float32(self) -> Any:
         return mx.float32
 
+    def float64(self) -> Any:
+        return mx.float64
+
     def float16(self) -> Any:
         return mx.float16
 
@@ -346,6 +355,9 @@ class MLXContext(RuntimeContext):
 
     def int32(self) -> Any:
         return mx.int32
+
+    def int64(self) -> Any:
+        return mx.int64
 
     def bool_(self) -> Any:
         return mx.bool_

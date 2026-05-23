@@ -71,24 +71,33 @@ class DanQingAudioEngine(IAudioEngine):
         if isinstance(raw, dict) and raw.get("stub_no_download"):
             return True
         ver_cfg = _version_config(raw, v)
-        lp = ver_cfg.get("local_path")
-        if not lp:
+        from backend.core.bundle_repos import bundle_local_paths, version_primary_local_path
+
+        try:
+            lp = version_primary_local_path(ver_cfg)
+        except ValueError:
             return False
-        dit_path = _resolve_models_subpath(self._paths, str(lp))
-        if not _dir_ready(dit_path):
+        bundle_path = _resolve_models_subpath(self._paths, str(lp))
+        if not _dir_ready(bundle_path):
             return False
-        clp = ver_cfg.get("companion_local_path")
-        if isinstance(clp, str) and clp.strip():
-            lm_path = _resolve_models_subpath(self._paths, clp.strip())
-            if not _dir_ready(lm_path):
+        for sub_lp in bundle_local_paths(ver_cfg):
+            if sub_lp == lp:
+                continue
+            sub_path = _resolve_models_subpath(self._paths, sub_lp)
+            if not _dir_ready(sub_path):
                 return False
+        if entry.family == "heartmula":
+            from backend.engine.families.heartmula.bundle import bundle_is_ready
+
+            return bundle_is_ready(bundle_path)
         return True
 
     def get_supported_models(self) -> List[str]:
         return [mid for mid, e in self._registry.all().items() if e.media == "audio"]
 
     def supports(self, model_id: str, action: str) -> bool:
-        e = self._registry.get(model_id)
+        mid, _ = parse_model_version(model_id)
+        e = self._registry.get(mid)
         if not e or e.media != "audio":
             return False
         return action in e.actions
@@ -119,14 +128,12 @@ class DanQingAudioEngine(IAudioEngine):
     async def generate(
         self, request: AudioGenerationRequest, ctx: ExecutionContext
     ) -> EngineResult:
-        if not self.supports(request.model, "create_music"):
-            mid = request.model.split(":", 1)[0]
+        mid, _ver = parse_model_version(request.model)
+        if not self.supports(mid, "create_music"):
             raise RuntimeError(
                 f"Model {mid!r} does not support text-to-music (create); "
                 "see config/models_registry.json actions."
             )
-
-        mid, _ver = parse_model_version(request.model)
         entry = self._registry.get(mid)
         if entry is None:
             raise RuntimeError(f"Model {request.model!r} not found in registry")

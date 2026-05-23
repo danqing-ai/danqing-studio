@@ -1085,9 +1085,13 @@ const startGeneration = async () => {
 
   const verCfg = (currentModelConfig.value && currentModelConfig.value.versions && (currentModelConfig.value.versions as Record<string, Record<string, unknown>>)[params.version as string]) || null;
   const sizeHuman = verCfg && verCfg.size ? String(verCfg.size) : '';
+  const minMemRaw = currentModelConfig.value?.parameters?.min_unified_memory_gb;
+  const minUnifiedMemoryGb =
+    minMemRaw != null && Number(minMemRaw) > 0 ? Number(minMemRaw) : null;
   warnIfRiskyMemory({
     systemInfo: unref(systemInfo),
     versionSizeHuman: sizeHuman,
+    minUnifiedMemoryGb,
     $tt,
   });
 

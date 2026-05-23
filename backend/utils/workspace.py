@@ -8,10 +8,11 @@ import sys
 from pathlib import Path
 
 from backend.utils.config_paths import (
-    read_bootstrap_workspace_pointer,
+    read_workspace_pointer,
+    resolve_default_config_root,
     restore_workspace_config_from_defaults,
     seed_workspace_config_from_defaults,
-    write_bootstrap_workspace_pointer,
+    write_workspace_pointer,
 )
 
 _WORKSPACE_SUBDIRS = (
@@ -28,23 +29,36 @@ _WORKSPACE_TOP_LEVEL = ("config", "db", "models", "outputs")
 _IGNORE_EMPTY_NAMES = frozenset({".DS_Store", "Thumbs.db", "desktop.ini"})
 
 
-def sanitize_bootstrap_workspace_pointer(bootstrap_root: Path) -> None:
-    """Drop invalid bootstrap pointers (missing dir, dev paths shipped in desktop bundles)."""
-    raw = read_bootstrap_workspace_pointer(bootstrap_root)
+def _resolve_default_config(
+    bootstrap_root: Path,
+    default_config_root: Path | None,
+) -> Path:
+    if default_config_root is not None:
+        return default_config_root.resolve()
+    return resolve_default_config_root(bootstrap_root=bootstrap_root.resolve(), bundle_root=None)
+
+
+def sanitize_workspace_pointer(
+    default_config_root: Path,
+    *,
+    bootstrap_root: Path,
+) -> None:
+    """Drop invalid pointers (missing dir, dev paths shipped in desktop bundles)."""
+    raw = read_workspace_pointer(default_config_root)
     if not raw:
         return
     try:
         candidate = normalize_workspace_path(bootstrap_root, raw)
     except ValueError:
-        write_bootstrap_workspace_pointer(bootstrap_root, "")
+        write_workspace_pointer(default_config_root, "")
         return
     if not candidate.is_dir():
-        write_bootstrap_workspace_pointer(bootstrap_root, "")
+        write_workspace_pointer(default_config_root, "")
 
 
-def is_workspace_configured(bootstrap_root: Path) -> bool:
-    """True when bootstrap ``config/workspace.pointer.json`` names a workspace directory."""
-    return bool(read_bootstrap_workspace_pointer(bootstrap_root).strip())
+def is_workspace_configured(default_config_root: Path) -> bool:
+    """True when ``default_config/workspace.pointer.json`` names a workspace directory."""
+    return bool(read_workspace_pointer(default_config_root).strip())
 
 
 def normalize_workspace_path(bootstrap_root: Path, raw: str) -> Path:
@@ -125,7 +139,7 @@ def apply_workspace_relocation(
     migrate_workspace_data(old_root, new_root)
     ensure_workspace_layout(new_root)
     seed_workspace_config_from_defaults(default_config_root, new_root)
-    write_bootstrap_workspace_pointer(bootstrap_root, str(new_root))
+    write_workspace_pointer(default_config_root, str(new_root))
     db_path = new_root / "db" / "studio.db"
     if db_path.is_file():
         from backend.persistence.asset_store import repair_asset_paths_in_database
@@ -138,9 +152,13 @@ def apply_workspace_relocation(
     return new_root
 
 
-def resolve_workspace_root(bootstrap_root: Path) -> Path:
+def resolve_workspace_root(
+    bootstrap_root: Path,
+    *,
+    default_config_root: Path,
+) -> Path:
     """Effective data root: custom workspace if configured, else install/dev root."""
-    raw = read_bootstrap_workspace_pointer(bootstrap_root)
+    raw = read_workspace_pointer(default_config_root)
     if not raw:
         return bootstrap_root.resolve()
     candidate = Path(raw).expanduser()
@@ -164,12 +182,16 @@ def _tree_has_user_files(path: Path) -> bool:
     return False
 
 
-def prune_obsolete_bootstrap_data_dirs(bootstrap_root: Path) -> None:
-    """Remove empty legacy ``models/`` / ``outputs/`` / ``db/`` under bootstrap after workspace migration."""
+def prune_obsolete_bootstrap_data_dirs(
+    bootstrap_root: Path,
+    *,
+    default_config_root: Path,
+) -> None:
+    """Remove empty legacy data dirs under bootstrap after workspace migration."""
     bootstrap = bootstrap_root.resolve()
-    if not is_workspace_configured(bootstrap):
+    if not is_workspace_configured(default_config_root):
         return
-    workspace = resolve_workspace_root(bootstrap)
+    workspace = resolve_workspace_root(bootstrap, default_config_root=default_config_root)
     if workspace == bootstrap:
         return
     for name in _WORKSPACE_TOP_LEVEL:
@@ -178,6 +200,9 @@ def prune_obsolete_bootstrap_data_dirs(bootstrap_root: Path) -> None:
         path = bootstrap / name
         if path.exists() and not _tree_has_user_files(path):
             shutil.rmtree(path)
+    legacy_cfg = bootstrap / "config"
+    if legacy_cfg.is_dir() and not _tree_has_user_files(legacy_cfg):
+        shutil.rmtree(legacy_cfg)
 
 
 def prepare_data_directories(
@@ -187,13 +212,12 @@ def prepare_data_directories(
 ) -> Path:
     """Create data layout under the effective workspace root."""
     bootstrap = bootstrap_root.resolve()
-    (bootstrap / "config").mkdir(parents=True, exist_ok=True)
-    sanitize_bootstrap_workspace_pointer(bootstrap)
-    root = resolve_workspace_root(bootstrap)
+    default_cfg = _resolve_default_config(bootstrap, default_config_root)
+    sanitize_workspace_pointer(default_cfg, bootstrap_root=bootstrap)
+    root = resolve_workspace_root(bootstrap, default_config_root=default_cfg)
     ensure_workspace_layout(root)
-    if default_config_root is not None:
-        seed_workspace_config_from_defaults(default_config_root, root)
-    prune_obsolete_bootstrap_data_dirs(bootstrap)
+    seed_workspace_config_from_defaults(default_cfg, root)
+    prune_obsolete_bootstrap_data_dirs(bootstrap, default_config_root=default_cfg)
     return root
 
 

@@ -165,6 +165,9 @@ class CudaContext(RuntimeContext):
     def expand_dims(self, x: Any, axis: int) -> Any:
         return x.unsqueeze(axis)
 
+    def squeeze(self, x: Any, axis: int) -> Any:
+        return x.squeeze(axis)
+
     def zeros_like(self, x: Any) -> Any:
         return torch.zeros_like(x)
 
@@ -249,6 +252,9 @@ class CudaContext(RuntimeContext):
 
     def rsqrt(self, x: Any) -> Any:
         return torch.rsqrt(x)
+
+    def power(self, base: Any, exponent: Any) -> Any:
+        return torch.pow(base, exponent)
 
     def mean(self, x: Any, axis: Any = None, keepdims: bool = False) -> Any:
         return torch.mean(x, dim=axis, keepdim=keepdims)
@@ -379,6 +385,9 @@ class CudaContext(RuntimeContext):
     def float32(self) -> Any:
         return torch.float32
 
+    def float64(self) -> Any:
+        return torch.float64
+
     def float16(self) -> Any:
         return torch.float16
 
@@ -387,6 +396,9 @@ class CudaContext(RuntimeContext):
 
     def int32(self) -> Any:
         return torch.int32
+
+    def int64(self) -> Any:
+        return torch.int64
 
     def bool_(self) -> Any:
         return torch.bool

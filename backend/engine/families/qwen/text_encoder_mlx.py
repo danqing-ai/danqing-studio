@@ -357,6 +357,51 @@ class QwenEncoder(nn.Module):
         hidden_states = self.norm(hidden_states)
         return hidden_states
 
+    def encode_hidden_at(
+        self,
+        input_ids: mx.array,
+        attention_mask: mx.array,
+        layer_index: int = -3,
+    ) -> mx.array:
+        """HF ``output_hidden_states[layer_index]`` (0=embeddings, -1=last layer output)."""
+        batch_size, seq_len = input_ids.shape
+        inputs_embeds = self.embed_tokens(input_ids)
+        cache_position = mx.arange(seq_len, dtype=mx.int32)
+        position_ids = mx.expand_dims(mx.expand_dims(cache_position, axis=0), axis=0)
+        position_ids = mx.broadcast_to(position_ids, (3, batch_size, seq_len))
+        padding_mask = mx.where(
+            attention_mask == 1,
+            mx.zeros_like(attention_mask).astype(mx.float32),
+            mx.ones_like(attention_mask).astype(mx.float32) * (-float("inf")),
+        )
+        padding_mask = mx.expand_dims(mx.expand_dims(padding_mask, axis=1), axis=1)
+
+        idx = mx.arange(seq_len, dtype=mx.int32)
+        j = mx.expand_dims(idx, axis=0)
+        i = mx.expand_dims(idx, axis=1)
+        tri_bool = j > i
+        zeros_2d = mx.zeros((seq_len, seq_len)).astype(mx.float32)
+        neginf_2d = mx.ones((seq_len, seq_len)).astype(mx.float32) * (-float("inf"))
+        causal_tri_mask = mx.where(tri_bool, neginf_2d, zeros_2d)
+        causal_tri_mask = mx.expand_dims(mx.expand_dims(causal_tri_mask, axis=0), axis=0)
+        causal_tri_mask = mx.broadcast_to(causal_tri_mask, (batch_size, 1, seq_len, seq_len))
+        attention_mask_4d = causal_tri_mask + padding_mask
+
+        hidden_states = inputs_embeds
+        position_embeddings = self.rotary_emb(hidden_states, position_ids)
+        all_hidden_states = [hidden_states]
+        for layer in self.layers:
+            hidden_states = layer(hidden_states, attention_mask_4d, position_embeddings)
+            all_hidden_states.append(hidden_states)
+
+        pick = layer_index if layer_index >= 0 else len(all_hidden_states) + layer_index
+        if pick < 0 or pick >= len(all_hidden_states):
+            raise RuntimeError(
+                f"QwenEncoder layer_index {layer_index} out of range "
+                f"(n_hidden_states={len(all_hidden_states)})."
+            )
+        return all_hidden_states[pick]
+
 class QwenTextEncoder(nn.Module):
     def __init__(self):
         super().__init__()

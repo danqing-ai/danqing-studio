@@ -18,6 +18,7 @@ from backend.engine.danqing_video_engine import DanQingVideoEngine
 from backend.engine.engine_registry import EngineRegistry
 from backend.engine.platform import PlatformInfo
 from backend.persistence.asset_store import SQLiteAssetStore
+from backend.persistence.stores import JsonConfigStore
 from backend.utils.path_utils import PathResolver
 
 
@@ -42,9 +43,10 @@ def build_engine_context(project_root: Path | None = None) -> EngineContext:
 
     registry_json = path_resolver.get_models_registry_path()
     model_registry = ModelRegistry.load(registry_json)
+    config_store = JsonConfigStore(path_resolver)
 
     shared_cache = ModelCache(
-        get_memory_limit=lambda: 120.0,
+        get_memory_limit=lambda: float(config_store.load().mlx_memory_limit),
         reserve_gb=20.0,
     )
 

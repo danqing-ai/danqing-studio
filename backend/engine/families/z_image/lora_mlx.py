@@ -157,3 +157,6 @@ def merge_z_image_lora_adapters(
             on_log("info", f"lora merged source={log_label!s} strength={strength} tensors={applied}")
 
     ctx.eval(*[t for _, t in model.parameters()])
+    refresh = getattr(model, "_refresh_compiled_forward", None)
+    if callable(refresh):
+        refresh()

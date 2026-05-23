@@ -1,7 +1,10 @@
 .PHONY: help clean lint start stop \
 	frontend-install frontend-dev frontend-build frontend-typecheck \
-	bench-setup bench-src bench-mflux bench-mflux-case bench-sanity bench-sanity-case bench-audio-sanity bench-audio-sanity-lm \
+	bench-setup bench-src bench-mflux bench-mflux-case bench-sanity bench-sanity-case \
+	bench-audio-sanity bench-audio-sanity-lm bench-audio-sanity-heartmula \
+	bench-wan-sanity bench-wan-baseline \
 	check-consistency check-ep-boundary check-theme-legacy check-ui-compat check-engine-imports \
+	sync-models-registry \
 	strip-el-tokens test-engine-unit \
 	pack-prereqs \
 	pack-macos-desktop-sidecar pack-macos-desktop-shell pack-macos-desktop \
@@ -73,9 +76,19 @@ bench-sanity-case:
 
 bench-audio-sanity:
 	$(PYTHON) -m tests.benchmark sanity --case ace-step-xl-sft-sanity
+	$(PYTHON) -m tests.benchmark sanity --case heartmula-oss-3b-happy-new-year-sanity
 
 bench-audio-sanity-lm:
 	$(PYTHON) -m tests.benchmark sanity --case ace-step-xl-sft-sanity-lm
+
+bench-audio-sanity-heartmula:
+	$(PYTHON) -m tests.benchmark sanity --case heartmula-oss-3b-happy-new-year-sanity
+
+bench-wan-sanity:
+	$(PYTHON) -m tests.benchmark sanity --case wan-2.2-ti2v-5b-sanity
+
+bench-wan-baseline:
+	$(PYTHON) -m tests.benchmark sanity --case wan-2.2-ti2v-5b-baseline
 
 # ============================================================================
 # Frontend
@@ -111,6 +124,9 @@ stop:
 
 check-consistency:
 	$(PYTHON) scripts/check_consistency.py
+
+sync-models-registry:
+	$(PYTHON) scripts/sync_workspace_registry.py
 
 check-ep-boundary:
 	$(PYTHON) scripts/check_ep_boundary.py
@@ -234,7 +250,7 @@ help:
 	@echo ""
 	@echo "Benchmark:"
 	@echo "  bench-setup / bench-src / bench-mflux / bench-mflux-case"
-	@echo "  bench-sanity / bench-sanity-case / bench-audio-sanity"
+	@echo "  bench-sanity / bench-sanity-case / bench-audio-sanity / bench-audio-sanity-heartmula"
 	@echo ""
 	@echo "Frontend:  frontend-install | frontend-dev | frontend-build | frontend-typecheck"
 	@echo "Dev:       start | stop"

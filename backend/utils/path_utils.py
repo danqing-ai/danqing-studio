@@ -56,7 +56,6 @@ class PathResolver(IPathResolver):
             self._bootstrap,
             default_config_root=self._default_config,
         )
-
     def get_bootstrap_root(self) -> Path:
         return self._bootstrap
 

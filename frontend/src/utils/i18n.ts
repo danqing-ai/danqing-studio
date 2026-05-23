@@ -78,7 +78,9 @@ export function $mvn(
   } else {
     suffix = String(vn);
   }
-  return suffix ? `${base} - ${suffix}` : base;
+  if (!suffix) return base;
+  if (suffix.trim().toLowerCase() === base.trim().toLowerCase()) return base;
+  return `${base} - ${suffix}`;
 }
 
 /** Preset name */

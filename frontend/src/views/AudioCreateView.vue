@@ -29,24 +29,30 @@
                 @change="onModelChange"
                 :placeholder="$t('studio.selectModel')"
               >
-                <DqOption
-                  v-for="mv in filteredModelPickerVersions"
-                  :key="mv.key"
-                  :label="mv.label"
-                  :value="mv.key"
-                  :disabled="!mv.ready"
-                >
-                  <div class="studio-picker-option">
-                    <span class="studio-picker-option__name" :class="{ 'is-disabled': !mv.ready }">{{ mv.label }}</span>
-                    <ModelLicenseBadges
-                      :recommended="mv.isRec"
-                      :commercial-use-allowed="mv.commercialUseAllowed"
-                      effect="plain"
+                <template v-if="selectedModelPickerItem" #value>
+                  <div class="studio-picker-option studio-picker-option--value">
+                    <span class="studio-picker-option__name">{{ selectedModelPickerItem.name }}</span>
+                    <ModelVersionPickerExtras
+                      :recommended="selectedModelPickerItem.recommended"
+                      :commercial-use-allowed="selectedModelPickerItem.commercialUseAllowed"
+                      :status="String(selectedModelPickerItem.status || '')"
+                      :size="String(selectedModelPickerItem.size || '')"
                     />
-                    <DqTag v-if="mv.ready" size="small" type="success">{{ $t('studio.ready') }}</DqTag>
-                    <DqTag v-else size="small" type="warning">{{ $t('studio.notDownloaded') }}</DqTag>
-                    <span v-if="mv.size" class="studio-picker-option__meta">{{ mv.size }}</span>
                   </div>
+                </template>
+                <DqOption
+                  v-for="item in filteredModelPickerVersions"
+                  :key="item.modelKey + '|' + item.versionKey"
+                  :label="String(item.name)"
+                  :value="item.modelKey + '|' + item.versionKey"
+                  :disabled="!item.ready"
+                >
+                  <ModelVersionPickerExtras
+                    :recommended="item.recommended"
+                    :commercial-use-allowed="item.commercialUseAllowed"
+                    :status="String(item.status || '')"
+                    :size="String(item.size || '')"
+                  />
                 </DqOption>
               </DqSelect>
               <ModelPickerFilters
@@ -83,7 +89,7 @@
                 v-model="params.prompt"
                 type="textarea"
                 :rows="4"
-                :placeholder="$t('audio.promptPlaceholder')"
+                :placeholder="promptPlaceholder"
                 resize="none"
                 @keydown.meta.enter.prevent="startGeneration"
                 @keydown.ctrl.enter.prevent="startGeneration"
@@ -180,6 +186,9 @@
                 :time-signatures="timeSignatures"
                 :duration-min="currentModelConfig?.parameters?.duration?.min ?? 10"
                 :duration-max="currentModelConfig?.parameters?.duration?.max ?? 600"
+                :show-bpm="supportsBpm"
+                :show-key-scale="supportsKeyScale"
+                :show-time-signature="supportsTimeSignature"
               />
             </DqSurfaceCard>
 
@@ -377,19 +386,21 @@
 
 <script setup lang="ts">
 // @ts-nocheck
-import { ref, reactive, computed, watch, onMounted, nextTick } from 'vue';
+import { ref, reactive, computed, watch, onMounted, nextTick, inject, unref, type Ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { toast } from '@/utils/feedback';
 import { api, taskIdFromSubmitResponse } from '@/utils/api';
 import { formatGenLogMessage, isDuplicateDenoiseStepLog } from '@/utils/genTaskLog';
-import { $tt } from '@/utils/i18n';
+import { $tt, $mn, $mvn } from '@/utils/i18n';
 import { useTasksStore } from '@/stores/tasks';
 import { useRegistryStore } from '@/stores/registry';
 import { pickDefaultVersionKey, resolveDefaultModelRegistryKey } from '@/utils/defaultModelSettings';
-import ModelLicenseBadges from '@/components/model/ModelLicenseBadges.vue';
 import ModelPickerFilters from '@/components/model/ModelPickerFilters.vue';
+import ModelVersionPickerExtras from '@/components/model/ModelVersionPickerExtras.vue';
 import { useModelRegistryFilters } from '@/composables/useModelRegistryFilters';
 import { applyModelVersionFilters } from '@/utils/modelPickerFilters';
+import { warnIfRiskyMemory } from '@/composables/memoryHint';
+import type { SystemInfo } from '@/types';
 import AudioCreateMusicParams from '@/components/audio/AudioCreateMusicParams.vue';
 import AudioCreateAdvancedParams from '@/components/audio/AudioCreateAdvancedParams.vue';
 import AudioMusicPlayer from '@/components/audio/AudioMusicPlayer.vue';
@@ -399,6 +410,7 @@ import { Download } from '@danqing/dq-shell';
 const tasksStore = useTasksStore();
 const registryStore = useRegistryStore();
 const router = useRouter();
+const systemInfo = inject<Ref<SystemInfo>>('systemInfo');
 
 // ---- Helpers (migrated from window globals) ----
 const STORAGE_KEY = 'dq-studio.audio-create-prompt-draft.v3';
@@ -423,14 +435,6 @@ function supportsAction(actions: unknown, action: string): boolean {
     return Object.prototype.hasOwnProperty.call(rec, action) && rec[action] != null;
   }
   return false;
-}
-
-function getModelName(c: any, mk: string) {
-  return c?.name?.zh || c?.name?.en || mk;
-}
-
-function getModelVersionName(mid: string, vk: string, vd: any) {
-  return vd?.name ? `${mid} ${vd.name}` : `${mid} ${vk}`;
 }
 
 const TSU = {
@@ -476,6 +480,10 @@ const params = reactive({
   time_signature: '',
   steps: 8,
   guidance: 3.0,
+  temperature: 1.0,
+  top_k: 50,
+  codec_steps: 10,
+  codec_guidance: 1.25,
   seed: null as number | null,
   n: 1,
   audio_format: 'wav',
@@ -524,7 +532,7 @@ const currentModelConfig = computed(() => {
 const currentModelDisplayName = computed(() => {
   const c = currentModelConfig.value;
   const mk = currentModelKey.value;
-  return getModelName(c, mk) || params.model || '';
+  return $mn(c, mk) || params.model || '';
 });
 
 const modelReady = computed(() => {
@@ -548,14 +556,40 @@ const hasCustomParams = computed(() => {
   const p = currentModelConfig.value?.parameters || {};
   const stepsDef = p.steps?.default ?? 8;
   const guidanceDef = p.guidance?.default ?? 3.0;
+  const temperatureDef = p.temperature?.default ?? 1.0;
+  const topKDef = p.top_k?.default ?? 50;
+  const codecStepsDef = p.codec_steps?.default ?? 10;
+  const codecGuidanceDef = p.codec_guidance?.default ?? 1.25;
   const durationDef = p.duration?.default ?? 30;
-  const formatDef = (p.audio_formats && p.audio_formats[0]) || 'wav';
-  return params.steps !== stepsDef || params.guidance !== guidanceDef || params.seed !== null
-    || params.n !== 1 || params.duration !== durationDef || params.audio_format !== formatDef;
+  const formatDef = (p.audio_formats && p.audio_formats[0]) || audioFormats.value[0] || 'wav';
+  return params.steps !== stepsDef || params.guidance !== guidanceDef
+    || params.temperature !== temperatureDef || params.top_k !== topKDef
+    || params.codec_steps !== codecStepsDef || params.codec_guidance !== codecGuidanceDef
+    || params.seed !== null || params.n !== 1 || params.duration !== durationDef
+    || params.audio_format !== formatDef;
 });
 
-// ---- Audio formats ----
-const audioFormats = ['mp3', 'flac', 'wav', 'opus', 'aac'];
+// ---- Registry-driven capability flags ----
+const supportsBpm = computed(() => currentModelConfig.value?.parameters?.supports_bpm === true);
+const supportsKeyScale = computed(() => currentModelConfig.value?.parameters?.supports_key_scale === true);
+const supportsTimeSignature = computed(
+  () => currentModelConfig.value?.parameters?.supports_time_signature === true,
+);
+
+const audioFormats = computed(() => {
+  const allowed = currentModelConfig.value?.parameters?.audio_formats;
+  if (Array.isArray(allowed) && allowed.length > 0) {
+    return allowed.map((f) => String(f).toLowerCase());
+  }
+  return ['mp3', 'flac', 'wav', 'opus', 'aac'];
+});
+
+const promptPlaceholder = computed(() => {
+  if (currentModelConfig.value?.family === 'heartmula') {
+    return $tt('audio.promptPlaceholderHeartMuLa');
+  }
+  return $tt('audio.promptPlaceholder');
+});
 const vocalLanguages = [
   { label: 'English', value: 'en' }, { label: '中文', value: 'zh' }, { label: '日本語', value: 'ja' },
   { label: '한국어', value: 'ko' }, { label: 'Français', value: 'fr' }, { label: 'Deutsch', value: 'de' },
@@ -588,44 +622,59 @@ const selectedModelVersion = ref('');
 
 const { commercialOnly: modelFilterCommercialOnly } = useModelRegistryFilters();
 
-const filteredModelPickerVersions = computed(() => {
-  const rows: Array<any> = [];
-  for (const [mid, config] of Object.entries(modelRegistry.value)) {
+const allAudioVersions = computed(() => {
+  const rows: Array<Record<string, unknown>> = [];
+  for (const [modelKey, config] of Object.entries(modelRegistry.value)) {
     if (!isAudioModel(config)) continue;
     const act = audioWorkTab.value === 'cover' ? 'cover' : 'create';
     if (act === 'cover' && !supportsAction(config.actions, 'cover')) continue;
     if (act === 'create' && !supportsAction(config.actions, 'create')) continue;
     const versions = config.versions || {};
-    const verKeys = Object.keys(versions);
-    const isRec = config.recommended === true;
-    const ds = modelsDetailedStatus.value[mid] || {};
+    const ds = modelsDetailedStatus.value[modelKey] || {};
     const versionStatuses = ds.versions || {};
-    for (const vk of verKeys) {
-      const vd = versions[vk];
-      const vst = versionStatuses[vk] || {};
-      const ready = vst.ready === true || (ds.status === 'ready' && vst.ready !== false);
-      const label = getModelVersionName(mid, vk, vd);
+    for (const [versionKey, versionConfig] of Object.entries(versions)) {
+      const vst = versionStatuses[versionKey] || { status: 'not_downloaded', ready: false };
+      const ready =
+        vst.ready === true || (ds.status === 'ready' && vst.ready !== false);
       rows.push({
-        key: mid + '|' + vk,
-        label,
+        modelKey,
+        versionKey,
+        name: $mvn(modelKey, config, versionConfig),
+        size: (versionConfig as Record<string, unknown>).size || '',
+        status: ready ? 'ready' : (vst.status || 'not_downloaded'),
         ready,
-        isRec,
+        recommended: config.recommended === true && (versionConfig as Record<string, unknown>).default === true,
         commercialUseAllowed: config.commercial_use_allowed === true,
-        mid,
-        vk,
-        size: vd.size || '',
       });
     }
   }
-  rows.sort((a, b) => {
-    if (a.isRec !== b.isRec) return a.isRec ? -1 : 1;
-    if (a.ready !== b.ready) return a.ready ? -1 : 1;
-    return a.label.localeCompare(b.label);
-  });
-  return applyModelVersionFilters(rows, {
+  return rows;
+});
+
+const selectedModelPickerItem = computed(() => {
+  const key = selectedModelVersion.value;
+  if (!key) return null;
+  return allAudioVersions.value.find((item) => `${item.modelKey}|${item.versionKey}` === key) ?? null;
+});
+
+const filteredModelPickerVersions = computed(() => {
+  const rows = applyModelVersionFilters(allAudioVersions.value, {
     installedOnly: true,
     commercialOnly: modelFilterCommercialOnly.value,
   });
+  rows.sort((a, b) => {
+    const ar = a.recommended ? 1 : 0;
+    const br = b.recommended ? 1 : 0;
+    if (ar !== br) return br - ar;
+    const an = String(a.name || '');
+    const bn = String(b.name || '');
+    try {
+      return an.localeCompare(bn, 'zh');
+    } catch {
+      return an < bn ? -1 : an > bn ? 1 : 0;
+    }
+  });
+  return rows;
 });
 
 const submitDisabled = computed(() => {
@@ -660,6 +709,12 @@ function applyDefaults(modelConfig: any) {
   const p = modelConfig.parameters;
   if (p.steps && p.steps.default != null) params.steps = p.steps.default;
   if (p.guidance && p.guidance.default != null) params.guidance = p.guidance.default;
+  if (p.temperature && p.temperature.default != null) params.temperature = p.temperature.default;
+  if (p.top_k && p.top_k.default != null) params.top_k = p.top_k.default;
+  if (p.codec_steps && p.codec_steps.default != null) params.codec_steps = p.codec_steps.default;
+  if (p.codec_guidance && p.codec_guidance.default != null) {
+    params.codec_guidance = p.codec_guidance.default;
+  }
   if (p.duration) {
     if (p.duration.default != null) params.duration = p.duration.default;
     const dmin = p.duration.min ?? 10;
@@ -668,7 +723,11 @@ function applyDefaults(modelConfig: any) {
     if (params.duration > dmax) params.duration = dmax;
   }
   if (p.audio_formats && Array.isArray(p.audio_formats) && p.audio_formats.length > 0) {
-    params.audio_format = p.audio_formats[0];
+    const fmt = String(p.audio_formats[0]).toLowerCase();
+    params.audio_format = fmt;
+  }
+  if (!audioFormats.value.includes(String(params.audio_format || '').toLowerCase())) {
+    params.audio_format = audioFormats.value[0] || 'wav';
   }
   params.negative_prompt = '';
   params.lyrics = '';
@@ -734,6 +793,24 @@ async function startGeneration() {
   if (!modelReady.value) { toast.warning('Model is not ready'); return; }
   if (!params.prompt.trim()) { toast.warning('Please enter a prompt'); return; }
 
+  const parsed = parseModelVersion(selectedModelVersion.value || '');
+  const mk = parsed.modelKey || parsed.model || currentModelKey.value;
+  const vk = parsed.version || '';
+  const verCfg =
+    mk && currentModelConfig.value?.versions
+      ? currentModelConfig.value.versions[vk]
+      : null;
+  const sizeHuman = verCfg?.size ? String(verCfg.size) : '';
+  const minMemRaw = currentModelConfig.value?.parameters?.min_unified_memory_gb;
+  const minUnifiedMemoryGb =
+    minMemRaw != null && Number(minMemRaw) > 0 ? Number(minMemRaw) : null;
+  warnIfRiskyMemory({
+    systemInfo: unref(systemInfo),
+    versionSizeHuman: sizeHuman,
+    minUnifiedMemoryGb,
+    $tt,
+  });
+
   generating.value = true;
   currentTask.id = '';
   currentTask.progress = 0;
@@ -760,6 +837,10 @@ async function startGeneration() {
       time_signature: params.time_signature || '',
       steps: params.steps ?? null,
       guidance: params.guidance ?? null,
+      temperature: params.temperature ?? null,
+      top_k: params.top_k ?? null,
+      codec_steps: params.codec_steps ?? null,
+      codec_guidance: params.codec_guidance ?? null,
       seed: params.seed ?? null,
       n: params.n ?? 1,
       audio_format: params.audio_format || 'wav',
@@ -987,9 +1068,12 @@ onMounted(async () => {
   if (!params.model) {
     const versions = filteredModelPickerVersions.value;
     if (versions.length > 0) {
-      const rec = versions.find((v: any) => v.ready && v.isRec) || versions.find((v: any) => v.ready) || versions[0];
-      selectedModelVersion.value = rec.key;
-      onModelChange(rec.key);
+      const rec =
+        versions.find((v) => v.ready && v.recommended) ||
+        versions.find((v) => v.ready) ||
+        versions[0];
+      selectedModelVersion.value = `${rec.modelKey}|${rec.versionKey}`;
+      onModelChange(selectedModelVersion.value);
     }
   }
   if (!params.model) {
@@ -1014,14 +1098,14 @@ watch(audioWorkTab, () => {
 watch(modelFilterCommercialOnly, () => {
   const rows = filteredModelPickerVersions.value;
   const key = selectedModelVersion.value;
-  if (key && rows.some((r) => r.key === key)) {
+  if (key && rows.some((r) => `${r.modelKey}|${r.versionKey}` === key)) {
     return;
   }
   const pick = rows.find((r) => r.ready) || rows[0];
   if (!pick) {
     return;
   }
-  selectedModelVersion.value = pick.key;
-  onModelChange(pick.key);
+  selectedModelVersion.value = `${pick.modelKey}|${pick.versionKey}`;
+  onModelChange(selectedModelVersion.value);
 });
 </script>

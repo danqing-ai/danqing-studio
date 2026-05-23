@@ -71,7 +71,27 @@ def resolve_video_transformer_weight_sources(
         shards = ltx_flat_transformer_weight_files(bundle_root, model_id)
         return (bundle_root, shards) if shards else (bundle_root, [])
 
+    if family == "wan":
+        shards = wan_flat_transformer_shards(bundle_root)
+        if shards:
+            return (bundle_root, shards)
+
     return None, []
+
+
+def wan_flat_transformer_shards(bundle_root: Path) -> list[Path]:
+    """Original Wan bundle: ``diffusion_pytorch_model*.safetensors`` at bundle root."""
+    if not bundle_root.is_dir():
+        return []
+    shards = sorted(bundle_root.glob("diffusion_pytorch_model*.safetensors"))
+    if shards:
+        return shards
+    tp = bundle_root / "transformer"
+    if _is_dir_nonempty(tp):
+        inner = sorted(tp.glob("*.safetensors"))
+        if inner:
+            return inner
+    return []
 
 
 def ltx_flat_vae_decoder_file(bundle_root: Path) -> Path | None:
@@ -97,3 +117,16 @@ def max_remapped_ltx_block_index(remapped: dict) -> int:
         if m:
             mx = max(mx, int(m.group(1)))
     return mx
+
+
+def hunyuan_vae_dir(bundle_root: Path) -> Path | None:
+    p = bundle_root / "vae"
+    return p if p.is_dir() else None
+
+
+def resolve_hunyuan_sr_bundle(bundle_root: Path | None) -> Path | None:
+    """SR weights may live in sibling ``*-1080p-sr`` bundle; caller passes explicit path via registry."""
+    if bundle_root is None:
+        return None
+    sr = bundle_root.parent / "hunyuan-video-1.5-1080p-sr"
+    return sr if sr.is_dir() else None

@@ -18,12 +18,16 @@ class T5Encoder:
         text_dim: int = 4096,
         *,
         tokenizer_path: str | None = None,
+        weight_dtype: Any | None = None,
+        native_mlx_only: bool = False,
     ):
         self.ctx = ctx
         self.model_path = model_path
         self._tokenizer_path = tokenizer_path or model_path
         self.max_seq_len = max_seq_len
         self.text_dim = text_dim
+        self._weight_dtype = weight_dtype
+        self._native_mlx_only = native_mlx_only
         self._tokenizer = None
         self._model = None
         self._torch_bridge_model = None
@@ -55,16 +59,70 @@ class T5Encoder:
         attention_mask_mx = mx.array(attention_mask, dtype=mx.float32)
         return self._forward_mlx(input_ids_mx, attention_mask_mx)
 
+    def encode_with_mask(self, texts: list[str]) -> tuple[Any, Any]:
+        """Encode texts → ``(hidden_states, attention_mask_bool)`` as MLX arrays."""
+        tokenizer = self.tokenizer
+        ctx = self.ctx
+        tokens = tokenizer(
+            texts, padding="max_length", max_length=self.max_seq_len,
+            truncation=True, return_tensors="np",
+        )
+        input_ids = tokens["input_ids"]
+        attention_mask = tokens["attention_mask"]
+        if ctx.backend != "mlx":
+            from backend.engine.common.text_encoders.t5_cuda import t5_prepare_torch_tensors, t5_forward_torch
+            tid, tam = t5_prepare_torch_tensors(ctx, input_ids, attention_mask)
+            hidden = t5_forward_torch(self, tid, tam)
+            import mlx.core as mx
+            mask = mx.array(attention_mask.astype(bool))
+            return hidden, mask
+        import mlx.core as mx
+        input_ids_mx = mx.array(input_ids, dtype=mx.int32)
+        attention_mask_mx = mx.array(attention_mask, dtype=mx.float32)
+        hidden = self._forward_mlx(input_ids_mx, attention_mask_mx)
+        mask = mx.array(attention_mask.astype(bool))
+        return hidden, mask
+
+    def encode_tokenized_np(
+        self,
+        input_ids: Any,
+        attention_mask: Any,
+    ) -> tuple[Any, Any]:
+        """Encode pre-tokenized numpy batches → MLX ``(hidden, bool_mask)``."""
+        import numpy as np
+        import mlx.core as mx
+
+        ctx = self.ctx
+        if ctx.backend != "mlx":
+            from backend.engine.common.text_encoders.t5_cuda import t5_prepare_torch_tensors, t5_forward_torch
+            tid, tam = t5_prepare_torch_tensors(ctx, input_ids, attention_mask)
+            hidden = t5_forward_torch(self, tid, tam)
+            mask = mx.array(np.asarray(attention_mask).astype(bool))
+            return hidden, mask
+        input_ids_mx = mx.array(input_ids, dtype=mx.int32)
+        attention_mask_mx = mx.array(attention_mask, dtype=mx.float32)
+        hidden = self._forward_mlx(input_ids_mx, attention_mask_mx)
+        mask = mx.array(np.asarray(attention_mask).astype(bool))
+        return hidden, mask
+
     def _forward_mlx(self, input_ids, attention_mask):
         import mlx.core as mx
         try:
             from mlx_lm.models.t5 import T5Model, T5Config
-        except ImportError:
+        except ImportError as e:
+            if self._native_mlx_only:
+                raise RuntimeError(
+                    "T5 MLX forward requires mlx_lm.models.t5; torch bridge disabled for this encoder."
+                ) from e
             return self._forward_mlx_via_torch_bridge(input_ids, attention_mask)
         if self._model is None:
             config = T5Config.from_pretrained(self.model_path)
             self._model = T5Model(config)
             self._model.load_weights(str(self.model_path))
+            if self._weight_dtype is not None:
+                from backend.engine.common.mlx_dtype import cast_module_parameters
+
+                cast_module_parameters(self._model, self._weight_dtype)
             mx.eval(self._model.parameters())
         return self._model(input_ids, attention_mask)
 
@@ -83,3 +141,11 @@ class T5Encoder:
 
         hidden_np = t5_cpu_torch_bridge_hidden_numpy(self, input_ids, attention_mask)
         return mx.array(hidden_np)
+
+    def release_weights(self) -> None:
+        """Drop loaded MLX / bridge weights (tokenizers unchanged)."""
+        self._model = None
+        self._torch_bridge_model = None
+        import mlx.core as mx
+
+        mx.clear_cache()
