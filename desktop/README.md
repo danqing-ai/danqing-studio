@@ -35,12 +35,13 @@ make pack-macos-desktop
 
 顺序：`out/frontend/dist` → `out/sidecar/danqing-api` → Tauri bundle。
 
-macOS 默认 **MLX 精简 sidecar**（无 torch / `*_cuda`）。
+| 平台 | 命令 | Sidecar profile |
+|------|------|-----------------|
+| macOS (Apple Silicon) | `make pack-macos-desktop` | **MLX**（无 torch） |
+| Linux x86_64 server | `make pack-linux-server` | **CUDA**（无 MLX） |
+| Windows x64 desktop | `make pack-windows-desktop-release` | **CUDA**（无 MLX） |
 
-| 平台 | 命令 | Sidecar |
-|------|------|---------|
-| macOS (Apple Silicon) | `make pack-macos-desktop` | MLX（精简） |
-| Windows x64 | `make pack-windows-desktop-release` | CUDA only（`full` + prune，无 MLX） |
+`DANQING_PYINSTALLER_PROFILE`：`mlx`（macOS）或 `cuda`（Linux/Windows）。禁止在同一发布包中混装 MLX + CUDA。
 
 Windows 需在 **Windows 本机** 构建；产物为 `out/desktop/bundle/nsis/*-setup.exe`。
 

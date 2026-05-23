@@ -85,8 +85,10 @@ jobs:
         working-directory: danqing-studio
         run: python3 scripts/set_desktop_version.py "${{ inputs.version }}"
 
-      - name: Build desktop bundle
+      - name: Build desktop bundle (MLX sidecar)
         working-directory: danqing-studio
+        env:
+          DANQING_PYINSTALLER_PROFILE: mlx
         run: |
           source .venv/bin/activate
           make pack-macos-desktop
@@ -166,6 +168,7 @@ jobs:
         working-directory: danqing-studio
         env:
           RELEASE_VERSION: ${{ env.RELEASE_VERSION }}
+          DANQING_PYINSTALLER_PROFILE: cuda
         run: |
           source .venv/bin/activate
           make pack-linux-server-archive RELEASE_VERSION="$RELEASE_VERSION"
@@ -271,10 +274,10 @@ jobs:
           npm install --no-audit --no-fund
           npm run build
 
-      - name: Build Windows desktop bundle
+      - name: Build Windows desktop bundle (CUDA sidecar)
         working-directory: danqing-studio
         env:
-          DANQING_PYINSTALLER_PROFILE: full
+          DANQING_PYINSTALLER_PROFILE: cuda
         run: |
           .\.venv\Scripts\Activate.ps1
           python scripts/build_sidecar.py

@@ -54,13 +54,21 @@ def build(*, clean: bool = True) -> Path:
             cmd.extend(["--target-architecture", "arm64"])
 
     profile = pc.packaging_profile()
+    if sys.platform == "darwin" and profile != "mlx":
+        raise SystemExit(
+            "macOS release must use DANQING_PYINSTALLER_PROFILE=mlx (MLX-only bundle)."
+        )
+    if sys.platform != "darwin" and profile == "mlx":
+        raise SystemExit(
+            "Linux/Windows release must use DANQING_PYINSTALLER_PROFILE=cuda (CUDA-only bundle)."
+        )
     print(f"Packaging profile: {profile}")
 
     for imp in pc.get_hidden_imports(profile):
         cmd.extend(["--hidden-import", imp])
     for data in pc.get_data_files(profile=profile):
         cmd.extend(["--add-data", data])
-    for binary in pc.get_binary_files(op.PROJECT_ROOT):
+    for binary in pc.get_binary_files(op.PROJECT_ROOT, profile=profile):
         cmd.extend(["--add-binary", binary])
     for hook in pc.get_runtime_hooks(op.PROJECT_ROOT):
         cmd.extend(["--runtime-hook", hook])
@@ -95,7 +103,7 @@ def build(*, clean: bool = True) -> Path:
                 print(f"Pruned sidecar ({len(removed)} entries)")
             if placed:
                 print(f"MLX layout: {', '.join(placed)} next to danqing-api")
-        elif profile == "full":
+        elif pc.is_cuda_profile(profile):
             import prune_sidecar_cuda as prune_cuda  # noqa: E402
 
             removed = prune_cuda.finalize_cuda_sidecar(out)

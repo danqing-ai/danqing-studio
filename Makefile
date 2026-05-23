@@ -170,20 +170,20 @@ pack-prereqs:
 	@command -v cargo >/dev/null 2>&1 || (printf '%s\n' 'cargo not found. Install Rust: https://rustup.rs/' >&2; exit 1)
 	@echo "pack-prereqs OK (npm + cargo)"
 
-# --- macOS desktop (MLX sidecar) — build on Darwin arm64 ---
+# --- macOS desktop (MLX sidecar only) — build on Darwin arm64 ---
 
 export DANQING_PYINSTALLER_PROFILE ?= mlx
 
 pack-macos-desktop-sidecar: frontend-build
-	DANQING_PYINSTALLER_PROFILE=$(DANQING_PYINSTALLER_PROFILE) $(PYTHON) scripts/build_sidecar.py
+	DANQING_PYINSTALLER_PROFILE=mlx $(PYTHON) scripts/build_sidecar.py
 
 pack-macos-desktop-shell: pack-prereqs
 	@./scripts/tauri_build_macos.sh
 
 pack-macos-desktop: frontend-build pack-macos-desktop-sidecar pack-macos-desktop-shell
-	@echo "pack-macos-desktop -> $(OUT_DIR)/desktop/bundle/"
+	@echo "pack-macos-desktop (MLX) -> $(OUT_DIR)/desktop/bundle/"
 
-# --- Linux server (CUDA tar.gz) — build on Linux x86_64 ---
+# --- Linux server (CUDA sidecar only) — build on Linux x86_64 ---
 
 pack-linux-server-venv:
 	@test -d .venv || python3.11 -m venv .venv || python3 -m venv .venv
@@ -192,7 +192,7 @@ pack-linux-server-venv:
 	$(PYTHON) -m pip install -r requirements-linux-cuda.txt pyinstaller
 
 pack-linux-server-sidecar: frontend-build
-	DANQING_PYINSTALLER_PROFILE=full $(PYTHON) scripts/build_sidecar.py
+	DANQING_PYINSTALLER_PROFILE=cuda $(PYTHON) scripts/build_sidecar.py
 
 pack-linux-server-archive: pack-linux-server-sidecar
 	RELEASE_VERSION=$(RELEASE_VERSION) $(PYTHON) scripts/package_linux_cuda_release.py --version $(RELEASE_VERSION)
@@ -200,7 +200,7 @@ pack-linux-server-archive: pack-linux-server-sidecar
 
 pack-linux-server: pack-linux-server-venv pack-linux-server-archive
 
-# --- Windows (CUDA) — build on Windows x86_64 ---
+# --- Windows desktop (CUDA sidecar only) — build on Windows x86_64 ---
 
 pack-windows-venv:
 	@test -d .venv || py -3.11 -m venv .venv || python -m venv .venv
@@ -209,7 +209,7 @@ pack-windows-venv:
 	$(PYTHON) -m pip install -r requirements-linux-cuda.txt pyinstaller
 
 pack-windows-sidecar: frontend-build
-	DANQING_PYINSTALLER_PROFILE=full $(PYTHON) scripts/build_sidecar.py
+	DANQING_PYINSTALLER_PROFILE=cuda $(PYTHON) scripts/build_sidecar.py
 
 pack-windows-server-archive: pack-windows-sidecar
 	RELEASE_VERSION=$(RELEASE_VERSION) $(PYTHON) scripts/package_windows_cuda_release.py --version $(RELEASE_VERSION)

@@ -1,9 +1,9 @@
 """
 Shared PyInstaller metadata for DanQing Studio desktop sidecar.
 
-Profiles:
-  mlx  — Apple Silicon / MLX inference only: no ``*_cuda`` modules, no PyTorch/CUDA stack.
-  full — include CUDA hidden imports (Linux/Windows CUDA builds).
+Profiles (platform-specific bundles — do not mix MLX + CUDA in one sidecar):
+  mlx  — macOS Apple Silicon: MLX only, no torch/CUDA.
+  cuda — Linux / Windows NVIDIA: PyTorch CUDA only, no MLX (``full`` is an alias).
 """
 
 from __future__ import annotations
@@ -14,50 +14,7 @@ from pathlib import Path
 
 from out_paths import FRONTEND_DIST, PROJECT_ROOT
 
-# Hidden imports that pull PyTorch / CUDA-only modules (full profile only).
-_CUDA_HIDDEN_IMPORTS: tuple[str, ...] = (
-    "backend.engine.families.z_image.text_encoder_cuda",
-    "backend.engine.common.text_encoders.clip_cuda",
-    "backend.engine.common.text_encoders.t5_cuda",
-    "backend.engine.common.text_encoders.qwen25vl_cuda",
-)
-
-# Runtime modules that must not appear in mlx profile bundles.
-_MLX_EXCLUDED_MODULES: tuple[str, ...] = (
-    # PyTorch / CUDA GPU stack
-    "torch",
-    "torchvision",
-    "torchaudio",
-    "torchgen",
-    "functorch",
-    "triton",
-    # DanQing CUDA backends
-    "backend.engine.runtime.cuda",
-    "backend.engine.families.z_image.text_encoder_cuda",
-    "backend.engine.common.text_encoders.t5_cuda",
-    "backend.engine.common.text_encoders.clip_cuda",
-    "backend.engine.common.text_encoders.qwen25vl_cuda",
-    "backend.engine.families.ace_step.transformer_cuda",
-    "backend.engine.families.ace_step.vae_cuda",
-    # Common venv bloat not used by MLX inference paths
-    "cv2",
-    "opencv_python",
-    "pyarrow",
-    "datasets",
-    "pandas",
-    "matplotlib",
-    "scipy",
-    "sklearn",
-    "accelerate",
-    "bitsandbytes",
-    "tensorboard",
-    "tensorboard_data_server",
-    "torch.utils.tensorboard",
-    "hf_xet",
-    "soundfile",
-)
-
-_MLX_CORE_HIDDEN_IMPORTS: tuple[str, ...] = (
+_SHARED_HIDDEN_IMPORTS: tuple[str, ...] = (
     "uvicorn.protocols.http.auto",
     "uvicorn.protocols.websockets.auto",
     "uvicorn.loops.auto",
@@ -87,6 +44,7 @@ _MLX_CORE_HIDDEN_IMPORTS: tuple[str, ...] = (
     "backend.core.model_registry",
     "backend.core.registry_format",
     "backend.core.task_kinds",
+    "backend.core.install_hooks",
     "backend.engine.engine_registry",
     "backend.engine.danqing_image_engine",
     "backend.engine.danqing_video_engine",
@@ -96,15 +54,6 @@ _MLX_CORE_HIDDEN_IMPORTS: tuple[str, ...] = (
     "backend.engine.pipelines.image_upscale_pipeline",
     "backend.engine.pipelines.video_pipeline",
     "backend.engine.pipelines.video_upscale_pipeline",
-    "backend.engine.pipelines.music_pipeline",
-    "backend.engine.families.ace_step",
-    "backend.engine.families.heartmula",
-    "backend.engine.families.heartmula.install_hook",
-    "backend.engine.families.heartmula.generation_mlx",
-    "backend.engine.families.heartmula.weights_mlx",
-    "backend.core.install_hooks",
-    "backend.engine.families.heartmula.mlx",
-    "backend.engine.common.safetensors_affine_quant",
     "backend.engine._transformer_registry",
     "backend.engine.families",
     "backend.engine.families.fibo",
@@ -113,16 +62,12 @@ _MLX_CORE_HIDDEN_IMPORTS: tuple[str, ...] = (
     "backend.engine.families.qwen",
     "backend.engine.families.z_image",
     "backend.engine.families.seedvr2",
-    "backend.engine.families.seedvr2.video_restore_mlx",
     "backend.engine.families.ltx",
     "backend.engine.families.wan",
-    "backend.engine.families.wan.transformer_mlx",
-    "backend.engine.families.wan.vae_mlx",
     "backend.engine.families.wan.vae",
     "backend.engine.families.wan.conditioning",
-    "backend.engine.families.wan.attention_mlx",
-    "backend.engine.families.wan.text_encoder_mlx",
     "backend.engine.families.cogvideox",
+    "backend.engine.common.safetensors_affine_quant",
     "backend.services.services",
     "backend.services.download_service",
     "backend.persistence.stores",
@@ -142,44 +87,138 @@ _MLX_CORE_HIDDEN_IMPORTS: tuple[str, ...] = (
     "safetensors",
     "tqdm",
     "requests",
+)
+
+_MLX_ONLY_HIDDEN_IMPORTS: tuple[str, ...] = (
+    "backend.engine.runtime.mlx",
+    "backend.engine.pipelines.music_pipeline",
+    "backend.engine.families.ace_step",
+    "backend.engine.families.heartmula",
+    "backend.engine.families.heartmula.install_hook",
+    "backend.engine.families.heartmula.generation_mlx",
+    "backend.engine.families.heartmula.weights_mlx",
+    "backend.engine.families.heartmula.mlx",
+    "backend.engine.families.seedvr2.video_restore_mlx",
+    "backend.engine.families.wan.transformer_mlx",
+    "backend.engine.families.wan.vae_mlx",
+    "backend.engine.families.wan.attention_mlx",
+    "backend.engine.families.wan.text_encoder_mlx",
+    "backend.engine.families.wan.rope_mlx",
     "mlx",
     "mlx.core",
     "mlx._reprlib_fix",
     "mlx_lm",
 )
 
+_CUDA_ONLY_HIDDEN_IMPORTS: tuple[str, ...] = (
+    "backend.engine.runtime.cuda",
+    "backend.engine.families.z_image.text_encoder_cuda",
+    "backend.engine.common.text_encoders.clip_cuda",
+    "backend.engine.common.text_encoders.t5_cuda",
+    "backend.engine.common.text_encoders.qwen25vl_cuda",
+    "backend.engine.families.ace_step.transformer_cuda",
+    "backend.engine.families.ace_step.vae_cuda",
+    "backend.engine.families.ace_step.generation_cuda",
+    "backend.engine.families.heartmula.generation_cuda",
+)
+
+_MLX_EXCLUDED_MODULES: tuple[str, ...] = (
+    "torch",
+    "torchvision",
+    "torchaudio",
+    "torchgen",
+    "functorch",
+    "triton",
+    "backend.engine.runtime.cuda",
+    "backend.engine.families.z_image.text_encoder_cuda",
+    "backend.engine.common.text_encoders.t5_cuda",
+    "backend.engine.common.text_encoders.clip_cuda",
+    "backend.engine.common.text_encoders.qwen25vl_cuda",
+    "backend.engine.families.ace_step.transformer_cuda",
+    "backend.engine.families.ace_step.vae_cuda",
+    "backend.engine.families.ace_step.generation_cuda",
+    "backend.engine.families.heartmula.generation_cuda",
+    "cv2",
+    "opencv_python",
+    "pyarrow",
+    "datasets",
+    "pandas",
+    "matplotlib",
+    "scipy",
+    "sklearn",
+    "accelerate",
+    "bitsandbytes",
+    "tensorboard",
+    "tensorboard_data_server",
+    "torch.utils.tensorboard",
+    "hf_xet",
+    "soundfile",
+)
+
+_CUDA_EXCLUDED_MODULES: tuple[str, ...] = (
+    "mlx",
+    "mlx.core",
+    "mlx.nn",
+    "mlx_lm",
+    "backend.engine.runtime.mlx",
+    "backend.engine.families.heartmula.generation_mlx",
+    "backend.engine.families.heartmula.weights_mlx",
+    "backend.engine.families.heartmula.mlx",
+    "backend.engine.families.seedvr2.video_restore_mlx",
+    "backend.engine.families.wan.transformer_mlx",
+    "backend.engine.families.wan.vae_mlx",
+    "backend.engine.families.wan.attention_mlx",
+    "backend.engine.families.wan.text_encoder_mlx",
+    "backend.engine.families.wan.rope_mlx",
+    "tensorboard",
+    "tensorboard_data_server",
+    "torch.utils.tensorboard",
+)
+
+
+def _normalize_profile(raw: str) -> str:
+    if raw in ("cuda", "full"):
+        return "cuda"
+    if raw == "mlx":
+        return "mlx"
+    return raw
+
 
 def packaging_profile() -> str:
-    """``mlx`` (default on macOS) or ``full``."""
+    """``mlx`` (macOS) or ``cuda`` (Linux/Windows)."""
     raw = os.environ.get("DANQING_PYINSTALLER_PROFILE", "").strip().lower()
-    if raw in ("mlx", "full"):
-        return raw
+    if raw:
+        profile = _normalize_profile(raw)
+        if profile in ("mlx", "cuda"):
+            return profile
     if sys.platform == "darwin":
         return "mlx"
-    return "full"
+    return "cuda"
+
+
+def is_cuda_profile(profile: str | None = None) -> bool:
+    return (profile or packaging_profile()) == "cuda"
 
 
 def get_hidden_imports(profile: str | None = None) -> list[str]:
     profile = profile or packaging_profile()
-    imports = list(_MLX_CORE_HIDDEN_IMPORTS)
-    if profile == "full":
-        imports.extend(_CUDA_HIDDEN_IMPORTS)
+    imports = list(_SHARED_HIDDEN_IMPORTS)
+    if profile == "mlx":
+        imports.extend(_MLX_ONLY_HIDDEN_IMPORTS)
+    else:
+        imports.extend(_CUDA_ONLY_HIDDEN_IMPORTS)
     return imports
 
 
 def get_exclude_modules(profile: str | None = None) -> list[str]:
     profile = profile or packaging_profile()
-    if profile == "full":
-        return [
-            "tensorboard",
-            "tensorboard_data_server",
-            "torch.utils.tensorboard",
-        ]
-    return list(_MLX_EXCLUDED_MODULES)
+    if profile == "mlx":
+        return list(_MLX_EXCLUDED_MODULES)
+    return list(_CUDA_EXCLUDED_MODULES)
 
 
 def get_data_files(project_root: Path | None = None, *, profile: str | None = None) -> list[str]:
-    profile = profile or packaging_profile()
+    _ = profile or packaging_profile()
     root = project_root or PROJECT_ROOT
     data: list[str] = []
     separator = ";" if sys.platform == "win32" else ":"
@@ -199,10 +238,13 @@ def get_data_files(project_root: Path | None = None, *, profile: str | None = No
     return data
 
 
-def get_binary_files(project_root: Path) -> list[str]:
+def get_binary_files(project_root: Path, *, profile: str | None = None) -> list[str]:
+    profile = profile or packaging_profile()
     binaries: list[str] = []
-    separator = ";" if sys.platform == "win32" else ":"
+    if profile != "mlx":
+        return binaries
 
+    separator = ";" if sys.platform == "win32" else ":"
     if sys.platform == "darwin":
         venv_lib = project_root / ".venv" / "lib"
         if venv_lib.exists():

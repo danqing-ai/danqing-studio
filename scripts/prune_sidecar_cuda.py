@@ -52,8 +52,10 @@ _REMOVE_DIST_INFO_PREFIXES = (
     "wheel-",
 )
 
-# Drop under _internal when present (PyInstaller collected but unused on CUDA image path).
+# Drop under _internal when present (PyInstaller collected but unused on CUDA path).
 _REMOVE_INTERNAL_GLOBS = (
+    "backend/engine/runtime/mlx",
+    "backend/engine/families/heartmula/mlx",
     "backend/engine/families/seedvr2",
     "backend/engine/families/ace_step",
     "backend/engine/pipelines/music_pipeline",
@@ -76,6 +78,11 @@ def prune_cuda_sidecar(sidecar_dir: Path, *, slim_transformers: bool = True) -> 
         target = internal / rel
         if _rm(target):
             removed.append(rel.replace("/", "."))
+
+    for mlx_py in sorted(internal.rglob("*_mlx.py")):
+        rel = mlx_py.relative_to(internal)
+        if _rm(mlx_py):
+            removed.append(str(rel).replace("\\", "/"))
 
     for entry in internal.iterdir():
         if not entry.is_dir() or not entry.name.endswith(".dist-info"):

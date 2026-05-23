@@ -9,7 +9,7 @@ excludedimports: list[str] = []
 
 if os.environ.get("DANQING_PYINSTALLER_PROFILE", "").lower() == "mlx" or (
     sys.platform == "darwin"
-    and os.environ.get("DANQING_PYINSTALLER_PROFILE", "").lower() != "full"
+    and os.environ.get("DANQING_PYINSTALLER_PROFILE", "").lower() not in ("cuda", "full")
 ):
     excludedimports = [
         "torch",

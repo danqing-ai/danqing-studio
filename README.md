@@ -204,17 +204,21 @@ V3TaskStore + SQLiteAssetStore
 
 ## Desktop app
 
-Tauri 2 wraps the same API as a native app (PyInstaller sidecar on macOS defaults to **MLX-only**):
+Platform-specific sidecars keep bundles small — **never mix MLX + CUDA in one release**:
+
+| Platform | Profile | Backend | Make target |
+|----------|---------|---------|-------------|
+| macOS (Apple Silicon) | `mlx` | MLX / Metal | `make pack-macos-desktop` |
+| Linux x86_64 server | `cuda` | PyTorch CUDA | `make pack-linux-server` |
+| Windows x64 desktop | `cuda` | PyTorch CUDA | `make pack-windows-desktop-release` |
 
 ```bash
-make pack-macos-desktop
+make pack-macos-desktop          # MLX-only .dmg
+make pack-linux-server           # CUDA server .tar.gz
+make pack-windows-desktop-release  # CUDA NSIS (on Windows)
 ```
 
-**Linux CUDA server**: `make pack-linux-server` → `out/dist/danqing-studio-linux-cuda-x86_64-<version>.tar.gz`.
-
-**Windows desktop (CUDA)**: `make pack-windows-desktop-release` → NSIS under `out/desktop/bundle/nsis/`. Optional headless: `make pack-windows-server`.
-
-GitHub tag builds: macOS `.dmg`, Linux CUDA `.tar.gz`, Windows CUDA NSIS `.exe` (`.github/workflows/release.yml`).
+GitHub tag builds use the same split (`.github/workflows/release.yml`).
 
 See [desktop/README.md](desktop/README.md).
 
@@ -366,7 +370,7 @@ REST / CLI → TaskScheduler → DanQing*Engine → Pipeline → RuntimeContext 
 make pack-macos-desktop
 ```
 
-说明见 [desktop/README.md](desktop/README.md)。macOS 默认 MLX 精简 sidecar；完整 CUDA：`DANQING_PYINSTALLER_PROFILE=full`。
+说明见 [desktop/README.md](desktop/README.md)。macOS 仅 MLX sidecar；Linux/Windows 仅 CUDA sidecar（`DANQING_PYINSTALLER_PROFILE=cuda`）。
 
 ### 配置
 
