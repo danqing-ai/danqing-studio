@@ -37,12 +37,9 @@ class SeedVR2EulerScheduler(BaseScheduler):
         return self._sigmas
 
     def _compute_timesteps_and_sigmas(self) -> tuple[mx.array, mx.array]:
-        step_size = self.T / self.num_inference_steps
-        timesteps = []
-        for i in range(self.num_inference_steps + 1):
-            t = self.T - i * step_size
-            timesteps.append(max(t, 0.0))
-        timesteps_arr = mx.array(timesteps, dtype=mx.float32)
+        timesteps_arr = mx.linspace(
+            self.T, 0.0, self.num_inference_steps + 1, dtype=mx.float32
+        )
         sigmas_arr = timesteps_arr / self.T
         return timesteps_arr, sigmas_arr
 

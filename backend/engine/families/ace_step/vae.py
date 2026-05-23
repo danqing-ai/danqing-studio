@@ -55,7 +55,11 @@ class AceStepVAE:
                     mlx_kwargs[k] = kwargs[k]
             self._vae = AceStepVAEMLX(**mlx_kwargs)
             if vae_dir:
-                load_vae_weights_from_bundle(vae_dir, self._vae)
+                eval_fn = getattr(ctx, "eval", None)
+                array_fn = getattr(ctx, "array", None)
+                load_vae_weights_from_bundle(
+                    vae_dir, self._vae, eval_fn=eval_fn, array_fn=array_fn
+                )
         elif backend == "cuda":
             from .vae_cuda import AceStepVAECuda
 

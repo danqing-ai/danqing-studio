@@ -5,6 +5,7 @@ from typing import Callable, Optional, Literal
 import mlx.core as mx
 import mlx.nn as nn
 
+from backend.engine.common.mlx_runtime_fallback import random_uniform
 from backend.engine.families.heartmula.mlx.ode.solver import euler_solve, midpoint_solve, heun_solve, rk4_solve
 
 
@@ -203,7 +204,7 @@ class FlowMatchingScheduler:
         Returns:
             Random timesteps in [0, 1].
         """
-        return mx.random.uniform(shape=(batch_size,))
+        return random_uniform(None, shape=(batch_size,))
 
     def get_loss(
         self,

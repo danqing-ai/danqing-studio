@@ -14,6 +14,14 @@ from typing import Any, Optional, Sequence, Tuple
 import mlx.core as mx
 import mlx.nn as nn
 
+from backend.engine.common.attention import (
+    build_causal_with_padding_bias,
+    repeat_kv_heads_mx,
+    scaled_dot_product_attention_bhsd_mx,
+    build_window_with_padding_bias,
+)
+from backend.engine.common.embeddings import build_position_ids_2d
+from backend.engine.common.mlx_runtime_fallback import load_weights_dict, run_eval
 from backend.engine.families.ace_step.weights_mlx import load_prefix_weights_for_mlx
 from backend.engine.families.z_image.text_encoder_mlx import (
     _ZImageEncoderLayer,
@@ -38,32 +46,6 @@ def _pack_sequences(
     positions = mx.arange(length, dtype=mx.int32)[None, :]
     new_mask = (positions < lengths[:, None]).astype(mx.float32)
     return hidden_left, new_mask
-
-
-def _create_4d_mask(
-    seq_len: int,
-    dtype: mx.Dtype,
-    attention_mask: Optional[mx.array],
-    *,
-    sliding_window: Optional[int] = None,
-    is_sliding_window: bool = False,
-) -> mx.array:
-    idx = mx.arange(seq_len, dtype=mx.int32)
-    diff = idx[:, None] - idx[None, :]
-    valid = mx.ones((seq_len, seq_len), dtype=mx.bool_)
-    if is_sliding_window and sliding_window is not None:
-        valid = valid & (mx.abs(diff) <= sliding_window)
-    valid = mx.expand_dims(mx.expand_dims(valid, 0), 0)
-    min_val = mx.array(-1e9, dtype=dtype)
-    mask = mx.where(valid, mx.zeros(valid.shape, dtype=dtype), min_val)
-    if attention_mask is not None:
-        pad = mx.where(
-            attention_mask[:, None, None, :] > 0,
-            mx.zeros((attention_mask.shape[0], 1, 1, seq_len), dtype=dtype),
-            min_val,
-        )
-        mask = mask + pad
-    return mask
 
 
 class _ConditionEncoderLayer(nn.Module):
@@ -148,23 +130,12 @@ class _ConditionSelfAttention(nn.Module):
         half = x.shape[-1] // 2
         return mx.concatenate([-x[..., half:], x[..., :half]], axis=-1)
 
-    @staticmethod
-    def _repeat_kv(x: mx.array, n_rep: int) -> mx.array:
-        if n_rep == 1:
-            return x
-        b, n_kv, length, d = x.shape
-        x = mx.expand_dims(x, axis=2)
-        x = mx.broadcast_to(x, (b, n_kv, n_rep, length, d))
-        return x.reshape(b, n_kv * n_rep, length, d)
-
     def __call__(
         self,
         hidden_states: mx.array,
         position_embeddings: Tuple[mx.array, mx.array],
         attention_mask: Optional[mx.array],
     ) -> mx.array:
-        from mlx.core.fast import scaled_dot_product_attention
-
         bsz, seq_len, _ = hidden_states.shape
         q = self.q_norm(self.q_proj(hidden_states).reshape(bsz, seq_len, self.num_heads, self.head_dim))
         k = self.k_norm(self.k_proj(hidden_states).reshape(bsz, seq_len, self.num_kv_heads, self.head_dim))
@@ -175,16 +146,19 @@ class _ConditionSelfAttention(nn.Module):
         q = (q * cos) + (self._rotate_half(q) * sin)
         k = (k * cos) + (self._rotate_half(k) * sin)
         q = mx.transpose(q, (0, 2, 1, 3))
-        k = self._repeat_kv(mx.transpose(k, (0, 2, 1, 3)), self.n_rep)
-        v = self._repeat_kv(mx.transpose(v, (0, 2, 1, 3)), self.n_rep)
-        out = scaled_dot_product_attention(
-            q.astype(mx.float32),
-            k.astype(mx.float32),
-            v.astype(mx.float32),
+        k = repeat_kv_heads_mx(mx, mx.transpose(k, (0, 2, 1, 3)), self.n_rep)
+        v = repeat_kv_heads_mx(mx, mx.transpose(v, (0, 2, 1, 3)), self.n_rep)
+        out = scaled_dot_product_attention_bhsd_mx(
+            mx,
+            q,
+            k,
+            v,
             scale=self.scale,
             mask=attention_mask,
+            compute_dtype=mx.float32,
+            out_dtype=hidden_states.dtype,
         )
-        out = mx.transpose(out.astype(hidden_states.dtype), (0, 2, 1, 3))
+        out = mx.transpose(out, (0, 2, 1, 3))
         return self.o_proj(out.reshape(bsz, seq_len, -1))
 
 
@@ -217,16 +191,26 @@ class _LyricEncoderMLX(nn.Module):
     def __call__(self, inputs_embeds: mx.array, attention_mask: mx.array) -> mx.array:
         bsz, seq_len, _ = inputs_embeds.shape
         hidden_states = self.embed_tokens(inputs_embeds)
-        position_ids = mx.broadcast_to(mx.arange(seq_len, dtype=mx.int32)[None, :], (bsz, seq_len))
+        position_ids = build_position_ids_2d(mx, bsz, seq_len, dtype=mx.int32)
         position_embeddings = self.rotary_emb(hidden_states, position_ids)
-        full_mask = _create_4d_mask(seq_len, hidden_states.dtype, attention_mask)
+        full_mask = build_window_with_padding_bias(
+            mx,
+            seq_len,
+            hidden_states.dtype,
+            attention_mask=attention_mask,
+            sliding_window=None,
+            neg_value=-1e9,
+            valid_value=1,
+        )
         slide_mask = (
-            _create_4d_mask(
+            build_window_with_padding_bias(
+                mx,
                 seq_len,
                 hidden_states.dtype,
-                attention_mask,
+                attention_mask=attention_mask,
                 sliding_window=self._cfg["sliding_window"],
-                is_sliding_window=True,
+                neg_value=-1e9,
+                valid_value=1,
             )
             if self._cfg["use_sliding_window"]
             else None
@@ -267,17 +251,27 @@ class _TimbreEncoderMLX(nn.Module):
         del refer_order  # text2music uses one reference per batch row
         bsz, seq_len, _ = refer_packed.shape
         hidden_states = self.embed_tokens(refer_packed)
-        position_ids = mx.broadcast_to(mx.arange(seq_len, dtype=mx.int32)[None, :], (bsz, seq_len))
+        position_ids = build_position_ids_2d(mx, bsz, seq_len, dtype=mx.int32)
         position_embeddings = self.rotary_emb(hidden_states, position_ids)
         attn_mask = mx.ones((bsz, seq_len), dtype=mx.float32)
-        full_mask = _create_4d_mask(seq_len, hidden_states.dtype, attn_mask)
+        full_mask = build_window_with_padding_bias(
+            mx,
+            seq_len,
+            hidden_states.dtype,
+            attention_mask=attn_mask,
+            sliding_window=None,
+            neg_value=-1e9,
+            valid_value=1,
+        )
         slide_mask = (
-            _create_4d_mask(
+            build_window_with_padding_bias(
+                mx,
                 seq_len,
                 hidden_states.dtype,
-                attn_mask,
+                attention_mask=attn_mask,
                 sliding_window=self._cfg["sliding_window"],
-                is_sliding_window=True,
+                neg_value=-1e9,
+                valid_value=1,
             )
             if self._cfg["use_sliding_window"]
             else None
@@ -378,13 +372,17 @@ class ConditionMlxConfig:
         }
 
 
-def load_condition_encoder_mlx(dit_bundle: Path) -> AceStepConditionEncoderMLX:
+def load_condition_encoder_mlx(
+    dit_bundle: Path, *, eval_fn: Any | None = None, array_fn: Any | None = None
+) -> AceStepConditionEncoderMLX:
     cfg = ConditionMlxConfig.from_json(dit_bundle / "config.json")
     model = AceStepConditionEncoderMLX(cfg.as_dict())
     weights_path = dit_bundle / "model.safetensors"
-    weights = load_prefix_weights_for_mlx(str(weights_path), "encoder.", strip_prefix=True)
+    weights = load_prefix_weights_for_mlx(
+        str(weights_path), "encoder.", strip_prefix=True, array_fn=array_fn
+    )
     model.load_weights(weights, strict=False)
-    mx.eval(model.parameters())
+    run_eval(eval_fn, model.parameters())
     return model
 
 
@@ -455,11 +453,17 @@ class Qwen3EmbeddingMLX(nn.Module):
     def encode(self, input_ids: mx.array, attention_mask: mx.array | None = None) -> mx.array:
         batch_size, seq_len = input_ids.shape
         hidden_states = self.embed_tokens(input_ids).astype(mx.float32)
-        position_ids = mx.broadcast_to(
-            mx.arange(seq_len, dtype=mx.int32)[None, :], (batch_size, seq_len)
-        )
+        position_ids = build_position_ids_2d(mx, batch_size, seq_len, dtype=mx.int32)
         position_embeddings = self.rotary_emb(hidden_states, position_ids)
-        causal_mask = _causal_mask(attention_mask, batch_size, hidden_states, seq_len)
+        causal_mask = build_causal_with_padding_bias(
+            mx,
+            attention_mask,
+            seq_len,
+            hidden_states.dtype,
+            valid_value=1,
+            neg_value=float("-inf"),
+            batch_size=batch_size,
+        )
         for layer in self.layers:
             hidden_states = layer(
                 hidden_states=hidden_states,
@@ -472,30 +476,13 @@ class Qwen3EmbeddingMLX(nn.Module):
         return self.embed_tokens(input_ids).astype(mx.float32)
 
 
-def _causal_mask(attention_mask, batch_size, hidden_states, seq_len):
-    idx = mx.arange(seq_len, dtype=mx.int32)
-    mask = idx[:, None] >= idx[None, :]
-    causal_mask = mx.where(
-        mask,
-        mx.zeros((seq_len, seq_len), dtype=hidden_states.dtype),
-        mx.full((seq_len, seq_len), float("-inf"), dtype=hidden_states.dtype),
-    )
-    causal_mask = causal_mask[None, None, :, :]
-    if attention_mask is not None:
-        padding_mask = mx.where(
-            attention_mask[:, None, None, :] > 0,
-            mx.zeros((batch_size, 1, 1, seq_len), dtype=hidden_states.dtype),
-            mx.full((batch_size, 1, 1, seq_len), float("-inf"), dtype=hidden_states.dtype),
-        )
-        causal_mask = causal_mask + padding_mask
-    return causal_mask
-
-
-def load_qwen3_embedding_mlx(model_dir: str | Path) -> Qwen3EmbeddingMLX:
+def load_qwen3_embedding_mlx(
+    model_dir: str | Path, *, eval_fn: Any | None = None, load_fn: Any | None = None
+) -> Qwen3EmbeddingMLX:
     model_path = Path(model_dir)
     weights: dict[str, mx.array] = {}
     for sf in sorted(model_path.glob("*.safetensors")):
-        weights.update(dict(mx.load(str(sf))))
+        weights.update(load_weights_dict(load_fn, str(sf)))
 
     config: dict = {}
     cfg_path = model_path / "config.json"
@@ -519,6 +506,6 @@ def load_qwen3_embedding_mlx(model_dir: str | Path) -> Qwen3EmbeddingMLX:
         new_key = key[6:] if key.startswith("model.") else key
         remapped.append((new_key, tensor))
     model.load_weights(remapped, strict=False)
-    mx.eval(model.parameters())
+    run_eval(eval_fn, model.parameters())
     return model
 

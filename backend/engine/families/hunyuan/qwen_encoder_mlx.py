@@ -11,6 +11,11 @@ from mlx import nn
 
 from backend.engine.common.hf_tokenizer_json import load_hf_tokenizer, render_qwen_chat_messages
 from backend.engine.common.mlx_dtype import cast_floating_mx_tree
+from backend.engine.common.mlx_runtime_fallback import (
+    load_weights_dict,
+    run_clear_cache,
+    run_eval,
+)
 from backend.engine.families.qwen.text_encoder_mlx import QwenEncoder
 from backend.engine.families.qwen.weights import apply_qwen_text_encoder_weights
 
@@ -25,7 +30,13 @@ def _read_qwen_text_config(model_dir: Path) -> dict[str, Any]:
     return data
 
 
-def _load_qwen_encoder_weights(model_dir: Path, *, weight_dtype: mx.Dtype) -> QwenEncoder:
+def _load_qwen_encoder_weights(
+    model_dir: Path,
+    *,
+    weight_dtype: mx.Dtype,
+    eval_fn: Any | None = None,
+    load_fn: Any | None = None,
+) -> QwenEncoder:
     cfg = _read_qwen_text_config(model_dir)
     encoder = QwenEncoder(
         vocab_size=int(cfg.get("vocab_size", 152064)),
@@ -39,7 +50,7 @@ def _load_qwen_encoder_weights(model_dir: Path, *, weight_dtype: mx.Dtype) -> Qw
     if not globs:
         raise RuntimeError(f"HunyuanVideo Qwen: no *.safetensors under {model_dir}")
     for sf in globs:
-        part = dict(mx.load(str(sf)))
+        part = load_weights_dict(load_fn, str(sf))
         for key, val in part.items():
             if key == "lm_head.weight" or key.startswith("lm_head."):
                 continue
@@ -54,23 +65,38 @@ def _load_qwen_encoder_weights(model_dir: Path, *, weight_dtype: mx.Dtype) -> Qw
     shell = nn.Module()
     shell.encoder = encoder
     shell.update({"encoder": enc_nested})
-    mx.eval(shell.parameters())
+    run_eval(eval_fn, shell.parameters())
     return shell.encoder
 
 
 class HunyuanQwen25VLEncoder:
     """Qwen2.5-VL MLX trunk for Hunyuan conditioning (``hidden_states[-3]``, crop after template)."""
 
-    def __init__(self, enc_dir: Path, tok_dir: Path, *, weight_dtype: mx.Dtype = mx.bfloat16):
+    def __init__(
+        self,
+        enc_dir: Path,
+        tok_dir: Path,
+        *,
+        weight_dtype: mx.Dtype = mx.bfloat16,
+        ctx: Any | None = None,
+    ):
         self._enc_dir = Path(enc_dir)
         self._tok_dir = Path(tok_dir)
         self._weight_dtype = weight_dtype
+        self._ctx = ctx
         self._tokenizer = load_hf_tokenizer(str(self._tok_dir))
-        self._encoder = _load_qwen_encoder_weights(self._enc_dir, weight_dtype=weight_dtype)
+        self._eval_fn = getattr(self._ctx, "eval", None) if self._ctx is not None else None
+        self._clear_cache_fn = (
+            getattr(self._ctx, "clear_cache", None) if self._ctx is not None else None
+        )
+        self._load_fn = getattr(self._ctx, "load_weights", None) if self._ctx is not None else None
+        self._encoder = _load_qwen_encoder_weights(
+            self._enc_dir, weight_dtype=weight_dtype, eval_fn=self._eval_fn, load_fn=self._load_fn
+        )
 
     def release_weights(self) -> None:
         self._encoder = None
-        mx.clear_cache()
+        run_clear_cache(self._clear_cache_fn)
 
     def encode_batch(
         self,
@@ -84,11 +110,14 @@ class HunyuanQwen25VLEncoder:
         input_ids, attn_mask = self._tokenizer.encode_batch(
             texts, max_length=max_length, add_special_tokens=False,
         )
-        input_ids_mx = mx.array(input_ids)
-        attn_mask_mx = mx.array(attn_mask)
+        array_fn = mx.array
+        if self._ctx is not None and hasattr(self._ctx, "array"):
+            array_fn = self._ctx.array
+        input_ids_mx = array_fn(input_ids)
+        attn_mask_mx = array_fn(attn_mask)
         hidden = self._encoder.encode_hidden_at(input_ids_mx, attn_mask_mx, layer_index=layer_index)
-        mx.eval(hidden)
+        run_eval(self._eval_fn, hidden)
         emb = np.asarray(hidden[:, crop_start:], dtype=np.float32)
         mask = np.asarray(attn_mask[:, crop_start:], dtype=np.int32).astype(bool)
-        mx.clear_cache()
+        run_clear_cache(self._clear_cache_fn)
         return emb, mask

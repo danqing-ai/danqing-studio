@@ -22,6 +22,8 @@ GALLERY_ROUTES = ROOT / "backend" / "api" / "routes" / "gallery.py"
 INTERFACES_PY = ROOT / "backend" / "core" / "interfaces.py"
 MEDIA_INTERFACES_PY = ROOT / "backend" / "core" / "media_interfaces.py"
 MODELS_REGISTRY_JSON = ROOT / "default_config" / "models_registry.json"
+MAKEFILE = ROOT / "Makefile"
+ENGINE_GOVERNANCE_WORKFLOW = ROOT / ".github" / "workflows" / "engine-governance.yml"
 
 
 def _load_json(path):
@@ -167,6 +169,26 @@ def main():
         failures.append("FAIL: assets.py missing /api/assets route")
     if "/api/gallery" not in gallery_body:
         failures.append("FAIL: gallery.py missing /api/gallery route")
+
+    # =========================================================================
+    # 11. Engine governance target/workflow wiring
+    # =========================================================================
+    makefile_body = _load_text(MAKEFILE)
+    if "check-engine-governance:" not in makefile_body:
+        failures.append("FAIL: Makefile missing check-engine-governance target")
+    if "verify-engine-stack:" not in makefile_body:
+        failures.append("FAIL: Makefile missing verify-engine-stack target")
+    if "check-models-registry-contracts" not in makefile_body:
+        failures.append("FAIL: Makefile missing check-models-registry-contracts target")
+
+    if not ENGINE_GOVERNANCE_WORKFLOW.exists():
+        failures.append("FAIL: missing .github/workflows/engine-governance.yml")
+    else:
+        wf = _load_text(ENGINE_GOVERNANCE_WORKFLOW)
+        if "make verify-engine-stack" not in wf:
+            failures.append(
+                "FAIL: engine-governance workflow must run `make verify-engine-stack`"
+            )
 
     import subprocess
 

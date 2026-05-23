@@ -1,0 +1,25 @@
+name: Engine Governance
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  governance:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Create venv for Makefile python
+        run: python -m venv .venv
+
+      - name: Run engine stack verification
+        run: make verify-engine-stack

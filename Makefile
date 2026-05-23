@@ -3,7 +3,7 @@
 	bench-setup bench-src bench-mflux bench-mflux-case bench-sanity bench-sanity-case \
 	bench-audio-sanity bench-audio-sanity-lm bench-audio-sanity-heartmula \
 	bench-wan-sanity bench-wan-baseline \
-	check-consistency check-ep-boundary check-theme-legacy check-ui-compat check-engine-imports \
+	check-consistency check-models-registry-contracts check-ep-boundary check-theme-legacy check-ui-compat check-engine-imports check-engine-family-layout check-engine-family-primitives check-engine-attention-paths check-engine-sdpa-paths check-engine-rope-paths check-engine-modulation-paths check-engine-governance verify-engine-stack \
 	sync-models-registry \
 	strip-el-tokens test-engine-unit \
 	pack-prereqs \
@@ -120,7 +120,7 @@ stop:
 	@chmod +x scripts/*.sh
 	@./scripts/stop.sh
 
-test: test-engine-unit
+test: verify-engine-stack
 
 test-integration:
 	@echo "No integration tests yet (placeholder)"
@@ -150,6 +150,49 @@ strip-el-tokens:
 check-engine-imports:
 	$(PYTHON) scripts/check_engine_backend_imports.py
 	@echo "Engine backend import gate OK"
+
+check-engine-family-layout:
+	$(PYTHON) scripts/check_engine_family_layout.py
+	@echo "Engine family layout gate OK"
+
+check-engine-family-primitives:
+	$(PYTHON) scripts/check_engine_family_primitives.py
+	@echo "Engine family primitive gate OK"
+
+check-engine-attention-paths:
+	$(PYTHON) scripts/check_engine_attention_paths.py
+	@echo "Engine attention path gate OK"
+
+check-engine-sdpa-paths:
+	$(PYTHON) scripts/check_engine_sdpa_paths.py
+	@echo "Engine SDPA path gate OK"
+
+check-engine-rope-paths:
+	$(PYTHON) scripts/check_engine_rope_paths.py
+	@echo "Engine RoPE path gate OK"
+
+check-engine-modulation-paths:
+	$(PYTHON) scripts/check_engine_modulation_paths.py
+	@echo "Engine modulation path gate OK"
+
+check-models-registry-contracts:
+	$(PYTHON) scripts/check_models_registry_contracts.py
+	@echo "Models registry contract gate OK"
+
+check-engine-governance: \
+	check-engine-imports \
+	check-engine-family-layout \
+	check-engine-family-primitives \
+	check-engine-attention-paths \
+	check-engine-sdpa-paths \
+	check-engine-rope-paths \
+	check-engine-modulation-paths \
+	check-models-registry-contracts \
+	check-consistency
+	@echo "Engine governance suite OK"
+
+verify-engine-stack: check-engine-governance test-engine-unit
+	@echo "Engine stack verification OK"
 
 test-engine-unit:
 	PYTHONPATH=. $(PYTHON) scripts/test_engine_unit.py

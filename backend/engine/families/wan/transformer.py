@@ -70,10 +70,10 @@ class WanTransformer(TransformerBase):
             self._core.set_i2v_state(z, mask2)
             latents = prepare_ti2v_i2v_latents(ctx, latents, z, mask2)
 
-        if getattr(self.config, "expand_timesteps", False):
+        if getattr(self.config, "expand_timesteps", False) and cond.get("wan_i2v"):
             cond["wan_expand_timesteps"] = True
             if cond.get("wan_i2v_mask") is None:
-                _, mask2_list = masks_like(ctx, [ctx.squeeze(latents, 0)], zero=False)
+                _, mask2_list = masks_like(ctx, [ctx.squeeze(latents, 0)], zero=True)
                 cond["wan_i2v_mask"] = mask2_list[0]
         return latents, cond
 
@@ -111,13 +111,17 @@ class WanTransformer(TransformerBase):
 
     def build_timestep_per_token(self, scalar_t: Any, seq_len: int, mask2: Any | None = None) -> Any:
         """Per-token timesteps for ``expand_timesteps`` (first-frame tokens → 0 when masked)."""
-        import numpy as np
-
         ctx = self.ctx
         cfg = self.config
         ph, pw = int(cfg.patch_size[1]), int(cfg.patch_size[2])
 
-        t_scalar = float(np.asarray(scalar_t).reshape(-1)[0])
+        if hasattr(scalar_t, "item"):
+            t_scalar = float(scalar_t.item())
+        else:
+            try:
+                t_scalar = float(scalar_t.reshape(-1)[0])
+            except Exception:
+                t_scalar = float(scalar_t)
         t_arr = ctx.array(t_scalar, dtype=ctx.float32())
 
         if mask2 is None or not getattr(cfg, "expand_timesteps", False):
@@ -133,7 +137,7 @@ class WanTransformer(TransformerBase):
 
         m_sub = m0[:, ::ph, ::pw] if ph > 1 or pw > 1 else m0
         temp_ts = (m_sub * t_arr).reshape(-1)
-        n_tok = int(np.prod(np.asarray(temp_ts.shape)))
+        n_tok = int(temp_ts.shape[0])
         flat = temp_ts.reshape(-1)
         if n_tok < seq_len:
             pad = ctx.ones((seq_len - n_tok,), dtype=ctx.float32()) * t_arr

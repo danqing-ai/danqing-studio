@@ -8,9 +8,30 @@ import mlx.core as mx
 import mlx.nn as nn
 import numpy as np
 
+from backend.engine.common.attention import (
+    build_padding_attention_bias,
+    scaled_dot_product_attention_bhsd_mx,
+)
 from backend.engine.common._base import TransformerBase
+from backend.engine.common.embeddings import apply_complex_rope_bshd
+from backend.engine.common.norm import (
+    apply_ada_layer_norm_continuous,
+    apply_rms_norm,
+    apply_scale_shift,
+    unpack_modulation_3way,
+)
 from backend.engine.config.model_configs import QwenImageConfig
 from backend.engine.runtime._base import RuntimeContext
+
+
+def _scalar_f64(value: Any) -> float:
+    try:
+        item = getattr(value, "item", None)
+        if callable(item):
+            return float(item())
+    except Exception:
+        pass
+    return float(np.asarray(value, dtype=np.float64).reshape(-1)[0])
 
 
 class AdaLayerNormContinuous(nn.Module):
@@ -21,12 +42,15 @@ class AdaLayerNormContinuous(nn.Module):
         self.norm = nn.LayerNorm(dims=embedding_dim, eps=1e-6, affine=False)
 
     def __call__(self, x: mx.array, text_embeddings: mx.array) -> mx.array:
-        text_embeddings = self.linear(nn.silu(text_embeddings).astype(mx.bfloat16))
-        chunk_size = self.embedding_dim
-        scale = text_embeddings[:, 0 * chunk_size : 1 * chunk_size]
-        shift = text_embeddings[:, 1 * chunk_size : 2 * chunk_size]
-        x = self.norm(x) * (1 + scale)[:, None, :] + shift[:, None, :]
-        return x
+        return apply_ada_layer_norm_continuous(
+            x,
+            text_embeddings,
+            linear=self.linear,
+            norm=self.norm,
+            embedding_dim=self.embedding_dim,
+            silu=nn.silu,
+            pre_linear_dtype=mx.bfloat16,
+        )
 
 
 class QwenTransformerRMSNorm(nn.Module):
@@ -36,13 +60,7 @@ class QwenTransformerRMSNorm(nn.Module):
         self.eps = eps
 
     def __call__(self, hidden_states: mx.array) -> mx.array:
-        input_dtype = hidden_states.dtype
-        variance = mx.power(hidden_states.astype(mx.float32), 2).mean(axis=-1, keepdims=True)
-        hidden_states = hidden_states * mx.rsqrt(variance + self.eps)
-        if self.weight.dtype in (mx.bfloat16, mx.float16):
-            hidden_states = hidden_states.astype(self.weight.dtype)
-        hidden_states = hidden_states * self.weight
-        return hidden_states.astype(input_dtype) if hidden_states.dtype != input_dtype else hidden_states
+        return apply_rms_norm(hidden_states, self.weight, self.eps)
 
 
 class QwenTimesteps(nn.Module):
@@ -98,11 +116,18 @@ class QwenTimeTextEmbed(nn.Module):
 class QwenEmbedRopeMLX(nn.Module):
     """3-D RoPE tables for image + text positions (matches bundled checkpoint layout)."""
 
-    def __init__(self, theta: int, axes_dim: list[int], scale_rope: bool = False):
+    def __init__(
+        self,
+        theta: int,
+        axes_dim: list[int],
+        scale_rope: bool = False,
+        array_fn: Any | None = None,
+    ):
         super().__init__()
         self.theta = theta
         self.axes_dim = axes_dim
         self.scale_rope = scale_rope
+        self.array_fn = array_fn or mx.array
 
         pos_index = np.arange(4096, dtype=np.int32)
         neg_index = (np.arange(4096, dtype=np.int32)[::-1] * -1) - 1
@@ -195,8 +220,8 @@ class QwenEmbedRopeMLX(nn.Module):
         txt_sin = self.pos_freqs[max_vid_index : max_vid_index + max_len, :, 1]
 
         return (
-            (mx.array(vid_cos.astype(np.float32)), mx.array(vid_sin.astype(np.float32))),
-            (mx.array(txt_cos.astype(np.float32)), mx.array(txt_sin.astype(np.float32))),
+            (self.array_fn(vid_cos.astype(np.float32)), self.array_fn(vid_sin.astype(np.float32))),
+            (self.array_fn(txt_cos.astype(np.float32)), self.array_fn(txt_sin.astype(np.float32))),
         )
 
 
@@ -262,10 +287,10 @@ class QwenAttention(nn.Module):
         txt_key = self.norm_added_k(txt_key)
 
         (img_cos, img_sin), (txt_cos, txt_sin) = image_rotary_emb
-        img_query = QwenAttention._apply_rope_qwen(img_query, img_cos, img_sin)
-        img_key = QwenAttention._apply_rope_qwen(img_key, img_cos, img_sin)
-        txt_query = QwenAttention._apply_rope_qwen(txt_query, txt_cos, txt_sin)
-        txt_key = QwenAttention._apply_rope_qwen(txt_key, txt_cos, txt_sin)
+        img_query = apply_complex_rope_bshd(mx, img_query, img_cos, img_sin)
+        img_key = apply_complex_rope_bshd(mx, img_key, img_cos, img_sin)
+        txt_query = apply_complex_rope_bshd(mx, txt_query, txt_cos, txt_sin)
+        txt_key = apply_complex_rope_bshd(mx, txt_key, txt_cos, txt_sin)
 
         joint_query = mx.concatenate([txt_query, img_query], axis=1)
         joint_key = mx.concatenate([txt_key, img_key], axis=1)
@@ -298,15 +323,18 @@ class QwenAttention(nn.Module):
         value: mx.array,
         mask: mx.array | None = None,
     ) -> mx.array:
-        from mlx.core.fast import scaled_dot_product_attention
-
         query_bhsd = mx.transpose(query, (0, 2, 1, 3))
         key_bhsd = mx.transpose(key, (0, 2, 1, 3))
         value_bhsd = mx.transpose(value, (0, 2, 1, 3))
         head_dim = query.shape[-1]
         scale_value = 1.0 / (head_dim**0.5)
-        hidden_states_bhsd = scaled_dot_product_attention(
-            query_bhsd, key_bhsd, value_bhsd, scale=scale_value, mask=mask
+        hidden_states_bhsd = scaled_dot_product_attention_bhsd_mx(
+            mx,
+            query_bhsd,
+            key_bhsd,
+            value_bhsd,
+            scale=scale_value,
+            mask=mask,
         )
         hidden_states = mx.transpose(hidden_states_bhsd, (0, 2, 1, 3))
         batch_size = hidden_states.shape[0]
@@ -328,26 +356,14 @@ class QwenAttention(nn.Module):
         joint_mask = mx.concatenate([mask.astype(mx.float32), ones_img], axis=1)
         if mx.all(joint_mask >= 0.999):
             return None
-        additive = (1.0 - joint_mask) * (-1e9)
-        return additive.reshape((additive.shape[0], 1, 1, additive.shape[1]))
-
-    @staticmethod
-    def _apply_rope_qwen(x: mx.array, cos_vals: mx.array, sin_vals: mx.array) -> mx.array:
-        x_float = x.astype(mx.float32)
-        x_reshaped = mx.reshape(x_float, (*x.shape[:-1], -1, 2))
-        x_real = x_reshaped[..., 0]
-        x_imag = x_reshaped[..., 1]
-        freqs_cos = cos_vals[None, :, None, :]
-        freqs_sin = sin_vals[None, :, None, :]
-        if freqs_cos.shape[-1] != x_real.shape[-1]:
-            freqs_cos = freqs_cos[..., : x_real.shape[-1]]
-            freqs_sin = freqs_sin[..., : x_real.shape[-1]]
-        out_real = x_real * freqs_cos - x_imag * freqs_sin
-        out_imag = x_real * freqs_sin + x_imag * freqs_cos
-        out_pairs = mx.stack([out_real, out_imag], axis=-1)
-        x_out = mx.reshape(out_pairs, (*x.shape[:-1], -1))
-        return x_out.astype(x.dtype)
-
+        return build_padding_attention_bias(
+            mx,
+            joint_mask,
+            joint_mask.shape[1],
+            mx.float32,
+            valid_value=1,
+            neg_value=-1e9,
+        )
 
 class QwenTransformerBlock(nn.Module):
     def __init__(self, dim: int, num_heads: int, head_dim: int):
@@ -409,14 +425,17 @@ class QwenTransformerBlock(nn.Module):
 
     @staticmethod
     def _modulate(x: mx.array, mod_params: mx.array) -> tuple[mx.array, mx.array]:
-        shift, scale, gate = mx.split(mod_params, 3, axis=-1)
-        return x * (1 + scale[:, None, :]) + shift[:, None, :], gate[:, None, :]
+        shift, scale, gate = unpack_modulation_3way(mod_params)
+        modulated = apply_scale_shift(x, scale[:, None, :], shift[:, None, :], add_one=True)
+        return modulated, gate[:, None, :]
 
 
 class QwenTransformer(nn.Module):
     """Inner DiT — hyper-parameters from ``QwenImageConfig``."""
 
-    def __init__(self, config: QwenImageConfig, *, patch_size: int = 2) -> None:
+    def __init__(
+        self, config: QwenImageConfig, *, patch_size: int = 2, array_fn: Any | None = None
+    ) -> None:
         super().__init__()
         self.config = config
         head_dim = config.hidden_dim // config.num_heads
@@ -426,7 +445,10 @@ class QwenTransformer(nn.Module):
         self.txt_norm = QwenTransformerRMSNorm(config.text_dim, eps=1e-6)
         self.txt_in = nn.Linear(config.text_dim, self.inner_dim)
         self.time_text_embed = QwenTimeTextEmbed(timestep_proj_dim=256, inner_dim=self.inner_dim)
-        self.pos_embed = QwenEmbedRopeMLX(theta=10000, axes_dim=[16, 56, 56], scale_rope=True)
+        self.array_fn = array_fn or mx.array
+        self.pos_embed = QwenEmbedRopeMLX(
+            theta=10000, axes_dim=[16, 56, 56], scale_rope=True, array_fn=self.array_fn
+        )
         self.transformer_blocks = [
             QwenTransformerBlock(dim=self.inner_dim, num_heads=config.num_heads, head_dim=head_dim)
             for _ in range(config.num_layers)
@@ -449,7 +471,7 @@ class QwenTransformer(nn.Module):
         del qwen_image_ids
         hidden_states = self.img_in(hidden_states)
         batch_size = hidden_states.shape[0]
-        timestep = QwenTransformer._compute_timestep(t, config)
+        timestep = QwenTransformer._compute_timestep(t, config, array_fn=self.array_fn)
         timestep = mx.broadcast_to(timestep, (batch_size,)).astype(hidden_states.dtype)
         encoder_hidden_states = self.txt_norm(encoder_hidden_states)
         encoder_hidden_states = self.txt_in(encoder_hidden_states)
@@ -473,7 +495,11 @@ class QwenTransformer(nn.Module):
         return self.proj_out(hidden_states)
 
     @staticmethod
-    def _compute_timestep(t: int | float, config: Any) -> mx.array:
+    def _compute_timestep(
+        t: int | float, config: Any, *, array_fn: Any | None = None
+    ) -> mx.array:
+        if array_fn is None:
+            array_fn = mx.array
         if isinstance(t, int):
             sched = config.scheduler
             sigmas = sched.sigmas
@@ -482,25 +508,25 @@ class QwenTransformer(nn.Module):
                 try:
                     if t < len(sigmas):
                         time_step = sigmas[t]
-                        return mx.array(
-                            np.full((1,), float(np.asarray(time_step).reshape(-1)[0])), dtype=mx.float32
+                        return array_fn(
+                            np.full((1,), _scalar_f64(time_step)), dtype=mx.float32
                         )
                 except Exception:
                     pass
                 for idx, ts in enumerate(timesteps_list):
                     try:
-                        ts_i = int(np.asarray(ts).reshape(-1)[0])
+                        ts_i = int(_scalar_f64(ts))
                     except Exception:
                         continue
                     if abs(ts_i - t) < 1:
                         time_step = sigmas[idx]
-                        return mx.array(
-                            np.full((1,), float(np.asarray(time_step).reshape(-1)[0])), dtype=mx.float32
+                        return array_fn(
+                            np.full((1,), _scalar_f64(time_step)), dtype=mx.float32
                         )
             time_step = float(t) / 1000.0
-            return mx.array(np.full((1,), time_step), dtype=mx.float32)
+            return array_fn(np.full((1,), time_step), dtype=mx.float32)
         time_step = float(t)
-        return mx.array(np.full((1,), time_step), dtype=mx.float32)
+        return array_fn(np.full((1,), time_step), dtype=mx.float32)
 
     @staticmethod
     def _compute_rotary_embeddings(
@@ -521,9 +547,7 @@ class QwenTransformer(nn.Module):
 
         txt_seq_lens = []
         for i in range(encoder_hidden_states_mask.shape[0]):
-            txt_seq_lens.append(
-                int(np.asarray(mx.sum(encoder_hidden_states_mask[i])).reshape(-1)[0])
-            )
+            txt_seq_lens.append(int(_scalar_f64(mx.sum(encoder_hidden_states_mask[i]))))
         img_rotary_emb, txt_rotary_emb = pos_embed(video_fhw=img_shapes, txt_seq_lens=txt_seq_lens)
         return img_rotary_emb, txt_rotary_emb
 
@@ -569,7 +593,7 @@ class QwenImageTransformer(TransformerBase):
     def __init__(self, config: QwenImageConfig, ctx: RuntimeContext):
         self.ctx = ctx
         self.config = config
-        self.dit = QwenTransformer(config)
+        self.dit = QwenTransformer(config, array_fn=ctx.array)
         self._param_map: dict[str, Any] = {}
         self._build_param_map()
 
@@ -609,19 +633,7 @@ class QwenImageTransformer(TransformerBase):
             ctx=load_ctx,
             bundle_affine_bits=bundle_affine_bits,
         )
-        for key, param in list(self._param_map.items()):
-            if param.dtype != mx.bfloat16:
-                new_param = param.astype(mx.bfloat16)
-                self._param_map[key] = new_param
-                parts = key.split(".")
-                obj = self
-                for part in parts[:-1]:
-                    obj = obj[int(part)] if part.isdigit() else getattr(obj, part)
-                last = parts[-1]
-                if hasattr(obj, last):
-                    setattr(obj, last, new_param)
-                elif hasattr(obj, "_parameters") and last in obj._parameters:
-                    obj._parameters[last] = new_param
+        self._cast_param_map_dtype(mx.bfloat16)
         return loaded, skipped
 
     def after_load_weights(self, bundle_root: str | None = None):
@@ -676,7 +688,7 @@ class QwenImageTransformer(TransformerBase):
             encoder_hidden_states=enc_mx,
             encoder_hidden_states_mask=mask_mx,
         )
-        mx.eval(out_mx)
+        ctx.eval(out_mx)
         out_f = out_mx.astype(mx.float32)
         _, seq_len, c_out = out_f.shape
         side = int(seq_len**0.5)

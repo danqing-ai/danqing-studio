@@ -17,6 +17,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from backend.engine.common._base import TransformerBase
+from backend.engine.common.attention import (
+    build_window_with_padding_bias_torch,
+    repeat_kv_heads_torch,
+    scaled_dot_product_attention_bhsd_torch,
+)
+from backend.engine.common.norm import apply_scale_shift, unpack_modulation_6table
 
 logger = logging.getLogger(__name__)
 
@@ -37,17 +43,6 @@ def _apply_rotary_pos_emb(
     q_embed = (q * cos) + (_rotate_half(q) * sin)
     k_embed = (k * cos) + (_rotate_half(k) * sin)
     return q_embed, k_embed
-
-
-def _create_sliding_window_mask(
-    seq_len: int, window_size: int, dtype: torch.dtype = torch.float32,
-    device: torch.device = torch.device("cpu"),
-) -> torch.Tensor:
-    indices = torch.arange(seq_len, device=device)
-    diff = torch.abs(indices[:, None] - indices[None, :])
-    neginf = torch.full(diff.shape, -1e9, dtype=dtype, device=device)
-    mask = torch.where(diff <= window_size, torch.zeros_like(neginf), neginf)
-    return mask[None, None, :, :]
 
 
 # ---------------------------------------------------------------------------
@@ -100,7 +95,7 @@ class _CrossAttentionCache:
 # Primitives
 # ---------------------------------------------------------------------------
 
-class _RMSNorm(nn.Module):
+class _AceStepRMSNorm(nn.Module):
     """Pure-PyTorch RMSNorm (compatible with torch < 2.4)."""
     def __init__(self, dims: int, eps: float = 1e-6):
         super().__init__()
@@ -154,17 +149,8 @@ class _Attention(nn.Module):
         self.v_proj = nn.Linear(hidden_size, num_key_value_heads * head_dim, bias=attention_bias)
         self.o_proj = nn.Linear(num_attention_heads * head_dim, hidden_size, bias=attention_bias)
 
-        self.q_norm = _RMSNorm(head_dim, eps=rms_norm_eps)
-        self.k_norm = _RMSNorm(head_dim, eps=rms_norm_eps)
-
-    @staticmethod
-    def _repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
-        if n_rep == 1:
-            return x
-        B, n_kv, L, D = x.shape
-        x = x.unsqueeze(2)
-        x = x.expand(B, n_kv, n_rep, L, D)
-        return x.reshape(B, n_kv * n_rep, L, D)
+        self.q_norm = _AceStepRMSNorm(head_dim, eps=rms_norm_eps)
+        self.k_norm = _AceStepRMSNorm(head_dim, eps=rms_norm_eps)
 
     def forward(
         self,
@@ -206,11 +192,11 @@ class _Attention(nn.Module):
                 cos, sin = position_cos_sin
                 q, k = _apply_rotary_pos_emb(q, k, cos, sin)
 
-        k = self._repeat_kv(k, self.n_rep)
-        v = self._repeat_kv(v, self.n_rep)
+        k = repeat_kv_heads_torch(k, self.n_rep)
+        v = repeat_kv_heads_torch(v, self.n_rep)
 
-        attn_out = F.scaled_dot_product_attention(
-            q, k, v, attn_mask=attention_mask, scale=self.scale,
+        attn_out = scaled_dot_product_attention_bhsd_torch(
+            q, k, v, mask=attention_mask, scale=self.scale
         )
         attn_out = attn_out.transpose(1, 2).reshape(B, L, -1)
         return self.o_proj(attn_out)
@@ -238,7 +224,7 @@ class _DiTLayer(nn.Module):
         self.layer_type = layer_type
         sw = sliding_window if layer_type == "sliding_attention" else None
 
-        self.self_attn_norm = _RMSNorm(hidden_size, eps=rms_norm_eps)
+        self.self_attn_norm = _AceStepRMSNorm(hidden_size, eps=rms_norm_eps)
         self.self_attn = _Attention(
             hidden_size=hidden_size,
             num_attention_heads=num_attention_heads,
@@ -251,7 +237,7 @@ class _DiTLayer(nn.Module):
             sliding_window=sw,
         )
 
-        self.cross_attn_norm = _RMSNorm(hidden_size, eps=rms_norm_eps)
+        self.cross_attn_norm = _AceStepRMSNorm(hidden_size, eps=rms_norm_eps)
         self.cross_attn = _Attention(
             hidden_size=hidden_size,
             num_attention_heads=num_attention_heads,
@@ -263,7 +249,7 @@ class _DiTLayer(nn.Module):
             is_cross_attention=True,
         )
 
-        self.mlp_norm = _RMSNorm(hidden_size, eps=rms_norm_eps)
+        self.mlp_norm = _AceStepRMSNorm(hidden_size, eps=rms_norm_eps)
         self.mlp = _SwiGLUMLP(hidden_size, intermediate_size)
 
         self.scale_shift_table = nn.Parameter(torch.zeros(1, 6, hidden_size))
@@ -280,13 +266,13 @@ class _DiTLayer(nn.Module):
         use_cache: bool = False,
     ) -> torch.Tensor:
         modulation = self.scale_shift_table + temb
-        parts = modulation.chunk(6, dim=1)
-        shift_msa, scale_msa, gate_msa = parts[0], parts[1], parts[2]
-        c_shift_msa, c_scale_msa, c_gate_msa = parts[3], parts[4], parts[5]
+        shift_msa, scale_msa, gate_msa, c_shift_msa, c_scale_msa, c_gate_msa = unpack_modulation_6table(
+            modulation
+        )
 
         # 1) Self-attention
         normed = self.self_attn_norm(hidden_states)
-        normed = normed * (1.0 + scale_msa) + shift_msa
+        normed = apply_scale_shift(normed, scale_msa, shift_msa, add_one=True)
         attn_out = self.self_attn(
             normed,
             position_cos_sin=position_cos_sin,
@@ -307,7 +293,7 @@ class _DiTLayer(nn.Module):
 
         # 3) MLP
         normed = self.mlp_norm(hidden_states)
-        normed = normed * (1.0 + c_scale_msa) + c_shift_msa
+        normed = apply_scale_shift(normed, c_scale_msa, c_shift_msa, add_one=True)
         ff_out = self.mlp(normed)
         hidden_states = hidden_states + ff_out * c_gate_msa
 
@@ -424,7 +410,7 @@ class AceStepDiTCuda(nn.Module):
             for i in range(num_hidden_layers)
         ])
 
-        self.norm_out = _RMSNorm(hidden_size, eps=rms_norm_eps)
+        self.norm_out = _AceStepRMSNorm(hidden_size, eps=rms_norm_eps)
         self.proj_out = nn.ConvTranspose1d(
             in_channels=hidden_size,
             out_channels=audio_acoustic_hidden_dim,
@@ -437,14 +423,21 @@ class AceStepDiTCuda(nn.Module):
         self.scale_shift_table = nn.Parameter(torch.zeros(1, 2, hidden_size))
         self._sliding_window = sliding_window
         self._layer_types = layer_types
-        self._sliding_masks: Dict[int, torch.Tensor] = {}
+        self._sliding_masks: Dict[tuple[int, torch.dtype, str], torch.Tensor] = {}
 
     def _get_sliding_mask(self, seq_len: int, dtype: torch.dtype, device: torch.device) -> torch.Tensor:
-        if seq_len not in self._sliding_masks:
-            self._sliding_masks[seq_len] = _create_sliding_window_mask(
-                seq_len, self._sliding_window, dtype, device,
+        dev_key = f"{device.type}:{device.index}"
+        key = (int(seq_len), dtype, dev_key)
+        if key not in self._sliding_masks:
+            self._sliding_masks[key] = build_window_with_padding_bias_torch(
+                int(seq_len),
+                dtype,
+                device,
+                attention_mask=None,
+                sliding_window=self._sliding_window,
+                neg_value=-1e9,
             )
-        return self._sliding_masks[seq_len]
+        return self._sliding_masks[key]
 
     def forward(
         self,
@@ -507,7 +500,7 @@ class AceStepDiTCuda(nn.Module):
         shift, scale = torch.chunk(
             self.scale_shift_table + temb.unsqueeze(1), 2, dim=1,
         )
-        hidden_states = self.norm_out(hidden_states) * (1.0 + scale) + shift
+        hidden_states = apply_scale_shift(self.norm_out(hidden_states), scale, shift, add_one=True)
 
         hidden_states = hidden_states.permute(0, 2, 1)  # NLC → NCL for ConvTranspose1d
         hidden_states = self.proj_out(hidden_states)

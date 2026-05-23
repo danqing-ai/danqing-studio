@@ -147,7 +147,7 @@ function progressColor(percent: number) {
           {{ $t('settings.realtime') }}
         </p>
         <DqInspectorSectionBody>
-          <div class="monitor-item monitor-item--inspector">
+          <div class="dq-inspector-meter">
             <DqInspectorKv :label="$t('settings.cpu')" :value="`${monitorData.cpu_percent}%`" />
             <DqProgress
               class="dq-inspector-progress"
@@ -158,7 +158,7 @@ function progressColor(percent: number) {
             />
           </div>
 
-          <div class="monitor-item monitor-item--inspector">
+          <div class="dq-inspector-meter">
             <DqInspectorKv
               :label="$t('settings.memoryLabel')"
               :value="`${monitorData.memory.used_gb} / ${monitorData.memory.total_gb} GB`"
@@ -172,7 +172,7 @@ function progressColor(percent: number) {
             />
           </div>
 
-          <div v-if="monitorData.gpu" class="monitor-item monitor-item--inspector">
+          <div v-if="monitorData.gpu" class="dq-inspector-meter dq-inspector-meter--stacked">
             <DqInspectorKv
               v-if="monitorData.gpu.model"
               :label="$t('settings.gpu')"

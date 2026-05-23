@@ -5,6 +5,8 @@ from typing import Optional
 import mlx.core as mx
 import mlx.nn as nn
 
+from backend.engine.common.mlx_runtime_fallback import random_uniform
+
 
 class CausalConv1d(nn.Module):
     """1D Causal Convolution with left padding.
@@ -44,7 +46,8 @@ class CausalConv1d(nn.Module):
 
         # MLX Conv1d: weight shape is (out_channels, kernel_size, in_channels // groups)
         scale = 1.0 / (in_channels * kernel_size) ** 0.5
-        self.weight = mx.random.uniform(
+        self.weight = random_uniform(
+            None,
             low=-scale,
             high=scale,
             shape=(out_channels, kernel_size, in_channels // groups),
@@ -134,7 +137,8 @@ class WeightNormConv1d(nn.Module):
         # Weight normalization: weight = g * (v / ||v||)
         # v is the direction vector
         scale = 1.0 / (in_channels * kernel_size) ** 0.5
-        self.weight_v = mx.random.uniform(
+        self.weight_v = random_uniform(
+            None,
             low=-scale,
             high=scale,
             shape=(out_channels, kernel_size, in_channels // groups),
@@ -249,7 +253,8 @@ class WeightNormConvTranspose1d(nn.Module):
         # Weight storage - we store the pre-computed weight directly
         # Shape: (out_channels, kernel_size, in_channels // groups)
         scale = 1.0 / (in_channels * kernel_size) ** 0.5
-        self.weight = mx.random.uniform(
+        self.weight = random_uniform(
+            None,
             low=-scale,
             high=scale,
             shape=(out_channels, kernel_size, in_channels // groups),
@@ -374,7 +379,8 @@ class Conv1d(nn.Module):
         self.groups = groups
 
         scale = 1.0 / (in_channels * kernel_size) ** 0.5
-        self.weight = mx.random.uniform(
+        self.weight = random_uniform(
+            None,
             low=-scale,
             high=scale,
             shape=(out_channels, kernel_size, in_channels // groups),

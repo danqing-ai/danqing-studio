@@ -1,15 +1,25 @@
 """Transformer layers for MLX (LLaMA-style architecture)."""
 
+import math
 from typing import Optional, Tuple, Callable
 
 import mlx.core as mx
 import mlx.nn as nn
 
+from backend.engine.common.attention import (
+    build_causal_with_offset_bias,
+    scaled_dot_product_attention_bhsd_mx,
+)
+from backend.engine.common.mlx_runtime_fallback import run_eval
 from backend.engine.families.heartmula.mlx.nn.kv_cache import KVLayerCache
 from backend.engine.families.heartmula.mlx.nn.rope import RotaryPositionEmbedding, apply_rotary_pos_emb
 
 
-class RMSNorm(nn.Module):
+def _run_eval(*values) -> None:
+    run_eval(None, *values)
+
+
+class HeartmulaRMSNorm(nn.Module):
     """Root Mean Square Layer Normalization.
 
     Normalizes inputs using RMS rather than mean and variance,
@@ -35,6 +45,10 @@ class RMSNorm(nn.Module):
             Normalized tensor.
         """
         return mx.fast.rms_norm(x, self.weight, self.eps)
+
+
+# Backward-compatible export for existing HeartMuLa modules.
+RMSNorm = HeartmulaRMSNorm
 
 
 class LlamaAttention(nn.Module):
@@ -129,7 +143,7 @@ class LlamaAttention(nn.Module):
             k_cache, v_cache = cache
             k = mx.concatenate([k_cache, k], axis=1)
             v = mx.concatenate([v_cache, v], axis=1)
-            mx.eval(k, v)
+            _run_eval(k, v)
             new_cache = (k, v)
         else:
             new_cache = (k, v)
@@ -142,8 +156,13 @@ class LlamaAttention(nn.Module):
 
         # Use fused scaled dot-product attention (Flash Attention)
         # SDPA handles GQA automatically when n_kv_heads < n_heads
-        output = mx.fast.scaled_dot_product_attention(
-            q, k, v, scale=self.scale, mask=mask
+        output = scaled_dot_product_attention_bhsd_mx(
+            mx,
+            q,
+            k,
+            v,
+            scale=self.scale,
+            mask=mask,
         )
 
         # Reshape back to (batch, seq_len, dim)
@@ -236,8 +255,8 @@ class LlamaTransformerBlock(nn.Module):
         )
         self.mlp = LlamaMLP(dim=dim, hidden_dim=hidden_dim)
 
-        self.attention_norm = RMSNorm(dim, eps=norm_eps)
-        self.mlp_norm = RMSNorm(dim, eps=norm_eps)
+        self.attention_norm = HeartmulaRMSNorm(dim, eps=norm_eps)
+        self.mlp_norm = HeartmulaRMSNorm(dim, eps=norm_eps)
 
     def __call__(
         self,
@@ -325,7 +344,7 @@ class LlamaTransformer(nn.Module):
         ]
 
         # Output norm and projection
-        self.norm = RMSNorm(dim, eps=norm_eps)
+        self.norm = HeartmulaRMSNorm(dim, eps=norm_eps)
 
         if tie_word_embeddings:
             self.lm_head = None
@@ -362,7 +381,10 @@ class LlamaTransformer(nn.Module):
 
         # Create causal mask if not provided
         if mask is None:
-            mask = self._create_causal_mask(seq_len, cache)
+            cache_len = 0
+            if cache is not None and cache[0] is not None:
+                cache_len = int(cache[0][0].shape[1])
+            mask = build_causal_with_offset_bias(mx, seq_len, cache_len, dtype=mx.float32)
 
         # Compute offset from cache
         offset = 0
@@ -388,33 +410,6 @@ class LlamaTransformer(nn.Module):
 
         return logits, new_caches
 
-    def _create_causal_mask(
-        self,
-        seq_len: int,
-        cache: Optional[list] = None,
-    ) -> mx.array:
-        """Create causal attention mask.
-
-        Args:
-            seq_len: Current sequence length.
-            cache: Optional cache to determine total length.
-
-        Returns:
-            Causal mask of shape (1, 1, seq_len, total_len).
-        """
-        total_len = seq_len
-        if cache is not None and cache[0] is not None:
-            total_len += cache[0][0].shape[1]
-
-        # Create causal mask using vectorized operations
-        cache_len = total_len - seq_len
-        row_indices = mx.arange(seq_len)[:, None]
-        col_indices = mx.arange(total_len)[None, :]
-        causal_mask = col_indices <= row_indices + cache_len
-        mask = mx.where(causal_mask, 0.0, float("-inf"))
-
-        return mask[None, None, :, :]
-
 
 class AdaLayerNormSingle(nn.Module):
     """Adaptive Layer Normalization for diffusion models.
@@ -429,7 +424,7 @@ class AdaLayerNormSingle(nn.Module):
 
     def __init__(self, dim: int, eps: float = 1e-6):
         super().__init__()
-        self.norm = RMSNorm(dim, eps=eps)
+        self.norm = HeartmulaRMSNorm(dim, eps=eps)
         # Project timestep to scale and shift
         self.linear = nn.Linear(dim, 2 * dim)
 
@@ -482,7 +477,7 @@ class TimestepEmbedding(nn.Module):
         """
         half_dim = self.dim // 2
         freqs = mx.exp(
-            -mx.log(mx.array(self.max_period))
+            -math.log(self.max_period)
             * mx.arange(half_dim).astype(mx.float32)
             / half_dim
         )

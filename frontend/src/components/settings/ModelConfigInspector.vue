@@ -105,19 +105,20 @@ defineProps<{
 
     <DqInspectorSection :title="$t('settings.hardwareCompatibility')">
       <DqInspectorSectionBody>
-        <DqInspectorKv
-          v-if="systemInfo.memory_gb"
-          :label="$t('settings.systemMemory')"
-          :value="`${systemInfo.memory_gb.toFixed(1)} GB`"
-        />
-        <DqProgress
-          v-if="systemInfo.memory_gb && minVersionSizeGB > 0"
-          class="dq-inspector-progress"
-          :percentage="Math.min(100, (minVersionSizeGB / systemInfo.memory_gb) * 100)"
-          :show-text="false"
-          :stroke-width="5"
-          :color="memoryProgressColor"
-        />
+        <div v-if="systemInfo.memory_gb" class="dq-inspector-meter">
+          <DqInspectorKv
+            :label="$t('settings.systemMemory')"
+            :value="`${systemInfo.memory_gb.toFixed(1)} GB`"
+          />
+          <DqProgress
+            v-if="minVersionSizeGB > 0"
+            class="dq-inspector-progress"
+            :percentage="Math.min(100, (minVersionSizeGB / systemInfo.memory_gb) * 100)"
+            :show-text="false"
+            :stroke-width="5"
+            :color="memoryProgressColor"
+          />
+        </div>
         <DqInspectorCallout
           v-if="recommendedVersion"
           variant="success"

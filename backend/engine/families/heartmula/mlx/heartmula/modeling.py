@@ -7,10 +7,18 @@ from pathlib import Path
 import mlx.core as mx
 import mlx.nn as nn
 
+from backend.engine.common.mlx_runtime_fallback import (
+    load_weights_dict,
+    run_eval,
+)
 from backend.engine.families.heartmula.mlx.heartmula.configuration import HeartMuLaConfig
 from backend.engine.families.heartmula.mlx.heartmula.backbone import HeartMuLaBackbone
 from backend.engine.families.heartmula.mlx.heartmula.decoder import HeartMuLaDecoder
 from backend.engine.families.heartmula.mlx.nn.kv_cache import KVCache
+
+
+def _run_eval(*values) -> None:
+    run_eval(None, *values)
 
 
 # Compiled top-k sampling for faster inference
@@ -358,9 +366,9 @@ class HeartMuLa(nn.Module):
         # Load weights
         weights_path = path / "model.safetensors"
         if weights_path.exists():
-            weights = mx.load(str(weights_path))
+            weights = load_weights_dict(None, str(weights_path))
             weights = {k: v.astype(dtype) for k, v in weights.items()}
             model.load_weights(list(weights.items()))
-            mx.eval(model.parameters())
+            _run_eval(model.parameters())
 
         return model

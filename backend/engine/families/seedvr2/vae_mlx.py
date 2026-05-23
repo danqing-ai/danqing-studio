@@ -5,6 +5,7 @@ from __future__ import annotations
 import mlx.core as mx
 from mlx import nn
 
+from backend.engine.common.attention import scaled_dot_product_attention_bhsd_mx
 from .weights_mlx import ModelConfig
 
 
@@ -91,7 +92,8 @@ class Attention3D(nn.Module):
         k = k[:, None, :, :]
         v = v[:, None, :, :]
 
-        x = mx.fast.scaled_dot_product_attention(
+        x = scaled_dot_product_attention_bhsd_mx(
+            mx,
             q,
             k,
             v,

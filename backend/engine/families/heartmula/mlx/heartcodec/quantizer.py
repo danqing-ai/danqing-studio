@@ -5,6 +5,8 @@ from typing import Optional, Tuple
 import mlx.core as mx
 import mlx.nn as nn
 
+from backend.engine.common.mlx_runtime_fallback import random_normal
+
 
 class EMACodebook(nn.Module):
     """EMA-updated codebook matching PyTorch structure.
@@ -15,7 +17,7 @@ class EMACodebook(nn.Module):
     def __init__(self, codebook_size: int, codebook_dim: int):
         super().__init__()
         # PyTorch stores as (1, codebook_size, codebook_dim)
-        self.embed = mx.random.normal(shape=(1, codebook_size, codebook_dim)) * 0.02
+        self.embed = random_normal(None, (1, codebook_size, codebook_dim)) * 0.02
         # EMA tracking (not used in inference, but needed for weight loading)
         self.cluster_size = mx.zeros((1, codebook_size))
         self.embed_avg = mx.zeros((1, codebook_size, codebook_dim))
@@ -246,7 +248,7 @@ class ResidualVQ(nn.Module):
 
         all_codes = []
         all_quantized = []
-        total_loss = mx.array(0.0)
+        total_loss = mx.zeros((), dtype=x.dtype)
         residual = x
 
         for quantizer in self.layers[:n_q]:

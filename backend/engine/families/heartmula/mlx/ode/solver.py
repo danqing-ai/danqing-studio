@@ -39,7 +39,7 @@ def euler_solve(
     t = t_start
 
     for _ in range(num_steps):
-        t_tensor = mx.array([t])
+        t_tensor = mx.full((1,), t)
 
         if guidance_scale > 1.0 and uncond is not None:
             # Classifier-free guidance
@@ -89,7 +89,7 @@ def midpoint_solve(
     t = t_start
 
     def get_velocity(t_val: float, x_val: mx.array) -> mx.array:
-        t_tensor = mx.array([t_val])
+        t_tensor = mx.full((1,), t_val)
         if guidance_scale > 1.0 and uncond is not None:
             v_cond = velocity_fn(t_tensor, x_val, condition)
             v_uncond = velocity_fn(t_tensor, x_val, uncond)
@@ -148,7 +148,7 @@ def heun_solve(
     t = t_start
 
     def get_velocity(t_val: float, x_val: mx.array) -> mx.array:
-        t_tensor = mx.array([t_val])
+        t_tensor = mx.full((1,), t_val)
         if guidance_scale > 1.0 and uncond is not None:
             v_cond = velocity_fn(t_tensor, x_val, condition)
             v_uncond = velocity_fn(t_tensor, x_val, uncond)
@@ -205,7 +205,7 @@ def rk4_solve(
     t = t_start
 
     def get_velocity(t_val: float, x_val: mx.array) -> mx.array:
-        t_tensor = mx.array([t_val])
+        t_tensor = mx.full((1,), t_val)
         if guidance_scale > 1.0 and uncond is not None:
             v_cond = velocity_fn(t_tensor, x_val, condition)
             v_uncond = velocity_fn(t_tensor, x_val, uncond)

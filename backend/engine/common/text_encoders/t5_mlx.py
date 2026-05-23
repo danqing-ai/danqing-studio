@@ -1,5 +1,6 @@
 """T5-XXL 文本编码器 — MLX 前向；PyTorch 见 ``t5_cuda``。"""
 from __future__ import annotations
+import importlib
 from typing import Any
 
 
@@ -55,8 +56,8 @@ class T5Encoder:
             tid, tam = t5_prepare_torch_tensors(ctx, input_ids, attention_mask)
             return t5_forward_torch(self, tid, tam)
         import mlx.core as mx
-        input_ids_mx = mx.array(input_ids, dtype=mx.int32)
-        attention_mask_mx = mx.array(attention_mask, dtype=mx.float32)
+        input_ids_mx = ctx.array(input_ids, dtype=mx.int32)
+        attention_mask_mx = ctx.array(attention_mask, dtype=mx.float32)
         return self._forward_mlx(input_ids_mx, attention_mask_mx)
 
     def encode_with_mask(self, texts: list[str]) -> tuple[Any, Any]:
@@ -73,14 +74,13 @@ class T5Encoder:
             from backend.engine.common.text_encoders.t5_cuda import t5_prepare_torch_tensors, t5_forward_torch
             tid, tam = t5_prepare_torch_tensors(ctx, input_ids, attention_mask)
             hidden = t5_forward_torch(self, tid, tam)
-            import mlx.core as mx
-            mask = mx.array(attention_mask.astype(bool))
+            mask = ctx.array(attention_mask.astype(bool))
             return hidden, mask
         import mlx.core as mx
-        input_ids_mx = mx.array(input_ids, dtype=mx.int32)
-        attention_mask_mx = mx.array(attention_mask, dtype=mx.float32)
+        input_ids_mx = ctx.array(input_ids, dtype=mx.int32)
+        attention_mask_mx = ctx.array(attention_mask, dtype=mx.float32)
         hidden = self._forward_mlx(input_ids_mx, attention_mask_mx)
-        mask = mx.array(attention_mask.astype(bool))
+        mask = ctx.array(attention_mask.astype(bool))
         return hidden, mask
 
     def encode_tokenized_np(
@@ -97,12 +97,12 @@ class T5Encoder:
             from backend.engine.common.text_encoders.t5_cuda import t5_prepare_torch_tensors, t5_forward_torch
             tid, tam = t5_prepare_torch_tensors(ctx, input_ids, attention_mask)
             hidden = t5_forward_torch(self, tid, tam)
-            mask = mx.array(np.asarray(attention_mask).astype(bool))
+            mask = ctx.array(np.asarray(attention_mask).astype(bool))
             return hidden, mask
-        input_ids_mx = mx.array(input_ids, dtype=mx.int32)
-        attention_mask_mx = mx.array(attention_mask, dtype=mx.float32)
+        input_ids_mx = ctx.array(input_ids, dtype=mx.int32)
+        attention_mask_mx = ctx.array(attention_mask, dtype=mx.float32)
         hidden = self._forward_mlx(input_ids_mx, attention_mask_mx)
-        mask = mx.array(np.asarray(attention_mask).astype(bool))
+        mask = ctx.array(np.asarray(attention_mask).astype(bool))
         return hidden, mask
 
     def _forward_mlx(self, input_ids, attention_mask):
@@ -122,14 +122,14 @@ class T5Encoder:
             if self._weight_dtype is not None:
                 from backend.engine.common.mlx_dtype import cast_module_parameters
 
-                cast_module_parameters(self._model, self._weight_dtype)
-            mx.eval(self._model.parameters())
+                cast_module_parameters(
+                    self._model, self._weight_dtype, eval_fn=self.ctx.eval
+                )
+            self.ctx.eval(self._model.parameters())
         return self._model(input_ids, attention_mask)
 
     def _forward_mlx_via_torch_bridge(self, input_ids, attention_mask):
         """mlx-lm 已移除 ``models.t5`` 时：HF T5Encoder → numpy → MLX（数值与原生 MLX T5 不完全一致）。"""
-        import mlx.core as mx
-
         try:
             from backend.engine.common.text_encoders.t5_cuda import t5_cpu_torch_bridge_hidden_numpy
         except ImportError as e:
@@ -140,12 +140,14 @@ class T5Encoder:
             ) from e
 
         hidden_np = t5_cpu_torch_bridge_hidden_numpy(self, input_ids, attention_mask)
-        return mx.array(hidden_np)
+        return self.ctx.array(hidden_np)
 
     def release_weights(self) -> None:
         """Drop loaded MLX / bridge weights (tokenizers unchanged)."""
         self._model = None
         self._torch_bridge_model = None
-        import mlx.core as mx
-
-        mx.clear_cache()
+        clear_cache_fn = getattr(self.ctx, "clear_cache", None)
+        if clear_cache_fn is not None:
+            clear_cache_fn()
+        else:
+            importlib.import_module("mlx.core").clear_cache()

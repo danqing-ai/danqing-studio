@@ -1,11 +1,11 @@
 """HunyuanVideo-1.5 dual text encoder — in-repo MLX (no transformers / tokenizers / torch)."""
 from __future__ import annotations
 
+import importlib
 import re
 from pathlib import Path
 from typing import Any
 
-import mlx.core as mx
 import numpy as np
 
 from backend.engine.common.hf_tokenizer_json import load_hf_tokenizer
@@ -161,12 +161,16 @@ class HunyuanVideoTextEncoder:
         if self._byt5_mlx is not None:
             self._byt5_mlx.release_weights()
             self._byt5_mlx = None
-        mx.clear_cache()
+        ctx = getattr(self, "ctx", None)
+        if ctx is not None and hasattr(ctx, "clear_cache"):
+            ctx.clear_cache()
+        else:
+            importlib.import_module("mlx.core").clear_cache()
 
     def _ensure_qwen(self) -> None:
         if self._qwen is not None:
             return
-        self._qwen = HunyuanQwen25VLEncoder(self._enc1_dir, self._tok1_dir)
+        self._qwen = HunyuanQwen25VLEncoder(self._enc1_dir, self._tok1_dir, ctx=self.ctx)
 
     def _ensure_byt5(self) -> None:
         if self._byt5_mlx is not None:
@@ -176,7 +180,7 @@ class HunyuanVideoTextEncoder:
             str(self._enc2_dir),
             max_seq_len=self.byt5_max_length,
             tokenizer_path=str(self._tok2_dir),
-            weight_dtype=mx.bfloat16,
+            weight_dtype=self.ctx.bfloat16(),
             native_mlx_only=True,
         )
 
@@ -231,19 +235,19 @@ class HunyuanVideoTextEncoder:
             raise RuntimeError("HunyuanVideoTextEncoder.encode requires at least one prompt.")
 
         mllm_emb, mllm_mask = self._encode_qwen(texts)
-        mx.clear_cache()
+        self.ctx.clear_cache()
         byt5_emb, byt5_mask = self._encode_byt5(texts)
 
         out = (
-            mx.array(mllm_emb),
-            mx.array(mllm_mask),
-            mx.array(byt5_emb),
-            mx.array(byt5_mask),
+            self.ctx.array(mllm_emb),
+            self.ctx.array(mllm_mask),
+            self.ctx.array(byt5_emb),
+            self.ctx.array(byt5_mask),
         )
         if self.release_after_encode:
             self.release_weights()
         else:
-            mx.clear_cache()
+            self.ctx.clear_cache()
         return out
 
 
@@ -256,7 +260,7 @@ def encode_hunyuan_prompt_dual(
     crop_start: int = 108,
     device: str = "auto",
     ctx: Any | None = None,
-) -> tuple[mx.array, mx.array, mx.array, mx.array]:
+) -> tuple[Any, Any, Any, Any]:
     """Legacy functional API — prefer ``get_hunyuan_text_encoder`` + ``encode``."""
     from types import SimpleNamespace
 

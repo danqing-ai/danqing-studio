@@ -16,11 +16,15 @@ import mlx.nn as nn
 import numpy as np
 
 from backend.engine.common._base import TransformerBase
-from backend.engine.common.attention import apply_rope_interleaved_real
+from backend.engine.common.attention import (
+    apply_rope_interleaved_real,
+    attention_bhsd_to_blhd,
+)
 from backend.engine.common.cfg_batch import (
     TEXT_KEYS_MINIMAL,
     predict_noise_cfg_batched,
 )
+from backend.engine.common.norm import unpack_modulation_6way
 from backend.engine.config.model_configs import CogVideoXConfig
 from backend.engine.runtime._base import RuntimeContext
 
@@ -200,7 +204,7 @@ class CogVideoXPatchEmbed:
             cfg.spatial_interpolation_scale,
             cfg.temporal_interpolation_scale,
         )
-        pos_mx = mx.array(pos_np.astype("float32"))
+        pos_mx = ctx.array(pos_np.astype("float32"))
         pos_mx = pos_mx.astype(embeds.dtype)
         if pos_mx.shape[1] != embeds.shape[1]:
             raise RuntimeError(
@@ -223,11 +227,7 @@ class CogVideoXLayerNormZero:
     ) -> tuple[Any, Any, Any, Any]:
         ctx = self.ctx
         v = self.linear(self.silu(temb))
-        D = v.shape[-1] // 6
-        shift, scale, gate, enc_shift, enc_scale, enc_gate = (
-            v[..., :D], v[..., D:2 * D], v[..., 2 * D:3 * D],
-            v[..., 3 * D:4 * D], v[..., 4 * D:5 * D], v[..., 5 * D:6 * D],
-        )
+        shift, scale, gate, enc_shift, enc_scale, enc_gate = unpack_modulation_6way(v)
         n_h = self.norm(hidden_states) * (1 + scale)[:, None, :] + shift[:, None, :]
         n_e = self.norm(encoder_hidden_states) * (1 + enc_scale)[:, None, :] + enc_shift[:, None, :]
         return n_h, n_e, gate[:, None, :], enc_gate[:, None, :]
@@ -293,8 +293,7 @@ class CogVideoXAttention:
             q = ctx.concat([q[:, :, :text_seq_length, :], q_t], axis=2)
             k = ctx.concat([k[:, :, :text_seq_length, :], k_t], axis=2)
 
-        attn_out = ctx.attention(q, k, v, scale=self.scale)
-        attn_out = ctx.permute(attn_out, (0, 2, 1, 3))
+        attn_out = attention_bhsd_to_blhd(ctx, q, k, v, scale=self.scale)
         attn_out = ctx.reshape(attn_out, (B, Seq, self.inner_dim))
         attn_out = self.to_out[0](attn_out)
         attn_out = self.to_out[1](attn_out)

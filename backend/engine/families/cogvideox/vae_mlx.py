@@ -14,9 +14,14 @@ from typing import Any, Callable
 import mlx.core as mx
 import mlx.nn as nn
 
+from backend.engine.common.mlx_runtime_fallback import load_weights_dict, run_eval
 from backend.engine.runtime._base import RuntimeContext
 
 logger = logging.getLogger(__name__)
+
+
+def _run_eval(*values: Any) -> None:
+    run_eval(None, *values)
 
 
 def _conv3d_weight_torch_to_mlx(w: mx.array) -> mx.array:
@@ -138,7 +143,7 @@ class SafeConv3d(nn.Module):
         output_chunks: list[mx.array] = []
         for chunk in input_chunks:
             out = self.conv(chunk)
-            mx.eval(out)
+            _run_eval(out)
             output_chunks.append(out)
         if len(output_chunks) == 1:
             return output_chunks[0]
@@ -618,7 +623,7 @@ class CogVideoXDecoder3DMlx(nn.Module):
         ho_ndhwc = _ncthw_to_ndhwc(hidden)
         ho2, new_cache["conv_out"] = self.conv_out(ho_ndhwc, conv_cache.get("conv_out"))
         out = _ndhwc_to_ncthw(ho2)
-        mx.eval(out)
+        _run_eval(out)
         _stage(1.0)
         return out, new_cache
 
@@ -700,13 +705,15 @@ def build_cogvideox_decoder_mlx(vae_cfg: dict[str, Any]) -> CogVideoXDecoder3DMl
     return dec
 
 
-def load_vae_bundle_weights(bundle_root: Path) -> tuple[dict[str, mx.array], dict[str, Any]]:
+def load_vae_bundle_weights(
+    bundle_root: Path, *, load_fn: Any | None = None
+) -> tuple[dict[str, mx.array], dict[str, Any]]:
     vae_cfg = _read_vae_config(bundle_root)
     vae_dir = bundle_root / "vae"
 
     merged: dict[str, mx.array] = {}
     for sf in sorted(vae_dir.glob("*.safetensors")):
-        merged.update(dict(mx.load(str(sf))))
+        merged.update(load_weights_dict(load_fn, str(sf)))
 
     dec_weights: dict[str, mx.array] = {}
     for k, v in merged.items():
@@ -735,13 +742,15 @@ def _read_vae_config(bundle_root: Path) -> dict[str, Any]:
 _decoder_cache: dict[str, CogVideoXDecoder3DMlx] = {}
 
 
-def _get_cogvideox_decoder(bundle_root: Path) -> CogVideoXDecoder3DMlx:
+def _get_cogvideox_decoder(
+    bundle_root: Path, *, load_fn: Any | None = None
+) -> CogVideoXDecoder3DMlx:
     """Reuse loaded VAE decoder per bundle (avoid re-reading safetensors after each denoise run)."""
     key = str(bundle_root.resolve())
     cached = _decoder_cache.get(key)
     if cached is not None:
         return cached
-    weights, vae_cfg = load_vae_bundle_weights(bundle_root)
+    weights, vae_cfg = load_vae_bundle_weights(bundle_root, load_fn=load_fn)
     dec = build_cogvideox_decoder_mlx(vae_cfg)
     _assign_decoder_weights(dec, weights)
     _decoder_cache[key] = dec
@@ -833,8 +842,11 @@ def _decode_decoder_temporal_batched(
     frame_batch_size: int = 2,
     conv_cache: dict[str, mx.array | None] | None = None,
     on_log: Callable[[str], None] | None = None,
+    eval_fn: Callable[..., None] | None = None,
 ) -> mx.array:
     """Temporal micro-batches with causal ``conv_cache`` (diffusers ``_decode``)."""
+    if eval_fn is None:
+        eval_fn = mx.eval
     num_frames = int(z_ncthw.shape[2])
     num_batches = max(num_frames // frame_batch_size, 1)
     out_parts: list[mx.array] = []
@@ -845,7 +857,7 @@ def _decode_decoder_temporal_batched(
         end_frame = frame_batch_size * (i + 1) + remaining_frames
         z_slice = z_ncthw[:, :, start_frame:end_frame]
         z_slice, cache = dec(z_slice, conv_cache=cache, on_stage=None)
-        mx.eval(z_slice)
+        eval_fn(z_slice)
         out_parts.append(z_slice)
         msg = (
             f"CogVideoX VAE temporal batch {i + 1}/{num_batches} "
@@ -865,6 +877,7 @@ def _tiled_decode_latents(
     params: _VaeTileParams,
     on_stage: Callable[[float], None] | None,
     on_log: Callable[[str], None] | None = None,
+    eval_fn: Callable[..., None] | None = None,
 ) -> mx.array:
     """Spatial tiling + temporal batching (diffusers ``tiled_decode``)."""
     _, _, _, height, width = z_ncthw.shape
@@ -904,7 +917,11 @@ def _tiled_decode_latents(
                 j : j + params.tile_latent_min_width,
             ]
             decoded = _decode_decoder_temporal_batched(
-                dec, z_tile, frame_batch_size=params.frame_batch_size, on_log=on_log,
+                dec,
+                z_tile,
+                frame_batch_size=params.frame_batch_size,
+                on_log=on_log,
+                eval_fn=eval_fn,
             )
             row.append(decoded)
         rows.append(row)
@@ -931,7 +948,10 @@ def _decode_latents_batched(
     params: _VaeTileParams,
     on_stage: Callable[[float], None] | None,
     on_log: Callable[[str], None] | None = None,
+    eval_fn: Callable[..., None] | None = None,
 ) -> mx.array:
+    if eval_fn is None:
+        eval_fn = mx.eval
     num_batches = max(int(z_ncthw.shape[2]) // params.frame_batch_size, 1)
     out_parts: list[mx.array] = []
     cache: dict[str, mx.array | None] | None = None
@@ -941,7 +961,7 @@ def _decode_latents_batched(
         end_frame = params.frame_batch_size * (i + 1) + remaining_frames
         z_slice = z_ncthw[:, :, start_frame:end_frame]
         z_slice, cache = dec(z_slice, conv_cache=cache, on_stage=None)
-        mx.eval(z_slice)
+        eval_fn(z_slice)
         out_parts.append(z_slice)
         if on_stage is not None:
             on_stage(min(0.98, (i + 1) / num_batches))
@@ -979,8 +999,10 @@ def decode_latents_ncthw(
     logger.info("CogVideoX VAE decode: latent shape=%s", tuple(latents.shape))
     if on_log is not None:
         on_log(f"CogVideoX VAE decode start (latent shape {tuple(latents.shape)})")
-    dec = _get_cogvideox_decoder(bundle_root)
-    mx.eval(latents)
+    dec = _get_cogvideox_decoder(
+        bundle_root, load_fn=getattr(ctx, "load_weights", None)
+    )
+    ctx.eval(latents)
 
     if on_stage is not None:
         on_stage(0.02)
@@ -995,14 +1017,28 @@ def decode_latents_ncthw(
         logger.info(msg)
         if on_log is not None:
             on_log(msg)
-        sample = _tiled_decode_latents(dec, latents, tile_params, on_stage=on_stage, on_log=on_log)
+        sample = _tiled_decode_latents(
+            dec,
+            latents,
+            tile_params,
+            on_stage=on_stage,
+            on_log=on_log,
+            eval_fn=ctx.eval,
+        )
     else:
         if on_log is not None:
             on_log("CogVideoX VAE temporal batched decode (diffusers default, no spatial tiling)")
-        sample = _decode_latents_batched(dec, latents, tile_params, on_stage=on_stage, on_log=on_log)
+        sample = _decode_latents_batched(
+            dec,
+            latents,
+            tile_params,
+            on_stage=on_stage,
+            on_log=on_log,
+            eval_fn=ctx.eval,
+        )
 
     sample = mx.clip(sample, -1.0, 1.0)
-    mx.eval(sample)
+    ctx.eval(sample)
     if on_stage is not None:
         on_stage(1.0)
     logger.info("CogVideoX VAE decode done: pixel shape=%s", tuple(sample.shape))

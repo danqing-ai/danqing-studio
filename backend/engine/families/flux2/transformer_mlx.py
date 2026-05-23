@@ -6,32 +6,17 @@ in_channels=128, inner_dim=4096 (9B) / 3072 (4B)
 """
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import mlx.core as mx
 import mlx.nn as nn
 
+from backend.engine.common.attention import attention_bhsd_to_blhd
+from backend.engine.common.embeddings import apply_complex_rope_bshd
+from backend.engine.common.norm import AdaLayerNormContinuous, apply_scale_shift
 from backend.engine.runtime._base import RuntimeContext
 from backend.engine.common._base import TransformerBase
-
-
-def _apply_rope_bshd(x, cos, sin):
-    """Matches reference apply_rope_bshd."""
-    out_dtype = x.dtype
-    cos = cos.astype(mx.float32)
-    sin = sin.astype(mx.float32)
-    cos = cos.reshape(1, 1, *cos.shape)
-    sin = sin.reshape(1, 1, *sin.shape)
-    x_f = x.astype(mx.float32)
-    x2 = x_f.reshape(*x_f.shape[:-1], -1, 2)
-    real = x2[..., 0]
-    imag = x2[..., 1]
-    rotated = mx.stack([
-        real * cos + (-imag) * sin,
-        imag * cos + real * sin,
-    ], axis=-1)
-    rotated = rotated.reshape(*x_f.shape)
-    return rotated.astype(out_dtype)
 
 
 class Flux2Modulation:
@@ -44,8 +29,6 @@ class Flux2Modulation:
         self.linear = nn.Linear(dim, dim * mod_param_sets * 3, bias=False)
 
     def forward(self, c):
-        import mlx.nn as nn
-        ctx = self.ctx
         out = nn.silu(c)
         out = self.linear(out)
         # Match reference: if 2D, expand_dims to 3D [B, 1, dim*3*mod_param_sets]
@@ -74,27 +57,25 @@ class Flux2TimestepEmbeddings:
             self.guidance_linear_2 = None
 
     def forward(self, t, guidance=None):
-        import mlx.core as mx
-        import mlx.nn as mxnn
-        import math
         t = t.astype(mx.float32)
         half = self.freq_dim
         freqs = mx.exp(-math.log(10000.0) * mx.arange(0, half, dtype=mx.float32) / half)
+        emb = self._sinusoidal_embedding(t, freqs)
+        temb = self.linear_2(nn.silu(self.linear_1(emb)))
+        if guidance is not None and self.guidance_linear_1 is not None and self.guidance_linear_2 is not None:
+            g_emb = self._sinusoidal_embedding(guidance.astype(mx.float32), freqs)
+            temb = temb + self.guidance_linear_2(nn.silu(self.guidance_linear_1(g_emb)))
+        return temb
+
+    def _sinusoidal_embedding(self, t: mx.array, freqs: mx.array) -> mx.array:
+        half = self.freq_dim
         args = t[:, None] * freqs[None]
         emb = mx.concatenate([mx.sin(args), mx.cos(args)], axis=-1)
         # flip_sin_to_cos: [sin, cos] → [cos, sin]
         emb = mx.concatenate([emb[:, half:], emb[:, :half]], axis=-1)
         if self.freq_dim % 2:
             emb = mx.concatenate([emb, mx.zeros((emb.shape[0], 1), dtype=emb.dtype)], axis=-1)
-        temb = self.linear_2(mxnn.silu(self.linear_1(emb)))
-        if guidance is not None and self.guidance_linear_1 is not None and self.guidance_linear_2 is not None:
-            g_args = guidance[:, None].astype(mx.float32) * freqs[None]
-            g_emb = mx.concatenate([mx.sin(g_args), mx.cos(g_args)], axis=-1)
-            g_emb = mx.concatenate([g_emb[:, half:], g_emb[:, :half]], axis=-1)
-            if self.freq_dim % 2:
-                g_emb = mx.concatenate([g_emb, mx.zeros((g_emb.shape[0], 1), dtype=g_emb.dtype)], axis=-1)
-            temb = temb + self.guidance_linear_2(mxnn.silu(self.guidance_linear_1(g_emb)))
-        return temb
+        return emb
 
 
 class Flux2PosEmbed:
@@ -106,7 +87,6 @@ class Flux2PosEmbed:
         self.axes_dim = axes_dim
 
     def forward(self, ids):
-        import mlx.core as mx
         cos_out = []
         sin_out = []
         pos = ids.astype(mx.float32)
@@ -192,8 +172,7 @@ class Flux2Attention:
         k = self._rotary(k, cos, sin)
 
         # Attention
-        out = ctx.attention(q, k, v, scale=self.scale)
-        out = ctx.permute(out, (0, 2, 1, 3))
+        out = attention_bhsd_to_blhd(ctx, q, k, v, scale=self.scale)
         out = out.reshape(B, -1, self.heads * head_dim)
 
         # 拆分 text 和 image 输出
@@ -203,7 +182,7 @@ class Flux2Attention:
         return self.to_out(img_out), self.to_add_out(txt_out)
 
     def _rotary(self, x, cos, sin):
-        return _apply_rope_bshd(x, cos, sin)
+        return apply_complex_rope_bshd(mx, x, cos, sin)
 
 
 class Flux2FeedForward:
@@ -239,18 +218,18 @@ class Flux2JointBlock:
         (c_shift_msa, c_scale_msa, c_gate_msa), (c_shift_mlp, c_scale_mlp, c_gate_mlp) = temb_mod_params_txt
 
         n_img = self.norm1(hidden_states)
-        n_img = (1 + scale_msa) * n_img + shift_msa
+        n_img = apply_scale_shift(n_img, scale_msa, shift_msa, add_one=True)
         n_txt = self.norm1_context(encoder_hidden_states)
-        n_txt = (1 + c_scale_msa) * n_txt + c_shift_msa
+        n_txt = apply_scale_shift(n_txt, c_scale_msa, c_shift_msa, add_one=True)
 
         img_out, txt_out = self.attn.forward(n_img, n_txt, image_rotary_emb)
         hidden_states = hidden_states + gate_msa * img_out
         encoder_hidden_states = encoder_hidden_states + c_gate_msa * txt_out
 
         n_img = self.norm2(hidden_states)
-        n_img = (1 + scale_mlp) * n_img + shift_mlp
+        n_img = apply_scale_shift(n_img, scale_mlp, shift_mlp, add_one=True)
         n_txt = self.norm2_context(encoder_hidden_states)
-        n_txt = (1 + c_scale_mlp) * n_txt + c_shift_mlp
+        n_txt = apply_scale_shift(n_txt, c_scale_mlp, c_shift_mlp, add_one=True)
 
         hidden_states = hidden_states + gate_mlp * self.ff.forward(n_img)
         encoder_hidden_states = encoder_hidden_states + c_gate_mlp * self.ff_context.forward(n_txt)
@@ -296,13 +275,12 @@ class Flux2ParallelSelfAttention:
         # RoPE
         if image_rotary_emb is not None:
             cos, sin = image_rotary_emb
-            q = _apply_rope_bshd(q, cos, sin)
-            k = _apply_rope_bshd(k, cos, sin)
+            q = apply_complex_rope_bshd(mx, q, cos, sin)
+            k = apply_complex_rope_bshd(mx, k, cos, sin)
 
         # Attention
         scale = self.dim_head ** -0.5
-        hidden_states = ctx.attention(q, k, v, scale=scale)
-        hidden_states = ctx.permute(hidden_states, (0, 2, 1, 3))
+        hidden_states = attention_bhsd_to_blhd(ctx, q, k, v, scale=scale)
         hidden_states = ctx.reshape(hidden_states, (B, S, self.inner_dim))
 
         # MLP (SwiGLU)
@@ -334,7 +312,7 @@ class Flux2SingleBlock:
     def forward(self, hidden_states, temb_mod_params, image_rotary_emb):
         shift, scale, gate = temb_mod_params
         normed = self.norm(hidden_states)
-        normed = (1 + scale) * normed + shift
+        normed = apply_scale_shift(normed, scale, shift, add_one=True)
 
         attn_output = self.attn.forward(normed, image_rotary_emb)
         hidden_states = hidden_states + gate * attn_output
@@ -381,7 +359,6 @@ class Flux2Transformer(TransformerBase):
             for _ in range(num_single)
         ]
 
-        from backend.engine.common.norm import AdaLayerNormContinuous
         self.norm_out = AdaLayerNormContinuous(dim, dim, ctx)
         patch_size = getattr(config, 'patch_size', 1)
         self.proj_out = nn.Linear(dim, patch_size * patch_size * getattr(config, 'out_channels', in_ch), bias=False)
@@ -395,28 +372,13 @@ class Flux2Transformer(TransformerBase):
         """Flux2 前向 — Pipeline 统一传入 int index，由模型自己处理所有转换。"""
         ctx = self.ctx
         B = latents.shape[0]
-        import mlx.core as mx
 
         # ------------------------------------------------------------------
         # 1. Timestep 转换（Pipeline 传入 int index）
         # ------------------------------------------------------------------
-        t_idx = int(timestep)
-        if sigmas is not None:
-            timestep_val = (sigmas[t_idx] * 1000.0).reshape((1,))
-        else:
-            # fallback: 直接作为 float 处理
-            if not isinstance(timestep, mx.array):
-                timestep_val = mx.array(timestep, dtype=mx.float32)
-            else:
-                timestep_val = timestep
-            if timestep_val.ndim == 0:
-                timestep_val = mx.full((B,), timestep_val, dtype=mx.float32)
-            # Auto-scale: if timestep <= 1.0, scale by 1000 (matching reference)
-            timestep_scale = mx.where(mx.max(timestep_val) <= 1.0, 1000.0, 1.0)
-            timestep_val = timestep_val * timestep_scale
+        timestep_val = self._resolve_timestep_value(B, timestep, sigmas, array_fn=ctx.array)
 
         temb = self.time_guidance_embed.forward(timestep_val)
-        import mlx.core as mx
         temb = temb.astype(mx.bfloat16)
 
         # ------------------------------------------------------------------
@@ -464,11 +426,8 @@ class Flux2Transformer(TransformerBase):
         img_ids = self._make_ids(B, H, W)
         txt_ids = self._make_text_ids(B, encoder_hidden_states.shape[1]) if encoder_hidden_states.shape[1] > 0 else None
 
-        img_ids_2d = img_ids[0] if img_ids.ndim == 3 else img_ids
-        txt_ids_2d = txt_ids[0] if txt_ids is not None and txt_ids.ndim == 3 else txt_ids
-
-        img_rotary = self.pos_embed.forward(img_ids_2d) if img_ids_2d is not None else (mx.zeros((1,)), mx.zeros((1,)))
-        txt_rotary = self.pos_embed.forward(txt_ids_2d) if txt_ids_2d is not None else (mx.zeros((1,)), mx.zeros((1,)))
+        img_rotary = self._rotary_from_ids(img_ids)
+        txt_rotary = self._rotary_from_ids(txt_ids)
         concat_rotary = (
             mx.concatenate([txt_rotary[0], img_rotary[0]], axis=0),
             mx.concatenate([txt_rotary[1], img_rotary[1]], axis=0),
@@ -503,13 +462,33 @@ class Flux2Transformer(TransformerBase):
         hidden_states = hidden_states.reshape(B, latent_h, latent_w, C).transpose(0, 3, 1, 2)
         return hidden_states
 
+    @staticmethod
+    def _resolve_timestep_value(
+        batch_size: int,
+        timestep: Any,
+        sigmas: Any | None,
+        *,
+        array_fn: Any | None = None,
+    ) -> Any:
+        if array_fn is None:
+            array_fn = mx.array
+        if sigmas is not None:
+            t_idx = int(timestep)
+            return (sigmas[t_idx] * 1000.0).reshape((1,))
+
+        # fallback: 直接作为 float 处理
+        timestep_val = timestep if hasattr(timestep, "shape") else array_fn(timestep, dtype=mx.float32)
+        if timestep_val.ndim == 0:
+            timestep_val = mx.full((batch_size,), timestep_val, dtype=mx.float32)
+        # Auto-scale: if timestep <= 1.0, scale by 1000 (matching reference)
+        timestep_scale = mx.where(mx.max(timestep_val) <= 1.0, 1000.0, 1.0)
+        return timestep_val * timestep_scale
+
     def _make_ids(self, B, H, W):
         """Generate position IDs — matches reference Flux2LatentCreator.prepare_grid_ids.
 
         Order: [t=0, h, w, layer=0], where w changes first (consistent with latent reshape).
         """
-        ctx = self.ctx
-        import mlx.core as mx
         h_ids = mx.arange(H, dtype=mx.int32)
         w_ids = mx.arange(W, dtype=mx.int32)
         h_grid = mx.broadcast_to(mx.expand_dims(h_ids, axis=1), (H, W))
@@ -519,28 +498,40 @@ class Flux2Transformer(TransformerBase):
         t = mx.full(flat_h.shape, 0, dtype=mx.int32)
         layer_ids = mx.zeros_like(flat_h)
         ids = mx.stack([t, flat_h, flat_w, layer_ids], axis=1)
-        ids = mx.expand_dims(ids, axis=0)
-        return mx.broadcast_to(ids, (B, ids.shape[1], ids.shape[2]))
+        return self._broadcast_ids_table(B, ids)
 
     def _make_text_ids(self, B, seq_len):
         """Generate text IDs — matches reference Flux2PromptEncoder.prepare_text_ids.
 
         Order: [t=0, h=0, w=0, token_ids].
         """
-        ctx = self.ctx
-        import mlx.core as mx
         t = mx.zeros((seq_len,), dtype=mx.int32)
         h = mx.zeros((seq_len,), dtype=mx.int32)
         w = mx.zeros((seq_len,), dtype=mx.int32)
         token_ids = mx.arange(seq_len, dtype=mx.int32)
         ids = mx.stack([t, h, w, token_ids], axis=1)
-        ids = mx.expand_dims(ids, axis=0)
-        return mx.broadcast_to(ids, (B, ids.shape[1], ids.shape[2]))
+        return self._broadcast_ids_table(B, ids)
+
+    @staticmethod
+    def _broadcast_ids_table(batch_size: int, ids_2d: mx.array) -> mx.array:
+        ids = mx.expand_dims(ids_2d, axis=0)
+        return mx.broadcast_to(ids, (batch_size, ids.shape[1], ids.shape[2]))
+
+    @staticmethod
+    def _ids_to_2d(ids: mx.array | None) -> mx.array | None:
+        if ids is None:
+            return None
+        return ids[0] if ids.ndim == 3 else ids
+
+    def _rotary_from_ids(self, ids: mx.array | None) -> tuple[mx.array, mx.array]:
+        ids_2d = self._ids_to_2d(ids)
+        if ids_2d is None:
+            return mx.zeros((1,)), mx.zeros((1,))
+        return self.pos_embed.forward(ids_2d)
 
     def load_weights(self, weights, strict=False,
                      ctx=None, *, bundle_affine_bits=None):
         """Load weights and auto-convert to bfloat16 (matches reference precision)."""
-        import mlx.core as mx
         load_ctx = ctx if ctx is not None else self.ctx
         loaded, skipped = super().load_weights(
             weights,
@@ -549,21 +540,5 @@ class Flux2Transformer(TransformerBase):
             bundle_affine_bits=bundle_affine_bits,
         )
         # Convert all parameters to bfloat16 for numerical consistency with reference
-        for key, param in list(self._param_map.items()):
-            if param.dtype != mx.bfloat16:
-                new_param = param.astype(mx.bfloat16)
-                self._param_map[key] = new_param
-                # Update the actual module parameter
-                parts = key.split('.')
-                obj = self
-                for part in parts[:-1]:
-                    if part.isdigit():
-                        obj = obj[int(part)]
-                    else:
-                        obj = getattr(obj, part)
-                last = parts[-1]
-                if hasattr(obj, last):
-                    setattr(obj, last, new_param)
-                elif hasattr(obj, '_parameters') and last in obj._parameters:
-                    obj._parameters[last] = new_param
+        self._cast_param_map_dtype(mx.bfloat16)
         return loaded, skipped

@@ -17,6 +17,8 @@ from typing import Any, List, Optional
 import mlx.core as mx
 import mlx.nn as nn
 
+from backend.engine.common.mlx_runtime_fallback import random_normal, run_eval
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -237,7 +239,7 @@ class AceStepVAEMLX(nn.Module):
         h = self.encoder(audio_nlc)
         mean, scale = mx.split(h, 2, axis=-1)
         std = mx.where(scale > 20.0, scale, mx.log(1.0 + mx.exp(scale))) + 1e-4
-        noise = mx.random.normal(mean.shape)
+        noise = random_normal(None, tuple(mean.shape))
         return mean + std * noise
 
     def encode_mean(self, audio_nlc: mx.array) -> mx.array:
@@ -271,11 +273,15 @@ def _state_dict_value_to_numpy(val: Any) -> Any:
     return np.asarray(val, dtype=np.float32)
 
 
-def convert_vae_weights_from_state_dict(state_dict: dict) -> list:
+def convert_vae_weights_from_state_dict(
+    state_dict: dict, *, array_fn: Any | None = None
+) -> list:
     """Convert Oobleck checkpoint ``state_dict`` (numpy or torch tensors) to MLX weights."""
     import mlx.core as mx
     import numpy as np
 
+    if array_fn is None:
+        array_fn = mx.array
     weights: list[tuple[str, mx.array]] = []
     all_keys = sorted(state_dict.keys())
     processed: set[str] = set()
@@ -301,7 +307,7 @@ def convert_vae_weights_from_state_dict(state_dict: dict) -> list:
             else:
                 w = w.swapaxes(1, 2)
 
-            weights.append((base + ".weight", mx.array(w)))
+            weights.append((base + ".weight", array_fn(w)))
             processed.add(key)
             processed.add(v_key)
             continue
@@ -311,23 +317,29 @@ def convert_vae_weights_from_state_dict(state_dict: dict) -> list:
 
         if key.endswith(".alpha") or key.endswith(".beta"):
             val = np.asarray(_state_dict_value_to_numpy(state_dict[key])).squeeze()
-            weights.append((key, mx.array(val)))
+            weights.append((key, array_fn(val)))
             processed.add(key)
             continue
 
         val = _state_dict_value_to_numpy(state_dict[key])
-        weights.append((key, mx.array(val)))
+        weights.append((key, array_fn(val)))
         processed.add(key)
 
     return weights
 
 
-def convert_vae_weights_from_pytorch(pytorch_vae) -> list:
+def convert_vae_weights_from_pytorch(pytorch_vae, *, array_fn: Any | None = None) -> list:
     """Extract PyTorch ``AutoencoderOobleck`` weights and convert to MLX format."""
-    return convert_vae_weights_from_state_dict(pytorch_vae.state_dict())
+    return convert_vae_weights_from_state_dict(pytorch_vae.state_dict(), array_fn=array_fn)
 
 
-def load_vae_weights_from_bundle(vae_dir: str, mlx_vae: AceStepVAEMLX) -> None:
+def load_vae_weights_from_bundle(
+    vae_dir: str,
+    mlx_vae: AceStepVAEMLX,
+    *,
+    eval_fn: Any | None = None,
+    array_fn: Any | None = None,
+) -> None:
     """Load VAE from bundle ``diffusion_pytorch_model.safetensors`` (no diffusers on MLX path)."""
     import mlx.core as mx
     from safetensors import safe_open
@@ -343,13 +355,19 @@ def load_vae_weights_from_bundle(vae_dir: str, mlx_vae: AceStepVAEMLX) -> None:
     with safe_open(str(st_path), framework="pt", device="cpu") as handle:
         for key in handle.keys():
             state_dict[key] = handle.get_tensor(key).detach().cpu().float().numpy()
-    weights = convert_vae_weights_from_state_dict(state_dict)
+    weights = convert_vae_weights_from_state_dict(state_dict, array_fn=array_fn)
     mlx_vae.load_weights(weights)
-    mx.eval(mlx_vae.parameters())
+    run_eval(eval_fn, mlx_vae.parameters())
 
 
-def load_vae_weights_from_pytorch(pytorch_vae, mlx_vae: AceStepVAEMLX) -> None:
+def load_vae_weights_from_pytorch(
+    pytorch_vae,
+    mlx_vae: AceStepVAEMLX,
+    *,
+    eval_fn: Any | None = None,
+    array_fn: Any | None = None,
+) -> None:
     """Load weights from a PyTorch VAE into an MLX VAE (CUDA-only helper)."""
-    weights = convert_vae_weights_from_pytorch(pytorch_vae)
+    weights = convert_vae_weights_from_pytorch(pytorch_vae, array_fn=array_fn)
     mlx_vae.load_weights(weights)
-    mx.eval(mlx_vae.parameters())
+    run_eval(eval_fn, mlx_vae.parameters())

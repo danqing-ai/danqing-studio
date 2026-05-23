@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import mlx.core as mx
 import numpy as np
 
+from backend.engine.common.mlx_runtime_fallback import random_normal, seeded_random_normal
 from backend.engine.families.ace_step.condition_mlx import (
     load_condition_encoder_mlx,
     load_qwen3_embedding_mlx,
@@ -96,7 +97,9 @@ class AceStepMlxGenerator:
             self._model_config = json.loads(f.read())
 
         logger.info("Loading ACE-Step MLX condition encoder + DiT + VAE from %s", dit_bundle)
-        self._condition_encoder = load_condition_encoder_mlx(dit_bundle)
+        self._condition_encoder = load_condition_encoder_mlx(
+            dit_bundle, eval_fn=self._ctx.eval, array_fn=self._ctx.array
+        )
 
         cfg = self._model_config
         self._dit = AceStepTransformer(
@@ -117,9 +120,11 @@ class AceStepMlxGenerator:
             rope_theta=cfg["rope_theta"],
             max_position_embeddings=cfg["max_position_embeddings"],
         )
-        dit_weights = load_decoder_safetensors_for_mlx(str(dit_bundle / "model.safetensors"))
+        dit_weights = load_decoder_safetensors_for_mlx(
+            str(dit_bundle / "model.safetensors"), array_fn=self._ctx.array
+        )
         self._dit._model.load_weights(dit_weights)
-        mx.eval(self._dit._model.parameters())
+        self._ctx.eval(self._dit._model.parameters())
 
         enc_dir = bundle / "Qwen3-Embedding-0.6B"
         if not enc_dir.is_dir():
@@ -128,7 +133,11 @@ class AceStepMlxGenerator:
                 "Download it from Hugging Face: Qwen/Qwen3-Embedding-0.6B"
             )
         self._text_tokenizer = AutoTokenizer.from_pretrained(str(enc_dir))
-        self._text_encoder = load_qwen3_embedding_mlx(enc_dir)
+        self._text_encoder = load_qwen3_embedding_mlx(
+            enc_dir,
+            eval_fn=self._ctx.eval,
+            load_fn=getattr(self._ctx, "load_weights", None),
+        )
 
         sp = resolve_silence_latent_path(bundle, dit_bundle)
         self._silence_latent = load_silence_latent_numpy(sp)
@@ -152,7 +161,7 @@ class AceStepMlxGenerator:
             return self._lm_formatter
         from backend.engine.families.ace_step.lm_format_mlx import AceStepLmFormatterMlx
 
-        fmt = AceStepLmFormatterMlx.from_bundle(self._bundle_root)
+        fmt = AceStepLmFormatterMlx.from_bundle(self._bundle_root, ctx=self._ctx)
         if fmt is None:
             return None
         fmt.load()
@@ -177,7 +186,7 @@ class AceStepMlxGenerator:
         return bool(config.get("is_turbo", False))
 
     def _decode_latents_mlx(self, latents_nlc: Any) -> Any:
-        latents = mx.array(np.asarray(latents_nlc, dtype=np.float32))
+        latents = self._ctx.array(np.asarray(latents_nlc, dtype=np.float32))
         if latents.ndim == 2:
             latents = mx.expand_dims(latents, 0)
         t_len = int(latents.shape[1])
@@ -348,20 +357,20 @@ class AceStepMlxGenerator:
             max_length=LYRIC_TOKEN_MAX_LENGTH,
             return_tensors="np",
         )
-        text_ids = mx.array(text_tok["input_ids"].astype(np.int32))
-        text_mask = mx.array(text_tok["attention_mask"].astype(np.float32))
-        lyric_ids = mx.array(lyric_tok["input_ids"].astype(np.int32))
-        lyric_mask = mx.array(lyric_tok["attention_mask"].astype(np.float32))
+        text_ids = self._ctx.array(text_tok["input_ids"].astype(np.int32))
+        text_mask = self._ctx.array(text_tok["attention_mask"].astype(np.float32))
+        lyric_ids = self._ctx.array(lyric_tok["input_ids"].astype(np.int32))
+        lyric_mask = self._ctx.array(lyric_tok["attention_mask"].astype(np.float32))
 
         text_hidden = self._text_encoder.encode(text_ids, text_mask)
         lyric_hidden = self._text_encoder.token_embed(lyric_ids)
 
         refer_np, refer_order = self._infer_refer_latent()
-        refer_packed = mx.array(refer_np.astype(np.float32))
-        refer_order_mx = mx.array(refer_order.astype(np.int32))
+        refer_packed = self._ctx.array(refer_np.astype(np.float32))
+        refer_order_mx = self._ctx.array(refer_order.astype(np.int32))
 
         src_latents_np = silence_tiled.astype(np.float32)[np.newaxis, ...]
-        src_latents = mx.array(src_latents_np)
+        src_latents = self._ctx.array(src_latents_np)
         latent_dim = int(src_latents.shape[-1])
         chunk_masks = mx.ones((1, max_latent_length, latent_dim), dtype=mx.float32)
         is_covers = mx.zeros((1,), dtype=mx.int32)
@@ -401,6 +410,10 @@ class AceStepMlxGenerator:
                 seed=run_seed,
                 infer_method="ode",
                 shift=shift,
+                eval_fn=self._ctx.eval,
+                array_fn=self._ctx.array,
+                randn_fn=getattr(self._ctx, "randn", None),
+                seeded_randn_fn=getattr(self._ctx, "seeded_randn", None),
             )
             latents = out["target_latents"]
             collapsed, latent_cos, latent_diff = latents_collapsed_to_silence(
@@ -534,22 +547,29 @@ def mlx_generate_diffusion(
     audio_cover_strength: float = 1.0,
     encoder_hidden_states_non_cover_np: Optional[np.ndarray] = None,
     context_latents_non_cover_np: Optional[np.ndarray] = None,
+    eval_fn: Optional[Callable[..., None]] = None,
+    array_fn: Optional[Callable[..., Any]] = None,
+    randn_fn: Optional[Callable[..., Any]] = None,
+    seeded_randn_fn: Optional[Callable[..., Any]] = None,
 ) -> Dict[str, object]:
     """Run MLX flow-matching diffusion; returns numpy ``target_latents``."""
-    import mlx.core as mx
 
     time_costs: Dict[str, float] = {}
     total_start = time.time()
+    if eval_fn is None:
+        eval_fn = mx.eval
+    if array_fn is None:
+        array_fn = mx.array
 
-    enc_hs = mx.array(encoder_hidden_states_np)
-    ctx = mx.array(context_latents_np)
+    enc_hs = array_fn(encoder_hidden_states_np)
+    ctx = array_fn(context_latents_np)
     enc_hs_nc = (
-        mx.array(encoder_hidden_states_non_cover_np)
+        array_fn(encoder_hidden_states_non_cover_np)
         if encoder_hidden_states_non_cover_np is not None
         else None
     )
     ctx_nc = (
-        mx.array(context_latents_non_cover_np)
+        array_fn(context_latents_non_cover_np)
         if context_latents_non_cover_np is not None
         else None
     )
@@ -557,19 +577,24 @@ def mlx_generate_diffusion(
     bsz = int(src_latents_shape[0])
     t_len = int(src_latents_shape[1])
     channels = int(src_latents_shape[2])
+    noise_shape = (bsz, t_len, channels)
 
     if seed is None:
-        noise = mx.random.normal((bsz, t_len, channels))
+        noise = random_normal(randn_fn, noise_shape)
     elif isinstance(seed, list):
         parts = []
         for s in seed:
             if s is None or s < 0:
-                parts.append(mx.random.normal((1, t_len, channels)))
+                parts.append(random_normal(randn_fn, (1, t_len, channels)))
             else:
-                parts.append(mx.random.normal((1, t_len, channels), key=mx.random.key(int(s))))
+                parts.append(
+                    seeded_random_normal(
+                        seeded_randn_fn, (1, t_len, channels), int(s)
+                    )
+                )
         noise = mx.concatenate(parts, axis=0)
     else:
-        noise = mx.random.normal((bsz, t_len, channels), key=mx.random.key(int(seed)))
+        noise = seeded_random_normal(seeded_randn_fn, noise_shape, int(seed))
 
     t_schedule_list = get_timestep_schedule(shift, timesteps)
     num_steps = len(t_schedule_list)
@@ -597,24 +622,24 @@ def mlx_generate_diffusion(
             cache=cache,
             use_cache=True,
         )
-        mx.eval(vt)
+        eval_fn(vt)
 
         if step_idx == num_steps - 1:
             t_unsq = mx.expand_dims(mx.expand_dims(t_curr, axis=-1), axis=-1)
             xt = xt - vt * t_unsq
-            mx.eval(xt)
+            eval_fn(xt)
             break
 
         next_t = t_schedule_list[step_idx + 1]
         if infer_method == "sde":
             t_unsq = mx.expand_dims(mx.expand_dims(t_curr, axis=-1), axis=-1)
             pred_clean = xt - vt * t_unsq
-            xt = next_t * mx.random.normal(xt.shape) + (1.0 - next_t) * pred_clean
+            xt = next_t * random_normal(randn_fn, tuple(xt.shape)) + (1.0 - next_t) * pred_clean
         else:
             dt = current_t - next_t
             xt = xt - vt * mx.full((bsz, 1, 1), dt)
 
-        mx.eval(xt)
+        eval_fn(xt)
 
     diff_end = time.time()
     total_end = time.time()

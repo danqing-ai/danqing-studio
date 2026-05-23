@@ -15,8 +15,11 @@ if str(_SCRIPT_DIR) not in sys.path:
 import out_paths as op  # noqa: E402
 
 # Tokenizer / text-encoder architectures used by DanQing MLX paths (fail loud if a new model needs another).
+# ``auto`` + ``encoder_decoder`` are required for ``from transformers import AutoTokenizer``.
 _TRANSFORMERS_MODEL_KEEP = frozenset(
     {
+        "auto",
+        "encoder_decoder",
         "t5",
         "clip",
         "qwen2",

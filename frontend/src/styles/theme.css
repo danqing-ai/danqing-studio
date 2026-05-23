@@ -71,7 +71,7 @@
 
 .dq-app-shell .dq-app-header {
  flex-shrink: 0;
- height: 60px;
+ height: var(--dq-shell-header-height, 60px);
  box-sizing: border-box;
 }
 
@@ -4876,6 +4876,31 @@ body {
 .settings-system-sidebar {
  position: sticky;
  top: 12px;
+}
+
+/* Inspector meters: force label row above progress (desktop WebView was collapsing rows). */
+.settings-system-sidebar .dq-inspector-meter,
+.settings-model-sidebar .dq-inspector-meter {
+ display: grid;
+ grid-template-rows: auto auto;
+ row-gap: 8px;
+ align-items: stretch;
+}
+
+.settings-system-sidebar .dq-inspector-meter .dq-inspector-kv,
+.settings-model-sidebar .dq-inspector-meter .dq-inspector-kv {
+ grid-row: 1;
+ margin: 0;
+}
+
+.settings-system-sidebar .dq-inspector-meter .dq-inspector-progress,
+.settings-model-sidebar .dq-inspector-meter .dq-inspector-progress {
+ grid-row: 2;
+ display: flex;
+ align-items: center;
+ margin: 0;
+ width: 100%;
+ min-height: 6px;
 }
 
 .system-info-grid--inspector {

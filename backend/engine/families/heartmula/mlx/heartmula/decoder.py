@@ -5,6 +5,7 @@ from typing import Optional, Tuple, List
 import mlx.core as mx
 import mlx.nn as nn
 
+from backend.engine.common.attention import build_causal_with_offset_bias
 from backend.engine.families.heartmula.mlx.nn.transformer import (
     RMSNorm,
     LlamaTransformerBlock,
@@ -94,7 +95,7 @@ class HeartMuLaDecoder(nn.Module):
         # Create causal mask if not provided
         if mask is None:
             seq_len = hidden_states.shape[1]
-            mask = self._create_causal_mask(seq_len, offset)
+            mask = build_causal_with_offset_bias(mx, seq_len, offset, dtype=mx.float32)
 
         # Process through layers
         new_caches = []
@@ -116,22 +117,6 @@ class HeartMuLaDecoder(nn.Module):
         if isinstance(cache, KVCache):
             return x, cache
         return x, new_caches
-
-    def _create_causal_mask(
-        self,
-        seq_len: int,
-        offset: int = 0,
-    ) -> mx.array:
-        """Create causal attention mask."""
-        total_len = seq_len + offset
-
-        # Create causal mask using vectorized operations
-        row_indices = mx.arange(seq_len)[:, None]
-        col_indices = mx.arange(total_len)[None, :]
-        causal_mask = col_indices <= row_indices + offset
-        mask = mx.where(causal_mask, 0.0, float("-inf"))
-
-        return mask[None, None, :, :]
 
     def setup_cache(
         self,

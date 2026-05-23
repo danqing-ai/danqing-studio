@@ -8,8 +8,7 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
-import mlx.core as mx
-
+from backend.engine.common.mlx_runtime_fallback import load_weights_dict, run_eval
 from backend.engine.families.ace_step.lm_format import (
     DEFAULT_LM_REWRITE_INSTRUCTION,
     LmFormatResult,
@@ -21,7 +20,11 @@ from backend.engine.families.ace_step.lm_format import (
 logger = logging.getLogger(__name__)
 
 
-def load_ace_step_lm_mlx(lm_dir: Path) -> tuple[Any, Any]:
+def _load_safetensors(load_fn: Any | None, path: Path) -> dict[str, Any]:
+    return load_weights_dict(load_fn, str(path))
+
+
+def load_ace_step_lm_mlx(lm_dir: Path, *, ctx: Any | None = None) -> tuple[Any, Any]:
     """Load Qwen3 5Hz LM with mlx-lm (checkpoint uses flat keys, not ``model.*``)."""
     from mlx_lm.models.qwen3 import Model, ModelArgs
     from mlx_lm.utils import load_tokenizer
@@ -32,13 +35,13 @@ def load_ace_step_lm_mlx(lm_dir: Path) -> tuple[Any, Any]:
     cfg["model_type"] = "qwen3"
 
     model = Model(ModelArgs.from_dict(cfg))
-    raw = dict(mx.load(str(lm_path / "model.safetensors")))
+    raw = _load_safetensors(getattr(ctx, "load_weights", None), lm_path / "model.safetensors")
     weights = {
         (f"model.{key}" if not key.startswith("model.") else key): value
         for key, value in raw.items()
     }
     model.load_weights(list(weights.items()), strict=False)
-    mx.eval(model.parameters())
+    run_eval(getattr(ctx, "eval", None), model.parameters())
     tokenizer = load_tokenizer(str(lm_path))
     return model, tokenizer
 
@@ -46,23 +49,26 @@ def load_ace_step_lm_mlx(lm_dir: Path) -> tuple[Any, Any]:
 class AceStepLmFormatterMlx:
     """Expand caption/lyrics via 5Hz LM on MLX."""
 
-    def __init__(self, lm_dir: Path):
+    def __init__(self, lm_dir: Path, *, ctx: Any | None = None):
         self._lm_dir = Path(lm_dir)
+        self._ctx = ctx
         self._model: Any = None
         self._tokenizer: Any = None
 
     @classmethod
-    def from_bundle(cls, bundle_root: Path) -> Optional["AceStepLmFormatterMlx"]:
+    def from_bundle(
+        cls, bundle_root: Path, *, ctx: Any | None = None
+    ) -> Optional["AceStepLmFormatterMlx"]:
         lm_dir = resolve_lm_dir(bundle_root)
         if lm_dir is None:
             return None
-        return cls(lm_dir)
+        return cls(lm_dir, ctx=ctx)
 
     def load(self) -> None:
         if self._model is not None:
             return
         logger.info("Loading ACE-Step 5Hz LM (MLX) from %s", self._lm_dir)
-        self._model, self._tokenizer = load_ace_step_lm_mlx(self._lm_dir)
+        self._model, self._tokenizer = load_ace_step_lm_mlx(self._lm_dir, ctx=self._ctx)
 
     def _build_prompt(self, caption: str, lyrics: str) -> str:
         user_content = f"# Caption\n{caption}\n\n# Lyric\n{lyrics}"

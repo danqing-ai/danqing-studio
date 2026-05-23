@@ -9,6 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import mlx.core as mx
+from backend.engine.common.mlx_runtime_fallback import load_weights_dict
 
 
 def _package_pos_emb_path() -> Path:
@@ -44,7 +45,7 @@ class SeedVR2PositiveEmbeddings:
 
     @staticmethod
     def load(batch_size: int = 1, *, bundle_path: str | Path | None = None) -> mx.array:
-        emb = mx.load(str(resolve_pos_emb_path(bundle_path)))["embedding"]
+        emb = load_weights_dict(None, str(resolve_pos_emb_path(bundle_path)))["embedding"]
         if emb.ndim == 2:
             emb = emb[None, ...]
         if batch_size > 1:

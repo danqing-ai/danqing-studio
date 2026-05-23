@@ -2,6 +2,7 @@
 """
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any
 
@@ -9,8 +10,18 @@ import mlx.core as mx
 import numpy as np
 from mlx import nn
 
-from transformers import AutoTokenizer
-
+from backend.engine.common.attention import (
+    build_causal_with_padding_bias,
+    repeat_kv_heads_mx,
+    scaled_dot_product_attention_bhsd_mx,
+)
+from backend.engine.common.embeddings import (
+    build_position_ids_3d_axes,
+    pad_ragged_1d_sequences,
+    pad_ragged_2d_sequences,
+)
+from backend.engine.common.mlx_runtime_fallback import load_weights_dict
+from backend.engine.common.norm import apply_rms_norm
 from backend.engine.families.qwen.weights import apply_qwen_text_encoder_weights
 
 class QwenRotaryEmbedding(nn.Module):
@@ -53,12 +64,7 @@ class QwenRMSNorm(nn.Module):
         self.eps = eps
 
     def __call__(self, hidden_states: mx.array) -> mx.array:
-        input_dtype = hidden_states.dtype
-        hidden_states = hidden_states.astype(mx.float32)
-        variance = mx.mean(mx.square(hidden_states), axis=-1, keepdims=True)
-        hidden_states = hidden_states * mx.rsqrt(variance + self.eps)
-        result = self.weight.astype(mx.float32) * hidden_states
-        return result.astype(input_dtype)
+        return apply_rms_norm(hidden_states, self.weight, self.eps)
 
 class QwenMLP(nn.Module):
     def __init__(self, hidden_size: int, intermediate_size: int):
@@ -73,11 +79,6 @@ class QwenMLP(nn.Module):
         intermediate_output = gate_output * up_output
         output = self.down_proj(intermediate_output)
         return output
-
-import math
-
-import mlx.core as mx
-from mlx import nn
 
 class QwenAttention(nn.Module):
     def __init__(
@@ -131,25 +132,21 @@ class QwenAttention(nn.Module):
         )
 
         if self.num_key_value_heads != self.num_attention_heads:
-            key_states = QwenAttention._repeat_kv(key_states, self.num_key_value_groups)
-            value_states = QwenAttention._repeat_kv(value_states, self.num_key_value_groups)
+            key_states = repeat_kv_heads_mx(mx, key_states, self.num_key_value_groups)
+            value_states = repeat_kv_heads_mx(mx, value_states, self.num_key_value_groups)
 
         mask = attention_mask[:, :, :, : key_states.shape[-2]].astype(query_states.dtype) if attention_mask is not None else None
-        attn_output = mx.fast.scaled_dot_product_attention(
-            query_states, key_states, value_states,
+        attn_output = scaled_dot_product_attention_bhsd_mx(
+            mx,
+            query_states,
+            key_states,
+            value_states,
             scale=self.scaling,
             mask=mask,
         )
         attn_output = attn_output.transpose(0, 2, 1, 3).reshape(bsz, q_len, self.hidden_size)
         attn_output = self.o_proj(attn_output)
         return attn_output
-
-    @staticmethod
-    def _repeat_kv(hidden_states: mx.array, n_rep: int) -> mx.array:
-        batch, num_key_value_heads, slen, head_dim = hidden_states.shape
-        hidden_states = mx.expand_dims(hidden_states, axis=2)
-        hidden_states = mx.broadcast_to(hidden_states, (batch, num_key_value_heads, n_rep, slen, head_dim))
-        return hidden_states.reshape(batch, num_key_value_heads * n_rep, slen, head_dim)
 
     @staticmethod
     def _apply_multimodal_rotary_pos_emb(
@@ -296,6 +293,22 @@ class QwenEncoder(nn.Module):
             start_idx = end_idx
         return image_embeds_split
 
+    @staticmethod
+    def _build_position_ids(batch_size: int, seq_len: int) -> mx.array:
+        return build_position_ids_3d_axes(mx, batch_size, seq_len, dtype=mx.int32)
+
+    @staticmethod
+    def _build_attention_mask_4d(attention_mask: mx.array, batch_size: int, seq_len: int) -> mx.array:
+        return build_causal_with_padding_bias(
+            mx,
+            attention_mask,
+            seq_len,
+            mx.float32,
+            valid_value=1,
+            neg_value=float("-inf"),
+            batch_size=batch_size,
+        )
+
     def __call__(
         self,
         input_ids: mx.array,
@@ -329,26 +342,8 @@ class QwenEncoder(nn.Module):
 
                 new_embeds = mx.stack(new_embeds_list, axis=0)
                 inputs_embeds = new_embeds.reshape(inputs_embeds.shape)
-        cache_position = mx.arange(seq_len, dtype=mx.int32)
-        position_ids = mx.expand_dims(mx.expand_dims(cache_position, axis=0), axis=0)
-        position_ids = mx.broadcast_to(position_ids, (3, batch_size, seq_len))
-        padding_mask = mx.where(
-            attention_mask == 1,
-            mx.zeros_like(attention_mask).astype(mx.float32),
-            mx.ones_like(attention_mask).astype(mx.float32) * (-float("inf")),
-        )
-        padding_mask = mx.expand_dims(mx.expand_dims(padding_mask, axis=1), axis=1)
-
-        idx = mx.arange(seq_len, dtype=mx.int32)
-        j = mx.expand_dims(idx, axis=0)
-        i = mx.expand_dims(idx, axis=1)
-        tri_bool = j > i
-        zeros_2d = mx.zeros((seq_len, seq_len)).astype(mx.float32)
-        neginf_2d = mx.ones((seq_len, seq_len)).astype(mx.float32) * (-float("inf"))
-        causal_tri_mask = mx.where(tri_bool, neginf_2d, zeros_2d)
-        causal_tri_mask = mx.expand_dims(mx.expand_dims(causal_tri_mask, axis=0), axis=0)
-        causal_tri_mask = mx.broadcast_to(causal_tri_mask, (batch_size, 1, seq_len, seq_len))
-        attention_mask_4d = causal_tri_mask + padding_mask
+        position_ids = self._build_position_ids(batch_size, seq_len)
+        attention_mask_4d = self._build_attention_mask_4d(attention_mask, batch_size, seq_len)
         hidden_states = inputs_embeds
         position_embeddings = self.rotary_emb(hidden_states, position_ids)
         for i, layer in enumerate(self.layers):
@@ -366,26 +361,8 @@ class QwenEncoder(nn.Module):
         """HF ``output_hidden_states[layer_index]`` (0=embeddings, -1=last layer output)."""
         batch_size, seq_len = input_ids.shape
         inputs_embeds = self.embed_tokens(input_ids)
-        cache_position = mx.arange(seq_len, dtype=mx.int32)
-        position_ids = mx.expand_dims(mx.expand_dims(cache_position, axis=0), axis=0)
-        position_ids = mx.broadcast_to(position_ids, (3, batch_size, seq_len))
-        padding_mask = mx.where(
-            attention_mask == 1,
-            mx.zeros_like(attention_mask).astype(mx.float32),
-            mx.ones_like(attention_mask).astype(mx.float32) * (-float("inf")),
-        )
-        padding_mask = mx.expand_dims(mx.expand_dims(padding_mask, axis=1), axis=1)
-
-        idx = mx.arange(seq_len, dtype=mx.int32)
-        j = mx.expand_dims(idx, axis=0)
-        i = mx.expand_dims(idx, axis=1)
-        tri_bool = j > i
-        zeros_2d = mx.zeros((seq_len, seq_len)).astype(mx.float32)
-        neginf_2d = mx.ones((seq_len, seq_len)).astype(mx.float32) * (-float("inf"))
-        causal_tri_mask = mx.where(tri_bool, neginf_2d, zeros_2d)
-        causal_tri_mask = mx.expand_dims(mx.expand_dims(causal_tri_mask, axis=0), axis=0)
-        causal_tri_mask = mx.broadcast_to(causal_tri_mask, (batch_size, 1, seq_len, seq_len))
-        attention_mask_4d = causal_tri_mask + padding_mask
+        position_ids = self._build_position_ids(batch_size, seq_len)
+        attention_mask_4d = self._build_attention_mask_4d(attention_mask, batch_size, seq_len)
 
         hidden_states = inputs_embeds
         position_embeddings = self.rotary_emb(hidden_states, position_ids)
@@ -428,33 +405,21 @@ class QwenTextEncoder(nn.Module):
         split_hidden_states = QwenTextEncoder._extract_masked_hidden(hidden_states, attention_mask)
         split_hidden_states = [e[drop_idx:] for e in split_hidden_states]
         attn_mask_list = [mx.ones(e.shape[0], dtype=mx.int32) for e in split_hidden_states]
-        max_seq_len = max([e.shape[0] for e in split_hidden_states])
-
-        padded_embeds = []
-        for u in split_hidden_states:
-            current_len = u.shape[0]
-            hidden_dim = u.shape[1]
-            if current_len < max_seq_len:
-                padding = mx.zeros((max_seq_len - current_len, hidden_dim), dtype=u.dtype)
-                padded = mx.concatenate([u, padding], axis=0)
-            else:
-                padded = u
-            padded_embeds.append(padded)
-
-        prompt_embeds = mx.stack(padded_embeds, axis=0)
-
-        padded_masks = []
-        for mask in attn_mask_list:
-            current_len = mask.shape[0]
-            if current_len < max_seq_len:
-                padding = mx.zeros(max_seq_len - current_len, dtype=mask.dtype)
-                padded = mx.concatenate([mask, padding], axis=0)
-            else:
-                padded = mask
-            padded_masks.append(padded)
-
-        encoder_attention_mask = mx.stack(padded_masks, axis=0)
-        prompt_embeds = prompt_embeds.astype(dtype)
+        max_seq_len = max(int(e.shape[0]) for e in split_hidden_states)
+        prompt_embeds = pad_ragged_2d_sequences(
+            mx,
+            split_hidden_states,
+            target_len=max_seq_len,
+            dtype=dtype,
+            pad_value=0.0,
+        )
+        encoder_attention_mask = pad_ragged_1d_sequences(
+            mx,
+            attn_mask_list,
+            target_len=max_seq_len,
+            dtype=mx.int32,
+            pad_value=0.0,
+        )
         return prompt_embeds, encoder_attention_mask
 
     @staticmethod
@@ -485,13 +450,15 @@ class QwenImageTextEncoder:
     """HF tokenizer + 上图 ``QwenTextEncoder`` MLX 模块；权重走 ``WeightMapper``。"""
 
     def __init__(self, ctx: Any, model_path: str | Path, tokenizer_path: str = "", **_kw: Any):
-        del ctx
+        self.ctx = ctx
         te_path = Path(model_path)
         self.bundle_root = te_path.parent if te_path.name == "text_encoder" else te_path
         raw_tok = tokenizer_path.strip() if tokenizer_path else ""
         tok_root = Path(raw_tok) if raw_tok and Path(raw_tok).is_dir() else self.bundle_root / "tokenizer"
         if not tok_root.is_dir():
             raise RuntimeError(f"Qwen Image: missing tokenizer directory: {tok_root}")
+        from transformers import AutoTokenizer
+
         self._hf = AutoTokenizer.from_pretrained(str(tok_root), trust_remote_code=True)
         self._prompt_template = (
             "<|im_start|>system\n"
@@ -509,11 +476,12 @@ class QwenImageTextEncoder:
             globs = sorted(root.glob("*.safetensors"))
         if not globs:
             raise RuntimeError(f"Qwen Image: no text_encoder *.safetensors under {root}")
+        load_fn = getattr(self.ctx, "load_weights", None)
         for sf in globs:
-            raw.update(dict(mx.load(str(sf))))
+            raw.update(load_weights_dict(load_fn, str(sf)))
         nested = _nested_without_encoder_visual(apply_qwen_text_encoder_weights(raw))
         self.model.update(nested)
-        mx.eval(self.model)
+        self.ctx.eval(self.model)
 
     def encode(self, texts: list[str]) -> tuple[Any, Any]:
         prompt = texts[0] if texts else ""
@@ -525,8 +493,10 @@ class QwenImageTextEncoder:
             max_length=1058,
             truncation=True,
         )
-        input_ids = mx.array(np.asarray(batch["input_ids"], dtype=np.int32))
-        attention_mask = mx.array(np.asarray(batch["attention_mask"], dtype=np.int32))
+        input_ids = self.ctx.array(np.asarray(batch["input_ids"], dtype=np.int32), dtype=mx.int32)
+        attention_mask = self.ctx.array(
+            np.asarray(batch["attention_mask"], dtype=np.int32), dtype=mx.int32
+        )
         pe, pm = self.model(input_ids=input_ids, attention_mask=attention_mask)
-        mx.eval(pe, pm)
+        self.ctx.eval(pe, pm)
         return pe, pm

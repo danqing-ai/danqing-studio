@@ -207,6 +207,22 @@ class VideoPipeline:
             return int(reg)
         return 16
 
+    def _validate_wan_umt5_embeddings(
+        self,
+        family: str,
+        txt_embeds: Any | None,
+        on_log: Callable[[str, str], None] | None,
+    ) -> None:
+        if not on_log or family != "wan" or txt_embeds is None:
+            return
+        self.ctx.eval(txt_embeds)
+        peak = float(self.ctx.sqrt(self.ctx.max(self.ctx.square(txt_embeds))))
+        if peak < 1e-3:
+            raise RuntimeError(
+                "Wan UMT5 embeddings are near zero; text encoder weights may not be loaded"
+            )
+        on_log("info", f"Wan UMT5 text embeddings ready (peak={peak:.3f})")
+
     def _validate_generate_geometry(
         self, family: str, config: Any, w: int, h: int, num_frames: int,
     ) -> None:
@@ -524,16 +540,7 @@ class VideoPipeline:
                 bundle_root=bundle_root,
                 guidance=guidance,
             )
-            if on_log and family == "wan" and txt_embeds is not None:
-                import mlx.core as mx
-
-                mx.eval(txt_embeds)
-                peak = float(mx.max(mx.abs(txt_embeds)))
-                if peak < 1e-3:
-                    raise RuntimeError(
-                        "Wan UMT5 embeddings are near zero; text encoder weights may not be loaded"
-                    )
-                on_log("info", f"Wan UMT5 text embeddings ready (peak={peak:.3f})")
+            self._validate_wan_umt5_embeddings(family, txt_embeds, on_log)
 
         if ctx_exec.cancel_token.is_cancelled():
             return None
@@ -806,16 +813,7 @@ class VideoPipeline:
                 bundle_root=bundle_root,
                 guidance=guidance,
             )
-            if on_log and family == "wan" and txt_embeds is not None:
-                import mlx.core as mx
-
-                mx.eval(txt_embeds)
-                peak = float(mx.max(mx.abs(txt_embeds)))
-                if peak < 1e-3:
-                    raise RuntimeError(
-                        "Wan UMT5 embeddings are near zero; text encoder weights may not be loaded"
-                    )
-                on_log("info", f"Wan UMT5 text embeddings ready (peak={peak:.3f})")
+            self._validate_wan_umt5_embeddings(family, txt_embeds, on_log)
 
         if ctx_exec.cancel_token.is_cancelled():
             return None

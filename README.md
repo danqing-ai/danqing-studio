@@ -145,7 +145,7 @@ Uses an isolated venv under `tests/benchmark/venv/`:
 make bench-setup
 make bench-mflux      # PSNR vs mflux reference CLI
 make bench-sanity     # reject flat / black / white outputs
-make test-engine-unit
+make verify-engine-stack   # governance gates + engine unit tests
 ```
 
 ---

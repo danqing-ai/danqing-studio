@@ -30,6 +30,7 @@ DanQing Studio — plugin-style **image / video** generation on **MLX** (Apple S
 | Task kinds | `backend/core/task_kinds.py` (do not hardcode kind strings) |
 | Cursor rules | `.cursor/rules/model-migration.mdc`, `.cursor/rules/no-silent-degrade.mdc`, `.cursor/rules/models-registry-maintain.mdc` |
 | Dual-platform design | `docs/dual_platform_architecture.md` |
+| New model integration checklist | `docs/engine_new_model_checklist.md` |
 | Desktop | `desktop/`, `make pack-macos-desktop` |
 
 ### Hardcoded paths
@@ -158,6 +159,8 @@ Default per family: `transformer.py`, `text_encoder.py` (if needed), `weights.py
 
 ## New model checklist
 
+Extended execution checklist (review-ready): `docs/engine_new_model_checklist.md`.
+
 1. **`default_config/models_registry.json`** — then `make sync-models-registry` to `{workspace}/config/models_registry.json`. Fields: `family`, `engine`, `actions`, `parameters`, `versions`, `backends`, bilingual `name`/`description`. First workspace setup copies from `default_config/` if missing; reset via settings only (no startup merge). See `.cursor/rules/models-registry-maintain.mdc`.
 2. **`backend/engine/config/model_configs.py`** — dataclass + `FAMILY_CONFIG_MAP`
 3. **`backend/engine/families/<family>/transformer.py`** — `TransformerBase`, inject `RuntimeContext`
@@ -176,8 +179,7 @@ make bench-mflux          # when mflux reference exists
 make bench-sanity         # no reference CLI
 make bench-audio-sanity   # ACE-Step + HeartMuLa MLX 10s RMS gate
 make bench-audio-sanity-heartmula   # HeartMuLa only
-make test-engine-unit
-make check-engine-imports
+make verify-engine-stack
 ```
 
 **Benchmark snapshot (2026-05, mflux create)**
@@ -295,6 +297,10 @@ make pack-linux-server   # release Linux server tar.gz
 | `test-engine-unit` | `scripts/test_engine_unit.py` |
 | `check-consistency` | registry/routes/i18n |
 | `check-engine-imports` | mlx/torch gate |
+| `check-models-registry-contracts` | required Hunyuan ModelScope registry contracts |
+| `check-engine-governance` | aggregate engine gates + consistency |
+| `verify-engine-stack` | governance + unit tests |
+| `check-engine-family-layout` | family subtree layout gate |
 | `lint` | Python syntax |
 | `frontend-install` / `frontend-dev` / `frontend-build` / `frontend-typecheck` | frontend |
 | `pack-macos-desktop` | macOS Tauri `.app` / `.dmg` (MLX sidecar) |
@@ -359,7 +365,7 @@ Makefile pattern: `pack-<platform>-<product>-<step>` (`desktop` \| `server`; `ve
 - **`scripts/start.sh`** — dev: venv + uvicorn --reload + Vite; release UI path is `out/frontend/dist/` (see `backend/main.py::_resolve_frontend_static_dir`)
 - **Add model** — full 5-step checklist above, not registry-only
 - **OpenAI-compatible API** (if added later) — separate `/v1/...` adapter; must delegate to same contracts/engines; do not replace resource-style `/api/images/*` routes
-- **Contributors** — run `make check-consistency` and `make check-engine-imports` before PR
+- **Contributors** — run `make verify-engine-stack` before PR
 
 ---
 

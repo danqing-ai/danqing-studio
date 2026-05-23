@@ -9,12 +9,22 @@ from pathlib import Path
 import mlx.core as mx
 import mlx.nn as nn
 
+from backend.engine.common.mlx_runtime_fallback import (
+    load_weights_dict,
+    random_normal,
+    run_eval,
+)
+
 # heartlib ``detokenize()`` uses this default for hop/chunk sizing (not full song length).
 _HEARTLIB_CHUNK_DURATION_SEC = 29.76
 
 from backend.engine.families.heartmula.mlx.heartcodec.configuration import HeartCodecConfig
 from backend.engine.families.heartmula.mlx.heartcodec.scalar_codec import ScalarModel
 from backend.engine.families.heartmula.mlx.heartcodec.flow_matching import FlowMatchingDecoder
+
+
+def _run_eval(*values) -> None:
+    run_eval(None, *values)
 
 
 class HeartCodec(nn.Module):
@@ -169,8 +179,8 @@ class HeartCodec(nn.Module):
                 pad = mx.broadcast_to(last, (batch_size, target_len - cur, nq))
             codes = mx.concatenate([codes, pad], axis=1)
 
-        first_latent = mx.random.normal(
-            shape=(batch_size, latent_length, self.flow_matching.out_channels)
+        first_latent = random_normal(
+            None, (batch_size, latent_length, self.flow_matching.out_channels)
         )
         first_latent_length = 0
 
@@ -211,8 +221,9 @@ class HeartCodec(nn.Module):
                     true_latent = mx.concatenate(
                         [
                             true_latent,
-                            mx.random.normal(
-                                shape=(
+                            random_normal(
+                                None,
+                                (
                                     batch_size,
                                     len_add,
                                     self.flow_matching.out_channels,
@@ -303,14 +314,14 @@ class HeartCodec(nn.Module):
         # Load weights using MLX's native loader (handles bfloat16 properly)
         weights_path = path / "model.safetensors"
         if weights_path.exists():
-            weights = mx.load(str(weights_path))
+            weights = load_weights_dict(None, str(weights_path))
 
             # Convert to target dtype if different
             weights = {k: v.astype(dtype) for k, v in weights.items()}
 
             # Load into model (strict=False to ignore PreProcessor/PostProcessor weights)
             model.load_weights(list(weights.items()), strict=False)
-            mx.eval(model.parameters())
+            _run_eval(model.parameters())
 
         return model
 

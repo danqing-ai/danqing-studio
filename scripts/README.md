@@ -18,5 +18,13 @@
 |------|-----------|
 | `check_consistency.py` | `make check-consistency` |
 | `check_engine_backend_imports.py` | `make check-engine-imports` |
+| `check_engine_family_primitives.py` | `make check-engine-family-primitives` |
+| `check_engine_attention_paths.py` | `make check-engine-attention-paths` |
+| `check_engine_sdpa_paths.py` | `make check-engine-sdpa-paths`（禁止 families 直呼 MLX/Torch SDPA） |
+| `check_engine_rope_paths.py` | `make check-engine-rope-paths` |
+| `check_engine_modulation_paths.py` | `make check-engine-modulation-paths` |
+| `check_models_registry_contracts.py` | `make check-models-registry-contracts` |
+| `check-engine-governance`（Make 聚合目标） | 一次执行全部 engine 架构门禁 + `check-consistency` |
+| `verify-engine-stack`（Make 聚合目标） | 一次执行 `check-engine-governance` + `test-engine-unit` |
 | `test_engine_unit.py` | `make test-engine-unit` |
 | `make_lint.py` | `make lint` |

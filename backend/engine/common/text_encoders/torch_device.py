@@ -1,6 +1,8 @@
 """Resolve PyTorch inference device for text-encoder sidecars (MLX desktop + Mac)."""
 from __future__ import annotations
 
+import importlib
+
 
 def resolve_torch_inference_device(preference: str = "auto") -> str:
     """Pick ``mps`` on Apple Silicon when available, else ``cpu``.
@@ -17,7 +19,7 @@ def resolve_torch_inference_device(preference: str = "auto") -> str:
             "(expected auto, cpu, mps, or cuda)."
         )
     try:
-        import torch
+        torch = importlib.import_module("torch")
     except ImportError as e:
         raise RuntimeError(
             "PyTorch is required for HunyuanVideo / Qwen2.5-VL text encoding but is not installed."

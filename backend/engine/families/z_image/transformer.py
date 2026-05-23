@@ -16,24 +16,15 @@ from typing import Any
 from backend.engine.config.model_configs import ZImageConfig
 from backend.engine.runtime._base import RuntimeContext
 from backend.engine.common._base import TransformerBase
-
-
-def _coerce_timestep_index(t: Any, ctx: RuntimeContext) -> int | None:
-    """Return integer timestep index if ``t`` is index-like; else ``None``."""
-    if isinstance(t, bool):
-        return None
-    if isinstance(t, int):
-        return t
-    try:
-        import numpy as np
-        if isinstance(t, np.integer):
-            return int(t)
-    except ImportError:
-        pass
-    if ctx.is_tensor(t) and ctx.is_integer_dtype_tensor(t):
-        return int(t.item())
-    return None
-
+from backend.engine.common.attention import attention_blhd, build_padding_attention_bias
+from backend.engine.common.embeddings import (
+    apply_complex_rope_from_cis_bshd,
+    pad_len_to_multiple as _pad_len_to_multiple,
+    build_tail_pad_mask as _build_tail_pad_mask,
+    pad_tail_with_last as _pad_tail_with_last,
+    apply_pad_token as _apply_pad_token,
+)
+from backend.engine.common.norm import apply_scale_shift, unpack_modulation_4way
 
 # =========================================================================
 # RopeEmbedder — 复数频率 RoPE
@@ -189,43 +180,24 @@ class ZImageAttention:
             k = self.norm_k(k)
 
         if freqs_cis is not None:
-            q = self._apply_rotary(q, freqs_cis)
-            k = self._apply_rotary(k, freqs_cis)
-
-        q = ctx.permute(q, (0, 2, 1, 3))
-        k = ctx.permute(k, (0, 2, 1, 3))
-        v = ctx.permute(v, (0, 2, 1, 3))
+            q = apply_complex_rope_from_cis_bshd(ctx, q, freqs_cis)
+            k = apply_complex_rope_from_cis_bshd(ctx, k, freqs_cis)
 
         mask = None
         if attention_mask is not None:
-            mask = ctx.where(attention_mask[:, None, None, :],
-                             ctx.full((1, 1, 1, 1), 0.0, dtype=ctx.float32()),
-                             ctx.full((1, 1, 1, 1), float("-inf"), dtype=ctx.float32()))
+            mask = build_padding_attention_bias(
+                ctx,
+                attention_mask,
+                attention_mask.shape[-1],
+                ctx.float32(),
+                valid_value=1,
+                neg_value=float("-inf"),
+            )
 
-        out = ctx.attention(q, k, v, scale=self.scale, mask=mask)
-        out = ctx.permute(out, (0, 2, 1, 3))
+        out = attention_blhd(ctx, q, k, v, scale=self.scale, mask=mask)
         out = ctx.reshape(out, (B, S, self.dim))
         out = self.to_out(out)
         return out
-
-    def _apply_rotary(self, x, freqs_cis):
-        """复数 RoPE: x [B,S,H,D] → 最后一维拆分为 (D/2, 2) → 复数乘法。
-        
-        freqs_cis: [S, D//2, 2] — 来自 RopeEmbedder（三轴拼接后）。
-        """
-        ctx = self.ctx
-        B, S, H, D = x.shape
-        half = D // 2
-        x = ctx.reshape(x, (B, S, H, half, 2))
-        freqs_cis = ctx.reshape(freqs_cis, (1, S, 1, half, 2))
-        x_real, x_imag = x[..., 0], x[..., 1]
-        c_real = freqs_cis[..., 0]
-        c_imag = freqs_cis[..., 1]
-        out_real = x_real * c_real - x_imag * c_imag
-        out_imag = x_real * c_imag + x_imag * c_real
-        out = ctx.stack([out_real, out_imag], axis=-1)
-        return ctx.reshape(out, (B, S, H, D))
-
 
 # =========================================================================
 # ZImageContextBlock — 无 AdaLN，仅用于 context 精炼
@@ -283,30 +255,26 @@ class ZImageTransformerBlock:
         ctx = self.ctx
         # AdaLN modulation: [B, 4*dim] → 4 params
         modulation = ctx.reshape(self.adaLN_modulation[0](t_emb), (-1, 1, 4 * self.attention.dim))
-        scale_msa, gate_msa, scale_mlp, gate_mlp = self._split4(modulation)
+        scale_msa, gate_msa, scale_mlp, gate_mlp = unpack_modulation_4way(modulation)
         scale_msa = 1.0 + scale_msa
         scale_mlp = 1.0 + scale_mlp
-        gate_msa = self._tanh(gate_msa)
-        gate_mlp = self._tanh(gate_mlp)
+        gate_msa = ctx.tanh(gate_msa)
+        gate_mlp = ctx.tanh(gate_mlp)
 
         # Attention with modulation
         normed = self.attn_norm1(x)
-        attn_out = self.attention.forward(normed * scale_msa, attention_mask=attn_mask, freqs_cis=freqs_cis)
+        attn_out = self.attention.forward(
+            apply_scale_shift(normed, scale_msa, 0.0, add_one=False),
+            attention_mask=attn_mask,
+            freqs_cis=freqs_cis,
+        )
         x = x + gate_msa * self.attn_norm2(attn_out)
 
         # FFN with modulation
         normed = self.ffn_norm1(x)
-        ffn_out = self.feed_forward.forward(normed * scale_mlp)
+        ffn_out = self.feed_forward.forward(apply_scale_shift(normed, scale_mlp, 0.0, add_one=False))
         x = x + gate_mlp * self.ffn_norm2(ffn_out)
         return x
-
-    def _split4(self, x):
-        """沿最后一维等分 4 份。"""
-        D = x.shape[-1] // 4
-        return x[..., :D], x[..., D:2*D], x[..., 2*D:3*D], x[..., 3*D:]
-
-    def _tanh(self, x):
-        return self.ctx.tanh(x)
 
 
 # =========================================================================
@@ -384,6 +352,8 @@ class ZImageTransformer(TransformerBase):
             for _ in range(config.num_layers)
         ]
         self.rope = RopeEmbedder(config_or_dims=config, ctx=ctx)
+        spec = getattr(config, "latent_noise_dtype", None)
+        self._act_dtype = ctx.bfloat16() if isinstance(spec, str) and spec.lower() in ("bfloat16", "bf16") else ctx.float32()
 
         self._param_map: dict[str, Any] = {}
         self._build_param_map()
@@ -392,12 +362,6 @@ class ZImageTransformer(TransformerBase):
         self._param_map["cap_pad_token"] = self.cap_pad_token
         self._compiled_forward = None
         self._compiled_cfg_forward = None
-
-    def _activation_dtype(self):
-        spec = getattr(self.config, "latent_noise_dtype", None)
-        if isinstance(spec, str) and spec.lower() in ("bfloat16", "bf16"):
-            return self.ctx.bfloat16()
-        return self.ctx.float32()
 
     def after_load_weights(self, bundle_root=None) -> None:
         super().after_load_weights(bundle_root)
@@ -514,17 +478,6 @@ class ZImageTransformer(TransformerBase):
         """mflux Z-Image convention: ``eps_c + g * (eps_c - eps_u)``."""
         return noise_cond + guidance * (noise_cond - noise_uncond)
 
-    def __call__(self, *args, **kwargs):
-        return self.forward(*args, **kwargs)
-
-    def _build_param_map(self):
-        """递归构建 参数路径 → MLX 参数张量 映射。"""
-        self._param_map.clear()
-        _collect_nn_params(self, "", self._param_map)
-
-    def parameters(self):
-        return list(self._param_map.items())
-
     def forward(self, latents, timestep,
                 txt_embeds=None, sigmas=None, **conditioning):
         """前向传播。
@@ -559,9 +512,7 @@ class ZImageTransformer(TransformerBase):
         return self._reshape_output(-output, input_shape, input_ndim)
 
     def _resolve_cap_feats(self, txt_embeds, conditioning):
-        cap_feats = txt_embeds
-        if cap_feats is None:
-            cap_feats = conditioning.get("cap_feats")
+        cap_feats = txt_embeds if txt_embeds is not None else conditioning.get("cap_feats")
         if cap_feats is None:
             raise ValueError("ZImageTransformer requires txt_embeds (Qwen3 cap_feats)")
         if cap_feats.ndim == 3 and cap_feats.shape[0] == 1:
@@ -570,9 +521,7 @@ class ZImageTransformer(TransformerBase):
 
     def _normalize_latents(self, latents):
         ctx = self.ctx
-        if latents.ndim == 5 and latents.shape[0] == 1:
-            latents = latents[0]
-        elif latents.ndim == 4 and latents.shape[0] == 1:
+        if latents.shape[0] == 1 and latents.ndim in (4, 5):
             latents = latents[0]
         if latents.ndim == 3:
             latents = ctx.reshape(latents, (latents.shape[0], 1, latents.shape[1], latents.shape[2]))
@@ -581,7 +530,19 @@ class ZImageTransformer(TransformerBase):
     def _resolve_timestep(self, timestep, sigmas):
         ctx = self.ctx
         t = timestep
-        idx = _coerce_timestep_index(t, ctx)
+        idx = None
+        if not isinstance(t, bool):
+            if isinstance(t, int):
+                idx = t
+            else:
+                try:
+                    import numpy as np
+                    if isinstance(t, np.integer):
+                        idx = int(t)
+                except ImportError:
+                    pass
+                if idx is None and ctx.is_tensor(t) and ctx.is_integer_dtype_tensor(t):
+                    idx = int(t.item())
         if idx is not None:
             if sigmas is None:
                 raise ValueError("ZImageTransformer requires sigmas when timestep is an integer index")
@@ -598,12 +559,10 @@ class ZImageTransformer(TransformerBase):
         ctx = self.ctx
         if input_ndim == 4:
             output = output[:, 0, :, :]
-            output = ctx.reshape(output, (1, output.shape[0], output.shape[1], output.shape[2]))
-        elif input_ndim == 5:
-            output = ctx.reshape(output, input_shape)
-        else:
-            output = ctx.reshape(output, (1,) + output.shape)
-        return output
+            return ctx.reshape(output, (1, output.shape[0], output.shape[1], output.shape[2]))
+        if input_ndim == 5:
+            return ctx.reshape(output, input_shape)
+        return ctx.reshape(output, (1,) + output.shape)
 
     def _forward_from_caches(
         self,
@@ -619,50 +578,29 @@ class ZImageTransformer(TransformerBase):
         use_compile: bool = False,
     ):
         if use_compile and self._compiled_forward is not None:
-            tokens = self._compiled_forward(
-                latents, t, cap_emb, cap_freqs, x_freqs, x_pad_mask, x_len,
-            )
-            return self._unpatchify(tokens, image_size)
-        tokens = self._forward_cached_compute(
-            latents, t, cap_emb, cap_freqs, x_freqs, x_pad_mask, x_len,
-        )
+            tokens = self._compiled_forward(latents, t, cap_emb, cap_freqs, x_freqs, x_pad_mask, x_len)
+        else:
+            tokens = self._forward_cached_compute(latents, t, cap_emb, cap_freqs, x_freqs, x_pad_mask, x_len)
         return self._unpatchify(tokens, image_size)
-
-    def _forward_cfg_cached_compute(
-        self,
-        latents,
-        t,
-        cap_emb,
-        cap_freqs,
-        x_freqs,
-        x_pad_mask,
-        x_len,
-        neg_cap_emb,
-        neg_cap_freqs,
-        neg_x_freqs,
-        neg_x_pad_mask,
-        neg_x_len,
-        guidance,
-    ):
-        noise_cond = self._forward_cached_compute(
-            latents, t, cap_emb, cap_freqs, x_freqs, x_pad_mask, x_len,
-        )
-        noise_uncond = self._forward_cached_compute(
-            latents, t, neg_cap_emb, neg_cap_freqs, neg_x_freqs, neg_x_pad_mask, neg_x_len,
-        )
-        return self.combine_cfg_noise(noise_cond, noise_uncond, guidance)
 
     def _forward_cached_compute(
         self, latents, t, cap_emb, cap_freqs, x_freqs, x_pad_mask, x_len,
     ):
         ctx = self.ctx
-        act = self._activation_dtype()
+        act = self._act_dtype
         t_emb = self.t_embedder.forward(ctx.mul(ctx.cast(t, ctx.float32()), self.t_scale))
 
-        img = self._patchify_image_values(latents, x_pad_mask)
+        pH = pW = self.patch_size
+        pF = self.f_patch_size
+        C, F, H, W = latents.shape
+        F_tok, H_tok, W_tok = F // pF, H // pH, W // pW
+        img = ctx.reshape(latents, (C, F_tok, pF, H_tok, pH, W_tok, pW))
+        img = ctx.permute(img, (1, 3, 5, 2, 4, 6, 0))
+        img = ctx.reshape(img, (F_tok * H_tok * W_tok, pF * pH * pW * C))
+        img = _pad_tail_with_last(ctx, img, int(x_pad_mask.shape[0]) - int(img.shape[0]))
         x_emb = self.x_embedder(img)
         x_emb = ctx.cast(x_emb, act)
-        x_emb = ctx.where(ctx.reshape(x_pad_mask, (-1, 1)), self.x_pad_token, x_emb)
+        x_emb = _apply_pad_token(ctx, x_emb, x_pad_mask, self.x_pad_token)
         x_emb = ctx.reshape(x_emb, (1, x_emb.shape[0], x_emb.shape[1]))
 
         for layer in self.noise_refiner:
@@ -681,22 +619,18 @@ class ZImageTransformer(TransformerBase):
         """Precompute caption embed + context refiner (constant across denoise steps)."""
         ctx = self.ctx
         cap_ori_len = cap_feats.shape[0]
-        cap_pad_len = (-cap_ori_len) % 32
+        cap_pad_len = _pad_len_to_multiple(cap_ori_len, 32)
         cap_padded_len = cap_ori_len + cap_pad_len
 
-        if cap_pad_len > 0:
-            cap_feats = ctx.concat([cap_feats, ctx.repeat(cap_feats[-1:], cap_pad_len, axis=0)], axis=0)
+        cap_feats = _pad_tail_with_last(ctx, cap_feats, cap_pad_len)
 
         cap_pos_ids = self._coord_grid((cap_padded_len, 1, 1), (1, 0, 0))
         cap_pos_ids = ctx.reshape(cap_pos_ids, (-1, 3))
-        cap_pad_mask = ctx.concat([
-            ctx.zeros((cap_ori_len,), dtype=ctx.float32()) > 0,
-            ctx.ones((cap_pad_len,), dtype=ctx.float32()) > 0,
-        ], axis=0) if cap_pad_len > 0 else ctx.zeros((cap_ori_len,), dtype=ctx.float32()) > 0
+        cap_pad_mask = _build_tail_pad_mask(ctx, int(cap_ori_len), int(cap_pad_len))
 
         cap_emb = self.cap_norm(cap_feats)
         cap_emb = self.cap_embedder(cap_emb)
-        cap_emb = ctx.where(ctx.reshape(cap_pad_mask, (-1, 1)), self.cap_pad_token, cap_emb)
+        cap_emb = _apply_pad_token(ctx, cap_emb, cap_pad_mask, self.cap_pad_token)
         cap_freqs_cis = self.rope.forward(cap_pos_ids)
         cap_emb = ctx.reshape(cap_emb, (1, cap_emb.shape[0], cap_emb.shape[1]))
 
@@ -714,7 +648,7 @@ class ZImageTransformer(TransformerBase):
         image_size = (F, H, W)
         F_tok, H_tok, W_tok = F // pF, H // pH, W // pW
         img_ori_len = F_tok * H_tok * W_tok
-        img_pad_len = (-img_ori_len) % 32
+        img_pad_len = _pad_len_to_multiple(img_ori_len, 32)
         x_len = img_ori_len + img_pad_len
 
         img_pos_ids = self._coord_grid((F_tok, H_tok, W_tok), (cap_padded_len + 1, 0, 0))
@@ -723,26 +657,9 @@ class ZImageTransformer(TransformerBase):
             img_pos_ids = ctx.concat([img_pos_ids, ctx.zeros((img_pad_len, 3), dtype=ctx.int32())], axis=0)
 
         x_freqs_cis = self.rope.forward(img_pos_ids)
-        x_pad_mask = ctx.concat([
-            ctx.zeros((img_ori_len,), dtype=ctx.float32()) > 0,
-            ctx.ones((img_pad_len,), dtype=ctx.float32()) > 0,
-        ], axis=0) if img_pad_len > 0 else ctx.zeros((img_ori_len,), dtype=ctx.float32()) > 0
+        x_pad_mask = _build_tail_pad_mask(ctx, int(img_ori_len), int(img_pad_len))
 
         return x_freqs_cis, x_pad_mask, x_len, image_size, img_ori_len
-
-    def _patchify_image_values(self, image, x_pad_mask):
-        ctx = self.ctx
-        pH = pW = self.patch_size
-        pF = self.f_patch_size
-        C, F, H, W = image.shape
-        F_tok, H_tok, W_tok = F // pF, H // pH, W // pW
-        img = ctx.reshape(image, (C, F_tok, pF, H_tok, pH, W_tok, pW))
-        img = ctx.permute(img, (1, 3, 5, 2, 4, 6, 0))
-        img = ctx.reshape(img, (F_tok * H_tok * W_tok, pF * pH * pW * C))
-        img_pad_len = int(x_pad_mask.shape[0]) - int(img.shape[0])
-        if img_pad_len > 0:
-            img = ctx.concat([img, ctx.repeat(img[-1:], img_pad_len, axis=0)], axis=0)
-        return img
 
     def _forward_compute(self, latents, t, cap_feats):
         ctx = self.ctx
@@ -753,7 +670,7 @@ class ZImageTransformer(TransformerBase):
         )
 
         x_emb = self.x_embedder(x_emb)
-        x_emb = ctx.where(ctx.reshape(x_pad_mask, (-1, 1)), self.x_pad_token, x_emb)
+        x_emb = _apply_pad_token(ctx, x_emb, x_pad_mask, self.x_pad_token)
         x_freqs_cis = self.rope.forward(x_pos_ids)
         x_emb = ctx.reshape(x_emb, (1, x_emb.shape[0], x_emb.shape[1]))
 
@@ -762,7 +679,7 @@ class ZImageTransformer(TransformerBase):
 
         cap_emb = self.cap_norm(cap_emb)
         cap_emb = self.cap_embedder(cap_emb)
-        cap_emb = ctx.where(ctx.reshape(cap_pad_mask, (-1, 1)), self.cap_pad_token, cap_emb)
+        cap_emb = _apply_pad_token(ctx, cap_emb, cap_pad_mask, self.cap_pad_token)
         cap_freqs_cis = self.rope.forward(cap_pos_ids)
         cap_emb = ctx.reshape(cap_emb, (1, cap_emb.shape[0], cap_emb.shape[1]))
 
@@ -791,18 +708,11 @@ class ZImageTransformer(TransformerBase):
 
         # Caption padding
         cap_ori_len = cap_feats.shape[0]
-        cap_pad_len = (-cap_ori_len) % 32
+        cap_pad_len = _pad_len_to_multiple(cap_ori_len, 32)
         cap_pos_ids = self._coord_grid((cap_ori_len + cap_pad_len, 1, 1), (1, 0, 0))
         cap_pos_ids = ctx.reshape(cap_pos_ids, (-1, 3))
-        cap_pad_mask = ctx.concat([
-            ctx.zeros((cap_ori_len,), dtype=ctx.float32()) > 0,
-            ctx.ones((cap_pad_len,), dtype=ctx.float32()) > 0,
-        ], axis=0) if cap_pad_len > 0 else ctx.zeros((cap_ori_len,), dtype=ctx.float32()) > 0
-
-        if cap_pad_len > 0:
-            cap_padded = ctx.concat([cap_feats, ctx.repeat(cap_feats[-1:], cap_pad_len, axis=0)], axis=0)
-        else:
-            cap_padded = cap_feats
+        cap_pad_mask = _build_tail_pad_mask(ctx, int(cap_ori_len), int(cap_pad_len))
+        cap_padded = _pad_tail_with_last(ctx, cap_feats, cap_pad_len)
 
         # Image patchification
         C, F, H, W = image.shape
@@ -816,19 +726,16 @@ class ZImageTransformer(TransformerBase):
 
         # Image padding
         img_ori_len = img.shape[0]
-        img_pad_len = (-img_ori_len) % 32
+        img_pad_len = _pad_len_to_multiple(img_ori_len, 32)
         img_pos_ids = self._coord_grid((F_tok, H_tok, W_tok),
                                        (cap_ori_len + cap_pad_len + 1, 0, 0))
         img_pos_ids = ctx.reshape(img_pos_ids, (-1, 3))
 
         if img_pad_len > 0:
             img_pos_ids = ctx.concat([img_pos_ids, ctx.zeros((img_pad_len, 3), dtype=ctx.int32())], axis=0)
-            img = ctx.concat([img, ctx.repeat(img[-1:], img_pad_len, axis=0)], axis=0)
+        img = _pad_tail_with_last(ctx, img, img_pad_len)
 
-        img_pad_mask = ctx.concat([
-            ctx.zeros((img_ori_len,), dtype=ctx.float32()) > 0,
-            ctx.ones((img_pad_len,), dtype=ctx.float32()) > 0,
-        ], axis=0) if img_pad_len > 0 else ctx.zeros((img_ori_len,), dtype=ctx.float32()) > 0
+        img_pad_mask = _build_tail_pad_mask(ctx, int(img_ori_len), int(img_pad_len))
 
         return img, cap_padded, image_size, img_pos_ids, cap_pos_ids, img_pad_mask, cap_pad_mask
 
@@ -852,63 +759,3 @@ class ZImageTransformer(TransformerBase):
         grids = ctx.meshgrid(*axes)
         return ctx.stack(grids, axis=-1)
 
-
-def _collect_nn_params(obj, prefix: str, result: dict) -> None:
-    """递归收集 MLX dict 参数树或 PyTorch ``nn.Module`` 子树中的叶子参数。"""
-    if obj is None or isinstance(obj, (int, float, str, bool, type)):
-        return
-
-    try:
-        import torch
-
-        if isinstance(obj, torch.Tensor):
-            return
-    except ImportError:
-        pass
-
-    try:
-        import mlx.core as mx
-
-        if isinstance(obj, mx.array):
-            return
-    except ImportError:
-        pass
-
-    try:
-        import torch.nn as tn
-
-        if isinstance(obj, tn.Module):
-            for name, param in obj.named_parameters():
-                key = f"{prefix}.{name}" if prefix else name
-                result[key] = param
-            return
-    except ImportError:
-        pass
-
-    if hasattr(obj, "parameters") and callable(obj.parameters):
-        try:
-            params = obj.parameters()
-            if isinstance(params, dict):
-                for pname, ptensor in params.items():
-                    key = f"{prefix}.{pname}" if prefix else pname
-                    result[key] = ptensor
-                return
-        except Exception:
-            pass
-
-    if isinstance(obj, (list, tuple)):
-        for i, item in enumerate(obj):
-            item_prefix = f"{prefix}.{i}" if prefix else str(i)
-            _collect_nn_params(item, item_prefix, result)
-        return
-
-    if hasattr(obj, "__dict__") and not isinstance(obj, type):
-        for attr_name, attr in sorted(vars(obj).items()):
-            if attr_name.startswith("_"):
-                continue
-            if attr_name in ("ctx", "config", "freqs_cis", "_param_map"):
-                continue
-            if attr is None or isinstance(attr, (int, float, str, bool, type)):
-                continue
-            new_prefix = f"{prefix}.{attr_name}" if prefix else attr_name
-            _collect_nn_params(attr, new_prefix, result)

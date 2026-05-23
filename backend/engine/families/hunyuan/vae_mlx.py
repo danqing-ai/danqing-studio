@@ -16,10 +16,20 @@ import mlx.core as mx
 import mlx.nn as nn
 import numpy as np
 
+from backend.engine.common.attention import (
+    build_frame_prefix_causal_bias,
+    scaled_dot_product_attention_bhsd_mx,
+)
+from backend.engine.common.mlx_runtime_fallback import load_weights_dict
 from backend.engine.common.mlx_dtype import cast_module_parameters
+from backend.engine.common.mlx_runtime_fallback import run_eval
 from backend.engine.runtime._base import RuntimeContext
 
 logger = logging.getLogger(__name__)
+
+
+def _run_eval(*values: Any) -> None:
+    run_eval(None, *values)
 
 
 def _conv3d_weight_torch_to_mlx(w: mx.array) -> mx.array:
@@ -81,14 +91,14 @@ def _prepare_causal_attention_mask(
     n_hw: int,
     batch_size: int,
 ) -> mx.array:
-    seq_len = n_frame * n_hw
-    token_idx = mx.arange(seq_len)
-    frame_idx = token_idx // n_hw
-    j_pos = mx.arange(seq_len)[None, :]
-    i_frame = frame_idx[:, None]
-    allowed = j_pos < (i_frame + 1) * n_hw
-    mask = mx.where(allowed, mx.zeros((seq_len, seq_len)), mx.full((seq_len, seq_len), float("-inf")))
-    return mx.broadcast_to(mx.expand_dims(mask, (0, 1)), (batch_size, 1, seq_len, seq_len))
+    return build_frame_prefix_causal_bias(
+        mx,
+        n_frame,
+        n_hw,
+        batch_size,
+        dtype=mx.float32,
+        neg_value=float("-inf"),
+    )
 
 
 class HunyuanVideo15CausalConv3d(nn.Module):
@@ -202,13 +212,16 @@ class HunyuanVideo15AttnBlock(nn.Module):
         value = _flatten_qkv(v)
 
         attention_mask = _prepare_causal_attention_mask(frames, n_hw, batch_size)
-        x_attn = mx.fast.scaled_dot_product_attention(
-            query.astype(mx.float32),
-            key.astype(mx.float32),
-            value.astype(mx.float32),
+        x_attn = scaled_dot_product_attention_bhsd_mx(
+            mx,
+            query,
+            key,
+            value,
             scale=channels**-0.5,
             mask=attention_mask,
-        ).astype(x.dtype)
+            compute_dtype=mx.float32,
+            out_dtype=x.dtype,
+        )
 
         x_attn = mx.squeeze(x_attn, axis=1)
         x_attn = mx.transpose(x_attn, (0, 2, 1))
@@ -266,7 +279,7 @@ class HunyuanVideo15MidBlock(nn.Module):
             if self.add_attention:
                 hidden = getattr(self, f"attn_{i}")(hidden)
             hidden = getattr(self, f"resnet_{i + 1}")(hidden)
-            mx.eval(hidden)
+            _run_eval(hidden)
         return hidden
 
 
@@ -407,10 +420,10 @@ class HunyuanVideo15UpBlock3D(nn.Module):
         h = hidden_states
         for i in range(self._num_layers):
             h = getattr(self, f"resnet_{i}")(h)
-            mx.eval(h)
+            _run_eval(h)
         if self.upsampler_0 is not None:
             h = self.upsampler_0(h)
-            mx.eval(h)
+            _run_eval(h)
         return h
 
 
@@ -467,9 +480,9 @@ class HunyuanVideo15Encoder3DMlx(nn.Module):
         hidden = self.conv_in(hidden_states)
         for i in range(self._num_down_blocks):
             hidden = getattr(self, f"down_block_{i}")(hidden)
-            mx.eval(hidden)
+            _run_eval(hidden)
         hidden = self.mid_block(hidden)
-        mx.eval(hidden)
+        _run_eval(hidden)
 
         batch_size, _, frame, height, width = hidden.shape
         shortcut = mx.mean(
@@ -541,16 +554,16 @@ class HunyuanVideo15Decoder3DMlx(nn.Module):
                 on_stage(min(1.0, max(0.0, float(frac))))
 
         hidden = self.conv_in(hidden_states) + _repeat_interleave_channels(hidden_states, self.repeat)
-        mx.eval(hidden)
+        _run_eval(hidden)
         _stage(0.08)
 
         hidden = self.mid_block(hidden)
-        mx.eval(hidden)
+        _run_eval(hidden)
         _stage(0.22)
 
         for i in range(self._num_up_blocks):
             hidden = getattr(self, f"up_block_{i}")(hidden)
-            mx.eval(hidden)
+            _run_eval(hidden)
             _stage(0.22 + 0.68 * ((i + 1) / max(self._num_up_blocks, 1)))
 
         hidden = self.norm_out(hidden)
@@ -670,13 +683,15 @@ def _read_vae_config(bundle_root: Path) -> dict[str, Any]:
         return json.load(f)
 
 
-def load_vae_bundle_weights(bundle_root: Path) -> tuple[dict[str, mx.array], dict[str, mx.array], dict[str, Any]]:
+def load_vae_bundle_weights(
+    bundle_root: Path, *, load_fn: Any | None = None
+) -> tuple[dict[str, mx.array], dict[str, mx.array], dict[str, Any]]:
     vae_cfg = _read_vae_config(bundle_root)
     vae_dir = bundle_root / "vae"
 
     merged: dict[str, mx.array] = {}
     for sf in sorted(vae_dir.glob("*.safetensors")):
-        merged.update(dict(mx.load(str(sf))))
+        merged.update(load_weights_dict(load_fn, str(sf)))
 
     enc_weights: dict[str, mx.array] = {}
     dec_weights: dict[str, mx.array] = {}
@@ -702,12 +717,14 @@ _decoder_cache: dict[str, HunyuanVideo15Decoder3DMlx] = {}
 _encoder_cache: dict[str, HunyuanVideo15Encoder3DMlx] = {}
 
 
-def _get_hunyuan_decoder(bundle_root: Path) -> HunyuanVideo15Decoder3DMlx:
+def _get_hunyuan_decoder(
+    bundle_root: Path, *, load_fn: Any | None = None
+) -> HunyuanVideo15Decoder3DMlx:
     key = str(bundle_root.resolve())
     cached = _decoder_cache.get(key)
     if cached is not None:
         return cached
-    enc_w, dec_w, vae_cfg = load_vae_bundle_weights(bundle_root)
+    enc_w, dec_w, vae_cfg = load_vae_bundle_weights(bundle_root, load_fn=load_fn)
     del enc_w
     dec = build_hunyuan_decoder_mlx(vae_cfg)
     _assign_decoder_weights(dec, dec_w)
@@ -716,12 +733,14 @@ def _get_hunyuan_decoder(bundle_root: Path) -> HunyuanVideo15Decoder3DMlx:
     return dec
 
 
-def _get_hunyuan_encoder(bundle_root: Path) -> HunyuanVideo15Encoder3DMlx:
+def _get_hunyuan_encoder(
+    bundle_root: Path, *, load_fn: Any | None = None
+) -> HunyuanVideo15Encoder3DMlx:
     key = str(bundle_root.resolve())
     cached = _encoder_cache.get(key)
     if cached is not None:
         return cached
-    enc_w, dec_w, vae_cfg = load_vae_bundle_weights(bundle_root)
+    enc_w, dec_w, vae_cfg = load_vae_bundle_weights(bundle_root, load_fn=load_fn)
     del dec_w
     enc = build_hunyuan_encoder_mlx(vae_cfg)
     _assign_encoder_weights(enc, enc_w)
@@ -838,7 +857,7 @@ def _decode_latent_volume_temporal(
             else:
                 z_slice = latents[:, :, start:end, :, :]
             piece = dec(z_slice, on_stage=None)
-            mx.eval(piece)
+            ctx.eval(piece)
             if start > 0:
                 piece = piece[:, :, tcr:, :, :]
             parts.append(piece)
@@ -847,7 +866,7 @@ def _decode_latent_volume_temporal(
         return mx.concatenate(parts, axis=2)
 
     sample = dec(latents, on_stage=on_stage)
-    mx.eval(sample)
+    ctx.eval(sample)
     return sample
 
 
@@ -906,7 +925,7 @@ def _tiled_spatial_decode_hunyuan(
                 tcr=tcr,
                 on_log=on_log,
             )
-            mx.eval(decoded)
+            ctx.eval(decoded)
             row.append(decoded)
             if hasattr(ctx, "clear_cache"):
                 ctx.clear_cache()
@@ -964,8 +983,10 @@ def decode_latents_ncthw(
     if on_log is not None:
         on_log(f"HunyuanVideo VAE decode start (latent shape {tuple(latents.shape)})")
 
-    dec = _get_hunyuan_decoder(bundle_root)
-    mx.eval(latents)
+    dec = _get_hunyuan_decoder(
+        bundle_root, load_fn=getattr(ctx, "load_weights", None)
+    )
+    ctx.eval(latents)
     if on_stage is not None:
         on_stage(0.02)
 
@@ -1006,7 +1027,7 @@ def decode_latents_ncthw(
             on_stage(0.98)
 
     sample = mx.clip(sample, -1.0, 1.0)
-    mx.eval(sample)
+    ctx.eval(sample)
     if on_stage is not None:
         on_stage(1.0)
     logger.info("HunyuanVideo VAE decode done: pixel shape=%s", tuple(sample.shape))
@@ -1032,10 +1053,12 @@ def encode_video_ncthw(
     if on_log is not None:
         on_log(f"HunyuanVideo VAE encode start (pixel shape {tuple(pixels_bcthw.shape)})")
 
-    enc = _get_hunyuan_encoder(bundle_root)
-    mx.eval(pixels_bcthw)
+    enc = _get_hunyuan_encoder(
+        bundle_root, load_fn=getattr(ctx, "load_weights", None)
+    )
+    ctx.eval(pixels_bcthw)
     moments = enc(pixels_bcthw)
     latents = _gaussian_mode(moments) * scaling_factor
-    mx.eval(latents)
+    ctx.eval(latents)
     logger.info("HunyuanVideo VAE encode done: latent shape=%s", tuple(latents.shape))
     return latents

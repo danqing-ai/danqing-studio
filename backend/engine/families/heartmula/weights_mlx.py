@@ -9,12 +9,15 @@ import re
 import numpy as np
 import mlx.core as mx
 
+from backend.engine.common.mlx_runtime_fallback import load_weights_dict, run_eval
+
 
 def convert_pytorch_to_mlx(
     src_path: Union[str, Path],
     dst_path: Union[str, Path],
     model_type: str = "auto",
     dtype: str = "bfloat16",
+    array_fn: Any | None = None,
 ) -> None:
     """Convert PyTorch weights to MLX format.
 
@@ -65,7 +68,9 @@ def convert_pytorch_to_mlx(
         "bfloat16": mx.bfloat16,
     }
     target_dtype = dtype_map.get(dtype, mx.bfloat16)
-    mlx_weights = {k: mx.array(v).astype(target_dtype) for k, v in mlx_weights.items()}
+    if array_fn is None:
+        array_fn = mx.array
+    mlx_weights = {k: array_fn(v).astype(target_dtype) for k, v in mlx_weights.items()}
 
     # Save as safetensors
     save_mlx_weights(mlx_weights, dst_path / "model.safetensors")
@@ -137,14 +142,23 @@ def load_pytorch_weights(path: Path) -> Dict[str, np.ndarray]:
     raise FileNotFoundError(f"No weights found in {path}")
 
 
-def load_mlx_weights_into_module(module: Any, mlx_path: Path, *, dtype: Any) -> None:
+def load_mlx_weights_into_module(
+    module: Any,
+    mlx_path: Path,
+    *,
+    dtype: Any,
+    eval_fn: Any | None = None,
+    array_fn: Any | None = None,
+) -> None:
     """Load ``mlx/model.safetensors`` into an initialized HeartMuLa / HeartCodec module."""
     if not mlx_path.is_file():
         raise FileNotFoundError(f"MLX weights not found: {mlx_path}")
-    weights = mx.load(str(mlx_path))
-    weights = {k: v.astype(dtype) for k, v in weights.items()}
+    weights = load_weights_dict(None, str(mlx_path))
+    if array_fn is None:
+        array_fn = mx.array
+    weights = {k: array_fn(v).astype(dtype) for k, v in weights.items()}
     module.load_weights(list(weights.items()), strict=False)
-    mx.eval(module.parameters())
+    run_eval(eval_fn, module.parameters())
 
 
 def save_mlx_weights(weights: Dict[str, mx.array], path: Path) -> None:

@@ -1,6 +1,11 @@
 <template>
   <div class="main-container dq-app-shell">
-    <header class="app-header dq-app-header" data-tauri-drag-region>
+    <header class="app-header dq-app-header">
+      <div
+        class="dq-tauri-titlebar-inset"
+        data-tauri-drag-region
+        aria-hidden="true"
+      />
       <TopNav
         :active-page="activePage"
         :queue-count="globalQueueCount"

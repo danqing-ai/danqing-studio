@@ -7,14 +7,22 @@ from typing import Any
 
 import mlx.core as mx
 import mlx.nn as nn
+from backend.engine.common.attention import (
+    build_causal_with_padding_bias,
+    scaled_dot_product_attention_bhsd_mx,
+)
+from backend.engine.common.embeddings import build_position_ids_2d
+from backend.engine.common.mlx_runtime_fallback import load_weights_dict
 
 
-def build_zimage_mlx_encoder(model_path: str) -> "_ZImageEncoderModel":
+def build_zimage_mlx_encoder(
+    model_path: str, ctx: Any, *, load_fn: Any | None = None
+) -> "_ZImageEncoderModel":
     """Load Z-Image Qwen3 text encoder weights from ``model_path`` (safetensors + config.json)."""
     model_dir = Path(model_path)
     weights: dict = {}
     for sf in sorted(model_dir.glob("*.safetensors")):
-        weights.update(dict(mx.load(str(sf))))
+        weights.update(load_weights_dict(load_fn, str(sf)))
 
     config_path = model_dir / "config.json"
     config: dict = {}
@@ -41,7 +49,7 @@ def build_zimage_mlx_encoder(model_path: str) -> "_ZImageEncoderModel":
         remapped[new_key] = tensor
 
     model.load_weights(list(remapped.items()), strict=False)
-    mx.eval(model.parameters())
+    ctx.eval(model.parameters())
     return model
 
 
@@ -80,7 +88,7 @@ class _ZImageEncoderModel(nn.Module):
     def __call__(self, input_ids, attention_mask=None):
         batch_size, seq_len = input_ids.shape
         hidden_states = self.embed_tokens(input_ids).astype(mx.float32)
-        position_ids = mx.broadcast_to(mx.arange(seq_len, dtype=mx.int32)[None, :], (batch_size, seq_len))
+        position_ids = _ZImageEncoderModel._build_position_ids(batch_size, seq_len)
         position_embeddings = self.rotary_emb(hidden_states, position_ids)
         causal_mask = _ZImageEncoderModel._get_causal_mask(attention_mask, batch_size, hidden_states, seq_len)
         for layer in self.layers[:-1]:
@@ -93,26 +101,19 @@ class _ZImageEncoderModel(nn.Module):
 
     @staticmethod
     def _get_causal_mask(attention_mask, batch_size, hidden_states, seq_len):
-        causal_mask = _ZImageEncoderModel._create_causal_mask(seq_len, hidden_states.dtype)
-        if attention_mask is not None:
-            padding_mask = mx.where(
-                attention_mask[:, None, None, :] == 1,
-                mx.zeros((batch_size, 1, 1, seq_len), dtype=hidden_states.dtype),
-                mx.full((batch_size, 1, 1, seq_len), float("-inf"), dtype=hidden_states.dtype),
-            )
-            causal_mask = causal_mask + padding_mask
-        return causal_mask
+        return build_causal_with_padding_bias(
+            mx,
+            attention_mask,
+            seq_len,
+            hidden_states.dtype,
+            valid_value=1,
+            neg_value=float("-inf"),
+            batch_size=batch_size,
+        )
 
     @staticmethod
-    def _create_causal_mask(seq_len, dtype):
-        idx = mx.arange(seq_len, dtype=mx.int32)
-        mask = idx[:, None] >= idx[None, :]
-        causal_mask = mx.where(
-            mask,
-            mx.zeros((seq_len, seq_len), dtype=dtype),
-            mx.full((seq_len, seq_len), float("-inf"), dtype=dtype),
-        )
-        return causal_mask[None, None, :, :]
+    def _build_position_ids(batch_size: int, seq_len: int):
+        return build_position_ids_2d(mx, batch_size, seq_len, dtype=mx.int32)
 
 
 class _ZImageEncoderRotaryEmbedding(nn.Module):
@@ -175,11 +176,16 @@ class _ZImageEncoderAttention(nn.Module):
         q = mx.transpose(q, axes=(0, 2, 1, 3))
         k = mx.transpose(k, axes=(0, 2, 1, 3))
         v = mx.transpose(v, axes=(0, 2, 1, 3))
-        from mlx.core.fast import scaled_dot_product_attention
-
-        q_f32, k_f32, v_f32 = q.astype(mx.float32), k.astype(mx.float32), v.astype(mx.float32)
-        attn_output = scaled_dot_product_attention(q_f32, k_f32, v_f32, scale=self.scale, mask=attention_mask)
-        attn_output = attn_output.astype(q.dtype)
+        attn_output = scaled_dot_product_attention_bhsd_mx(
+            mx,
+            q,
+            k,
+            v,
+            scale=self.scale,
+            mask=attention_mask,
+            compute_dtype=mx.float32,
+            out_dtype=q.dtype,
+        )
         attn_output = mx.transpose(attn_output, axes=(0, 2, 1, 3)).reshape(batch_size, seq_len, -1)
         return self.o_proj(attn_output)
 
@@ -309,8 +315,8 @@ class ZImageTextEncoder:
         num_valid = int(attention_mask.sum())
 
         if ctx.backend == "mlx":
-            input_ids = mx.array(input_ids, dtype=mx.int32)
-            attention_mask = mx.array(attention_mask, dtype=mx.float32)
+            input_ids = ctx.array(input_ids, dtype=mx.int32)
+            attention_mask = ctx.array(attention_mask, dtype=mx.float32)
             return self._forward_mlx(input_ids, attention_mask, num_valid)
         from backend.engine.families.z_image.text_encoder_cuda import (
             zimage_prepare_torch_ids,
@@ -322,13 +328,15 @@ class ZImageTextEncoder:
 
     def _forward_mlx(self, input_ids, attention_mask, num_valid: int):
         if self._model is None:
-            self._model = build_zimage_mlx_encoder(self.model_path)
+            self._model = build_zimage_mlx_encoder(
+                self.model_path, self.ctx, load_fn=getattr(self.ctx, "load_weights", None)
+            )
             self._refresh_compiled_layers()
 
         batch_size, seq_len = input_ids.shape
         hidden_states = self._model.embed_tokens(input_ids).astype(mx.bfloat16)
         causal_mask = self._model._get_causal_mask(attention_mask, batch_size, hidden_states, seq_len)
-        position_ids = mx.broadcast_to(mx.arange(seq_len, dtype=mx.int32)[None, :], (batch_size, seq_len))
+        position_ids = self._model._build_position_ids(batch_size, seq_len)
         position_embeddings = self._model.rotary_emb(hidden_states, position_ids)
 
         if self.hidden_state_layers is not None:

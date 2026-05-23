@@ -13,12 +13,20 @@ import mlx.core as mx
 import numpy as np
 from PIL import Image
 
+from backend.engine.common.mlx_runtime_fallback import seeded_random_normal
 from backend.engine.common.scale_factor import ScaleFactor
 from backend.engine.common.vae.mlx_tiling import VAEUtil
 from backend.engine.families.seedvr2.embed_mlx import SeedVR2PositiveEmbeddings
 from backend.engine.families.seedvr2.preprocess_mlx import SeedVR2LatentCreator, SeedVR2Util
 
-from .job_mlx import SeedVR2UpscalePipeline, SeedVR2UpscaleRuntime, _UpscaleDenoiseCtx
+from .job_mlx import (
+    SeedVR2UpscalePipeline,
+    SeedVR2UpscaleRuntime,
+    _UpscaleDenoiseCtx,
+    _resolve_array_fn,
+    _resolve_eval_fn,
+    _resolve_seeded_randn_fn,
+)
 
 
 def _pad_stack_rgb_frames(
@@ -26,6 +34,7 @@ def _pad_stack_rgb_frames(
     *,
     resolution: int | ScaleFactor,
     softness: float,
+    array_fn: Callable[..., Any] = mx.array,
 ) -> tuple[mx.array, int, int, int, int]:
     """将若干帧对齐为同一空间尺寸后堆成 ``(1,3,T,H,W)``（[-1,1]）。
 
@@ -50,7 +59,7 @@ def _pad_stack_rgb_frames(
         canvas = mx.slice_update(
             canvas,
             x,
-            start_indices=mx.array([0, 0], dtype=mx.int32),
+            start_indices=array_fn([0, 0], dtype=mx.int32),
             axes=(1, 2),
         )
         padded.append(canvas)
@@ -90,11 +99,15 @@ def restore_video_chunk_spatiotemporal(
     """对一段连续帧做 SeedVR2 视频修复，返回每帧 RGB ``(3,h,w)`` 张量列表（[-1,1]）。"""
     if not frame_paths:
         return []
+    eval_fn = _resolve_eval_fn(pipeline.dit)
+    array_fn = _resolve_array_fn(pipeline.dit)
+    seeded_randn_fn = _resolve_seeded_randn_fn(pipeline.dit)
 
     processed, max_h, max_w, true_h, true_w = _pad_stack_rgb_frames(
         frame_paths,
         resolution=resolution,
         softness=softness,
+        array_fn=array_fn,
     )
 
     runtime = SeedVR2UpscaleRuntime.from_aligned_hw(
@@ -108,15 +121,16 @@ def restore_video_chunk_spatiotemporal(
     )
 
     initial_latent = VAEUtil.encode(vae=pipeline.vae, image=processed, tiling_config=pipeline.tiling_config)
-    mx.eval(initial_latent)
+    eval_fn(initial_latent)
 
     static_condition = SeedVR2LatentCreator.create_condition(encoded_latent=initial_latent)
     t_lat = int(initial_latent.shape[2])
     h_lat = int(initial_latent.shape[-2])
     w_lat = int(initial_latent.shape[-1])
-    latents = mx.random.normal(
-        shape=(1, 16, t_lat, h_lat, w_lat),
-        key=mx.random.key(int(seed) & 0x7FFFFFFF),
+    latents = seeded_random_normal(
+        seeded_randn_fn,
+        (1, 16, t_lat, h_lat, w_lat),
+        int(seed) & 0x7FFFFFFF,
     )
     txt_pos = SeedVR2PositiveEmbeddings.load(bundle_path=bundle_path)
 
@@ -132,12 +146,12 @@ def restore_video_chunk_spatiotemporal(
         )
         latents = runtime.scheduler.step(noise=noise, timestep=t, latents=latents)
         ctx.in_loop(t, latents)
-        mx.eval(latents)
+        eval_fn(latents)
 
     ctx.after_loop(latents)
 
     decoded = VAEUtil.decode(vae=pipeline.vae, latent=latents, tiling_config=pipeline.tiling_config)
-    mx.eval(decoded)
+    eval_fn(decoded)
     if decoded.ndim == 4:
         decoded = decoded[:, :, None, :, :]
     _, _, t_dec, _, _ = decoded.shape

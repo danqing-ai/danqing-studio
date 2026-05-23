@@ -15,6 +15,8 @@ from typing import Any, Callable
 import mlx.core as mx
 import mlx.nn as nn
 
+from backend.engine.common.attention import scaled_dot_product_attention_bhsd_mx
+from backend.engine.common.mlx_runtime_fallback import load_weights_dict
 from backend.engine.runtime._base import RuntimeContext
 
 logger = logging.getLogger(__name__)
@@ -143,7 +145,7 @@ class CausalConv3d(nn.Module):
         return _ndhwc_to_ncthw(out)
 
 
-class RMSNorm(nn.Module):
+class WanVAERMSNorm(nn.Module):
     def __init__(self, dim: int, *, channel_first: bool = True, images: bool = True, bias: bool = False):
         super().__init__()
         del channel_first
@@ -248,9 +250,9 @@ class ResidualBlock(nn.Module):
         super().__init__()
         del dropout
         self.shortcut = CausalConv3d(in_dim, out_dim, 1) if in_dim != out_dim else None
-        self.norm1 = RMSNorm(in_dim, images=False)
+        self.norm1 = WanVAERMSNorm(in_dim, images=False)
         self.conv1 = CausalConv3d(in_dim, out_dim, 3, padding=1)
-        self.norm2 = RMSNorm(out_dim, images=False)
+        self.norm2 = WanVAERMSNorm(out_dim, images=False)
         self.conv2 = CausalConv3d(out_dim, out_dim, 3, padding=1)
 
     def __call__(
@@ -283,7 +285,7 @@ class ResidualBlock(nn.Module):
 class AttentionBlock(nn.Module):
     def __init__(self, dim: int):
         super().__init__()
-        self.norm = RMSNorm(dim)
+        self.norm = WanVAERMSNorm(dim)
         self.to_qkv = nn.Conv2d(dim, dim * 3, 1)
         self.proj = nn.Conv2d(dim, dim, 1)
 
@@ -299,7 +301,7 @@ class AttentionBlock(nn.Module):
         q = mx.reshape(q, (b * t, 1, h * w, c))
         k = mx.reshape(k, (b * t, 1, h * w, c))
         v = mx.reshape(v, (b * t, 1, h * w, c))
-        attn = mx.fast.scaled_dot_product_attention(q, k, v, scale=(c ** -0.5))
+        attn = scaled_dot_product_attention_bhsd_mx(mx, q, k, v, scale=(c ** -0.5))
         attn = mx.reshape(attn, (b * t, c, h, w))
         out = self.proj(_nchw_to_nhwc(attn))
         out = mx.reshape(_nhwc_to_nchw(out), (b, c, t, h, w))
@@ -524,7 +526,7 @@ class Encoder3d(nn.Module):
         self.mid_res0 = ResidualBlock(out_dim, out_dim, dropout)
         self.mid_attn = AttentionBlock(out_dim)
         self.mid_res1 = ResidualBlock(out_dim, out_dim, dropout)
-        self.head_norm = RMSNorm(out_dim, images=False)
+        self.head_norm = WanVAERMSNorm(out_dim, images=False)
         self.head_conv = CausalConv3d(out_dim, z_dim, 3, padding=1)
 
     def __call__(
@@ -607,7 +609,7 @@ class Decoder3d(nn.Module):
                 )
             )
         self.upsamples = upsamples
-        self.head_norm = RMSNorm(out_dim, images=False)
+        self.head_norm = WanVAERMSNorm(out_dim, images=False)
         self.head_conv = CausalConv3d(out_dim, 12, 3, padding=1)
 
     def __call__(
@@ -918,7 +920,7 @@ def _tiled_spatial_decode_wan(
             decoded = _decode_wan_latent_volume(
                 model, z_tile, scale, on_stage=_tile_stage,
             )
-            mx.eval(decoded)
+            ctx.eval(decoded)
             row.append(decoded)
             if hasattr(ctx, "clear_cache"):
                 ctx.clear_cache()
@@ -940,7 +942,7 @@ def _tiled_spatial_decode_wan(
             result_row.append(blended[:, :, :, :rh, :rw])
         result_rows.append(mx.concatenate(result_row, axis=4))
     sample = mx.concatenate(result_rows, axis=3)
-    mx.eval(sample)
+    ctx.eval(sample)
     return sample
 
 
@@ -1100,7 +1102,11 @@ def _read_wan_vae_config(bundle_root: Path) -> dict[str, Any]:
         raise RuntimeError(f"Wan: cannot read VAE config {cfg_path}: {e}") from e
 
 
-def _scale_tensors_from_vae_cfg(cfg: dict[str, Any], z_dim: int) -> tuple[mx.array, mx.array]:
+def _scale_tensors_from_vae_cfg(
+    cfg: dict[str, Any], z_dim: int, *, array_fn: Any | None = None
+) -> tuple[mx.array, mx.array]:
+    if array_fn is None:
+        array_fn = mx.array
     mean = cfg.get("latents_mean")
     std = cfg.get("latents_std")
     if (
@@ -1109,15 +1115,23 @@ def _scale_tensors_from_vae_cfg(cfg: dict[str, Any], z_dim: int) -> tuple[mx.arr
         and len(mean) == z_dim
         and len(std) == z_dim
     ):
-        mean_a = mx.array(mean, dtype=mx.float32).reshape(1, z_dim, 1, 1, 1)
-        inv_std = mx.array([1.0 / float(s) for s in std], dtype=mx.float32).reshape(1, z_dim, 1, 1, 1)
+        mean_a = array_fn(mean, dtype=mx.float32).reshape(1, z_dim, 1, 1, 1)
+        inv_std = array_fn([1.0 / float(s) for s in std], dtype=mx.float32).reshape(
+            1, z_dim, 1, 1, 1
+        )
         return mean_a, inv_std
-    mean_a = mx.array(_WAN22_VAE_MEAN, dtype=mx.float32).reshape(1, z_dim, 1, 1, 1)
-    inv_std = mx.array([1.0 / s for s in _WAN22_VAE_STD], dtype=mx.float32).reshape(1, z_dim, 1, 1, 1)
+    mean_a = array_fn(_WAN22_VAE_MEAN, dtype=mx.float32).reshape(1, z_dim, 1, 1, 1)
+    inv_std = array_fn([1.0 / s for s in _WAN22_VAE_STD], dtype=mx.float32).reshape(
+        1, z_dim, 1, 1, 1
+    )
     return mean_a, inv_std
 
 
-def _load_vae_state_dict(bundle_root: Path) -> dict[str, mx.array]:
+def _load_vae_state_dict(
+    bundle_root: Path, *, array_fn: Any | None = None, load_fn: Any | None = None
+) -> dict[str, mx.array]:
+    if array_fn is None:
+        array_fn = mx.array
     pth_candidates = [
         bundle_root / "Wan2.2_VAE.pth",
         bundle_root / "Wan2_2_VAE.pth",
@@ -1128,13 +1142,13 @@ def _load_vae_state_dict(bundle_root: Path) -> dict[str, mx.array]:
             import torch
 
             sd = torch.load(str(pth), map_location="cpu", weights_only=True)
-            return {k: mx.array(v.detach().cpu().numpy()) for k, v in sd.items()}
+            return {k: array_fn(v.detach().cpu().numpy()) for k, v in sd.items()}
 
     vae_dir = bundle_root / "vae"
     if vae_dir.is_dir():
         merged: dict[str, mx.array] = {}
         for sf in sorted(vae_dir.glob("*.safetensors")):
-            merged.update(dict(mx.load(str(sf))))
+            merged.update(load_weights_dict(load_fn, str(sf)))
         if merged:
             logger.info("Loading Wan VAE weights from %s (%d tensors)", vae_dir, len(merged))
             return _normalize_vae_state_dict(merged)
@@ -1178,7 +1192,11 @@ def load_wan_vae(ctx: RuntimeContext, bundle_root: Path | str) -> Wan22VAE:
     if cached is not None:
         return cached
 
-    weights = _load_vae_state_dict(root)
+    weights = _load_vae_state_dict(
+        root,
+        array_fn=ctx.array,
+        load_fn=getattr(ctx, "load_weights", None),
+    )
     if "encoder.conv1.weight" not in weights and "encoder.conv_in.weight" in weights:
         weights = _normalize_vae_state_dict(weights)
 
@@ -1192,7 +1210,7 @@ def load_wan_vae(ctx: RuntimeContext, bundle_root: Path | str) -> Wan22VAE:
     )
     _assign_wan_vae_weights(model, weights)
 
-    mean, inv_std = _scale_tensors_from_vae_cfg(vae_cfg, z_dim)
+    mean, inv_std = _scale_tensors_from_vae_cfg(vae_cfg, z_dim, array_fn=ctx.array)
     wrapper = Wan22VAE(model=model, scale_mean=mean, scale_inv_std=inv_std, z_dim=model.z_dim)
     _vae_cache[key] = wrapper
     logger.info("Wan 2.2 VAE loaded from %s (z_dim=%d)", root, model.z_dim)
@@ -1247,7 +1265,7 @@ def decode_wan_vae_latents(
             vae.model, latents_bcthw, scale, on_stage=_stage,
         )
     sample = mx.clip(sample, -1.0, 1.0)
-    mx.eval(sample)
+    ctx.eval(sample)
     _stage(1.0)
     logger.info("Wan VAE decode done: pixel shape=%s", tuple(sample.shape))
     return sample
@@ -1265,6 +1283,6 @@ def encode_wan_vae_image(
     pixels = mx.expand_dims(mx.expand_dims(image_chw, 0), 2)
     logger.info("Wan VAE encode: pixel shape=%s", tuple(pixels.shape))
     latents = vae.model.encode(pixels, (vae.scale_mean, vae.scale_inv_std))
-    mx.eval(latents)
+    ctx.eval(latents)
     logger.info("Wan VAE encode done: latent shape=%s", tuple(latents.shape))
     return latents

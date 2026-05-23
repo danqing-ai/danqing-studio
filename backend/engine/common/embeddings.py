@@ -8,6 +8,129 @@ from __future__ import annotations
 from typing import Any
 
 
+def build_position_ids_2d(ops: Any, batch_size: int, seq_len: int, *, dtype: Any) -> Any:
+    """Build position ids ``[B, S]`` from ``arange(S)``."""
+    pos = ops.arange(int(seq_len), dtype=dtype)[None, :]
+    return ops.broadcast_to(pos, (int(batch_size), int(seq_len)))
+
+
+def build_position_ids_3d_axes(ops: Any, batch_size: int, seq_len: int, *, dtype: Any) -> Any:
+    """Build stacked position ids ``[3, B, S]`` for multimodal rotary paths."""
+    pos2d = build_position_ids_2d(ops, batch_size, seq_len, dtype=dtype)
+    return ops.broadcast_to(ops.expand_dims(pos2d, axis=0), (3, int(batch_size), int(seq_len)))
+
+
+def pad_ragged_2d_sequences(
+    ops: Any,
+    sequences: list[Any],
+    *,
+    target_len: int | None = None,
+    dtype: Any | None = None,
+    pad_value: float = 0.0,
+) -> Any:
+    """Pad list of ``[L, D]`` tensors into ``[B, T, D]``."""
+    if not sequences:
+        raise RuntimeError("pad_ragged_2d_sequences requires non-empty sequences")
+    max_len = max(int(s.shape[0]) for s in sequences)
+    t = int(target_len) if target_len is not None else max_len
+    padded: list[Any] = []
+    for s in sequences:
+        cur = int(s.shape[0])
+        dim = int(s.shape[1])
+        use = s[:t] if cur > t else s
+        if cur < t:
+            pad = ops.full((t - cur, dim), float(pad_value), dtype=s.dtype)
+            use = ops.concat([use, pad], axis=0)
+        padded.append(use)
+    out = ops.stack(padded, axis=0)
+    return out.astype(dtype) if dtype is not None else out
+
+
+def pad_ragged_1d_sequences(
+    ops: Any,
+    sequences: list[Any],
+    *,
+    target_len: int | None = None,
+    dtype: Any | None = None,
+    pad_value: float = 0.0,
+) -> Any:
+    """Pad list of ``[L]`` tensors into ``[B, T]``."""
+    if not sequences:
+        raise RuntimeError("pad_ragged_1d_sequences requires non-empty sequences")
+    max_len = max(int(s.shape[0]) for s in sequences)
+    t = int(target_len) if target_len is not None else max_len
+    padded: list[Any] = []
+    for s in sequences:
+        cur = int(s.shape[0])
+        use = s[:t] if cur > t else s
+        if cur < t:
+            pad = ops.full((t - cur,), float(pad_value), dtype=s.dtype)
+            use = ops.concat([use, pad], axis=0)
+        padded.append(use)
+    out = ops.stack(padded, axis=0)
+    return out.astype(dtype) if dtype is not None else out
+
+
+def pad_len_to_multiple(length: int, multiple: int = 32) -> int:
+    """Return trailing pad length to align ``length`` to ``multiple``."""
+    return (-int(length)) % int(multiple)
+
+
+def build_tail_pad_mask(ops: Any, valid_len: int, pad_len: int, *, dtype: Any | None = None) -> Any:
+    """Build boolean mask with ``False`` valid prefix and ``True`` padded tail."""
+    mask_dtype = dtype if dtype is not None else ops.float32()
+    valid = ops.zeros((int(valid_len),), dtype=mask_dtype) > 0
+    if int(pad_len) <= 0:
+        return valid
+    tail = ops.ones((int(pad_len),), dtype=mask_dtype) > 0
+    return ops.concat([valid, tail], axis=0)
+
+
+def pad_tail_with_last(ops: Any, values: Any, pad_len: int) -> Any:
+    """Pad tail by repeating the last token/value row ``pad_len`` times."""
+    if int(pad_len) <= 0:
+        return values
+    return ops.concat([values, ops.repeat(values[-1:], int(pad_len), axis=0)], axis=0)
+
+
+def apply_pad_token(ops: Any, embeds: Any, pad_mask: Any, pad_token: Any) -> Any:
+    """Apply ``pad_token`` to positions selected by 1D ``pad_mask``."""
+    return ops.where(ops.reshape(pad_mask, (-1, 1)), pad_token, embeds)
+
+
+def apply_complex_rope_bshd(ops: Any, x: Any, cos_vals: Any, sin_vals: Any) -> Any:
+    """Apply complex rotary embedding on ``[B, S, H, D]`` with separate cos/sin."""
+    x_float = x.astype(ops.float32())
+    x_pairs = ops.reshape(x_float, (*x.shape[:-1], -1, 2))
+    x_real = x_pairs[..., 0]
+    x_imag = x_pairs[..., 1]
+    freqs_cos = cos_vals[None, :, None, :]
+    freqs_sin = sin_vals[None, :, None, :]
+    if freqs_cos.shape[-1] != x_real.shape[-1]:
+        freqs_cos = freqs_cos[..., : x_real.shape[-1]]
+        freqs_sin = freqs_sin[..., : x_real.shape[-1]]
+    out_real = x_real * freqs_cos - x_imag * freqs_sin
+    out_imag = x_real * freqs_sin + x_imag * freqs_cos
+    out_pairs = ops.stack([out_real, out_imag], axis=-1)
+    return ops.reshape(out_pairs, (*x.shape[:-1], -1)).astype(x.dtype)
+
+
+def apply_complex_rope_from_cis_bshd(ops: Any, x: Any, freqs_cis: Any) -> Any:
+    """Apply complex rotary embedding on ``[B, S, H, D]`` with ``[..., 2]`` cis table."""
+    b, s, h, d = x.shape
+    half = d // 2
+    x_pairs = ops.reshape(x, (b, s, h, half, 2))
+    freqs = ops.reshape(freqs_cis, (1, s, 1, half, 2))
+    x_real = x_pairs[..., 0]
+    x_imag = x_pairs[..., 1]
+    c_real = freqs[..., 0]
+    c_imag = freqs[..., 1]
+    out_real = x_real * c_real - x_imag * c_imag
+    out_imag = x_real * c_imag + x_imag * c_real
+    out = ops.stack([out_real, out_imag], axis=-1)
+    return ops.reshape(out, (b, s, h, d))
+
+
 class TimestepEmbedding:
     """正弦时间步嵌入 → MLP 投影。
 
@@ -38,6 +161,20 @@ class TimestepEmbedding:
 
     def __call__(self, timesteps):
         return self.forward(timesteps)
+
+
+def sinusoidal_embedding_1d(ctx: Any, dim: int, position: Any, *, base: float = 10000.0) -> Any:
+    """Standard 1D sinusoidal embedding used by diffusion timestep paths."""
+    if dim % 2 != 0:
+        raise ValueError("dim must be even")
+    half = dim // 2
+    pos = position.astype(ctx.float32())
+    freqs = ctx.power(
+        ctx.array(float(base), dtype=ctx.float32()),
+        -ctx.arange(half, dtype=ctx.float32()) / half,
+    )
+    sinusoid = ctx.outer(pos, freqs)
+    return ctx.concat([ctx.cos(sinusoid), ctx.sin(sinusoid)], axis=-1)
 
 
 class RoPE2D:
@@ -130,6 +267,151 @@ class RoPE3D:
 
     def __call__(self, num_frames: int, height: int, width: int) -> tuple[Any, Any]:
         return self.forward(num_frames, height, width)
+
+
+def _factorized_rope_dims(half_d: int) -> tuple[int, int, int]:
+    d_t = half_d - 2 * (half_d // 3)
+    d_h = half_d // 3
+    d_w = half_d // 3
+    return d_t, d_h, d_w
+
+
+def factorized_rope_params(
+    ops: Any,
+    max_seq_len: int,
+    dim: int,
+    *,
+    theta: float = 10000.0,
+) -> Any:
+    """Precompute factorized RoPE frequencies as ``[L, dim//2, 2]``."""
+    if dim % 2 != 0:
+        raise ValueError("rope dim must be even")
+    import numpy as np
+
+    freqs = (
+        np.arange(max_seq_len, dtype=np.float64)[:, None]
+        * (1.0 / np.power(theta, np.arange(0, dim, 2, dtype=np.float64) / dim)[None, :])
+    )
+    return ops.array(np.stack([np.cos(freqs), np.sin(freqs)], axis=-1).astype(np.float32))
+
+
+def factorized_rope_concat_params(
+    ops: Any,
+    max_seq_len: int,
+    dims: list[int],
+    *,
+    theta: float = 10000.0,
+) -> Any:
+    """Concatenate per-axis factorized RoPE params into one ``[L, sum(d//2), 2]`` table."""
+    if not dims:
+        raise RuntimeError("factorized_rope_concat_params requires non-empty dims")
+    parts = [factorized_rope_params(ops, max_seq_len, int(d), theta=theta) for d in dims]
+    return ops.concat(parts, axis=1)
+
+
+def factorized_rope_precompute_cos_sin(
+    ops: Any,
+    grid_sizes: list[tuple[int, int, int]],
+    freqs: Any,
+    *,
+    dtype: Any,
+) -> tuple[Any, Any]:
+    """Precompute ``(cos, sin)`` for a fixed 3D grid (all batch items identical)."""
+    if freqs.dtype != dtype:
+        freqs = freqs.astype(dtype)
+
+    f, h, w = grid_sizes[0]
+    seq_len = int(f * h * w)
+    half_d = int(freqs.shape[1])
+    d_t, d_h, d_w = _factorized_rope_dims(half_d)
+
+    freqs_t = freqs[:, :d_t]
+    freqs_h = freqs[:, d_t : d_t + d_h]
+    freqs_w = freqs[:, d_t + d_h : d_t + d_h + d_w]
+
+    ft = ops.broadcast_to(freqs_t[:f].reshape(f, 1, 1, d_t, 2), (f, h, w, d_t, 2))
+    fh = ops.broadcast_to(freqs_h[:h].reshape(1, h, 1, d_h, 2), (f, h, w, d_h, 2))
+    fw = ops.broadcast_to(freqs_w[:w].reshape(1, 1, w, d_w, 2), (f, h, w, d_w, 2))
+
+    freqs_i = ops.concatenate([ft, fh, fw], axis=3).reshape(seq_len, 1, half_d, 2)
+    return freqs_i[..., 0], freqs_i[..., 1]
+
+
+def factorized_rope_apply(
+    ops: Any,
+    x: Any,
+    grid_sizes: list[tuple[int, int, int]],
+    freqs: Any,
+    *,
+    precomputed_cos_sin: tuple[Any, Any] | None = None,
+) -> Any:
+    """Apply factorized 3-way RoPE on ``[B, L, num_heads, head_dim]``."""
+    b, s, _n, d = x.shape
+    half_d = d // 2
+
+    if precomputed_cos_sin is not None:
+        cos_f, sin_f = precomputed_cos_sin
+        f0, h0, w0 = grid_sizes[0]
+        seq_len = int(f0 * h0 * w0)
+        all_same = all(grid_sizes[i] == grid_sizes[0] for i in range(1, b)) if b > 1 else True
+
+        if all_same:
+            x_seq = x[:, :seq_len].reshape(b, seq_len, -1, half_d, 2)
+            x_real = x_seq[..., 0]
+            x_imag = x_seq[..., 1]
+            out_real = x_real * cos_f - x_imag * sin_f
+            out_imag = x_real * sin_f + x_imag * cos_f
+            x_rotated = ops.stack([out_real, out_imag], axis=-1).reshape(b, seq_len, -1, d)
+            if seq_len < s:
+                x_rotated = ops.concatenate([x_rotated, x[:, seq_len:]], axis=1)
+            return x_rotated
+
+        outputs = []
+        for i in range(b):
+            f, h, w = grid_sizes[i]
+            sl = int(f * h * w)
+            x_i = x[i, :sl].reshape(sl, -1, half_d, 2)
+            x_real = x_i[..., 0]
+            x_imag = x_i[..., 1]
+            out_real = x_real * cos_f - x_imag * sin_f
+            out_imag = x_real * sin_f + x_imag * cos_f
+            x_rotated = ops.stack([out_real, out_imag], axis=-1).reshape(sl, -1, d)
+            if sl < s:
+                x_rotated = ops.concatenate([x_rotated, x[i, sl:]], axis=0)
+            outputs.append(x_rotated)
+        return ops.stack(outputs)
+
+    if freqs.dtype != x.dtype:
+        freqs = freqs.astype(x.dtype)
+
+    d_t, d_h, d_w = _factorized_rope_dims(half_d)
+    freqs_t = freqs[:, :d_t]
+    freqs_h = freqs[:, d_t : d_t + d_h]
+    freqs_w = freqs[:, d_t + d_h : d_t + d_h + d_w]
+
+    outputs = []
+    for i in range(b):
+        f, h, w = grid_sizes[i]
+        seq_len = int(f * h * w)
+        x_i = x[i, :seq_len].reshape(seq_len, -1, half_d, 2)
+
+        ft = ops.broadcast_to(freqs_t[:f].reshape(f, 1, 1, d_t, 2), (f, h, w, d_t, 2))
+        fh = ops.broadcast_to(freqs_h[:h].reshape(1, h, 1, d_h, 2), (f, h, w, d_h, 2))
+        fw = ops.broadcast_to(freqs_w[:w].reshape(1, 1, w, d_w, 2), (f, h, w, d_w, 2))
+        freqs_i = ops.concatenate([ft, fh, fw], axis=3).reshape(seq_len, 1, half_d, 2)
+        cos_f = freqs_i[..., 0]
+        sin_f = freqs_i[..., 1]
+
+        x_real = x_i[..., 0]
+        x_imag = x_i[..., 1]
+        out_real = x_real * cos_f - x_imag * sin_f
+        out_imag = x_real * sin_f + x_imag * cos_f
+        x_rotated = ops.stack([out_real, out_imag], axis=-1).reshape(seq_len, -1, d)
+        if seq_len < s:
+            x_rotated = ops.concatenate([x_rotated, x[i, seq_len:]], axis=0)
+        outputs.append(x_rotated)
+
+    return ops.stack(outputs)
 
 
 class PatchEmbed2D:

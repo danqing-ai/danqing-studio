@@ -11,10 +11,13 @@ def load_prefix_weights_for_mlx(
     prefix: str,
     *,
     strip_prefix: bool = True,
+    array_fn: Any | None = None,
 ) -> List[Tuple[str, Any]]:
     import mlx.core as mx
     from safetensors import safe_open
 
+    if array_fn is None:
+        array_fn = mx.array
     weights: List[Tuple[str, Any]] = []
     with safe_open(safetensors_path, framework="pt", device="cpu") as handle:
         for key in handle.keys():
@@ -22,16 +25,20 @@ def load_prefix_weights_for_mlx(
                 continue
             arr = handle.get_tensor(key).detach().cpu().float().numpy()
             mlx_key = key[len(prefix) :] if strip_prefix else key
-            weights.append((mlx_key, mx.array(arr)))
+            weights.append((mlx_key, array_fn(arr)))
     if not weights:
         raise RuntimeError(f"No weights with prefix {prefix!r} in {safetensors_path}")
     return weights
 
 
-def load_decoder_safetensors_for_mlx(safetensors_path: str) -> List[Tuple[str, Any]]:
+def load_decoder_safetensors_for_mlx(
+    safetensors_path: str, *, array_fn: Any | None = None
+) -> List[Tuple[str, Any]]:
     import mlx.core as mx
     from safetensors import safe_open
 
+    if array_fn is None:
+        array_fn = mx.array
     weights: List[Tuple[str, Any]] = []
     with safe_open(safetensors_path, framework="pt", device="cpu") as handle:
         for key in handle.keys():
@@ -39,5 +46,5 @@ def load_decoder_safetensors_for_mlx(safetensors_path: str) -> List[Tuple[str, A
                 continue
             tensor = handle.get_tensor(key).detach().cpu().float().numpy()
             mlx_key, np_val = _convert_decoder_tensor_for_mlx(key, tensor)
-            weights.append((mlx_key, mx.array(np_val)))
+            weights.append((mlx_key, array_fn(np_val)))
     return weights

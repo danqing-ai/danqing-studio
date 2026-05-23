@@ -8,6 +8,7 @@ import mlx.core as mx
 import numpy as np
 from PIL import Image
 
+from backend.engine.common.mlx_runtime_fallback import seeded_random_normal
 from backend.engine.common.scale_factor import ScaleFactor
 
 
@@ -19,10 +20,12 @@ class SeedVR2LatentCreator:
         width: int,
         batch_size: int = 1,
         latent_channels: int = 16,
+        seeded_randn_fn=None,
     ) -> mx.array:
-        return mx.random.normal(
-            shape=(batch_size, latent_channels, 1, height, width),
-            key=mx.random.key(seed),
+        return seeded_random_normal(
+            seeded_randn_fn,
+            (batch_size, latent_channels, 1, height, width),
+            int(seed),
         )
 
     @staticmethod
@@ -43,7 +46,11 @@ class SeedVR2Util:
         image_path: str | Path,
         resolution: int | ScaleFactor,
         softness: float = 0.0,
+        *,
+        array_fn=None,
     ) -> tuple[mx.array, int, int]:
+        if array_fn is None:
+            array_fn = mx.array
         image = Image.open(image_path).convert("RGB")
         w, h = image.size
 
@@ -75,7 +82,7 @@ class SeedVR2Util:
             padded.paste(resized, (0, 0))
             resized = padded
 
-        img_mx = mx.array(np.array(resized)).astype(mx.float32) / 255.0
+        img_mx = array_fn(np.array(resized)).astype(mx.float32) / 255.0
         img_mx = mx.clip(img_mx, 0.0, 1.0)
         img_mx = img_mx * 2.0 - 1.0
         img_mx = mx.transpose(img_mx, (2, 0, 1))
@@ -87,11 +94,26 @@ class SeedVR2Util:
         content: mx.array,
         style: mx.array,
         luminance_weight: float = 0.8,
+        *,
+        array_fn=None,
     ) -> mx.array:
-        return SeedVR2Util._lab_color_transfer_exact(content, style, luminance_weight=luminance_weight)
+        return SeedVR2Util._lab_color_transfer_exact(
+            content,
+            style,
+            luminance_weight=luminance_weight,
+            array_fn=array_fn,
+        )
 
     @staticmethod
-    def _lab_color_transfer_exact(content: mx.array, style: mx.array, luminance_weight: float = 0.8) -> mx.array:
+    def _lab_color_transfer_exact(
+        content: mx.array,
+        style: mx.array,
+        luminance_weight: float = 0.8,
+        *,
+        array_fn=None,
+    ) -> mx.array:
+        if array_fn is None:
+            array_fn = mx.array
         content_f = content.astype(mx.float32)
         style_f = style.astype(mx.float32)
 
@@ -122,7 +144,7 @@ class SeedVR2Util:
         out_rgb = np.clip(out_rgb, 0.0, 1.0)
 
         out = out_rgb * 2.0 - 1.0
-        out = mx.array(out, dtype=mx.float32)
+        out = array_fn(out, dtype=mx.float32)
         out = mx.transpose(out, (0, 3, 1, 2))
         return out.astype(content.dtype)
 

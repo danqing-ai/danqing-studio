@@ -25,5 +25,4 @@ if _profile in ("cuda", "full") or (
         "backend.engine.families.wan.vae_mlx",
         "backend.engine.families.wan.attention_mlx",
         "backend.engine.families.wan.text_encoder_mlx",
-        "backend.engine.families.wan.rope_mlx",
     ]

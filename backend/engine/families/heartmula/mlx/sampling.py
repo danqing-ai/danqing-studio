@@ -4,6 +4,8 @@ from typing import Optional, Tuple
 
 import mlx.core as mx
 
+from backend.engine.common.mlx_runtime_fallback import random_categorical
+
 
 def sample_topk(
     logits: mx.array,
@@ -40,7 +42,7 @@ def sample_topk(
     probs = mx.softmax(topk_logits, axis=-1)
 
     # Sample from categorical
-    samples = mx.random.categorical(mx.log(probs + 1e-10))
+    samples = random_categorical(None, mx.log(probs + 1e-10))
 
     # Map back to original vocabulary
     # Handle arbitrary batch dimensions
@@ -99,7 +101,7 @@ def sample_topp(
     sorted_probs = sorted_probs / mx.sum(sorted_probs, axis=-1, keepdims=True)
 
     # Sample
-    samples = mx.random.categorical(mx.log(sorted_probs + 1e-10))
+    samples = random_categorical(None, mx.log(sorted_probs + 1e-10))
 
     # Map back to original indices
     original_shape = samples.shape
@@ -163,7 +165,7 @@ def sample_typical(
     sorted_probs = sorted_probs / mx.sum(sorted_probs, axis=-1, keepdims=True)
 
     # Sample
-    samples = mx.random.categorical(mx.log(sorted_probs + 1e-10))
+    samples = random_categorical(None, mx.log(sorted_probs + 1e-10))
 
     # Map back
     original_shape = samples.shape

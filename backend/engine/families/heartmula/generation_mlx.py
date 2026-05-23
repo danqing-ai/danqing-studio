@@ -11,6 +11,7 @@ from typing import Any, Callable, List, Optional
 import mlx.core as mx
 import numpy as np
 
+from backend.engine.common.mlx_runtime_fallback import set_random_seed
 from backend.engine.common.hf_tokenizer_json import HFTokenizerJson
 from backend.engine.families.heartmula.bundle import (
     load_gen_config,
@@ -76,19 +77,27 @@ class HeartMulaMlxGenerator:
         mula_cfg = HeartMuLaConfig.from_pretrained(paths.mula_torch)
         self._mula = HeartMuLa(mula_cfg)
         load_mlx_weights_into_module(
-            self._mula, mlx_weights_path(paths.mula_torch), dtype=lm_dtype
+            self._mula,
+            mlx_weights_path(paths.mula_torch),
+            dtype=lm_dtype,
+            eval_fn=self._ctx.eval,
+            array_fn=self._ctx.array,
         )
 
         codec_cfg = HeartCodecConfig.from_pretrained(paths.codec_torch)
         self._codec = HeartCodec(codec_cfg)
         load_mlx_weights_into_module(
-            self._codec, mlx_weights_path(paths.codec_torch), dtype=codec_dtype
+            self._codec,
+            mlx_weights_path(paths.codec_torch),
+            dtype=codec_dtype,
+            eval_fn=self._ctx.eval,
+            array_fn=self._ctx.array,
         )
 
         self._tokenizer = HFTokenizerJson.from_directory(paths.root)
         self._gen_cfg = load_gen_config(paths.gen_config)
         self._mula_paths = paths
-        mx.eval(self._mula.parameters(), self._codec.parameters())
+        self._ctx.eval(self._mula.parameters(), self._codec.parameters())
         logger.info("HeartMuLa MLX ready")
 
     def _cfg(self) -> dict:
@@ -105,8 +114,13 @@ class HeartMulaMlxGenerator:
         paths = self._mula_paths
         mula_cfg = HeartMuLaConfig.from_pretrained(paths.mula_torch)
         self._mula = HeartMuLa(mula_cfg)
-        load_mlx_weights_into_module(self._mula, mlx_weights_path(paths.mula_torch), dtype=dtype)
-        mx.eval(self._mula.parameters())
+        load_mlx_weights_into_module(
+            self._mula,
+            mlx_weights_path(paths.mula_torch),
+            dtype=dtype,
+            eval_fn=self._ctx.eval,
+            array_fn=self._ctx.array,
+        )
         logger.info("HeartMuLa LM re-loaded after codec phase")
         return self._mula
 
@@ -115,7 +129,7 @@ class HeartMulaMlxGenerator:
             return
         self._mula.reset_caches()
         self._mula = None
-        mx.clear_cache()
+        self._ctx.clear_cache()
         gc.collect()
 
     def _encode_tags(self, tags_s: str, text_bos: int, text_eos: int) -> List[int]:
@@ -150,7 +164,7 @@ class HeartMulaMlxGenerator:
             raise RuntimeError("HeartMuLa MLX generator not loaded")
         mula = self._ensure_mula_loaded()
         _apply_mlx_memory_budget()
-        mx.random.seed(seed)
+        set_random_seed(None, seed)
 
         cfg = self._cfg()
         text_bos = int(cfg.get("text_bos_id", 128000))
@@ -191,10 +205,10 @@ class HeartMulaMlxGenerator:
 
         bs = 2 if cfg_scale != 1.0 else 1
 
-        tokens = mx.array(prompt_tokens)[None, ...]
+        tokens = self._ctx.array(prompt_tokens)[None, ...]
         if cfg_scale != 1.0:
             tokens = mx.concatenate([tokens, tokens], axis=0)
-        tokens_mask = mx.array(prompt_mask)[None, ...]
+        tokens_mask = self._ctx.array(prompt_mask)[None, ...]
         if cfg_scale != 1.0:
             tokens_mask = mx.concatenate([tokens_mask, tokens_mask], axis=0)
 
@@ -241,7 +255,7 @@ class HeartMulaMlxGenerator:
             continuous_segments=muq_embed,
             starts=[muq_idx] * bs,
         )
-        mx.eval(curr)
+        self._ctx.eval(curr)
         codes_buf[0] = curr[0]
         n_frames = 1
         _report_progress(1, force=True)
@@ -253,7 +267,7 @@ class HeartMulaMlxGenerator:
             t_frame = time.monotonic()
             padded_buf[:, 0, :num_codebooks] = curr
             padded_buf[:, 0, -1] = empty_id
-            next_pos = mx.array([[base_pos + i + 1]] * bs, dtype=mx.int32)
+            next_pos = self._ctx.array([[base_pos + i + 1]] * bs, dtype=mx.int32)
             curr = mula.generate_frame(
                 tokens=padded_buf,
                 tokens_mask=pad_mask_buf,
@@ -265,7 +279,7 @@ class HeartMulaMlxGenerator:
                 starts=None,
             )
             if (i + 1) % LM_EVAL_INTERVAL == 0:
-                mx.eval(curr)
+                self._ctx.eval(curr)
             frame_s = time.monotonic() - t_frame
             if frame_s >= 8.0 or (i + 1) % 10 == 0:
                 logger.info(
@@ -308,7 +322,7 @@ class HeartMulaMlxGenerator:
                 valid_len,
                 n_frames,
             )
-        codes_batch = mx.array(codes_np[:valid_len][None, :, :], dtype=mx.int32)
+        codes_batch = self._ctx.array(codes_np[:valid_len][None, :, :], dtype=mx.int32)
 
         self._unload_mula()
 
@@ -318,7 +332,7 @@ class HeartMulaMlxGenerator:
             num_steps=codec_steps,
             guidance_scale=codec_guidance,
         )
-        mx.eval(audio)
+        self._ctx.eval(audio)
 
         wf = np.array(audio.astype(mx.float32)).flatten()
         peak = float(np.abs(wf).max())

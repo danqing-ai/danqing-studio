@@ -5,6 +5,12 @@ from pathlib import Path
 from typing import Any
 import mlx.core as mx
 import mlx.nn as nn
+from backend.engine.common.attention import (
+    build_causal_with_padding_bias,
+    scaled_dot_product_attention_bhsd_mx,
+)
+from backend.engine.common.norm import apply_rms_norm
+from backend.engine.common.mlx_runtime_fallback import load_weights_dict
 from backend.engine.families.z_image.text_encoder_mlx import (
     _ZImageEncoderMLP,
     _ZImageEncoderRotaryEmbedding,
@@ -21,12 +27,7 @@ class Float32RMSNorm(nn.Module):
         self.weight = mx.ones((hidden_size,))
         self.eps = eps
     def __call__(self, hidden_states):
-        import mlx.core as mx
-        input_dtype = hidden_states.dtype
-        hidden_states = hidden_states.astype(mx.float32)
-        variance = mx.mean(mx.square(hidden_states), axis=-1, keepdims=True)
-        hidden_states = hidden_states * mx.rsqrt(variance + self.eps)
-        return (self.weight.astype(mx.float32) * hidden_states).astype(input_dtype)
+        return apply_rms_norm(hidden_states, self.weight, self.eps)
 
 
 class _Flux2Attention(nn.Module):
@@ -47,8 +48,6 @@ class _Flux2Attention(nn.Module):
         self.k_norm = Float32RMSNorm(head_dim, eps=rms_norm_eps)
 
     def __call__(self, hidden_states, attention_mask, position_embeddings, past_key_value):
-        import mlx.core as mx
-        from mlx.core.fast import scaled_dot_product_attention
         B, S, _ = hidden_states.shape
         q = self.q_proj(hidden_states).reshape(B, S, self.num_heads, self.head_dim)
         k = self.k_proj(hidden_states).reshape(B, S, self.num_kv_heads, self.head_dim)
@@ -68,8 +67,15 @@ class _Flux2Attention(nn.Module):
             k = mx.repeat(k, self.num_kv_groups, axis=1)
             v = mx.repeat(v, self.num_kv_groups, axis=1)
         q_f32, k_f32, v_f32 = q.astype(mx.float32), k.astype(mx.float32), v.astype(mx.float32)
-        out = scaled_dot_product_attention(q_f32, k_f32, v_f32, scale=self.scale, mask=attention_mask)
-        out = out.astype(q.dtype)
+        out = scaled_dot_product_attention_bhsd_mx(
+            mx,
+            q_f32,
+            k_f32,
+            v_f32,
+            scale=self.scale,
+            mask=attention_mask,
+            out_dtype=q.dtype,
+        )
         out = mx.transpose(out, axes=(0, 2, 1, 3)).reshape(B, S, self.num_heads * self.head_dim)
         return self.o_proj(out), None
 
@@ -77,7 +83,6 @@ class _Flux2Attention(nn.Module):
 def _rotate_half_f2(x):
     x1 = x[..., :x.shape[-1] // 2]
     x2 = x[..., x.shape[-1] // 2:]
-    import mlx.core as mx
     return mx.concatenate([-x2, x1], axis=-1)
 
 
@@ -155,13 +160,11 @@ class Flux2TextEncoder:
                           truncation=True, return_tensors="np")
         input_ids = tokens["input_ids"]
         attention_mask = tokens["attention_mask"]
-        import mlx.core as mx
-        input_ids = mx.array(input_ids, dtype=mx.int32)
-        attention_mask = mx.array(attention_mask, dtype=mx.float32)
+        input_ids = self.ctx.array(input_ids, dtype=mx.int32)
+        attention_mask = self.ctx.array(attention_mask, dtype=mx.float32)
         return self._forward(input_ids, attention_mask)
 
     def _forward(self, input_ids, attention_mask):
-        import mlx.core as mx
         if self._model is None:
             self._model = self._build_model()
         B, S = input_ids.shape
@@ -171,12 +174,15 @@ class Flux2TextEncoder:
 
         # j > i causal mask + padding mask
         mask_dtype = hidden.dtype
-        pad = mx.where(attention_mask == 1,
-                      mx.zeros(attention_mask.shape, dtype=mask_dtype),
-                      mx.full(attention_mask.shape, -float("inf"), dtype=mask_dtype))
-        pad = mx.expand_dims(mx.expand_dims(pad, axis=1), axis=1)
-        causal = _flux2_causal_mask(S, mask_dtype, B)
-        attn_mask = causal + pad
+        attn_mask = build_causal_with_padding_bias(
+            mx,
+            attention_mask,
+            S,
+            mask_dtype,
+            valid_value=1,
+            neg_value=float("-inf"),
+            batch_size=B,
+        )
 
         all_hidden = [hidden]
         for layer in self._model.layers:
@@ -191,15 +197,15 @@ class Flux2TextEncoder:
         return result.astype(mx.bfloat16)
 
     def _build_model(self):
-        import mlx.core as mx
-        from pathlib import Path
-        import json
         d = Path(self.model_path)
         w = {}
-        for sf in sorted(d.glob("*.safetensors")): w.update(dict(mx.load(str(sf))))
+        load_fn = getattr(self.ctx, "load_weights", None)
+        for sf in sorted(d.glob("*.safetensors")):
+            w.update(load_weights_dict(load_fn, str(sf)))
         cfg = {}
         if (d / "config.json").exists():
-            with open(d / "config.json") as f: cfg = json.load(f)
+            with open(d / "config.json", encoding="utf-8") as f:
+                cfg = json_load(f)
         model = _Flux2EncoderModel(
             vocab_size=cfg.get("vocab_size", 151936),
             hidden_size=cfg.get("hidden_size", 4096),
@@ -213,17 +219,6 @@ class Flux2TextEncoder:
         )
         rw = {k[6:] if k.startswith("model.") else k: v for k, v in w.items()}
         model.load_weights(list(rw.items()), strict=False)
-        mx.eval(model.parameters())
+        self.ctx.eval(model.parameters())
         return model
 
-
-def _flux2_causal_mask(seq_len: int, dtype, batch_size: int):
-    import mlx.core as mx
-    idx = mx.arange(seq_len, dtype=mx.int32)
-    j = mx.expand_dims(idx, axis=0)
-    i = mx.expand_dims(idx, axis=1)
-    zeros = mx.zeros((seq_len, seq_len), dtype=dtype)
-    neginf = mx.full((seq_len, seq_len), -float("inf"), dtype=dtype)
-    causal = mx.where(j > i, neginf, zeros)
-    causal = mx.expand_dims(mx.expand_dims(causal, axis=0), axis=0)
-    return mx.broadcast_to(causal, (batch_size, 1, seq_len, seq_len))

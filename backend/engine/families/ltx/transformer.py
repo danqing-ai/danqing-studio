@@ -19,8 +19,9 @@ from __future__ import annotations
 from typing import Any
 
 from backend.engine.common._base import TransformerBase
-from backend.engine.common.attention import _apply_rope
+from backend.engine.common.attention import _apply_rope, attention_bhsd_to_blhd
 from backend.engine.common.embeddings import PatchEmbed3D, RoPE3D
+from backend.engine.common.norm import apply_rms_norm, apply_scale_shift, unpack_modulation_6table
 from backend.engine.config.model_configs import LTXConfig
 from backend.engine.runtime._base import RuntimeContext
 
@@ -78,8 +79,7 @@ class _LTXAttention:
             q = _apply_rope(ctx, q, rope_cos, rope_sin)
             k = _apply_rope(ctx, k, rope_cos, rope_sin)
 
-        attn_out = ctx.attention(q, k, v, scale=self.scale)
-        attn_out = ctx.permute(attn_out, (0, 2, 1, 3))
+        attn_out = attention_bhsd_to_blhd(ctx, q, k, v, scale=self.scale)
         attn_out = ctx.reshape(attn_out, (B, N, C))
         return self.to_out(attn_out)
 
@@ -117,16 +117,13 @@ class LTXBlock:
         """block_cond: [B, 6, dim]"""
         ctx = self.ctx
 
-        shift_msa = block_cond[:, 0, :]
-        scale_msa = block_cond[:, 1, :]
-        gate_msa = block_cond[:, 2, :]
-        shift_mlp = block_cond[:, 3, :]
-        scale_mlp = block_cond[:, 4, :]
-        gate_mlp = block_cond[:, 5, :]
+        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = unpack_modulation_6table(
+            block_cond
+        )
 
         # self-attention (modulated)
         x_norm = _rms_norm(x, ctx, 1e-6)
-        x_mod = x_norm * (1.0 + scale_msa[:, None, :]) + shift_msa[:, None, :]
+        x_mod = apply_scale_shift(x_norm, scale_msa[:, None, :], shift_msa[:, None, :], add_one=True)
         x = x + gate_msa[:, None, :] * self.self_attn(x_mod, rope_cos=rope_cos, rope_sin=rope_sin)
 
         # cross-attention (unmodulated)
@@ -136,7 +133,7 @@ class LTXBlock:
 
         # feed-forward (modulated)
         x_norm = _rms_norm(x, ctx, 1e-6)
-        x_mod = x_norm * (1.0 + scale_mlp[:, None, :]) + shift_mlp[:, None, :]
+        x_mod = apply_scale_shift(x_norm, scale_mlp[:, None, :], shift_mlp[:, None, :], add_one=True)
         x_ff = self.mlp_in(x_mod)
         x_ff = ctx.gelu(x_ff)
         x_ff = self.mlp_out(x_ff)
@@ -296,7 +293,7 @@ class LTXTransformer(TransformerBase):
         out_cond = t_emb[:, None, :] + self.output_modulation[None, :, :]  # [B, 2, dim]
         final_shift = out_cond[:, 0, :]
         final_scale = out_cond[:, 1, :]
-        x = x_norm * (1.0 + final_scale[:, None, :]) + final_shift[:, None, :]
+        x = apply_scale_shift(x_norm, final_scale[:, None, :], final_shift[:, None, :], add_one=True)
 
         # 8. Output projection → reshape to latent
         x = self.proj_out(x)  # [B, T*H*W, dim_out]
@@ -321,5 +318,5 @@ class LTXTransformer(TransformerBase):
 
 def _rms_norm(x, ctx, eps: float = 1e-6):
     """RMS normalization without learned affine weight."""
-    rms = ctx.sqrt(ctx.mean(x * x, axis=-1, keepdims=True) + float(eps))
-    return x / rms
+    weight = ctx.ones((int(x.shape[-1]),), dtype=x.dtype)
+    return apply_rms_norm(x, weight, eps)

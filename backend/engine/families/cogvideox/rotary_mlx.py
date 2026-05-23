@@ -32,12 +32,16 @@ def get_resize_crop_region_for_grid(
     return (crop_top, crop_left), (crop_top + resize_height, crop_left + resize_width)
 
 
-def _get_1d_rotary_pos_embed_mx(dim: int, pos: mx.array, theta: float = 10000.0) -> tuple[mx.array, mx.array]:
+def _get_1d_rotary_pos_embed_mx(
+    dim: int, pos: mx.array, theta: float = 10000.0, *, array_fn: Any | None = None
+) -> tuple[mx.array, mx.array]:
     """``use_real=True``, ``repeat_interleave_real=True`` branch of diffusers ``get_1d_rotary_pos_embed``."""
+    if array_fn is None:
+        array_fn = mx.array
     if dim % 2 != 0:
         raise ValueError(f"RoPE dim must be even, got {dim}")
     idx = mx.arange(0, dim, 2, dtype=mx.float32)
-    inv = mx.power(mx.array(theta, dtype=mx.float32), -idx / float(dim))
+    inv = mx.power(array_fn(theta, dtype=mx.float32), -idx / float(dim))
     p = pos.astype(mx.float32).reshape(-1)
     freqs = p[:, None] * inv[None, :]
     c = mx.cos(freqs)
@@ -53,6 +57,8 @@ def _get_3d_rotary_pos_embed_linspace_mx(
     grid_size: tuple[int, int],
     temporal_size: int,
     theta: int = 10000,
+    *,
+    array_fn: Any | None = None,
 ) -> tuple[mx.array, mx.array]:
     """CogVideoX 1.0 path: ``grid_type == \"linspace\"`` (``patch_size_t is None``)."""
     start, stop = crops_coords
@@ -90,9 +96,9 @@ def _get_3d_rotary_pos_embed_linspace_mx(
             f"CogVideoX RoPE: embed_dim {embed_dim} cannot be split as diffusers (t+h+w)."
         )
 
-    t_cos, t_sin = _get_1d_rotary_pos_embed_mx(dim_t, grid_t, float(theta))
-    h_cos, h_sin = _get_1d_rotary_pos_embed_mx(dim_h, grid_h, float(theta))
-    w_cos, w_sin = _get_1d_rotary_pos_embed_mx(dim_w, grid_w, float(theta))
+    t_cos, t_sin = _get_1d_rotary_pos_embed_mx(dim_t, grid_t, float(theta), array_fn=array_fn)
+    h_cos, h_sin = _get_1d_rotary_pos_embed_mx(dim_h, grid_h, float(theta), array_fn=array_fn)
+    w_cos, w_sin = _get_1d_rotary_pos_embed_mx(dim_w, grid_w, float(theta), array_fn=array_fn)
 
     tc = mx.reshape(t_cos, (ts, 1, 1, dim_t))
     tsin = mx.reshape(t_sin, (ts, 1, 1, dim_t))
@@ -158,6 +164,7 @@ def prepare_cogvideox_image_rotary_emb(
         grid_size=(grid_h, grid_w),
         temporal_size=int(latent_num_frames),
         theta=10000,
+        array_fn=ctx.array,
     )
     if int(cos.shape[-1]) != embed_dim:
         raise RuntimeError(f"CogVideoX RoPE: expected last dim {embed_dim}, got {cos.shape}")

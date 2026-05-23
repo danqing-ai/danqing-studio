@@ -11,6 +11,14 @@ from typing import Any
 import mlx.core as mx
 import mlx.nn as nn
 
+from backend.engine.common.attention import (
+    apply_binary_mask_bias,
+    build_padding_attention_bias,
+    scaled_dot_product_attention_bhsd_mx,
+)
+from backend.engine.common.embeddings import pad_ragged_2d_sequences
+from backend.engine.common.norm import apply_rms_norm
+
 logger = logging.getLogger(__name__)
 
 
@@ -31,10 +39,7 @@ class _T5LayerNorm(nn.Module):
         self.eps = eps
 
     def __call__(self, x: mx.array) -> mx.array:
-        x = x * mx.rsqrt(x.astype(mx.float32).square().mean(axis=-1, keepdims=True) + self.eps)
-        if self.weight.dtype in (mx.float16, mx.bfloat16):
-            x = x.astype(self.weight.dtype)
-        return self.weight * x
+        return apply_rms_norm(x, self.weight, self.eps)
 
 
 class _T5Attention(nn.Module):
@@ -72,9 +77,31 @@ class _T5Attention(nn.Module):
             if pos_bias is not None:
                 attn_mask = attn_mask + pos_bias.astype(mx.float32)
             if mask is not None:
-                m = mask.reshape(b, 1, 1, -1) if mask.ndim == 2 else mx.expand_dims(mask, 1)
-                attn_mask = mx.where(m == 0, mx.finfo(mx.float32).min, attn_mask)
-        out = mx.fast.scaled_dot_product_attention(q, k, v, scale=scale, mask=attn_mask)
+                if mask.ndim == 2:
+                    attn_mask = attn_mask + build_padding_attention_bias(
+                        mx,
+                        mask,
+                        lk,
+                        mx.float32,
+                        valid_value=1,
+                        neg_value=float(mx.finfo(mx.float32).min),
+                    )
+                else:
+                    attn_mask = apply_binary_mask_bias(
+                        mx,
+                        attn_mask,
+                        mask,
+                        valid_value=1,
+                        neg_value=float(mx.finfo(mx.float32).min),
+                    )
+        out = scaled_dot_product_attention_bhsd_mx(
+            mx,
+            q,
+            k,
+            v,
+            scale=scale,
+            mask=attn_mask,
+        )
         out = mx.transpose(out, (0, 2, 1, 3)).reshape(b, lq, n * c)
         return self.dropout(self.o(out))
 
@@ -186,17 +213,21 @@ class _UMT5Encoder(nn.Module):
         return self.dropout(self.norm(x))
 
 
-def _load_umt5_state_dict(checkpoint_path: Path) -> dict[str, mx.array]:
+def _load_umt5_state_dict(
+    checkpoint_path: Path, *, array_fn: Any | None = None
+) -> dict[str, mx.array]:
     import torch
 
     logger.info("Loading Wan UMT5 weights from %s", checkpoint_path)
+    if array_fn is None:
+        array_fn = mx.array
     sd = torch.load(str(checkpoint_path), map_location="cpu", weights_only=True)
     out: dict[str, mx.array] = {}
     for k, v in sd.items():
         arr = v.detach().cpu()
         if arr.dtype == torch.bfloat16:
             arr = arr.float()
-        out[k] = mx.array(arr.numpy())
+        out[k] = array_fn(arr.numpy())
     return out
 
 
@@ -271,9 +302,11 @@ class WanUMT5EncoderMLX:
     def _ensure_model(self) -> _UMT5Encoder:
         if self._model is None:
             model = _UMT5Encoder()
-            weights = _load_umt5_state_dict(self._checkpoint_path)
+            weights = _load_umt5_state_dict(
+                self._checkpoint_path, array_fn=self.ctx.array
+            )
             _apply_umt5_weights(model, weights)
-            mx.eval(model.parameters())
+            self.ctx.eval(model.parameters())
             logger.info(
                 "Wan UMT5-XXL loaded (%d tensors from %s)",
                 len(weights),
@@ -295,36 +328,62 @@ class WanUMT5EncoderMLX:
             truncation=True,
             return_tensors="np",
         )
-        ids = mx.array(tokens["input_ids"], dtype=mx.int32)
-        mask = mx.array(tokens["attention_mask"], dtype=mx.float32)
+        ids = self.ctx.array(tokens["input_ids"], dtype=mx.int32)
+        mask = self.ctx.array(tokens["attention_mask"], dtype=mx.float32)
         hidden = self._ensure_model()(ids, mask=mask)
         self.ctx.eval(hidden)
         # Match official Wan: truncate to real token length, zero-pad tail for DiT.
-        import numpy as np
-
-        seq_lens = [int(v) for v in np.asarray(mask.sum(axis=1)).tolist()]
-        out = mx.zeros((len(texts), self.text_len, int(hidden.shape[-1])), dtype=mx.float32)
-        for i, seq_len in enumerate(seq_lens):
-            n = min(seq_len, self.text_len)
-            if n > 0:
-                out[i, :n] = hidden[i, :n].astype(mx.float32)
-        return out
+        seq_lens = [int(v) for v in mask.sum(axis=1).tolist()]
+        trimmed = [
+            hidden[i, : min(seq_len, self.text_len)].astype(mx.float32)
+            for i, seq_len in enumerate(seq_lens)
+        ]
+        return pad_ragged_2d_sequences(
+            self.ctx,
+            trimmed,
+            target_len=self.text_len,
+            dtype=mx.float32,
+            pad_value=0.0,
+        )
 
     def release_weights(self) -> None:
         self._model = None
-        mx.clear_cache()
+        self.ctx.clear_cache()
 
 
 def resolve_wan_umt5_pth(bundle_root: Path) -> tuple[Path, Path] | None:
     """Return ``(checkpoint.pth, tokenizer_dir)`` for original Wan bundles."""
+    root = Path(bundle_root)
+    if not root.is_absolute():
+        from backend.utils.config_paths import resolve_default_config_root
+        from backend.utils.workspace import resolve_workspace_root
+
+        repo_root = Path(__file__).resolve().parents[4]
+        default_cfg = resolve_default_config_root(bootstrap_root=repo_root, bundle_root=None)
+        workspace_root = resolve_workspace_root(repo_root, default_config_root=default_cfg)
+        root = (workspace_root / root).resolve()
+    if not root.is_dir():
+        return None
+
+    def _looks_like_tokenizer_dir(path: Path) -> bool:
+        if not path.is_dir():
+            return False
+        marker_files = (
+            "tokenizer_config.json",
+            "tokenizer.json",
+            "spiece.model",
+        )
+        return any((path / m).is_file() for m in marker_files)
+
     tok_candidates = [
-        bundle_root / "google/umt5-xxl",
-        bundle_root / "umt5-xxl",
+        root / "google" / "umt5-xxl",
+        root / "umt5-xxl",
+        root / "tokenizer",
     ]
-    tok_dir = next((p for p in tok_candidates if p.is_dir() and any(p.iterdir())), None)
+    tok_dir = next((p for p in tok_candidates if _looks_like_tokenizer_dir(p)), None)
     if tok_dir is None:
         return None
-    pth_candidates = sorted(bundle_root.glob("models_t5*.pth"))
+    pth_candidates = sorted(root.glob("models_t5*.pth"))
     pth = next((p for p in pth_candidates if p.is_file()), None)
     if pth is None:
         return None

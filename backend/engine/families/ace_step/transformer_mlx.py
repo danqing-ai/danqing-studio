@@ -21,6 +21,12 @@ import mlx.core as mx
 import mlx.nn as nn
 
 from backend.engine.common._base import TransformerBase
+from backend.engine.common.attention import (
+    build_window_with_padding_bias,
+    repeat_kv_heads_mx,
+    scaled_dot_product_attention_bhsd_mx,
+)
+from backend.engine.common.norm import apply_scale_shift, unpack_modulation_6table
 
 logger = logging.getLogger(__name__)
 
@@ -41,17 +47,6 @@ def _apply_rotary_pos_emb(
     q_embed = (q * cos) + (_rotate_half(q) * sin)
     k_embed = (k * cos) + (_rotate_half(k) * sin)
     return q_embed, k_embed
-
-
-def _create_sliding_window_mask(
-    seq_len: int, window_size: int, dtype: mx.Dtype = mx.float32,
-) -> mx.array:
-    indices = mx.arange(seq_len)
-    diff = mx.abs(indices[:, None] - indices[None, :])
-    zeros = mx.zeros(diff.shape, dtype=dtype)
-    neginf = mx.full(diff.shape, -1e9, dtype=dtype)
-    mask = mx.where(diff <= window_size, zeros, neginf)
-    return mask[None, None, :, :]
 
 
 # ---------------------------------------------------------------------------
@@ -159,15 +154,6 @@ class _Attention(nn.Module):
         self.q_norm = nn.RMSNorm(head_dim, eps=rms_norm_eps)
         self.k_norm = nn.RMSNorm(head_dim, eps=rms_norm_eps)
 
-    @staticmethod
-    def _repeat_kv(x: mx.array, n_rep: int) -> mx.array:
-        if n_rep == 1:
-            return x
-        B, n_kv, L, D = x.shape
-        x = mx.expand_dims(x, axis=2)
-        x = mx.broadcast_to(x, (B, n_kv, n_rep, L, D))
-        return x.reshape(B, n_kv * n_rep, L, D)
-
     def __call__(
         self,
         hidden_states: mx.array,
@@ -208,11 +194,16 @@ class _Attention(nn.Module):
                 cos, sin = position_cos_sin
                 q, k = _apply_rotary_pos_emb(q, k, cos, sin)
 
-        k = self._repeat_kv(k, self.n_rep)
-        v = self._repeat_kv(v, self.n_rep)
+        k = repeat_kv_heads_mx(mx, k, self.n_rep)
+        v = repeat_kv_heads_mx(mx, v, self.n_rep)
 
-        attn_out = mx.fast.scaled_dot_product_attention(
-            q, k, v, scale=self.scale, mask=attention_mask,
+        attn_out = scaled_dot_product_attention_bhsd_mx(
+            mx,
+            q,
+            k,
+            v,
+            scale=self.scale,
+            mask=attention_mask,
         )
         attn_out = attn_out.transpose(0, 2, 1, 3).reshape(B, L, -1)
         return self.o_proj(attn_out)
@@ -284,13 +275,13 @@ class _DiTLayer(nn.Module):
         use_cache: bool = False,
     ) -> mx.array:
         modulation = self.scale_shift_table + temb
-        parts = mx.split(modulation, 6, axis=1)
-        shift_msa, scale_msa, gate_msa = parts[0], parts[1], parts[2]
-        c_shift_msa, c_scale_msa, c_gate_msa = parts[3], parts[4], parts[5]
+        shift_msa, scale_msa, gate_msa, c_shift_msa, c_scale_msa, c_gate_msa = (
+            unpack_modulation_6table(modulation)
+        )
 
         # 1) Self-attention
         normed = self.self_attn_norm(hidden_states)
-        normed = normed * (1.0 + scale_msa) + shift_msa
+        normed = apply_scale_shift(normed, scale_msa, shift_msa, add_one=True)
         attn_out = self.self_attn(
             normed,
             position_cos_sin=position_cos_sin,
@@ -311,7 +302,7 @@ class _DiTLayer(nn.Module):
 
         # 3) MLP
         normed = self.mlp_norm(hidden_states)
-        normed = normed * (1.0 + c_scale_msa) + c_shift_msa
+        normed = apply_scale_shift(normed, c_scale_msa, c_shift_msa, add_one=True)
         ff_out = self.mlp(normed)
         hidden_states = hidden_states + ff_out * c_gate_msa
 
@@ -446,16 +437,22 @@ class AceStepDiTMLX(nn.Module):
 
         self.scale_shift_table = mx.zeros((1, 2, hidden_size))
 
-        self._sliding_masks: Dict[int, mx.array] = {}
+        self._sliding_masks: Dict[tuple[int, str], mx.array] = {}
         self._sliding_window = sliding_window
         self._layer_types = layer_types
 
     def _get_sliding_mask(self, seq_len: int, dtype: mx.Dtype) -> mx.array:
-        if seq_len not in self._sliding_masks:
-            self._sliding_masks[seq_len] = _create_sliding_window_mask(
-                seq_len, self._sliding_window, dtype,
+        key = (int(seq_len), str(dtype))
+        if key not in self._sliding_masks:
+            self._sliding_masks[key] = build_window_with_padding_bias(
+                mx,
+                seq_len,
+                dtype,
+                attention_mask=None,
+                sliding_window=self._sliding_window,
+                neg_value=-1e9,
             )
-        return self._sliding_masks[seq_len]
+        return self._sliding_masks[key]
 
     def __call__(
         self,
@@ -511,7 +508,7 @@ class AceStepDiTMLX(nn.Module):
         shift, scale = mx.split(
             self.scale_shift_table + mx.expand_dims(temb, axis=1), 2, axis=1,
         )
-        hidden_states = self.norm_out(hidden_states) * (1.0 + scale) + shift
+        hidden_states = apply_scale_shift(self.norm_out(hidden_states), scale, shift, add_one=True)
 
         hidden_states = self.proj_out(hidden_states)
         hidden_states = hidden_states[:, :original_seq_len, :]

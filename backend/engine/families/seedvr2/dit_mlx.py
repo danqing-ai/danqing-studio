@@ -13,12 +13,14 @@ import mlx.core as mx
 from mlx import nn
 
 from backend.engine.common._base import TransformerBase
+from backend.engine.common.attention import scaled_dot_product_attention_bhsd_mx
+from backend.engine.common.norm import apply_rms_norm
 
 
 # ----- rms_norm.py -----
 
 
-class RMSNorm(nn.Module):
+class SeedVR2RMSNorm(nn.Module):
     def __init__(
         self,
         dim: int,
@@ -30,7 +32,7 @@ class RMSNorm(nn.Module):
         self.weight = mx.ones((dim,))
 
     def __call__(self, x: mx.array) -> mx.array:
-        return mx.fast.rms_norm(x, self.weight, self.eps)
+        return apply_rms_norm(x, self.weight, self.eps)
 
 
 # ----- swiglu_mlp.py -----
@@ -392,7 +394,13 @@ class WindowPartitioner:
     @staticmethod
     def _flatten_list(tensors: list[mx.array]) -> tuple[mx.array, mx.array]:
         assert len(tensors) > 0
-        shapes = mx.array([x.shape[:-1] for x in tensors], dtype=mx.int32)
+        shape_rows = []
+        for x in tensors:
+            t = mx.full((1, 1), int(x.shape[0]), dtype=mx.int32)
+            h = mx.full((1, 1), int(x.shape[1]), dtype=mx.int32)
+            w = mx.full((1, 1), int(x.shape[2]), dtype=mx.int32)
+            shape_rows.append(mx.concatenate([t, h, w], axis=1))
+        shapes = mx.concatenate(shape_rows, axis=0)
         result = mx.concatenate([x.reshape(-1, x.shape[-1]) for x in tensors], axis=0)
         return result, shapes
 
@@ -402,7 +410,11 @@ class WindowPartitioner:
         shapes: mx.array,
     ) -> list[mx.array]:
         lengths = mx.prod(shapes, axis=1).tolist()
-        indices = mx.cumsum(mx.array(lengths[:-1])).tolist()
+        indices: list[int] = []
+        running = 0
+        for length in lengths[:-1]:
+            running += int(length)
+            indices.append(running)
         pieces = mx.split(tensor, indices)
         return [p.reshape(*s.tolist(), -1) for p, s in zip(pieces, shapes)]
 
@@ -538,7 +550,10 @@ class PatchIn(nn.Module):
 
         vid = self.proj(vid)
         vid = vid.reshape(B, -1, vid.shape[-1])
-        vid_shape = mx.broadcast_to(mx.array([T_patches, H_patches, W_patches], dtype=mx.int32), (B, 3))
+        t_col = mx.full((B, 1), T_patches, dtype=mx.int32)
+        h_col = mx.full((B, 1), H_patches, dtype=mx.int32)
+        w_col = mx.full((B, 1), W_patches, dtype=mx.int32)
+        vid_shape = mx.concatenate([t_col, h_col, w_col], axis=1)
 
         return vid, vid_shape
 
@@ -605,8 +620,8 @@ class MMAttention(nn.Module):
 
         self.proj_qkv_vid = nn.Linear(vid_dim, 3 * inner_dim, bias=qk_bias)
         self.proj_out_vid = nn.Linear(inner_dim, vid_dim, bias=True)
-        self.norm_q_vid = RMSNorm(head_dim, eps=qk_norm_eps)
-        self.norm_k_vid = RMSNorm(head_dim, eps=qk_norm_eps)
+        self.norm_q_vid = SeedVR2RMSNorm(head_dim, eps=qk_norm_eps)
+        self.norm_k_vid = SeedVR2RMSNorm(head_dim, eps=qk_norm_eps)
 
         if shared_weights:
             self.proj_qkv_txt = self.proj_qkv_vid
@@ -616,8 +631,8 @@ class MMAttention(nn.Module):
         else:
             self.proj_qkv_txt = nn.Linear(txt_dim, 3 * inner_dim, bias=qk_bias)
             self.proj_out_txt = nn.Linear(inner_dim, txt_dim, bias=True)
-            self.norm_q_txt = RMSNorm(head_dim, eps=qk_norm_eps)
-            self.norm_k_txt = RMSNorm(head_dim, eps=qk_norm_eps)
+            self.norm_q_txt = SeedVR2RMSNorm(head_dim, eps=qk_norm_eps)
+            self.norm_k_txt = SeedVR2RMSNorm(head_dim, eps=qk_norm_eps)
 
         self.rope = RoPEModule(dim=rope_dim, freqs_for=rope_freqs_for)
 
@@ -636,6 +651,7 @@ class MMAttention(nn.Module):
         q_txt, k_txt, v_txt = self.norm_q_txt(qkv_txt[:, 0]), self.norm_k_txt(qkv_txt[:, 1]), qkv_txt[:, 2]
 
         counts, txt_len = partitioner.window_counts, txt_shape[:, 0]
+        counts_arr = self._counts_to_array(counts)
         qkv_t_rep = self._repeat_text_for_windows(mx.stack([q_txt, k_txt, v_txt], axis=1), txt_len, counts)
         q_txt_rep, k_txt_rep, v_txt_rep = qkv_t_rep[:, 0], qkv_t_rep[:, 1], qkv_t_rep[:, 2]
 
@@ -647,7 +663,7 @@ class MMAttention(nn.Module):
                 vid_shape=partitioner.window_shapes,
                 txt_q=q_txt_rep,
                 txt_k=k_txt_rep,
-                txt_shape=mx.repeat(txt_shape, mx.array(counts), axis=0),
+                txt_shape=mx.repeat(txt_shape, counts_arr, axis=0),
             )
         else:
             q_vid, k_vid = self.rope(
@@ -666,13 +682,13 @@ class MMAttention(nn.Module):
             counts,
         )
 
-        win_lens = vid_lens + txt_len[mx.repeat(mx.arange(len(counts)), mx.array(counts))]
+        win_lens = vid_lens + txt_len[mx.repeat(mx.arange(len(counts)), counts_arr)]
         windows = mx.split(qkv, mx.cumsum(win_lens[:-1]).tolist())
 
         out = []
         for w in windows:
             q, k, v = [x[None].transpose(0, 2, 1, 3) for x in [w[:, 0], w[:, 1], w[:, 2]]]
-            o = mx.fast.scaled_dot_product_attention(q, k, v, scale=self.scale)
+            o = scaled_dot_product_attention_bhsd_mx(mx, q, k, v, scale=self.scale)
             out.append(o.transpose(0, 2, 1, 3).squeeze(0))
 
         # 5. Coalesce and Project Out
@@ -688,7 +704,8 @@ class MMAttention(nn.Module):
     def _repeat_text_for_windows(txt, txt_len, counts):
         B, L = len(counts), int(txt_len[0])
         txt = txt.reshape(B, L, *txt.shape[1:])
-        return mx.repeat(txt, mx.array(counts), axis=0).reshape(-1, *txt.shape[2:])
+        counts_arr = MMAttention._counts_to_array(counts)
+        return mx.repeat(txt, counts_arr, axis=0).reshape(-1, *txt.shape[2:])
 
     @staticmethod
     def _concat_with_text(vid, txt, vid_lens, txt_len, counts):
@@ -699,7 +716,8 @@ class MMAttention(nn.Module):
 
     @staticmethod
     def _unconcat_and_coalesce(combined, vid_lens, txt_len, counts):
-        win_to_batch = mx.repeat(mx.arange(len(txt_len)), mx.array(counts))
+        counts_arr = MMAttention._counts_to_array(counts)
+        win_to_batch = mx.repeat(mx.arange(len(txt_len)), counts_arr)
         lens = mx.stack([vid_lens, txt_len[win_to_batch]], axis=1).reshape(-1)
         parts = mx.split(combined, mx.cumsum(lens[:-1]).tolist())
 
@@ -711,6 +729,13 @@ class MMAttention(nn.Module):
             final_txt.append(mx.stack(t_parts[offset : offset + count]).mean(axis=0))
             offset += count
         return vid_out, mx.concatenate(final_txt, axis=0)
+
+    @staticmethod
+    def _counts_to_array(counts: list[int]) -> mx.array:
+        if not counts:
+            return mx.zeros((0,), dtype=mx.int32)
+        parts = [mx.full((1,), int(c), dtype=mx.int32) for c in counts]
+        return mx.concatenate(parts, axis=0)
 
 
 # ----- mm_swiglu.py -----
@@ -857,7 +882,7 @@ class TransformerBlock(nn.Module):
 
     @staticmethod
     def _rms_norm(x: mx.array, eps: float = 1e-5) -> mx.array:
-        return mx.fast.rms_norm(x, mx.ones(x.shape[-1]), eps)
+        return apply_rms_norm(x, mx.ones(x.shape[-1]), eps)
 
 
 # ----- transformer.py -----
@@ -940,7 +965,7 @@ class SeedVR2DiT(nn.Module, TransformerBase):
             )
 
         if use_output_ada:
-            self.vid_out_norm = RMSNorm(vid_dim, eps=norm_eps)
+            self.vid_out_norm = SeedVR2RMSNorm(vid_dim, eps=norm_eps)
             self.out_shift = mx.zeros((vid_dim,))
             self.out_scale = mx.ones((vid_dim,))
 

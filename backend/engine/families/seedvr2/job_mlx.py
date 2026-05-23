@@ -127,6 +127,29 @@ class _UpscaleDenoiseCtx:
         return None
 
 
+def _resolve_eval_fn(dit: Any) -> Callable[..., None]:
+    fn = mx.eval
+    dit_ctx = getattr(dit, "ctx", None)
+    if dit_ctx is not None and hasattr(dit_ctx, "eval"):
+        fn = dit_ctx.eval
+    return fn
+
+
+def _resolve_array_fn(dit: Any) -> Callable[..., Any]:
+    fn = mx.array
+    dit_ctx = getattr(dit, "ctx", None)
+    if dit_ctx is not None and hasattr(dit_ctx, "array"):
+        fn = dit_ctx.array
+    return fn
+
+
+def _resolve_seeded_randn_fn(dit: Any) -> Callable[..., Any] | None:
+    dit_ctx = getattr(dit, "ctx", None)
+    if dit_ctx is not None and hasattr(dit_ctx, "seeded_randn"):
+        return dit_ctx.seeded_randn
+    return None
+
+
 class SeedVR2UpscalePipeline:
     """从 bundle 构建并执行 SeedVR2 超分。"""
 
@@ -225,9 +248,11 @@ class SeedVR2UpscalePipeline:
             seed=seed,
             height=initial_latent.shape[-2],
             width=initial_latent.shape[-1],
+            seeded_randn_fn=_resolve_seeded_randn_fn(self.dit),
         )
 
         txt_pos = SeedVR2PositiveEmbeddings.load(bundle_path=self._bundle_path)
+        eval_fn = _resolve_eval_fn(self.dit)
 
         t0 = time.perf_counter()
         ctx = _UpscaleDenoiseCtx()
@@ -246,7 +271,7 @@ class SeedVR2UpscalePipeline:
 
             ctx.in_loop(t, latents)
 
-            mx.eval(latents)
+            eval_fn(latents)
 
         ctx.after_loop(latents)
 

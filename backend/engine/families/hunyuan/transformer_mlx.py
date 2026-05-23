@@ -13,11 +13,23 @@ import mlx.nn as nn
 import numpy as np
 
 from backend.engine.common._base import TransformerBase, _collect_params
-from backend.engine.common.attention import _apply_rope
+from backend.engine.common.attention import (
+    _apply_rope,
+    attention_blhd,
+    attention_bhsd_to_blhd,
+    build_bidirectional_bool_attention_mask,
+    left_pad_token_mask,
+)
 from backend.engine.common.cfg_batch import (
     HUNYUAN_CFG_TEXT_KEYS,
     broadcast_batch,
     predict_noise_cfg_batched,
+)
+from backend.engine.common.norm import (
+    apply_ada_layer_norm_continuous,
+    apply_ada_layer_norm_zero,
+    apply_scale_shift,
+    unpack_modulation_2way,
 )
 from backend.engine.runtime._base import RuntimeContext
 
@@ -118,9 +130,9 @@ class _HunyuanVideo15AdaNorm:
 
     def __call__(self, temb: Any) -> tuple[Any, Any]:
         v = self.linear(self.nonlinearity(temb))
-        D = v.shape[-1] // 2
-        gate_msa = v[:, :D][:, None, :]
-        gate_mlp = v[:, D:][:, None, :]
+        gate_msa, gate_mlp = unpack_modulation_2way(v)
+        gate_msa = gate_msa[:, None, :]
+        gate_mlp = gate_mlp[:, None, :]
         return gate_msa, gate_mlp
 
 
@@ -179,13 +191,9 @@ class _RefinerSelfAttention:
         k = self.to_k(hidden_states)
         v = self.to_v(hidden_states)
         q = ctx.reshape(q, (B, S, self.heads, self.head_dim))
-        q = ctx.permute(q, (0, 2, 1, 3))
         k = ctx.reshape(k, (B, S, self.heads, self.head_dim))
-        k = ctx.permute(k, (0, 2, 1, 3))
         v = ctx.reshape(v, (B, S, self.heads, self.head_dim))
-        v = ctx.permute(v, (0, 2, 1, 3))
-        out = ctx.attention(q, k, v, scale=self.scale, mask=attn_mask)
-        out = ctx.permute(out, (0, 2, 1, 3))
+        out = attention_blhd(ctx, q, k, v, scale=self.scale, mask=attn_mask)
         out = ctx.reshape(out, (B, S, self.inner_dim))
         out = self.to_out[0](out)
         return self.to_out[1](out)
@@ -241,7 +249,9 @@ class _IndividualTokenRefiner:
         temb: Any,
         attention_mask: Any | None = None,
     ) -> Any:
-        attn_mask = _build_refiner_attn_mask(self.ctx, attention_mask)
+        attn_mask = None
+        if attention_mask is not None:
+            attn_mask = build_bidirectional_bool_attention_mask(mx, attention_mask.astype(mx.bool_))
         for block in self.refiner_blocks:
             hidden_states = block(hidden_states, temb, attn_mask)
         return hidden_states
@@ -364,11 +374,13 @@ class _RotaryPosEmbed:
         patch_size_t: int,
         rope_dim: tuple[int, ...],
         theta: float = 256.0,
+        array_fn: Any | None = None,
     ):
         self.patch_size = patch_size
         self.patch_size_t = patch_size_t
         self.rope_dim = rope_dim
         self.theta = theta
+        self.array_fn = array_fn or mx.array
 
     def __call__(self, hidden_states: Any) -> tuple[Any, Any]:
         _, _, num_frames, height, width = hidden_states.shape
@@ -390,7 +402,7 @@ class _RotaryPosEmbed:
             sin_parts.append(s)
         cos = np.concatenate(cos_parts, axis=1)
         sin = np.concatenate(sin_parts, axis=1)
-        return mx.array(cos), mx.array(sin)
+        return self.array_fn(cos), self.array_fn(sin)
 
 
 class _AdaLayerNormZero:
@@ -401,17 +413,13 @@ class _AdaLayerNormZero:
         self.norm = nn.LayerNorm(dim, eps=1e-6, affine=False)
 
     def __call__(self, x: Any, emb: Any) -> tuple[Any, Any, Any, Any, Any]:
-        e = self.linear(nn.silu(emb))
-        c = e.shape[-1] // 6
-        shift_msa = e[:, 0 * c : 1 * c]
-        scale_msa = e[:, 1 * c : 2 * c]
-        gate_msa = e[:, 2 * c : 3 * c]
-        shift_mlp = e[:, 3 * c : 4 * c]
-        scale_mlp = e[:, 4 * c : 5 * c]
-        gate_mlp = e[:, 5 * c : 6 * c]
-        n = self.norm(x)
-        n = n * (1 + scale_msa[:, None, :]) + shift_msa[:, None, :]
-        return n, gate_msa, shift_mlp, scale_mlp, gate_mlp
+        return apply_ada_layer_norm_zero(
+            x,
+            emb,
+            linear=self.linear,
+            norm=self.norm,
+            silu=nn.silu,
+        )
 
 
 class _JointAttention:
@@ -483,10 +491,12 @@ class _JointAttention:
         v = ctx.concat([v, ev], axis=2)
 
         total_len = img_len + txt_len
-        mask = _build_joint_attn_mask(ctx, attention_mask, img_len, total_len)
+        mask = None
+        if attention_mask is not None:
+            mask = left_pad_token_mask(ctx, attention_mask, total_len)
+            mask = build_bidirectional_bool_attention_mask(mx, mask)
 
-        out = ctx.attention(q, k, v, scale=self.scale, mask=mask)
-        out = ctx.permute(out, (0, 2, 1, 3))
+        out = attention_bhsd_to_blhd(ctx, q, k, v, scale=self.scale, mask=mask)
         out = ctx.reshape(out, (B, total_len, self.inner_dim))
 
         hid = out[:, :img_len, :]
@@ -527,8 +537,8 @@ class _TransformerBlock:
 
         n_h2 = self.norm2(hidden_states)
         n_e2 = self.norm2_context(encoder_hidden_states)
-        n_h2 = n_h2 * (1 + sc_mlp[:, None, :]) + s_mlp[:, None, :]
-        n_e2 = n_e2 * (1 + c_sc_mlp[:, None, :]) + c_s_mlp[:, None, :]
+        n_h2 = apply_scale_shift(n_h2, sc_mlp[:, None, :], s_mlp[:, None, :], add_one=True)
+        n_e2 = apply_scale_shift(n_e2, c_sc_mlp[:, None, :], c_s_mlp[:, None, :], add_one=True)
 
         hidden_states = hidden_states + g_mlp[:, None, :] * self.ff(n_h2)
         encoder_hidden_states = encoder_hidden_states + c_g_mlp[:, None, :] * self.ff_context(n_e2)
@@ -539,48 +549,21 @@ class _AdaLayerNormContinuous:
     """``norm_out``."""
 
     def __init__(self, ctx: RuntimeContext, dim: int):
+        self.dim = int(dim)
         self.silu = nn.SiLU()
         self.linear = ctx.Linear(dim, dim * 2, bias=True)
         self.norm = nn.LayerNorm(dim, eps=1e-6, affine=False)
 
     def __call__(self, x: Any, temb: Any) -> Any:
-        v = self.linear(self.silu(temb))
-        half = v.shape[-1] // 2
-        shift = v[:, :half]
-        scale = v[:, half:]
-        x = self.norm(x)
-        return x * (1 + scale[:, None, :]) + shift[:, None, :]
-
-
-def _build_refiner_attn_mask(ctx: RuntimeContext | None, attention_mask: Any | None) -> Any | None:
-    if ctx is None or attention_mask is None:
-        return None
-    mask = attention_mask.astype(mx.bool_)
-    B, seq = mask.shape
-    m1 = mx.reshape(mask, (B, 1, 1, seq))
-    m1 = mx.broadcast_to(m1, (B, 1, seq, seq))
-    m2 = mx.transpose(m1, (0, 1, 3, 2))
-    return m1 & m2
-
-
-def _build_joint_attn_mask(
-    ctx: RuntimeContext,
-    attention_mask: Any | None,
-    img_len: int,
-    total_len: int,
-) -> Any | None:
-    if attention_mask is None:
-        return None
-    mask = attention_mask.astype(mx.bool_)
-    pad_len = total_len - int(mask.shape[1])
-    if pad_len > 0:
-        pad = mx.ones((int(mask.shape[0]), pad_len), dtype=mx.bool_)
-        mask = ctx.concat([pad, mask], axis=1)
-    B, seq = mask.shape
-    m1 = mx.reshape(mask, (B, 1, 1, seq))
-    m1 = mx.broadcast_to(m1, (B, 1, seq, seq))
-    m2 = mx.transpose(m1, (0, 1, 3, 2))
-    return m1 & m2
+        return apply_ada_layer_norm_continuous(
+            x,
+            temb,
+            linear=self.linear,
+            norm=self.norm,
+            embedding_dim=self.dim,
+            silu=self.silu,
+            pre_linear_dtype=None,
+        )
 
 
 def _reorder_encoder_tokens(
@@ -623,6 +606,8 @@ def _stack_reordered_encoder(
     encoder_attention_mask_2: Any,
     encoder_hidden_states_3: Any,
     encoder_attention_mask_3: Any,
+    *,
+    array_fn: Any | None = None,
 ) -> tuple[Any, Any]:
     """Batch-wise reorder + pad to common sequence length."""
     t_np = np.asarray(encoder_hidden_states)
@@ -651,7 +636,9 @@ def _stack_reordered_encoder(
         L = emb.shape[0]
         out_emb[b, :L] = emb
         out_mask[b, :L] = m
-    return mx.array(out_emb), mx.array(out_mask)
+    if array_fn is None:
+        array_fn = mx.array
+    return array_fn(out_emb), array_fn(out_mask)
 
 
 class HunyuanVideoTransformer(TransformerBase):
@@ -693,7 +680,9 @@ class HunyuanVideoTransformer(TransformerBase):
         self.context_embedder_2 = _ByT5TextProjection(ctx, text2_dim, 2048, inner_dim)
         self.time_embed = _TimeEmbedding(ctx, inner_dim, use_meanflow=use_meanflow)
         self.cond_type_embed = ctx.Embedding(3, inner_dim)
-        self.rope = _RotaryPosEmbed(patch, patch_t, tuple(rope_axes), rope_theta)
+        self.rope = _RotaryPosEmbed(
+            patch, patch_t, tuple(rope_axes), rope_theta, array_fn=ctx.array
+        )
 
         self.transformer_blocks = [
             _TransformerBlock(ctx, heads, head_dim, mlp_ratio)
@@ -880,6 +869,7 @@ class HunyuanVideoTransformer(TransformerBase):
             txt_attn_mask_2,
             encoder_hidden_states_3,
             encoder_attention_mask_3,
+            array_fn=self.ctx.array,
         )
 
         for block in self.transformer_blocks:
@@ -923,21 +913,6 @@ class HunyuanVideoTransformer(TransformerBase):
             ctx=load_ctx,
             bundle_affine_bits=bundle_affine_bits,
         )
-        for key, param in list(self._param_map.items()):
-            if param.dtype != mx.bfloat16:
-                new_param = param.astype(mx.bfloat16)
-                self._param_map[key] = new_param
-                parts = key.split(".")
-                obj = self
-                for part in parts[:-1]:
-                    if part.isdigit():
-                        obj = obj[int(part)]
-                    else:
-                        obj = getattr(obj, part)
-                last = parts[-1]
-                if hasattr(obj, last):
-                    setattr(obj, last, new_param)
-                elif hasattr(obj, "_parameters") and last in obj._parameters:
-                    obj._parameters[last] = new_param
-        mx.eval(*[p for _, p in self._param_map.items()])
+        self._cast_param_map_dtype(mx.bfloat16)
+        self.ctx.eval(*[p for _, p in self._param_map.items()])
         return loaded, skipped

@@ -1,10 +1,12 @@
 """Flow Matching Decoder for HeartCodec - matches PyTorch architecture."""
 
+import math
 from typing import Optional
 
 import mlx.core as mx
 import mlx.nn as nn
 
+from backend.engine.common.mlx_runtime_fallback import random_normal
 from backend.engine.families.heartmula.mlx.nn.transformer import RMSNorm, LlamaAttention, LlamaMLP
 from backend.engine.families.heartmula.mlx.heartcodec.quantizer import ResidualVQ
 from backend.engine.families.heartmula.mlx.ode.solver import euler_solve
@@ -84,7 +86,7 @@ class TimestepEmbedder(nn.Module):
         """
         half_dim = self.frequency_embedding_size // 2
         freqs = mx.exp(
-            -mx.log(mx.array(max_period)) * mx.arange(half_dim) / half_dim
+            -math.log(max_period) * mx.arange(half_dim) / half_dim
         )
         # Note: PyTorch multiplies by scale=1000, critical for correct embeddings!
         args = t[:, None] * freqs[None, :] * scale
@@ -529,7 +531,7 @@ class FlowMatchingDecoder(nn.Module):
 
                 # Concatenate [x, incontext_x, mu] along channel dim
                 hidden_states = mx.concatenate([x_doubled, incontext_doubled, mu_doubled], axis=-1)
-                t_tensor = mx.broadcast_to(mx.array([t]), (2,))
+                t_tensor = mx.full((2,), t)
 
                 # Run estimator
                 dphi_dt = self.estimator(t_tensor, hidden_states)
@@ -540,7 +542,7 @@ class FlowMatchingDecoder(nn.Module):
             else:
                 # Concatenate [x, incontext_x, mu] along channel dim
                 hidden_states = mx.concatenate([x, incontext_x, mu], axis=-1)
-                t_tensor = mx.array([t])
+                t_tensor = mx.full((1,), t)
                 dphi_dt = self.estimator(t_tensor, hidden_states)
 
             x = x + dt * dphi_dt
@@ -586,16 +588,15 @@ class FlowMatchingDecoder(nn.Module):
             latent_length = num_frames
 
         if true_latents is None:
-            true_latents = mx.random.normal(
-                shape=(batch_size, num_frames, self.out_channels)
-            )
+            true_latents = random_normal(None, (batch_size, num_frames, self.out_channels))
         elif true_latents.shape[1] < num_frames:
             pad_t = num_frames - true_latents.shape[1]
             true_latents = mx.concatenate(
                 [
                     true_latents,
-                    mx.random.normal(
-                        shape=(batch_size, pad_t, self.out_channels),
+                    random_normal(
+                        None,
+                        (batch_size, pad_t, self.out_channels),
                         dtype=true_latents.dtype,
                     ),
                 ],
@@ -604,7 +605,7 @@ class FlowMatchingDecoder(nn.Module):
         elif true_latents.shape[1] > num_frames:
             true_latents = true_latents[:, :num_frames, :]
 
-        latents = mx.random.normal(shape=(batch_size, num_frames, self.out_channels))
+        latents = random_normal(None, (batch_size, num_frames, self.out_channels))
 
         latent_masks = mx.zeros((batch_size, num_frames), dtype=mx.int32)
         latent_masks[:, : int(latent_length)] = 2

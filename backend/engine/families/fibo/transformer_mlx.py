@@ -9,7 +9,7 @@ import mlx.core as mx
 
 from backend.engine.common.attention import SelfAttention
 from backend.engine.common.embeddings import PatchEmbed2D, TimestepEmbedding, RoPE2D
-from backend.engine.common.norm import RMSNorm
+from backend.engine.common.norm import RMSNorm, apply_scale_shift, unpack_modulation_6way
 from backend.engine.config.model_configs import FIBOConfig
 from backend.engine.runtime._base import RuntimeContext
 from backend.engine.common._base import TransformerBase
@@ -44,18 +44,16 @@ class FIBOTransformerBlock:
 
     def forward(self, x, c, rope_cos, rope_sin):
         v = self.adaLN_modulation(c)
-        D = v.shape[-1] // 6
-        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = (
-            v[..., :D], v[..., D:2*D], v[..., 2*D:3*D],
-            v[..., 3*D:4*D], v[..., 4*D:5*D], v[..., 5*D:6*D],
-        )
+        shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp = unpack_modulation_6way(v)
         xn = RMSNorm._apply_norm(x, self.norm1.weight, self.norm1.eps)
         x = x + gate_msa[:, None, :] * self.attn.forward(
-            xn * (1 + scale_msa[:, None, :]) + shift_msa[:, None, :], rope_cos, rope_sin,
+            apply_scale_shift(xn, scale_msa[:, None, :], shift_msa[:, None, :], add_one=True),
+            rope_cos,
+            rope_sin,
         )
         xn = RMSNorm._apply_norm(x, self.norm2.weight, self.norm2.eps)
         x = x + gate_mlp[:, None, :] * self.mlp(
-            xn * (1 + scale_mlp[:, None, :]) + shift_mlp[:, None, :],
+            apply_scale_shift(xn, scale_mlp[:, None, :], shift_mlp[:, None, :], add_one=True),
         )
         return x
 
@@ -109,7 +107,7 @@ class FIBOTransformer(TransformerBase):
             t_idx = int(timestep)
             n = int(sigmas.shape[0]) if hasattr(sigmas, "shape") else len(sigmas)
             sigma_t = sigmas[t_idx] if t_idx < n else sigmas[-1] if n > 0 else 1.0
-            t_val = float(mx.reshape(mx.array(sigma_t), (-1,))[0]) * 1000.0
+            t_val = float(mx.reshape(ctx.array(sigma_t), (-1,))[0]) * 1000.0
         else:
             tv = timestep
             if isinstance(tv, mx.array):

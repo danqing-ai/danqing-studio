@@ -7,6 +7,7 @@ from typing import Any
 
 import mlx.core as mx
 from backend.engine.common._base import _collect_params
+from backend.engine.common.norm import apply_rms_norm
 from backend.engine.families.flux1.weights import remap_flux1_t5_weights
 from backend.engine.runtime._base import RuntimeContext
 
@@ -21,13 +22,7 @@ class _T5LayerNorm:
         return {"weight": self.weight}
 
     def forward(self, hidden_states: Any) -> Any:
-        variance = mx.mean(
-            mx.power(hidden_states.astype(mx.float32), 2),
-            axis=-1,
-            keepdims=True,
-        )
-        hidden_states = hidden_states * mx.rsqrt(variance + self.variance_epsilon)
-        return self.weight * hidden_states
+        return apply_rms_norm(hidden_states, self.weight, self.variance_epsilon)
 
 
 class _T5SelfAttention:
@@ -234,7 +229,7 @@ class Flux1T5Encoder:
             truncation=True,
             return_tensors="np",
         )
-        input_ids = mx.array(tokens["input_ids"], dtype=mx.int32)
+        input_ids = self.ctx.array(tokens["input_ids"], dtype=mx.int32)
         return self.forward(input_ids)
 
     def forward(self, input_ids: Any) -> Any:

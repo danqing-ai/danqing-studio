@@ -1,9 +1,8 @@
 """Batched classifier-free guidance — one DiT forward for pos + neg branches."""
 from __future__ import annotations
 
+import importlib
 from typing import Any, Callable
-
-import mlx.core as mx
 
 from backend.engine.runtime._base import RuntimeContext
 
@@ -21,6 +20,10 @@ def broadcast_batch(ctx: RuntimeContext, tensor: Any | None, batch_size: int) ->
     if b == batch_size:
         return tensor
     if b == 1:
+        if hasattr(ctx, "repeat"):
+            return ctx.repeat(tensor, batch_size, axis=0)
+        # Backward-compatible fallback for lightweight test/mocking contexts.
+        mx = importlib.import_module("mlx.core")
         return mx.repeat(tensor, batch_size, axis=0)
     raise RuntimeError(
         f"CFG batch broadcast: expected batch 1 or {batch_size}, got {b}"

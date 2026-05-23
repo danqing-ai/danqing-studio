@@ -6,7 +6,7 @@ from typing import Any
 
 import mlx.core as mx
 import mlx.nn as nn
-from mlx.core.fast import scaled_dot_product_attention
+from backend.engine.common.attention import scaled_dot_product_attention_bhsd_mx
 
 from backend.engine.families.flux1.weights import nest_flux1_clip_weights, remap_flux1_clip_weights
 from backend.engine.runtime._base import RuntimeContext
@@ -48,8 +48,8 @@ class _CLIPSdpaAttention(nn.Module):
         query = self._reshape_and_transpose(self.q_proj(hidden_states))
         key = self._reshape_and_transpose(self.k_proj(hidden_states))
         value = self._reshape_and_transpose(self.v_proj(hidden_states))
-        scale = 1 / mx.sqrt(mx.array(query.shape[-1], dtype=mx.float32))
-        attn = scaled_dot_product_attention(query, key, value, scale=scale, mask=mask)
+        scale = float(query.shape[-1]) ** -0.5
+        attn = scaled_dot_product_attention_bhsd_mx(mx, query, key, value, scale=scale, mask=mask)
         attn = mx.transpose(attn, (0, 2, 1, 3))
         attn = mx.reshape(attn, (self.batch_size, -1, self.num_heads * self.head_dimension))
         return self.out_proj(attn)
@@ -164,7 +164,7 @@ class Flux1CLIPEncoder(nn.Module):
         nested = nest_flux1_clip_weights(flat)
         self.update(nested, strict=False)
         if getattr(self.ctx, "backend", None) == "mlx":
-            mx.eval(self.parameters())
+            self.ctx.eval(self.parameters())
 
     def encode(self, texts: list[str]) -> tuple[Any, Any]:
         tokenizer = self.tokenizer
@@ -175,7 +175,7 @@ class Flux1CLIPEncoder(nn.Module):
             truncation=True,
             return_tensors="np",
         )
-        input_ids = mx.array(tokens["input_ids"], dtype=mx.int32)
+        input_ids = self.ctx.array(tokens["input_ids"], dtype=mx.int32)
         pooled = self(input_ids)
         return pooled, None
 

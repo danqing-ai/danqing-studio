@@ -33,7 +33,7 @@ class CLIPEncoder:
         input_ids = tokens["input_ids"]
         if ctx.backend == "mlx":
             import mlx.core as mx
-            input_ids_mx = mx.array(input_ids, dtype=mx.int32)
+            input_ids_mx = ctx.array(input_ids, dtype=mx.int32)
             return self._forward_mlx(input_ids_mx)
         from backend.engine.common.text_encoders.clip_cuda import clip_encoder_encode_from_numpy
         return clip_encoder_encode_from_numpy(self, input_ids)
@@ -49,16 +49,15 @@ class CLIPEncoder:
             config = CLIPTextConfig.from_pretrained(self.model_path)
             self._model = CLIPTextModel(config)
             self._model.load_weights(str(self.model_path))
-            mx.eval(self._model.parameters())
+            self.ctx.eval(self._model.parameters())
         pooled, hidden = self._model(input_ids)
         return pooled, hidden
 
     def _forward_mlx_via_torch_bridge(self, input_ids):
-        import mlx.core as mx
         import numpy as np
 
         from backend.engine.common.text_encoders.clip_cuda import clip_cpu_torch_bridge_numpy
 
         ids_np = np.asarray(input_ids, dtype=np.int32)
         pooled_np, hidden_np = clip_cpu_torch_bridge_numpy(self, ids_np)
-        return mx.array(pooled_np), mx.array(hidden_np)
+        return self.ctx.array(pooled_np), self.ctx.array(hidden_np)

@@ -221,6 +221,32 @@ class TransformerBase:
             self._build_param_map()
         return list(self._param_map.items())
 
+    def _rebind_param_by_key(self, key: str, new_param: Any) -> None:
+        """Rebind module attribute referenced by flat ``_param_map`` key."""
+        parts = key.split(".")
+        obj: Any = self
+        for part in parts[:-1]:
+            obj = obj[int(part)] if part.isdigit() else getattr(obj, part)
+        last = parts[-1]
+        if hasattr(obj, last):
+            setattr(obj, last, new_param)
+        elif hasattr(obj, "_parameters") and last in obj._parameters:
+            obj._parameters[last] = new_param
+
+    def _cast_param_map_dtype(self, target_dtype: Any) -> int:
+        """Cast all ``_param_map`` tensors to ``target_dtype`` and rebind updated params."""
+        if not hasattr(self, "_param_map"):
+            self._build_param_map()
+        changed = 0
+        for key, param in list(self._param_map.items()):
+            if param.dtype == target_dtype:
+                continue
+            new_param = param.astype(target_dtype)
+            self._param_map[key] = new_param
+            self._rebind_param_by_key(key, new_param)
+            changed += 1
+        return changed
+
     def load_weights(self, weights: list[tuple[str, Any]], strict: bool = False,
                      ctx: Any = None, *, bundle_affine_bits: int | None = None):
         """Default weight loading (via _param_map).
@@ -365,14 +391,10 @@ class TransformerBase:
 
 def _assign_param_tensor(param: Any, tensor: Any) -> None:
     """In-place assign checkpoint tensor into a model parameter (MLX array or torch Tensor)."""
-    try:
-        import torch
-    except ImportError:
-        torch = None  # type: ignore
-
-    if torch is not None and isinstance(param, torch.Tensor):
-        if not isinstance(tensor, torch.Tensor):
-            tensor = torch.as_tensor(tensor)
+    pmod = getattr(param.__class__, "__module__", "")
+    if pmod.startswith("torch."):
+        if not getattr(tensor.__class__, "__module__", "").startswith("torch."):
+            tensor = param.new_tensor(tensor)
         if tensor.shape != param.shape:
             raise RuntimeError(f"shape mismatch: param {tuple(param.shape)} vs tensor {tuple(tensor.shape)}")
         if tensor.device != param.device or tensor.dtype != param.dtype:
@@ -384,30 +406,57 @@ def _assign_param_tensor(param: Any, tensor: Any) -> None:
 
 
 def _collect_params(obj, prefix: str, result: dict):
-    """Recursively collect nn.Module parameters."""
-    if hasattr(obj, 'parameters') and callable(obj.parameters):
+    """Recursively collect MLX dict trees and torch/MLX module parameter leaves."""
+    if obj is None or isinstance(obj, (int, float, str, bool, type)):
+        return
+
+    cls = obj.__class__
+    module_name = getattr(cls, "__module__", "")
+    qual_name = getattr(cls, "__qualname__", "")
+    full_type_name = f"{module_name}.{qual_name}".lower()
+
+    # Skip tensor leaves without importing backend modules.
+    if full_type_name.startswith("torch.") and "tensor" in full_type_name:
+        return
+    if full_type_name.startswith("mlx.") and "array" in full_type_name:
+        return
+
+    # Collect PyTorch nn.Module leaves without importing torch.
+    if full_type_name.startswith("torch.nn.") and hasattr(obj, "named_parameters"):
         try:
-            for pname, ptensor in obj.parameters().items():
-                result[f"{prefix}.{pname}" if prefix else pname] = ptensor
+            for name, param in obj.named_parameters():
+                key = f"{prefix}.{name}" if prefix else name
+                result[key] = param
             return
         except Exception:
             pass
-    for attr_name in sorted(dir(obj)):
-        if attr_name.startswith('_') or attr_name in ('ctx', 'config', 'freqs_cis', '_param_map'):
-            continue
+
+    if hasattr(obj, "parameters") and callable(obj.parameters):
         try:
-            attr = getattr(obj, attr_name)
+            params = obj.parameters()
+            if isinstance(params, dict):
+                for pname, ptensor in params.items():
+                    key = f"{prefix}.{pname}" if prefix else pname
+                    result[key] = ptensor
+                return
         except Exception:
-            continue
-        if attr is None or isinstance(attr, (int, float, str, bool, type)):
-            continue
-        new_prefix = f"{prefix}.{attr_name}" if prefix else attr_name
-        if hasattr(attr, 'parameters') and callable(attr.parameters):
-            _collect_params(attr, new_prefix, result)
-        elif isinstance(attr, (list, tuple)):
-            for i, item in enumerate(attr):
-                _collect_params(item, f"{new_prefix}.{i}", result)
-        elif hasattr(attr, '__dict__') and not isinstance(attr, type):
+            pass
+
+    if isinstance(obj, (list, tuple)):
+        for i, item in enumerate(obj):
+            item_prefix = f"{prefix}.{i}" if prefix else str(i)
+            _collect_params(item, item_prefix, result)
+        return
+
+    if hasattr(obj, "__dict__") and not isinstance(obj, type):
+        for attr_name, attr in sorted(vars(obj).items()):
+            if attr_name.startswith("_"):
+                continue
+            if attr_name in ("ctx", "config", "freqs_cis", "_param_map"):
+                continue
+            if attr is None or isinstance(attr, (int, float, str, bool, type)):
+                continue
+            new_prefix = f"{prefix}.{attr_name}" if prefix else attr_name
             _collect_params(attr, new_prefix, result)
 
 

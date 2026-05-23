@@ -11,18 +11,25 @@ from typing import Any
 import mlx.core as mx
 import mlx.nn as mx_nn
 import numpy as np
-from mlx.core.fast import scaled_dot_product_attention
 
 from backend.engine.common._base import TransformerBase, _collect_params
+from backend.engine.common.attention import scaled_dot_product_attention_bhsd_mx
 from backend.engine.common.embeddings import PatchEmbed2D
+from backend.engine.common.norm import (
+    apply_ada_layer_norm_zero,
+    apply_ada_layer_norm_zero_single,
+    apply_rms_norm,
+    apply_scale_shift,
+    unpack_modulation_2way,
+)
 from backend.engine.config.model_configs import Flux1Config
 from backend.engine.runtime._base import RuntimeContext
 
 
 def _rms_norm_fp32(norm: Any, x: Any) -> Any:
     """mflux ``AttentionUtils.process_qkv`` — RMSNorm in float32, cast back."""
-    dtype = x.dtype
-    return norm(x.astype(mx.float32)).astype(dtype)
+    eps = float(getattr(norm, "eps", 1e-6))
+    return apply_rms_norm(x, norm.weight, eps)
 
 
 def _scalar_to_float(x: Any) -> float:
@@ -134,8 +141,10 @@ class _Flux1JointAttention:
             q_joint, k_joint = _apply_flux1_rope(ctx, q_joint, k_joint, rotary_emb)
 
         # mflux ``AttentionUtils.compute_attention`` — flat [B, S, H*D] before split
-        scale = 1 / mx.sqrt(mx.array(q_joint.shape[-1], dtype=mx.float32))
-        attn_out = scaled_dot_product_attention(q_joint, k_joint, v_joint, scale=scale)
+        scale = float(q_joint.shape[-1]) ** -0.5
+        attn_out = scaled_dot_product_attention_bhsd_mx(
+            mx, q_joint, k_joint, v_joint, scale=scale
+        )
         attn_out = mx.reshape(
             mx.transpose(attn_out, (0, 2, 1, 3)),
             (B, -1, self.heads * self.dim_head),
@@ -177,8 +186,8 @@ class _Flux1SingleAttention:
         if rotary_emb is not None:
             q, k = _apply_flux1_rope(ctx, q, k, rotary_emb)
 
-        scale = 1 / mx.sqrt(mx.array(q.shape[-1], dtype=mx.float32))
-        out = scaled_dot_product_attention(q, k, v, scale=scale)
+        scale = float(q.shape[-1]) ** -0.5
+        out = scaled_dot_product_attention_bhsd_mx(mx, q, k, v, scale=scale)
         return mx.reshape(mx.transpose(out, (0, 2, 1, 3)), (B, S, self.dim))
 
 
@@ -207,17 +216,13 @@ class _AdaLayerNormZero:
         self.norm = mx_nn.LayerNorm(dim, eps=1e-6, affine=False)
 
     def forward(self, x, emb):
-        e = self.linear(mx_nn.silu(emb))
-        chunk = e.shape[-1] // 6
-        shift_msa = e[:, 0 * chunk : 1 * chunk]
-        scale_msa = e[:, 1 * chunk : 2 * chunk]
-        gate_msa = e[:, 2 * chunk : 3 * chunk]
-        shift_mlp = e[:, 3 * chunk : 4 * chunk]
-        scale_mlp = e[:, 4 * chunk : 5 * chunk]
-        gate_mlp = e[:, 5 * chunk : 6 * chunk]
-        n = self.norm(x)
-        n = n * (1 + scale_msa[:, None]) + shift_msa[:, None]
-        return n, gate_msa, shift_mlp, scale_mlp, gate_mlp
+        return apply_ada_layer_norm_zero(
+            x,
+            emb,
+            linear=self.linear,
+            norm=self.norm,
+            silu=mx_nn.silu,
+        )
 
 
 class _Flux1JointBlock:
@@ -247,7 +252,9 @@ class _Flux1JointBlock:
         attn_output = mx.expand_dims(gate_msa, axis=1) * attn_output
         hidden_states = hidden_states + attn_output
         norm_hidden_states = norm_layer(hidden_states)
-        norm_hidden_states = norm_hidden_states * (1 + scale_mlp[:, None]) + shift_mlp[:, None]
+        norm_hidden_states = apply_scale_shift(
+            norm_hidden_states, scale_mlp[:, None], shift_mlp[:, None], add_one=True
+        )
         ff_output = ff_layer.forward(norm_hidden_states)
         ff_output = mx.expand_dims(gate_mlp, axis=1) * ff_output
         return hidden_states + ff_output
@@ -280,14 +287,13 @@ class _AdaLayerNormZeroSingle:
         self.linear = ctx.Linear(dim, dim * 3, bias=True)
 
     def forward(self, x, emb):
-        e = self.linear(mx_nn.silu(emb))
-        chunk = e.shape[-1] // 3
-        shift_msa = e[:, 0 * chunk : 1 * chunk]
-        scale_msa = e[:, 1 * chunk : 2 * chunk]
-        gate = e[:, 2 * chunk : 3 * chunk]
-        n = self.norm(x)
-        n = n * (1 + scale_msa[:, None]) + shift_msa[:, None]
-        return n, gate
+        return apply_ada_layer_norm_zero_single(
+            x,
+            emb,
+            linear=self.linear,
+            norm=self.norm,
+            silu=mx_nn.silu,
+        )
 
 
 class _Flux1SingleBlock:
@@ -319,11 +325,9 @@ class _AdaLayerNormContinuousOut:
     def forward(self, x, c):
         ctx = self.ctx
         v = self.linear(ctx.silu(c).astype(mx.bfloat16))
-        D = v.shape[-1] // 2
-        scale = v[..., :D]
-        shift = v[..., D:]
+        scale, shift = unpack_modulation_2way(v)
         x = self.norm(x)
-        return x * (1 + scale[:, None, :]) + shift[:, None, :]
+        return apply_scale_shift(x, scale[:, None, :], shift[:, None, :], add_one=True)
 
 
 def _pack_flux1_latents(ctx: RuntimeContext, latents: Any) -> Any:
@@ -522,13 +526,13 @@ class Flux1Transformer(TransformerBase):
                 hidden_states, encoder_hidden_states, c, rotary_emb=rotary_emb,
             )
             if getattr(ctx, "backend", None) == "mlx":
-                mx.eval(encoder_hidden_states, hidden_states)
+                ctx.eval(encoder_hidden_states, hidden_states)
 
         x = ctx.concat([encoder_hidden_states, hidden_states], axis=1)
         for block in self.single_transformer_blocks:
             x = block.forward(x, c, rotary_emb=rotary_emb)
             if getattr(ctx, "backend", None) == "mlx":
-                mx.eval(x)
+                ctx.eval(x)
 
         hidden_states = x[:, txt_len:]
         hidden_states = self.norm_out.forward(hidden_states, c)
@@ -557,17 +561,5 @@ class Flux1Transformer(TransformerBase):
             ctx=load_ctx,
             bundle_affine_bits=bundle_affine_bits,
         )
-        for key, param in list(self._param_map.items()):
-            if param.dtype != mx.bfloat16:
-                new_param = param.astype(mx.bfloat16)
-                self._param_map[key] = new_param
-                parts = key.split(".")
-                obj = self
-                for part in parts[:-1]:
-                    obj = obj[int(part)] if part.isdigit() else getattr(obj, part)
-                last = parts[-1]
-                if hasattr(obj, last):
-                    setattr(obj, last, new_param)
-                elif hasattr(obj, "_parameters") and last in obj._parameters:
-                    obj._parameters[last] = new_param
+        self._cast_param_map_dtype(mx.bfloat16)
         return loaded, skipped

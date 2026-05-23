@@ -5,7 +5,422 @@ Reference implementations: Flux1/Flux2 Attention and spatiotemporal video attent
 """
 from __future__ import annotations
 
+import importlib
 from typing import Any, Optional
+
+
+def _int32_dtype(ctx: Any) -> Any:
+    d = getattr(ctx, "int32", None)
+    if callable(d):
+        return d()
+    if d is not None:
+        return d
+    raise RuntimeError("Context does not provide int32 dtype")
+
+
+def build_key_padding_mask_from_lengths(
+    ctx: Any,
+    lengths: Any,
+    seq_len: int,
+    dtype: Any,
+    *,
+    neg_value: float = -1e9,
+) -> Any:
+    """Build key-padding mask from per-batch valid lengths."""
+    b = int(lengths.shape[0])
+    positions = ctx.arange(0, int(seq_len), dtype=_int32_dtype(ctx))
+    valid_k = positions.reshape(1, 1, 1, int(seq_len)) < lengths.reshape(b, 1, 1, 1)
+    shape = (b, 1, int(seq_len), int(seq_len))
+    neg = ctx.full(shape, float(neg_value), dtype=dtype)
+    return ctx.where(valid_k, ctx.zeros(shape, dtype=dtype), neg)
+
+
+def build_causal_attention_mask(
+    ctx: Any,
+    seq_len: int,
+    dtype: Any,
+    *,
+    neg_value: float = -1e9,
+) -> Any:
+    """Build lower-triangular causal mask ``[1, 1, L, L]`` for attention."""
+    l = int(seq_len)
+    positions = ctx.arange(0, l, dtype=_int32_dtype(ctx))
+    q_pos = positions.reshape(1, 1, l, 1)
+    k_pos = positions.reshape(1, 1, 1, l)
+    keep = q_pos >= k_pos
+    shape = (1, 1, l, l)
+    neg = ctx.full(shape, float(neg_value), dtype=dtype)
+    return ctx.where(keep, ctx.zeros(shape, dtype=dtype), neg)
+
+
+def build_padding_attention_bias(
+    ctx: Any,
+    attention_mask: Any,
+    seq_len: int,
+    dtype: Any,
+    *,
+    valid_value: int = 1,
+    neg_value: float = -1e9,
+) -> Any:
+    """Build ``[B,1,1,L]`` additive attention bias from binary token mask."""
+    b = int(attention_mask.shape[0])
+    l = int(seq_len)
+    return ctx.where(
+        attention_mask[:, None, None, :l] == valid_value,
+        ctx.zeros((b, 1, 1, l), dtype=dtype),
+        ctx.full((b, 1, 1, l), float(neg_value), dtype=dtype),
+    )
+
+
+def resolve_blhd_attention_mask(
+    ctx: Any,
+    q: Any,
+    *,
+    mask: Any | None = None,
+    causal: bool = False,
+    q_lens: Any | None = None,
+    k_lens: Any | None = None,
+    dtype: Any | None = None,
+    neg_value: float = -1e9,
+) -> Any | None:
+    """Resolve additive mask for ``[B, L, H, D]`` attention."""
+    if mask is not None:
+        return mask
+    target_dtype = dtype if dtype is not None else getattr(q, "dtype", None)
+    if target_dtype is None:
+        d = getattr(ctx, "float32", None)
+        target_dtype = d() if callable(d) else d
+    if target_dtype is None:
+        raise RuntimeError("Cannot resolve attention mask dtype for BLHD attention.")
+    seq_len = int(q.shape[1])
+    if causal:
+        return build_causal_attention_mask(ctx, seq_len, target_dtype, neg_value=neg_value)
+    lens = k_lens if k_lens is not None else q_lens
+    if lens is None:
+        return None
+    lens_i32 = (
+        lens.astype(_int32_dtype(ctx))
+        if hasattr(lens, "astype")
+        else ctx.array(lens, dtype=_int32_dtype(ctx))
+    )
+    return build_key_padding_mask_from_lengths(
+        ctx,
+        lens_i32,
+        seq_len,
+        target_dtype,
+        neg_value=neg_value,
+    )
+
+
+def build_bidirectional_bool_attention_mask(ctx: Any, token_mask: Any) -> Any:
+    """Build symmetric bool mask ``[B,1,S,S]`` from token keep mask ``[B,S]``."""
+    m = token_mask.astype(bool)
+    b = int(m.shape[0])
+    s = int(m.shape[1])
+    m1 = ctx.reshape(m, (b, 1, 1, s))
+    m1 = ctx.broadcast_to(m1, (b, 1, s, s))
+    m2 = ctx.transpose(m1, (0, 1, 3, 2))
+    return m1 & m2
+
+
+def left_pad_token_mask(ctx: Any, token_mask: Any, total_len: int) -> Any:
+    """Left-pad token mask ``[B,S]`` to ``[B,total_len]`` with valid tokens."""
+    mask = token_mask.astype(bool)
+    pad_len = int(total_len) - int(mask.shape[1])
+    if pad_len <= 0:
+        return mask
+    pad = ctx.ones((int(mask.shape[0]), pad_len), dtype=bool)
+    return ctx.concat([pad, mask], axis=1)
+
+
+def apply_binary_mask_bias(
+    ctx: Any,
+    attn_mask: Any,
+    mask: Any,
+    *,
+    valid_value: int = 1,
+    neg_value: float = float("-inf"),
+) -> Any:
+    """Apply binary keep-mask to attention bias tensor via ``where``."""
+    m = mask
+    while len(m.shape) < 4:
+        m = ctx.expand_dims(m, axis=1)
+    return ctx.where(m == valid_value, attn_mask, float(neg_value))
+
+
+def build_causal_with_padding_bias(
+    ctx: Any,
+    attention_mask: Any | None,
+    seq_len: int,
+    dtype: Any,
+    *,
+    valid_value: int = 1,
+    neg_value: float = -1e9,
+    batch_size: int | None = None,
+) -> Any:
+    """Build additive 4D mask ``[B,1,S,S]`` = causal bias + optional padding bias."""
+    s = int(seq_len)
+    if batch_size is None:
+        if attention_mask is not None:
+            b = int(attention_mask.shape[0])
+        else:
+            b = 1
+    else:
+        b = int(batch_size)
+    causal = ctx.broadcast_to(build_causal_attention_mask(ctx, s, dtype, neg_value=neg_value), (b, 1, s, s))
+    if attention_mask is None:
+        return causal
+    pad = build_padding_attention_bias(
+        ctx,
+        attention_mask,
+        s,
+        dtype,
+        valid_value=valid_value,
+        neg_value=neg_value,
+    )
+    return causal + pad
+
+
+def build_causal_with_offset_bias(
+    ctx: Any,
+    seq_len: int,
+    offset: int = 0,
+    *,
+    dtype: Any | None = None,
+    neg_value: float = float("-inf"),
+) -> Any:
+    """Build causal additive mask ``[1,1,S,T]`` where ``T = S + offset``."""
+    s = int(seq_len)
+    off = int(offset)
+    total = s + off
+    if dtype is None:
+        dtype = getattr(ctx, "float32", None)
+        dtype = dtype() if callable(dtype) else dtype
+    row_indices = ctx.arange(s, dtype=_int32_dtype(ctx))[:, None]
+    col_indices = ctx.arange(total, dtype=_int32_dtype(ctx))[None, :]
+    causal = col_indices <= (row_indices + off)
+    mask = ctx.where(causal, 0.0, float(neg_value))
+    if dtype is not None and hasattr(mask, "astype"):
+        mask = mask.astype(dtype)
+    return mask[None, None, :, :]
+
+
+def build_window_with_padding_bias(
+    ctx: Any,
+    seq_len: int,
+    dtype: Any,
+    *,
+    attention_mask: Any | None = None,
+    sliding_window: int | None = None,
+    neg_value: float = -1e9,
+    valid_value: int = 1,
+) -> Any:
+    """Build additive 4D mask ``[B,1,S,S]`` for full/sliding self-attention."""
+    s = int(seq_len)
+    idx = ctx.arange(s, dtype=_int32_dtype(ctx))
+    diff = idx[:, None] - idx[None, :]
+    valid = ctx.ones((s, s), dtype=bool)
+    if sliding_window is not None:
+        valid = valid & (ctx.abs(diff) <= int(sliding_window))
+    valid = ctx.expand_dims(ctx.expand_dims(valid, 0), 0)
+    min_val = ctx.full((), float(neg_value), dtype=dtype)
+    mask = ctx.where(valid, ctx.zeros(valid.shape, dtype=dtype), min_val)
+    if attention_mask is not None:
+        pad = build_padding_attention_bias(
+            ctx,
+            attention_mask,
+            s,
+            dtype,
+            valid_value=valid_value,
+            neg_value=neg_value,
+        )
+        mask = mask + pad
+    return mask
+
+
+def build_window_with_padding_bias_torch(
+    seq_len: int,
+    dtype: Any,
+    device: Any,
+    *,
+    attention_mask: Any | None = None,
+    sliding_window: int | None = None,
+    neg_value: float = -1e9,
+    valid_value: int = 1,
+) -> Any:
+    """Build additive 4D mask ``[B,1,S,S]`` for torch full/sliding self-attention."""
+    torch = importlib.import_module("torch")
+    s = int(seq_len)
+    idx = torch.arange(s, device=device)
+    diff = idx[:, None] - idx[None, :]
+    valid = torch.ones((s, s), dtype=torch.bool, device=device)
+    if sliding_window is not None:
+        valid = valid & (diff.abs() <= int(sliding_window))
+    zeros = torch.zeros((1, 1, s, s), dtype=dtype, device=device)
+    neg = torch.full((1, 1, s, s), float(neg_value), dtype=dtype, device=device)
+    mask = torch.where(valid.view(1, 1, s, s), zeros, neg)
+    if attention_mask is not None:
+        b = int(attention_mask.shape[0])
+        keep = attention_mask[:, None, None, :s] == int(valid_value)
+        pad_zeros = torch.zeros((b, 1, 1, s), dtype=dtype, device=device)
+        pad_neg = torch.full((b, 1, 1, s), float(neg_value), dtype=dtype, device=device)
+        mask = mask + torch.where(keep, pad_zeros, pad_neg)
+    return mask
+
+
+def build_frame_prefix_causal_bias(
+    ctx: Any,
+    n_frame: int,
+    n_hw: int,
+    batch_size: int,
+    *,
+    dtype: Any,
+    neg_value: float = float("-inf"),
+) -> Any:
+    """Build frame-wise causal mask for flattened video tokens ``[B,1,S,S]``.
+
+    Token ``i`` (in frame ``fi``) can attend to all tokens from frames ``<= fi``.
+    """
+    frames = int(n_frame)
+    hw = int(n_hw)
+    b = int(batch_size)
+    seq_len = frames * hw
+    token_idx = ctx.arange(seq_len, dtype=_int32_dtype(ctx))
+    frame_idx = token_idx // hw
+    j_pos = ctx.arange(seq_len, dtype=_int32_dtype(ctx))[None, :]
+    i_frame = frame_idx[:, None]
+    allowed = j_pos < (i_frame + 1) * hw
+    mask2d = ctx.where(
+        allowed,
+        ctx.zeros((seq_len, seq_len), dtype=dtype),
+        ctx.full((seq_len, seq_len), float(neg_value), dtype=dtype),
+    )
+    return ctx.broadcast_to(ctx.expand_dims(mask2d, (0, 1)), (b, 1, seq_len, seq_len))
+
+
+def repeat_kv_heads_mx(ops: Any, x: Any, n_rep: int) -> Any:
+    """Repeat KV heads for MLX-style tensors ``[B, H_kv, L, D]``."""
+    rep = int(n_rep)
+    if rep == 1:
+        return x
+    b, n_kv, l, d = (int(x.shape[i]) for i in range(4))
+    x = ops.expand_dims(x, axis=2)
+    x = ops.broadcast_to(x, (b, n_kv, rep, l, d))
+    return x.reshape(b, n_kv * rep, l, d)
+
+
+def repeat_kv_heads_torch(x: Any, n_rep: int) -> Any:
+    """Repeat KV heads for torch tensors ``[B, H_kv, L, D]``."""
+    rep = int(n_rep)
+    if rep == 1:
+        return x
+    b, n_kv, l, d = (int(x.shape[i]) for i in range(4))
+    x = x.unsqueeze(2)
+    x = x.expand(b, n_kv, rep, l, d)
+    return x.reshape(b, n_kv * rep, l, d)
+
+
+def scaled_dot_product_attention_bhsd_mx(
+    ops: Any,
+    q: Any,
+    k: Any,
+    v: Any,
+    *,
+    scale: float,
+    mask: Any | None = None,
+    compute_dtype: Any | None = None,
+    out_dtype: Any | None = None,
+) -> Any:
+    """MLX fast SDPA for ``[B, H, S, D]`` tensors with optional dtype control."""
+    q_in, k_in, v_in = q, k, v
+    if compute_dtype is not None:
+        q = q.astype(compute_dtype)
+        k = k.astype(compute_dtype)
+        v = v.astype(compute_dtype)
+    out = ops.fast.scaled_dot_product_attention(q, k, v, scale=scale, mask=mask)
+    if out_dtype is not None:
+        return out.astype(out_dtype)
+    if compute_dtype is not None and hasattr(q_in, "dtype"):
+        return out.astype(q_in.dtype)
+    return out
+
+
+def scaled_dot_product_attention_bhsd_torch(
+    q: Any,
+    k: Any,
+    v: Any,
+    *,
+    scale: float,
+    mask: Any | None = None,
+    out_dtype: Any | None = None,
+) -> Any:
+    """Torch SDPA for ``[B, H, S, D]`` tensors with optional output dtype."""
+    torch = importlib.import_module("torch")
+    out = torch.nn.functional.scaled_dot_product_attention(
+        q, k, v, attn_mask=mask, scale=scale
+    )
+    if out_dtype is not None:
+        return out.to(out_dtype)
+    return out
+
+
+def attention_blhd(
+    ctx: Any,
+    q: Any,
+    k: Any,
+    v: Any,
+    *,
+    scale: float,
+    mask: Any | None = None,
+    dtype: Any | None = None,
+) -> Any:
+    """Scaled dot-product attention for ``[B, L, H, D]`` tensors."""
+    if dtype is None:
+        dtype = getattr(q, "dtype", None)
+    if dtype is not None:
+        q = q.astype(dtype)
+        k = k.astype(dtype)
+        v = v.astype(dtype)
+    qh = ctx.permute(q, (0, 2, 1, 3))
+    kh = ctx.permute(k, (0, 2, 1, 3))
+    vh = ctx.permute(v, (0, 2, 1, 3))
+    out = ctx.attention(qh, kh, vh, scale=scale, mask=mask)
+    return ctx.permute(out, (0, 2, 1, 3))
+
+
+def attention_bhsd(
+    ctx: Any,
+    q: Any,
+    k: Any,
+    v: Any,
+    *,
+    scale: float,
+    mask: Any | None = None,
+    dtype: Any | None = None,
+) -> Any:
+    """Scaled dot-product attention for ``[B, H, S, D]`` tensors."""
+    if dtype is None:
+        dtype = getattr(q, "dtype", None)
+    if dtype is not None:
+        q = q.astype(dtype)
+        k = k.astype(dtype)
+        v = v.astype(dtype)
+    return ctx.attention(q, k, v, scale=scale, mask=mask)
+
+
+def attention_bhsd_to_blhd(
+    ctx: Any,
+    q: Any,
+    k: Any,
+    v: Any,
+    *,
+    scale: float,
+    mask: Any | None = None,
+    dtype: Any | None = None,
+) -> Any:
+    """Scaled dot-product attention from ``[B,H,S,D]`` to ``[B,S,H,D]``."""
+    out = attention_bhsd(ctx, q, k, v, scale=scale, mask=mask, dtype=dtype)
+    return ctx.permute(out, (0, 2, 1, 3))
 
 
 class SelfAttention:

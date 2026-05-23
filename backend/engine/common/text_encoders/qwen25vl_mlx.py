@@ -14,6 +14,7 @@ def encode_prompt_embeds_qwen25vl(
     *,
     tokenizer_max_length: int = 512,
     device: str = "cpu",
+    array_fn: Any | None = None,
 ) -> mx.array:
     """``[B, tokenizer_max_length, hidden]`` MLX float32 — matches upstream slice layout."""
     try:
@@ -33,7 +34,9 @@ def encode_prompt_embeds_qwen25vl(
         tokenizer_max_length=tokenizer_max_length,
         device=device,
     )
-    return mx.array(hidden_np, dtype=mx.float32)
+    if array_fn is None:
+        array_fn = mx.array
+    return array_fn(hidden_np, dtype=mx.float32)
 
 
 class Qwen25VLEncoder:
@@ -42,11 +45,12 @@ class Qwen25VLEncoder:
     加载 transformers 模型，在 CPU 上运行，返回 MLX array。
     """
 
-    def __init__(self, model_path: str | Path, device: str = "cpu"):
+    def __init__(self, model_path: str | Path, device: str = "cpu", *, array_fn: Any | None = None):
         from transformers import Qwen2Tokenizer
 
         self.model_path = Path(model_path)
         self.device = device
+        self._array_fn = array_fn or mx.array
 
         text_encoder_path = self.model_path / "text_encoder"
         text_processor_path = self.model_path / "text_processor"
@@ -73,6 +77,7 @@ class Qwen25VLEncoder:
             prompts,
             tokenizer_max_length=max_length,
             device=self.device,
+            array_fn=self._array_fn,
         )
 
     def __call__(self, prompts: list[str]) -> mx.array:
