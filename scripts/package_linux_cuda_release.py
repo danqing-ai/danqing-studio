@@ -22,7 +22,7 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 export DANQING_USER_DATA_DIR="${DANQING_USER_DATA_DIR:-$HOME/danqing-data}"
 mkdir -p "$DANQING_USER_DATA_DIR"/{models,outputs,db,config}
 export DANQING_HTTP_HOST="${DANQING_HTTP_HOST:-0.0.0.0}"
-export DANQING_HTTP_PORT="${DANQING_HTTP_PORT:-7860}"
+export DANQING_HTTP_PORT="${DANQING_HTTP_PORT:-7800}"
 exec "$ROOT/danqing-api/danqing-api"
 """
 
@@ -41,7 +41,7 @@ Quick start:
   export DANQING_USER_DATA_DIR=$HOME/danqing-data   # optional
   ./run.sh
 
-Open http://127.0.0.1:7860 (or your host:7860). API docs: /docs
+Open http://127.0.0.1:7800 (or your host:7800). API docs: /docs
 
 Place model weights under $DANQING_USER_DATA_DIR/models/ per config/models_registry.json.
 Copy default_config/models_registry.json into $DANQING_USER_DATA_DIR/config/ on first run if needed.
@@ -49,7 +49,7 @@ Copy default_config/models_registry.json into $DANQING_USER_DATA_DIR/config/ on 
 Environment:
   DANQING_USER_DATA_DIR  Writable data root (models, outputs, db, config)
   DANQING_HTTP_HOST      Bind address (default 0.0.0.0)
-  DANQING_HTTP_PORT      Port (default 7860)
+  DANQING_HTTP_PORT      Port (default 7800)
 
 Only registry models with backends including \"cuda\" are supported in this bundle.
 """

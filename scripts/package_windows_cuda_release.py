@@ -26,7 +26,7 @@ if not exist "%DANQING_USER_DATA_DIR%\outputs" mkdir "%DANQING_USER_DATA_DIR%\ou
 if not exist "%DANQING_USER_DATA_DIR%\db" mkdir "%DANQING_USER_DATA_DIR%\db"
 if not exist "%DANQING_USER_DATA_DIR%\config" mkdir "%DANQING_USER_DATA_DIR%\config"
 if not defined DANQING_HTTP_HOST set "DANQING_HTTP_HOST=0.0.0.0"
-if not defined DANQING_HTTP_PORT set "DANQING_HTTP_PORT=7860"
+if not defined DANQING_HTTP_PORT set "DANQING_HTTP_PORT=7800"
 "%ROOT%danqing-api\danqing-api.exe"
 endlocal
 """
@@ -46,7 +46,7 @@ Quick start:
   set DANQING_USER_DATA_DIR=%USERPROFILE%\\danqing-data
   run.bat
 
-Open http://127.0.0.1:7860 in a browser. API docs: /docs
+Open http://127.0.0.1:7800 in a browser. API docs: /docs
 
 Place model weights under %DANQING_USER_DATA_DIR%\\models\\ per config/models_registry.json.
 Copy default_config\\models_registry.json into %DANQING_USER_DATA_DIR%\\config\\ on first run if needed.
@@ -54,7 +54,7 @@ Copy default_config\\models_registry.json into %DANQING_USER_DATA_DIR%\\config\\
 Environment:
   DANQING_USER_DATA_DIR  Writable data root (models, outputs, db, config)
   DANQING_HTTP_HOST      Bind address (default 0.0.0.0)
-  DANQING_HTTP_PORT      Port (default 7860)
+  DANQING_HTTP_PORT      Port (default 7800)
 
 Only registry models with backends including "cuda" are supported in this bundle.
 """

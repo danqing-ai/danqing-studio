@@ -95,7 +95,7 @@ def create_app() -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:7860", "http://127.0.0.1:7860", "*"],
+        allow_origins=["http://localhost:5800", "http://127.0.0.1:5800", "http://localhost:7800", "http://127.0.0.1:7800", "*"],
         allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -236,5 +236,5 @@ if __name__ == "__main__":
     import uvicorn
 
     host = os.environ.get("DANQING_HTTP_HOST", "0.0.0.0")
-    port = int(os.environ.get("DANQING_HTTP_PORT", "7860"))
+    port = int(os.environ.get("DANQING_HTTP_PORT", "7800"))
     uvicorn.run(app, host=host, port=port)

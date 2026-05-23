@@ -23,7 +23,7 @@
 
 ## 开发（不打包 sidecar）
 
-1. 终端 A：仓库根 `./bin/launch.sh`
+1. 终端 A：仓库根 `make dev`（API :7800，Vite :5800）
 2. 终端 B：`cd desktop && npm install && npm run dev`
 
 ## 发布构建

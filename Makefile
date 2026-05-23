@@ -1,4 +1,4 @@
-.PHONY: help clean lint start stop \
+.PHONY: help clean lint dev start stop test test-integration \
 	frontend-install frontend-dev frontend-build frontend-typecheck \
 	bench-setup bench-src bench-mflux bench-mflux-case bench-sanity bench-sanity-case \
 	bench-audio-sanity bench-audio-sanity-lm bench-audio-sanity-heartmula \
@@ -112,11 +112,18 @@ frontend-typecheck: frontend-install
 # Dev server
 # ============================================================================
 
-start:
-	./bin/launch.sh
+dev start:
+	@chmod +x scripts/*.sh
+	@./scripts/start.sh
 
 stop:
-	./bin/stop.sh
+	@chmod +x scripts/*.sh
+	@./scripts/stop.sh
+
+test: test-engine-unit
+
+test-integration:
+	@echo "No integration tests yet (placeholder)"
 
 # ============================================================================
 # Quality gates
@@ -253,11 +260,12 @@ help:
 	@echo "  bench-sanity / bench-sanity-case / bench-audio-sanity / bench-audio-sanity-heartmula"
 	@echo ""
 	@echo "Frontend:  frontend-install | frontend-dev | frontend-build | frontend-typecheck"
-	@echo "Dev:       start | stop"
-	@echo "Quality:   lint | test-engine-unit | check-*"
+	@echo "Dev:       dev | start | stop"
+	@echo "Test:      test | test-integration"
+	@echo "Quality:   lint | check-*"
 	@echo "Clean:     clean"
 	@echo ""
-	@echo "Release packaging (pack-<platform>-<product>-<step>):"
+	@echo "Release (pack-<platform>-<product>):"
 	@echo "  macOS desktop (MLX):     pack-macos-desktop"
 	@echo "  Linux server (CUDA):     pack-linux-server"
 	@echo "  Windows desktop (CUDA):  pack-windows-desktop-release   (on Windows)"

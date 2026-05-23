@@ -17,7 +17,8 @@ DanQing Studio — plugin-style **image / video** generation on **MLX** (Apple S
 | API entry | `backend/main.py` |
 | Frontend entry | `frontend/index.html` → Vite → `frontend/src/` |
 | Production UI build | `out/frontend/dist/` (`frontend/vite.config.ts`) |
-| Launch / stop | `bin/launch.sh`, `bin/stop.sh` |
+| Launch / stop | `make dev` / `make start` / `make stop` → `scripts/start.sh`, `scripts/stop.sh` |
+| Dev ports | Backend **7800**, frontend **5800** (`78xx`/`58xx`, suffix `00` = Studio) |
 | Model registry (git / factory) | `default_config/models_registry.json` |
 | Workspace pointer (local, gitignored) | `default_config/workspace.pointer.json` |
 | Model registry (runtime) | `{workspace}/config/models_registry.json` — sync via `make sync-models-registry` |
@@ -265,21 +266,21 @@ Engines: `ModelRegistry` + `EngineRegistry` → `DanQingImageEngine` / `DanQingV
 - `POST /api/audios/generations` — `AUDIO_GENERATION` → `DanQingAudioEngine` → `MusicPipeline` (ACE-Step `ace-step-xl-sft`, MLX + CUDA)
 - `POST /api/audios/edits` — `AUDIO_EDIT` (registry actions `cover` / `repaint`; engine must declare support)
 
-Route sources: `backend/api/routes/*.py`. Live docs: `http://localhost:7860/docs`.
+Route sources: `backend/api/routes/*.py`. Live docs: `http://localhost:7800/docs`.
 
 ---
 
 ## Running
 
 ```bash
-./bin/launch.sh          # macOS-oriented; venv + deps + optional frontend build
-make start / make stop
+make dev                 # uvicorn --reload + Vite HMR
+make start / make stop   # same as dev / stop scripts
 
-source .venv/bin/activate
-python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 7860
-
-make frontend-dev        # :5173 → proxy /api to :7860
+make frontend-dev        # :5800 → proxy /api to :7800 (if running backend separately)
 make frontend-build      # → out/frontend/dist/
+
+make pack-macos-desktop  # release desktop
+make pack-linux-server   # release Linux server tar.gz
 ```
 
 ---
@@ -354,7 +355,7 @@ Makefile pattern: `pack-<platform>-<product>-<step>` (`desktop` \| `server`; `ve
 
 - **First run is slow** — model load into GPU memory
 - **DB schema** — no migrations; delete `db/studio.db` (+ outputs) to reset
-- **`launch.sh`** — checks/builds frontend; production path is `out/frontend/dist/` (see `backend/main.py::_resolve_frontend_static_dir`)
+- **`scripts/start.sh`** — dev: venv + uvicorn --reload + Vite; release UI path is `out/frontend/dist/` (see `backend/main.py::_resolve_frontend_static_dir`)
 - **Add model** — full 5-step checklist above, not registry-only
 - **OpenAI-compatible API** (if added later) — separate `/v1/...` adapter; must delegate to same contracts/engines; do not replace resource-style `/api/images/*` routes
 - **Contributors** — run `make check-consistency` and `make check-engine-imports` before PR

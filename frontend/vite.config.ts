@@ -14,10 +14,11 @@ export default defineConfig({
     include: ['reka-ui', '@danqing/dq-ui', '@danqing/dq-shell'],
   },
   server: {
-    port: 5173,
+    port: Number(process.env.DQ_FRONTEND_PORT || 5800),
+    strictPort: true,
     proxy: {
       '/api': {
-        target: 'http://localhost:7860',
+        target: `http://127.0.0.1:${process.env.DQ_BACKEND_PORT || 7800}`,
         changeOrigin: true,
       },
     },

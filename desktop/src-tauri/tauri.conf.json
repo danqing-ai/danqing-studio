@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "",
     "beforeBuildCommand": "",
-    "devUrl": "http://127.0.0.1:7860",
+    "devUrl": "http://127.0.0.1:7800",
     "frontendDist": "../loader"
   },
   "app": {

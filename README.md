@@ -55,7 +55,7 @@ Audio routes accept tasks but **fail explicitly** in the task log until an infer
 
 | Platform | Notes |
 |----------|--------|
-| **macOS (Apple Silicon)** | Primary target; MLX via Metal. `./bin/launch.sh` expects macOS + Python 3.11. |
+| **macOS (Apple Silicon)** | Primary target; MLX via Metal. `make dev` expects macOS + Python 3.11. |
 | **Linux / Windows + NVIDIA** | CUDA path when `torch` + CUDA are installed; not all families ship `*_cuda.py` yet — missing capability **fails loud**, no silent fallback. |
 | **Python** | 3.11+ (`.venv/` at repo root) |
 | **RAM** | 32 GB+ recommended for large models |
@@ -80,16 +80,32 @@ pip install -r requirements.txt
 ### Run (web)
 
 ```bash
-# Recommended: creates venv if needed, installs deps, builds frontend when needed
-./bin/launch.sh
-
-# Or manual
-source .venv/bin/activate
-make frontend-build    # once — output: out/frontend/dist/
-python3 -m uvicorn backend.main:app --host 0.0.0.0 --port 7860
+# 开发：uvicorn --reload + Vite HMR（一键启停）
+make dev
+# 或 make start / make stop
 ```
 
-Open **http://localhost:7860** — Swagger UI at **/docs**.
+Open **http://localhost:5800** (Vite, proxies `/api` → :7800) or **http://localhost:7800** — Swagger at **/docs**.
+
+### Dev ports (DanQing family)
+
+Backend **`78xx`**, frontend **`58xx`** — same last two digits = same project. All three repos can run `make dev` at once.
+
+| Project | Backend | Frontend (Vite) |
+|---------|---------|-------------------|
+| **Studio** | 7800 | 5800 |
+| Teams | 7801 | 5801 |
+| Mail | 7802 | 5802 |
+
+Override: `DQ_BACKEND_PORT`, `DQ_FRONTEND_PORT` (see `scripts/out_paths.sh`).
+
+### Release
+
+```bash
+make pack-macos-desktop     # macOS .app / .dmg → out/desktop/bundle/
+make pack-linux-server      # Linux CUDA tar.gz → out/dist/
+make pack-windows-desktop-release   # Windows NSIS (on Windows)
+```
 
 ### CLI examples
 
@@ -115,10 +131,10 @@ Install weights from the **Models** page or `POST /api/models/{id}/install` (pro
 
 ### Frontend dev (hot reload)
 
-Terminal A — API on port **7860**. Terminal B:
+`make dev` 已同时启动 API（:7800，--reload）与 Vite（:5800）。也可单独：
 
 ```bash
-make frontend-dev   # Vite on :5173, proxies /api → :7860
+make frontend-dev   # Vite on :5800, proxies /api → :7800
 ```
 
 ### Benchmarks (optional)
@@ -152,7 +168,7 @@ DanQing-Studio/
 │   └── main.py              # FastAPI entry
 ├── frontend/                # Vue 3 + Vite + TypeScript
 ├── desktop/                 # Tauri 2 shell
-├── bin/                     # launch.sh, stop.sh, danqing-*
+├── bin/                     # danqing-* CLI
 ├── default_config/          # factory models_registry, presets, locales, workspace.pointer
 ├── scripts/                 # build, lint gates, desktop packaging
 ├── tests/benchmark/         # mflux + sanity harness
@@ -235,7 +251,9 @@ MLX_METAL_MEMORY_LIMIT=120
 
 | Command | Purpose |
 |---------|---------|
-| `make start` / `make stop` | API via launch/stop scripts |
+| `make dev` / `make start` / `make stop` | Dev: uvicorn --reload + Vite HMR |
+| `make pack-macos-desktop` | macOS desktop release |
+| `make pack-linux-server` | Linux server release |
 | `make frontend-dev` | Vite dev server |
 | `make frontend-build` | Production UI → `out/frontend/dist/` |
 | `make frontend-typecheck` | `vue-tsc` |
@@ -244,7 +262,7 @@ MLX_METAL_MEMORY_LIMIT=120
 | `make lint` | Python syntax check |
 | `make clean` | Remove `out/` build tree |
 
-Backend reload: `python3 -m uvicorn backend.main:app --reload --port 7860`
+Backend reload: `python3 -m uvicorn backend.main:app --reload --port 7800`
 
 ---
 
@@ -259,7 +277,7 @@ Backend reload: `python3 -m uvicorn backend.main:app --reload --port 7860`
 | Models | `GET /api/models`, `POST /api/models/{id}/install`, registry at `GET /api/registry` |
 | System | `GET /api/system/health`, `GET /api/settings/system` |
 
-Interactive docs: **http://localhost:7860/docs**
+Interactive docs: **http://localhost:7800/docs**
 
 ---
 
@@ -301,7 +319,7 @@ MIT
 
 | 平台 | 说明 |
 |------|------|
-| **macOS（Apple Silicon）** | 主要目标；`./bin/launch.sh` 面向 macOS + Python 3.11 |
+| **macOS（Apple Silicon）** | 主要目标；`make dev` 面向 macOS + Python 3.11 |
 | **Linux / Windows + NVIDIA** | 需 `torch` + CUDA；部分 family 尚无 `*_cuda.py` 时会**明确报错** |
 | **Python** | 3.11+，仓库根 `.venv/` |
 | **内存** | 大模型建议 32 GB 及以上 |
@@ -312,15 +330,16 @@ MIT
 
 ```bash
 cd DanQing-Studio
-python3.11 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-./bin/launch.sh
+make dev
+# 或 make start / make stop
 ```
 
-浏览器打开 **http://localhost:7860**，API 文档 **/docs**。
+浏览器打开 **http://localhost:5800**（Vite，代理 `/api` → :7800），API 文档 **/docs**。
+
+发布：`make pack-macos-desktop` / `make pack-linux-server`
 
 ```bash
-# 前端热更新（API 另开终端跑在 7860）
+# 前端热更新（API 另开终端跑在 7800）
 make frontend-dev
 
 # CLI 示例
