@@ -101,8 +101,12 @@ async def get_task_logs(
 
 @router.delete("/{task_id}")
 async def delete_task(task_id: str, sched: TaskScheduler = Depends(get_task_scheduler)):
-    ok = await sched.cancel(task_id)
-    return {"ok": ok}
+    out = await sched.cancel(task_id)
+    if out == "not_found":
+        raise HTTPException(404, "task not found")
+    if out == "not_cancellable":
+        raise HTTPException(409, "only queued/running tasks can be cancelled")
+    return {"ok": True}
 
 
 @router.get("/{task_id}/stream")

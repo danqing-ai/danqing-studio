@@ -143,20 +143,20 @@ class TaskScheduler:
             },
         }
 
-    async def cancel(self, task_id: str) -> bool:
+    async def cancel(self, task_id: str) -> Literal["ok", "not_found", "not_cancellable"]:
         tok = self._tokens.get(task_id)
         if tok:
             tok.cancel()
         row = self._tasks.get_task(task_id)
         if not row:
-            return False
+            return "not_found"
         st = row["status"]
         if st in ("completed", "failed", "cancelled"):
-            return False
+            return "not_cancellable"
         if st == "queued":
             self._tasks.mark_cancelled(task_id)
             await self._rebuild_queued_heap()
-            return True
+            return "ok"
         if st == "running":
             k = row.get("kind") or ""
             mid = row.get("model_id") or ""
@@ -167,8 +167,8 @@ class TaskScheduler:
             elif TK.is_audio_kind(k):
                 await self._engines.get_audio(mid).cancel(task_id)
             self._tasks.mark_cancelled(task_id)
-            return True
-        return False
+            return "ok"
+        return "not_cancellable"
 
     def get_task(self, task_id: str) -> Optional[dict[str, Any]]:
         return self._tasks.get_task(task_id)
@@ -409,6 +409,10 @@ class TaskScheduler:
                 res = await self._engines.get_audio(model_id).edit(req, ctx)
             else:
                 raise RuntimeError(f"unknown kind {kind}")
+
+            if tok.is_cancelled():
+                self._tasks.mark_cancelled(tid)
+                return
 
             self._tasks.mark_completed(
                 tid,

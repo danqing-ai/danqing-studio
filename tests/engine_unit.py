@@ -90,6 +90,109 @@ class TaskKindMappingTests(unittest.TestCase):
         self.assertEqual(task_kind_for_registry_action("image", "create"), IMAGE_GENERATION)
 
 
+class TaskSchedulerCancellationTests(unittest.TestCase):
+    def test_queued_cancel_removes_from_execution_queue(self) -> None:
+        import asyncio
+        import tempfile
+
+        import backend.core.task_kinds as TK
+        from backend.persistence.v3_task_store import V3TaskStore
+        from backend.scheduler.task_scheduler import TaskScheduler
+
+        class _PathResolver:
+            def __init__(self, root: Path):
+                self._root = root
+
+            def get_outputs_dir(self) -> Path:
+                out = self._root / "outputs"
+                out.mkdir(parents=True, exist_ok=True)
+                return out
+
+        class _EngineRegistry:
+            pass
+
+        async def _run() -> None:
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                db = root / "studio.db"
+                sched = TaskScheduler(
+                    path_resolver=_PathResolver(root),
+                    task_store=V3TaskStore(db),
+                    asset_store=SimpleNamespace(),
+                    engine_registry=_EngineRegistry(),
+                    config_store=None,
+                )
+                task = await sched.submit(
+                    kind=TK.AUDIO_GENERATION,
+                    model_id="ace-step-xl-sft",
+                    params={"model": "ace-step-xl-sft", "prompt": "test", "n": 1},
+                )
+                out = await sched.cancel(task["id"])
+                self.assertEqual(out, "ok")
+                row = sched.get_task(task["id"])
+                self.assertIsNotNone(row)
+                self.assertEqual(row["status"], "cancelled")
+                queued_ids = {r["id"] for r in sched.queue_snapshot()["queued"]}
+                self.assertNotIn(task["id"], queued_ids)
+
+        asyncio.run(_run())
+
+    def test_running_cancel_not_overwritten_by_completed(self) -> None:
+        import asyncio
+        import tempfile
+
+        import backend.core.task_kinds as TK
+        from backend.core.contracts import EngineResult
+        from backend.persistence.v3_task_store import V3TaskStore
+        from backend.scheduler.task_scheduler import TaskScheduler
+
+        class _PathResolver:
+            def __init__(self, root: Path):
+                self._root = root
+
+            def get_outputs_dir(self) -> Path:
+                out = self._root / "outputs"
+                out.mkdir(parents=True, exist_ok=True)
+                return out
+
+        class _AudioEngine:
+            async def generate(self, _request, ctx):
+                # Simulate user cancellation observed during model execution.
+                ctx.cancel_token.cancel()
+                return EngineResult(
+                    primary_asset_id="ast_test",
+                    asset_ids=["ast_test"],
+                    output_paths=["/tmp/fake.wav"],
+                    metadata={},
+                )
+
+        class _EngineRegistry:
+            def get_audio(self, _model_id):
+                return _AudioEngine()
+
+        async def _run() -> None:
+            with tempfile.TemporaryDirectory() as td:
+                root = Path(td)
+                db = root / "studio.db"
+                sched = TaskScheduler(
+                    path_resolver=_PathResolver(root),
+                    task_store=V3TaskStore(db),
+                    asset_store=SimpleNamespace(),
+                    engine_registry=_EngineRegistry(),
+                    config_store=None,
+                )
+                task = await sched.submit(
+                    kind=TK.AUDIO_GENERATION,
+                    model_id="ace-step-xl-sft",
+                    params={"model": "ace-step-xl-sft", "prompt": "test", "n": 1},
+                )
+                await sched._execute(task["id"])
+                row = sched.get_task(task["id"])
+                self.assertIsNotNone(row)
+                self.assertEqual(row["status"], "cancelled")
+
+        asyncio.run(_run())
+
 class AceStepGenerationTests(unittest.TestCase):
     def test_prepare_music_request_auto_zh_and_turbo_steps(self) -> None:
         import json

@@ -224,12 +224,21 @@ function openTaskQueue() {
 
 async function cancelGlobalTask(taskId: string) {
   try {
-    await api.gen.cancelMediaTask(taskId);
+    const result = await api.gen.cancelMediaTask(taskId);
+    if (!result || result.ok !== true) {
+      throw new Error('cancel failed');
+    }
     await tasksStore.pollQueueOnce();
     toast.success($tt('studio.cancelled'));
   } catch (e: unknown) {
     console.error('cancelGlobalTask', e);
-    const msg = e instanceof Error ? e.message : String(e);
+    let msg = '';
+    if (typeof e === 'object' && e !== null && 'response' in e) {
+      const err = e as { response?: { data?: { detail?: string } } };
+      msg = err.response?.data?.detail || '';
+    }
+    if (!msg && e instanceof Error) msg = e.message;
+    if (!msg) msg = String(e);
     toast.error($tt('studio.error', { msg }));
   }
 }

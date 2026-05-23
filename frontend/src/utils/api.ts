@@ -462,8 +462,8 @@ export const api = {
       return response.data;
     },
 
-    async cancelMediaTask(taskId: string): Promise<unknown> {
-      const response = await client.delete(`/api/tasks/${taskId}`);
+    async cancelMediaTask(taskId: string): Promise<{ ok?: boolean }> {
+      const response = await client.delete(`/api/tasks/${encodeURIComponent(taskId)}`);
       return response.data;
     },
 

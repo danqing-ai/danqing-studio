@@ -5,6 +5,7 @@ Dispatches by registry ``family`` (ACE-Step, HeartMuLa, …) on MLX or CUDA.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import random
 import time
@@ -102,11 +103,17 @@ class MusicPipeline:
             self._generator_key = key
         return self._generator
 
+    @staticmethod
+    def _raise_if_cancelled(exec_ctx: ExecutionContext) -> None:
+        if exec_ctx.cancel_token.is_cancelled():
+            raise asyncio.CancelledError()
+
     def run(
         self,
         request: AudioGenerationRequest,
         exec_ctx: ExecutionContext,
     ) -> EngineResult:
+        self._raise_if_cancelled(exec_ctx)
         t0 = time.monotonic()
         model_id, version_key = parse_model_version(request.model)
         entry = self._registry.get(model_id)
@@ -177,6 +184,7 @@ class MusicPipeline:
         output_paths: List[str] = []
         output_durations: List[float] = []
         for i in range(n):
+            self._raise_if_cancelled(exec_ctx)
             batch_seed = seed + i
             exec_ctx.on_progress(
                 ProgressEvent(
@@ -190,6 +198,7 @@ class MusicPipeline:
             max_lm_frames = max(1, int(prepared.duration * HEARTMULA_FRAME_RATE))
 
             def _lm_progress(done: int, total: int) -> None:
+                self._raise_if_cancelled(exec_ctx)
                 frac = done / total if total else 0.0
                 exec_ctx.on_progress(
                     ProgressEvent(
@@ -250,6 +259,7 @@ class MusicPipeline:
                     )
                 )
                 raise
+            self._raise_if_cancelled(exec_ctx)
 
             gen_s = time.monotonic() - t_gen
             frames = getattr(generator, "last_frame_count", 0)
@@ -300,6 +310,7 @@ class MusicPipeline:
             output_paths.append(str(out_path))
             output_durations.append(dur_written)
 
+        self._raise_if_cancelled(exec_ctx)
         exec_ctx.on_progress(
             ProgressEvent(progress=1.0, step=n, total=n, message="Complete")
         )
@@ -382,6 +393,7 @@ class MusicPipeline:
         output_durations: List[float] = []
         lyrics_capture: AceStepLyricsCapture | None = None
         for i in range(n):
+            self._raise_if_cancelled(exec_ctx)
             batch_seed = seed + i
             exec_ctx.on_progress(
                 ProgressEvent(
@@ -427,6 +439,7 @@ class MusicPipeline:
                     )
                 )
                 raise
+            self._raise_if_cancelled(exec_ctx)
 
             gen_s = time.monotonic() - t_gen
             latent_frames = getattr(generator, "last_latent_frames", 0)
@@ -515,6 +528,7 @@ class MusicPipeline:
             output_paths.append(str(out_path))
             output_durations.append(dur_written)
 
+        self._raise_if_cancelled(exec_ctx)
         exec_ctx.on_progress(
             ProgressEvent(progress=1.0, step=n, total=n, message="Complete")
         )
