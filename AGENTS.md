@@ -345,7 +345,7 @@ Makefile pattern: `pack-<platform>-<product>-<step>` (`desktop` \| `server`; `ve
 - Build: `make pack-macos-desktop` or `scripts/build_desktop.sh`
 - Artifacts: `out/frontend/dist/`, `out/sidecar/danqing-api/`, `out/desktop/bundle/`, `out/dist/*.tar.gz` (Linux CUDA server)
 - macOS default: `DANQING_PYINSTALLER_PROFILE=mlx` (no torch / `*_cuda`)
-- CUDA server/desktop: `make pack-linux-server` / `make pack-windows-desktop-release`; CI in `.github/workflows/build-desktop.yml`
+- CUDA server/desktop: `make pack-linux-server` / `make pack-windows-desktop-release`; CI in `.github/workflows/release.yml`
 - Sidecar env: `DANQING_HTTP_HOST`, `DANQING_HTTP_PORT`, `DANQING_USER_DATA_DIR`
 - New engine modules must be reachable from `scripts/build_desktop.py` / PyInstaller hooks
 

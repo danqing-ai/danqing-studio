@@ -2,7 +2,7 @@
 
 Shared packages live in the sibling repo [danqing-ai/dq-ui](https://github.com/danqing-ai/dq-ui) (`file:../../dq-ui/packages/*` in `package.json`).
 
-GitHub Actions checks out `dq-ui` next to `danqing-studio` so `npm install` resolves those paths (see `.github/workflows/build-desktop.yml`).
+GitHub Actions checks out `dq-ui` next to the repo so `npm install` resolves those paths (see `.github/workflows/release.yml`).
 
 ## Feedback
 

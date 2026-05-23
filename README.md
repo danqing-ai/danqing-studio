@@ -214,7 +214,7 @@ make pack-macos-desktop
 
 **Windows desktop (CUDA)**: `make pack-windows-desktop-release` → NSIS under `out/desktop/bundle/nsis/`. Optional headless: `make pack-windows-server`.
 
-GitHub tag builds: macOS `.dmg`, Linux CUDA `.tar.gz`, Windows CUDA NSIS `.exe` (workflow `Build Release Artifacts`).
+GitHub tag builds: macOS `.dmg`, Linux CUDA `.tar.gz`, Windows CUDA NSIS `.exe` (`.github/workflows/release.yml`).
 
 See [desktop/README.md](desktop/README.md).
 
