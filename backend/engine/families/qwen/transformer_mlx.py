@@ -9,17 +9,16 @@ import numpy as np
 
 from backend.engine.common.attention import (
     build_padding_attention_bias,
-    scaled_dot_product_attention_bhsd_mx,
 )
 from backend.engine.common._base import TransformerBase
-from backend.engine.common.embeddings import apply_complex_rope_bshd, sinusoidal_timestep_proj
+from backend.engine.common.embeddings import apply_complex_rope_bshd
 from backend.engine.common.norm import (
     apply_ada_layer_norm_continuous,
     apply_scale_shift,
     unpack_modulation_3way,
 )
 from backend.engine.config.model_configs import QwenImageConfig
-from backend.engine.common.text_encoders.qwen3_mlx import MlxRMSNorm, MlxTimestepEmbeddingMLP
+from backend.engine.common.text_encoders.qwen3_mlx import MlxRMSNorm
 from backend.engine.runtime.mlx import MLXContext
 from backend.engine.runtime._base import RuntimeContext
 
@@ -56,22 +55,52 @@ class AdaLayerNormContinuous(nn.Module):
 
 
 class QwenTimeTextEmbed(nn.Module):
+    class _QwenTimesteps(nn.Module):
+        def __init__(self, proj_dim: int = 256, scale: float = 1000.0):
+            super().__init__()
+            self.proj_dim = proj_dim
+            self.flip_sin_to_cos = True
+            self.downscale_freq_shift = 0.0
+            self.scale = scale
+
+        def __call__(self, timesteps: mx.array) -> mx.array:
+            if len(timesteps.shape) != 1:
+                raise ValueError("Timesteps should be a 1d-array")
+
+            half_dim = self.proj_dim // 2
+            max_period = 10000
+            exponent = -np.log(max_period) * mx.arange(0, half_dim, dtype=mx.float32)
+            exponent = exponent / (half_dim - self.downscale_freq_shift)
+            emb = mx.exp(exponent).astype(timesteps.dtype)
+            emb = timesteps[:, None].astype(mx.float32) * emb[None, :]
+            emb = self.scale * emb
+            emb = mx.concatenate([mx.sin(emb), mx.cos(emb)], axis=-1)
+            if self.flip_sin_to_cos:
+                emb = mx.concatenate([emb[:, half_dim:], emb[:, :half_dim]], axis=-1)
+            return emb
+
+    class _QwenTimestepEmbedding(nn.Module):
+        def __init__(self, proj_dim: int, inner_dim: int):
+            super().__init__()
+            self.linear_1 = nn.Linear(proj_dim, inner_dim, bias=True)
+            self.linear_2 = nn.Linear(inner_dim, inner_dim, bias=True)
+
+        def __call__(self, x: mx.array) -> mx.array:
+            x = self.linear_1(x)
+            x = nn.silu(x)
+            x = self.linear_2(x)
+            return x
+
     def __init__(self, timestep_proj_dim: int, inner_dim: int, scale: float = 1000.0):
         super().__init__()
-        self.timestep_proj_dim = timestep_proj_dim
-        self.scale = scale
-        self.timestep_embedder = MlxTimestepEmbeddingMLP(timestep_proj_dim, inner_dim)
+        self.time_proj = QwenTimeTextEmbed._QwenTimesteps(proj_dim=timestep_proj_dim, scale=scale)
+        self.timestep_embedder = QwenTimeTextEmbed._QwenTimestepEmbedding(
+            proj_dim=timestep_proj_dim,
+            inner_dim=inner_dim,
+        )
 
     def __call__(self, timestep: mx.array, hidden_states: mx.array) -> mx.array:
-        if len(timestep.shape) != 1:
-            raise ValueError("timesteps must be 1-d")
-        timesteps_proj = sinusoidal_timestep_proj(
-            _MLX_CTX,
-            timestep,
-            self.timestep_proj_dim,
-            flip_sin_to_cos=True,
-            scale=self.scale,
-        )
+        timesteps_proj = self.time_proj(timestep)
         return self.timestep_embedder(timesteps_proj.astype(hidden_states.dtype))
 
 
@@ -290,8 +319,7 @@ class QwenAttention(nn.Module):
         value_bhsd = mx.transpose(value, (0, 2, 1, 3))
         head_dim = query.shape[-1]
         scale_value = 1.0 / (head_dim**0.5)
-        hidden_states_bhsd = scaled_dot_product_attention_bhsd_mx(
-            mx,
+        hidden_states_bhsd = mx.fast.scaled_dot_product_attention(
             query_bhsd,
             key_bhsd,
             value_bhsd,
@@ -628,8 +656,8 @@ class QwenImageTransformer(TransformerBase):
         B, _C, H_lat, W_lat = latents.shape
         x = ctx.permute(latents, (0, 2, 3, 1))
         seq = ctx.reshape(x, (B, H_lat * W_lat, latents.shape[1]))
-        seq_mx = seq.astype(mx.bfloat16)
-        enc_mx = txt_embeds.astype(mx.bfloat16)
+        seq_mx = seq
+        enc_mx = txt_embeds
         mask_mx = encoder_hidden_states_mask.astype(mx.float32)
 
         class _MC:

@@ -1141,7 +1141,16 @@ class ImagePipeline:
 
         _lnd_edit = runtime_contract.denoise_latent_noise_dtype(self.ctx)
         _noise_sample_dtype_edit = runtime_contract.noise_sample_dtype(self.ctx, _lnd_edit)
-        if getattr(config, "latent_noise_packed", False):
+        if encoder_type == "qwen_image":
+            q_h = int(encoded.shape[2])
+            q_w = int(encoded.shape[3])
+            q_seq = q_h * q_w
+            packed_noise = self.ctx.seeded_randn((1, q_seq, 64), seed, dtype=_noise_sample_dtype_edit)
+            if _noise_sample_dtype_edit != _lnd_edit:
+                packed_noise = packed_noise.astype(_lnd_edit)
+            packed_noise = self.ctx.reshape(packed_noise, (1, q_h, q_w, 64))
+            noise = self.ctx.permute(packed_noise, (0, 3, 1, 2))
+        elif getattr(config, "latent_noise_packed", False):
             from backend.engine.families.flux1.transformer_mlx import _unpack_flux1_latents
 
             _, _, lh, lw = encoded.shape
