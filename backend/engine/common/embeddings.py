@@ -9,6 +9,14 @@ import math
 from typing import Any
 
 
+def _ops_float32_dtype(ops: Any) -> Any:
+    """``RuntimeContext.float32()`` or ``mlx.core.float32`` dtype."""
+    dtype = getattr(ops, "float32", None)
+    if dtype is None:
+        raise RuntimeError("ops must expose float32 dtype or float32() callable")
+    return dtype() if callable(dtype) else dtype
+
+
 def build_position_ids_2d(ops: Any, batch_size: int, seq_len: int, *, dtype: Any) -> Any:
     """Build position ids ``[B, S]`` from ``arange(S)``."""
     pos = ops.arange(int(seq_len), dtype=dtype)[None, :]
@@ -79,7 +87,7 @@ def pad_len_to_multiple(length: int, multiple: int = 32) -> int:
 
 def build_tail_pad_mask(ops: Any, valid_len: int, pad_len: int, *, dtype: Any | None = None) -> Any:
     """Build boolean mask with ``False`` valid prefix and ``True`` padded tail."""
-    mask_dtype = dtype if dtype is not None else ops.float32()
+    mask_dtype = dtype if dtype is not None else _ops_float32_dtype(ops)
     valid = ops.zeros((int(valid_len),), dtype=mask_dtype) > 0
     if int(pad_len) <= 0:
         return valid
@@ -101,7 +109,10 @@ def apply_pad_token(ops: Any, embeds: Any, pad_mask: Any, pad_token: Any) -> Any
 
 def apply_complex_rope_bshd(ops: Any, x: Any, cos_vals: Any, sin_vals: Any) -> Any:
     """Apply complex rotary embedding on ``[B, S, H, D]`` with separate cos/sin."""
-    x_float = x.astype(ops.float32())
+    seq_len = int(x.shape[1])
+    cos_vals = cos_vals[:seq_len]
+    sin_vals = sin_vals[:seq_len]
+    x_float = x.astype(_ops_float32_dtype(ops))
     x_pairs = ops.reshape(x_float, (*x.shape[:-1], -1, 2))
     x_real = x_pairs[..., 0]
     x_imag = x_pairs[..., 1]

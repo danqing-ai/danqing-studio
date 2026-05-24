@@ -200,7 +200,7 @@ class HeartMuLa(nn.Module):
         B, S, _ = tokens.shape
 
         # Text embeddings from last channel
-        text_tokens = tokens[:, :, -1]  # (B, S)
+        text_tokens = tokens[:, :, -1].astype(mx.int32)  # (B, S)
         text_embeds = self.text_embeddings(text_tokens)  # (B, S, dim)
 
         # Apply unconditional embedding for CFG
@@ -221,7 +221,7 @@ class HeartMuLa(nn.Module):
 
         # Audio embeddings from first num_codebooks channels
         # tokens[:, :, :-1] shape: (B, S, num_codebooks)
-        audio_tokens = tokens[:, :, :-1]  # (B, S, num_codebooks)
+        audio_tokens = tokens[:, :, :-1].astype(mx.int32)  # (B, S, num_codebooks)
 
         # Add codebook offsets: token + codebook_idx * vocab_size
         codebook_offsets = mx.arange(self.num_codebooks) * self.audio_vocab_size

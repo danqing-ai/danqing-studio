@@ -27,6 +27,9 @@ from backend.engine.common.mlx_runtime_fallback import load_weights_dict, run_ev
 from backend.engine.families.ace_step.weights_mlx import load_prefix_weights_for_mlx
 from backend.engine.common.text_encoders.qwen3_mlx import MlxSwiGLUMLP
 from backend.engine.families.z_image.text_encoder_mlx import (
+    _ZImageEncoderLayer,
+    _ZImageEncoderRotaryEmbedding,
+)
 
 _MLX_CTX = MLXContext()
 
@@ -437,6 +440,7 @@ class Qwen3EmbeddingMLX(nn.Module):
         self.rotary_emb = _ZImageEncoderRotaryEmbedding(dim=head_dim, base=rope_theta)
 
     def encode(self, input_ids: mx.array, attention_mask: mx.array | None = None) -> mx.array:
+        input_ids = input_ids.astype(mx.int32)
         batch_size, seq_len = input_ids.shape
         hidden_states = self.embed_tokens(input_ids).astype(mx.float32)
         position_ids = build_position_ids_2d(mx, batch_size, seq_len, dtype=mx.int32)
@@ -459,7 +463,7 @@ class Qwen3EmbeddingMLX(nn.Module):
         return self.norm(hidden_states).astype(mx.float32)
 
     def token_embed(self, input_ids: mx.array) -> mx.array:
-        return self.embed_tokens(input_ids).astype(mx.float32)
+        return self.embed_tokens(input_ids.astype(mx.int32)).astype(mx.float32)
 
 
 def load_qwen3_embedding_mlx(

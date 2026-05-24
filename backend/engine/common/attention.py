@@ -18,6 +18,16 @@ def _int32_dtype(ctx: Any) -> Any:
     raise RuntimeError("Context does not provide int32 dtype")
 
 
+def _bool_dtype(ctx: Any) -> Any:
+    for name in ("bool", "bool_"):
+        d = getattr(ctx, name, None)
+        if callable(d):
+            return d()
+        if d is not None:
+            return d
+    raise RuntimeError("Context does not provide bool dtype")
+
+
 def build_key_padding_mask_from_lengths(
     ctx: Any,
     lengths: Any,
@@ -129,7 +139,7 @@ def left_pad_token_mask(ctx: Any, token_mask: Any, total_len: int) -> Any:
     pad_len = int(total_len) - int(mask.shape[1])
     if pad_len <= 0:
         return mask
-    pad = ctx.ones((int(mask.shape[0]), pad_len), dtype=bool)
+    pad = ctx.ones((int(mask.shape[0]), pad_len), dtype=_bool_dtype(ctx))
     return ctx.concat([pad, mask], axis=1)
 
 
@@ -219,7 +229,7 @@ def build_window_with_padding_bias(
     s = int(seq_len)
     idx = ctx.arange(s, dtype=_int32_dtype(ctx))
     diff = idx[:, None] - idx[None, :]
-    valid = ctx.ones((s, s), dtype=bool)
+    valid = ctx.ones((s, s), dtype=_bool_dtype(ctx))
     if sliding_window is not None:
         valid = valid & (ctx.abs(diff) <= int(sliding_window))
     valid = ctx.expand_dims(ctx.expand_dims(valid, 0), 0)

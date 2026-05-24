@@ -36,9 +36,9 @@ class T5Encoder:
     @property
     def tokenizer(self):
         if self._tokenizer is None:
-            from transformers import T5Tokenizer
-            self._tokenizer = T5Tokenizer.from_pretrained(
-                self._tokenizer_path, legacy=False,
+            from transformers import AutoTokenizer
+            self._tokenizer = AutoTokenizer.from_pretrained(
+                self._tokenizer_path, use_fast=False,
             )
         return self._tokenizer
 

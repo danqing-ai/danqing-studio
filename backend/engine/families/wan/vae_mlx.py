@@ -277,7 +277,7 @@ class ResidualBlock(nn.Module):
                 x = layer(x, feat_cache[idx])
                 feat_cache[idx] = cache_x
                 feat_idx[0] += 1
-            elif isinstance(layer, (RMSNorm, CausalConv3d)):
+            elif isinstance(layer, (WanVAERMSNorm, CausalConv3d)):
                 x = layer(x)
         return x + h
 
@@ -966,7 +966,7 @@ def _set_conv2d(mod: nn.Conv2d, prefix: str, weights: dict[str, mx.array]) -> No
     mod.bias = weights[f"{prefix}.bias"]
 
 
-def _set_rms_norm(mod: RMSNorm, prefix: str, weights: dict[str, mx.array]) -> None:
+def _set_rms_norm(mod: WanVAERMSNorm, prefix: str, weights: dict[str, mx.array]) -> None:
     mod.gamma = weights[f"{prefix}.gamma"]
 
 

@@ -15,6 +15,7 @@ from mlx import nn
 from backend.engine.common._base import TransformerBase
 from backend.engine.common.attention import scaled_dot_product_attention_bhsd_mx
 from backend.engine.common.embeddings import sinusoidal_timestep_proj
+from backend.engine.common.norm import apply_rms_norm
 from backend.engine.common.text_encoders.qwen3_mlx import MlxRMSNorm, SeedVR2SwiGLUMLP
 from backend.engine.runtime.mlx import MLXContext
 
