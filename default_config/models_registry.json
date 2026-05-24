@@ -1095,6 +1095,8 @@
         "lora_support": true,
         "seed_support": true,
         "negative_prompt_support": true,
+        "supports_guidance": false,
+        "enable_thinking": false,
         "scheduler": {
           "default": "linear",
           "options": [
