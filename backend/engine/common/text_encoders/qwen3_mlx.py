@@ -331,6 +331,36 @@ class Qwen3EncoderModel(nn.Module):
             )
         return hidden_states.astype(input_ids.dtype)
 
+    def get_prompt_embeds(
+        self,
+        input_ids: mx.array,
+        attention_mask: mx.array | None = None,
+        hidden_state_layers: tuple[int, ...] = (9, 18, 27),
+    ) -> mx.array:
+        batch_size, seq_len = input_ids.shape
+        hidden_states = self.embed_tokens(input_ids).astype(mx.float32)
+        if attention_mask is None:
+            attention_mask = mx.ones((batch_size, seq_len), dtype=mx.int32)
+        position_ids = Qwen3EncoderModel._build_position_ids(batch_size, seq_len)
+        position_embeddings = self.rotary_emb(hidden_states, position_ids)
+        causal_mask = Qwen3EncoderModel._get_causal_mask(
+            attention_mask, batch_size, hidden_states, seq_len
+        )
+        hidden_states_list = [hidden_states]
+        for layer in self.layers:
+            hidden_states = layer(
+                hidden_states=hidden_states,
+                attention_mask=causal_mask,
+                position_embeddings=position_embeddings,
+            )
+            hidden_states_list.append(hidden_states)
+        _ = self.norm(hidden_states)
+        stacked = mx.stack([hidden_states_list[i] for i in hidden_state_layers], axis=1)
+        batch_size, num_layers, seq_len, hidden_dim = stacked.shape
+        return mx.transpose(stacked, (0, 2, 1, 3)).reshape(
+            batch_size, seq_len, num_layers * hidden_dim
+        )
+
     @staticmethod
     def _get_causal_mask(attention_mask, batch_size, hidden_states, seq_len):
         return build_causal_with_padding_bias(
@@ -387,3 +417,13 @@ def build_zimage_mlx_encoder(
     model.load_weights(list(remapped.items()), strict=False)
     ctx.eval(model.parameters())
     return model
+
+
+def build_qwen3_mlx_encoder(
+    model_path: str,
+    ctx: Any,
+    *,
+    load_fn: Any | None = None,
+) -> Qwen3EncoderModel:
+    """Load shared Qwen3 MLX encoder (Flux2/Z-Image/Qwen-Image)."""
+    return build_zimage_mlx_encoder(model_path=model_path, ctx=ctx, load_fn=load_fn)

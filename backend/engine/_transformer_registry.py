@@ -27,6 +27,14 @@ _TEXT_ENCODER = {
     "flux2":    ("backend.engine.families.flux2.text_encoder",     "Flux2TextEncoder"),
     "z_image":  ("backend.engine.families.z_image.text_encoder",   "ZImageTextEncoder"),
     "qwen_image": ("backend.engine.families.qwen.text_encoder", "QwenImageTextEncoder"),
+    "fibo":     ("backend.engine.families.fibo.text_encoder_mlx", "FiboTextEncoder"),
+}
+
+_IMAGE_LORA_MERGE = {
+    "flux1": ("backend.engine.families.flux1.lora_mlx", "merge_flux1_lora_adapters"),
+    "flux2": ("backend.engine.families.flux2.lora_mlx", "merge_flux2_lora_adapters"),
+    "z_image": ("backend.engine.families.z_image.lora_mlx", "merge_z_image_lora_adapters"),
+    "qwen_image": ("backend.engine.families.qwen.lora_mlx", "merge_qwen_image_lora_adapters"),
 }
 
 
@@ -52,6 +60,47 @@ def get_text_encoder(encoder_type: str):
     if entry is None:
         raise RuntimeError(f"Unknown encoder type: {encoder_type}")
     return getattr(importlib.import_module(entry[0]), entry[1])
+
+
+def get_image_lora_merge(family: str):
+    import importlib
+
+    entry = _IMAGE_LORA_MERGE.get(family)
+    if entry is None:
+        return None
+    return getattr(importlib.import_module(entry[0]), entry[1])
+
+
+def merge_image_lora_adapters(
+    *,
+    family: str,
+    model: Any,
+    adapters: list[Any],
+    base_model_id: str,
+    project_root: Path,
+    registry: Any,
+    ctx: Any,
+    on_log: Any | None = None,
+) -> None:
+    merge_fn = get_image_lora_merge(family)
+    if merge_fn is None:
+        supported = ", ".join(sorted(_IMAGE_LORA_MERGE.keys()))
+        raise RuntimeError(
+            "LoRA adapters require in-engine merging; supported image families are "
+            f"{supported} (this model is family={family!r}). Remove adapters or switch model."
+        )
+    kwargs = dict(
+        model=model,
+        adapters=adapters,
+        base_model_id=base_model_id,
+        project_root=project_root,
+        registry=registry,
+        ctx=ctx,
+        on_log=on_log,
+    )
+    if family == "z_image":
+        kwargs["patch_size"] = int(getattr(getattr(model, "config", None), "patch_size", 2) or 2)
+    merge_fn(**kwargs)
 
 
 def encode_prompt_with_image_text_encoder(

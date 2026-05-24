@@ -64,12 +64,14 @@ class Flux2Config:
     mlp_ratio: float = 3.0
     qk_norm: bool = True
     supports_guidance: bool = True
+    requires_sigma_shift: bool = True
     supports_img2img: bool = True
     supports_edit: bool = False
     encoder_type: str = "flux2"
     text_encoder_out_layers: tuple = (9, 18, 27)  # Flux2 Qwen3 takes 3 layers concatenated
     enable_thinking: bool = False     # Reference: Flux2KleinWeightDefinition explicitly disables
     vae_scale: int = 16              # Flux2 uses 16x tile, not 8x
+    latent_noise_dtype: str = "bfloat16"
 
 
 @dataclass
@@ -103,22 +105,21 @@ class FIBOConfig:
     
     Architecture: DiT + JSON structured prompt encoding
     """
-    in_channels: int = 64
-    out_channels: int = 64
+    in_channels: int = 48
+    out_channels: int = 48
     hidden_dim: int = 3072
     num_heads: int = 24
     num_layers: int = 32
     text_dim: int = 4096
-    max_seq_len: int = 512
+    max_seq_len: int = 2048
     rope_dim: int = 64
     mlp_ratio: float = 4.0
     qk_norm: bool = True
     supports_guidance: bool = True
     supports_img2img: bool = True
-    # FIBO-specific: JSON structured prompt（管线侧按字符串送 T5；与 mflux 一致用合法 JSON 更佳）
     structured_prompt: bool = True
-    encoder_type: str = "t5"
-    vae_scale: int = 8
+    encoder_type: str = "fibo"
+    vae_scale: int = 16
 
 
 @dataclass
@@ -146,6 +147,7 @@ class ZImageConfig:
     norm_eps: float = 1e-5
     qk_norm: bool = True
     supports_guidance: bool = True    # Z-Image=True, Z-Image-Turbo=False
+    requires_sigma_shift: bool = True
     supports_img2img: bool = False
     encoder_type: str = "z_image"       # ZImageTextEncoder
     text_encoder_out_layers: Optional[tuple] = None  # flux2=(9,18,27), z_image=None
@@ -153,8 +155,8 @@ class ZImageConfig:
     vae_scale: int = 8
     # Match mflux ``ZImageLatentCreator.create_noise`` (``ModelConfig.precision`` = bf16).
     latent_noise_dtype: str = "bfloat16"
-    use_mlx_compile: bool = True         # ``mx.compile`` DiT forward after weight load (MLX only)
-    use_mlx_cfg_fusion: bool = True      # fused compiled CFG step (MLX only, skips dual eval sync)
+    use_mlx_compile: bool = False        # keep numerical path close to reference; prioritize parity
+    use_mlx_cfg_fusion: bool = False     # disable fused CFG fast-path; use explicit cond/uncond forwards
 
 
 @dataclass
@@ -707,6 +709,8 @@ FAMILY_CONFIG_MAP: dict[str, type] = {
     "hunyuan": HunyuanVideoConfig,
 }
 
+IMAGE_FAMILY_REUSE_CONTRACT = frozenset({"flux1", "flux2", "z_image", "qwen_image", "fibo", "seedvr2"})
+
 
 def get_config_class(family: str) -> type:
     """Get config dataclass by family name."""
@@ -714,3 +718,17 @@ def get_config_class(family: str) -> type:
     if cls is None:
         raise KeyError(f"unknown model family: {family}")
     return cls
+
+
+def assert_image_family_contract(family: str, config: Any) -> None:
+    """Engine-side governance for image families entering ``ImagePipeline``."""
+    if family not in IMAGE_FAMILY_REUSE_CONTRACT:
+        raise RuntimeError(
+            f"Image family {family!r} is not declared in IMAGE_FAMILY_REUSE_CONTRACT. "
+            "Register family/config/transformer instead of adding pipeline special-case branches."
+        )
+    encoder_type = str(getattr(config, "encoder_type", "") or "")
+    if not encoder_type:
+        raise RuntimeError(
+            f"Image family {family!r} config must declare encoder_type for registry-driven text encoding."
+        )
