@@ -943,6 +943,107 @@ class InstallHooksTests(unittest.TestCase):
             self.assertTrue(mlx_weights_ready(root))
 
 
+class AssetStoreBatchDeleteTests(unittest.TestCase):
+    def test_delete_batch_keeps_files_when_commit_fails(self) -> None:
+        from backend.persistence.asset_store import SQLiteAssetStore
+
+        class _ConnFailCommit:
+            def __init__(self, inner):  # noqa: ANN001
+                self._inner = inner
+
+            def execute(self, *args, **kwargs):  # noqa: ANN001
+                return self._inner.execute(*args, **kwargs)
+
+            def commit(self) -> None:
+                raise RuntimeError("simulated commit failure")
+
+            def rollback(self) -> None:
+                self._inner.rollback()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "studio.db"
+            assets = root / "assets"
+            store = SQLiteAssetStore(db, assets)
+            src = root / "in.png"
+            src.write_bytes(b"\x89PNG\r\n\x1a\n")
+            aid = store.create_from_file(
+                src,
+                kind="image",
+                mime_type="image/png",
+                source_task_id="tsk_test",
+            )
+            main = store.get_file_path(aid)
+            self.assertTrue(main.is_file())
+
+            real_conn = store._conn()
+            store._conn = lambda: _ConnFailCommit(real_conn)  # type: ignore[method-assign]
+            with self.assertRaises(RuntimeError):
+                store.delete_batch([aid])
+            self.assertTrue(main.is_file())
+            row = real_conn.execute(
+                "SELECT id FROM assets WHERE id = ?", (aid,)
+            ).fetchone()
+            self.assertIsNotNone(row)
+
+            store._conn = SQLiteAssetStore._conn.__get__(store, SQLiteAssetStore)  # type: ignore[method-assign]
+            store.delete_batch([aid])
+            self.assertFalse(main.exists())
+
+    def test_rebind_points_at_new_db(self) -> None:
+        from backend.persistence.asset_store import SQLiteAssetStore
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db_a = root / "a" / "studio.db"
+            assets_a = root / "a" / "assets"
+            db_b = root / "b" / "studio.db"
+            assets_b = root / "b" / "assets"
+            store = SQLiteAssetStore(db_a, assets_a)
+            src = root / "in.png"
+            src.write_bytes(b"x")
+            aid = store.create_from_file(
+                src,
+                kind="image",
+                mime_type="image/png",
+                source_task_id="tsk_test",
+            )
+            store.rebind(db_b, assets_b)
+            with self.assertRaises(FileNotFoundError):
+                store.get_file_path(aid)
+            db_b.parent.mkdir(parents=True, exist_ok=True)
+            store2 = SQLiteAssetStore(db_b, assets_b)
+            with store2._conn() as conn:
+                self.assertEqual(
+                    conn.execute("SELECT COUNT(*) FROM assets").fetchone()[0],
+                    0,
+                )
+
+
+class TaskSchedulerPaginationTests(unittest.TestCase):
+    def test_paginate_task_rows_fetches_beyond_first_page(self) -> None:
+        from backend.scheduler.task_scheduler import TaskScheduler
+
+        calls: list[tuple[int, int]] = []
+
+        def fake_list(limit: int, offset: int = 0, *, status=None):  # noqa: ANN001
+            calls.append((limit, offset))
+            if offset == 0:
+                return [{"id": f"t{i}"} for i in range(limit)]
+            if offset == 500:
+                return [{"id": "t_extra"}]
+            return []
+
+        rows = TaskScheduler._paginate_task_rows(
+            fake_list,
+            status="queued",
+            page_size=500,
+        )
+        self.assertEqual(len(rows), 501)
+        self.assertEqual(rows[-1]["id"], "t_extra")
+        self.assertEqual(calls, [(500, 0), (500, 500)])
+
+
 class BenchmarkMetadataTests(unittest.TestCase):
     def test_exit_exempt_nonempty(self) -> None:
         self.assertIn("z-image-create", BENCHMARK_EXIT_EXEMPT_MISMATCH_VS_MFLUX)

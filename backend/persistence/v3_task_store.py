@@ -18,6 +18,12 @@ class V3TaskStore(IV3TaskStore):
         self._lock = threading.Lock()
         self._init_db()
 
+    def rebind(self, db_path: Path) -> None:
+        """Point task store at a new workspace DB (e.g. after workspace migration)."""
+        with self._lock:
+            self._db_path = db_path.resolve()
+            self._init_db()
+
     def _conn(self) -> sqlite3.Connection:
         c = sqlite3.connect(str(self._db_path), check_same_thread=False)
         c.row_factory = sqlite3.Row
