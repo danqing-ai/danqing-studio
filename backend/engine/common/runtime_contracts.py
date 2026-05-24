@@ -53,7 +53,6 @@ class FamilyRuntimeContract:
             self.family != "flux1"
             and bool(getattr(self.config, "supports_guidance", False))
             and float(guidance) > 1.0
-            and not bool(getattr(self.config, "structured_prompt", False))
         )
 
     def base_model_kwargs(
@@ -115,6 +114,9 @@ class FamilyRuntimeContract:
             kwargs["sigmas"] = sigmas
         if timestep_embed_value is not None:
             kwargs["timestep_embed_value"] = float(timestep_embed_value)
+        mask_key = getattr(self.config, "text_encoder_mask_key", None)
+        if mask_key is not None and txt_attn_mask is not None:
+            kwargs[mask_key] = txt_attn_mask
         self._apply_qwen_image_kwargs(
             kwargs,
             encoder_type=encoder_type,
@@ -141,6 +143,9 @@ class FamilyRuntimeContract:
             overrides["pooled_embeds"] = pooled_embeds
         if self.family == "flux1":
             overrides["guidance_scale"] = float(guidance)
+        mask_key = getattr(self.config, "text_encoder_mask_key", None)
+        if mask_key is not None and neg_attn_mask is not None:
+            overrides[mask_key] = neg_attn_mask
         self._apply_qwen_image_kwargs(
             overrides,
             encoder_type=encoder_type,

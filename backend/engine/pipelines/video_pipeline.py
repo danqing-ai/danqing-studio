@@ -293,6 +293,41 @@ class VideoPipeline:
             self._t5_max_seq_len = 512
         self._t5 = None
 
+    @staticmethod
+    def _resolve_wan_shift_value(
+        *,
+        request_shift: Any | None,
+        registry_shift: Any | None,
+        scheduler_default_shift: Any | None,
+        on_log: Callable | None = None,
+    ) -> float | None:
+        """Resolve Wan Flow UniPC shift with safer defaults.
+
+        Frontend often sends registry default ``shift`` even when user did not tune it.
+        If that echoed value disagrees with bundle scheduler default, prefer bundle default
+        to avoid unstable/noisy generations.
+        """
+        req = float(request_shift) if request_shift is not None else None
+        reg = float(registry_shift) if registry_shift is not None else None
+        sch = float(scheduler_default_shift) if scheduler_default_shift is not None else None
+        eps = 1e-6
+
+        if req is not None:
+            if reg is not None and sch is not None and abs(req - reg) <= eps and abs(req - sch) > eps:
+                if on_log:
+                    on_log(
+                        "info",
+                        f"Wan shift {req:g} matches registry default; using bundle scheduler default {sch:g}",
+                    )
+                return sch
+            return req
+
+        if sch is not None:
+            return sch
+        if reg is not None:
+            return reg
+        return None
+
     def _denoise_video(
         self,
         *,
@@ -594,8 +629,15 @@ class VideoPipeline:
         else:
             sched_kwargs: dict[str, Any] = {}
             shift_default = self._registry_scalar_default(entry, "shift", None)
-            shift_val = float(request.shift) if request.shift is not None else (
-                float(shift_default) if shift_default is not None else None
+            shift_val = self._resolve_wan_shift_value(
+                request_shift=request.shift if family == "wan" else None,
+                registry_shift=shift_default if family == "wan" else None,
+                scheduler_default_shift=getattr(scheduler, "_default_shift", None) if family == "wan" else None,
+                on_log=on_log,
+            ) if family == "wan" else (
+                float(request.shift) if request.shift is not None else (
+                    float(shift_default) if shift_default is not None else None
+                )
             )
             if shift_val is not None:
                 sched_kwargs["shift"] = shift_val
@@ -626,6 +668,10 @@ class VideoPipeline:
             ]
             if wan_shift is not None:
                 parts.append(f"shift={wan_shift}")
+            if family == "wan":
+                parts.append(
+                    f"wan_expand_timesteps={bool(extra_cond.get('wan_expand_timesteps', False))}"
+                )
             if _cfg_renorm:
                 parts.append(f"cfg_renorm=True cfg_renorm_min={_cfg_renorm_min}")
             if family == "cogvideox" and hasattr(scheduler, "_prediction_type"):
@@ -864,8 +910,15 @@ class VideoPipeline:
         else:
             sched_kwargs: dict[str, Any] = {}
             shift_default = self._registry_scalar_default(entry, "shift", None)
-            shift_val = float(request.shift) if request.shift is not None else (
-                float(shift_default) if shift_default is not None else None
+            shift_val = self._resolve_wan_shift_value(
+                request_shift=request.shift if family == "wan" else None,
+                registry_shift=shift_default if family == "wan" else None,
+                scheduler_default_shift=getattr(scheduler, "_default_shift", None) if family == "wan" else None,
+                on_log=on_log,
+            ) if family == "wan" else (
+                float(request.shift) if request.shift is not None else (
+                    float(shift_default) if shift_default is not None else None
+                )
             )
             if shift_val is not None:
                 sched_kwargs["shift"] = shift_val
@@ -894,6 +947,10 @@ class VideoPipeline:
             ]
             if _cfg_renorm:
                 parts.append(f"cfg_renorm=True cfg_renorm_min={_cfg_renorm_min}")
+            if family == "wan":
+                parts.append(
+                    f"wan_expand_timesteps={bool(extra_cond.get('wan_expand_timesteps', False))}"
+                )
             if family == "cogvideox" and hasattr(scheduler, "_prediction_type"):
                 parts.append(f"sched_prediction={scheduler._prediction_type}")
                 parts.append(f"sched_spacing={getattr(scheduler, '_timestep_spacing', '?')}")

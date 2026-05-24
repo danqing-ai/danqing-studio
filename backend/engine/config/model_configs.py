@@ -102,15 +102,18 @@ class QwenImageConfig:
 @dataclass
 class FIBOConfig:
     """FIBO series (FIBO / FIBO-Lite / FIBO-Edit)
-    
-    Architecture: DiT + JSON structured prompt encoding
+
+    Architecture: Bria4Transformer2DModel — Joint MM-DiT + Single DiT.
     """
     in_channels: int = 48
     out_channels: int = 48
     hidden_dim: int = 3072
     num_heads: int = 24
-    num_layers: int = 32
+    head_dim: int = 128
+    num_joint_layers: int = 8
+    num_single_layers: int = 38
     text_dim: int = 4096
+    text_encoder_dim: int = 2048
     max_seq_len: int = 2048
     rope_dim: int = 64
     mlp_ratio: float = 4.0
@@ -120,6 +123,7 @@ class FIBOConfig:
     structured_prompt: bool = True
     encoder_type: str = "fibo"
     vae_scale: int = 16
+    text_encoder_mask_key: str = "text_encoder_layers"
 
 
 @dataclass

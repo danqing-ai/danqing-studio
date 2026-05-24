@@ -70,9 +70,12 @@ class WanTransformer(TransformerBase):
             self._core.set_i2v_state(z, mask2)
             latents = prepare_ti2v_i2v_latents(ctx, latents, z, mask2)
 
-        if getattr(self.config, "expand_timesteps", False) and cond.get("wan_i2v"):
+        if getattr(self.config, "expand_timesteps", False):
+            # Wan2.2 TI2V expects token-wise timestep input for both T2V and I2V:
+            # - I2V: mask first-frame tokens to 0 (handled by wan_i2v_mask)
+            # - T2V: no mask -> all tokens use the same scalar timestep
             cond["wan_expand_timesteps"] = True
-            if cond.get("wan_i2v_mask") is None:
+            if cond.get("wan_i2v") and cond.get("wan_i2v_mask") is None:
                 _, mask2_list = masks_like(ctx, [ctx.squeeze(latents, 0)], zero=True)
                 cond["wan_i2v_mask"] = mask2_list[0]
         return latents, cond

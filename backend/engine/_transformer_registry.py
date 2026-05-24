@@ -150,6 +150,8 @@ def encode_prompt_with_image_text_encoder(
     if isinstance(out, tuple):
         if len(out) == 2 and encoder_type == "flux1":
             return out[0], None, out[1]
+        if len(out) == 2 and encoder_type == "fibo":
+            return out[0], out[1], None
         if len(out) != 2:
             raise RuntimeError(
                 f"Text encoder {encoder_type!r} returned a tuple of len {len(out)}; expected 2."

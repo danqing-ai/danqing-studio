@@ -457,25 +457,28 @@ class Flux1Transformer(TransformerBase):
         B = latents.shape[0]
         _, _, H, W = latents.shape
 
-        timestep_embed_value = conditioning.get("timestep_embed_value")
-        if timestep_embed_value is not None:
-            t_val = float(timestep_embed_value)
-        elif sigmas is not None:
+        # mflux computes timestep embedding from scheduler sigmas[t] * 1000.
+        # Prefer sigmas when available to avoid scheduler-specific drift.
+        if sigmas is not None:
             t_idx = int(timestep)
             n = int(sigmas.shape[0]) if hasattr(sigmas, "shape") else len(sigmas)
             sigma_t = sigmas[t_idx] if t_idx < n else sigmas[-1] if n > 0 else 1.0
             t_val = _scalar_to_float(sigma_t) * 1000.0
         else:
-            tv = timestep
-            if isinstance(tv, mx.array):
-                if tv.ndim == 0:
-                    t_val = float(tv)
-                else:
-                    t_val = float(mx.reshape(tv, (-1,))[0])
+            timestep_embed_value = conditioning.get("timestep_embed_value")
+            if timestep_embed_value is not None:
+                t_val = float(timestep_embed_value)
             else:
-                t_val = float(tv)
-            if t_val <= 1.0 + 1e-5:
-                t_val *= 1000.0
+                tv = timestep
+                if isinstance(tv, mx.array):
+                    if tv.ndim == 0:
+                        t_val = float(tv)
+                    else:
+                        t_val = float(mx.reshape(tv, (-1,))[0])
+                else:
+                    t_val = float(tv)
+                if t_val <= 1.0 + 1e-5:
+                    t_val *= 1000.0
         # mflux ``compute_text_embeddings``: timestep as ModelConfig.precision (bfloat16)
         t_batch = mx.full((B,), t_val, dtype=mx.bfloat16)
 

@@ -90,8 +90,9 @@ def _image_pipeline_cfg_noise_pred(
     if neg_embeds is not None and getattr(config, "supports_guidance", False):
         if getattr(ctx, "backend", None) == "mlx":
             ctx.eval(noise_cond)
-        uncond_kwargs = {"txt_embeds": neg_embeds, **uncond_overrides}
+        uncond_kwargs = {"txt_embeds": neg_embeds}
         uncond_kwargs.update(model_kwargs)
+        uncond_kwargs.update(uncond_overrides)
         uncond_kwargs["txt_embeds"] = neg_embeds
         noise_uncond = model(latents, t, **uncond_kwargs)
         if getattr(ctx, "backend", None) == "mlx":
@@ -477,6 +478,13 @@ class ImagePipeline:
         )
         enc_items = prepare_vae_encoder_weight_items(vae_weights)
         loaded, skipped = enc.load_weights(enc_items, strict=False)
+        if (
+            getattr(self.ctx, "backend", None) == "mlx"
+            and str(getattr(entry, "family", "")).lower() == "flux1"
+        ):
+            import mlx.core as mx
+
+            enc.cast_floating_params(mx.bfloat16)
         if on_log:
             on_log(
                 "info",

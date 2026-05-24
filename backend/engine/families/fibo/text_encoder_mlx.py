@@ -38,15 +38,11 @@ class FiboTextEncoder:
         self._model.eval()
 
     def encode(self, texts: list[str]) -> Any:
-        import json
-
         import numpy as np
         import torch
 
         if not texts:
             raise ValueError("FiboTextEncoder.encode requires non-empty texts")
-        for t in texts:
-            json.loads(t)
 
         self._load()
         assert self._tokenizer is not None and self._model is not None
@@ -62,4 +58,5 @@ class FiboTextEncoder:
         last = out.hidden_states[-1]
         prev = out.hidden_states[-2]
         embeds = torch.cat([last, prev], dim=-1).to(torch.float32).numpy()
-        return self.ctx.array(embeds)
+        layers = [self.ctx.array(h.to(torch.float32).numpy()) for h in out.hidden_states]
+        return self.ctx.array(embeds), layers

@@ -1079,6 +1079,29 @@ def _diffusers_to_official_vae_key(key: str) -> str:
     key = key.replace("decoder.mid_block.resnets.0.", "decoder.middle.0.")
     key = key.replace("decoder.mid_block.resnets.1.", "decoder.middle.2.")
     key = key.replace("decoder.mid_block.attentions.0.", "decoder.middle.1.")
+
+    # Mid-block resnets: norm/conv/shortcut (same as down_blocks/up_blocks but fixed indices)
+    key = key.replace("encoder.middle.0.norm1.", "encoder.middle.0.residual.0.")
+    key = key.replace("encoder.middle.0.conv1.", "encoder.middle.0.residual.2.")
+    key = key.replace("encoder.middle.0.norm2.", "encoder.middle.0.residual.3.")
+    key = key.replace("encoder.middle.0.conv2.", "encoder.middle.0.residual.6.")
+    key = key.replace("encoder.middle.0.conv_shortcut.", "encoder.middle.0.shortcut.")
+    key = key.replace("encoder.middle.2.norm1.", "encoder.middle.2.residual.0.")
+    key = key.replace("encoder.middle.2.conv1.", "encoder.middle.2.residual.2.")
+    key = key.replace("encoder.middle.2.norm2.", "encoder.middle.2.residual.3.")
+    key = key.replace("encoder.middle.2.conv2.", "encoder.middle.2.residual.6.")
+    key = key.replace("encoder.middle.2.conv_shortcut.", "encoder.middle.2.shortcut.")
+
+    key = key.replace("decoder.middle.0.norm1.", "decoder.middle.0.residual.0.")
+    key = key.replace("decoder.middle.0.conv1.", "decoder.middle.0.residual.2.")
+    key = key.replace("decoder.middle.0.norm2.", "decoder.middle.0.residual.3.")
+    key = key.replace("decoder.middle.0.conv2.", "decoder.middle.0.residual.6.")
+    key = key.replace("decoder.middle.0.conv_shortcut.", "decoder.middle.0.shortcut.")
+    key = key.replace("decoder.middle.2.norm1.", "decoder.middle.2.residual.0.")
+    key = key.replace("decoder.middle.2.conv1.", "decoder.middle.2.residual.2.")
+    key = key.replace("decoder.middle.2.norm2.", "decoder.middle.2.residual.3.")
+    key = key.replace("decoder.middle.2.conv2.", "decoder.middle.2.residual.6.")
+    key = key.replace("decoder.middle.2.conv_shortcut.", "decoder.middle.2.shortcut.")
     return key
 
 

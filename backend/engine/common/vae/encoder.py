@@ -56,9 +56,9 @@ class VAEEncoder:
         self.down4 = _EncoderBlock(512, 512, ctx, stride=1)  # no downsample
 
         # Mid block
-        self.mid_resnet1 = ResnetBlock(512, 512, ctx)
-        self.mid_attn = SpatialAttention(512, ctx)
-        self.mid_resnet2 = ResnetBlock(512, 512, ctx)
+        self.mid_resnet1 = ResnetBlock(512, 512, ctx, cast_after_norm=True, norm_input_fp32=True)
+        self.mid_attn = SpatialAttention(512, ctx, cast_after_norm=True, norm_input_fp32=True)
+        self.mid_resnet2 = ResnetBlock(512, 512, ctx, cast_after_norm=True, norm_input_fp32=True)
 
         # Output
         self.norm_out = nn.GroupNorm(32, 512, eps=1e-6, pytorch_compatible=True)
@@ -108,6 +108,7 @@ class VAEEncoder:
         h = self.mid_attn.forward(h)
         h = self.mid_resnet2.forward(h)
         h = _to_nhwc(ctx, h)
+        h = h.astype(importlib.import_module("mlx.core").float32)
         h = self.norm_out(h)
         h = ctx.silu(h)
         h = self.conv_out(h)
@@ -161,6 +162,39 @@ class VAEEncoder:
             self._build_param_map()
         return list(self._param_map.items())
 
+    def cast_floating_params(self, dtype: Any) -> None:
+        """Cast nested MLX submodules to target dtype (for mflux parity-sensitive paths)."""
+        from backend.engine.common.mlx_dtype import cast_module_parameters
+
+        visited: set[int] = set()
+
+        def _walk(obj: Any) -> None:
+            oid = id(obj)
+            if oid in visited:
+                return
+            visited.add(oid)
+            if hasattr(obj, "parameters") and hasattr(obj, "update") and obj is not self:
+                mod = getattr(obj.__class__, "__module__", "")
+                if mod.startswith("mlx."):
+                    cast_module_parameters(obj, dtype, eval_fn=self.ctx.eval)
+                    return
+            if isinstance(obj, list):
+                for it in obj:
+                    _walk(it)
+                return
+            if isinstance(obj, dict):
+                for it in obj.values():
+                    _walk(it)
+                return
+            if hasattr(obj, "__dict__"):
+                for v in obj.__dict__.values():
+                    if isinstance(v, (int, float, str, bool, type, bytes, bytearray)):
+                        continue
+                    _walk(v)
+
+        _walk(self)
+        self._build_param_map()
+
 
 def _collect_vae_params(obj, prefix, result):
     for name in sorted(dir(obj)):
@@ -187,8 +221,15 @@ class _EncoderBlock:
     """Encoder block: 2 Resnets + optional Downsample。"""
     def __init__(self, in_ch: int, out_ch: int, ctx: RuntimeContext, stride: int = 2):
         self.resnets = [
-            ResnetBlock(in_ch, out_ch, ctx, use_shortcut=(in_ch != out_ch)),
-            ResnetBlock(out_ch, out_ch, ctx),
+            ResnetBlock(
+                in_ch,
+                out_ch,
+                ctx,
+                use_shortcut=(in_ch != out_ch),
+                cast_after_norm=True,
+                norm_input_fp32=True,
+            ),
+            ResnetBlock(out_ch, out_ch, ctx, cast_after_norm=True, norm_input_fp32=True),
         ]
         self.down = Downsample(out_ch, ctx) if stride > 1 else None
 

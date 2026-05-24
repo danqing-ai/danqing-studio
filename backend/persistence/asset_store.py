@@ -150,21 +150,29 @@ def _ffprobe_duration(path: Path) -> Optional[float]:
         return None
 
 
-def _ffmpeg_first_frame(video: Path, out_png: Path) -> bool:
+def _ffmpeg_preview_frame(video: Path, out_png: Path, *, seek_seconds: float | None = None) -> bool:
     try:
-        subprocess.run(
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+        ]
+        if seek_seconds is not None and seek_seconds > 0:
+            # Put -ss before input for faster seek when extracting one preview frame.
+            cmd.extend(["-ss", f"{seek_seconds:.3f}"])
+        cmd.extend(
             [
-                "ffmpeg",
-                "-y",
-                "-hide_banner",
-                "-loglevel",
-                "error",
                 "-i",
                 str(video),
                 "-frames:v",
                 "1",
                 str(out_png),
-            ],
+            ]
+        )
+        subprocess.run(
+            cmd,
             capture_output=True,
             timeout=120,
             check=True,
@@ -275,7 +283,11 @@ class SQLiteAssetStore(IAssetStore):
             if duration is not None:
                 meta.setdefault("duration_seconds", duration)
             poster = self._root / f"{aid}.poster.png"
-            if _ffmpeg_first_frame(dest, poster):
+            seek_sec: float | None = None
+            if kind == "video" and duration is not None and duration > 0:
+                # Mid-frame preview better reflects overall video quality than first frame.
+                seek_sec = max(0.0, float(duration) * 0.5)
+            if _ffmpeg_preview_frame(dest, poster, seek_seconds=seek_sec):
                 thumb_path = poster
                 meta.setdefault("has_poster", True)
             mw, mh = meta.get("width"), meta.get("height")

@@ -23,8 +23,16 @@ def _vae_cuda_nchw(ctx: RuntimeContext) -> bool:
 class ResnetBlock:
     """VAE ResNet: GroupNorm → SiLU → Conv → GroupNorm → SiLU → Conv → +shortcut。"""
 
-    def __init__(self, in_ch: int, out_ch: int, ctx: RuntimeContext,
-                 use_shortcut: bool = False):
+    def __init__(
+        self,
+        in_ch: int,
+        out_ch: int,
+        ctx: RuntimeContext,
+        use_shortcut: bool = False,
+        *,
+        cast_after_norm: bool = False,
+        norm_input_fp32: bool = False,
+    ):
         nn = ctx; self.ctx = ctx
         self.norm1 = nn.GroupNorm(32, in_ch, eps=1e-6, pytorch_compatible=True)
         self.conv1 = nn.Conv2d(in_ch, out_ch, 3, stride=1, padding=1)
@@ -32,13 +40,23 @@ class ResnetBlock:
         self.conv2 = nn.Conv2d(out_ch, out_ch, 3, stride=1, padding=1)
         self.use_shortcut = use_shortcut
         self.conv_shortcut = nn.Conv2d(in_ch, out_ch, 1) if use_shortcut else None
+        self.cast_after_norm = bool(cast_after_norm)
+        self.norm_input_fp32 = bool(norm_input_fp32)
 
     def forward(self, x):
         ctx = self.ctx
         if _vae_cuda_nchw(ctx):
-            h = self.norm1(x)
+            if self.norm_input_fp32:
+                torch = importlib.import_module("torch")
+                x_norm = x.to(dtype=torch.float32)
+            else:
+                x_norm = x
+            h = self.norm1(x_norm)
             h = ctx.silu(h)
             h = self.conv1(h)
+            if self.norm_input_fp32:
+                torch = importlib.import_module("torch")
+                h = h.to(dtype=torch.float32)
             h = self.norm2(h)
             h = ctx.silu(h)
             h = self.conv2(h)
@@ -46,8 +64,20 @@ class ResnetBlock:
                 return self.conv_shortcut(x) + h
             return x + h
         h = _to_nhwc(ctx, x)
-        h = self.norm1(h); h = ctx.silu(h); h = self.conv1(h)
-        h = self.norm2(h); h = ctx.silu(h); h = self.conv2(h)
+        if self.norm_input_fp32:
+            h = h.astype(importlib.import_module("mlx.core").float32)
+        h = self.norm1(h)
+        if self.cast_after_norm:
+            h = h.astype(importlib.import_module("mlx.core").bfloat16)
+        h = ctx.silu(h)
+        h = self.conv1(h)
+        if self.norm_input_fp32:
+            h = h.astype(importlib.import_module("mlx.core").float32)
+        h = self.norm2(h)
+        if self.cast_after_norm:
+            h = h.astype(importlib.import_module("mlx.core").bfloat16)
+        h = ctx.silu(h)
+        h = self.conv2(h)
         h = _to_nchw(ctx, h)
         if self.conv_shortcut is not None:
             s = _to_nhwc(ctx, x); s = self.conv_shortcut(s); x = _to_nchw(ctx, s)
@@ -57,18 +87,31 @@ class ResnetBlock:
 class SpatialAttention:
     """VAE 中间块的空间注意力 (1-head)。"""
 
-    def __init__(self, dim: int = 512, ctx: RuntimeContext = None):
+    def __init__(
+        self,
+        dim: int = 512,
+        ctx: RuntimeContext = None,
+        *,
+        cast_after_norm: bool = False,
+        norm_input_fp32: bool = False,
+    ):
         nn = ctx; self.ctx = ctx
         self.norm = nn.GroupNorm(32, dim, eps=1e-6, pytorch_compatible=True)
         self.to_q = nn.Linear(dim, dim)
         self.to_k = nn.Linear(dim, dim)
         self.to_v = nn.Linear(dim, dim)
         self.to_out = nn.Linear(dim, dim)
+        self.cast_after_norm = bool(cast_after_norm)
+        self.norm_input_fp32 = bool(norm_input_fp32)
 
     def forward(self, x):
         ctx = self.ctx
         if _vae_cuda_nchw(ctx):
-            h = self.norm(x)
+            if self.norm_input_fp32:
+                torch = importlib.import_module("torch")
+                h = self.norm(x.to(dtype=torch.float32))
+            else:
+                h = self.norm(x)
             B, C, H, W = h.shape
             h_bhwc = ctx.permute(h, (0, 2, 3, 1))
             scale = C ** -0.5
@@ -89,7 +132,11 @@ class SpatialAttention:
         B, H, W, C = h.shape
         scale = C ** -0.5
 
+        if self.norm_input_fp32:
+            h = h.astype(importlib.import_module("mlx.core").float32)
         h = self.norm(h)
+        if self.cast_after_norm:
+            h = h.astype(importlib.import_module("mlx.core").bfloat16)
         q = ctx.reshape(self.to_q(h), (B, H * W, 1, C))
         k = ctx.reshape(self.to_k(h), (B, H * W, 1, C))
         v = ctx.reshape(self.to_v(h), (B, H * W, 1, C))

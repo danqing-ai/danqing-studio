@@ -7,7 +7,6 @@ from typing import Any
 
 import mlx.core as mx
 from backend.engine.common._base import _collect_params
-from backend.engine.common.norm import apply_rms_norm
 from backend.engine.families.flux1.weights import remap_flux1_t5_weights
 from backend.engine.runtime._base import RuntimeContext
 
@@ -22,7 +21,14 @@ class _T5LayerNorm:
         return {"weight": self.weight}
 
     def forward(self, hidden_states: Any) -> Any:
-        return apply_rms_norm(hidden_states, self.weight, self.variance_epsilon)
+        # Match mflux T5LayerNorm exactly: variance in fp32, then rescale original dtype.
+        variance = mx.mean(
+            mx.power(hidden_states.astype(mx.float32), 2),
+            axis=-1,
+            keepdims=True,
+        )
+        hidden_states = hidden_states * mx.rsqrt(variance + self.variance_epsilon)
+        return self.weight * hidden_states
 
 
 class _T5SelfAttention:
