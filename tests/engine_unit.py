@@ -15,6 +15,128 @@ def _t(shape: tuple[int, ...]) -> SimpleNamespace:
     return SimpleNamespace(shape=shape)
 
 
+class RuntimeContractTests(unittest.TestCase):
+    def test_family_runtime_guidance_semantics(self) -> None:
+        from backend.engine.common.runtime_contracts import FamilyRuntimeContract
+
+        flux1 = FamilyRuntimeContract(
+            family="flux1",
+            config=SimpleNamespace(supports_guidance=False, structured_prompt=False),
+        )
+        self.assertEqual(flux1.resolve_guidance_scalar(3.5), 3.5)
+        self.assertFalse(flux1.should_encode_negative_prompt(3.5))
+
+        zimg = FamilyRuntimeContract(
+            family="z_image",
+            config=SimpleNamespace(supports_guidance=True, structured_prompt=False),
+        )
+        self.assertTrue(zimg.should_encode_negative_prompt(2.0))
+        structured = FamilyRuntimeContract(
+            family="fibo",
+            config=SimpleNamespace(supports_guidance=True, structured_prompt=True),
+        )
+        self.assertFalse(structured.should_encode_negative_prompt(2.0))
+
+    def test_family_runtime_zimage_noise_layout(self) -> None:
+        import numpy as np
+
+        from backend.engine.common.runtime_contracts import FamilyRuntimeContract
+
+        class _FakeCtx:
+            @staticmethod
+            def seeded_randn(shape, _seed, dtype=None):
+                return np.zeros(shape, dtype=np.float32)
+
+            @staticmethod
+            def randn(shape, dtype=None):
+                return np.zeros(shape, dtype=np.float32)
+
+            @staticmethod
+            def expand_dims(x, axis):
+                return np.expand_dims(x, axis=axis)
+
+            @staticmethod
+            def squeeze(x, axis):
+                return np.squeeze(x, axis=axis)
+
+        contract = FamilyRuntimeContract(
+            family="z_image",
+            config=SimpleNamespace(supports_guidance=True, structured_prompt=False),
+        )
+        out = contract.sample_txt2img_noise(
+            _FakeCtx(),
+            latent_shape=(1, 16, 64, 64),
+            seed=42,
+            sample_dtype="float32",
+            target_dtype="float32",
+        )
+        self.assertEqual(tuple(out.shape), (1, 16, 64, 64))
+        class _DTypeCtx:
+            @staticmethod
+            def float32():
+                return "float32"
+        self.assertEqual(contract.noise_sample_dtype(_DTypeCtx(), "bfloat16"), "float32")
+        self.assertEqual(contract.noise_sample_dtype(_DTypeCtx(), "mlx.core.bfloat16"), "float32")
+
+    def test_scheduler_resolver_falls_back_to_config_flags(self) -> None:
+        from backend.engine.common.runtime_contracts import SchedulerSemanticsResolver
+
+        resolver = SchedulerSemanticsResolver()
+        entry = SimpleNamespace(parameters={})
+        config = SimpleNamespace(requires_sigma_shift=True)
+        sem = resolver.resolve(
+            entry=entry,
+            config=config,
+            request_scheduler=None,
+            request_metadata={},
+            steps=8,
+            width=1024,
+            height=1024,
+        )
+        self.assertEqual(sem.scheduler_name, "flow_match_euler")
+        self.assertTrue(sem.requires_sigma_shift)
+        self.assertTrue(sem.use_empirical_mu)
+        self.assertEqual(sem.set_timesteps_kwargs["num_inference_steps"], 8)
+        self.assertEqual(sem.set_timesteps_kwargs["image_seq_len"], (1024 // 16) * (1024 // 16))
+
+    def test_scheduler_resolver_registry_overrides_and_sigma_schedule(self) -> None:
+        from backend.engine.common.runtime_contracts import SchedulerSemanticsResolver
+
+        resolver = SchedulerSemanticsResolver()
+        entry = SimpleNamespace(
+            parameters={
+                "scheduler": {"default": "flow_match_euler_flux_dynamic"},
+                "requires_sigma_shift": {"default": False},
+                "use_empirical_mu": {"default": True},
+                "scheduler_sigma_schedule": {"default": "linspace_1_to_inv_steps"},
+                "scheduler_mu": {"default": 0.42},
+                "enable_cfg_renorm": {"default": True},
+                "cfg_renorm_min": {"default": 0.12},
+            }
+        )
+        sem = resolver.resolve(
+            entry=entry,
+            config=SimpleNamespace(requires_sigma_shift=True),
+            request_scheduler=None,
+            request_metadata={},
+            steps=4,
+            width=512,
+            height=512,
+            init_timestep=2,
+        )
+        self.assertEqual(sem.scheduler_name, "flow_match_euler_flux_dynamic")
+        self.assertFalse(sem.requires_sigma_shift)
+        self.assertTrue(sem.use_empirical_mu)
+        self.assertTrue(sem.cfg_renorm)
+        self.assertEqual(sem.cfg_renorm_min, 0.12)
+        self.assertEqual(sem.set_timesteps_kwargs["init_timestep"], 2)
+        self.assertEqual(sem.set_timesteps_kwargs["mu"], 0.42)
+        sigmas = sem.set_timesteps_kwargs["sigmas"]
+        self.assertEqual(len(sigmas), 4)
+        self.assertAlmostEqual(sigmas[0], 1.0)
+        self.assertAlmostEqual(sigmas[-1], 0.25)
+
+
 class MlxAffineQuantInferenceTests(unittest.TestCase):
     def test_infer_8bit_from_dense_shape(self) -> None:
         qw, qs = _t((16, 32)), _t((16, 2))
@@ -1050,6 +1172,21 @@ class BenchmarkMetadataTests(unittest.TestCase):
     def test_exit_exempt_nonempty(self) -> None:
         self.assertIn("z-image-create", BENCHMARK_EXIT_EXEMPT_MISMATCH_VS_MFLUX)
         self.assertIn("qwen-image-rewrite", BENCHMARK_EXIT_EXEMPT_MISMATCH_VS_MFLUX)
+
+    def test_z_image_turbo_enable_thinking_aligned_with_mflux(self) -> None:
+        import json
+        from pathlib import Path
+
+        reg = json.loads(
+            (Path(__file__).resolve().parents[1] / "default_config" / "models_registry.json").read_text(
+                encoding="utf-8",
+            )
+        )
+        turbo = reg["models"]["z-image-turbo"]
+        self.assertTrue(
+            turbo["parameters"].get("enable_thinking"),
+            "z-image-turbo must keep enable_thinking=true to align tokenizer chat-template semantics with mflux",
+        )
 
 
 if __name__ == "__main__":

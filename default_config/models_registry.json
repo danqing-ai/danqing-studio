@@ -979,6 +979,7 @@
         "lora_support": true,
         "seed_support": true,
         "negative_prompt_support": true,
+        "enable_thinking": true,
         "requires_sigma_shift": true,
         "vae_scale": 8
       },
@@ -1096,7 +1097,7 @@
         "seed_support": true,
         "negative_prompt_support": true,
         "supports_guidance": false,
-        "enable_thinking": false,
+        "enable_thinking": true,
         "scheduler": {
           "default": "linear",
           "options": [
@@ -1226,7 +1227,8 @@
         },
         "lora_support": false,
         "seed_support": true,
-        "negative_prompt_support": false
+        "negative_prompt_support": false,
+        "vae_scale": 16
       },
       "recommended": false,
       "source": "modelscope",

@@ -75,6 +75,7 @@ from backend.core.contracts import CancelToken
 
 from .pipeline import DenoisingPipeline, GenerationCancelled
 from .text_encoders import T5Encoder, CLIPEncoder
+from .runtime_contracts import FamilyRuntimeContract, SchedulerSemanticsResolver, SchedulerSemantics
 
 __all__ = [
     # Schedulers
@@ -114,7 +115,7 @@ __all__ = [
     "build_position_ids_2d", "build_position_ids_3d_axes",
     "pad_ragged_2d_sequences", "pad_ragged_1d_sequences",
     "pad_len_to_multiple", "build_tail_pad_mask", "pad_tail_with_last", "apply_pad_token",
-    "apply_complex_rope_bshd", "apply_complex_rope_from_cis_bshd",
+    "apply_complex_rope_bshd", "apply_complex_rope_bhsd", "apply_complex_rope_from_cis_bshd",
     "PatchEmbed2D", "PatchEmbed3D",
     # Weights
     "parse_size_gb", "load_safetensors", "save_safetensors",
@@ -125,4 +126,6 @@ __all__ = [
     "DenoisingPipeline", "CancelToken", "GenerationCancelled",
     # Text Encoders (family-specific encoders live under ``engine.families.*``)
     "T5Encoder", "CLIPEncoder",
+    # Runtime contracts
+    "FamilyRuntimeContract", "SchedulerSemanticsResolver", "SchedulerSemantics",
 ]

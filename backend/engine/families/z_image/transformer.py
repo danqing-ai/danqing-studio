@@ -94,7 +94,14 @@ class TimestepEmbedder:
 
     def forward(self, t):
         ctx = self.ctx
-        emb = sinusoidal_timestep_proj(ctx, t, self.frequency_embedding_size)
+        # mflux z-image timestep embedding uses [cos, sin] concat order.
+        emb = sinusoidal_timestep_proj(
+            ctx,
+            t,
+            self.frequency_embedding_size,
+            sin_first=False,
+            flip_sin_to_cos=False,
+        )
         x = self.linear1(emb)
         x = ctx.silu(x)
         x = self.linear2(x)
@@ -379,6 +386,10 @@ class ZImageTransformer(TransformerBase):
 
     def before_denoise(self, latents, timesteps, sigmas, **cond):
         if getattr(self.ctx, "backend", None) != "mlx":
+            return latents, cond
+        # Keep inference numerics aligned with reference path by default:
+        # no precomputed caches unless explicit MLX fast-path is enabled.
+        if not getattr(self.config, "use_mlx_compile", False):
             return latents, cond
         cond = dict(cond)
         txt_embeds = cond.pop("txt_embeds", None)

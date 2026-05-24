@@ -1,6 +1,6 @@
 .PHONY: help clean lint dev start stop test test-integration \
 	frontend-install frontend-dev frontend-build frontend-typecheck \
-	bench-setup bench-src bench-mflux bench-mflux-case bench-sanity bench-sanity-case \
+	bench-setup bench-src bench-mflux bench-mflux-case bench-mlx-video bench-mlx-video-case bench-diffusers bench-diffusers-case bench-sanity bench-sanity-case \
 	bench-audio-sanity bench-audio-sanity-lm bench-audio-sanity-heartmula \
 	bench-wan-sanity bench-wan-baseline \
 	check-consistency check-models-registry-contracts check-ep-boundary check-theme-legacy check-ui-compat check-engine-imports check-engine-family-layout check-engine-family-primitives check-engine-attention-paths check-engine-sdpa-paths check-engine-rope-paths check-engine-modulation-paths check-engine-governance verify-engine-stack \
@@ -63,6 +63,26 @@ bench-mflux-case: $(SRC_IMG)
 		exit 2; \
 	fi
 	$(PYTHON) -m tests.benchmark mflux --case $(ID)
+
+bench-mlx-video: $(SRC_IMG)
+	$(PYTHON) -m tests.benchmark mlx-video --all
+
+bench-mlx-video-case: $(SRC_IMG)
+	@if [ -z "$(ID)" ]; then \
+		echo "Usage: make bench-mlx-video-case ID=<case-id>"; \
+		exit 2; \
+	fi
+	$(PYTHON) -m tests.benchmark mlx-video --case $(ID)
+
+bench-diffusers: $(SRC_IMG)
+	$(PYTHON) -m tests.benchmark diffusers --all
+
+bench-diffusers-case: $(SRC_IMG)
+	@if [ -z "$(ID)" ]; then \
+		echo "Usage: make bench-diffusers-case ID=<case-id>"; \
+		exit 2; \
+	fi
+	$(PYTHON) -m tests.benchmark diffusers --case $(ID)
 
 bench-sanity:
 	$(PYTHON) -m tests.benchmark sanity --all
@@ -299,7 +319,8 @@ help:
 	@echo "DanQing Studio v4 — Makefile"
 	@echo ""
 	@echo "Benchmark:"
-	@echo "  bench-setup / bench-src / bench-mflux / bench-mflux-case"
+	@echo "  bench-setup / bench-src / bench-mflux / bench-mflux-case / bench-mlx-video / bench-mlx-video-case"
+	@echo "  bench-diffusers / bench-diffusers-case"
 	@echo "  bench-sanity / bench-sanity-case / bench-audio-sanity / bench-audio-sanity-heartmula"
 	@echo ""
 	@echo "Frontend:  frontend-install | frontend-dev | frontend-build | frontend-typecheck"

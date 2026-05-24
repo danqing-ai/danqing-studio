@@ -107,6 +107,13 @@ def apply_pad_token(ops: Any, embeds: Any, pad_mask: Any, pad_token: Any) -> Any
     return ops.where(ops.reshape(pad_mask, (-1, 1)), pad_token, embeds)
 
 
+def _ops_transpose(ops: Any, x: Any, axes: tuple[int, ...]) -> Any:
+    permute = getattr(ops, "permute", None)
+    if callable(permute):
+        return permute(x, axes)
+    return ops.transpose(x, axes)
+
+
 def apply_complex_rope_bshd(ops: Any, x: Any, cos_vals: Any, sin_vals: Any) -> Any:
     """Apply complex rotary embedding on ``[B, S, H, D]`` with separate cos/sin."""
     seq_len = int(x.shape[1])
@@ -125,6 +132,13 @@ def apply_complex_rope_bshd(ops: Any, x: Any, cos_vals: Any, sin_vals: Any) -> A
     out_imag = x_real * freqs_sin + x_imag * freqs_cos
     out_pairs = ops.stack([out_real, out_imag], axis=-1)
     return ops.reshape(out_pairs, (*x.shape[:-1], -1)).astype(x.dtype)
+
+
+def apply_complex_rope_bhsd(ops: Any, x: Any, cos_vals: Any, sin_vals: Any) -> Any:
+    """Apply complex rotary embedding on ``[B, H, S, D]`` (Flux2 joint attention layout)."""
+    x_bshd = _ops_transpose(ops, x, (0, 2, 1, 3))
+    y_bshd = apply_complex_rope_bshd(ops, x_bshd, cos_vals, sin_vals)
+    return _ops_transpose(ops, y_bshd, (0, 2, 1, 3))
 
 
 def apply_complex_rope_from_cis_bshd(ops: Any, x: Any, freqs_cis: Any) -> Any:

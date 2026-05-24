@@ -1,12 +1,16 @@
 # Benchmark
 
-两套套件，统一入口 `python -m tests.benchmark`：
+三套套件，统一入口 `python -m tests.benchmark`：
 
 | Make | CLI | 说明 |
 |------|-----|------|
 | `make bench-mflux` | `mflux --all` | 全模型 mflux PSNR/SSIM 对照 |
 | `make bench-mflux-case ID=…` | `mflux --case ID` | 单个 mflux 用例 |
-| `make bench-sanity` | `sanity --all` | 全模型成片健全性（拒黑/白/平场） |
+| `make bench-mlx-video` | `mlx-video --all` | 视频模型对比 mlx-video 参考实现 |
+| `make bench-mlx-video-case ID=…` | `mlx-video --case ID` | 单个 mlx-video 对比用例 |
+| `make bench-diffusers` | `diffusers --all` | 图像模型对比 diffusers 参考实现 |
+| `make bench-diffusers-case ID=…` | `diffusers --case ID` | 单个 diffusers 对比用例 |
+| `make bench-sanity` | `sanity --all` | 全模型成片健全性（反噪声/反平场 + 质量评分） |
 | `make bench-sanity-case ID=…` | `sanity --case ID` | 单个健全性用例 |
 | `make bench-sanity-case ID=ace-step-xl-sft-sanity` | 同上 | ACE-Step MLX 10s 音频 RMS 健全性（需 `models/Audio/acestep-v15-xl-sft`） |
 | `make bench-sanity-case ID=heartmula-oss-3b-happy-new-year-sanity` | 同上 | HeartMuLa MLX 10s 音频 RMS 健全性（需 `models/Audio/heartmula-oss-3b-happy-new-year`） |
@@ -17,8 +21,22 @@
 | `make bench-wan-baseline` | `sanity --case wan-2.2-ti2v-5b-baseline` | Wan 5B 耗时基线（8 步、81 帧，打印 `[BASELINE] total_sec`） |
 | `make bench-sanity-case ID=ace-step-xl-sft-cuda-sanity` | 同上 | CUDA 路径（无 GPU 时 SKIP） |
 
-列出用例：`python -m tests.benchmark mflux --list` / `sanity --list`
+列出用例：`python -m tests.benchmark mflux --list` / `mlx-video --list` / `diffusers --list` / `sanity --list`
 
 首次跑 mflux 对照：`make bench-setup`（独立 venv）。rewrite/upscale 需 `make bench-src`。
 
 用例定义：`cases.py`。输出：`tests/benchmark/outputs/`。
+
+参考对比说明（对齐 mflux 模式）：
+- 视频参考默认走 `mlx-video`，命令可用 `DANQING_BENCH_MLX_VIDEO_CMD` 覆盖（默认 `mlx-video-generate`）
+- 图像参考分两套：`mflux`（`mflux` 子命令）与 `diffusers`（`diffusers` 子命令）
+- `--list-runnable` 会按本地 bundle 过滤可跑用例：`python -m tests.benchmark mlx-video --list-runnable`
+
+质量门禁可在 `SanityCase` 里按模型覆写：`image_quality_thresholds` / `audio_quality_thresholds` /
+`video_quality_thresholds`。推荐先复用 `cases.py` 顶部模板（如 `IMAGE_THRESHOLDS_REWRITE`、`AUDIO_THRESHOLDS_ACE_STEP`、
+`VIDEO_THRESHOLDS_WAN`）再微调单 case。可选语义门禁：`semantic_gate_enabled=True`（image/video 默认 CLIP，audio 默认 CLAP）。
+
+推荐语义门禁 profile（环境变量）：
+- `DANQING_BENCH_SEMANTIC_PROFILE=off`（默认）：关闭语义门禁
+- `DANQING_BENCH_SEMANTIC_PROFILE=core`：开启 image/video 语义门禁（推荐先用）
+- `DANQING_BENCH_SEMANTIC_PROFILE=all`：再额外开启 audio(CLAP) 语义门禁

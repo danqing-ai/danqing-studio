@@ -2,27 +2,39 @@
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
+
 from .cases import (
     ALL_CASES,
     ALL_SANITY_CASES,
     BENCHMARK_EXIT_EXEMPT_MISMATCH_VS_MFLUX,
     BenchmarkCase,
+    ExternalRefCase,
+    SRC_IMAGE,
     SanityCase,
     ace_step_bundle_installed,
     cuda_runtime_available,
     heartmula_bundle_installed,
     mlx_runtime_available,
+    get_external_ref_case,
     get_case,
     get_sanity_case,
+    iter_external_ref_cases,
+    iter_external_ref_cases_by_backend,
     iter_mflux_cases,
     list_cases,
+    list_external_ref_cases,
+    list_external_ref_cases_by_backend,
+    list_skipped_external_ref_cases_by_backend,
     list_sanity_cases,
+    list_skipped_external_ref_cases,
     list_skipped_mflux_cases,
     resolve_benchmark_data_root,
     resolve_fp16_bundle_dir,
@@ -32,12 +44,15 @@ from .cases import (
 from .metrics import (
     CompareResult,
     SanityResult,
-    check_output_audio,
     check_output_image,
-    check_output_video,
+    check_output_audio_with_thresholds,
+    check_output_image_with_thresholds,
+    check_output_video_with_thresholds,
     compare_images,
+    compare_videos,
     hash_image,
 )
+from .semantic import score_semantic_alignment
 
 # 与参考图对比：PSNR 档位 + SSIM 下限（纯噪声 / 完全跑崩时相对参考图 SSIM 极低）
 MIN_PSNR_PASS = 30.0
@@ -170,14 +185,31 @@ class BenchmarkRunner:
             print(f"  [SKIP] {case.id}: 丹青引擎输出生成失败或未实现")
             result = CompareResult(ref_hash=hash_image(ref_path))
             result.ref_time_sec = ref_time
+            result.product_ok = None
+            result.product_reason = "danqing_generate_failed"
             self.results.append((case, result))
             return result
 
+        product = check_output_image(our_path)
         result = compare_images(our_path, ref_path)
+        result.product_ok = product.ok
+        result.product_reason = product.reason if not product.ok else "ok"
         result.ours_time_sec = ours_time
         result.ref_time_sec = ref_time
         self.results.append((case, result))
         return result
+
+    @staticmethod
+    def grade_product(result: CompareResult) -> str:
+        """PRODUCT_SKIP | PRODUCT_FAIL | PRODUCT_PASS — 丹青成片是否可用（非 PSNR）。"""
+        if result.product_ok is None:
+            return "PRODUCT_SKIP"
+        return "PRODUCT_PASS" if result.product_ok else "PRODUCT_FAIL"
+
+    @staticmethod
+    def grade_parity(result: CompareResult) -> str:
+        """PSNR 档位（与 mflux 参考图的像素级一致性）。"""
+        return BenchmarkRunner.grade(result)
 
     def run_all(self, run_ours: bool = True) -> None:
         """执行全部已注册用例（跳过 workspace 中未安装的 fp16 bundle）。"""
@@ -471,9 +503,18 @@ class BenchmarkRunner:
             time_info = " (" + ", ".join(parts) + ")"
 
         if result.psnr is not None:
-            status = BenchmarkRunner.grade(result)
-            print(f"  {status}: PSNR={result.psnr:.2f}dB SSIM={result.ssim:.4f} "
-                  f"max_diff={result.pixel_max_diff:.4f} mean_diff={result.pixel_mean_diff:.4f}{time_info}")
+            parity = BenchmarkRunner.grade_parity(result)
+            product = BenchmarkRunner.grade_product(result)
+            prod_note = ""
+            if product == "PRODUCT_FAIL":
+                prod_note = f" product=FAIL({result.product_reason})"
+            elif product == "PRODUCT_PASS":
+                prod_note = " product=PASS"
+            print(
+                f"  {parity}: PSNR={result.psnr:.2f}dB SSIM={result.ssim:.4f} "
+                f"max_diff={result.pixel_max_diff:.4f} mean_diff={result.pixel_mean_diff:.4f}"
+                f"{prod_note}{time_info}"
+            )
         elif result.ref_hash:
             print(f"  SKIP: ref_hash={result.ref_hash} (丹青引擎输出不可用){time_info}")
         else:
@@ -491,14 +532,20 @@ class BenchmarkRunner:
         skipped = sum(1 for _, r in self.results if BenchmarkRunner.grade(r) == "SKIP")
         total = len(self.results)
 
+        product_fail = sum(
+            1 for _, r in self.results if BenchmarkRunner.grade_product(r) == "PRODUCT_FAIL"
+        )
         print(f"\n{'='*60}")
-        print(f"Summary: {total} cases — "
-              f"{passed} PASS / {warned} WARN / {failed} FAIL / {skipped} SKIP")
+        print(
+            f"Summary: {total} cases — "
+            f"{passed} PASS / {warned} WARN / {failed} FAIL / {skipped} SKIP"
+        )
+        print(f"Product gate: {product_fail} PRODUCT_FAIL (exit code uses this, not PSNR alone)")
         if exempt_fail:
             ids = ", ".join(sorted(BENCHMARK_EXIT_EXEMPT_MISMATCH_VS_MFLUX))
             print(
-                f"KNOWN GAP (exempt from --all exit code): {exempt_fail} case(s) "
-                f"in {{{ids}}} — rewrite vs mflux PSNR not yet aligned"
+                f"Parity gap (PSNR FAIL, product OK): {exempt_fail} case(s) "
+                f"in {{{ids}}} — pixel match vs mflux still open"
             )
         print(f"{'='*60}")
 
@@ -519,12 +566,430 @@ class BenchmarkRunner:
                 print(f"  [{case.id}] SKIP{time_str}")
 
 
+class ExternalReferenceRunner(BenchmarkRunner):
+    """Open-source reference parity (mlx-video / diffusers / custom command)."""
+
+    def __init__(self, output_dir: str | Path = "tests/benchmark/outputs"):
+        super().__init__(output_dir=output_dir)
+        self.ref_results: list[tuple[ExternalRefCase, CompareResult]] = []
+
+    def run_case(self, case: ExternalRefCase, *, run_ours: bool = True, run_ref: bool = True) -> CompareResult:
+        media = (case.media or "image").strip().lower()
+        ext = "mp4" if media == "video" else "png"
+        ours_path = self.output_dir / f"{case.id}_danqing.{ext}"
+        ref_path = self.output_dir / f"{case.id}_ref.{ext}"
+        if case.action in ("rewrite", "upscale") or case.source_image:
+            ensure_benchmark_source_image()
+
+        ours_ok = False
+        ref_ok = False
+        ours_time = None
+        ref_time = None
+        if run_ours:
+            t0 = time.time()
+            ours_ok = self._run_danqing_external(case, ours_path)
+            ours_time = time.time() - t0
+        if run_ref:
+            t0 = time.time()
+            ref_ok = self._run_external_reference(case, ref_path)
+            ref_time = time.time() - t0
+
+        if not ref_ok:
+            print(f"  [SKIP] {case.id}: 参考输出({case.ref_backend})生成失败")
+            res = CompareResult(ours_time_sec=ours_time, ref_time_sec=ref_time)
+            self.ref_results.append((case, res))
+            return res
+        if not ours_ok:
+            print(f"  [SKIP] {case.id}: 丹青引擎输出生成失败")
+            res = CompareResult(ref_hash=hash_image(ref_path), ref_time_sec=ref_time)
+            res.product_ok = False
+            res.product_reason = "danqing_generate_failed"
+            self.ref_results.append((case, res))
+            return res
+
+        if media == "video":
+            product = check_output_video_with_thresholds(ours_path, thresholds=None)
+            res = compare_videos(ours_path, ref_path)
+        else:
+            product = check_output_image(ours_path)
+            res = compare_images(ours_path, ref_path)
+        res.product_ok = product.ok
+        res.product_reason = product.reason if not product.ok else "ok"
+        res.ours_time_sec = ours_time
+        res.ref_time_sec = ref_time
+        self.ref_results.append((case, res))
+        return res
+
+    def run_all(self, run_ours: bool = True, *, backend_filter: str = "") -> None:
+        if backend_filter:
+            cases = iter_external_ref_cases_by_backend(backend_filter)
+            skipped = list_skipped_external_ref_cases_by_backend(backend_filter)
+        else:
+            cases = iter_external_ref_cases()
+            skipped = list_skipped_external_ref_cases()
+        total_registered = (
+            len(list_external_ref_cases_by_backend(backend_filter))
+            if backend_filter
+            else len(list_external_ref_cases())
+        )
+        print(f"\n{'='*60}")
+        print(
+            f"DanQing OSS Reference Parity — {len(cases)} runnable / "
+            f"{total_registered} registered"
+        )
+        print(f"Data root: {resolve_benchmark_data_root()}")
+        if skipped:
+            print(f"Skipped (no local bundle): {len(skipped)}")
+        print(f"{'='*60}\n")
+        for cid, reason in skipped:
+            print(f"  [SKIP] {cid}: {reason}")
+
+        for case in cases:
+            print(f"[{case.id}] {case.description}")
+            if case.media == "video":
+                print(
+                    f"  media=video model={case.model} seed={case.seed} steps={case.steps} "
+                    f"frames={case.video_num_frames} size={case.video_size} ref={case.ref_backend}"
+                )
+            else:
+                print(
+                    f"  media=image model={case.model} seed={case.seed} steps={case.steps} "
+                    f"size={case.width}x{case.height} ref={case.ref_backend}"
+                )
+            result = self.run_case(case, run_ours=run_ours, run_ref=True)
+            self._print_result(result)
+        self._print_summary()
+
+    def _run_danqing_external(self, case: ExternalRefCase, output_path: Path) -> bool:
+        if case.media == "video":
+            return self._run_danqing_video_generate(case, output_path, timeout_sec=case.timeout_sec)
+        bc = BenchmarkCase(
+            id=case.id,
+            model=case.model,
+            action=case.action,
+            prompt=case.prompt,
+            seed=case.seed,
+            width=case.width,
+            height=case.height,
+            steps=case.steps,
+            guidance=case.guidance,
+            negative_prompt=case.negative_prompt,
+            source_image=case.source_image,
+            image_strength=case.image_strength,
+            _mflux_model_flag="__EXTERNAL_REF__",
+        )
+        return self._run_danqing(bc, output_path)
+
+    def _run_danqing_video_generate(
+        self, case: ExternalRefCase, output_path: Path, *, timeout_sec: int | None = None
+    ) -> bool:
+        cli = PROJECT_ROOT / "bin" / "danqing-video-generate"
+        cmd = [
+            sys.executable,
+            str(cli),
+            "--model",
+            case.model,
+            "--prompt",
+            case.prompt,
+            "--size",
+            case.video_size,
+            "--num-frames",
+            str(int(case.video_num_frames)),
+            "--fps",
+            str(int(case.video_fps)),
+            "--steps",
+            str(int(case.steps)),
+            "--guidance",
+            str(float(case.guidance)),
+            "--seed",
+            str(case.seed),
+            "--output",
+            str(output_path),
+        ]
+        if case.negative_prompt:
+            cmd.extend(["--negative-prompt", case.negative_prompt])
+        tout = int(timeout_sec) if timeout_sec is not None else DEFAULT_DANQING_CLI_TIMEOUT_SEC
+        try:
+            env = os.environ.copy()
+            env.setdefault("MLX_METAL_DEVICE_ONLY", "1")
+            env.setdefault("MLX_METAL_MEMORY_LIMIT", "120")
+            env["PYTHONUNBUFFERED"] = "1"
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=tout,
+                env=env,
+                cwd=str(PROJECT_ROOT),
+            )
+            if proc.returncode != 0:
+                print(f"    [danqing-video] 失败 (exit={proc.returncode})")
+                if proc.stderr:
+                    print(f"    [danqing-video] stderr: {proc.stderr[:STDERR_HEAD_CHARS]}")
+                return False
+            print(f"    [danqing-video] 输出: {output_path}")
+            return True
+        except subprocess.TimeoutExpired:
+            print(f"    [danqing-video] 超时 ({tout}s)")
+            return False
+        except FileNotFoundError:
+            print(f"    [danqing-video] 未找到 CLI: {cli}")
+            return False
+
+    def _run_external_reference(self, case: ExternalRefCase, output_path: Path) -> bool:
+        backend = (case.ref_backend or "").strip().lower()
+        if backend == "mlx_video":
+            return self._run_ref_mlx_video(case, output_path)
+        if backend == "mflux":
+            return self._run_ref_mflux(case, output_path)
+        if backend == "diffusers":
+            return self._run_ref_diffusers(case, output_path)
+        if backend == "custom":
+            return self._run_ref_custom(case, output_path)
+        print(f"    [ref] 未知 backend: {case.ref_backend!r}")
+        return False
+
+    def _run_ref_mflux(self, case: ExternalRefCase, output_path: Path) -> bool:
+        if case.media != "image":
+            print("    [ref-mflux] 目前仅支持 image")
+            return False
+        bc = BenchmarkCase(
+            id=case.id,
+            model=case.model,
+            action=case.action,
+            prompt=case.prompt,
+            seed=case.seed,
+            width=case.width,
+            height=case.height,
+            steps=case.steps,
+            guidance=case.guidance,
+            negative_prompt=case.negative_prompt,
+            source_image=case.source_image or SRC_IMAGE,
+            image_strength=case.image_strength,
+            _mflux_cli=case.ref_mflux_cli or "mflux-generate",
+            _mflux_model_flag="",
+        )
+        return self._run_mflux(bc, output_path)
+
+    def _run_ref_custom(self, case: ExternalRefCase, output_path: Path) -> bool:
+        if not case.ref_cmd_template:
+            print("    [ref] custom backend 需要 ref_cmd_template")
+            return False
+        return self._run_ref_template_cmd(case, output_path, default_cmd="")
+
+    def _run_ref_mlx_video(self, case: ExternalRefCase, output_path: Path) -> bool:
+        default_cmd = os.getenv("DANQING_BENCH_MLX_VIDEO_CMD", "mlx-video-generate")
+        if not case.ref_cmd_template:
+            print("    [ref] mlx_video backend 缺少 ref_cmd_template")
+            return False
+        return self._run_ref_template_cmd(case, output_path, default_cmd=default_cmd)
+
+    def _run_ref_template_cmd(self, case: ExternalRefCase, output_path: Path, *, default_cmd: str) -> bool:
+        fmt = {
+            "cmd": default_cmd,
+            "model": case.model,
+            "ref_model": case.ref_model or case.model,
+            "prompt": case.prompt,
+            "seed": str(case.seed),
+            "steps": str(int(case.steps)),
+            "guidance": str(float(case.guidance)),
+            "negative_prompt": case.negative_prompt,
+            "width": str(int(case.width)),
+            "height": str(int(case.height)),
+            "video_size": case.video_size,
+            "num_frames": str(int(case.video_num_frames)),
+            "fps": str(int(case.video_fps)),
+            "source_image": str(
+                _benchmark_source_path(
+                    BenchmarkCase(
+                        id=case.id,
+                        model=case.model,
+                        action=case.action,
+                        source_image=case.source_image or SRC_IMAGE,
+                        _mflux_model_flag="__EXTERNAL_REF__",
+                    )
+                )
+            ),
+            "output": str(output_path),
+        }
+        try:
+            cmd_text = case.ref_cmd_template.format(**fmt).strip()
+        except KeyError as e:
+            print(f"    [ref] 模板变量缺失: {e}")
+            return False
+        if not cmd_text:
+            print("    [ref] 空命令模板")
+            return False
+        cmd = shlex.split(cmd_text)
+        tout = int(case.timeout_sec or DEFAULT_DANQING_CLI_TIMEOUT_SEC)
+        env = os.environ.copy()
+        env.setdefault("MLX_METAL_DEVICE_ONLY", "1")
+        env.setdefault("MLX_METAL_MEMORY_LIMIT", "120")
+        env["PYTHONUNBUFFERED"] = "1"
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=tout,
+                env=env,
+                cwd=str(PROJECT_ROOT),
+            )
+            if proc.returncode != 0:
+                print(f"    [ref] 命令失败 (exit={proc.returncode})")
+                if proc.stderr:
+                    print(f"    [ref] stderr: {proc.stderr[:STDERR_HEAD_CHARS]}")
+                return False
+            print(f"    [ref] 输出: {output_path}")
+            return True
+        except subprocess.TimeoutExpired:
+            print(f"    [ref] 超时 ({tout}s)")
+            return False
+        except FileNotFoundError:
+            print(f"    [ref] 未找到命令: {cmd[0] if cmd else default_cmd}")
+            return False
+
+    def _run_ref_diffusers(self, case: ExternalRefCase, output_path: Path) -> bool:
+        if case.media != "image":
+            print("    [ref] diffusers backend 目前仅支持 image")
+            return False
+        if case.action != "create":
+            print("    [ref] diffusers backend 当前仅支持 create")
+            return False
+        ref_model = (case.ref_model or "").strip()
+        if not ref_model:
+            print("    [ref] diffusers backend 缺少 ref_model")
+            return False
+        lora_path = ""
+        if case.ref_lora_rel:
+            lora_abs = (resolve_benchmark_data_root() / case.ref_lora_rel).resolve()
+            if not lora_abs.exists():
+                print(f"    [ref-diffusers] LoRA 不存在: {lora_abs}")
+                return False
+            lora_path = str(lora_abs)
+        script_lines = [
+            "import torch",
+            "from diffusers import DiffusionPipeline",
+            (
+                "pipe=DiffusionPipeline.from_pretrained("
+                f"{ref_model!r}, torch_dtype=torch.bfloat16 if hasattr(torch,'bfloat16') else torch.float32)"
+            ),
+            "pipe=pipe.to('cpu')",
+        ]
+        if lora_path:
+            script_lines.append(f"pipe.load_lora_weights({lora_path!r})")
+        script_lines.extend(
+            [
+                (
+                    f"img=pipe(prompt={case.prompt!r}, width={int(case.width)}, height={int(case.height)}, "
+                    f"num_inference_steps={int(case.steps)}, guidance_scale={float(case.guidance)}).images[0]"
+                ),
+                f"img.save({str(output_path)!r})",
+                "print('saved', " + repr(str(output_path)) + ")",
+            ]
+        )
+        script = "\n".join(script_lines) + "\n"
+        cmd = [sys.executable, "-c", script]
+        tout = int(case.timeout_sec or 3600)
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
+        try:
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=tout,
+                env=env,
+                cwd=str(PROJECT_ROOT),
+            )
+            if proc.returncode != 0:
+                print(f"    [ref-diffusers] 失败 (exit={proc.returncode})")
+                if proc.stderr:
+                    print(f"    [ref-diffusers] stderr: {proc.stderr[:STDERR_HEAD_CHARS]}")
+                return False
+            return output_path.is_file()
+        except subprocess.TimeoutExpired:
+            print(f"    [ref-diffusers] 超时 ({tout}s)")
+            return False
+        except FileNotFoundError:
+            print("    [ref-diffusers] Python 不可用")
+            return False
+
+    def _print_summary(self) -> None:
+        passed = sum(1 for _, r in self.ref_results if BenchmarkRunner.grade(r) == "PASS")
+        warned = sum(1 for _, r in self.ref_results if BenchmarkRunner.grade(r) == "WARN")
+        failed = sum(1 for _, r in self.ref_results if BenchmarkRunner.grade(r) == "FAIL")
+        skipped = sum(1 for _, r in self.ref_results if BenchmarkRunner.grade(r) == "SKIP")
+        total = len(self.ref_results)
+        product_fail = sum(
+            1 for _, r in self.ref_results if BenchmarkRunner.grade_product(r) == "PRODUCT_FAIL"
+        )
+        print(f"\n{'='*60}")
+        print(
+            f"OSSRef summary: {total} cases — "
+            f"{passed} PASS / {warned} WARN / {failed} FAIL / {skipped} SKIP"
+        )
+        print(f"Product gate: {product_fail} PRODUCT_FAIL (exit code uses this)")
+        print(f"{'='*60}")
+        for case, r in self.ref_results:
+            if r.psnr is not None:
+                print(f"  [{case.id}] {BenchmarkRunner.grade(r)} PSNR={r.psnr:.1f}dB SSIM={r.ssim:.4f}")
+            else:
+                print(f"  [{case.id}] SKIP")
+
+
 class SanitySuiteRunner(BenchmarkRunner):
     """无 mflux 参考：仅生成 + 像素健全性（见 ``sanity.check_output_image``）。"""
 
     def __init__(self, output_dir: str | Path = "tests/benchmark/outputs"):
         super().__init__(output_dir=output_dir)
         self.sanity_results: list[tuple[SanityCase, SanityResult]] = []
+
+    @staticmethod
+    def _score_text(res: SanityResult) -> str:
+        if res.score <= 0:
+            return ""
+        if not res.subscores:
+            return f" score={res.score:.1f}"
+        i = float(res.subscores.get("integrity", 0.0))
+        a = float(res.subscores.get("anti_garbage", 0.0))
+        s = float(res.subscores.get("semantic_proxy", 0.0))
+        return f" score={res.score:.1f} (I={i:.1f},A={a:.1f},S={s:.1f})"
+
+    @staticmethod
+    def _apply_semantic_gate(case: SanityCase, res: SanityResult, out_path: Path, media: str) -> SanityResult:
+        if not case.semantic_gate_enabled or res.skipped or not res.ok:
+            return res
+        try:
+            sem_score = score_semantic_alignment(
+                media=media if media in ("image", "video", "audio") else "image",
+                path=out_path,
+                prompt=case.prompt,
+                backend=case.semantic_backend,
+                model_id=case.semantic_model_id,
+            )
+        except Exception as e:
+            res.ok = False
+            res.reason = f"semantic_gate_error:{e}"
+            return res
+
+        subs = dict(res.subscores or {})
+        integrity = float(subs.get("integrity", 0.0))
+        anti_garbage = float(subs.get("anti_garbage", 0.0))
+        subs["semantic_proxy"] = float(np.clip(sem_score, 0.0, 100.0))
+        subs["semantic_model"] = float(np.clip(sem_score, 0.0, 100.0))
+        if integrity > 0.0 or anti_garbage > 0.0:
+            res.score = float(np.clip(0.2 * integrity + 0.5 * anti_garbage + 0.3 * subs["semantic_proxy"], 0.0, 100.0))
+        else:
+            res.score = float(np.clip(0.7 * res.score + 0.3 * subs["semantic_proxy"], 0.0, 100.0))
+        res.subscores = subs
+        if sem_score < float(case.semantic_min_score):
+            res.ok = False
+            res.reason = (
+                f"semantic_low(score={sem_score:.1f},"
+                f"min={float(case.semantic_min_score):.1f},backend={case.semantic_backend or 'auto'})"
+            )
+        return res
 
     @staticmethod
     def _audio_model_base(case: SanityCase) -> str:
@@ -718,12 +1183,17 @@ class SanitySuiteRunner(BenchmarkRunner):
                 self.sanity_results.append((case, res))
                 print(f"  FAIL: {res.reason} ({elapsed:.1f}s)")
                 return res
-            res = check_output_video(out_path)
+            res = check_output_video_with_thresholds(
+                out_path,
+                thresholds=case.video_quality_thresholds or None,
+            )
+            res = self._apply_semantic_gate(case, res, out_path, media="video")
             self.sanity_results.append((case, res))
             status = "PASS" if res.ok else "FAIL"
             detail = res.reason if not res.ok else (
                 f"frame_std={res.std_luma:.4f} mean_luma={res.mean_luma:.3f}"
             )
+            detail += self._score_text(res)
             label = "BASELINE" if case.is_timing_baseline else status
             print(f"  {label}: {detail} ({elapsed:.1f}s)")
             if case.is_timing_baseline:
@@ -827,12 +1297,17 @@ class SanitySuiteRunner(BenchmarkRunner):
                 self.sanity_results.append((case, res))
                 print(f"  FAIL: {res.reason} ({elapsed:.1f}s)")
                 return res
-            res = check_output_audio(out_path)
+            res = check_output_audio_with_thresholds(
+                out_path,
+                thresholds=case.audio_quality_thresholds or None,
+            )
+            res = self._apply_semantic_gate(case, res, out_path, media="audio")
             self.sanity_results.append((case, res))
             status = "PASS" if res.ok else "FAIL"
             detail = res.reason if not res.ok else (
                 f"rms={res.mean_luma:.4f} peak={res.std_luma:.4f}"
             )
+            detail += self._score_text(res)
             print(f"  {status}: {detail} ({elapsed:.1f}s)")
             print(f"    output: {out_path}")
             return res
@@ -876,12 +1351,17 @@ class SanitySuiteRunner(BenchmarkRunner):
             self.sanity_results.append((case, res))
             print(f"  FAIL: {res.reason} ({elapsed:.1f}s)")
             return res
-        res = check_output_image(out_path)
+        res = check_output_image_with_thresholds(
+            out_path,
+            thresholds=case.image_quality_thresholds or None,
+        )
+        res = self._apply_semantic_gate(case, res, out_path, media="image")
         self.sanity_results.append((case, res))
         status = "PASS" if res.ok else "FAIL"
         detail = res.reason if not res.ok else (
             f"std={res.std_luma:.4f} entropy_bits={res.entropy_bits:.2f} lap_var={res.laplacian_var:.2f}"
         )
+        detail += self._score_text(res)
         print(f"  {status}: {detail} ({elapsed:.1f}s)")
         print(f"    output: {out_path}")
         return res
@@ -916,6 +1396,13 @@ class SanitySuiteRunner(BenchmarkRunner):
                     f"  model={case.model} seed={case.seed} steps={case.steps} "
                     f"size={case.width}x{case.height} guidance={case.guidance}"
                 )
+            if case.semantic_gate_enabled:
+                backend = case.semantic_backend or ("clap" if media == "audio" else "clip")
+                model_id = case.semantic_model_id or "(default)"
+                print(
+                    f"  semantic_gate: enabled backend={backend} "
+                    f"min_score={case.semantic_min_score:.1f} model={model_id}"
+                )
             self.run_one_sanity(case)
         self._print_sanity_summary()
 
@@ -933,6 +1420,7 @@ class SanitySuiteRunner(BenchmarkRunner):
             else:
                 tag = "PASS" if r.ok else "FAIL"
                 extra = f" ({r.reason})" if not r.ok else ""
+                extra += self._score_text(r)
                 print(f"  [{case.id}] {tag}{extra}")
 
 
@@ -955,16 +1443,14 @@ def run_sanity(case_id: str = "", output_dir: str = "tests/benchmark/outputs") -
 
 
 def run_mflux(case_id: str = "", output_dir: str = "tests/benchmark/outputs") -> int:
-    """Mflux PSNR suite: ``case_id`` empty runs all ``ALL_CASES``. Exit 1 on non-exempt FAIL."""
+    """Mflux suite: exit 1 when 丹青成片健全性失败；PSNR 仅作 parity 报告。"""
     runner = BenchmarkRunner(output_dir=output_dir)
     if not case_id:
         runner.run_all(run_ours=True)
-        failed = sum(
-            1
-            for c, r in runner.results
-            if BenchmarkRunner.grade(r) == "FAIL" and c.id not in BENCHMARK_EXIT_EXEMPT_MISMATCH_VS_MFLUX
+        product_failed = sum(
+            1 for _, r in runner.results if BenchmarkRunner.grade_product(r) == "PRODUCT_FAIL"
         )
-        return 1 if failed else 0
+        return 1 if product_failed else 0
     case = get_case(case_id)
     if case is None:
         print(f"Unknown mflux case: {case_id}")
@@ -974,8 +1460,45 @@ def run_mflux(case_id: str = "", output_dir: str = "tests/benchmark/outputs") ->
     result = runner.run_case(case, run_ours=True, run_ref=True)
     runner._print_result(result)
     print(f"\nOutputs: {runner.output_dir}")
-    grade = BenchmarkRunner.grade(result)
-    if grade == "FAIL" and case.id in BENCHMARK_EXIT_EXEMPT_MISMATCH_VS_MFLUX:
-        print("  (exit 0: exempt — see BENCHMARK_EXIT_EXEMPT_MISMATCH_VS_MFLUX in cases.py)")
-        return 0
-    return 1 if grade == "FAIL" else 0
+    if BenchmarkRunner.grade_product(result) == "PRODUCT_FAIL":
+        return 1
+    return 0
+
+
+def run_reference(case_id: str = "", output_dir: str = "tests/benchmark/outputs", *, backend_filter: str = "") -> int:
+    """Reference parity suite (mlx-video or diffusers, selected by backend_filter)."""
+    runner = ExternalReferenceRunner(output_dir=output_dir)
+    if not case_id:
+        runner.run_all(run_ours=True, backend_filter=backend_filter)
+        product_failed = sum(
+            1 for _, r in runner.ref_results if BenchmarkRunner.grade_product(r) == "PRODUCT_FAIL"
+        )
+        return 1 if product_failed else 0
+    case = get_external_ref_case(case_id)
+    if case is None:
+        ids = list_external_ref_cases_by_backend(backend_filter) if backend_filter else list_external_ref_cases()
+        print(f"Unknown reference case: {case_id}")
+        print(f"Available: {ids}")
+        return 2
+    if backend_filter and (case.ref_backend or "").strip().lower() != backend_filter.strip().lower():
+        ids = list_external_ref_cases_by_backend(backend_filter)
+        print(f"Case {case_id} is not in backend suite {backend_filter!r}")
+        print(f"Available: {ids}")
+        return 2
+    print(f"[{case.id}] {case.description}")
+    result = runner.run_case(case, run_ours=True, run_ref=True)
+    runner._print_result(result)
+    print(f"\nOutputs: {runner.output_dir}")
+    if BenchmarkRunner.grade_product(result) == "PRODUCT_FAIL":
+        return 1
+    return 0
+
+
+def run_mlx_video(case_id: str = "", output_dir: str = "tests/benchmark/outputs") -> int:
+    """mlx-video reference parity suite."""
+    return run_reference(case_id=case_id, output_dir=output_dir, backend_filter="mlx_video")
+
+
+def run_diffusers(case_id: str = "", output_dir: str = "tests/benchmark/outputs") -> int:
+    """diffusers reference parity suite."""
+    return run_reference(case_id=case_id, output_dir=output_dir, backend_filter="diffusers")

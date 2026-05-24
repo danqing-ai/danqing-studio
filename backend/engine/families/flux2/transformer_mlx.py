@@ -10,11 +10,29 @@ from __future__ import annotations
 import mlx.core as mx
 import mlx.nn as nn
 
-from backend.engine.common.attention import attention_bhsd_to_blhd
-from backend.engine.common.embeddings import apply_complex_rope_bshd, sinusoidal_timestep_proj
+from backend.engine.common.embeddings import sinusoidal_timestep_proj
 from backend.engine.common.norm import AdaLayerNormContinuous, apply_scale_shift
 from backend.engine.runtime._base import RuntimeContext
 from backend.engine.common._base import TransformerBase
+
+
+def _apply_rope_bhsd(x, cos, sin):
+    """Flux2 joint attention RoPE on ``[B, H, S, D]`` (matches reference apply_rope_bshd)."""
+    out_dtype = x.dtype
+    cos = cos.astype(mx.float32)
+    sin = sin.astype(mx.float32)
+    cos = cos.reshape(1, 1, *cos.shape)
+    sin = sin.reshape(1, 1, *sin.shape)
+    x_f = x.astype(mx.float32)
+    x2 = x_f.reshape(*x_f.shape[:-1], -1, 2)
+    real = x2[..., 0]
+    imag = x2[..., 1]
+    rotated = mx.stack([
+        real * cos + (-imag) * sin,
+        imag * cos + real * sin,
+    ], axis=-1)
+    rotated = rotated.reshape(*x_f.shape)
+    return rotated.astype(out_dtype)
 
 
 class Flux2Modulation:
@@ -107,7 +125,6 @@ class Flux2Attention:
         self.ctx = ctx
         self.heads = heads
         self.dim_head = dim_head
-        self.scale = dim_head ** -0.5
 
         self.to_q = nn.Linear(dim, heads * dim_head, bias=False)
         self.to_k = nn.Linear(dim, heads * dim_head, bias=False)
@@ -160,9 +177,11 @@ class Flux2Attention:
         q = self._rotary(q, cos, sin)
         k = self._rotary(k, cos, sin)
 
-        # Attention
-        out = attention_bhsd_to_blhd(ctx, q, k, v, scale=self.scale)
-        out = out.reshape(B, -1, self.heads * head_dim)
+        # Attention (mflux AttentionUtils.compute_attention)
+        attn_scale = 1 / mx.sqrt(q.shape[-1])
+        out = mx.fast.scaled_dot_product_attention(q, k, v, scale=attn_scale)
+        out = ctx.permute(out, (0, 2, 1, 3))
+        out = ctx.reshape(out, (B, -1, self.heads * head_dim))
 
         # 拆分 text 和 image 输出
         txt_out = out[:, :S_txt, :]
@@ -171,7 +190,7 @@ class Flux2Attention:
         return self.to_out(img_out), self.to_add_out(txt_out)
 
     def _rotary(self, x, cos, sin):
-        return apply_complex_rope_bshd(mx, x, cos, sin)
+        return _apply_rope_bhsd(x, cos, sin)
 
 
 class Flux2FeedForward:
@@ -258,18 +277,19 @@ class Flux2ParallelSelfAttention:
         v = ctx.permute(v, (0, 2, 1, 3))
 
         # QK norm in float32 (reference)
-        q = self.norm_q(q.astype(mx.float32)).astype(q.dtype)
-        k = self.norm_k(k.astype(mx.float32)).astype(k.dtype)
+        q = self.norm_q(q.astype(mx.float32)).astype(mx.bfloat16)
+        k = self.norm_k(k.astype(mx.float32)).astype(mx.bfloat16)
 
         # RoPE
         if image_rotary_emb is not None:
             cos, sin = image_rotary_emb
-            q = apply_complex_rope_bshd(mx, q, cos, sin)
-            k = apply_complex_rope_bshd(mx, k, cos, sin)
+            q = _apply_rope_bhsd(q, cos, sin)
+            k = _apply_rope_bhsd(k, cos, sin)
 
         # Attention
-        scale = self.dim_head ** -0.5
-        hidden_states = attention_bhsd_to_blhd(ctx, q, k, v, scale=scale)
+        scale = 1 / mx.sqrt(q.shape[-1])
+        hidden_states = mx.fast.scaled_dot_product_attention(q, k, v, scale=scale)
+        hidden_states = ctx.permute(hidden_states, (0, 2, 1, 3))
         hidden_states = ctx.reshape(hidden_states, (B, S, self.inner_dim))
 
         # MLP (SwiGLU)
@@ -366,6 +386,9 @@ class Flux2Transformer(TransformerBase):
         # 1. Timestep 转换（Pipeline 传入 int index）
         # ------------------------------------------------------------------
         timestep_val = self._resolve_timestep_value(B, timestep, sigmas, array_fn=ctx.array)
+        # Match mflux: cast timestep to hidden_states input dtype before embedding.
+        if hasattr(latents, "dtype"):
+            timestep_val = timestep_val.astype(latents.dtype)
 
         temb = self.time_guidance_embed.forward(timestep_val)
         temb = temb.astype(mx.bfloat16)
@@ -461,11 +484,20 @@ class Flux2Transformer(TransformerBase):
     ) -> Any:
         if array_fn is None:
             array_fn = mx.array
+        # Only use sigma table lookup when caller truly passes an integer step index.
+        # The denoise loop normally passes scheduler timesteps (float tensor/scalar), and
+        # coercing those to int will corrupt the time embedding trajectory.
         if sigmas is not None:
-            t_idx = int(timestep)
-            return (sigmas[t_idx] * 1000.0).reshape((1,))
+            t_idx: int | None = None
+            if isinstance(timestep, int) and not isinstance(timestep, bool):
+                t_idx = int(timestep)
+            elif isinstance(timestep, mx.array) and timestep.ndim == 0:
+                dt = str(timestep.dtype).lower()
+                if "int" in dt and "float" not in dt:
+                    t_idx = int(timestep.item())
+            if t_idx is not None:
+                return (sigmas[t_idx] * 1000.0).reshape((1,))
 
-        # fallback: 直接作为 float 处理
         timestep_val = timestep if hasattr(timestep, "shape") else array_fn(timestep, dtype=mx.float32)
         if timestep_val.ndim == 0:
             timestep_val = mx.full((batch_size,), timestep_val, dtype=mx.float32)
@@ -520,7 +552,7 @@ class Flux2Transformer(TransformerBase):
 
     def load_weights(self, weights, strict=False,
                      ctx=None, *, bundle_affine_bits=None):
-        """Load weights and auto-convert to bfloat16 (matches reference precision)."""
+        """Load weights using checkpoint/native dtype (mflux-aligned)."""
         load_ctx = ctx if ctx is not None else self.ctx
         loaded, skipped = super().load_weights(
             weights,
@@ -528,6 +560,4 @@ class Flux2Transformer(TransformerBase):
             ctx=load_ctx,
             bundle_affine_bits=bundle_affine_bits,
         )
-        # Convert all parameters to bfloat16 for numerical consistency with reference
-        self._cast_param_map_dtype(mx.bfloat16)
         return loaded, skipped

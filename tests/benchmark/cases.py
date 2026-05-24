@@ -46,6 +46,7 @@ SeedVR2 超分健全性：若 ``models/Upscaler/seedvr2-*-fp16`` 下缺少 ``job
 from __future__ import annotations
 
 import json
+import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -306,6 +307,15 @@ class SanityCase:
     top_k: Optional[int] = None
     codec_steps: Optional[int] = None
     codec_guidance: Optional[float] = None
+    # Quality gate overrides (per-case/per-model); keys are consumed by metrics.py
+    image_quality_thresholds: dict[str, float] = field(default_factory=dict)
+    audio_quality_thresholds: dict[str, float] = field(default_factory=dict)
+    video_quality_thresholds: dict[str, float] = field(default_factory=dict)
+    # Optional semantic alignment gate (disabled by default)
+    semantic_gate_enabled: bool = False
+    semantic_min_score: float = 55.0
+    semantic_backend: str = ""  # image/video: clip, audio: clap
+    semantic_model_id: str = ""  # optional override model id
 
     def __post_init__(self):
         if not self.description:
@@ -333,6 +343,56 @@ class SanityCase:
         )
 
 
+# Quality-gate templates (case-level overrides).
+# Keep this table centralized so model-specific tuning is explicit.
+IMAGE_THRESHOLDS_DEFAULT: dict[str, float] = {
+    "min_score": 70.0,
+}
+IMAGE_THRESHOLDS_REWRITE: dict[str, float] = {
+    "min_score": 72.0,
+    "noise_hf_high": 0.56,
+}
+IMAGE_THRESHOLDS_UPSCALE: dict[str, float] = {
+    "min_score": 62.0,
+    "noise_hf_high": 0.62,
+}
+IMAGE_THRESHOLDS_FIBO: dict[str, float] = {
+    "min_score": 72.0,
+    "noise_hf_high": 0.55,
+    "noise_edge_coh_low": 0.13,
+}
+
+AUDIO_THRESHOLDS_DEFAULT: dict[str, float] = {
+    "min_score": 65.0,
+}
+AUDIO_THRESHOLDS_ACE_STEP: dict[str, float] = {
+    "min_score": 65.0,
+    "noise_flatness_high": 0.74,
+}
+AUDIO_THRESHOLDS_HEARTMULA: dict[str, float] = {
+    "min_score": 66.0,
+    "noise_flatness_high": 0.73,
+    "low_dyn_std": 0.0022,
+}
+
+VIDEO_THRESHOLDS_DEFAULT: dict[str, float] = {
+    "min_score": 65.0,
+}
+VIDEO_THRESHOLDS_WAN: dict[str, float] = {
+    "min_score": 65.0,
+    "noise_temporal_ssim_low": 0.09,
+    "noise_temporal_delta_high": 0.18,
+}
+
+# Optional semantic gate profile:
+# - off: disable all semantic checks (default)
+# - core: enable semantic checks for image/video cases
+# - all: enable semantic checks for image/video/audio cases
+SEMANTIC_PROFILE = (os.getenv("DANQING_BENCH_SEMANTIC_PROFILE", "off") or "off").strip().lower()
+ENABLE_SEMANTIC_CORE = SEMANTIC_PROFILE in {"core", "all"}
+ENABLE_SEMANTIC_AUDIO = SEMANTIC_PROFILE == "all"
+
+
 ALL_SANITY_CASES: list[SanityCase] = [
     SanityCase(
         id="fibo-sanity",
@@ -341,6 +401,10 @@ ALL_SANITY_CASES: list[SanityCase] = [
         seed=42,
         steps=8,
         guidance=1.0,
+        image_quality_thresholds=IMAGE_THRESHOLDS_FIBO.copy(),
+        semantic_gate_enabled=ENABLE_SEMANTIC_CORE,
+        semantic_min_score=57.0,
+        semantic_backend="clip",
         description="FIBO — 成片健全性（与 mflux PSNR 套件独立，可单独冒烟）",
     ),
     SanityCase(
@@ -351,6 +415,10 @@ ALL_SANITY_CASES: list[SanityCase] = [
         seed=42,
         steps=4,
         guidance=3.5,
+        image_quality_thresholds=IMAGE_THRESHOLDS_REWRITE.copy(),
+        semantic_gate_enabled=ENABLE_SEMANTIC_CORE,
+        semantic_min_score=58.0,
+        semantic_backend="clip",
         description="Z-Image rewrite — 健全性（无 mflux 对照）",
     ),
     SanityCase(
@@ -361,6 +429,10 @@ ALL_SANITY_CASES: list[SanityCase] = [
         seed=42,
         steps=4,
         guidance=2.0,
+        image_quality_thresholds=IMAGE_THRESHOLDS_REWRITE.copy(),
+        semantic_gate_enabled=ENABLE_SEMANTIC_CORE,
+        semantic_min_score=60.0,
+        semantic_backend="clip",
         description="Qwen-Image rewrite — 健全性（注册表仅声明 rewrite）",
     ),
     SanityCase(
@@ -372,6 +444,7 @@ ALL_SANITY_CASES: list[SanityCase] = [
         steps=1,
         guidance=0.0,
         upscale_scale=2,
+        image_quality_thresholds=IMAGE_THRESHOLDS_UPSCALE.copy(),
         description="SeedVR2-7B 2× upscale — 健全性",
     ),
     SanityCase(
@@ -383,6 +456,7 @@ ALL_SANITY_CASES: list[SanityCase] = [
         steps=1,
         guidance=0.0,
         upscale_scale=2,
+        image_quality_thresholds=IMAGE_THRESHOLDS_UPSCALE.copy(),
         description="SeedVR2-3B 2× upscale — 健全性",
     ),
     SanityCase(
@@ -398,6 +472,10 @@ ALL_SANITY_CASES: list[SanityCase] = [
         audio_format="wav",
         ace_step_use_lm=False,
         timeout_sec=300,
+        audio_quality_thresholds=AUDIO_THRESHOLDS_ACE_STEP.copy(),
+        semantic_gate_enabled=ENABLE_SEMANTIC_AUDIO,
+        semantic_min_score=53.0,
+        semantic_backend="clap",
         description="ACE-Step MLX 10s audio — reject near-silent output (no mflux ref)",
     ),
     SanityCase(
@@ -413,6 +491,10 @@ ALL_SANITY_CASES: list[SanityCase] = [
         audio_format="wav",
         ace_step_use_lm=False,
         timeout_sec=600,
+        audio_quality_thresholds=AUDIO_THRESHOLDS_ACE_STEP.copy(),
+        semantic_gate_enabled=ENABLE_SEMANTIC_AUDIO,
+        semantic_min_score=53.0,
+        semantic_backend="clap",
         description="ACE-Step CUDA 10s audio — skip when torch.cuda unavailable",
     ),
     SanityCase(
@@ -428,6 +510,10 @@ ALL_SANITY_CASES: list[SanityCase] = [
         audio_format="wav",
         ace_step_use_lm=True,
         timeout_sec=420,
+        audio_quality_thresholds=AUDIO_THRESHOLDS_ACE_STEP.copy(),
+        semantic_gate_enabled=ENABLE_SEMANTIC_AUDIO,
+        semantic_min_score=53.0,
+        semantic_backend="clap",
         description="ACE-Step MLX 10s + 5Hz LM expansion — audio sanity",
     ),
     SanityCase(
@@ -445,6 +531,10 @@ ALL_SANITY_CASES: list[SanityCase] = [
         seed=42,
         audio_format="wav",
         timeout_sec=900,
+        audio_quality_thresholds=AUDIO_THRESHOLDS_HEARTMULA.copy(),
+        semantic_gate_enabled=ENABLE_SEMANTIC_AUDIO,
+        semantic_min_score=55.0,
+        semantic_backend="clap",
         description="HeartMuLa MLX 10s audio — reject near-silent output (no upstream ref)",
     ),
     SanityCase(
@@ -459,6 +549,10 @@ ALL_SANITY_CASES: list[SanityCase] = [
         guidance=5.0,
         seed=42,
         timeout_sec=2400,
+        video_quality_thresholds=VIDEO_THRESHOLDS_WAN.copy(),
+        semantic_gate_enabled=ENABLE_SEMANTIC_CORE,
+        semantic_min_score=54.0,
+        semantic_backend="clip",
         description="Wan 2.2 TI2V 5B quick video sanity (4 steps, 17 frames)",
     ),
     SanityCase(
@@ -474,6 +568,10 @@ ALL_SANITY_CASES: list[SanityCase] = [
         seed=42,
         timeout_sec=7200,
         is_timing_baseline=True,
+        video_quality_thresholds=VIDEO_THRESHOLDS_WAN.copy(),
+        semantic_gate_enabled=ENABLE_SEMANTIC_CORE,
+        semantic_min_score=54.0,
+        semantic_backend="clip",
         description="Wan 2.2 TI2V 5B timing baseline (8 steps, 81 frames @ 480x720)",
     ),
 ]
@@ -834,3 +932,205 @@ def get_case(case_id: str) -> Optional[BenchmarkCase]:
 
 def list_cases() -> list[str]:
     return [c.id for c in ALL_CASES]
+
+
+@dataclass
+class ExternalRefCase:
+    """Parity case against open-source references (mlx-video / diffusers / custom CLI)."""
+
+    id: str
+    model: str
+    media: str  # image | video
+    action: str = "create"
+    prompt: str = ""
+    seed: int = 42
+    width: int = 512
+    height: int = 512
+    steps: int = 8
+    guidance: float = 4.0
+    negative_prompt: str = ""
+    source_image: str = ""
+    image_strength: float = 0.6
+    video_size: str = "480x720"
+    video_num_frames: int = 17
+    video_fps: int = 16
+    description: str = ""
+    timeout_sec: int = 1200
+    # reference adapter
+    ref_backend: str = "mlx_video"  # mlx_video | mflux | diffusers | custom
+    ref_model: str = ""
+    # mflux CLI override when ref_backend == mflux
+    ref_mflux_cli: str = ""
+    # Optional LoRA path relative to workspace root (for diffusers refs).
+    ref_lora_rel: str = ""
+    # Optional command template for mlx-video/custom; placeholders:
+    # {model} {ref_model} {prompt} {seed} {steps} {guidance}
+    # {negative_prompt} {width} {height} {video_size} {num_frames} {fps}
+    # {source_image} {output}
+    ref_cmd_template: str = ""
+    # Optional bundle check; relative to workspace root
+    local_bundle_rel: str = ""
+
+    def __post_init__(self):
+        if not self.description:
+            self.description = f"{self.model} parity vs {self.ref_backend}"
+
+
+def _workspace_has_rel_path(rel: str) -> bool:
+    if not rel:
+        return True
+    return (resolve_benchmark_data_root() / rel).exists()
+
+
+def iter_external_ref_cases() -> list[ExternalRefCase]:
+    runnable: list[ExternalRefCase] = []
+    for case in ALL_EXTERNAL_REF_CASES:
+        if _workspace_has_rel_path(case.local_bundle_rel):
+            runnable.append(case)
+    return runnable
+
+
+def list_skipped_external_ref_cases() -> list[tuple[str, str]]:
+    skipped: list[tuple[str, str]] = []
+    for case in ALL_EXTERNAL_REF_CASES:
+        if _workspace_has_rel_path(case.local_bundle_rel):
+            continue
+        skipped.append((case.id, f"missing bundle {case.local_bundle_rel}"))
+    return skipped
+
+
+def get_external_ref_case(case_id: str) -> Optional[ExternalRefCase]:
+    for c in ALL_EXTERNAL_REF_CASES:
+        if c.id == case_id:
+            return c
+    return None
+
+
+def list_external_ref_cases() -> list[str]:
+    return [c.id for c in ALL_EXTERNAL_REF_CASES]
+
+
+def iter_external_ref_cases_by_backend(backend: str) -> list[ExternalRefCase]:
+    b = (backend or "").strip().lower()
+    return [c for c in iter_external_ref_cases() if (c.ref_backend or "").strip().lower() == b]
+
+
+def list_external_ref_cases_by_backend(backend: str) -> list[str]:
+    b = (backend or "").strip().lower()
+    return [c.id for c in ALL_EXTERNAL_REF_CASES if (c.ref_backend or "").strip().lower() == b]
+
+
+def list_skipped_external_ref_cases_by_backend(backend: str) -> list[tuple[str, str]]:
+    b = (backend or "").strip().lower()
+    skipped: list[tuple[str, str]] = []
+    for case in ALL_EXTERNAL_REF_CASES:
+        if (case.ref_backend or "").strip().lower() != b:
+            continue
+        if _workspace_has_rel_path(case.local_bundle_rel):
+            continue
+        skipped.append((case.id, f"missing bundle {case.local_bundle_rel}"))
+    return skipped
+
+
+# Open-source reference parity cases:
+# 1) video: compare against mlx-video
+# 2) image: compare against diffusers for models that do not rely on mflux parity.
+ALL_EXTERNAL_REF_CASES: list[ExternalRefCase] = [
+    ExternalRefCase(
+        id="wan-2.2-ti2v-5b-mlx-video",
+        model="wan-2.2-ti2v-5b",
+        media="video",
+        prompt="a cat walking on green grass, soft daylight",
+        seed=42,
+        steps=4,
+        guidance=5.0,
+        video_size="480x720",
+        video_num_frames=17,
+        video_fps=16,
+        timeout_sec=2400,
+        ref_backend="mlx_video",
+        ref_model="wan-2.2-ti2v-5b",
+        # Prefer explicit env override; fallback to widely-used mlx-video CLI style.
+        ref_cmd_template=(
+            "{cmd} --model {ref_model} --prompt \"{prompt}\" --seed {seed} "
+            "--steps {steps} --guidance {guidance} --size {video_size} "
+            "--num-frames {num_frames} --fps {fps} --output {output}"
+        ),
+        local_bundle_rel="models/Video/wan-2.2-ti2v-5b-original",
+        description="Wan 5B parity vs mlx-video reference",
+    ),
+    ExternalRefCase(
+        id="ltx-2.3-distilled-mlx-video",
+        model="ltx-2.3-distilled",
+        media="video",
+        prompt="a cinematic scene of ocean waves at golden hour",
+        seed=42,
+        steps=8,
+        guidance=3.5,
+        video_size="480x720",
+        video_num_frames=17,
+        video_fps=16,
+        timeout_sec=2400,
+        ref_backend="mlx_video",
+        ref_model="ltx-2.3-distilled",
+        ref_cmd_template=(
+            "{cmd} --model {ref_model} --prompt \"{prompt}\" --seed {seed} "
+            "--steps {steps} --guidance {guidance} --size {video_size} "
+            "--num-frames {num_frames} --fps {fps} --output {output}"
+        ),
+        local_bundle_rel="models/Video/ltx-2.3-distilled-original",
+        description="LTX 2.3 distilled parity vs mlx-video reference",
+    ),
+    ExternalRefCase(
+        id="qwen-image-mflux-rewrite",
+        model="qwen-image",
+        media="image",
+        action="rewrite",
+        prompt="change to a snowy winter scene",
+        seed=42,
+        steps=4,
+        guidance=1.0,
+        width=512,
+        height=512,
+        source_image=SRC_IMAGE,
+        image_strength=0.6,
+        ref_backend="mflux",
+        ref_mflux_cli="mflux-generate-qwen",
+        timeout_sec=3600,
+        local_bundle_rel="models/Image/qwen-image-fp16",
+        description="Qwen-Image parity vs mflux (rewrite)",
+    ),
+    ExternalRefCase(
+        id="z-image-turbo-mflux-create",
+        model="z-image-turbo",
+        media="image",
+        prompt="a serene lake at sunset, mountains, oil painting style",
+        seed=42,
+        steps=8,
+        guidance=0.0,
+        width=512,
+        height=512,
+        ref_backend="mflux",
+        ref_mflux_cli="mflux-generate-z-image-turbo",
+        timeout_sec=3600,
+        local_bundle_rel="models/Image/z-image-turbo-fp16",
+        description="Z-Image-Turbo parity vs mflux (create)",
+    ),
+    ExternalRefCase(
+        id="z-image-turbo-diffusers-create",
+        model="z-image-turbo",
+        media="image",
+        action="create",
+        prompt="a serene lake at sunset, mountains, oil painting style",
+        seed=42,
+        steps=8,
+        guidance=0.0,
+        width=512,
+        height=512,
+        ref_backend="diffusers",
+        ref_model="Tongyi-MAI/Z-Image-Turbo",
+        timeout_sec=3600,
+        local_bundle_rel="models/Image/z-image-turbo-fp16",
+        description="Z-Image-Turbo parity vs diffusers",
+    ),
+]
