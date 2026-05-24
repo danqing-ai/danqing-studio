@@ -302,13 +302,17 @@ class _DiTLayer(nn.Module):
 # ---------------------------------------------------------------------------
 
 class _TimestepEmbedding(nn.Module):
+    """Sinusoidal timestep embedding → MLP → (temb, 6-way projection).
+
+    Mirrors ``transformer_mlx._TimestepEmbedding``; weights: ``linear_1``,
+    ``linear_2``, ``time_proj`` (no separate ``act1`` — SiLU is functional).
+    """
+
     def __init__(self, in_channels: int = 256, time_embed_dim: int = 2048, scale: float = 1000.0):
         super().__init__()
         self.in_channels = in_channels
         self.scale = scale
-
         self.linear_1 = nn.Linear(in_channels, time_embed_dim, bias=True)
-        self.act1 = nn.SiLU()
         self.linear_2 = nn.Linear(time_embed_dim, time_embed_dim, bias=True)
         self.act2 = nn.SiLU()
         self.time_proj = nn.Linear(time_embed_dim, time_embed_dim * 6, bias=True)
@@ -317,9 +321,8 @@ class _TimestepEmbedding(nn.Module):
         t_freq = sinusoidal_timestep_proj(
             _CUDA_CTX, t, self.in_channels, sin_first=False, scale=self.scale
         ).to(t.dtype)
-        temb = self.linear_1(t_freq.to(t.dtype))
-        temb = self.act1(temb)
-        temb = self.linear_2(temb)
+        x = t_freq.to(t.dtype)
+        temb = self.linear_2(F.silu(self.linear_1(x)))
         proj = self.time_proj(self.act2(temb))
         timestep_proj = proj.reshape(proj.shape[0], 6, -1)
         return temb, timestep_proj

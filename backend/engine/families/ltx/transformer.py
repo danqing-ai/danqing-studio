@@ -20,7 +20,7 @@ from typing import Any
 
 from backend.engine.common._base import TransformerBase
 from backend.engine.common.attention import _apply_rope, attention_bhsd_to_blhd
-from backend.engine.common.embeddings import PatchEmbed3D, RoPE3D, sinusoidal_timestep_proj
+from backend.engine.common.embeddings import PatchEmbed3D, RoPE3D, LTXTimestepEmbeddingMLP, sinusoidal_timestep_proj
 from backend.engine.common.norm import apply_rms_norm, apply_scale_shift, unpack_modulation_6table
 from backend.engine.config.model_configs import LTXConfig
 from backend.engine.runtime._base import RuntimeContext
@@ -143,31 +143,6 @@ class LTXBlock:
 
 
 # ---------------------------------------------------------------------------
-# Flat timestep embedding (avoids nn.Sequential)
-# ---------------------------------------------------------------------------
-
-class _LTXTimestepEmbedding:
-    """Sinusoidal timestep embedding — flat layers, no nn.Sequential."""
-
-    def __init__(self, dim: int, ctx: RuntimeContext, frequency_embedding_size: int = 256):
-        self.ctx = ctx
-        nn = ctx
-        self.frequency_embedding_size = frequency_embedding_size
-        self.mlp_in = nn.Linear(frequency_embedding_size, dim)
-        self.mlp_out = nn.Linear(dim, dim)
-
-    def forward(self, timesteps):
-        ctx = self.ctx
-        embedding = sinusoidal_timestep_proj(ctx, timesteps, self.frequency_embedding_size)
-        embedding = self.mlp_in(embedding)
-        embedding = ctx.silu(embedding)
-        return self.mlp_out(embedding)
-
-    def __call__(self, timesteps):
-        return self.forward(timesteps)
-
-
-# ---------------------------------------------------------------------------
 # LTX Transformer
 # ---------------------------------------------------------------------------
 
@@ -197,7 +172,7 @@ class LTXTransformer(TransformerBase):
         )
 
         # Time embedding: sinusoidal → MLP (in → out) → out_proj (→ 6*dim)
-        self.time_embed = _LTXTimestepEmbedding(dim, ctx)           # [B] → [B, dim]
+        self.time_embed = LTXTimestepEmbeddingMLP(dim, ctx)           # [B] → [B, dim]
         self.time_embed_out = nn.Linear(dim, 6 * dim)               # [B, dim] → [B, 6*dim]
 
         # Text projection: T5 4096 → dim

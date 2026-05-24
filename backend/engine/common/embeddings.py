@@ -221,6 +221,24 @@ class TimestepEmbeddingMLP:
         return self.linear_2(self.act(self.linear_1(x)))
 
 
+class LTXTimestepEmbeddingMLP:
+    """LTX sinusoidal timestep MLP — flat ``mlp_in`` / ``mlp_out`` keys (dual-platform ctx)."""
+
+    def __init__(self, dim: int, ctx: Any, frequency_embedding_size: int = 256):
+        nn = ctx
+        self.ctx = ctx
+        self.frequency_embedding_size = frequency_embedding_size
+        self.mlp_in = nn.Linear(frequency_embedding_size, dim, bias=True)
+        self.mlp_out = nn.Linear(dim, dim, bias=True)
+
+    def __call__(self, timesteps: Any) -> Any:
+        ctx = self.ctx
+        embedding = sinusoidal_timestep_proj(ctx, timesteps, self.frequency_embedding_size)
+        embedding = self.mlp_in(embedding)
+        embedding = ctx.silu(embedding)
+        return self.mlp_out(embedding)
+
+
 class RoPE2D:
     """2D 旋转位置编码 (图像模型)。
 

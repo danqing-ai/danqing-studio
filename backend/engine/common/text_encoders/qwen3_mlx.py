@@ -55,13 +55,36 @@ Float32RMSNorm = MlxRMSNorm
 class MlxTimestepEmbeddingMLP(nn.Module):
     """diffusers ``TimestepEmbedding`` as ``mlx.nn.Module`` (linear → SiLU → linear)."""
 
-    def __init__(self, in_channels: int, time_embed_dim: int):
+    def __init__(
+        self,
+        in_channels: int,
+        time_embed_dim: int,
+        *,
+        linear_1_name: str = "linear_1",
+        linear_2_name: str = "linear_2",
+    ):
         super().__init__()
-        self.linear_1 = nn.Linear(in_channels, time_embed_dim, bias=True)
-        self.linear_2 = nn.Linear(time_embed_dim, time_embed_dim, bias=True)
+        self._linear_1_name = linear_1_name
+        self._linear_2_name = linear_2_name
+        setattr(self, linear_1_name, nn.Linear(in_channels, time_embed_dim, bias=True))
+        setattr(self, linear_2_name, nn.Linear(time_embed_dim, time_embed_dim, bias=True))
 
     def __call__(self, x: mx.array) -> mx.array:
-        return self.linear_2(nn.silu(self.linear_1(x)))
+        linear_1 = getattr(self, self._linear_1_name)
+        linear_2 = getattr(self, self._linear_2_name)
+        return linear_2(nn.silu(linear_1(x)))
+
+
+class MlxLTXTimestepEmbeddingMLP(MlxTimestepEmbeddingMLP):
+    """LTX timestep MLP — checkpoint keys ``mlp_in`` / ``mlp_out``."""
+
+    def __init__(self, frequency_embedding_size: int, dim: int):
+        super().__init__(
+            frequency_embedding_size,
+            dim,
+            linear_1_name="mlp_in",
+            linear_2_name="mlp_out",
+        )
 
 
 class MlxTimestepEmbeddingMLPWide(nn.Module):
