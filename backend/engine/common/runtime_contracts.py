@@ -49,6 +49,11 @@ class FamilyRuntimeContract:
         return 0.0
 
     def should_encode_negative_prompt(self, guidance: float) -> bool:
+        if (
+            self.family == "fibo"
+            and bool(getattr(self.config, "structured_prompt", False))
+        ):
+            return False
         return (
             self.family != "flux1"
             and bool(getattr(self.config, "supports_guidance", False))

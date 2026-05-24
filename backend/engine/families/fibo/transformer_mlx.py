@@ -12,6 +12,7 @@ import mlx.core as mx
 import mlx.nn as mx_nn
 
 from backend.engine.common._base import TransformerBase, _collect_params
+from backend.engine.common.cfg_batch import FIBO_CFG_TEXT_KEYS, predict_noise_cfg_batched
 from backend.engine.common.embeddings import sinusoidal_timestep_proj
 from backend.engine.config.model_configs import FIBOConfig
 from backend.engine.runtime._base import RuntimeContext
@@ -376,7 +377,7 @@ class _AdaLayerNormContinuousOut:
     def __init__(self, dim: int, ctx: RuntimeContext):
         self.ctx = ctx
         self.norm = mx_nn.LayerNorm(dim, eps=1e-6, affine=False)
-        self.linear = mx_nn.Linear(dim, dim * 2, bias=True)
+        self.linear = mx_nn.Linear(dim, dim * 2, bias=False)
 
     def forward(self, x: Any, c: Any) -> Any:
         v = self.linear(mx_nn.silu(c).astype(mx.bfloat16))
@@ -433,6 +434,67 @@ class FIBOTransformer(TransformerBase):
 
         self._build_param_map()
 
+    def forward_cfg(
+        self,
+        latents: Any,
+        timestep: Any,
+        txt_embeds: Any,
+        neg_embeds: Any | None,
+        guidance: float,
+        sigmas: Any | None = None,
+        *,
+        cfg_renorm: bool = False,
+        cfg_renorm_min: float = 0.0,
+        **conditioning: Any,
+    ) -> Any:
+        """Batched CFG — mflux stacks [uncond, cond] on batch axis 0."""
+        if (
+            neg_embeds is None
+            and txt_embeds is not None
+            and int(txt_embeds.shape[0]) == 2
+        ):
+            batched_latents = self.ctx.concat([latents, latents], axis=0)
+            noise = self.forward(
+                batched_latents,
+                timestep,
+                txt_embeds=txt_embeds,
+                sigmas=sigmas,
+                **conditioning,
+            )
+            noise_uncond = noise[0:1]
+            noise_cond = noise[1:2]
+            noise_pred = self.combine_cfg_noise(noise_cond, noise_uncond, guidance)
+            if cfg_renorm:
+                noise_pred = self.refine_cfg_noise(
+                    noise_cond, noise_pred, cfg_renorm_min=cfg_renorm_min,
+                )
+            return noise_pred
+
+        pos_kwargs: dict[str, Any] = {
+            "txt_embeds": txt_embeds,
+            "sigmas": sigmas,
+            **conditioning,
+        }
+        neg_kwargs: dict[str, Any] = {
+            "txt_embeds": neg_embeds,
+            "sigmas": sigmas,
+            **conditioning,
+        }
+        return predict_noise_cfg_batched(
+            self.forward,
+            self.ctx,
+            latents,
+            timestep,
+            guidance=float(guidance),
+            pos_kwargs=pos_kwargs,
+            neg_kwargs=neg_kwargs,
+            text_keys=FIBO_CFG_TEXT_KEYS,
+            combine_cfg_noise=self.combine_cfg_noise,
+            refine_cfg_noise=self.refine_cfg_noise,
+            cfg_renorm=cfg_renorm,
+            cfg_renorm_min=cfg_renorm_min,
+        )
+
     def _build_param_map(self):
         if hasattr(self, "_param_map"):
             self._param_map.clear()
@@ -454,6 +516,7 @@ class FIBOTransformer(TransformerBase):
         dim = cfg.hidden_dim
         B = latents.shape[0]
         _, _, H, W = latents.shape
+        text_encoder_layers = conditioning.get("text_encoder_layers", text_encoder_layers)
 
         # Pack latents [B,48,H,W] → [B, H*W, 48]
         hidden_states = mx.transpose(latents, (0, 2, 3, 1))
@@ -469,7 +532,10 @@ class FIBOTransformer(TransformerBase):
             txt_len = 0
 
         # Time embedding
-        if sigmas is not None:
+        timestep_embed_value = conditioning.get("timestep_embed_value")
+        if timestep_embed_value is not None:
+            t_val = float(timestep_embed_value)
+        elif sigmas is not None:
             t_idx = int(timestep)
             n = int(sigmas.shape[0]) if hasattr(sigmas, "shape") else len(sigmas)
             sigma_t = sigmas[t_idx] if t_idx < n else sigmas[-1] if n > 0 else 1.0
@@ -497,10 +563,11 @@ class FIBOTransformer(TransformerBase):
         ids = mx.expand_dims(ids, axis=0)
         cos, sin = self.pos_embed.forward(ids)
 
-        # Attention mask (causal over full sequence)
-        seq_total = txt_len + img_seq_len
-        attention_mask = mx.ones((B, seq_total), dtype=mx.float32)
-        attn_matrix = mx.einsum("bi,bj->bij", attention_mask, attention_mask)
+        # Attention mask — mflux: full bidirectional over prompt + latent tokens
+        prompt_mask = mx.ones((B, txt_len), dtype=mx.float32)
+        latent_mask = mx.ones((B, img_seq_len), dtype=mx.float32)
+        attention_mask_2d = mx.concatenate([prompt_mask, latent_mask], axis=1)
+        attn_matrix = mx.einsum("bi,bj->bij", attention_mask_2d, attention_mask_2d)
         min_dtype = mx.finfo(mx.float32).min
         attn_matrix = mx.where(
             attn_matrix == 1,
@@ -509,9 +576,9 @@ class FIBOTransformer(TransformerBase):
         )
         attn_matrix = mx.expand_dims(attn_matrix, axis=1).astype(mx.bfloat16)
 
-        # Caption projection
+        # Caption projection (mflux applies before DiT blocks)
+        total_layers = cfg.num_joint_layers + cfg.num_single_layers
         if text_encoder_layers is not None and len(text_encoder_layers) > 0:
-            total_layers = cfg.num_joint_layers + cfg.num_single_layers
             if len(text_encoder_layers) >= total_layers:
                 text_encoder_layers = text_encoder_layers[len(text_encoder_layers) - total_layers :]
             else:
@@ -523,7 +590,7 @@ class FIBOTransformer(TransformerBase):
                 for i, layer in enumerate(text_encoder_layers)
             ]
         else:
-            projected_layers = [None] * (cfg.num_joint_layers + cfg.num_single_layers)
+            projected_layers = [None] * total_layers
 
         # Joint blocks
         for i, block in enumerate(self.transformer_blocks):
@@ -541,7 +608,6 @@ class FIBOTransformer(TransformerBase):
         for i, block in enumerate(self.single_transformer_blocks):
             block_idx = cfg.num_joint_layers + i
             if projected_layers[block_idx] is not None:
-                # For single blocks, split combined stream, inject caption, re-combine
                 enc_len = encoder_hidden_states.shape[1]
                 enc_part = x[:, :enc_len, :]
                 img_part = x[:, enc_len:, :]

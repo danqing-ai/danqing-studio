@@ -122,6 +122,7 @@ class FIBOConfig:
     supports_img2img: bool = True
     structured_prompt: bool = True
     encoder_type: str = "fibo"
+    use_mlx_cfg_fusion: bool = True
     vae_scale: int = 16
     text_encoder_mask_key: str = "text_encoder_layers"
 

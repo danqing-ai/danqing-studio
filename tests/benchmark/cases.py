@@ -41,7 +41,8 @@ SeedVR2 超分健全性：若 ``models/Upscaler/seedvr2-*-fp16`` 下缺少 ``job
 | WARN | flux2-klein-4b-create；z-image-create（豁免退出码）；qwen-image-rewrite（豁免） |
 | SKIP 无权重 | seedvr2-3b；flux1-kontext；fibo-lite；fibo-edit |
 | PASS | flux1-schnell/dev/krea-dev create（2026-05-19；RMSNorm eps + registry max_seq_len + 禁用 Flux.1 双路 CFG） |
-| SKIP 丹青未跑通 | fibo create/rewrite；fibo-edit-rmbg（VAE encoder） |
+| PASS | fibo-create；fibo-rewrite（2026-05-24；MLX SmolLM3 + batched CFG + FIBO Wan2.2 VAE） |
+| SKIP 丹青未跑通 | fibo-edit-rmbg（VAE encoder） |
 """
 from __future__ import annotations
 

@@ -63,8 +63,15 @@ def _image_pipeline_cfg_noise_pred(
 ) -> Any:
     """Classifier-free guidance merge — polymorphic ``forward_cfg`` when available (MLX Z-Image)."""
     forward_cfg = getattr(model, "forward_cfg", None)
+    fibo_batched_cfg = (
+        neg_embeds is None
+        and txt_embeds is not None
+        and getattr(config, "structured_prompt", False)
+        and getattr(txt_embeds, "shape", None) is not None
+        and int(txt_embeds.shape[0]) == 2
+    )
     if (
-        neg_embeds is not None
+        (neg_embeds is not None or fibo_batched_cfg)
         and getattr(config, "supports_guidance", False)
         and guidance > 0.0
         and callable(forward_cfg)
@@ -372,6 +379,27 @@ class ImagePipeline:
             self.ctx.eval(packed)
         return packed
 
+    def _vae_encode_fibo_wan(
+        self,
+        *,
+        image_n11: Any,
+        entry: Any,
+        version_key: str | None,
+        height_px: int | None,
+        width_px: int | None,
+        on_log: Callable | None,
+    ) -> Any:
+        del height_px, width_px
+        from backend.engine.families.fibo import vae_mlx
+
+        bundle_root = self._local_bundle_root(entry, version_key)
+        if bundle_root is None:
+            raise RuntimeError("FIBO VAE encode: model bundle is not installed at local_path.")
+        latents = vae_mlx.encode_image_n11(self.ctx, image_n11, bundle_root)
+        if on_log:
+            on_log("info", f"vae_encode fibo wan latent_shape={tuple(latents.shape)}")
+        return latents
+
     def _vae_encode_wan(
         self,
         *,
@@ -454,6 +482,16 @@ class ImagePipeline:
 
         _, vae_cfg, vae_weights = self._load_vae_dir_cfg_weights(entry, version_key)
         vae_cls = str(vae_cfg.get("_class_name") or "")
+
+        if getattr(entry, "family", "") == "fibo" and vae_cls == "AutoencoderKLWan":
+            return self._vae_encode_fibo_wan(
+                image_n11=image_n11,
+                entry=entry,
+                version_key=version_key,
+                height_px=height_px,
+                width_px=width_px,
+                on_log=on_log,
+            )
 
         encode_handler = self._vae_encode_handlers.get(vae_cls)
         if vae_cls in ("AutoencoderKLQwenImage", "AutoencoderKLWan") and encode_handler is not None:
@@ -578,13 +616,38 @@ class ImagePipeline:
         if prompt and encoder_type != "t5":
             if bundle_root is None:
                 raise RuntimeError("Cannot load text encoder: model bundle is not installed at local_path.")
-            txt_embeds, txt_attn_mask, pooled_embeds = _encode_prompt_image_text(
-                self.ctx,
-                prompt,
-                encoder_type=encoder_type,
-                bundle_root=bundle_root,
-                config=config,
-            )
+            if (
+                encoder_type == "fibo"
+                and getattr(config, "structured_prompt", False)
+                and float(guidance) > 1.0
+            ):
+                from backend.engine._transformer_registry import get_text_encoder
+
+                enc_cls = get_text_encoder(encoder_type)
+                enc_dir = bundle_root / "text_encoder"
+                tok_dir = bundle_root / "tokenizer"
+                if not tok_dir.exists():
+                    tok_dir = enc_dir
+                enc = enc_cls(
+                    self.ctx,
+                    str(enc_dir),
+                    tokenizer_path=str(tok_dir),
+                    max_seq_len=getattr(config, "max_seq_len", 2048),
+                )
+                txt_embeds, txt_attn_mask = enc.encode_prompt_cfg(
+                    prompt,
+                    negative_prompt,
+                    guidance=float(guidance),
+                )
+                pooled_embeds = None
+            else:
+                txt_embeds, txt_attn_mask, pooled_embeds = _encode_prompt_image_text(
+                    self.ctx,
+                    prompt,
+                    encoder_type=encoder_type,
+                    bundle_root=bundle_root,
+                    config=config,
+                )
             if runtime_contract.should_encode_negative_prompt(guidance):
                 neg_txt = (negative_prompt or "").strip() or " "
                 neg_embeds, neg_attn_mask, neg_pooled_embeds = _encode_prompt_image_text(
@@ -669,7 +732,17 @@ class ImagePipeline:
                 if packed_denoise and flux_unpack is not None
                 else latents
             )
-            if neg_embeds is not None and getattr(config, "supports_guidance", False):
+            fibo_batched_cfg = (
+                neg_embeds is None
+                and txt_embeds is not None
+                and getattr(config, "structured_prompt", False)
+                and getattr(txt_embeds, "shape", None) is not None
+                and int(txt_embeds.shape[0]) == 2
+            )
+            if (
+                getattr(config, "supports_guidance", False)
+                and (neg_embeds is not None or fibo_batched_cfg)
+            ):
                 uncond_overrides = runtime_contract.compose_uncond_overrides(
                     pooled_embeds=neg_pooled_embeds,
                     guidance=guidance,
@@ -1388,6 +1461,31 @@ class ImagePipeline:
             on_log=(lambda level, msg: on_log(level, msg)) if on_log else None,
         )
 
+    def _vae_decode_fibo_wan(
+        self,
+        *,
+        latents: Any,
+        bundle_root: Path | None,
+        on_log: Callable | None,
+        vae_output_to_uint8_hwc: Callable[..., Any],
+        image_cls: Any,
+    ) -> Any:
+        del vae_output_to_uint8_hwc
+        from backend.engine.families.fibo import vae_mlx
+
+        if bundle_root is None:
+            raise RuntimeError("FIBO VAE decode: missing bundle_root")
+        import mlx.core as mx
+
+        pixels = vae_mlx.decode_latents_nchw(self.ctx, latents, bundle_root)
+        pixels = mx.clip((pixels + 1.0) * 0.5, 0.0, 1.0)
+        arr = np.asarray(pixels)
+        if arr.ndim == 4:
+            arr = arr[0].transpose(1, 2, 0)
+        if on_log:
+            on_log("info", f"vae_decode fibo frame_size={(int(arr.shape[1]), int(arr.shape[0]))}")
+        return image_cls.fromarray((arr * 255.0).astype(np.uint8))
+
     def _vae_decode_wan(
         self,
         *,
@@ -1450,6 +1548,17 @@ class ImagePipeline:
             latents = latents.reshape(B, latent_h, latent_w, channels).transpose(0, 3, 1, 2)
 
         vae_cls = str(vae_cfg.get("_class_name") or "")
+        entry_family = ""
+        if entry is not None:
+            entry_family = str(getattr(entry, "family", "") or "")
+        if entry_family == "fibo" and vae_cls == "AutoencoderKLWan":
+            return self._vae_decode_fibo_wan(
+                latents=latents,
+                bundle_root=bundle_root,
+                on_log=on_log,
+                vae_output_to_uint8_hwc=vae_output_to_uint8_hwc,
+                image_cls=Image,
+            )
         handler = self._vae_decode_handlers.get(vae_cls)
         if handler is not None:
             return handler(
