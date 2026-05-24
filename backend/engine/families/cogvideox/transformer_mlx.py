@@ -8,7 +8,6 @@ Implementation references:
 """
 from __future__ import annotations
 
-import math
 from typing import Any
 
 import mlx.core as mx
@@ -20,6 +19,8 @@ from backend.engine.common.attention import (
     apply_rope_interleaved_real,
     attention_bhsd_to_blhd,
 )
+from backend.engine.common.text_encoders.qwen3_mlx import MlxTimestepEmbeddingMLP
+from backend.engine.common.embeddings import sinusoidal_timestep_proj
 from backend.engine.common.cfg_batch import (
     TEXT_KEYS_MINIMAL,
     predict_noise_cfg_batched,
@@ -109,46 +110,6 @@ def build_joint_pos_embedding(
     joint = np.zeros((1, max_text_seq_length + num_patches, embed_dim), dtype=np.float32)
     joint[0, max_text_seq_length:, :] = pos_embedding.astype(np.float32)
     return joint
-
-
-def _get_timestep_embedding_mx(
-    ctx: RuntimeContext,
-    timesteps: Any,
-    embedding_dim: int,
-    *,
-    flip_sin_to_cos: bool = False,
-    downscale_freq_shift: float = 1.0,
-    scale: float = 1.0,
-    max_period: int = 10000,
-) -> Any:
-    timesteps = ctx.reshape(timesteps, (-1,))
-    half_dim = embedding_dim // 2
-    denom = max(half_dim - downscale_freq_shift, 1e-8)
-    exp_arg = -math.log(max_period) * ctx.arange(half_dim, dtype=ctx.float32()) / denom
-    emb = ctx.exp(exp_arg)
-    emb = timesteps[:, None].astype(ctx.float32()) * emb[None, :]
-    emb = scale * emb
-    emb = ctx.concat([ctx.sin(emb), ctx.cos(emb)], axis=-1)
-    if flip_sin_to_cos:
-        emb = ctx.concat([emb[:, half_dim:], emb[:, :half_dim]], axis=-1)
-    if embedding_dim % 2 == 1:
-        z = ctx.zeros((emb.shape[0], 1), dtype=emb.dtype)
-        emb = ctx.concat([emb, z], axis=-1)
-    return emb
-
-
-class TimestepEmbeddingLinear:
-    """Maps to diffusers `TimestepEmbedding`: linear_1 → SiLU → linear_2."""
-
-    def __init__(self, ctx: RuntimeContext, in_channels: int, time_embed_dim: int):
-        self.linear_1 = ctx.Linear(in_channels, time_embed_dim, bias=True)
-        self.act = nn.SiLU()
-        self.linear_2 = ctx.Linear(time_embed_dim, time_embed_dim, bias=True)
-
-    def __call__(self, x: Any) -> Any:
-        x = self.linear_1(x)
-        x = self.act(x)
-        return self.linear_2(x)
 
 
 class _FFGeluApprox:
@@ -381,7 +342,7 @@ class CogVideoXTransformer3D(TransformerBase):
         self.patch_embed = CogVideoXPatchEmbed(cfg, ctx)
         self.embedding_dropout = nn_ctx.Dropout(cfg.dropout)
 
-        self.time_embedding = TimestepEmbeddingLinear(ctx, cfg.inner_dim, cfg.time_embed_dim)
+        self.time_embedding = MlxTimestepEmbeddingMLP(cfg.inner_dim, cfg.time_embed_dim)
 
         self.transformer_blocks = nn_ctx.ModuleList([
             CogVideoXBlock(cfg, ctx) for _ in range(cfg.num_layers)
@@ -415,8 +376,10 @@ class CogVideoXTransformer3D(TransformerBase):
 
     def _time_proj_sin(self, timestep: Any) -> Any:
         cfg = self.config
-        return _get_timestep_embedding_mx(
-            self.ctx, timestep, cfg.inner_dim,
+        return sinusoidal_timestep_proj(
+            self.ctx,
+            timestep,
+            cfg.inner_dim,
             flip_sin_to_cos=cfg.flip_sin_to_cos,
             downscale_freq_shift=cfg.freq_shift,
             scale=1.0,

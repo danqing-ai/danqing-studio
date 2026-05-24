@@ -1,123 +1,75 @@
-"""Flux2 Klein text encoder — Float32RMSNorm + float32 SDPA + 3-layer concatenation."""
+"""Flux2 Klein text encoder — MlxRMSNorm + float32 SDPA + 3-layer concatenation."""
 from __future__ import annotations
 from json import load as json_load
 from pathlib import Path
 from typing import Any
 import mlx.core as mx
 import mlx.nn as nn
-from backend.engine.common.attention import (
-    build_causal_with_padding_bias,
-    scaled_dot_product_attention_bhsd_mx,
-)
-from backend.engine.common.norm import apply_rms_norm
+from backend.engine.common.attention import build_causal_with_padding_bias
 from backend.engine.common.mlx_runtime_fallback import load_weights_dict
+from backend.engine.common.text_encoders.qwen3_mlx import MlxRMSNorm
 from backend.engine.families.z_image.text_encoder_mlx import (
-    _ZImageEncoderMLP,
+    _ZImageEncoderLayer,
     _ZImageEncoderRotaryEmbedding,
 )
-# ============================================================================
-# Flux2TextEncoder — Flux2 Klein text encoder
-# Reference Qwen3TextEncoder implementation: Float32RMSNorm + float32 SDPA + 3-layer concat
-# ============================================================================
-
-class Float32RMSNorm(nn.Module):
-    """Matches reference Qwen3VLRMSNorm: force float32 before RMS computation."""
-    def __init__(self, hidden_size: int, eps: float = 1e-6):
-        super().__init__()
-        self.weight = mx.ones((hidden_size,))
-        self.eps = eps
-    def __call__(self, hidden_states):
-        return apply_rms_norm(hidden_states, self.weight, self.eps)
 
 
-class _Flux2Attention(nn.Module):
-    """Flux2 专属 Attention — Float32RMSNorm QK norm + float32 SDPA。"""
+def _flux2_rms_norm(dims: int, eps: float = 1e-6):
+    return MlxRMSNorm(dims, eps=eps)
 
-    def __init__(self, hidden_size, num_heads, num_kv_heads, head_dim, rms_norm_eps=1e-6):
-        super().__init__()
-        self.num_heads = num_heads
-        self.num_kv_heads = num_kv_heads
-        self.head_dim = head_dim
-        self.num_kv_groups = num_heads // num_kv_heads
-        self.scale = head_dim ** -0.5
-        self.q_proj = nn.Linear(hidden_size, num_heads * head_dim, bias=False)
-        self.k_proj = nn.Linear(hidden_size, num_kv_heads * head_dim, bias=False)
-        self.v_proj = nn.Linear(hidden_size, num_kv_heads * head_dim, bias=False)
-        self.o_proj = nn.Linear(num_heads * head_dim, hidden_size, bias=False)
-        self.q_norm = Float32RMSNorm(head_dim, eps=rms_norm_eps)
-        self.k_norm = Float32RMSNorm(head_dim, eps=rms_norm_eps)
 
-    def __call__(self, hidden_states, attention_mask, position_embeddings, past_key_value):
-        B, S, _ = hidden_states.shape
-        q = self.q_proj(hidden_states).reshape(B, S, self.num_heads, self.head_dim)
-        k = self.k_proj(hidden_states).reshape(B, S, self.num_kv_heads, self.head_dim)
-        v = self.v_proj(hidden_states).reshape(B, S, self.num_kv_heads, self.head_dim)
-        q = self.q_norm(q)
-        k = self.k_norm(k)
-        q = mx.transpose(q, axes=(0, 2, 1, 3))
-        k = mx.transpose(k, axes=(0, 2, 1, 3))
-        v = mx.transpose(v, axes=(0, 2, 1, 3))
-        if position_embeddings is not None:
-            cos, sin = position_embeddings
-            cos = mx.expand_dims(cos, axis=1)
-            sin = mx.expand_dims(sin, axis=1)
-            q = (q * cos) + (_rotate_half_f2(q) * sin)
-            k = (k * cos) + (_rotate_half_f2(k) * sin)
-        if self.num_kv_groups > 1:
-            k = mx.repeat(k, self.num_kv_groups, axis=1)
-            v = mx.repeat(v, self.num_kv_groups, axis=1)
-        q_f32, k_f32, v_f32 = q.astype(mx.float32), k.astype(mx.float32), v.astype(mx.float32)
-        out = scaled_dot_product_attention_bhsd_mx(
-            mx,
-            q_f32,
-            k_f32,
-            v_f32,
-            scale=self.scale,
-            mask=attention_mask,
-            out_dtype=q.dtype,
+class _Flux2DecoderLayer(_ZImageEncoderLayer):
+    """Flux2 Qwen3 layer — MlxRMSNorm + tuple return for API compat."""
+
+    def __init__(
+        self,
+        hidden_size,
+        num_attention_heads,
+        num_key_value_heads,
+        intermediate_size,
+        head_dim,
+        rms_norm_eps=1e-6,
+    ):
+        super().__init__(
+            hidden_size,
+            num_attention_heads,
+            num_key_value_heads,
+            intermediate_size,
+            head_dim,
+            rms_norm_eps=rms_norm_eps,
+            rms_norm_factory=_flux2_rms_norm,
         )
-        out = mx.transpose(out, axes=(0, 2, 1, 3)).reshape(B, S, self.num_heads * self.head_dim)
-        return self.o_proj(out), None
-
-
-def _rotate_half_f2(x):
-    x1 = x[..., :x.shape[-1] // 2]
-    x2 = x[..., x.shape[-1] // 2:]
-    return mx.concatenate([-x2, x1], axis=-1)
-
-
-class _Flux2DecoderLayer(nn.Module):
-    """Flux2 专属 DecoderLayer — Float32RMSNorm + _Flux2Attention。"""
-
-    def __init__(self, hidden_size, num_heads, num_kv_heads, intermediate_size, head_dim, rms_norm_eps=1e-6):
-        super().__init__()
-        self.input_layernorm = Float32RMSNorm(hidden_size, eps=rms_norm_eps)
-        self.post_attention_layernorm = Float32RMSNorm(hidden_size, eps=rms_norm_eps)
-        self.self_attn = _Flux2Attention(hidden_size, num_heads, num_kv_heads, head_dim, rms_norm_eps)
-        self.mlp = _ZImageEncoderMLP(hidden_size, intermediate_size)
 
     def __call__(self, hidden_states, attention_mask, position_embeddings, past_key_value=None):
-        residual = hidden_states
-        hidden_states = self.input_layernorm(hidden_states)
-        attn_out, _ = self.self_attn(hidden_states, attention_mask, position_embeddings, past_key_value)
-        hidden_states = residual + attn_out
-        residual = hidden_states
-        hidden_states = self.post_attention_layernorm(hidden_states)
-        hidden_states = self.mlp(hidden_states)
-        return residual + hidden_states, None
+        return super().__call__(hidden_states, attention_mask, position_embeddings), None
 
 
 class _Flux2EncoderModel(nn.Module):
     """Flux2 Qwen3 编码器模型。"""
 
-    def __init__(self, vocab_size=151936, hidden_size=4096, num_hidden_layers=36,
-                 num_attention_heads=32, num_key_value_heads=8, intermediate_size=12288,
-                 head_dim=128, rope_theta=1000000.0, rms_norm_eps=1e-6):
+    def __init__(
+        self,
+        vocab_size=151936,
+        hidden_size=4096,
+        num_hidden_layers=36,
+        num_attention_heads=32,
+        num_key_value_heads=8,
+        intermediate_size=12288,
+        head_dim=128,
+        rope_theta=1000000.0,
+        rms_norm_eps=1e-6,
+    ):
         super().__init__()
         self.embed_tokens = nn.Embedding(vocab_size, hidden_size)
         self.layers = [
-            _Flux2DecoderLayer(hidden_size, num_attention_heads, num_key_value_heads,
-                              intermediate_size, head_dim, rms_norm_eps)
+            _Flux2DecoderLayer(
+                hidden_size,
+                num_attention_heads,
+                num_key_value_heads,
+                intermediate_size,
+                head_dim,
+                rms_norm_eps,
+            )
             for _ in range(num_hidden_layers)
         ]
         self.rotary_emb = _ZImageEncoderRotaryEmbedding(dim=head_dim, base=rope_theta)
@@ -126,8 +78,8 @@ class _Flux2EncoderModel(nn.Module):
 class Flux2TextEncoder:
     """Flux2 Klein text encoder — matches reference qwen3_text_encoder.
 
-    - Float32RMSNorm instead of nn.RMSNorm
-    - float32 SDPA
+    - MlxRMSNorm instead of nn.RMSNorm
+    - float32 SDPA (via shared Z-Image attention path)
     - j > i causal mask
     - get_prompt_embeds logic (takes (9,18,27) three-layer concat)
     - enable_thinking=False
@@ -172,7 +124,6 @@ class Flux2TextEncoder:
         pos_ids = mx.broadcast_to(mx.arange(S, dtype=mx.int32)[None, :], (B, S))
         pos_emb = self._model.rotary_emb(hidden, pos_ids)
 
-        # j > i causal mask + padding mask
         mask_dtype = hidden.dtype
         attn_mask = build_causal_with_padding_bias(
             mx,
@@ -189,7 +140,6 @@ class Flux2TextEncoder:
             hidden, _ = layer(hidden, attn_mask, pos_emb, None)
             all_hidden.append(hidden)
 
-        # 取 (9, 18, 27) 三层拼接
         outputs = [all_hidden[i] for i in (9, 18, 27)]
         stacked = mx.stack(outputs, axis=1)
         _, L, _, D = stacked.shape
@@ -221,4 +171,3 @@ class Flux2TextEncoder:
         model.load_weights(list(rw.items()), strict=False)
         self.ctx.eval(model.parameters())
         return model
-

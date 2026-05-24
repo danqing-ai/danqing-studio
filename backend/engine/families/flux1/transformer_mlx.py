@@ -14,7 +14,7 @@ import numpy as np
 
 from backend.engine.common._base import TransformerBase, _collect_params
 from backend.engine.common.attention import scaled_dot_product_attention_bhsd_mx
-from backend.engine.common.embeddings import PatchEmbed2D
+from backend.engine.common.embeddings import PatchEmbed2D, sinusoidal_timestep_proj
 from backend.engine.common.norm import (
     apply_ada_layer_norm_zero,
     apply_ada_layer_norm_zero_single,
@@ -355,20 +355,6 @@ def _unpack_flux1_latents(ctx: RuntimeContext, tokens: Any, h: int, w: int) -> A
     return ctx.reshape(x, (B, 16, h, w))
 
 
-def _flux1_time_proj(ctx: RuntimeContext, time_steps: Any) -> Any:
-    """mflux ``TimeTextEmbed._time_proj`` — sin/cos 拼接后交换两半。"""
-    import math
-
-    max_period = 10000.0
-    half_dim = 128
-    exponent = -math.log(max_period) * ctx.arange(0, half_dim, dtype=ctx.float32()) / half_dim
-    emb_scale = ctx.exp(exponent)
-    ts = ctx.reshape(time_steps.astype(ctx.float32()), (-1, 1))
-    emb = ts * ctx.reshape(emb_scale, (1, -1))
-    emb = ctx.concat([ctx.sin(emb), ctx.cos(emb)], axis=-1)
-    return ctx.concat([emb[:, half_dim:], emb[:, :half_dim]], axis=-1)
-
-
 class _Flux1TimestepMLP:
     """diffusers ``timestep_embedder`` / mflux ``TimestepEmbedder``。"""
 
@@ -507,13 +493,15 @@ class Flux1Transformer(TransformerBase):
         encoder_hidden_states = txt
         txt_len = encoder_hidden_states.shape[1]
 
-        t_proj = _flux1_time_proj(ctx, t_batch)
+        t_proj = sinusoidal_timestep_proj(ctx, t_batch, 256, flip_sin_to_cos=True)
         c = self.time_in.forward(t_proj)
         guidance_scale = conditioning.get("guidance_scale")
         if self.guidance_in is not None and guidance_scale is not None:
             g_val = float(guidance_scale) * 1000.0
             g_batch = mx.full((B,), g_val, dtype=mx.bfloat16)
-            c = c + self.guidance_in.forward(_flux1_time_proj(ctx, g_batch))
+            c = c + self.guidance_in.forward(
+                sinusoidal_timestep_proj(ctx, g_batch, 256, flip_sin_to_cos=True)
+            )
         if pooled_embeds is not None:
             c = c + self.vector_in(pooled_embeds)
         c = c.astype(mx.bfloat16)

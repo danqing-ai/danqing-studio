@@ -11,7 +11,10 @@ from backend.engine.common.cfg_batch import (
     TEXT_KEYS_MINIMAL,
     predict_noise_cfg_batched,
 )
-from backend.engine.common.attention import build_key_padding_mask_from_lengths
+from backend.engine.common.attention import (
+    build_key_padding_mask_from_lengths,
+    wan_attention,
+)
 from backend.engine.common.embeddings import (
     factorized_rope_apply,
     factorized_rope_concat_params,
@@ -21,7 +24,6 @@ from backend.engine.common.embeddings import (
 )
 from backend.engine.common.norm import (
     apply_layer_norm_fp32,
-    apply_rms_norm,
     apply_scale_shift,
     unpack_modulation_2table,
     unpack_modulation_6table,
@@ -29,18 +31,7 @@ from backend.engine.common.norm import (
 from backend.engine.config.model_configs import WanConfig
 from backend.engine.runtime._base import RuntimeContext
 
-from .attention_mlx import wan_attention
-
-
-class WanRMSNorm(nn.Module):
-    def __init__(self, dim: int, eps: float = 1e-5):
-        super().__init__()
-        self.eps = eps
-        self.weight = mx.ones((dim,))
-
-    def __call__(self, x: mx.array) -> mx.array:
-        return apply_rms_norm(x, self.weight, self.eps)
-
+from backend.engine.common.text_encoders.qwen3_mlx import MlxRMSNorm
 
 class WanLayerNorm(nn.LayerNorm):
     def __init__(self, dim: int, eps: float = 1e-6, elementwise_affine: bool = False):
@@ -60,8 +51,8 @@ class WanSelfAttention(nn.Module):
         self.k = nn.Linear(dim, dim)
         self.v = nn.Linear(dim, dim)
         self.o = nn.Linear(dim, dim)
-        self.norm_q = WanRMSNorm(dim, eps=eps) if qk_norm else nn.Identity()
-        self.norm_k = WanRMSNorm(dim, eps=eps) if qk_norm else nn.Identity()
+        self.norm_q = MlxRMSNorm(dim, eps=eps) if qk_norm else nn.Identity()
+        self.norm_k = MlxRMSNorm(dim, eps=eps) if qk_norm else nn.Identity()
 
     def __call__(
         self,

@@ -13,7 +13,6 @@ a SwiGLU MLP.  Modulation is via AdaLN (scale_shift_table + timestep projection)
 """
 from __future__ import annotations
 
-import math
 import logging
 from typing import Dict, List, Optional, Tuple
 
@@ -25,27 +24,26 @@ from backend.engine.common.attention import (
     build_window_with_padding_bias,
     repeat_kv_heads_mx,
     scaled_dot_product_attention_bhsd_mx,
+    rotate_half,
 )
+from backend.engine.common.embeddings import sinusoidal_timestep_proj
 from backend.engine.common.norm import apply_scale_shift, unpack_modulation_6table
+from backend.engine.runtime.mlx import MLXContext
+from backend.engine.common.text_encoders.qwen3_mlx import MlxSwiGLUMLP, MlxTimestepEmbeddingMLP
 
 logger = logging.getLogger(__name__)
+
+_MLX_CTX = MLXContext()
 
 # ---------------------------------------------------------------------------
 # Rotary helpers
 # ---------------------------------------------------------------------------
 
-def _rotate_half(x: mx.array) -> mx.array:
-    half = x.shape[-1] // 2
-    x1 = x[..., :half]
-    x2 = x[..., half:]
-    return mx.concatenate([-x2, x1], axis=-1)
-
-
 def _apply_rotary_pos_emb(
     q: mx.array, k: mx.array, cos: mx.array, sin: mx.array,
 ) -> Tuple[mx.array, mx.array]:
-    q_embed = (q * cos) + (_rotate_half(q) * sin)
-    k_embed = (k * cos) + (_rotate_half(k) * sin)
+    q_embed = (q * cos) + (rotate_half(_MLX_CTX, q) * sin)
+    k_embed = (k * cos) + (rotate_half(_MLX_CTX, k) * sin)
     return q_embed, k_embed
 
 
@@ -106,17 +104,6 @@ class _CrossAttentionCache:
 # ---------------------------------------------------------------------------
 # Primitives
 # ---------------------------------------------------------------------------
-
-class _SwiGLUMLP(nn.Module):
-    def __init__(self, hidden_size: int, intermediate_size: int):
-        super().__init__()
-        self.gate_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
-        self.up_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
-        self.down_proj = nn.Linear(intermediate_size, hidden_size, bias=False)
-
-    def __call__(self, x: mx.array) -> mx.array:
-        return self.down_proj(nn.silu(self.gate_proj(x)) * self.up_proj(x))
-
 
 class _Attention(nn.Module):
     """Multi-head attention with QK-RMSNorm.  Supports self-attention (with RoPE)
@@ -259,7 +246,7 @@ class _DiTLayer(nn.Module):
         )
 
         self.mlp_norm = nn.RMSNorm(hidden_size, eps=rms_norm_eps)
-        self.mlp = _SwiGLUMLP(hidden_size, intermediate_size)
+        self.mlp = MlxSwiGLUMLP(hidden_size, intermediate_size)
 
         self.scale_shift_table = mx.zeros((1, 6, hidden_size))
 
@@ -313,35 +300,21 @@ class _DiTLayer(nn.Module):
 # Timestep embedding
 # ---------------------------------------------------------------------------
 
-class _TimestepEmbedding(nn.Module):
+class _TimestepEmbedding(MlxTimestepEmbeddingMLP):
     """Sinusoidal timestep embedding → MLP → (temb, 6-way projection)."""
 
     def __init__(self, in_channels: int = 256, time_embed_dim: int = 2048, scale: float = 1000.0):
-        super().__init__()
+        super().__init__(in_channels, time_embed_dim)
         self.in_channels = in_channels
         self.scale = scale
-
-        self.linear_1 = nn.Linear(in_channels, time_embed_dim, bias=True)
-        self.act1 = nn.SiLU()
-        self.linear_2 = nn.Linear(time_embed_dim, time_embed_dim, bias=True)
         self.act2 = nn.SiLU()
         self.time_proj = nn.Linear(time_embed_dim, time_embed_dim * 6, bias=True)
 
-    def _sinusoidal_embedding(self, t: mx.array, dim: int, max_period: int = 10000) -> mx.array:
-        t = t * self.scale
-        half = dim // 2
-        freqs = mx.exp(-math.log(max_period) * mx.arange(half).astype(mx.float32) / half)
-        args = t[:, None].astype(mx.float32) * freqs[None, :]
-        embedding = mx.concatenate([mx.cos(args), mx.sin(args)], axis=-1)
-        if dim % 2:
-            embedding = mx.concatenate([embedding, mx.zeros_like(embedding[:, :1])], axis=-1)
-        return embedding
-
     def __call__(self, t: mx.array) -> Tuple[mx.array, mx.array]:
-        t_freq = self._sinusoidal_embedding(t, self.in_channels)
-        temb = self.linear_1(t_freq.astype(t.dtype))
-        temb = self.act1(temb)
-        temb = self.linear_2(temb)
+        t_freq = sinusoidal_timestep_proj(
+            _MLX_CTX, t, self.in_channels, sin_first=False, scale=self.scale
+        ).astype(t.dtype)
+        temb = super().__call__(t_freq.astype(t.dtype))
         proj = self.time_proj(self.act2(temb))
         timestep_proj = proj.reshape(proj.shape[0], 6, -1)
         return temb, timestep_proj

@@ -23,6 +23,5 @@ if _profile in ("cuda", "full") or (
         "backend.engine.families.seedvr2.video_restore_mlx",
         "backend.engine.families.wan.transformer_mlx",
         "backend.engine.families.wan.vae_mlx",
-        "backend.engine.families.wan.attention_mlx",
         "backend.engine.families.wan.text_encoder_mlx",
     ]

@@ -571,7 +571,7 @@ class HunyuanWeightTests(unittest.TestCase):
     def test_wan_attention_padding_mask(self) -> None:
         import mlx.core as mx
 
-        from backend.engine.families.wan.attention_mlx import wan_attention
+        from backend.engine.common.attention import wan_attention
         from backend.engine.runtime.mlx import MLXContext
 
         ctx = MLXContext()

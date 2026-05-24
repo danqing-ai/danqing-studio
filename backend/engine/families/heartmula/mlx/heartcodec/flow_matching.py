@@ -1,15 +1,19 @@
 """Flow Matching Decoder for HeartCodec - matches PyTorch architecture."""
 
-import math
 from typing import Optional
 
 import mlx.core as mx
 import mlx.nn as nn
 
+from backend.engine.common.embeddings import sinusoidal_timestep_proj
+from backend.engine.common.text_encoders.qwen3_mlx import MlxTimestepEmbeddingMLP
 from backend.engine.common.mlx_runtime_fallback import random_normal
+from backend.engine.runtime.mlx import MLXContext
 from backend.engine.families.heartmula.mlx.nn.transformer import RMSNorm, LlamaAttention, LlamaMLP
 from backend.engine.families.heartmula.mlx.heartcodec.quantizer import ResidualVQ
 from backend.engine.families.heartmula.mlx.ode.solver import euler_solve
+
+_MLX_CTX = MLXContext()
 
 
 class FFNBlock(nn.Module):
@@ -76,22 +80,7 @@ class TimestepEmbedder(nn.Module):
     def __init__(self, hidden_size: int, frequency_embedding_size: int = 512):
         super().__init__()
         self.frequency_embedding_size = frequency_embedding_size
-        self.linear_1 = nn.Linear(frequency_embedding_size, hidden_size, bias=True)
-        self.linear_2 = nn.Linear(hidden_size, hidden_size, bias=True)
-
-    def _timestep_embedding(self, t: mx.array, max_period: float = 10000.0, scale: float = 1000.0) -> mx.array:
-        """Create sinusoidal timestep embeddings.
-
-        Matches PyTorch's timestep_embedding with scale=1000 default.
-        """
-        half_dim = self.frequency_embedding_size // 2
-        freqs = mx.exp(
-            -math.log(max_period) * mx.arange(half_dim) / half_dim
-        )
-        # Note: PyTorch multiplies by scale=1000, critical for correct embeddings!
-        args = t[:, None] * freqs[None, :] * scale
-        embedding = mx.concatenate([mx.cos(args), mx.sin(args)], axis=-1)
-        return embedding
+        self.mlp = MlxTimestepEmbeddingMLP(frequency_embedding_size, hidden_size)
 
     def __call__(self, t: mx.array) -> mx.array:
         """Forward pass.
@@ -102,11 +91,10 @@ class TimestepEmbedder(nn.Module):
         Returns:
             Embedding of shape (batch, hidden_size).
         """
-        t_emb = self._timestep_embedding(t)
-        t_emb = self.linear_1(t_emb)
-        t_emb = nn.silu(t_emb)
-        t_emb = self.linear_2(t_emb)
-        return t_emb
+        t_emb = sinusoidal_timestep_proj(
+            _MLX_CTX, t, self.frequency_embedding_size, sin_first=False, scale=1000.0
+        )
+        return self.mlp(t_emb)
 
 
 class AdaLNSingle(nn.Module):

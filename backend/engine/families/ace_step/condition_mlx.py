@@ -19,14 +19,16 @@ from backend.engine.common.attention import (
     repeat_kv_heads_mx,
     scaled_dot_product_attention_bhsd_mx,
     build_window_with_padding_bias,
+    rotate_half,
 )
 from backend.engine.common.embeddings import build_position_ids_2d
+from backend.engine.runtime.mlx import MLXContext
 from backend.engine.common.mlx_runtime_fallback import load_weights_dict, run_eval
 from backend.engine.families.ace_step.weights_mlx import load_prefix_weights_for_mlx
+from backend.engine.common.text_encoders.qwen3_mlx import MlxSwiGLUMLP
 from backend.engine.families.z_image.text_encoder_mlx import (
-    _ZImageEncoderLayer,
-    _ZImageEncoderRotaryEmbedding,
-)
+
+_MLX_CTX = MLXContext()
 
 
 def _pack_sequences(
@@ -71,7 +73,7 @@ class _ConditionEncoderLayer(nn.Module):
             head_dim,
             rms_norm_eps,
         )
-        self.mlp = _SwiGLU(hidden_size, intermediate_size)
+        self.mlp = MlxSwiGLUMLP(hidden_size, intermediate_size)
 
     def __call__(
         self,
@@ -90,17 +92,6 @@ class _ConditionEncoderLayer(nn.Module):
         residual = hidden_states
         hidden_states = self.mlp(self.post_attention_layernorm(hidden_states))
         return residual + hidden_states
-
-
-class _SwiGLU(nn.Module):
-    def __init__(self, hidden_size: int, intermediate_size: int):
-        super().__init__()
-        self.gate_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
-        self.up_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
-        self.down_proj = nn.Linear(intermediate_size, hidden_size, bias=False)
-
-    def __call__(self, x: mx.array) -> mx.array:
-        return self.down_proj(nn.silu(self.gate_proj(x)) * self.up_proj(x))
 
 
 class _ConditionSelfAttention(nn.Module):
@@ -125,11 +116,6 @@ class _ConditionSelfAttention(nn.Module):
         self.q_norm = nn.RMSNorm(head_dim, eps=rms_norm_eps)
         self.k_norm = nn.RMSNorm(head_dim, eps=rms_norm_eps)
 
-    @staticmethod
-    def _rotate_half(x: mx.array) -> mx.array:
-        half = x.shape[-1] // 2
-        return mx.concatenate([-x[..., half:], x[..., :half]], axis=-1)
-
     def __call__(
         self,
         hidden_states: mx.array,
@@ -143,8 +129,8 @@ class _ConditionSelfAttention(nn.Module):
         cos, sin = position_embeddings
         cos = mx.expand_dims(cos, axis=2)
         sin = mx.expand_dims(sin, axis=2)
-        q = (q * cos) + (self._rotate_half(q) * sin)
-        k = (k * cos) + (self._rotate_half(k) * sin)
+        q = (q * cos) + (rotate_half(_MLX_CTX, q) * sin)
+        k = (k * cos) + (rotate_half(_MLX_CTX, k) * sin)
         q = mx.transpose(q, (0, 2, 1, 3))
         k = repeat_kv_heads_mx(mx, mx.transpose(k, (0, 2, 1, 3)), self.n_rep)
         v = repeat_kv_heads_mx(mx, mx.transpose(v, (0, 2, 1, 3)), self.n_rep)

@@ -364,6 +364,15 @@ def scaled_dot_product_attention_bhsd_torch(
     return out
 
 
+def rotate_half_torch(x: Any) -> Any:
+    """GPT-style split-half RoPE rotation for Torch tensors."""
+    torch = importlib.import_module("torch")
+    half = x.shape[-1] // 2
+    x1 = x[..., :half]
+    x2 = x[..., half:]
+    return torch.cat([-x2, x1], dim=-1)
+
+
 def attention_blhd(
     ctx: Any,
     q: Any,
@@ -386,6 +395,48 @@ def attention_blhd(
     vh = ctx.permute(v, (0, 2, 1, 3))
     out = ctx.attention(qh, kh, vh, scale=scale, mask=mask)
     return ctx.permute(out, (0, 2, 1, 3))
+
+
+def wan_blhd_attention(
+    ctx: Any,
+    q: Any,
+    k: Any,
+    v: Any,
+    *,
+    q_lens: Any | None = None,
+    k_lens: Any | None = None,
+    mask: Any | None = None,
+    softmax_scale: float | None = None,
+    q_scale: float | None = None,
+    causal: bool = False,
+    window_size: tuple[int, int] = (-1, -1),
+    dtype: Any | None = None,
+) -> Any:
+    """Wan layout attention on ``[B, L, num_heads, head_dim]`` tensors."""
+    if window_size != (-1, -1):
+        raise RuntimeError(
+            f"Wan attention does not support sliding window_size={window_size!r}"
+        )
+    if q_scale is not None:
+        q = q * q_scale
+    target_dtype = dtype if dtype is not None else getattr(q, "dtype", ctx.float32())
+    scale = softmax_scale
+    if scale is None:
+        scale = float(q.shape[-1]) ** -0.5
+    mask = resolve_blhd_attention_mask(
+        ctx,
+        q,
+        mask=mask,
+        causal=causal,
+        q_lens=q_lens,
+        k_lens=k_lens,
+        dtype=target_dtype,
+        neg_value=-1e9,
+    )
+    return attention_blhd(ctx, q, k, v, scale=scale, mask=mask, dtype=target_dtype)
+
+
+wan_attention = wan_blhd_attention
 
 
 def attention_bhsd(
@@ -590,15 +641,18 @@ def _apply_rope(ctx, x, cos, sin):
     rope_dim = cos.shape[-1]
     x_rope = x[..., :rope_dim]
     x_pass = x[..., rope_dim:]
-    x_rotated = x_rope * cos + _rotate_half(ctx, x_rope) * sin
+    x_rotated = x_rope * cos + rotate_half(ctx, x_rope) * sin
     return ctx.concat([x_rotated, x_pass], axis=-1)
 
 
-def _rotate_half(ctx, x):
-    """Rotate half the hidden dims of the input."""
+def rotate_half(ctx: Any, x: Any) -> Any:
+    """Rotate half the hidden dims of the input (GPT-style split-half RoPE)."""
     x1 = x[..., : x.shape[-1] // 2]
     x2 = x[..., x.shape[-1] // 2 :]
     return ctx.concat([-x2, x1], axis=-1)
+
+
+_rotate_half = rotate_half
 
 
 def apply_rope_interleaved_real(ctx, x, cos, sin):

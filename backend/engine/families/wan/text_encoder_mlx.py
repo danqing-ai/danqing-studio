@@ -17,7 +17,7 @@ from backend.engine.common.attention import (
     scaled_dot_product_attention_bhsd_mx,
 )
 from backend.engine.common.embeddings import pad_ragged_2d_sequences
-from backend.engine.common.norm import apply_rms_norm
+from backend.engine.common.text_encoders.qwen3_mlx import MlxRMSNorm
 
 logger = logging.getLogger(__name__)
 
@@ -30,16 +30,6 @@ def _basic_clean(text: str) -> str:
 def _whitespace_clean(text: str) -> str:
     text = re.sub(r"\s+", " ", text)
     return text.strip()
-
-
-class _T5LayerNorm(nn.Module):
-    def __init__(self, dim: int, eps: float = 1e-6):
-        super().__init__()
-        self.weight = mx.ones((dim,))
-        self.eps = eps
-
-    def __call__(self, x: mx.array) -> mx.array:
-        return apply_rms_norm(x, self.weight, self.eps)
 
 
 class _T5Attention(nn.Module):
@@ -168,9 +158,9 @@ class _T5SelfAttentionBlock(nn.Module):
     ):
         super().__init__()
         self.shared_pos = shared_pos
-        self.norm1 = _T5LayerNorm(dim)
+        self.norm1 = MlxRMSNorm(dim)
         self.attn = _T5Attention(dim, dim_attn, num_heads, dropout)
-        self.norm2 = _T5LayerNorm(dim)
+        self.norm2 = MlxRMSNorm(dim)
         self.ffn = _T5FeedForward(dim, dim_ffn, dropout)
         self.pos_embedding = None if shared_pos else _T5RelativeEmbedding(
             num_buckets, num_heads, bidirectional=True,
@@ -204,7 +194,7 @@ class _UMT5Encoder(nn.Module):
             )
             for _ in range(num_layers)
         ]
-        self.norm = _T5LayerNorm(dim)
+        self.norm = MlxRMSNorm(dim)
 
     def __call__(self, ids: mx.array, mask: mx.array | None = None) -> mx.array:
         x = self.dropout(self.token_embedding(ids))

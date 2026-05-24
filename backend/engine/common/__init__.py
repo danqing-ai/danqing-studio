@@ -56,7 +56,8 @@ from .attention import (
     build_frame_prefix_causal_bias,
 )
 from .embeddings import (
-    TimestepEmbedding, sinusoidal_embedding_1d, RoPE2D, RoPE3D,
+    TimestepEmbedding, TimestepEmbeddingMLP, sinusoidal_embedding_1d,
+    sinusoidal_timestep_proj, RoPE2D, RoPE3D,
     factorized_rope_params, factorized_rope_concat_params, factorized_rope_precompute_cos_sin, factorized_rope_apply,
     build_position_ids_2d, build_position_ids_3d_axes,
     pad_ragged_2d_sequences, pad_ragged_1d_sequences,
@@ -90,11 +91,12 @@ __all__ = [
     "silu", "gelu",
     # Attention
     "SelfAttention", "CrossAttention", "TemporalAttention",
-    "attention_blhd",
+    "attention_blhd", "wan_blhd_attention", "wan_attention", "rotate_half",
     "attention_bhsd",
     "attention_bhsd_to_blhd",
     "scaled_dot_product_attention_bhsd_mx",
     "scaled_dot_product_attention_bhsd_torch",
+    "rotate_half_torch",
     "repeat_kv_heads_mx",
     "repeat_kv_heads_torch",
     "build_key_padding_mask_from_lengths", "build_causal_attention_mask",
@@ -106,7 +108,8 @@ __all__ = [
     "build_window_with_padding_bias_torch",
     "build_frame_prefix_causal_bias",
     # Embeddings
-    "TimestepEmbedding", "sinusoidal_embedding_1d", "RoPE2D", "RoPE3D",
+    "TimestepEmbedding", "TimestepEmbeddingMLP", "sinusoidal_embedding_1d",
+    "sinusoidal_timestep_proj", "RoPE2D", "RoPE3D",
     "factorized_rope_params", "factorized_rope_concat_params", "factorized_rope_precompute_cos_sin", "factorized_rope_apply",
     "build_position_ids_2d", "build_position_ids_3d_axes",
     "pad_ragged_2d_sequences", "pad_ragged_1d_sequences",

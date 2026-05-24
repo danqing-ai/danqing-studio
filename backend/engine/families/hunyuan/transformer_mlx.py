@@ -5,7 +5,6 @@ Reference: ``diffusers/models/transformers/transformer_hunyuan_video15.py``
 """
 from __future__ import annotations
 
-import math
 from typing import Any
 
 import mlx.core as mx
@@ -25,6 +24,8 @@ from backend.engine.common.cfg_batch import (
     broadcast_batch,
     predict_noise_cfg_batched,
 )
+from backend.engine.common.text_encoders.qwen3_mlx import MlxTimestepEmbeddingMLP
+from backend.engine.common.embeddings import sinusoidal_timestep_proj
 from backend.engine.common.norm import (
     apply_ada_layer_norm_continuous,
     apply_ada_layer_norm_zero,
@@ -40,30 +41,6 @@ def _cfg_int(cfg: Any, name: str, default: int) -> int:
 
 def _cfg_float(cfg: Any, name: str, default: float) -> float:
     return float(getattr(cfg, name, default))
-
-
-def _timesteps_proj(ctx: RuntimeContext, timesteps: Any, *, num_channels: int = 256) -> Any:
-    """diffusers ``Timesteps`` (flip_sin_to_cos=True, downscale_freq_shift=0)."""
-    timesteps = ctx.reshape(timesteps.astype(ctx.float32()), (-1,))
-    half = num_channels // 2
-    exp_arg = -math.log(10000.0) * ctx.arange(half, dtype=ctx.float32()) / float(half)
-    emb = timesteps[:, None] * ctx.exp(exp_arg)[None, :]
-    emb = ctx.concat([ctx.cos(emb), ctx.sin(emb)], axis=-1)
-    return ctx.concat([emb[:, half:], emb[:, :half]], axis=-1)
-
-
-class _TimestepEmbedding:
-    """diffusers ``TimestepEmbedding``: linear_1 → SiLU → linear_2."""
-
-    def __init__(self, ctx: RuntimeContext, in_channels: int, time_embed_dim: int):
-        self.linear_1 = ctx.Linear(in_channels, time_embed_dim, bias=True)
-        self.act = nn.SiLU()
-        self.linear_2 = ctx.Linear(time_embed_dim, time_embed_dim, bias=True)
-
-    def __call__(self, x: Any) -> Any:
-        x = self.linear_1(x)
-        x = self.act(x)
-        return self.linear_2(x)
 
 
 class _PixArtAlphaTextProjection:
@@ -83,12 +60,14 @@ class _PixArtAlphaTextProjection:
 class _CombinedTimestepTextProjEmbeddings:
     def __init__(self, ctx: RuntimeContext, embedding_dim: int, pooled_projection_dim: int):
         self.ctx = ctx
-        self.timestep_embedder = _TimestepEmbedding(ctx, 256, embedding_dim)
+        self.timestep_embedder = MlxTimestepEmbeddingMLP(256, embedding_dim)
         self.text_embedder = _PixArtAlphaTextProjection(ctx, pooled_projection_dim, embedding_dim)
 
     def __call__(self, timestep: Any, pooled_projection: Any) -> Any:
         ctx = self.ctx
-        t_proj = _timesteps_proj(ctx, timestep)
+        t_proj = sinusoidal_timestep_proj(
+            ctx, timestep, 256, sin_first=False, flip_sin_to_cos=True
+        )
         t_emb = self.timestep_embedder(t_proj)
         p_emb = self.text_embedder(pooled_projection)
         return t_emb + p_emb
@@ -338,17 +317,23 @@ class _TimeEmbedding:
 
     def __init__(self, ctx: RuntimeContext, embedding_dim: int, use_meanflow: bool = False):
         self.ctx = ctx
-        self.timestep_embedder = _TimestepEmbedding(ctx, 256, embedding_dim)
+        self.timestep_embedder = MlxTimestepEmbeddingMLP(256, embedding_dim)
         self.use_meanflow = use_meanflow
         self.timestep_embedder_r = (
-            _TimestepEmbedding(ctx, 256, embedding_dim) if use_meanflow else None
+            MlxTimestepEmbeddingMLP(256, embedding_dim) if use_meanflow else None
         )
 
     def __call__(self, timestep: Any, timestep_r: Any | None = None) -> Any:
         ctx = self.ctx
-        emb = self.timestep_embedder(_timesteps_proj(ctx, timestep))
+        t_proj = sinusoidal_timestep_proj(
+            ctx, timestep, 256, sin_first=False, flip_sin_to_cos=True
+        )
+        emb = self.timestep_embedder(t_proj)
         if timestep_r is not None and self.timestep_embedder_r is not None:
-            emb = emb + self.timestep_embedder_r(_timesteps_proj(ctx, timestep_r))
+            r_proj = sinusoidal_timestep_proj(
+                ctx, timestep_r, 256, sin_first=False, flip_sin_to_cos=True
+            )
+            emb = emb + self.timestep_embedder_r(r_proj)
         return emb
 
 

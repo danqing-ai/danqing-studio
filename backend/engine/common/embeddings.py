@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import math
 from typing import Any
 
 
@@ -175,6 +176,49 @@ def sinusoidal_embedding_1d(ctx: Any, dim: int, position: Any, *, base: float = 
     )
     sinusoid = ctx.outer(pos, freqs)
     return ctx.concat([ctx.cos(sinusoid), ctx.sin(sinusoid)], axis=-1)
+
+
+def sinusoidal_timestep_proj(
+    ctx: Any,
+    timesteps: Any,
+    embedding_dim: int,
+    *,
+    sin_first: bool = True,
+    flip_sin_to_cos: bool = False,
+    downscale_freq_shift: float = 0.0,
+    scale: float = 1.0,
+    max_period: float = 10000.0,
+) -> Any:
+    """diffusers-style sinusoidal timestep projection (CogVideoX / Flux1 / Hunyuan)."""
+    timesteps = ctx.reshape(timesteps.astype(ctx.float32()), (-1,))
+    half_dim = embedding_dim // 2
+    denom = max(half_dim - downscale_freq_shift, 1e-8)
+    exp_arg = -math.log(max_period) * ctx.arange(half_dim, dtype=ctx.float32()) / denom
+    emb_freq = ctx.exp(exp_arg)
+    emb = scale * timesteps[:, None] * emb_freq[None, :]
+    if sin_first:
+        emb = ctx.concat([ctx.sin(emb), ctx.cos(emb)], axis=-1)
+    else:
+        emb = ctx.concat([ctx.cos(emb), ctx.sin(emb)], axis=-1)
+    if flip_sin_to_cos:
+        emb = ctx.concat([emb[:, half_dim:], emb[:, :half_dim]], axis=-1)
+    if embedding_dim % 2 == 1:
+        z = ctx.zeros((emb.shape[0], 1), dtype=emb.dtype)
+        emb = ctx.concat([emb, z], axis=-1)
+    return emb
+
+
+class TimestepEmbeddingMLP:
+    """diffusers ``TimestepEmbedding``: linear → SiLU → linear (explicit layers for remap)."""
+
+    def __init__(self, ctx: Any, in_channels: int, time_embed_dim: int):
+        nn = ctx
+        self.linear_1 = nn.Linear(in_channels, time_embed_dim, bias=True)
+        self.act = nn.SiLU()
+        self.linear_2 = nn.Linear(time_embed_dim, time_embed_dim, bias=True)
+
+    def __call__(self, x: Any) -> Any:
+        return self.linear_2(self.act(self.linear_1(x)))
 
 
 class RoPE2D:

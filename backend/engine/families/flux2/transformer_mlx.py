@@ -6,14 +6,12 @@ in_channels=128, inner_dim=4096 (9B) / 3072 (4B)
 """
 from __future__ import annotations
 
-import math
-from typing import Any
 
 import mlx.core as mx
 import mlx.nn as nn
 
 from backend.engine.common.attention import attention_bhsd_to_blhd
-from backend.engine.common.embeddings import apply_complex_rope_bshd
+from backend.engine.common.embeddings import apply_complex_rope_bshd, sinusoidal_timestep_proj
 from backend.engine.common.norm import AdaLayerNormContinuous, apply_scale_shift
 from backend.engine.runtime._base import RuntimeContext
 from backend.engine.common._base import TransformerBase
@@ -57,25 +55,16 @@ class Flux2TimestepEmbeddings:
             self.guidance_linear_2 = None
 
     def forward(self, t, guidance=None):
+        ctx = self.ctx
         t = t.astype(mx.float32)
-        half = self.freq_dim
-        freqs = mx.exp(-math.log(10000.0) * mx.arange(0, half, dtype=mx.float32) / half)
-        emb = self._sinusoidal_embedding(t, freqs)
-        temb = self.linear_2(nn.silu(self.linear_1(emb)))
+        emb = sinusoidal_timestep_proj(ctx, t, self.freq_dim * 2, flip_sin_to_cos=True)
+        temb = self.linear_2(ctx.silu(self.linear_1(emb)))
         if guidance is not None and self.guidance_linear_1 is not None and self.guidance_linear_2 is not None:
-            g_emb = self._sinusoidal_embedding(guidance.astype(mx.float32), freqs)
-            temb = temb + self.guidance_linear_2(nn.silu(self.guidance_linear_1(g_emb)))
+            g_emb = sinusoidal_timestep_proj(
+                ctx, guidance.astype(mx.float32), self.freq_dim * 2, flip_sin_to_cos=True
+            )
+            temb = temb + self.guidance_linear_2(ctx.silu(self.guidance_linear_1(g_emb)))
         return temb
-
-    def _sinusoidal_embedding(self, t: mx.array, freqs: mx.array) -> mx.array:
-        half = self.freq_dim
-        args = t[:, None] * freqs[None]
-        emb = mx.concatenate([mx.sin(args), mx.cos(args)], axis=-1)
-        # flip_sin_to_cos: [sin, cos] → [cos, sin]
-        emb = mx.concatenate([emb[:, half:], emb[:, :half]], axis=-1)
-        if self.freq_dim % 2:
-            emb = mx.concatenate([emb, mx.zeros((emb.shape[0], 1), dtype=emb.dtype)], axis=-1)
-        return emb
 
 
 class Flux2PosEmbed:

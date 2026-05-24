@@ -14,52 +14,16 @@ from mlx import nn
 
 from backend.engine.common._base import TransformerBase
 from backend.engine.common.attention import scaled_dot_product_attention_bhsd_mx
-from backend.engine.common.norm import apply_rms_norm
+from backend.engine.common.embeddings import sinusoidal_timestep_proj
+from backend.engine.common.text_encoders.qwen3_mlx import MlxRMSNorm, SeedVR2SwiGLUMLP
+from backend.engine.runtime.mlx import MLXContext
 
-
-# ----- rms_norm.py -----
-
-
-class SeedVR2RMSNorm(nn.Module):
-    def __init__(
-        self,
-        dim: int,
-        eps: float = 1e-5,
-    ):
-        super().__init__()
-        self.dim = dim
-        self.eps = eps
-        self.weight = mx.ones((dim,))
-
-    def __call__(self, x: mx.array) -> mx.array:
-        return apply_rms_norm(x, self.weight, self.eps)
+_MLX_CTX = MLXContext()
 
 
 # ----- swiglu_mlp.py -----
 
-class SwiGLUMLP(nn.Module):
-    def __init__(
-        self,
-        dim: int,
-        expand_ratio: int = 4,
-        multiple_of: int = 256,
-        bias: bool = False,
-    ):
-        super().__init__()
-        hidden_dim = int(2 * dim * expand_ratio / 3)
-        hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
-        self.proj_in = nn.Linear(dim, hidden_dim, bias=bias)
-        self.proj_in_gate = nn.Linear(dim, hidden_dim, bias=bias)
-        self.proj_out = nn.Linear(hidden_dim, dim, bias=bias)
-
-    def __call__(self, x: mx.array) -> mx.array:
-        gate = nn.silu(self.proj_in_gate(x))
-        x = self.proj_in(x)
-        x = gate * x
-        x = self.proj_out(x)
-        return x
-
-
+SwiGLUMLP = SeedVR2SwiGLUMLP
 class GELUMLP(nn.Module):
     def __init__(
         self,
@@ -96,27 +60,13 @@ class TimeEmbedding(nn.Module):
 
     def __call__(self, timestep: mx.array) -> mx.array:
         timestep = timestep[None] if timestep.ndim == 0 else timestep
-        emb = TimeEmbedding._get_timestep_embedding(
-            timesteps=timestep,
-            embedding_dim=self.sinusoidal_dim,
-        )
+        emb = sinusoidal_timestep_proj(_MLX_CTX, timestep, self.sinusoidal_dim)
         emb = self.proj_in(emb)
         emb = nn.silu(emb)
         emb = self.proj_hid(emb)
         emb = nn.silu(emb)
         emb = self.proj_out(emb)
         return emb
-
-    @staticmethod
-    def _get_timestep_embedding(
-        timesteps: mx.array,
-        embedding_dim: int,
-    ) -> mx.array:
-        half_dim = embedding_dim // 2
-        freqs = mx.exp(mx.arange(half_dim, dtype=mx.float32) * (-math.log(10000) / half_dim))
-        args = timesteps[:, None].astype(mx.float32) * freqs
-        return mx.concatenate([mx.sin(args), mx.cos(args)], axis=-1)
-
 
 # ----- rope.py -----
 
@@ -620,8 +570,8 @@ class MMAttention(nn.Module):
 
         self.proj_qkv_vid = nn.Linear(vid_dim, 3 * inner_dim, bias=qk_bias)
         self.proj_out_vid = nn.Linear(inner_dim, vid_dim, bias=True)
-        self.norm_q_vid = SeedVR2RMSNorm(head_dim, eps=qk_norm_eps)
-        self.norm_k_vid = SeedVR2RMSNorm(head_dim, eps=qk_norm_eps)
+        self.norm_q_vid = MlxRMSNorm(head_dim, eps=qk_norm_eps)
+        self.norm_k_vid = MlxRMSNorm(head_dim, eps=qk_norm_eps)
 
         if shared_weights:
             self.proj_qkv_txt = self.proj_qkv_vid
@@ -631,8 +581,8 @@ class MMAttention(nn.Module):
         else:
             self.proj_qkv_txt = nn.Linear(txt_dim, 3 * inner_dim, bias=qk_bias)
             self.proj_out_txt = nn.Linear(inner_dim, txt_dim, bias=True)
-            self.norm_q_txt = SeedVR2RMSNorm(head_dim, eps=qk_norm_eps)
-            self.norm_k_txt = SeedVR2RMSNorm(head_dim, eps=qk_norm_eps)
+            self.norm_q_txt = MlxRMSNorm(head_dim, eps=qk_norm_eps)
+            self.norm_k_txt = MlxRMSNorm(head_dim, eps=qk_norm_eps)
 
         self.rope = RoPEModule(dim=rope_dim, freqs_for=rope_freqs_for)
 
@@ -965,7 +915,7 @@ class SeedVR2DiT(nn.Module, TransformerBase):
             )
 
         if use_output_ada:
-            self.vid_out_norm = SeedVR2RMSNorm(vid_dim, eps=norm_eps)
+            self.vid_out_norm = MlxRMSNorm(vid_dim, eps=norm_eps)
             self.out_shift = mx.zeros((vid_dim,))
             self.out_scale = mx.ones((vid_dim,))
 

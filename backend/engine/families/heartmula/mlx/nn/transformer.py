@@ -1,6 +1,5 @@
 """Transformer layers for MLX (LLaMA-style architecture)."""
 
-import math
 from typing import Optional, Tuple, Callable
 
 import mlx.core as mx
@@ -11,44 +10,65 @@ from backend.engine.common.attention import (
     scaled_dot_product_attention_bhsd_mx,
 )
 from backend.engine.common.mlx_runtime_fallback import run_eval
-from backend.engine.families.heartmula.mlx.nn.kv_cache import KVLayerCache
+from backend.engine.common.embeddings import sinusoidal_timestep_proj
+from backend.engine.runtime.mlx import MLXContext
+from backend.engine.families.heartmula.mlx.nn.kv_cache import KVCache, KVLayerCache
 from backend.engine.families.heartmula.mlx.nn.rope import RotaryPositionEmbedding, apply_rotary_pos_emb
+from backend.engine.common.text_encoders.qwen3_mlx import (
+    LlamaMLP,
+    MlxRMSNorm,
+    MlxTimestepEmbeddingMLPWide,
+)
+
+_MLX_CTX = MLXContext()
+
+
+def forward_llama_transformer_stack(
+    *,
+    layers: list,
+    norm: MlxRMSNorm,
+    hidden_states: mx.array,
+    mask: Optional[mx.array] = None,
+    cache: Optional[KVCache | list] = None,
+) -> Tuple[mx.array, KVCache | list]:
+    """Shared LLaMA-style stack forward for HeartMuLa backbone and decoder."""
+    offset = 0
+    if isinstance(cache, KVCache):
+        offset = cache.layers[0].length
+    elif cache is not None and cache[0] is not None:
+        if isinstance(cache[0], KVLayerCache):
+            offset = cache[0].length
+        else:
+            offset = cache[0][0].shape[1]
+
+    if mask is None:
+        seq_len = hidden_states.shape[1]
+        mask = build_causal_with_offset_bias(mx, seq_len, offset, dtype=mx.float32)
+
+    new_caches = []
+    x = hidden_states
+    for i, layer in enumerate(layers):
+        if isinstance(cache, KVCache):
+            layer_cache = cache.layers[i]
+        elif cache is not None:
+            layer_cache = cache[i]
+        else:
+            layer_cache = None
+        x, new_cache = layer(x, mask=mask, cache=layer_cache, offset=offset)
+        new_caches.append(new_cache)
+
+    x = norm(x)
+    if isinstance(cache, KVCache):
+        return x, cache
+    return x, new_caches
 
 
 def _run_eval(*values) -> None:
     run_eval(None, *values)
 
 
-class HeartmulaRMSNorm(nn.Module):
-    """Root Mean Square Layer Normalization.
-
-    Normalizes inputs using RMS rather than mean and variance,
-    which is more efficient and works well for transformers.
-
-    Args:
-        dim: Dimension of the input.
-        eps: Epsilon for numerical stability.
-    """
-
-    def __init__(self, dim: int, eps: float = 1e-6):
-        super().__init__()
-        self.eps = eps
-        self.weight = mx.ones((dim,))
-
-    def __call__(self, x: mx.array) -> mx.array:
-        """Apply RMS normalization.
-
-        Args:
-            x: Input tensor.
-
-        Returns:
-            Normalized tensor.
-        """
-        return mx.fast.rms_norm(x, self.weight, self.eps)
-
-
-# Backward-compatible export for existing HeartMuLa modules.
-RMSNorm = HeartmulaRMSNorm
+HeartmulaRMSNorm = MlxRMSNorm
+RMSNorm = MlxRMSNorm
 
 
 class LlamaAttention(nn.Module):
@@ -178,45 +198,6 @@ class LlamaAttention(nn.Module):
         return output, (k_out, v_out)
 
 
-class LlamaMLP(nn.Module):
-    """SwiGLU MLP used in LLaMA models.
-
-    Implements the gated linear unit with SiLU activation:
-    output = down_proj(silu(gate_proj(x)) * up_proj(x))
-
-    Args:
-        dim: Model dimension.
-        hidden_dim: Hidden dimension (typically 4 * dim or 8/3 * dim).
-        bias: Whether to use bias in linear layers.
-    """
-
-    def __init__(
-        self,
-        dim: int,
-        hidden_dim: Optional[int] = None,
-        bias: bool = False,
-    ):
-        super().__init__()
-        hidden_dim = hidden_dim or int(8 * dim / 3)
-        # Round to multiple of 256 for efficiency
-        hidden_dim = ((hidden_dim + 255) // 256) * 256
-
-        self.gate_proj = nn.Linear(dim, hidden_dim, bias=bias)
-        self.up_proj = nn.Linear(dim, hidden_dim, bias=bias)
-        self.down_proj = nn.Linear(hidden_dim, dim, bias=bias)
-
-    def __call__(self, x: mx.array) -> mx.array:
-        """Forward pass.
-
-        Args:
-            x: Input tensor of shape (batch, seq_len, dim).
-
-        Returns:
-            Output tensor of same shape.
-        """
-        return self.down_proj(nn.silu(self.gate_proj(x)) * self.up_proj(x))
-
-
 class LlamaTransformerBlock(nn.Module):
     """Transformer block with pre-normalization (LLaMA style).
 
@@ -285,6 +266,60 @@ class LlamaTransformerBlock(nn.Module):
         x = x + self.mlp(self.mlp_norm(x))
 
         return x, new_cache
+
+
+def build_llama_transformer_layers(
+    *,
+    n_layers: int,
+    dim: int,
+    n_heads: int,
+    n_kv_heads: int,
+    hidden_dim: int,
+    max_seq_len: int,
+    norm_eps: float,
+    rope_base: float,
+) -> list[LlamaTransformerBlock]:
+    return [
+        LlamaTransformerBlock(
+            dim=dim,
+            n_heads=n_heads,
+            n_kv_heads=n_kv_heads,
+            hidden_dim=hidden_dim,
+            max_seq_len=max_seq_len,
+            norm_eps=norm_eps,
+            rope_base=rope_base,
+        )
+        for _ in range(n_layers)
+    ]
+
+
+def setup_llama_kv_cache(
+    *,
+    batch_size: int,
+    max_seq_len: int,
+    n_kv_heads: int,
+    head_dim: int,
+    n_layers: int,
+) -> KVCache:
+    return KVCache(
+        batch_size=batch_size,
+        max_seq_len=max_seq_len,
+        n_kv_heads=n_kv_heads,
+        head_dim=head_dim,
+        n_layers=n_layers,
+    )
+
+
+def llama_stack_from_config(cls: type, config: dict):
+    return cls(
+        dim=config["dim"],
+        n_heads=config["n_heads"],
+        n_kv_heads=config.get("n_kv_heads", config["n_heads"]),
+        n_layers=config["n_layers"],
+        hidden_dim=config.get("hidden_dim"),
+        norm_eps=config.get("norm_eps", 1e-5),
+        rope_base=config.get("rope_base", 10000.0),
+    )
 
 
 class LlamaTransformer(nn.Module):
@@ -449,45 +484,16 @@ class AdaLayerNormSingle(nn.Module):
         return x
 
 
-class TimestepEmbedding(nn.Module):
-    """Sinusoidal timestep embedding for diffusion models.
-
-    Args:
-        dim: Embedding dimension.
-        max_period: Maximum period for sinusoidal encoding.
-    """
+class TimestepEmbedding(MlxTimestepEmbeddingMLPWide):
+    """Sinusoidal timestep embedding + wide MLP (HeartMuLa weight keys: ``linear1``/``linear2``)."""
 
     def __init__(self, dim: int, max_period: int = 10000):
-        super().__init__()
+        super().__init__(dim, dim, expansion=4)
         self.dim = dim
         self.max_period = max_period
 
-        # MLP to project embedding
-        self.linear1 = nn.Linear(dim, dim * 4)
-        self.linear2 = nn.Linear(dim * 4, dim)
-
     def __call__(self, timesteps: mx.array) -> mx.array:
-        """Compute timestep embeddings.
-
-        Args:
-            timesteps: Timestep values of shape (batch,).
-
-        Returns:
-            Embeddings of shape (batch, dim).
-        """
-        half_dim = self.dim // 2
-        freqs = mx.exp(
-            -math.log(self.max_period)
-            * mx.arange(half_dim).astype(mx.float32)
-            / half_dim
+        embedding = sinusoidal_timestep_proj(
+            _MLX_CTX, timesteps, self.dim, sin_first=False, max_period=float(self.max_period)
         )
-
-        args = timesteps[:, None].astype(mx.float32) * freqs[None, :]
-        embedding = mx.concatenate([mx.cos(args), mx.sin(args)], axis=-1)
-
-        # MLP
-        embedding = self.linear1(embedding)
-        embedding = nn.silu(embedding)
-        embedding = self.linear2(embedding)
-
-        return embedding
+        return super().__call__(embedding)

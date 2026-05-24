@@ -23,6 +23,7 @@ from backend.engine.common.embeddings import (
     build_tail_pad_mask as _build_tail_pad_mask,
     pad_tail_with_last as _pad_tail_with_last,
     apply_pad_token as _apply_pad_token,
+    sinusoidal_timestep_proj,
 )
 from backend.engine.common.norm import apply_scale_shift, unpack_modulation_4way
 
@@ -92,17 +93,8 @@ class TimestepEmbedder:
         self.linear2 = nn.Linear(mid_size, out_size, bias=True)
 
     def forward(self, t):
-        import math
-
         ctx = self.ctx
-        half = self.frequency_embedding_size // 2
-        dt = ctx.float32()
-        freqs = ctx.exp(ctx.mul(ctx.arange(0, half, dtype=dt), (-math.log(10000.0) / half)))
-        t_col = ctx.reshape(ctx.cast(t, dt), (-1, 1))
-        args = ctx.mul(t_col, ctx.reshape(freqs, (1, -1)))
-        emb = ctx.concat([ctx.cos(args), ctx.sin(args)], axis=-1)
-        if self.frequency_embedding_size % 2:
-            emb = ctx.concat([emb, ctx.zeros_like(emb[:, :1])], axis=-1)
+        emb = sinusoidal_timestep_proj(ctx, t, self.frequency_embedding_size)
         x = self.linear1(emb)
         x = ctx.silu(x)
         x = self.linear2(x)

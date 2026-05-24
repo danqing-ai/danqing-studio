@@ -14,15 +14,19 @@ from backend.engine.common.attention import (
     build_causal_with_padding_bias,
     repeat_kv_heads_mx,
     scaled_dot_product_attention_bhsd_mx,
+    rotate_half,
 )
+from backend.engine.runtime.mlx import MLXContext
 from backend.engine.common.embeddings import (
     build_position_ids_3d_axes,
     pad_ragged_1d_sequences,
     pad_ragged_2d_sequences,
 )
 from backend.engine.common.mlx_runtime_fallback import load_weights_dict
-from backend.engine.common.norm import apply_rms_norm
 from backend.engine.families.qwen.weights import apply_qwen_text_encoder_weights
+from backend.engine.common.text_encoders.qwen3_mlx import MlxRMSNorm, MlxSwiGLUMLP
+
+_MLX_CTX = MLXContext()
 
 class QwenRotaryEmbedding(nn.Module):
     def __init__(
@@ -56,29 +60,6 @@ class QwenRotaryEmbedding(nn.Module):
         cos = mx.cos(emb) * self.attention_scaling
         sin = mx.sin(emb) * self.attention_scaling
         return cos.astype(x.dtype), sin.astype(x.dtype)
-
-class QwenRMSNorm(nn.Module):
-    def __init__(self, hidden_size: int, eps: float = 1e-6):
-        super().__init__()
-        self.weight = mx.ones((hidden_size,))
-        self.eps = eps
-
-    def __call__(self, hidden_states: mx.array) -> mx.array:
-        return apply_rms_norm(hidden_states, self.weight, self.eps)
-
-class QwenMLP(nn.Module):
-    def __init__(self, hidden_size: int, intermediate_size: int):
-        super().__init__()
-        self.gate_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
-        self.up_proj = nn.Linear(hidden_size, intermediate_size, bias=False)
-        self.down_proj = nn.Linear(intermediate_size, hidden_size, bias=False)
-
-    def __call__(self, hidden_states: mx.array) -> mx.array:
-        gate_output = nn.silu(self.gate_proj(hidden_states))
-        up_output = self.up_proj(hidden_states)
-        intermediate_output = gate_output * up_output
-        output = self.down_proj(intermediate_output)
-        return output
 
 class QwenAttention(nn.Module):
     def __init__(
@@ -187,19 +168,13 @@ class QwenAttention(nn.Module):
         cos_combined = cos_combined.astype(mx.float32)
         sin_combined = sin_combined.astype(mx.float32)
 
-        q_embed = (q * cos_combined) + (QwenAttention._rotate_half(q) * sin_combined)
-        k_embed = (k * cos_combined) + (QwenAttention._rotate_half(k) * sin_combined)
+        q_embed = (q * cos_combined) + (rotate_half(_MLX_CTX, q) * sin_combined)
+        k_embed = (k * cos_combined) + (rotate_half(_MLX_CTX, k) * sin_combined)
 
         q_embed = q_embed.astype(orig_q_dtype)
         k_embed = k_embed.astype(orig_k_dtype)
 
         return q_embed, k_embed
-
-    @staticmethod
-    def _rotate_half(x: mx.array) -> mx.array:
-        x1 = x[..., : x.shape[-1] // 2]
-        x2 = x[..., x.shape[-1] // 2 :]
-        return mx.concatenate([-x2, x1], axis=-1)
 
 class QwenEncoderLayer(nn.Module):
     def __init__(
@@ -213,7 +188,7 @@ class QwenEncoderLayer(nn.Module):
         rope_theta: float = 1000000.0,
     ):
         super().__init__()
-        self.input_layernorm = QwenRMSNorm(hidden_size, eps=rms_norm_eps)
+        self.input_layernorm = MlxRMSNorm(hidden_size, eps=rms_norm_eps)
         self.self_attn = QwenAttention(
             hidden_size=hidden_size,
             num_attention_heads=num_attention_heads,
@@ -222,11 +197,8 @@ class QwenEncoderLayer(nn.Module):
             rope_theta=rope_theta,
             rope_scaling={"mrope_section": [16, 24, 24]},
         )
-        self.post_attention_layernorm = QwenRMSNorm(hidden_size, eps=rms_norm_eps)
-        self.mlp = QwenMLP(
-            hidden_size=hidden_size,
-            intermediate_size=intermediate_size,
-        )
+        self.post_attention_layernorm = MlxRMSNorm(hidden_size, eps=rms_norm_eps)
+        self.mlp = MlxSwiGLUMLP(hidden_size, intermediate_size)
 
     def __call__(
         self,
@@ -265,7 +237,7 @@ class QwenEncoder(nn.Module):
 
         self.embed_tokens = nn.Embedding(vocab_size, hidden_size)
         self.layers = [QwenEncoderLayer() for i in range(num_hidden_layers)]
-        self.norm = QwenRMSNorm(hidden_size, eps=1e-6)
+        self.norm = MlxRMSNorm(hidden_size, eps=1e-6)
         self.rotary_emb = QwenRotaryEmbedding(
             dim=hidden_size // 28,
             max_position_embeddings=max_position_embeddings,

@@ -8,7 +8,6 @@ in NLC to avoid unnecessary permutations.
 """
 from __future__ import annotations
 
-import math
 import logging
 from typing import Dict, List, Optional, Tuple
 
@@ -21,27 +20,25 @@ from backend.engine.common.attention import (
     build_window_with_padding_bias_torch,
     repeat_kv_heads_torch,
     scaled_dot_product_attention_bhsd_torch,
+    rotate_half_torch,
 )
+from backend.engine.common.embeddings import sinusoidal_timestep_proj
 from backend.engine.common.norm import apply_scale_shift, unpack_modulation_6table
+from backend.engine.runtime.cuda import CudaContext
 
 logger = logging.getLogger(__name__)
+
+_CUDA_CTX = CudaContext()
 
 # ---------------------------------------------------------------------------
 # Rotary helpers
 # ---------------------------------------------------------------------------
 
-def _rotate_half(x: torch.Tensor) -> torch.Tensor:
-    half = x.shape[-1] // 2
-    x1 = x[..., :half]
-    x2 = x[..., half:]
-    return torch.cat([-x2, x1], dim=-1)
-
-
 def _apply_rotary_pos_emb(
     q: torch.Tensor, k: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor,
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    q_embed = (q * cos) + (_rotate_half(q) * sin)
-    k_embed = (k * cos) + (_rotate_half(k) * sin)
+    q_embed = (q * cos) + (rotate_half_torch(q) * sin)
+    k_embed = (k * cos) + (rotate_half_torch(k) * sin)
     return q_embed, k_embed
 
 
@@ -316,18 +313,10 @@ class _TimestepEmbedding(nn.Module):
         self.act2 = nn.SiLU()
         self.time_proj = nn.Linear(time_embed_dim, time_embed_dim * 6, bias=True)
 
-    def _sinusoidal_embedding(self, t: torch.Tensor, dim: int, max_period: int = 10000) -> torch.Tensor:
-        t = t * self.scale
-        half = dim // 2
-        freqs = torch.exp(-math.log(max_period) * torch.arange(half, device=t.device).float() / half)
-        args = t[:, None].float() * freqs[None, :]
-        embedding = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
-        if dim % 2:
-            embedding = torch.cat([embedding, torch.zeros_like(embedding[:, :1])], dim=-1)
-        return embedding
-
     def forward(self, t: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        t_freq = self._sinusoidal_embedding(t, self.in_channels)
+        t_freq = sinusoidal_timestep_proj(
+            _CUDA_CTX, t, self.in_channels, sin_first=False, scale=self.scale
+        ).to(t.dtype)
         temb = self.linear_1(t_freq.to(t.dtype))
         temb = self.act1(temb)
         temb = self.linear_2(temb)

@@ -1,7 +1,6 @@
 """Qwen-Image DiT（MLX）— 单文件：结构与 diffusers 对齐，权重经 ``remap_qwen_transformer_weights`` 扁平加载。"""
 from __future__ import annotations
 
-import math
 from typing import Any
 
 import mlx.core as mx
@@ -13,15 +12,18 @@ from backend.engine.common.attention import (
     scaled_dot_product_attention_bhsd_mx,
 )
 from backend.engine.common._base import TransformerBase
-from backend.engine.common.embeddings import apply_complex_rope_bshd
+from backend.engine.common.embeddings import apply_complex_rope_bshd, sinusoidal_timestep_proj
 from backend.engine.common.norm import (
     apply_ada_layer_norm_continuous,
-    apply_rms_norm,
     apply_scale_shift,
     unpack_modulation_3way,
 )
 from backend.engine.config.model_configs import QwenImageConfig
+from backend.engine.common.text_encoders.qwen3_mlx import MlxRMSNorm, MlxTimestepEmbeddingMLP
+from backend.engine.runtime.mlx import MLXContext
 from backend.engine.runtime._base import RuntimeContext
+
+_MLX_CTX = MLXContext()
 
 
 def _scalar_f64(value: Any) -> float:
@@ -53,63 +55,23 @@ class AdaLayerNormContinuous(nn.Module):
         )
 
 
-class QwenTransformerRMSNorm(nn.Module):
-    def __init__(self, dim: int, eps: float = 1e-6):
-        super().__init__()
-        self.weight = mx.ones((dim,))
-        self.eps = eps
-
-    def __call__(self, hidden_states: mx.array) -> mx.array:
-        return apply_rms_norm(hidden_states, self.weight, self.eps)
-
-
-class QwenTimesteps(nn.Module):
-    def __init__(self, proj_dim: int = 256, scale: float = 1000.0):
-        super().__init__()
-        self.proj_dim = proj_dim
-        self.flip_sin_to_cos = True
-        self.downscale_freq_shift = 0.0
-        self.scale = scale
-
-    def __call__(self, timesteps: mx.array) -> mx.array:
-        if len(timesteps.shape) != 1:
-            raise ValueError("timesteps must be 1-d")
-        half_dim = self.proj_dim // 2
-        max_period = 10000
-        exponent = -math.log(max_period) * mx.arange(0, half_dim, dtype=mx.float32)
-        exponent = exponent / (half_dim - self.downscale_freq_shift)
-        timesteps_dtype = timesteps.dtype
-        emb = mx.exp(exponent).astype(timesteps_dtype)
-        emb = timesteps[:, None].astype(mx.float32) * emb[None, :]
-        emb = self.scale * emb
-        emb = mx.concatenate([mx.sin(emb), mx.cos(emb)], axis=-1)
-        if self.flip_sin_to_cos:
-            emb = mx.concatenate([emb[:, half_dim:], emb[:, :half_dim]], axis=-1)
-        return emb
-
-
-class QwenTimestepEmbedding(nn.Module):
-    def __init__(self, proj_dim: int, inner_dim: int):
-        super().__init__()
-        self.linear_1 = nn.Linear(proj_dim, inner_dim, bias=True)
-        self.linear_2 = nn.Linear(inner_dim, inner_dim, bias=True)
-
-    def __call__(self, x: mx.array) -> mx.array:
-        x = self.linear_1(x)
-        x = nn.silu(x)
-        return self.linear_2(x)
-
-
 class QwenTimeTextEmbed(nn.Module):
-    def __init__(self, timestep_proj_dim: int, inner_dim: int):
+    def __init__(self, timestep_proj_dim: int, inner_dim: int, scale: float = 1000.0):
         super().__init__()
-        self.time_proj = QwenTimesteps(proj_dim=timestep_proj_dim, scale=1000.0)
-        self.timestep_embedder = QwenTimestepEmbedding(
-            proj_dim=timestep_proj_dim, inner_dim=inner_dim
-        )
+        self.timestep_proj_dim = timestep_proj_dim
+        self.scale = scale
+        self.timestep_embedder = MlxTimestepEmbeddingMLP(timestep_proj_dim, inner_dim)
 
     def __call__(self, timestep: mx.array, hidden_states: mx.array) -> mx.array:
-        timesteps_proj = self.time_proj(timestep)
+        if len(timestep.shape) != 1:
+            raise ValueError("timesteps must be 1-d")
+        timesteps_proj = sinusoidal_timestep_proj(
+            _MLX_CTX,
+            timestep,
+            self.timestep_proj_dim,
+            flip_sin_to_cos=True,
+            scale=self.scale,
+        )
         return self.timestep_embedder(timesteps_proj.astype(hidden_states.dtype))
 
 
@@ -442,7 +404,7 @@ class QwenTransformer(nn.Module):
         self.inner_dim = config.num_heads * head_dim
 
         self.img_in = nn.Linear(config.in_channels, self.inner_dim)
-        self.txt_norm = QwenTransformerRMSNorm(config.text_dim, eps=1e-6)
+        self.txt_norm = MlxRMSNorm(config.text_dim, eps=1e-6)
         self.txt_in = nn.Linear(config.text_dim, self.inner_dim)
         self.time_text_embed = QwenTimeTextEmbed(timestep_proj_dim=256, inner_dim=self.inner_dim)
         self.array_fn = array_fn or mx.array

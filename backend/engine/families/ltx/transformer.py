@@ -20,7 +20,7 @@ from typing import Any
 
 from backend.engine.common._base import TransformerBase
 from backend.engine.common.attention import _apply_rope, attention_bhsd_to_blhd
-from backend.engine.common.embeddings import PatchEmbed3D, RoPE3D
+from backend.engine.common.embeddings import PatchEmbed3D, RoPE3D, sinusoidal_timestep_proj
 from backend.engine.common.norm import apply_rms_norm, apply_scale_shift, unpack_modulation_6table
 from backend.engine.config.model_configs import LTXConfig
 from backend.engine.runtime._base import RuntimeContext
@@ -158,13 +158,7 @@ class _LTXTimestepEmbedding:
 
     def forward(self, timesteps):
         ctx = self.ctx
-        half = self.frequency_embedding_size // 2
-        freqs = ctx.exp(
-            -ctx.log(ctx.full((half,), 10000.0))
-            * ctx.arange(half, dtype=timesteps.dtype) / half
-        )
-        args = ctx.reshape(timesteps, (-1, 1)) * ctx.reshape(freqs, (1, -1))
-        embedding = ctx.concat([ctx.cos(args), ctx.sin(args)], axis=-1)
+        embedding = sinusoidal_timestep_proj(ctx, timesteps, self.frequency_embedding_size)
         embedding = self.mlp_in(embedding)
         embedding = ctx.silu(embedding)
         return self.mlp_out(embedding)
