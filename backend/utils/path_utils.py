@@ -56,6 +56,15 @@ class PathResolver(IPathResolver):
             self._bootstrap,
             default_config_root=self._default_config,
         )
+
+    def reload_workspace_root(self) -> Path:
+        """Re-read workspace pointer and refresh effective data root (after relocation)."""
+        self._root = prepare_data_directories(
+            self._bootstrap,
+            default_config_root=self._default_config,
+        )
+        return self._root
+
     def get_bootstrap_root(self) -> Path:
         return self._bootstrap
 
