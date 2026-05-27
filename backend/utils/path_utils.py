@@ -124,6 +124,11 @@ def get_system_info() -> dict:
         "memory_gb": get_memory_gb(),
         "dependencies": {},
     }
+    used_gb, available_gb = get_memory_usage_gb()
+    if used_gb > 0:
+        info["memory_used_gb"] = used_gb
+    if available_gb > 0:
+        info["memory_available_gb"] = available_gb
 
     deps = {
         "mlx": "mlx.core",
@@ -176,6 +181,19 @@ def get_memory_gb() -> float:
             except Exception:
                 return 0
         return 0
+
+
+def get_memory_usage_gb() -> tuple[float, float]:
+    """Return (used_gb, available_gb) from psutil; (0, 0) when unavailable."""
+    try:
+        import psutil
+
+        mem = psutil.virtual_memory()
+        used = round(mem.used / (1024**3), 1)
+        available = round(getattr(mem, "available", mem.free) / (1024**3), 1)
+        return used, available
+    except Exception:
+        return 0.0, 0.0
 
 
 def is_apple_silicon() -> bool:

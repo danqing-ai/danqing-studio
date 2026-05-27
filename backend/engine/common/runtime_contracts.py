@@ -1,8 +1,7 @@
 """Runtime contract entrypoints for image-family semantics.
 
-This module intentionally keeps behavior identical to ``ImagePipeline``'s
-historical inline logic while providing a single place to review/extend family
-runtime and scheduler semantics.
+Family-specific denoise semantics are driven by ``ModelConfig`` flags; this module
+must not branch on ``family`` strings for standard image create paths.
 """
 from __future__ import annotations
 
@@ -36,26 +35,27 @@ class FamilyRuntimeContract:
 
     def noise_sample_dtype(self, ctx: Any, denoise_dtype: Any) -> Any:
         # mflux aligns gaussian sampling in fp32, then casts to latent precision.
+        if not bool(getattr(self.config, "noise_sample_fp32", False)):
+            return denoise_dtype
         dtype_name = str(denoise_dtype).split(".")[-1].lower()
-        if self.family in ("flux2", "z_image") and dtype_name in ("bfloat16", "float16"):
+        if dtype_name in ("bfloat16", "float16"):
             return ctx.float32()
         return denoise_dtype
 
     def resolve_guidance_scalar(self, guidance: float) -> float:
         if getattr(self.config, "supports_guidance", True):
             return float(guidance)
-        if self.family == "flux1":
+        if bool(getattr(self.config, "preserve_guidance_when_disabled", False)):
             return float(guidance)
         return 0.0
 
     def should_encode_negative_prompt(self, guidance: float) -> bool:
-        if (
-            self.family == "fibo"
-            and bool(getattr(self.config, "structured_prompt", False))
+        if bool(getattr(self.config, "skip_negative_when_structured_prompt", False)) and bool(
+            getattr(self.config, "structured_prompt", False)
         ):
             return False
         return (
-            self.family != "flux1"
+            bool(getattr(self.config, "cfg_negative_eligible", True))
             and bool(getattr(self.config, "supports_guidance", False))
             and float(guidance) > 1.0
         )
@@ -71,13 +71,13 @@ class FamilyRuntimeContract:
         kwargs = {"txt_embeds": txt_embeds} if txt_embeds is not None else {}
         if pooled_embeds is not None:
             kwargs["pooled_embeds"] = pooled_embeds
-        if self.family == "flux1":
+        if bool(getattr(self.config, "passes_guidance_in_kwargs", False)):
             kwargs["guidance_scale"] = float(guidance)
         kwargs.update(extra_cond)
         return kwargs
 
-    @staticmethod
-    def _apply_qwen_image_kwargs(
+    def _apply_encoder_step_kwargs(
+        self,
         kwargs: dict[str, Any],
         *,
         encoder_type: str,
@@ -86,7 +86,8 @@ class FamilyRuntimeContract:
         scheduler_timesteps: Any,
         encoder_hidden_states_mask: Any | None,
     ) -> None:
-        if encoder_type != "qwen_image":
+        step_kw = getattr(self.config, "encoder_step_kwargs", None)
+        if step_kw != "qwen_image" and encoder_type != "qwen_image":
             return
         kwargs["image_height"] = int(image_height)
         kwargs["image_width"] = int(image_width)
@@ -122,7 +123,7 @@ class FamilyRuntimeContract:
         mask_key = getattr(self.config, "text_encoder_mask_key", None)
         if mask_key is not None and txt_attn_mask is not None:
             kwargs[mask_key] = txt_attn_mask
-        self._apply_qwen_image_kwargs(
+        self._apply_encoder_step_kwargs(
             kwargs,
             encoder_type=encoder_type,
             image_height=image_height,
@@ -146,12 +147,12 @@ class FamilyRuntimeContract:
         overrides: dict[str, Any] = {}
         if pooled_embeds is not None:
             overrides["pooled_embeds"] = pooled_embeds
-        if self.family == "flux1":
+        if bool(getattr(self.config, "passes_guidance_in_kwargs", False)):
             overrides["guidance_scale"] = float(guidance)
         mask_key = getattr(self.config, "text_encoder_mask_key", None)
         if mask_key is not None and neg_attn_mask is not None:
             overrides[mask_key] = neg_attn_mask
-        self._apply_qwen_image_kwargs(
+        self._apply_encoder_step_kwargs(
             overrides,
             encoder_type=encoder_type,
             image_height=image_height,
@@ -171,7 +172,7 @@ class FamilyRuntimeContract:
         target_dtype: Any,
     ) -> Any:
         _, channels, height, width = latent_shape
-        if self.family == "z_image":
+        if bool(getattr(self.config, "z_image_noise_layout", False)):
             z_shape = (channels, 1, height, width)
             z_noise = (
                 ctx.seeded_randn(z_shape, seed, dtype=sample_dtype)
@@ -198,7 +199,7 @@ class FamilyRuntimeContract:
         sample_dtype: Any,
         target_dtype: Any,
     ) -> Any:
-        if self.family == "z_image":
+        if bool(getattr(self.config, "z_image_noise_layout", False)):
             z_shape = (int(encoded_shape[1]), 1, int(encoded_shape[2]), int(encoded_shape[3]))
             z_noise = ctx.seeded_randn(z_shape, seed, dtype=sample_dtype)
             noise = ctx.squeeze(ctx.expand_dims(z_noise, axis=0), axis=2)

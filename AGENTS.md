@@ -64,6 +64,7 @@ Three product-level constraints (also in `.cursor/rules/*.mdc`):
 | Family size | `families/<family>/` ≤ **8 logical units**; `stem.py` + `stem_mlx.py` + `stem_cuda.py` = **1** unit |
 | API/CLI | Extend contracts + route/CLI first; REST and CLI stay aligned |
 | Dual platform | Multi-`backends` models must run on each declared runtime or fail loud |
+| Engine LOC | Refactors under `backend/engine/` should be **net delete or neutral** (bugfix exceptions documented in PR); no new `vae_codecs/` / `video_codecs/` wrapper trees — use `vae_codec_registry.py` / `video_codec_registry.py` only |
 
 ### Fail loud (default)
 

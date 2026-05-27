@@ -41,6 +41,9 @@ class Flux1Config:
     supports_mask: bool = False       # Fill / Depth need this
     supports_controlnet: bool = False
     vae_scale: int = 8               # VAE latent downsampling factor
+    passes_guidance_in_kwargs: bool = True
+    preserve_guidance_when_disabled: bool = True
+    cfg_negative_eligible: bool = False
 
     def __post_init__(self):
         pass
@@ -72,6 +75,8 @@ class Flux2Config:
     enable_thinking: bool = False     # Reference: Flux2KleinWeightDefinition explicitly disables
     vae_scale: int = 16              # Flux2 uses 16x tile, not 8x
     latent_noise_dtype: str = "bfloat16"
+    noise_sample_fp32: bool = True
+    vae_preview_warmup: bool = True
 
 
 @dataclass
@@ -97,6 +102,7 @@ class QwenImageConfig:
     supports_img2img: bool = True
     vae_scale: int = 16
     encoder_type: str = "qwen_image"
+    encoder_step_kwargs: str = "qwen_image"
 
 
 @dataclass
@@ -122,6 +128,7 @@ class FIBOConfig:
     supports_img2img: bool = True
     structured_prompt: bool = True
     encoder_type: str = "fibo"
+    skip_negative_when_structured_prompt: bool = True
     use_mlx_cfg_fusion: bool = True
     vae_scale: int = 16
     text_encoder_mask_key: str = "text_encoder_layers"
@@ -160,6 +167,8 @@ class ZImageConfig:
     vae_scale: int = 8
     # Match mflux ``ZImageLatentCreator.create_noise`` (``ModelConfig.precision`` = bf16).
     latent_noise_dtype: str = "bfloat16"
+    noise_sample_fp32: bool = True
+    z_image_noise_layout: bool = True
     use_mlx_compile: bool = False        # keep numerical path close to reference; prioritize parity
     use_mlx_cfg_fusion: bool = False     # disable fused CFG fast-path; use explicit cond/uncond forwards
 
@@ -268,12 +277,18 @@ class HeartMulaConfig:
     default_topk: int = 50
     topk_min: int = 10
     topk_max: int = 100
-    codec_ode_steps: int = 10
+    codec_ode_steps: int = 20
     codec_ode_steps_min: int = 4
-    codec_ode_steps_max: int = 24
+    codec_ode_steps_max: int = 32
     codec_guidance_scale: float = 1.25
     codec_guidance_min: float = 1.0
     codec_guidance_max: float = 2.0
+    long_form_temperature: float = 1.04
+    long_form_temperature_min: float = 0.9
+    long_form_temperature_max: float = 1.5
+    long_form_topk: int = 60
+    long_form_topk_min: int = 20
+    long_form_topk_max: int = 150
     supports_guidance: bool = True
     supports_img2img: bool = False
 
@@ -314,6 +329,17 @@ class LTXConfig:
     vae_scale: int = 32
     temporal_vae_scale: int = 8
     default_scheduler: str = "flow_match_euler"
+    uses_mlx_forge_weight_restore: bool = True
+    validate_ltx_block_depth: bool = True
+    geometry_check: str = "generic"
+    post_denoise_clear_cache: bool = False
+    uses_ltx_flat_vae_decoder: bool = True
+    video_vae_backend: str = "generic"
+    video_i2v_style: str = "concat"
+    bundle_config_merger: str = ""
+    release_t5_after_encode: bool = False
+    cfg_negative_prompt_style: str = "default"
+    scheduler_bundle_extras: str = ""
 
 
 @dataclass
@@ -357,6 +383,19 @@ class WanConfig:
     num_train_timesteps: int = 1000
     use_mlx_compile: bool = True  # ``mx.compile`` DiT forward after weight load (MLX only)
     vae_spatial_tiling: bool = False  # 默认整幅 decode；分块拼接在 TI2V 5B 分辨率下会出 seam
+    uses_wan_t5_bundle: bool = True
+    uses_wan_shift: bool = True
+    snap_pixel_dims: bool = True
+    validate_umt5_embeddings: bool = True
+    post_denoise_clear_cache: bool = False
+    geometry_check: str = "wan"
+    uses_wan_vae_bundle: bool = True
+    video_vae_backend: str = "wan"
+    video_i2v_style: str = "wan"
+    bundle_config_merger: str = "wan"
+    release_t5_after_encode: bool = True
+    cfg_negative_prompt_style: str = "wan"
+    scheduler_bundle_extras: str = "wan_flow_unipc"
 
 
 def merge_wan_config_from_bundle(config: WanConfig, bundle_root: Path | None) -> None:
@@ -487,6 +526,15 @@ class CogVideoXConfig:
     vae_scale: int = 8                   # spatial latent scaling vs pixels (registry may override)
     latent_noise_dtype: str = "bfloat16" # MLX denoise activations (scheduler keeps FP32 updates)
     use_mlx_compile: bool = True         # ``mx.compile`` DiT forward after weight load (MLX only)
+    post_denoise_clear_cache: bool = True
+    geometry_check: str = "cogvideox"
+    uses_prediction_type: bool = True
+    video_vae_backend: str = "cogvideox"
+    video_i2v_style: str = "concat"
+    bundle_config_merger: str = "cogvideox"
+    release_t5_after_encode: bool = True
+    cfg_negative_prompt_style: str = "default"
+    scheduler_bundle_extras: str = "cogvideox_dpm"
 
     def __post_init__(self) -> None:
         if self.ff_inner_dim is None:
@@ -538,6 +586,17 @@ class HunyuanVideoConfig:
     text_encoder_release_after_encode: bool = True
     vae_temporal_chunk_size: int = 8
     vae_spatial_tiling: bool = False
+    inject_text_encoder_paths: bool = True
+    post_denoise_clear_cache: bool = True
+    geometry_check: str = "generic"
+    uses_hunyuan_vae_bundle: bool = True
+    video_vae_backend: str = "hunyuan"
+    video_i2v_style: str = "hunyuan"
+    bundle_config_merger: str = "hunyuan"
+    release_t5_after_encode: bool = False
+    cfg_negative_prompt_style: str = "default"
+    scheduler_bundle_extras: str = ""
+    default_encoder_type: str = "hunyuan_video_dual"
 
 
 def merge_hunyuan_transformer_config_from_bundle(config: HunyuanVideoConfig, bundle_root: Path | None) -> None:

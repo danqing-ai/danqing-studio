@@ -6,6 +6,51 @@ New model integration policy for DanQing Studio. Keep this checklist aligned wit
 - `.cursor/rules/model-migration.mdc`
 - `.cursor/rules/no-silent-degrade.mdc`
 - `docs/dual_platform_architecture.md`
+- `docs/canonical_image_family_flux2.md` — **canonical Shape A template**
+
+---
+
+## 0) Plugin shape decision (A / B / C)
+
+Pick **one** shape before writing code:
+
+| Shape | When | Entry | Copy template |
+|-------|------|-------|---------------|
+| **A — DiT + ImagePipeline** | Standard txt2img / edit with `TransformerBase.forward(latents, t, txt_embeds=…)` | `ImagePipeline.run()` | **flux2** (`docs/canonical_image_family_flux2.md`) |
+| **B — Job Pipeline** | Upscale / MM-DiT with non-standard denoise API | `ImageUpscalePipeline` → `families/<family>/job_*.py` | seedvr2 |
+| **C — Generation Facade** | End-to-end audio or whole-stack generator | `MusicPipeline` → `families/<family>/generation.py` | ace_step, heartmula |
+
+**Do not** mirror upstream directory trees (e.g. `families/<family>/mlx/`). HeartMuLa's `mlx/` subtree is allowlisted temporarily only.
+
+```
+Need standard image denoise loop?
+├─ yes → Shape A (flux2 template)
+└─ no
+   ├─ upscale / SR job? → Shape B
+   └─ audio / full generator? → Shape C
+```
+
+---
+
+## 0b) Five registration touch points (Shape A)
+
+Complete **all five** before merging:
+
+- [ ] **`default_config/models_registry.json`** — required: `family`, `engine`, `actions`, `backends`, bilingual `name`/`description`
+- [ ] **`make sync-models-registry`**
+- [ ] **`backend/engine/config/model_configs.py`** — dataclass, `FAMILY_CONFIG_MAP`, `IMAGE_FAMILY_REUSE_CONTRACT`
+- [ ] **`backend/engine/_transformer_registry.py`** — `_TRANSFORMER`, `_WEIGHT_REMAP`, `_TEXT_ENCODER`, optional `_IMAGE_LORA_MERGE`
+- [ ] **`backend/engine/vae_codec_registry.py`** — only if VAE `_class_name` ≠ generic `AutoencoderKL`
+
+`family` is **required** in registry JSON (`ModelRegistry.load` fails loud if missing).
+
+---
+
+## 0c) VAE handling (Shape A)
+
+- [ ] **Generic** — `AutoencoderKL` + `common/vae/decoder.py` (no codec registration)
+- [ ] **Family codec** — register `_class_name` in `vae_codec_registry.py` (flux2, qwen, wan)
+- [ ] **Large VAE subtree** — `common/vae/<name>/` acceptable when mapping table is long (qwen_image)
 
 ---
 
@@ -49,7 +94,11 @@ New model integration policy for DanQing Studio. Keep this checklist aligned wit
 
 - [ ] Read upstream for math reference only (do not mirror upstream directory tree)
 - [ ] Confirm `media`, `actions`, `backends` and fail-loud behavior
-- [ ] Pick nearest in-repo reference family (e.g. Flux2 / Z-Image / Wan)
+- [ ] Pick nearest in-repo reference family:
+  - Shape A: **Flux2** (preferred) or Z-Image / Qwen
+  - Shape B: seedvr2
+  - Shape C: ace_step (`generation.py` facade)
+- [ ] Optional scaffold: `python scripts/scaffold_image_family.py --family my_family --class MyFamilyTransformer`
 - [ ] Split planned code into:
   - reusable common math
   - family-specific topology/remap

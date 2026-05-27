@@ -308,6 +308,8 @@ class SanityCase:
     top_k: Optional[int] = None
     codec_steps: Optional[int] = None
     codec_guidance: Optional[float] = None
+    long_form_temperature: Optional[float] = None
+    long_form_topk: Optional[int] = None
     # Quality gate overrides (per-case/per-model); keys are consumed by metrics.py
     image_quality_thresholds: dict[str, float] = field(default_factory=dict)
     audio_quality_thresholds: dict[str, float] = field(default_factory=dict)
@@ -527,7 +529,7 @@ ALL_SANITY_CASES: list[SanityCase] = [
         guidance=1.5,
         temperature=1.0,
         top_k=50,
-        codec_steps=10,
+        codec_steps=20,
         codec_guidance=1.25,
         seed=42,
         audio_format="wav",

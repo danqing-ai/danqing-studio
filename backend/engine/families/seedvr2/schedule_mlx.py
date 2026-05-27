@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-"""SeedVR2 超分调度器：基类 + Euler 实现 + 注册表（与 ``job_mlx`` 同包）。"""
+"""SeedVR2 超分调度器（job-local MLX 多步实现）。
+
+``backend.engine.common.schedulers.SeedVR2EulerScheduler`` 供 ``get_scheduler()`` /
+Pipeline 单步 SR 路径使用；本模块保留 ``job_mlx`` 所需的多步 ``config`` 驱动 Euler，
+二者 API 不同，不可互换。
+"""
 
 from abc import ABC, abstractmethod
 

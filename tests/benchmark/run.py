@@ -1092,6 +1092,10 @@ class SanitySuiteRunner(BenchmarkRunner):
             cmd.extend(["--codec-steps", str(int(case.codec_steps))])
         if case.codec_guidance is not None:
             cmd.extend(["--codec-guidance", str(float(case.codec_guidance))])
+        if case.long_form_temperature is not None:
+            cmd.extend(["--long-form-temperature", str(float(case.long_form_temperature))])
+        if case.long_form_topk is not None:
+            cmd.extend(["--long-form-topk", str(int(case.long_form_topk))])
         try:
             t0 = time.time()
             env = os.environ.copy()

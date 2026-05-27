@@ -34,7 +34,11 @@ from backend.engine.platform import PlatformInfo
 from backend.engine.danqing_audio_engine import DanQingAudioEngine
 from backend.engine.danqing_image_engine import DanQingImageEngine
 from backend.engine.danqing_video_engine import DanQingVideoEngine
-from backend.engine.common.cache import ModelCache
+from backend.engine.memory_policy import (
+    apply_memory_settings,
+    build_gpu_runtimes,
+    build_shared_model_cache,
+)
 from backend.services.services import SettingsService
 from backend.services.download_service import DownloadService
 from backend.scheduler.task_scheduler import TaskScheduler
@@ -143,27 +147,14 @@ def _setup_dependencies():
     registry_json = path_resolver.get_models_registry_path()
     model_registry = ModelRegistry.load(registry_json)
 
-    # v4 模型缓存 — honor user ``mlx_memory_limit`` (GB)
-    shared_cache = ModelCache(
-        get_memory_limit=lambda: float(config_store.load().mlx_memory_limit),
-        reserve_gb=20.0,
-    )
-
-    # 检测平台并构建 RuntimeContext 字典
+    app_settings = config_store.load()
+    shared_cache = build_shared_model_cache(config_store.load)
     platforms = PlatformInfo.detect()
     _logger.info(f"Detected GPU backends: {platforms}")
-    runtimes: dict[str, Any] = {}
-    if "mlx" in platforms:
-        from backend.engine.runtime.mlx import MLXContext
-
-        runtimes["mlx"] = MLXContext()
-    if "cuda" in platforms:
-        from backend.engine.runtime.cuda import CudaContext
-
-        runtimes["cuda"] = CudaContext()
-
+    runtimes = build_gpu_runtimes(app_settings)
     if not runtimes:
         raise RuntimeError("No GPU backend available (need MLX on Apple Silicon or CUDA on NVIDIA)")
+    apply_memory_settings(app_settings, runtimes, shared_cache)
 
     # v4 丹青引擎
     danqing_image = DanQingImageEngine(
@@ -215,6 +206,7 @@ def _setup_dependencies():
         task_scheduler=scheduler,
         asset_store_v3=asset_store,
         shared_model_cache=shared_cache,
+        gpu_runtimes=runtimes,
     )
 
 

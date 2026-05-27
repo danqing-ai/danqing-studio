@@ -384,6 +384,46 @@ class SQLiteAssetStore(IAssetStore):
             conn.commit()
             return cur.rowcount > 0
 
+    def purge_generation_step_previews(self, task_id: str) -> int:
+        """Remove ephemeral denoise-step previews wrongly registered as assets (legacy)."""
+        if not task_id:
+            return 0
+        with self._conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT id FROM assets
+                WHERE source_task_id = ?
+                  AND (
+                    source_action = 'preview'
+                    OR metadata LIKE '%"preview": true%'
+                    OR metadata LIKE '%"preview":true%'
+                  )
+                """,
+                (task_id,),
+            ).fetchall()
+        n = 0
+        for row in rows:
+            if self.delete(row["id"]):
+                n += 1
+        return n
+
+    def purge_all_generation_step_previews(self) -> int:
+        """One-shot cleanup of legacy step previews registered as gallery assets."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                """
+                SELECT id FROM assets
+                WHERE source_action = 'preview'
+                   OR metadata LIKE '%"preview": true%'
+                   OR metadata LIKE '%"preview":true%'
+                """
+            ).fetchall()
+        n = 0
+        for row in rows:
+            if self.delete(row["id"]):
+                n += 1
+        return n
+
     def list_assets(
         self,
         *,
@@ -394,6 +434,7 @@ class SQLiteAssetStore(IAssetStore):
         model: Optional[str] = None,
         search: Optional[str] = None,
         exclude_upload_refs: bool = False,
+        exclude_step_previews: bool = True,
         sort_by: str = "created_at",
         sort_order: str = "desc",
         limit: int = 100,
@@ -421,6 +462,11 @@ class SQLiteAssetStore(IAssetStore):
             args.append(f"%{search}%")
         if exclude_upload_refs:
             where.append("NOT (COALESCE(source_task_id, '') = '' AND source_action = 'upload')")
+        if exclude_step_previews:
+            where.append(
+                "(COALESCE(source_action, '') != 'preview' AND "
+                "metadata NOT LIKE '%\"preview\": true%' AND metadata NOT LIKE '%\"preview\":true%')"
+            )
 
         order_col = "created_at" if sort_by in ("created_at", "name", "width", "height") else "created_at"
         order_dir = "DESC" if sort_order.lower() == "desc" else "ASC"

@@ -59,13 +59,25 @@ def main():
         "--codec-steps",
         type=int,
         default=None,
-        help="HeartMuLa codec ODE steps (4-24)",
+        help="HeartMuLa codec ODE steps (4-32)",
     )
     parser.add_argument(
         "--codec-guidance",
         type=float,
         default=None,
         help="HeartMuLa codec guidance (1.0-2.0)",
+    )
+    parser.add_argument(
+        "--long-form-temperature",
+        type=float,
+        default=None,
+        help="HeartMuLa long-form (>120s) LM temperature (0.9-1.5)",
+    )
+    parser.add_argument(
+        "--long-form-topk",
+        type=int,
+        default=None,
+        help="HeartMuLa long-form (>120s) LM top-k (20-150)",
     )
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument("--n", type=int, default=2)
@@ -93,6 +105,8 @@ def main():
         top_k=args.top_k,
         codec_steps=args.codec_steps,
         codec_guidance=args.codec_guidance,
+        long_form_temperature=args.long_form_temperature,
+        long_form_topk=args.long_form_topk,
         seed=args.seed,
         n=args.n,
         audio_format=args.audio_format,

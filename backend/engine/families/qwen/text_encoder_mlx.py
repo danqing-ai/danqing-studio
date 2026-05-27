@@ -13,13 +13,14 @@ from mlx import nn
 
 from backend.engine.common.attention import (
     rotate_half,
+    scaled_dot_product_attention_bhsd_mx,
 )
 from backend.engine.runtime.mlx import MLXContext
 from backend.engine.common.embeddings import (
     pad_ragged_1d_sequences,
     pad_ragged_2d_sequences,
 )
-from backend.engine.common.mlx_runtime_fallback import load_weights_dict
+from backend.engine.common.mlx_runtime_fallback import load_weights_dict, run_eval
 from backend.engine.families.qwen.weights import apply_qwen_text_encoder_weights
 from backend.engine.common.text_encoders.qwen3_mlx import MlxSwiGLUMLP
 
@@ -131,7 +132,9 @@ class QwenAttention(nn.Module):
             value_states = QwenAttention._repeat_kv(value_states, self.num_key_value_groups)
 
         mask = attention_mask[:, :, :, : key_states.shape[-2]].astype(query_states.dtype) if attention_mask is not None else None
-        attn_output = mx.fast.scaled_dot_product_attention(query_states, key_states, value_states, scale=self.scaling, mask=mask)
+        attn_output = scaled_dot_product_attention_bhsd_mx(
+            mx, query_states, key_states, value_states, scale=self.scaling, mask=mask,
+        )
         attn_output = attn_output.transpose(0, 2, 1, 3).reshape(bsz, q_len, self.hidden_size)
         attn_output = self.o_proj(attn_output)
         return attn_output
@@ -441,6 +444,90 @@ def _nested_without_encoder_visual(nested: dict) -> dict:
     return out
 
 
+def _read_qwen25vl_encoder_config(
+    model_dir: Path,
+    config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if config is not None:
+        return config
+    cfg_path = model_dir / "config.json"
+    if cfg_path.is_file():
+        data = json.loads(cfg_path.read_text(encoding="utf-8"))
+        if isinstance(data.get("text_config"), dict):
+            return data["text_config"]
+        return data
+    return {}
+
+
+def _glob_qwen25vl_safetensors(model_dir: Path) -> list[Path]:
+    globs = sorted(model_dir.glob("*.safetensors"))
+    if globs:
+        return globs
+    te_dir = model_dir / "text_encoder"
+    if te_dir.is_dir():
+        return sorted(te_dir.glob("*.safetensors"))
+    return []
+
+
+def load_qwen25vl_mlx_encoder(
+    model_dir: Path,
+    *,
+    config: dict[str, Any] | None = None,
+    weight_dtype: mx.Dtype | None = None,
+    skip_lm_head: bool = False,
+    strip_visual: bool = True,
+    eval_fn: Any | None = None,
+    load_fn: Any | None = None,
+    ctx: Any | None = None,
+) -> QwenEncoder:
+    """Load Qwen2.5-VL MLX encoder trunk (shared by Qwen-Image and HunyuanVideo)."""
+    root = Path(model_dir)
+    cfg = _read_qwen25vl_encoder_config(root, config)
+    encoder = QwenEncoder(
+        vocab_size=int(cfg.get("vocab_size", 152064)),
+        hidden_size=int(cfg.get("hidden_size", 3584)),
+        num_hidden_layers=int(cfg.get("num_hidden_layers", 28)),
+        max_position_embeddings=int(cfg.get("max_position_embeddings", 128000)),
+        rope_theta=float(cfg.get("rope_theta", 1_000_000.0)),
+    )
+    globs = _glob_qwen25vl_safetensors(root)
+    if not globs:
+        raise RuntimeError(f"Qwen2.5-VL: no *.safetensors under {root}")
+
+    raw: dict[str, Any] = {}
+    for sf in globs:
+        part = load_weights_dict(load_fn, str(sf))
+        for key, val in part.items():
+            if skip_lm_head and (key == "lm_head.weight" or key.startswith("lm_head.")):
+                continue
+            raw[key] = val
+
+    nested = apply_qwen_text_encoder_weights(raw)
+    if strip_visual:
+        nested = _nested_without_encoder_visual(nested)
+    enc_nested = nested.get("encoder")
+    if not isinstance(enc_nested, dict):
+        raise RuntimeError("Qwen2.5-VL: weight remap did not produce encoder.* tree.")
+    if strip_visual:
+        enc_nested = {k: v for k, v in enc_nested.items() if k != "visual"}
+
+    if weight_dtype is not None:
+        from backend.engine.common.mlx_dtype import cast_floating_mx_tree
+
+        enc_nested = cast_floating_mx_tree(enc_nested, weight_dtype)
+
+    shell = nn.Module()
+    shell.encoder = encoder
+    shell.update({"encoder": enc_nested})
+
+    if eval_fn is not None:
+        run_eval(eval_fn, shell.parameters())
+    elif ctx is not None and hasattr(ctx, "eval"):
+        ctx.eval(shell.parameters())
+
+    return shell.encoder
+
+
 class QwenImageTextEncoder:
     """HF tokenizer + 上图 ``QwenTextEncoder`` MLX 模块；权重走 ``WeightMapper``。"""
 
@@ -463,20 +550,11 @@ class QwenImageTextEncoder:
             "<|im_start|>assistant\n"
         )
         self.model = QwenTextEncoder()
-        raw: dict[str, Any] = {}
-        root = self.bundle_root
-        te_dir = root / "text_encoder"
-        globs = sorted(te_dir.glob("*.safetensors")) if te_dir.is_dir() else []
-        if not globs:
-            globs = sorted(root.glob("*.safetensors"))
-        if not globs:
-            raise RuntimeError(f"Qwen Image: no text_encoder *.safetensors under {root}")
-        load_fn = getattr(self.ctx, "load_weights", None)
-        for sf in globs:
-            raw.update(load_weights_dict(load_fn, str(sf)))
-        nested = _nested_without_encoder_visual(apply_qwen_text_encoder_weights(raw))
-        self.model.update(nested)
-        self.ctx.eval(self.model)
+        self.model.encoder = load_qwen25vl_mlx_encoder(
+            self.bundle_root,
+            ctx=self.ctx,
+            load_fn=getattr(self.ctx, "load_weights", None),
+        )
 
     def encode(self, texts: list[str]) -> tuple[Any, Any]:
         prompt = texts[0] if texts else ""

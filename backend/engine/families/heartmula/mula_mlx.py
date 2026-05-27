@@ -1,4 +1,311 @@
-"""HeartMuLa - Music Language Model."""
+"""HeartMuLa merged module: mula_mlx.py."""
+from __future__ import annotations
+
+# --- from mlx/heartmula/configuration.py ---
+
+from dataclasses import dataclass, field
+from typing import Dict, Optional, Union
+from pathlib import Path
+import json
+
+
+# Predefined model configurations
+LLAMA_CONFIGS: Dict[str, Dict] = {
+    "llama-3B": {
+        "dim": 3072,
+        "n_heads": 24,
+        "n_kv_heads": 8,
+        "n_layers": 28,
+        "hidden_dim": 8192,
+        "rope_base": 500000.0,
+        "norm_eps": 1e-5,
+    },
+    "llama-7B": {
+        "dim": 4096,
+        "n_heads": 32,
+        "n_kv_heads": 8,
+        "n_layers": 32,
+        "hidden_dim": 11008,
+        "rope_base": 500000.0,
+        "norm_eps": 1e-5,
+    },
+    "llama-300M": {
+        "dim": 3072,
+        "n_heads": 8,
+        "n_kv_heads": 4,  # GQA with 4 kv heads
+        "n_layers": 3,
+        "hidden_dim": 8192,
+        "rope_base": 500000.0,
+        "norm_eps": 1e-5,
+    },
+    "llama-400M": {
+        "dim": 4096,
+        "n_heads": 8,
+        "n_kv_heads": 8,
+        "n_layers": 3,
+        "hidden_dim": 11008,
+        "rope_base": 500000.0,
+        "norm_eps": 1e-5,
+    },
+}
+
+
+@dataclass
+class HeartMuLaConfig:
+    """Configuration for HeartMuLa music language model.
+
+    HeartMuLa is a hierarchical music generation model consisting of:
+    1. A backbone transformer (LLaMA-3B by default) for sequence modeling
+    2. A decoder transformer (LLaMA-300M by default) for multi-codebook generation
+
+    Attributes:
+        model_type: Model type identifier.
+        backbone_flavor: Backbone model architecture ("llama-3B" or "llama-7B").
+        decoder_flavor: Decoder model architecture ("llama-300M" or "llama-400M").
+        text_vocab_size: Size of text vocabulary.
+        audio_vocab_size: Size of audio vocabulary per codebook.
+        audio_num_codebooks: Number of audio codebooks (RVQ levels).
+        muq_dim: Multi-unit quantization embedding dimension.
+        max_seq_len: Maximum sequence length.
+        tie_word_embeddings: Whether to tie input/output embeddings.
+    """
+
+    model_type: str = "heartmula"
+    backbone_flavor: str = "llama-3B"
+    decoder_flavor: str = "llama-300M"
+    text_vocab_size: int = 128256
+    audio_vocab_size: int = 8197  # 8192 codes + 5 special tokens
+    audio_num_codebooks: int = 8
+    muq_dim: int = 512
+    max_seq_len: int = 8192
+    tie_word_embeddings: bool = False
+
+    @property
+    def backbone_config(self) -> Dict:
+        """Get backbone transformer configuration."""
+        return LLAMA_CONFIGS[self.backbone_flavor]
+
+    @property
+    def decoder_config(self) -> Dict:
+        """Get decoder transformer configuration."""
+        return LLAMA_CONFIGS[self.decoder_flavor]
+
+    @property
+    def backbone_dim(self) -> int:
+        """Get backbone hidden dimension."""
+        return self.backbone_config["dim"]
+
+    @property
+    def decoder_dim(self) -> int:
+        """Get decoder hidden dimension."""
+        return self.decoder_config["dim"]
+
+    @classmethod
+    def from_pretrained(cls, path: str) -> "HeartMuLaConfig":
+        """Load configuration from a pretrained model directory.
+
+        Args:
+            path: Path to the model directory containing config.json.
+
+        Returns:
+            HeartMuLaConfig instance.
+        """
+        config_path = Path(path) / "config.json"
+        if not config_path.exists():
+            raise FileNotFoundError(f"Config file not found: {config_path}")
+
+        with open(config_path, "r") as f:
+            config_dict = json.load(f)
+
+        return cls(**{k: v for k, v in config_dict.items() if k in cls.__dataclass_fields__})
+
+    def save_pretrained(self, path: Union[str, Path]) -> None:
+        """Save configuration to a directory.
+
+        Args:
+            path: Path to save the configuration.
+        """
+        save_path = Path(path)
+        save_path.mkdir(parents=True, exist_ok=True)
+
+        config_dict = {k: getattr(self, k) for k in self.__dataclass_fields__}
+
+        with open(save_path / "config.json", "w") as f:
+            json.dump(config_dict, f, indent=2)
+
+    def to_dict(self) -> dict:
+        """Convert configuration to dictionary.
+
+        Returns:
+            Configuration as dictionary.
+        """
+        return {k: getattr(self, k) for k in self.__dataclass_fields__}
+
+# --- from mlx/heartmula/backbone.py ---
+
+from typing import Optional, Tuple, List
+
+import mlx.core as mx
+import mlx.nn as nn
+
+from backend.engine.families.heartmula.nn_mlx import (
+    RMSNorm,
+    build_llama_transformer_layers,
+    forward_llama_transformer_stack,
+    llama_stack_from_config,
+    setup_llama_kv_cache,
+)
+from backend.engine.families.heartmula.nn_mlx import KVCache
+
+
+class HeartMuLaBackbone(nn.Module):
+    """Backbone transformer for HeartMuLa.
+
+    This is a LLaMA-style transformer that processes the combined
+    text and audio sequence to predict the first codebook (codebook 0).
+    """
+
+    def __init__(
+        self,
+        dim: int = 3072,
+        n_heads: int = 24,
+        n_kv_heads: int = 8,
+        n_layers: int = 28,
+        hidden_dim: int = 8192,
+        max_seq_len: int = 8192,
+        norm_eps: float = 1e-5,
+        rope_base: float = 500000.0,
+    ):
+        super().__init__()
+
+        self.dim = dim
+        self.n_heads = n_heads
+        self.n_kv_heads = n_kv_heads
+        self.n_layers = n_layers
+        self.head_dim = dim // n_heads
+
+        self.layers = build_llama_transformer_layers(
+            n_layers=n_layers,
+            dim=dim,
+            n_heads=n_heads,
+            n_kv_heads=n_kv_heads,
+            hidden_dim=hidden_dim,
+            max_seq_len=max_seq_len,
+            norm_eps=norm_eps,
+            rope_base=rope_base,
+        )
+        self.norm = RMSNorm(dim, eps=norm_eps)
+
+    def __call__(
+        self,
+        hidden_states: mx.array,
+        mask: Optional[mx.array] = None,
+        cache: Optional[KVCache | List] = None,
+    ) -> Tuple[mx.array, KVCache | List]:
+        return forward_llama_transformer_stack(
+            layers=self.layers,
+            norm=self.norm,
+            hidden_states=hidden_states,
+            mask=mask,
+            cache=cache,
+        )
+
+    def setup_cache(self, batch_size: int, max_seq_len: int) -> KVCache:
+        return setup_llama_kv_cache(
+            batch_size=batch_size,
+            max_seq_len=max_seq_len,
+            n_kv_heads=self.n_kv_heads,
+            head_dim=self.head_dim,
+            n_layers=self.n_layers,
+        )
+
+    @classmethod
+    def from_config(cls, config: dict) -> "HeartMuLaBackbone":
+        return llama_stack_from_config(cls, config)
+
+# --- from mlx/heartmula/decoder.py ---
+
+from typing import Optional, Tuple, List
+
+import mlx.core as mx
+import mlx.nn as nn
+
+from backend.engine.families.heartmula.nn_mlx import (
+    RMSNorm,
+    build_llama_transformer_layers,
+    forward_llama_transformer_stack,
+    llama_stack_from_config,
+    setup_llama_kv_cache,
+)
+from backend.engine.families.heartmula.nn_mlx import KVCache
+
+
+class HeartMuLaDecoder(nn.Module):
+    """Local decoder for HeartMuLa.
+
+    This is a smaller transformer that predicts codebooks 1-7
+    given the backbone output and previously predicted codebooks.
+    """
+
+    def __init__(
+        self,
+        dim: int = 3072,
+        n_heads: int = 8,
+        n_kv_heads: int = 8,
+        n_layers: int = 3,
+        hidden_dim: int = 8192,
+        max_seq_len: int = 8192,
+        norm_eps: float = 1e-5,
+        rope_base: float = 500000.0,
+    ):
+        super().__init__()
+
+        self.dim = dim
+        self.n_heads = n_heads
+        self.n_kv_heads = n_kv_heads
+        self.n_layers = n_layers
+        self.head_dim = dim // n_heads
+
+        self.layers = build_llama_transformer_layers(
+            n_layers=n_layers,
+            dim=dim,
+            n_heads=n_heads,
+            n_kv_heads=n_kv_heads,
+            hidden_dim=hidden_dim,
+            max_seq_len=max_seq_len,
+            norm_eps=norm_eps,
+            rope_base=rope_base,
+        )
+        self.norm = RMSNorm(dim, eps=norm_eps)
+
+    def __call__(
+        self,
+        hidden_states: mx.array,
+        mask: Optional[mx.array] = None,
+        cache: Optional[KVCache | List] = None,
+    ) -> Tuple[mx.array, KVCache | List]:
+        return forward_llama_transformer_stack(
+            layers=self.layers,
+            norm=self.norm,
+            hidden_states=hidden_states,
+            mask=mask,
+            cache=cache,
+        )
+
+    def setup_cache(self, batch_size: int, max_seq_len: int) -> KVCache:
+        return setup_llama_kv_cache(
+            batch_size=batch_size,
+            max_seq_len=max_seq_len,
+            n_kv_heads=self.n_kv_heads,
+            head_dim=self.head_dim,
+            n_layers=self.n_layers,
+        )
+
+    @classmethod
+    def from_config(cls, config: dict) -> "HeartMuLaDecoder":
+        return llama_stack_from_config(cls, config)
+
+# --- from mlx/heartmula/modeling.py ---
 
 from functools import partial
 from typing import Optional, Tuple, List, Union
@@ -11,10 +318,7 @@ from backend.engine.common.mlx_runtime_fallback import (
     load_weights_dict,
     run_eval,
 )
-from backend.engine.families.heartmula.mlx.heartmula.configuration import HeartMuLaConfig
-from backend.engine.families.heartmula.mlx.heartmula.backbone import HeartMuLaBackbone
-from backend.engine.families.heartmula.mlx.heartmula.decoder import HeartMuLaDecoder
-from backend.engine.families.heartmula.mlx.nn.kv_cache import KVCache
+from backend.engine.families.heartmula.nn_mlx import KVCache
 
 
 def _run_eval(*values) -> None:

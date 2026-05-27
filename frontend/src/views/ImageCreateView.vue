@@ -87,6 +87,21 @@
             </DqAlert>
           </DqSurfaceCard>
 
+          <!-- Work title -->
+          <DqSurfaceCard class="studio-surface-card studio-card-mb">
+            <template #header>
+              <div class="card-title">
+                <DqIcon><document /></DqIcon>
+                {{ $t('studio.workTitle') }}
+              </div>
+            </template>
+            <DqInput
+              v-model="params.title"
+              clearable
+              :placeholder="$t('studio.workTitlePlaceholder')"
+            />
+          </DqSurfaceCard>
+
           <!-- Prompt (not needed for upscale) -->
           <DqSurfaceCard v-if="editMode !== 'image_upscale'"
             class="studio-surface-card studio-card-mb"
@@ -116,8 +131,11 @@
                 </DqSelect>
               </DqCol>
               <DqCol :span="6" class="studio-presets-row__action">
-                <DqButton class="studio-presets-row__control" @click="loadPreset">
-                  {{ $t('create.loadPreset') }}
+                <DqButton class="studio-presets-row__control studio-presets-row__load-btn" @click="loadPreset">
+                  <span class="studio-inline-btn">
+                    <DqIcon :size="14"><folder-opened /></DqIcon>
+                    {{ $t('create.loadPreset') }}
+                  </span>
                 </DqButton>
               </DqCol>
             </DqRow>
@@ -164,30 +182,26 @@
           <DqSurfaceCard v-if="editMode !== 'image_upscale'"
             class="studio-surface-card studio-card-mb"
           >
-            <DqCollapse v-model="advancedParamsOpen" class="studio-collapse-plain">
-              <DqCollapseItem name="advanced">
-                <template #title>
-                  <div class="studio-collapse-title-row">
-                    <DqIcon><setting /></DqIcon>
-                    <span>{{ $t('studio.advancedParams') }}</span>
-                    <DqTag v-if="hasCustomParams" size="small" type="warning">{{ $t('studio.hasCustom') }}</DqTag>
-                  </div>
-                </template>
+            <template #header>
+              <div class="card-title">
+                <DqIcon><setting /></DqIcon>
+                {{ $t('studio.advancedParams') }}
+                <DqTag v-if="hasCustomParams" size="small" type="warning">{{ $t('studio.hasCustom') }}</DqTag>
+              </div>
+            </template>
 
-                <ImageCreateAdvancedParams
-                  :params="params"
-                  :current-model-config="currentModelConfig"
-                  :edit-mode="editMode"
-                  :compatible-loras="compatibleLoras"
-                  :compatible-control-nets="compatibleControlNets"
-                  :control-image-src="controlImageSrc"
-                  :recent-images="recentImages"
-                  @reset-to-defaults="resetToDefaults"
-                  @control-asset-pick="onControlAssetPick"
-                  @remove-control-image="removeControlImage"
-                />
-              </DqCollapseItem>
-            </DqCollapse>
+            <ImageCreateAdvancedParams
+              :params="params"
+              :current-model-config="currentModelConfig"
+              :edit-mode="editMode"
+              :compatible-loras="compatibleLoras"
+              :compatible-control-nets="compatibleControlNets"
+              :control-image-src="controlImageSrc"
+              :recent-images="recentImages"
+              @reset-to-defaults="resetToDefaults"
+              @control-asset-pick="onControlAssetPick"
+              @remove-control-image="removeControlImage"
+            />
           </DqSurfaceCard>
 
           <!-- Main action (plan §2.3: primary button + queue hint) -->
@@ -220,10 +234,12 @@
                   <template v-if="currentTask.total > 0 && currentTask.status === 'running'">
                     Step {{ currentTask.step }}/{{ currentTask.total }} &nbsp;
                   </template>
+                  <span v-if="progressPhaseLabelText" class="studio-task-phase">{{ progressPhaseLabelText }}</span>
                   <DqTag :type="getStatusType(currentTask.status)" size="small">
                     {{ getStatusText(currentTask.status) }}
                   </DqTag>
                 </div>
+                <p v-if="taskQueueHint" class="studio-task-queue-hint">{{ taskQueueHint }}</p>
               </template>
             </div>
           </DqSurfaceCard>
@@ -302,19 +318,58 @@
             <DqEmpty v-else :description="$t('studio.uploadEditImage')" />
           </StudioPreviewPane>
 
-          <StudioPreviewPane :title="$t('studio.currentPreview')" icon="picture-filled">
-            <CreateImagePreview
-              v-if="previewImage"
+          <DqAlert
+            v-if="showTurboHint"
+            type="info"
+            :closable="true"
+            class="studio-turbo-hint studio-card-mb"
+            :title="$t('studio.turboModelHint')"
+          />
+          <div v-if="memoryBarVisible" class="studio-memory-bar studio-card-mb">
+            <div class="studio-memory-bar__head">
+              <span class="studio-memory-bar__title">
+                <DqIcon :size="14"><cpu /></DqIcon>
+                {{ memoryBarLabel }}
+              </span>
+              <span class="studio-memory-bar__pct">{{ memoryBarPercent }}%</span>
+            </div>
+            <DqProgress :percentage="memoryBarPercent" :show-text="false" class="studio-memory-bar__track" />
+            <p v-if="memoryBarMlxHint" class="studio-memory-bar__mlx">{{ memoryBarMlxHint }}</p>
+          </div>
+
+          <StudioPreviewPane
+            :title="$t('studio.currentPreview')"
+            icon="picture-filled"
+            class="studio-preview-pane--current"
+          >
+            <LivingCanvas
+              :key="previewImageKey"
               :src="previewImage"
               :hue="previewImageHue"
               :alt="previewCaption"
+              :empty-text="$t('studio.noPreview')"
+              :step-hint="livingCanvasStepHint"
               @download="downloadPreviewImage"
               @expand="openCurrentPreviewDialog"
             />
-            <DqEmpty v-else class="studio-preview-pane__empty" :description="$t('studio.noPreview')" />
-            <p v-if="previewImage && previewCaption" class="studio-preview-pane__caption" :title="previewCaption">
-              {{ previewCaption }}
-            </p>
+            <div v-if="previewImage && previewCaption" class="studio-preview-pane__caption-block">
+              <p class="studio-preview-pane__caption" :title="previewCaption">{{ previewCaption }}</p>
+              <p v-if="previewCaptionSub" class="studio-preview-pane__caption-sub" :title="previewCaptionSub">
+                {{ previewCaptionSub }}
+              </p>
+            </div>
+            <DqButton
+              v-if="enhanceOfferVisible"
+              type="secondary"
+              block
+              class="studio-enhance-offer-btn"
+              @click="startEnhanceGeneration"
+            >
+              <span class="studio-inline-btn">
+                <DqIcon :size="15"><magic-stick /></DqIcon>
+                {{ enhanceOfferLabel }}
+              </span>
+            </DqButton>
           </StudioPreviewPane>
 
           <StudioPreviewPane :title="$t('studio.recent')" icon="clock" split-head recent>
@@ -334,7 +389,7 @@
                   <img
                     v-if="!recentGalleryThumbFailed[String(image.path)]"
                     :src="getImageUrl(image)"
-                    :alt="String(image.name || '')"
+                    :alt="recentImageLabel(image)"
                     loading="lazy"
                     @error="markRecentGalleryThumbFailed(image)"
                   />
@@ -342,6 +397,9 @@
                     <DqIcon :size="44"><Picture /></DqIcon>
                   </div>
                 </div>
+                <p v-if="recentImageLabel(image)" class="studio-recent-grid__caption" :title="recentImageLabel(image)">
+                  {{ truncateDisplayLabel(recentImageLabel(image), 40) }}
+                </p>
                 <div class="recent-actions">
                   <DqButton class="action-btn rewrite-btn" size="sm" @click.stop="quickFromGallery(image, 'rewrite')">
                     <DqIcon :size="12"><brush /></DqIcon>
@@ -360,7 +418,7 @@
     </DqRow>
 
     <!-- Image preview dialog -->
-    <DqDialog v-model:open="previewVisible" :title="selectedImage?.name ?? ''" width="70%" center>
+    <DqDialog v-model:open="previewVisible" :title="selectedImage ? recentImageLabel(selectedImage) : ''" width="70%" center>
       <div v-if="selectedImage" class="studio-dialog-center">
         <img class="studio-dialog-img" :src="getImageUrl(selectedImage)" />
       </div>
@@ -375,7 +433,7 @@
 
 <script setup lang="ts">
 // @ts-nocheck
-import { ref, reactive, computed, watch, onMounted, inject, nextTick, unref } from 'vue';
+import { ref, reactive, computed, watch, onMounted, onUnmounted, inject, nextTick, unref } from 'vue';
 import type { Ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { toast } from '@/utils/feedback';
@@ -400,7 +458,8 @@ import ImageCreateAdvancedParams from '@/components/create/ImageCreateAdvancedPa
 import CreateUpscaleParams from '@/components/create/CreateUpscaleParams.vue';
 import CreateExtendParams from '@/components/create/CreateExtendParams.vue';
 import StudioPreviewPane from '@/components/create/StudioPreviewPane.vue';
-import CreateImagePreview from '@/components/create/CreateImagePreview.vue';
+import LivingCanvas from '@/components/create/LivingCanvas.vue';
+import { assetDisplayLabel, previewDisplayCaption, truncateDisplayLabel } from '@/utils/assetDisplay';
 import { Picture } from '@danqing/dq-shell';
 
 /* ------------------------------------------------------------------ */
@@ -486,6 +545,7 @@ function parseModelVersionValue(value: string): { modelKey: string; versionKey: 
 /* ------------------------------------------------------------------ */
 
 const params = reactive<Record<string, unknown>>({
+  title: '',
   prompt: '',
   negative_prompt: '',
   model: '',
@@ -522,9 +582,93 @@ const genLogLastStep = ref(0);
 /** 'denoise' | 'post' — log post-phase line once when SSE reports message post */
 const genLogLastPhase = ref('');
 const previewImage = ref('');
+/** Bust browser cache when the same asset URL is reused during step previews. */
+const previewImageKey = ref(0);
 const currentPreviewDialogOpen = ref(false);
+/** Keep SSE alive for the active generation (do not rely on GC). */
+let activeGenStream: EventSource | null = null;
+let previewPollTimer: ReturnType<typeof setInterval> | null = null;
+let previewBlobUrl: string | null = null;
 
-const previewCaption = computed(() => (params.prompt || '').trim());
+function closeGenStream() {
+  if (activeGenStream) {
+    activeGenStream.close();
+    activeGenStream = null;
+  }
+}
+
+function stopPreviewPoll() {
+  if (previewPollTimer != null) {
+    clearInterval(previewPollTimer);
+    previewPollTimer = null;
+  }
+}
+
+function revokePreviewBlobUrl() {
+  if (previewBlobUrl) {
+    URL.revokeObjectURL(previewBlobUrl);
+    previewBlobUrl = null;
+  }
+}
+
+function applyPreviewUrl(url: unknown) {
+  if (!url) return;
+  revokePreviewBlobUrl();
+  const raw = String(url);
+  const base = raw.startsWith('http') ? raw : raw.startsWith('/') ? raw : `/${raw}`;
+  previewImage.value = `${base}${base.includes('?') ? '&' : '?'}t=${Date.now()}`;
+  previewImageKey.value += 1;
+}
+
+/** Step preview: poll GET /api/tasks/{id}/preview (backend writes work_dir/preview_latest.png). */
+async function pollTaskPreviewOnce(taskId: string) {
+  if (!taskId) return;
+  const url = `${api.tasks.previewUrl(taskId)}?t=${Date.now()}`;
+  try {
+    const res = await fetch(url, { method: 'GET', cache: 'no-store' });
+    if (!res.ok) return;
+    const blob = await res.blob();
+    if (!blob.size) return;
+    revokePreviewBlobUrl();
+    previewBlobUrl = URL.createObjectURL(blob);
+    previewImage.value = previewBlobUrl;
+    previewImageKey.value += 1;
+  } catch {
+    /* 404 until first step preview is written */
+  }
+}
+
+function startPreviewPoll(taskId: string) {
+  stopPreviewPoll();
+  const tick = () => {
+    if (!generating.value || String(currentTask.value?.id || '') !== taskId) {
+      stopPreviewPoll();
+      return;
+    }
+    pollTaskPreviewOnce(taskId);
+  };
+  tick();
+  previewPollTimer = setInterval(tick, 1500);
+}
+
+function applyPreviewAsset(assetId: unknown) {
+  if (!assetId) return;
+  revokePreviewBlobUrl();
+  const id = String(assetId);
+  previewImage.value = `${api.gallery.getImageUrl(`asset:${id}`)}?t=${Date.now()}`;
+  previewImageKey.value += 1;
+}
+
+const previewCaption = computed(() =>
+  previewDisplayCaption(String(params.title || ''), String(params.prompt || '')),
+);
+
+const previewCaptionSub = computed(() => {
+  const title = String(params.title || '').trim();
+  const prompt = String(params.prompt || '').trim();
+  if (title && prompt) return prompt;
+  return '';
+});
 
 const previewImageHue = computed(() => {
   let h = 0;
@@ -563,7 +707,6 @@ const markRecentGalleryThumbFailed = (image: Record<string, unknown>) => {
   if (!p) return;
   recentGalleryThumbFailed.value = { ...recentGalleryThumbFailed.value, [p]: true };
 };
-const advancedParamsOpen = ref<string[]>(['advanced']);
 const compatibleLoras = ref<Array<Record<string, unknown>>>([]);
 const compatibleControlNets = ref<Array<Record<string, unknown>>>([]);
 const controlImageSrc = ref('');
@@ -818,11 +961,183 @@ const editingSubModeDesc = computed(() => {
 });
 
 const submitDisabled = computed(() => {
+  if (generating.value) return true;
   if (selectedModelNotReady.value) return true;
   if (editMode.value === 'image_upscale') {
     return !editImageSrc.value;
   }
   return !String(params.prompt || '').trim();
+});
+
+const showTurboHint = computed(() => {
+  if (editMode.value !== 'image_generation') return false;
+  const m = String(params.model || '');
+  return m === 'z-image' || m === 'flux1-dev';
+});
+
+const memoryLive = reactive({
+  usedGb: 0,
+  totalGb: 0,
+  mlxActiveGb: 0,
+});
+
+let memoryPollTimer: ReturnType<typeof setInterval> | null = null;
+
+async function refreshMemoryLive() {
+  try {
+    const metrics = (await api.system.metrics()) as {
+      memory?: { total_gb?: number; used_gb?: number };
+    };
+    const mem = metrics?.memory;
+    if (mem && Number(mem.total_gb) > 0) {
+      memoryLive.totalGb = Number(mem.total_gb);
+      memoryLive.usedGb = Number(mem.used_gb ?? 0);
+    }
+    const cache = (await api.system.getCacheStatus()) as {
+      mlx?: { active_gb?: number };
+    };
+    const active = cache?.mlx?.active_gb;
+    if (active != null && Number(active) >= 0) {
+      memoryLive.mlxActiveGb = Number(active);
+    }
+  } catch {
+    /* ignore transient monitor errors */
+  }
+}
+
+function stopMemoryPoll() {
+  if (memoryPollTimer != null) {
+    clearInterval(memoryPollTimer);
+    memoryPollTimer = null;
+  }
+}
+
+function startMemoryPoll(fast = false) {
+  stopMemoryPoll();
+  void refreshMemoryLive();
+  memoryPollTimer = setInterval(() => {
+    void refreshMemoryLive();
+  }, fast ? 3000 : 12000);
+}
+
+const memoryBarVisible = computed(() => {
+  const si = unref(systemInfo);
+  return si && Number(si.memory_gb) > 0;
+});
+
+const memoryBarUsedGb = computed(() => {
+  const si = unref(systemInfo) as SystemInfo | undefined;
+  if (memoryLive.usedGb > 0) return memoryLive.usedGb;
+  const fromInfo = Number(si?.memory_used_gb);
+  if (Number.isFinite(fromInfo) && fromInfo > 0) return fromInfo;
+  const total = Number(si?.memory_gb) || 0;
+  const avail = Number(si?.memory_available_gb);
+  if (total > 0 && Number.isFinite(avail) && avail >= 0 && avail < total) {
+    return total - avail;
+  }
+  return 0;
+});
+
+const memoryBarTotalGb = computed(() => {
+  if (memoryLive.totalGb > 0) return memoryLive.totalGb;
+  const si = unref(systemInfo) as SystemInfo | undefined;
+  return Number(si?.memory_gb) || 0;
+});
+
+const memoryBarLabel = computed(() => {
+  const total = memoryBarTotalGb.value;
+  const used = memoryBarUsedGb.value;
+  if (!total) return '';
+  return $tt('studio.memoryBarLabel', {
+    used: used > 0 ? used.toFixed(1) : '—',
+    total: total.toFixed(1),
+  });
+});
+
+const memoryBarPercent = computed(() => {
+  const total = memoryBarTotalGb.value;
+  const used = memoryBarUsedGb.value;
+  if (!total || !used) return 0;
+  return Math.min(100, Math.round((used / total) * 100));
+});
+
+const memoryBarMlxHint = computed(() => {
+  const si = unref(systemInfo) as SystemInfo | undefined;
+  const limit = Number(si?.mlx_memory_limit) || 0;
+  const active = memoryLive.mlxActiveGb > 0
+    ? memoryLive.mlxActiveGb
+    : Number(si?.mlx_active_gb) || 0;
+  if (!limit || active <= 0) return '';
+  return $tt('studio.memoryBarMlxHint', {
+    used: active.toFixed(1),
+    limit: limit.toFixed(0),
+  });
+});
+
+const livingCanvasStepHint = computed(() => {
+  const t = currentTask.value;
+  if (!t || t.status !== 'running') return '';
+  const step = Number(t.step) || 0;
+  const total = Number(t.total) || 0;
+  if (step > 0 && total > 0 && previewImage.value) {
+    return $tt('studio.livingCanvasStep', { step, total });
+  }
+  return '';
+});
+
+const taskQueueHint = computed(() => {
+  const t = currentTask.value;
+  if (!t || t.status !== 'queued') return '';
+  const pos = Number(t.queue_position);
+  const sec = Number(t.estimated_wait_seconds);
+  if (pos > 0 && sec > 0) {
+    return $tt('studio.taskQueuedHint', { pos, sec: Math.round(sec) });
+  }
+  if (pos > 0) {
+    return $tt('studio.taskQueuedHintNoEta', { pos });
+  }
+  return '';
+});
+
+const progressPhaseLabelText = computed(() => {
+  const t = currentTask.value;
+  if (!t || (t.status !== 'running' && t.status !== 'queued')) return '';
+  return progressPhaseLabel(
+    (t.progress_phase as string) || '',
+    (t.progress_message as string) || ''
+  );
+});
+
+function progressPhaseLabel(phase: string, message: string): string {
+  const key = phase || (message === 'denoise' ? 'denoising' : message === 'post' ? 'decoding' : message);
+  if (!key || key === 'denoise' || key === 'post') {
+    if (key === 'denoise') return $tt('studio.phase.denoising');
+    if (key === 'post') return $tt('studio.phase.decoding');
+    return '';
+  }
+  const i18nKey = `studio.phase.${key}`;
+  const out = $tt(i18nKey);
+  return out !== i18nKey ? out : '';
+}
+
+function taskErrorMessage(row: Record<string, unknown>): string {
+  return String(row.error ?? row.error_message ?? '');
+}
+
+const enhanceOfferVisible = computed(() => {
+  if (editMode.value !== 'image_generation' || generating.value) return false;
+  if (!previewImage.value || !currentTask.value) return false;
+  if (currentTask.value.status !== 'completed') return false;
+  const m = String(params.model || '');
+  return m === 'z-image-turbo' || m === 'flux1-schnell';
+});
+
+const enhanceOfferLabel = computed(() => {
+  const m = String(params.model || '');
+  const target = m === 'flux1-schnell' ? 'flux1-dev' : 'z-image';
+  const cfg = modelRegistry.value[target] as { name?: string | { zh?: string; en?: string } } | undefined;
+  const name = cfg ? $mn(cfg, target) : target;
+  return $tt('studio.enhanceWithModel', { name });
 });
 
 const primaryCtaLabel = computed(() => {
@@ -1097,6 +1412,9 @@ const startGeneration = async () => {
 
   // Immediately show "submitting" progress to give visual feedback
   generating.value = true;
+  revokePreviewBlobUrl();
+  previewImage.value = '';
+  previewImageKey.value += 1;
   currentTask.value = {
     id: '',
     progress: 0,
@@ -1119,12 +1437,31 @@ const startGeneration = async () => {
     const tid = taskIdFromSubmitResponse(submitRes);
     if (!tid) {
       addLog($tt('studio.error', { msg: 'missing task id in submit response' }), 'error');
+      generating.value = false;
       return;
     }
-    attachStream(tid);
+    const taskBlock =
+      submitRes != null && typeof submitRes === 'object'
+        ? (submitRes as Record<string, unknown>).task
+        : null;
+    attachStream(tid, taskBlock as Record<string, unknown> | null);
   };
 
-  const attachStream = (tid: string) => {
+  const refreshTaskSnapshot = async (tid: string) => {
+    try {
+      const updated = (await api.gen.getMediaTask(tid)) as Record<string, unknown>;
+      if (currentTask.value && String(currentTask.value.id) === tid) {
+        currentTask.value = { ...currentTask.value, ...updated };
+      }
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const attachStream = (tid: string, submitTask: Record<string, unknown> | null = null) => {
+    closeGenStream();
+    stopPreviewPoll();
+    tasksStore.registerPageOwnedStream(tid);
     genLogLastStep.value = 0;
     genLogLastPhase.value = '';
     currentTask.value = {
@@ -1133,12 +1470,17 @@ const startGeneration = async () => {
       step: 0,
       total: 0,
       status: 'queued',
+      queue_position: submitTask?.queue_position,
+      estimated_wait_seconds: submitTask?.estimated_wait_seconds,
       params: {
         model: modelStr,
+        title: String(params.title || '').trim(),
         prompt: editMode.value === 'image_upscale' ? '' : params.prompt,
       },
     };
-    api.gen.streamMediaTask(tid, {
+    startPreviewPoll(tid);
+    void refreshTaskSnapshot(tid);
+    activeGenStream = api.gen.streamMediaTask(tid, {
       onLog: (logData: unknown) => ingestServerLog(logData as Record<string, unknown>),
       onStatus: (statusData: unknown) => {
         if (currentTask.value) {
@@ -1147,27 +1489,43 @@ const startGeneration = async () => {
         }
       },
       onDone: async (doneData: unknown) => {
+        generating.value = false;
+        stopPreviewPoll();
+        closeGenStream();
+        tasksStore.unregisterPageOwnedStream(tid);
         const data = doneData as Record<string, unknown>;
         if (data.status === 'completed') {
           addLog($tt('studio.genComplete'), 'success');
-          const updated = await api.gen.getMediaTask(tid);
-          currentTask.value = updated as Record<string, unknown>;
-          const pid = (updated as Record<string, unknown>).result && ((updated as Record<string, unknown>).result as Record<string, unknown>).primary_asset_id;
+          const updated = (await api.gen.getMediaTask(tid)) as Record<string, unknown>;
+          currentTask.value = updated;
+          const pid =
+            updated.result &&
+            (updated.result as Record<string, unknown>).primary_asset_id;
           if (pid) {
-            previewImage.value = api.gallery.getImageUrl(`asset:${pid}`);
+            applyPreviewAsset(pid);
             addLog($tt('studio.outputFile', { name: String(pid) }), 'info');
           }
           loadRecentImages();
         } else if (data.status === 'failed') {
-          const updated = await api.gen.getMediaTask(tid);
-          currentTask.value = updated as Record<string, unknown>;
-          addLog($tt('studio.genFailed', { msg: String(((updated as Record<string, unknown>).error_message || '')) }), 'error');
+          const updated = (await api.gen.getMediaTask(tid)) as Record<string, unknown>;
+          currentTask.value = updated;
+          addLog($tt('studio.genFailed', { msg: taskErrorMessage(updated) }), 'error');
+        } else {
+          currentTask.value = { ...(currentTask.value || {}), status: data.status };
         }
       },
-      onError: () => addLog($tt('studio.connectionLost'), 'warning'),
+      onError: () => {
+        stopPreviewPoll();
+        closeGenStream();
+        tasksStore.unregisterPageOwnedStream(tid);
+        addLog($tt('studio.connectionLost'), 'warning');
+      },
       onProgress: (progressData: unknown) => {
         const data = progressData as Record<string, unknown>;
         if (!currentTask.value) return;
+        if (currentTask.value.status === 'queued' && data.progress != null) {
+          currentTask.value.status = 'running';
+        }
         if (typeof data.progress === 'number') {
           currentTask.value.progress = data.progress;
         }
@@ -1177,6 +1535,15 @@ const startGeneration = async () => {
           data.total != null ? data.total : currentTask.value.total;
         currentTask.value.step = nextStep;
         currentTask.value.total = nextTotal;
+        if (data.phase === 'denoising') {
+          pollTaskPreviewOnce(String(currentTask.value.id || ''));
+        }
+        if (data.phase) {
+          currentTask.value.progress_phase = data.phase;
+        }
+        if (data.message) {
+          currentTask.value.progress_message = data.message;
+        }
         if (data.message === 'post') {
           if (genLogLastPhase.value !== 'post') {
             genLogLastPhase.value = 'post';
@@ -1184,6 +1551,10 @@ const startGeneration = async () => {
           }
         } else if (data.message === 'denoise') {
           genLogLastPhase.value = 'denoise';
+        } else if (data.phase && genLogLastPhase.value !== String(data.phase)) {
+          genLogLastPhase.value = String(data.phase);
+          const label = progressPhaseLabel(String(data.phase), '');
+          if (label) addLog(label, 'info');
         }
         if (nextTotal > 0 && nextStep > 0) {
           genLogLastStep.value = nextStep as number;
@@ -1277,6 +1648,7 @@ const startGeneration = async () => {
         operation,
         source_asset_id,
         mask_asset_id,
+        title: String(params.title || '').trim(),
         prompt: params.prompt,
         negative_prompt: params.negative_prompt || '',
         source_fidelity: Math.min(0.95, Math.max(0.05, 1 - (params.strength ?? 0.4))),
@@ -1315,6 +1687,7 @@ const startGeneration = async () => {
     if (params.controlnet && control_asset_id) {
       submitRes = await api.gen.createImageGeneration({
         model: modelStr,
+        title: String(params.title || '').trim(),
         prompt: params.prompt,
         negative_prompt: params.negative_prompt || '',
         size: `${params.width}x${params.height}`,
@@ -1334,6 +1707,7 @@ const startGeneration = async () => {
     } else {
       submitRes = await api.gen.createImageGeneration({
         model: modelStr,
+        title: String(params.title || '').trim(),
         prompt: params.prompt,
         negative_prompt: params.negative_prompt || '',
         size: `${params.width}x${params.height}`,
@@ -1350,10 +1724,28 @@ const startGeneration = async () => {
     tasksStore.pollQueueOnce();
   } catch (e) {
     generating.value = false;
+    stopPreviewPoll();
+    closeGenStream();
     currentTask.value = null;
     addLog($tt('studio.error', { msg: (e as Error).message || String(e) }), 'error');
   }
 };
+
+function startEnhanceGeneration() {
+  const m = String(params.model || '');
+  const target = m === 'flux1-schnell' ? 'flux1-dev' : 'z-image';
+  params.model = target;
+  const cfg = modelRegistry.value[target] as { versions?: Record<string, Record<string, unknown>> } | undefined;
+  const versions = cfg?.versions || {};
+  const vKey =
+    Object.keys(versions).find((k) => versions[k]?.default) || Object.keys(versions)[0] || '';
+  if (vKey) {
+    params.version = vKey;
+    selectedModelVersion.value = `${target}|${vKey}`;
+    onModelVersionChange(selectedModelVersion.value);
+  }
+  void startGeneration();
+}
 
 // Load recent images
 const loadRecentImages = async () => {
@@ -1372,6 +1764,9 @@ const loadRecentImages = async () => {
 const getImageUrl = (image: Record<string, unknown>) => {
   return api.gallery.getImageUrl(String(image.path || ''));
 };
+
+const recentImageLabel = (image: Record<string, unknown>) =>
+  assetDisplayLabel(image as import('@/types').GalleryItem, '');
 
 // Image preview
 const previewVisible = ref(false);
@@ -1470,6 +1865,7 @@ onMounted(async () => {
   await applyAppSettingsDefaults();
   loadPresets();
   loadRecentImages();
+  startMemoryPoll(false);
   const fromGal = localStorage.getItem(DQ_STORAGE.IMG2IMG_REF);
   if (fromGal) {
     setImageWorkMode('rewrite_reference');
@@ -1478,6 +1874,17 @@ onMounted(async () => {
     localStorage.removeItem(DQ_STORAGE.IMG2IMG_REF);
     toast.success($tt('create.img2imgFromGallery'));
   }
+});
+
+onUnmounted(() => {
+  stopPreviewPoll();
+  stopMemoryPoll();
+  closeGenStream();
+  revokePreviewBlobUrl();
+});
+
+watch(generating, (running) => {
+  startMemoryPoll(running);
 });
 
 // Watch edit mode switch: auto-select a supported model for image editing

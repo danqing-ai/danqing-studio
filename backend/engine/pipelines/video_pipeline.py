@@ -19,7 +19,7 @@ from typing import Any, Callable
 
 from backend.core.contracts import (
     ExecutionContext, VideoGenerationRequest, VideoEditRequest,
-    LogEvent, ProgressEvent, parse_model_version, parse_size,
+    LogEvent, ProgressEvent, parse_model_version, parse_size, work_title_metadata,
 )
 from backend.engine.common.cache import ModelCache
 from backend.engine.common.pipeline_registry import (
@@ -30,6 +30,24 @@ from backend.engine.common.pipeline_registry import (
 )
 from backend.engine.common.schedulers import get_scheduler
 from backend.engine.common.text_encoders import T5Encoder
+from backend.engine.common.video_runtime_contracts import (
+    merge_video_bundle_config,
+    resolve_wan_shift_value,
+    video_apply_i2v_conditioning,
+    video_cfg_negative_prompt,
+    video_encoder_type,
+    video_i2v_encode_failure_message,
+    video_infer_log_extras,
+    video_prepare_i2v_source_image,
+    video_resolve_shift_value,
+    video_rotary_model_kwargs,
+    video_scheduler_ctor_kwargs,
+    video_snap_pixel_dims_if_needed,
+    video_t5_max_seq_len,
+    video_validate_generate_geometry,
+    wan_t5_bundle_paths,
+)
+from backend.engine.video_codec_registry import get_video_decode_handler, get_video_encode_handler
 from backend.engine._transformer_registry import (
     encode_video_prompt as _encode_video_prompt_fn,
     get_video_transformer_class as _get_video_transformer_class,
@@ -38,9 +56,8 @@ from backend.engine._transformer_registry import (
 from backend.engine.config.model_configs import get_config_class
 
 
-def _video_post_denoise_clear_cache(family: str) -> bool:
-    """Families whose DiT peak memory should be released before VAE decode."""
-    return family in ("hunyuan", "cogvideox")
+def _video_post_denoise_clear_cache(config: Any) -> bool:
+    return bool(getattr(config, "post_denoise_clear_cache", False))
 
 
 def _timestep_embed_schedule_from_scheduler(scheduler: Any) -> list[float] | None:
@@ -138,22 +155,21 @@ class VideoPipeline:
         p = self._resolve_path(lp)
         return p if p.is_dir() else None
 
-    def _effective_t5_bundle_root(self, entry, bundle_root: Path | None) -> Path | None:
+    def _effective_t5_bundle_root(self, entry, bundle_root: Path | None, config: Any) -> Path | None:
         """Prefer current version bundle; if T5 dirs are missing (typical MLX-forge flat HF), use ``original``."""
         if bundle_root is None or not bundle_root.is_dir():
             return None
-        family = getattr(entry, "family", "")
         try:
-            if family == "wan":
-                self._wan_t5_encoder_bundle_paths(bundle_root)
+            if bool(getattr(config, "uses_wan_t5_bundle", False)):
+                wan_t5_bundle_paths(bundle_root)
             else:
                 _t5_encoder_bundle_paths(bundle_root)
             return bundle_root
         except RuntimeError as err:
             alt = self._resolved_original_video_bundle_root(entry)
             if alt is not None:
-                if family == "wan":
-                    self._wan_t5_encoder_bundle_paths(alt)
+                if bool(getattr(config, "uses_wan_t5_bundle", False)):
+                    wan_t5_bundle_paths(alt)
                 else:
                     _t5_encoder_bundle_paths(alt)
                 return alt
@@ -162,25 +178,10 @@ class VideoPipeline:
                 f"and no installed ``original`` registry version for ``{entry.id}``."
                 + (
                     " Wan bundles require ``models_t5*.pth`` and ``google/umt5-xxl``."
-                    if family == "wan"
+                    if bool(getattr(config, "uses_wan_t5_bundle", False))
                     else " Install a full model bundle with ``text_encoder`` + ``tokenizer``."
                 )
             ) from err
-
-    @staticmethod
-    def _wan_t5_encoder_bundle_paths(bundle_root: Path) -> tuple[str, str]:
-        """Wan original bundle: ``models_t5*.pth`` + ``google/umt5-xxl`` tokenizer."""
-        from backend.engine.families.wan.text_encoder_mlx import resolve_wan_umt5_pth
-
-        assets = resolve_wan_umt5_pth(bundle_root)
-        if assets is None:
-            raise RuntimeError(
-                f"Wan T5 assets not found under {bundle_root}. Expected "
-                f"``models_t5_umt5-xxl-enc-bf16.pth`` (or ``models_t5*.pth``) and "
-                f"``google/umt5-xxl`` tokenizer."
-            )
-        pth_path, tok_dir = assets
-        return str(pth_path), str(tok_dir)
 
     def _resolve_guidance_default(self, entry) -> float:
         g = self._registry_scalar_default(entry, "guidance", None)
@@ -209,11 +210,11 @@ class VideoPipeline:
 
     def _validate_wan_umt5_embeddings(
         self,
-        family: str,
+        config: Any,
         txt_embeds: Any | None,
         on_log: Callable[[str, str], None] | None,
     ) -> None:
-        if not on_log or family != "wan" or txt_embeds is None:
+        if not on_log or not bool(getattr(config, "validate_umt5_embeddings", False)) or txt_embeds is None:
             return
         self.ctx.eval(txt_embeds)
         peak = float(self.ctx.sqrt(self.ctx.max(self.ctx.square(txt_embeds))))
@@ -224,73 +225,23 @@ class VideoPipeline:
         on_log("info", f"Wan UMT5 text embeddings ready (peak={peak:.3f})")
 
     def _validate_generate_geometry(
-        self, family: str, config: Any, w: int, h: int, num_frames: int,
+        self, config: Any, w: int, h: int, num_frames: int,
     ) -> None:
-        if w <= 0 or h <= 0:
-            raise RuntimeError(f"invalid video size {w}x{h}")
-        vae_sf = int(getattr(config, "vae_scale", 8) or 8)
-        if family == "cogvideox":
-            tvs = int(getattr(config, "temporal_vae_scale", 4) or 4)
-            if (num_frames - 1) % tvs != 0:
-                raise RuntimeError(
-                    f"CogVideoX requires (num_frames - 1) % {tvs} == 0; got {num_frames} "
-                    f"(valid examples: 49, 45, 41 for temporal VAE scale {tvs})"
-                )
-        if family == "wan":
-            tvs = int(getattr(config, "temporal_vae_scale", 4) or 4)
-            if (num_frames - 1) % tvs != 0:
-                raise RuntimeError(
-                    f"Wan requires (num_frames - 1) % {tvs} == 0; got {num_frames} "
-                    f"(valid examples: 81, 49 for temporal VAE scale {tvs})"
-                )
-            _, ph, pw = getattr(config, "patch_size", (1, 2, 2))
-            step_h = vae_sf * int(ph)
-            step_w = vae_sf * int(pw)
-            if h % step_h != 0 or w % step_w != 0:
-                raise RuntimeError(
-                    f"Wan requires height % {step_h} == 0 and width % {step_w} == 0 "
-                    f"(vae_scale={vae_sf}, patch_size={getattr(config, 'patch_size', (1, 2, 2))}); "
-                    f"got {w}x{h}. Example valid size: 480x704 for 480x720 intent."
-                )
-        if w % vae_sf != 0 or h % vae_sf != 0:
-            raise RuntimeError(
-                f"video width and height must be divisible by vae_scale={vae_sf}; got {w}x{h}"
-            )
-        tvs = getattr(config, "temporal_vae_scale", None)
-        if tvs is not None and int(tvs) > 0:
-            if (num_frames - 1) % int(tvs) != 0:
-                raise RuntimeError(
-                    f"video requires (num_frames - 1) % {int(tvs)} == 0; got {num_frames}"
-                )
+        video_validate_generate_geometry(config, w, h, num_frames)
 
     def _snap_wan_pixel_dims_if_needed(
         self,
-        family: str,
         config: Any,
         w: int,
         h: int,
         *,
         on_log: Callable | None = None,
     ) -> tuple[int, int]:
-        if family != "wan":
-            return w, h
-        from backend.engine.families.wan.conditioning import snap_wan_pixel_dims
+        return video_snap_pixel_dims_if_needed(config, w, h, on_log=on_log)
 
-        vae_scale = int(getattr(config, "vae_scale", 16) or 16)
-        patch_size = tuple(getattr(config, "patch_size", (1, 2, 2)))
-        ow, oh = w, h
-        w, h = snap_wan_pixel_dims(w, h, vae_scale=vae_scale, patch_size=patch_size)
-        if (w, h) != (ow, oh) and on_log is not None:
-            on_log("info", f"Wan adjusted output size {ow}x{oh} -> {w}x{h} for patch/VAE alignment")
-        return w, h
-
-    def _prepare_t5_context(self, family: str, config: Any) -> None:
-        if family == "cogvideox":
-            self._t5_max_seq_len = int(getattr(config, "max_text_seq_length", 226))
-        elif family == "wan":
-            self._t5_max_seq_len = int(getattr(config, "text_len", 512))
-        else:
-            self._t5_max_seq_len = 512
+    def _prepare_t5_context(self, config: Any) -> None:
+        self._video_config = config
+        self._t5_max_seq_len = video_t5_max_seq_len(config)
         self._t5 = None
 
     @staticmethod
@@ -301,32 +252,12 @@ class VideoPipeline:
         scheduler_default_shift: Any | None,
         on_log: Callable | None = None,
     ) -> float | None:
-        """Resolve Wan Flow UniPC shift with safer defaults.
-
-        Frontend often sends registry default ``shift`` even when user did not tune it.
-        If that echoed value disagrees with bundle scheduler default, prefer bundle default
-        to avoid unstable/noisy generations.
-        """
-        req = float(request_shift) if request_shift is not None else None
-        reg = float(registry_shift) if registry_shift is not None else None
-        sch = float(scheduler_default_shift) if scheduler_default_shift is not None else None
-        eps = 1e-6
-
-        if req is not None:
-            if reg is not None and sch is not None and abs(req - reg) <= eps and abs(req - sch) > eps:
-                if on_log:
-                    on_log(
-                        "info",
-                        f"Wan shift {req:g} matches registry default; using bundle scheduler default {sch:g}",
-                    )
-                return sch
-            return req
-
-        if sch is not None:
-            return sch
-        if reg is not None:
-            return reg
-        return None
+        return resolve_wan_shift_value(
+            request_shift=request_shift,
+            registry_shift=registry_shift,
+            scheduler_default_shift=scheduler_default_shift,
+            on_log=on_log,
+        )
 
     def _denoise_video(
         self,
@@ -525,22 +456,23 @@ class VideoPipeline:
         vst = self._registry_scalar_default(entry, "vae_spatial_tiling", None)
         if vst is not None:
             config.vae_spatial_tiling = bool(vst)
-        if family == "hunyuan":
+        if getattr(config, "inject_text_encoder_paths", False):
             self._inject_hunyuan_text_encoder_paths(entry, config)
 
         if ctx_exec.cancel_token.is_cancelled():
             return None
 
         bundle_root = self._local_bundle_root(entry, version_key or None)
-        self._merge_video_transformer_bundle_config(family, bundle_root, config)
-        w, h = self._snap_wan_pixel_dims_if_needed(family, config, w, h, on_log=on_log)
-        self._validate_generate_geometry(family, config, w, h, num_frames)
-        encoder_type = self._resolve_video_encoder_type(config, family)
+        merge_video_bundle_config(config, bundle_root)
+        w, h = self._snap_wan_pixel_dims_if_needed(config, w, h, on_log=on_log)
+        self._validate_generate_geometry(config, w, h, num_frames)
+        encoder_type = video_encoder_type(config)
         if encoder_type == "t5":
-            self._t5_bundle_root = self._effective_t5_bundle_root(entry, bundle_root)
-            self._prepare_t5_context(family, config)
+            self._t5_bundle_root = self._effective_t5_bundle_root(entry, bundle_root, config)
+            self._prepare_t5_context(config)
         else:
             self._t5_bundle_root = bundle_root
+            self._video_config = config
 
         steps_default = self._registry_scalar_default(entry, "steps", 40)
         guidance_default = self._resolve_guidance_default(entry)
@@ -575,16 +507,16 @@ class VideoPipeline:
                 bundle_root=bundle_root,
                 guidance=guidance,
             )
-            self._validate_wan_umt5_embeddings(family, txt_embeds, on_log)
+            self._validate_wan_umt5_embeddings(config, txt_embeds, on_log)
 
         if ctx_exec.cancel_token.is_cancelled():
             return None
 
-        self._release_video_t5_after_encode(family, encoder_type)
+        self._release_video_t5_after_encode(config, encoder_type)
 
         # 2. Load model (registry-driven, zero family branching)
         latent_frames = self._latent_frame_count(config, num_frames)
-        model = self._load_model(family, config, entry, version_key or None, latent_frames)
+        model = self._load_model(config, entry, version_key or None, latent_frames)
         if model is None:
             raise RuntimeError(f"Failed to load model: {model_key}")
 
@@ -608,7 +540,7 @@ class VideoPipeline:
 
         # 3. Scheduler
         scheduler = self._create_video_scheduler(
-            family=family,
+            config=config,
             scheduler_name=scheduler_default,
             bundle_root=bundle_root,
         )
@@ -629,21 +561,20 @@ class VideoPipeline:
         else:
             sched_kwargs: dict[str, Any] = {}
             shift_default = self._registry_scalar_default(entry, "shift", None)
-            shift_val = self._resolve_wan_shift_value(
-                request_shift=request.shift if family == "wan" else None,
-                registry_shift=shift_default if family == "wan" else None,
-                scheduler_default_shift=getattr(scheduler, "_default_shift", None) if family == "wan" else None,
+            shift_val = video_resolve_shift_value(
+                config,
+                request_shift=request.shift,
+                registry_shift=shift_default,
+                scheduler_default_shift=getattr(scheduler, "_default_shift", None),
                 on_log=on_log,
-            ) if family == "wan" else (
-                float(request.shift) if request.shift is not None else (
-                    float(shift_default) if shift_default is not None else None
-                )
             )
             if shift_val is not None:
                 sched_kwargs["shift"] = shift_val
             timesteps = scheduler.set_timesteps(steps, **sched_kwargs)
-            if family == "wan":
-                wan_shift = float(sched_kwargs.get("shift", getattr(scheduler, "_default_shift", 1.0)))
+            if bool(getattr(config, "uses_wan_shift", False)):
+                wan_shift = float(
+                    sched_kwargs.get("shift", getattr(scheduler, "_default_shift", 1.0))
+                )
         sigmas = getattr(scheduler, 'sigmas', None)
         timestep_embed_schedule = _timestep_embed_schedule_from_scheduler(scheduler)
         _cfg_renorm = bool(self._registry_scalar_default(entry, "enable_cfg_renorm", False))
@@ -668,15 +599,9 @@ class VideoPipeline:
             ]
             if wan_shift is not None:
                 parts.append(f"shift={wan_shift}")
-            if family == "wan":
-                parts.append(
-                    f"wan_expand_timesteps={bool(extra_cond.get('wan_expand_timesteps', False))}"
-                )
             if _cfg_renorm:
                 parts.append(f"cfg_renorm=True cfg_renorm_min={_cfg_renorm_min}")
-            if family == "cogvideox" and hasattr(scheduler, "_prediction_type"):
-                parts.append(f"sched_prediction={scheduler._prediction_type}")
-                parts.append(f"sched_spacing={getattr(scheduler, '_timestep_spacing', '?')}")
+            parts.extend(video_infer_log_extras(config, scheduler, extra_cond))
             on_log("info", " ".join(parts))
 
         # 4. Initial noise [B, C, T_latent, H_lat, W_lat]
@@ -689,7 +614,7 @@ class VideoPipeline:
 
         # ── Hook ③: before denoise ──
         latents, extra_cond = model.before_denoise(latents, timesteps, sigmas, **extra_cond)
-        rope_kw = self._cogvideox_rotary_model_kwargs(family, config, h, w, latents)
+        rope_kw = video_rotary_model_kwargs(config, self.ctx, h, w, latents)
 
         latents = self._denoise_video(
             latents=latents,
@@ -720,7 +645,7 @@ class VideoPipeline:
             if on_log:
                 on_log("info", "Materializing denoised latents for VAE decode...")
             self.ctx.eval(latents)
-            if _video_post_denoise_clear_cache(family):
+            if _video_post_denoise_clear_cache(config):
                 self.ctx.clear_cache()
 
         n_steps = len(timesteps)
@@ -739,7 +664,7 @@ class VideoPipeline:
                 on_log("info", msg)
 
         frames = self._vae_decode_video(
-            latents, entry, version_key or None,
+            latents, entry, version_key or None, config,
             on_post_progress=_vae_post_progress,
             on_post_log=_vae_post_log,
         )
@@ -769,6 +694,7 @@ class VideoPipeline:
             "fps": fps, "width": w, "height": h,
             "mime_type": "video/mp4",
         }
+        metadata.update(work_title_metadata(request.title))
 
         return str(out_path), metadata
 
@@ -809,22 +735,23 @@ class VideoPipeline:
         vst = self._registry_scalar_default(entry, "vae_spatial_tiling", None)
         if vst is not None:
             config.vae_spatial_tiling = bool(vst)
-        if family == "hunyuan":
+        if getattr(config, "inject_text_encoder_paths", False):
             self._inject_hunyuan_text_encoder_paths(entry, config)
 
         if ctx_exec.cancel_token.is_cancelled():
             return None
 
         bundle_root = self._local_bundle_root(entry, version_key or None)
-        self._merge_video_transformer_bundle_config(family, bundle_root, config)
-        w, h = self._snap_wan_pixel_dims_if_needed(family, config, w, h, on_log=on_log)
-        self._validate_generate_geometry(family, config, w, h, num_frames)
-        encoder_type = self._resolve_video_encoder_type(config, family)
+        merge_video_bundle_config(config, bundle_root)
+        w, h = self._snap_wan_pixel_dims_if_needed(config, w, h, on_log=on_log)
+        self._validate_generate_geometry(config, w, h, num_frames)
+        encoder_type = video_encoder_type(config)
         if encoder_type == "t5":
-            self._t5_bundle_root = self._effective_t5_bundle_root(entry, bundle_root)
-            self._prepare_t5_context(family, config)
+            self._t5_bundle_root = self._effective_t5_bundle_root(entry, bundle_root, config)
+            self._prepare_t5_context(config)
         else:
             self._t5_bundle_root = bundle_root
+            self._video_config = config
 
         steps_default = self._registry_scalar_default(entry, "steps", 40)
         guidance_default = self._resolve_guidance_default(entry)
@@ -859,16 +786,16 @@ class VideoPipeline:
                 bundle_root=bundle_root,
                 guidance=guidance,
             )
-            self._validate_wan_umt5_embeddings(family, txt_embeds, on_log)
+            self._validate_wan_umt5_embeddings(config, txt_embeds, on_log)
 
         if ctx_exec.cancel_token.is_cancelled():
             return None
 
-        self._release_video_t5_after_encode(family, encoder_type)
+        self._release_video_t5_after_encode(config, encoder_type)
 
         # 2. Load model
         latent_frames = self._latent_frame_count(config, num_frames)
-        model = self._load_model(family, config, entry, version_key or None, latent_frames)
+        model = self._load_model(config, entry, version_key or None, latent_frames)
         if model is None:
             raise RuntimeError(f"Failed to load model: {model_key}")
 
@@ -890,7 +817,7 @@ class VideoPipeline:
 
         # 3. Scheduler
         scheduler = self._create_video_scheduler(
-            family=family,
+            config=config,
             scheduler_name=scheduler_default,
             bundle_root=bundle_root,
         )
@@ -910,15 +837,12 @@ class VideoPipeline:
         else:
             sched_kwargs: dict[str, Any] = {}
             shift_default = self._registry_scalar_default(entry, "shift", None)
-            shift_val = self._resolve_wan_shift_value(
-                request_shift=request.shift if family == "wan" else None,
-                registry_shift=shift_default if family == "wan" else None,
-                scheduler_default_shift=getattr(scheduler, "_default_shift", None) if family == "wan" else None,
+            shift_val = video_resolve_shift_value(
+                config,
+                request_shift=request.shift,
+                registry_shift=shift_default,
+                scheduler_default_shift=getattr(scheduler, "_default_shift", None),
                 on_log=on_log,
-            ) if family == "wan" else (
-                float(request.shift) if request.shift is not None else (
-                    float(shift_default) if shift_default is not None else None
-                )
             )
             if shift_val is not None:
                 sched_kwargs["shift"] = shift_val
@@ -947,13 +871,7 @@ class VideoPipeline:
             ]
             if _cfg_renorm:
                 parts.append(f"cfg_renorm=True cfg_renorm_min={_cfg_renorm_min}")
-            if family == "wan":
-                parts.append(
-                    f"wan_expand_timesteps={bool(extra_cond.get('wan_expand_timesteps', False))}"
-                )
-            if family == "cogvideox" and hasattr(scheduler, "_prediction_type"):
-                parts.append(f"sched_prediction={scheduler._prediction_type}")
-                parts.append(f"sched_spacing={getattr(scheduler, '_timestep_spacing', '?')}")
+            parts.extend(video_infer_log_extras(config, scheduler, extra_cond))
             on_log("info", " ".join(parts))
 
         # 4. Initial noise
@@ -966,69 +884,26 @@ class VideoPipeline:
 
         # Load source image condition if available
         if request.source_asset_id:
-            src_asset = self._asset_store.get_asset(request.source_asset_id)
-            if src_asset and src_asset.file_path:
+            src_path = self._asset_store.get_file_path(request.source_asset_id)
+            if src_path and src_path.exists():
                 from PIL import Image
-                src_img = Image.open(src_asset.file_path).convert("RGB")
-                if family == "wan":
-                    from backend.engine.families.wan.conditioning import prepare_wan_reference_image
-
-                    src_img = prepare_wan_reference_image(src_img, w, h)
-                else:
-                    src_img = src_img.resize((w, h))
+                src_img = Image.open(str(src_path)).convert("RGB")
+                src_img = video_prepare_i2v_source_image(config, src_img, w, h)
                 import numpy as np
                 src_array = np.array(src_img).astype(np.float32) / 127.5 - 1.0
                 src_tensor = self.ctx.array(np.expand_dims(src_array, 0))
-                # VAE encode first frame
-                vae_latent = self._vae_encode_frame(src_tensor, entry, version_key or None)
+                vae_latent = self._vae_encode_frame(
+                    src_tensor, entry, version_key or None, config,
+                )
                 if vae_latent is not None:
-                    if family == "hunyuan":
-                        B, C, T, H, W = latents.shape
-                        cond_lat = self.ctx.zeros((B, C, T, H, W), dtype=latents.dtype)
-                        cond_lat = self.ctx.concat(
-                            [vae_latent[:, :, :1, :, :], cond_lat[:, :, 1:, :, :]], axis=2,
-                        )
-                        mask = self.ctx.zeros((B, 1, T, H, W), dtype=latents.dtype)
-                        mask = mask + 0.0
-                        mask_slice = self.ctx.ones((B, 1, 1, H, W), dtype=latents.dtype)
-                        mask = self.ctx.concat([mask_slice, mask[:, :, 1:, :, :]], axis=2)
-                        extra_cond["cond_latents"] = cond_lat
-                        extra_cond["mask_concat"] = mask
-                        extra_cond["i2v_mode"] = True
-                    elif family == "wan":
-                        from backend.engine.families.wan.conditioning import (
-                            expand_wan_cond_latent,
-                            masks_like,
-                        )
-
-                        z = self.ctx.squeeze(vae_latent, 0)
-                        noise_cthw = self.ctx.squeeze(latents, 0)
-                        z = expand_wan_cond_latent(self.ctx, z, int(noise_cthw.shape[1]))
-                        _, mask2 = masks_like(self.ctx, [noise_cthw], zero=True)
-                        extra_cond["wan_cond_latent"] = z
-                        extra_cond["wan_i2v_mask"] = mask2[0]
-                        extra_cond["wan_i2v"] = True
-                    else:
-                        latents = self.ctx.concat(
-                            [vae_latent[:, :, :1, :, :], latents[:, :, 1:, :, :]], axis=2
-                        )
-                else:
-                    if family == "wan":
-                        raise RuntimeError(
-                            "Wan image-to-video (animate) failed to VAE-encode the source image. "
-                            "Ensure the model bundle includes Wan2.2_VAE.pth (or vae/*.safetensors) "
-                            "and text_encoder assets under the bundle root."
-                        )
-                    raise RuntimeError(
-                        "Image-to-video (animate) requires encoding the first RGB frame into "
-                        "video latents. DanQing does not yet implement the Lightricks "
-                        "`AutoencoderKLLTXVideo`-class encoder in MLX; first-frame conditioning "
-                        "cannot be applied. Use text-to-video (`create`) or add an MLX encoder "
-                        "port for your bundle VAE."
+                    latents = video_apply_i2v_conditioning(
+                        config, self.ctx, latents, vae_latent, extra_cond,
                     )
+                else:
+                    raise RuntimeError(video_i2v_encode_failure_message(config))
 
         latents, extra_cond = model.before_denoise(latents, timesteps, sigmas, **extra_cond)
-        rope_kw = self._cogvideox_rotary_model_kwargs(family, config, h, w, latents)
+        rope_kw = video_rotary_model_kwargs(config, self.ctx, h, w, latents)
 
         latents = self._denoise_video(
             latents=latents,
@@ -1059,7 +934,7 @@ class VideoPipeline:
             if on_log:
                 on_log("info", "Materializing denoised latents for VAE decode...")
             self.ctx.eval(latents)
-            if _video_post_denoise_clear_cache(family):
+            if _video_post_denoise_clear_cache(config):
                 self.ctx.clear_cache()
 
         n_steps = len(timesteps)
@@ -1078,7 +953,7 @@ class VideoPipeline:
                 on_log("info", msg)
 
         frames = self._vae_decode_video(
-            latents, entry, version_key or None,
+            latents, entry, version_key or None, config,
             on_post_progress=_vae_post_progress,
             on_post_log=_vae_post_log,
         )
@@ -1108,36 +983,9 @@ class VideoPipeline:
             "fps": fps, "width": w, "height": h,
             "mime_type": "video/mp4",
         }
+        metadata.update(work_title_metadata(request.title))
 
         return str(out_path), metadata
-
-    def _merge_video_transformer_bundle_config(
-        self, family: str, bundle_root: Path | None, config: Any,
-    ) -> None:
-        if family == "cogvideox":
-            self._merge_cogvideox_transformer_bundle_config_if_applicable(
-                family, bundle_root, config,
-            )
-        elif family == "hunyuan":
-            from backend.engine.config.model_configs import (
-                HunyuanVideoConfig,
-                merge_hunyuan_transformer_config_from_bundle,
-            )
-            if isinstance(config, HunyuanVideoConfig):
-                merge_hunyuan_transformer_config_from_bundle(config, bundle_root)
-        elif family == "wan":
-            from backend.engine.config.model_configs import WanConfig, merge_wan_bundle_config
-
-            if isinstance(config, WanConfig):
-                merge_wan_bundle_config(config, bundle_root)
-
-    def _resolve_video_encoder_type(self, config: Any, family: str) -> str:
-        enc = getattr(config, "encoder_type", None)
-        if enc:
-            return str(enc)
-        if family == "hunyuan":
-            return "hunyuan_video_dual"
-        return "t5"
 
     def _encode_video_text(
         self,
@@ -1146,7 +994,7 @@ class VideoPipeline:
         family: str,
         bundle_root: Path | None,
     ) -> tuple[Any, Any | None, Any | None, Any | None, Any | None, Any | None]:
-        encoder_type = self._resolve_video_encoder_type(config, family)
+        encoder_type = video_encoder_type(config)
         if encoder_type == "t5":
             return self._encode_t5(text), None, None, None, None, None
         if bundle_root is None:
@@ -1177,7 +1025,7 @@ class VideoPipeline:
             return None, None, None, None, *empty_neg
 
         use_cfg = bool(getattr(config, "supports_guidance", True) and guidance > 1.0)
-        encoder_type = self._resolve_video_encoder_type(config, family)
+        encoder_type = video_encoder_type(config)
         if (
             use_cfg
             and encoder_type == "hunyuan_video_dual"
@@ -1194,24 +1042,14 @@ class VideoPipeline:
             )
 
         if use_cfg and encoder_type == "t5":
-            if family == "wan":
-                from backend.engine.families.wan.conditioning import WAN_SAMPLE_NEG_PROMPT
-
-                neg_txt = (negative_prompt or "").strip() or WAN_SAMPLE_NEG_PROMPT
-            else:
-                neg_txt = negative_prompt.strip() if negative_prompt else " "
+            neg_txt = video_cfg_negative_prompt(config, negative_prompt)
             embeds = self._encode_t5_texts([prompt, neg_txt])
             return embeds[0:1], None, None, None, embeds[1:2], None, None, None
 
         pos = self._encode_video_text(prompt, config, family, bundle_root)
         if not use_cfg:
             return (*pos, *empty_neg)
-        if family == "wan":
-            from backend.engine.families.wan.conditioning import WAN_SAMPLE_NEG_PROMPT
-
-            neg_txt = (negative_prompt or "").strip() or WAN_SAMPLE_NEG_PROMPT
-        else:
-            neg_txt = negative_prompt.strip() if negative_prompt else " "
+        neg_txt = video_cfg_negative_prompt(config, negative_prompt)
         neg = self._encode_video_text(neg_txt, config, family, bundle_root)
         return (*pos, *neg)
 
@@ -1242,72 +1080,15 @@ class VideoPipeline:
             extra_cond["neg_txt_attn_mask_2"] = neg_mask_2
         return extra_cond
 
-    def _merge_wan_config_from_bundle_if_applicable(
-        self, family: str, bundle_root: Path | None, config: Any,
-    ) -> None:
-        if family != "wan" or bundle_root is None:
-            return
-        from backend.engine.config.model_configs import WanConfig, merge_wan_bundle_config
-
-        if isinstance(config, WanConfig):
-            merge_wan_bundle_config(config, bundle_root)
-
-    def _merge_cogvideox_transformer_bundle_config_if_applicable(
-        self, family: str, bundle_root: Path | None, config: Any,
-    ) -> None:
-        if family != "cogvideox" or bundle_root is None:
-            return
-        from backend.engine.config.model_configs import (
-            CogVideoXConfig,
-            merge_cogvideox_transformer_config_from_bundle,
-        )
-        if isinstance(config, CogVideoXConfig):
-            merge_cogvideox_transformer_config_from_bundle(config, bundle_root)
-
-    def _cogvideox_rotary_model_kwargs(
-        self, family: str, config: Any, pixel_h: int, pixel_w: int, latents: Any,
-    ) -> dict[str, Any]:
-        if family != "cogvideox" or not getattr(config, "use_rotary_positional_embeddings", False):
-            return {}
-        from backend.engine.families.cogvideox.rotary_mlx import prepare_cogvideox_image_rotary_emb
-
-        lt = int(latents.shape[2])
-        vae_sf = int(getattr(config, "vae_scale", 8))
-        cos_sin = prepare_cogvideox_image_rotary_emb(
-            self.ctx, config, int(pixel_h), int(pixel_w), lt, vae_sf,
-        )
-        return {"image_rotary_emb": cos_sin}
-
     def _create_video_scheduler(
         self,
         *,
-        family: str,
+        config: Any,
         scheduler_name: str,
         bundle_root: Path | None,
     ) -> Any:
-        """Instantiate the denoise scheduler; family bundles may supply JSON defaults."""
-        import json
-
-        ctor_kwargs: dict[str, Any] = {}
-        if family == "cogvideox" and scheduler_name == "cogvideox_dpm":
-            if bundle_root is None:
-                raise RuntimeError("CogVideoX requires a local model bundle for scheduler config.")
-            from backend.engine.config.model_configs import cogvideox_scheduler_kwargs_from_bundle
-
-            ctor_kwargs = cogvideox_scheduler_kwargs_from_bundle(bundle_root)
-        elif family == "wan" and scheduler_name == "wan_flow_unipc":
-            ctor_kwargs["num_train_timesteps"] = 1000
-            if bundle_root is not None:
-                sched_cfg = bundle_root / "scheduler" / "scheduler_config.json"
-                if sched_cfg.is_file():
-                    try:
-                        data = json.loads(sched_cfg.read_text(encoding="utf-8"))
-                        if "flow_shift" in data:
-                            ctor_kwargs["shift"] = float(data["flow_shift"])
-                    except (OSError, json.JSONDecodeError, TypeError, ValueError) as e:
-                        raise RuntimeError(
-                            f"Wan: cannot read scheduler config {sched_cfg}: {e}"
-                        ) from e
+        """Instantiate the denoise scheduler; bundle may supply JSON defaults via config flags."""
+        ctor_kwargs = video_scheduler_ctor_kwargs(config, scheduler_name, bundle_root)
         return get_scheduler(scheduler_name, ctx=self.ctx, **ctor_kwargs)
 
     # ------------------------------------------------------------------
@@ -1327,17 +1108,17 @@ class VideoPipeline:
 
     def _encode_t5_texts(self, texts: list[str]) -> Any:
         """Batch T5 encode — one tokenizer + one forward for multiple prompts."""
-        entry_family = getattr(getattr(self, "_current_entry", None), "family", "")
+        contract = getattr(self, "_video_config", None)
         t5_root = getattr(self, "_t5_bundle_root", None)
         if t5_root is None:
             raise RuntimeError("T5 encoding requires _t5_bundle_root")
         bundle_root = t5_root if isinstance(t5_root, Path) else Path(t5_root)
         max_seq_len = int(getattr(self, "_t5_max_seq_len", 512))
-        if entry_family == "wan":
+        if contract is not None and bool(getattr(contract, "uses_wan_t5_bundle", False)):
             if self._t5 is None:
                 from backend.engine.families.wan.text_encoder_mlx import WanUMT5EncoderMLX
 
-                pth_path, tok_dir = self._wan_t5_encoder_bundle_paths(bundle_root)
+                pth_path, tok_dir = wan_t5_bundle_paths(bundle_root)
                 self._t5 = WanUMT5EncoderMLX(
                     self.ctx,
                     pth_path,
@@ -1352,11 +1133,15 @@ class VideoPipeline:
             )
         return self._t5.encode(texts)
 
-    def _release_video_t5_after_encode(self, family: str, encoder_type: str) -> None:
+    def _release_video_t5_after_encode(
+        self,
+        config: Any,
+        encoder_type: str,
+    ) -> None:
         """Drop T5 weights before loading DiT so ~10GB headroom is available."""
         if encoder_type != "t5" or self._t5 is None:
             return
-        if family not in ("cogvideox", "wan"):
+        if not bool(getattr(config, "release_t5_after_encode", False)):
             return
         self._t5.release_weights()
         self._t5 = None
@@ -1368,9 +1153,15 @@ class VideoPipeline:
     def _model_cache_key(self, entry, version_key: str | None, num_frames: int) -> str:
         return f"video:{entry.id}:{version_key or 'default'}:{num_frames}"
 
-    def _load_model(self, family: str, config, entry,
-                    version_key: str | None, num_frames: int) -> Any:
+    def _load_model(
+        self,
+        config,
+        entry,
+        version_key: str | None,
+        num_frames: int,
+    ) -> Any:
         """加载视频模型 — 注册表驱动，零 family 分支。"""
+        family = getattr(entry, "family", "")
         cache_key = self._model_cache_key(entry, version_key, num_frames)
         if self._cache is not None:
             cached = self._cache.get(cache_key)
@@ -1392,12 +1183,12 @@ class VideoPipeline:
         for sf in shard_paths:
             w.update(self.ctx.load_weights(str(sf)))
 
-        if family == "ltx" and looks_like_mlx_forge_ltx_transformer_keys(w):
+        if bool(getattr(config, "uses_mlx_forge_weight_restore", False)) and looks_like_mlx_forge_ltx_transformer_keys(w):
             w = restore_diffusers_names_from_mlx_forge_ltx(w)
 
         if remap_fn:
             w = remap_fn(w)
-            if family == "ltx":
+            if bool(getattr(config, "validate_ltx_block_depth", False)):
                 mx_blk = max_remapped_ltx_block_index(w)
                 if mx_blk >= 0:
                     n_blocks = mx_blk + 1
@@ -1438,87 +1229,29 @@ class VideoPipeline:
     # VAE decode (frame-by-frame for video)
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _resolve_cogvideox_vae_frame_batch(entry) -> int:
-        raw = VideoPipeline._registry_scalar_default(entry, "vae_frame_batch_size", 2)
-        try:
-            n = int(raw if raw is not None else 2)
-        except (TypeError, ValueError):
-            n = 2
-        return max(1, min(n, 8))
-
-    @staticmethod
-    def _resolve_hunyuan_vae_temporal_chunk(entry, latents) -> int:
-        """Registry ``vae_temporal_chunk_size``; skip chunking when T is small enough."""
-        chunk = int(VideoPipeline._registry_scalar_default(entry, "vae_temporal_chunk_size", 8) or 0)
-        if chunk <= 0:
-            return 0
-        if getattr(latents, "ndim", None) == 5:
-            t = int(latents.shape[2])
-            if t <= chunk:
-                return 0
-        return chunk
-
-    @staticmethod
-    def _resolve_hunyuan_vae_spatial_tiling(entry) -> bool:
-        return bool(VideoPipeline._registry_scalar_default(entry, "vae_spatial_tiling", False))
-
-    @staticmethod
-    def _resolve_wan_vae_spatial_tiling(entry) -> bool:
-        return bool(VideoPipeline._registry_scalar_default(entry, "vae_spatial_tiling", False))
 
     def _vae_decode_video(
         self,
         latents,
         entry,
         version_key,
+        config: Any,
         on_post_progress: Callable[[float], None] | None = None,
         on_post_log: Callable[[str], None] | None = None,
     ) -> list:
-        """逐帧 VAE 解码视频 latent → PIL Image 列表。
-
-        latents: [B, C, T, H, W] 5D 视频 latent
-        Returns: list of PIL Image (RGB frames)
-        """
-        family = getattr(entry, "family", "")
-        if family == "cogvideox":
-            from backend.engine.families.cogvideox.vae import decode_cogvideox_latents_to_pil_frames
-
-            bundle_root = self._local_bundle_root(entry, version_key)
-            frame_batch = self._resolve_cogvideox_vae_frame_batch(entry)
-            return decode_cogvideox_latents_to_pil_frames(
-                self.ctx, latents, bundle_root,
-                on_stage=on_post_progress,
-                on_log=on_post_log,
-                frame_batch_size=frame_batch,
-            )
-        if family == "hunyuan":
-            from backend.engine.families.hunyuan.vae import decode_hunyuan_latents_to_pil_frames
-
-            bundle_root = self._local_bundle_root(entry, version_key)
-            chunk = self._resolve_hunyuan_vae_temporal_chunk(entry, latents)
-            spatial = self._resolve_hunyuan_vae_spatial_tiling(entry)
-            return decode_hunyuan_latents_to_pil_frames(
-                self.ctx, latents, bundle_root,
-                on_stage=on_post_progress,
-                on_log=on_post_log,
-                temporal_chunk_size=chunk,
-                spatial_tiling=spatial,
-            )
-        if family == "wan":
-            from backend.engine.families.wan.vae import decode_wan_latents_to_pil_frames
-
-            bundle_root = self._local_bundle_root(entry, version_key)
-            spatial = self._resolve_wan_vae_spatial_tiling(entry)
-            spatial_scale = int(self._registry_scalar_default(entry, "vae_scale", 16) or 16)
-            return decode_wan_latents_to_pil_frames(
-                self.ctx,
-                latents,
-                bundle_root,
-                on_stage=on_post_progress,
-                on_log=on_post_log,
-                spatial_tiling=spatial,
-                spatial_scale=spatial_scale,
+        """逐帧 VAE 解码视频 latent → PIL Image 列表。"""
+        backend = str(getattr(config, "video_vae_backend", "generic") or "generic")
+        handler = get_video_decode_handler(backend)
+        if handler is not None:
+            return handler(
+                ctx=self.ctx,
+                latents=latents,
+                entry=entry,
+                version_key=version_key,
+                local_bundle_root=self._local_bundle_root,
+                registry_scalar_default=self._registry_scalar_default,
+                on_post_progress=on_post_progress,
+                on_post_log=on_post_log,
             )
 
         from PIL import Image
@@ -1547,7 +1280,7 @@ class VideoPipeline:
         if vae_dir and vae_dir.exists():
             for sf in sorted(vae_dir.glob("*.safetensors")):
                 vae_weights.update(ctx.load_weights(str(sf)))
-        elif family == "ltx" and bundle_root is not None:
+        elif bool(getattr(config, "uses_ltx_flat_vae_decoder", False)) and bundle_root is not None:
             dec_path = ltx_flat_vae_decoder_file(bundle_root)
             if dec_path is not None:
                 raw_dec = ctx.load_weights(str(dec_path))
@@ -1614,34 +1347,26 @@ class VideoPipeline:
         latents = ctx.permute(latents, (0, 3, 1, 2))
         return latents
 
-    def _vae_encode_frame(self, image_tensor, entry, version_key) -> Any:
+    def _vae_encode_frame(
+        self,
+        image_tensor,
+        entry,
+        version_key,
+        config: Any,
+    ) -> Any:
         """VAE 编码单帧图像 → latent（用于 I2V 首帧条件）。"""
-        family = getattr(entry, "family", "")
-        bundle_root = self._local_bundle_root(entry, version_key)
-        if family == "hunyuan" and bundle_root is not None:
-            from backend.engine.families.hunyuan.vae import encode_hunyuan_rgb_to_latents
-
-            ctx = self.ctx
-            if image_tensor.ndim == 4:
-                image_tensor = ctx.unsqueeze(image_tensor, axis=2)
-            return encode_hunyuan_rgb_to_latents(ctx, image_tensor, bundle_root)
-        if family == "wan" and bundle_root is not None:
-            from backend.engine.families.wan.vae import encode_wan_image_to_latent
-
-            ctx = self.ctx
-            import numpy as np
-            if image_tensor.ndim == 4:
-                chw = image_tensor[0]
-            else:
-                chw = image_tensor
-            if int(chw.shape[0]) == 3:
-                pass
-            else:
-                chw = ctx.permute(chw, (2, 0, 1))
-            latent = encode_wan_image_to_latent(ctx, chw, bundle_root)
-            return ctx.expand_dims(latent, 0)
-        del image_tensor, entry, version_key
-        return None
+        backend = str(getattr(config, "video_vae_backend", "generic") or "generic")
+        handler = get_video_encode_handler(backend)
+        if handler is None:
+            return None
+        return handler(
+            ctx=self.ctx,
+            image_tensor=image_tensor,
+            entry=entry,
+            version_key=version_key,
+            local_bundle_root=self._local_bundle_root,
+            registry_scalar_default=self._registry_scalar_default,
+        )
 
     # ------------------------------------------------------------------
     # 视频保存

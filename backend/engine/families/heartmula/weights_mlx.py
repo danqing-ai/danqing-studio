@@ -24,8 +24,7 @@ def convert_pytorch_to_mlx(
     Args:
         src_path: Source directory with PyTorch weights.
         dst_path: Destination directory for MLX weights.
-        model_type: Model type ("heartcodec", "heartmula", "heartclap",
-            "hearttranscriptor", or "auto").
+        model_type: Model type ("heartcodec", "heartmula", or "auto").
         dtype: Target data type.
     """
     src_path = Path(src_path)
@@ -46,8 +45,6 @@ def convert_pytorch_to_mlx(
     converters = {
         "heartcodec": convert_heartcodec_weights,
         "heartmula": convert_heartmula_weights,
-        "heartclap": convert_heartclap_weights,
-        "hearttranscriptor": convert_hearttranscriptor_weights,
     }
 
     converter = converters.get(model_type.lower())
@@ -453,6 +450,15 @@ def _map_heartcodec_key(key: str) -> str:
 
     # === Flow Matching ===
     # MLX architecture matches PyTorch structure, but some naming differences remain
+    # TimestepEmbedder wraps MLP under ``.mlp`` in MLX runtime.
+    new_key = new_key.replace(
+        ".timestep_embedder.linear_1.",
+        ".timestep_embedder.mlp.linear_1.",
+    )
+    new_key = new_key.replace(
+        ".timestep_embedder.linear_2.",
+        ".timestep_embedder.mlp.linear_2.",
+    )
 
     # Map MLP layer names (PyTorch: gate/up/down -> MLX: gate_proj/up_proj/down_proj)
     new_key = new_key.replace('.mlp.gate.', '.mlp.gate_proj.')
@@ -566,46 +572,6 @@ def _map_heartmula_key(key: str) -> str:
     return new_key
 
 
-def convert_heartclap_weights(weights: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
-    """Convert HeartCLAP weights.
-
-    Args:
-        weights: PyTorch weights.
-
-    Returns:
-        Converted MLX weights.
-    """
-    return convert_generic_weights(weights)
-
-
-def convert_hearttranscriptor_weights(weights: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
-    """Convert HeartTranscriptor weights.
-
-    Args:
-        weights: PyTorch weights.
-
-    Returns:
-        Converted MLX weights.
-    """
-    converted = {}
-
-    for key, value in weights.items():
-        new_key = key
-
-        # Handle Whisper-specific weight names
-        # Map from HuggingFace Whisper to our implementation
-        new_key = new_key.replace("model.encoder", "encoder")
-        new_key = new_key.replace("model.decoder", "decoder")
-
-        # Handle conv weights
-        if "conv" in key.lower() and "weight" in key and value.ndim == 3:
-            value = convert_conv_weights(value)
-
-        converted[new_key] = value
-
-    return converted
-
-
 def main():
     """Command-line interface for weight conversion."""
     import argparse
@@ -614,7 +580,7 @@ def main():
     parser.add_argument("--src", type=str, required=True, help="Source directory")
     parser.add_argument("--dst", type=str, required=True, help="Destination directory")
     parser.add_argument("--model-type", type=str, default="auto",
-                        choices=["auto", "heartcodec", "heartmula", "heartclap", "hearttranscriptor"],
+                        choices=["auto", "heartcodec", "heartmula"],
                         help="Model type")
     parser.add_argument("--dtype", type=str, default="bfloat16",
                         choices=["float32", "float16", "bfloat16"],

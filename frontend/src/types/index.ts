@@ -5,6 +5,7 @@ export interface GalleryItem {
   height: number;
   duration_seconds: number | null;
   created_at: string;
+  title: string;
   prompt: string;
   model: string;
   thumbnail: string;
@@ -34,6 +35,7 @@ export interface Task {
   priority?: number;
   params?: {
     model?: string;
+    title?: string;
     prompt?: string;
     [key: string]: unknown;
   };
@@ -71,6 +73,10 @@ export interface SystemInfo {
   platform: string;
   architecture: string;
   memory_gb: number;
+  memory_used_gb?: number;
+  memory_available_gb?: number;
+  mlx_active_gb?: number;
+  mlx_peak_gb?: number;
   mlx_memory_limit: number;
   python_version?: string;
   dependencies?: Record<string, string>;

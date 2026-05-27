@@ -43,6 +43,8 @@ export const useTasksStore = defineStore('tasks', () => {
   }
 
   const logStreams = new Map<string, EventSource>();
+  /** Task ids whose SSE is owned by a create page (avoid duplicate empty store streams). */
+  const pageOwnedStreams = new Set<string>();
 
   function closeTaskLogStream(taskId: string) {
     const es = logStreams.get(taskId);
@@ -56,6 +58,18 @@ export const useTasksStore = defineStore('tasks', () => {
     }
   }
 
+  function registerPageOwnedStream(taskId: string) {
+    if (!taskId) return;
+    pageOwnedStreams.add(taskId);
+    closeTaskLogStream(taskId);
+  }
+
+  function unregisterPageOwnedStream(taskId: string) {
+    if (!taskId) return;
+    pageOwnedStreams.delete(taskId);
+    closeTaskLogStream(taskId);
+  }
+
   function openTaskLogStream(
     taskId: string,
     callbacks: {
@@ -66,7 +80,10 @@ export const useTasksStore = defineStore('tasks', () => {
       onDone?: (data: unknown) => void;
       onError?: (event: Event) => void;
     }
-  ): EventSource {
+  ): EventSource | null {
+    if (pageOwnedStreams.has(taskId)) {
+      return logStreams.get(taskId) ?? null;
+    }
     closeTaskLogStream(taskId);
     const url = api.tasks.logStreamUrl(taskId);
     const eventSource = new EventSource(url);
@@ -86,6 +103,8 @@ export const useTasksStore = defineStore('tasks', () => {
       if (data.eta_seconds != null) patch.eta_seconds = data.eta_seconds;
       if (Object.prototype.hasOwnProperty.call(data, 'message')) {
         patch.progressMessage = data.message;
+      } else if (data.phase) {
+        patch.progressMessage = String(data.phase);
       }
       patchLiveTaskProgress(taskId, patch);
       callbacks.onProgress?.(data);
@@ -135,7 +154,7 @@ export const useTasksStore = defineStore('tasks', () => {
       queueState.running = data.running || [];
       queueState.queued = data.queued || [];
       for (const t of queueState.running || []) {
-        if (t?.id && !logStreams.has(t.id)) {
+        if (t?.id && !logStreams.has(t.id) && !pageOwnedStreams.has(t.id)) {
           openTaskLogStream(t.id, {});
         }
       }
@@ -167,6 +186,8 @@ export const useTasksStore = defineStore('tasks', () => {
     clearLiveTaskProgress,
     openTaskLogStream,
     closeTaskLogStream,
+    registerPageOwnedStream,
+    unregisterPageOwnedStream,
     pollQueueOnce,
     ensureQueuePoller,
     releaseQueuePoller,

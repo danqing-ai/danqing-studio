@@ -73,6 +73,7 @@ def register_services(
     task_scheduler: Optional[TaskScheduler] = None,
     asset_store_v3: Optional[SQLiteAssetStore] = None,
     shared_model_cache=None,
+    gpu_runtimes=None,
 ) -> Container:
     c = get_container()
     c.register_instance(IPathResolver, path_resolver)
@@ -91,4 +92,6 @@ def register_services(
         c.register_instance(SQLiteAssetStore, asset_store_v3)
     if shared_model_cache is not None:
         c.register_named("shared_model_cache", shared_model_cache)
+    if gpu_runtimes is not None:
+        c.register_named("gpu_runtimes", gpu_runtimes)
     return c

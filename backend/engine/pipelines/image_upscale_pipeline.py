@@ -53,12 +53,6 @@ class ImageUpscalePipeline:
         model_key, version_key = parse_model_version(request.model)
         entry = self._registry.require(model_key)
         family = getattr(entry, "family", "")
-        if family != "seedvr2":
-            raise RuntimeError(
-                f"Image upscale on MLX is only implemented for family 'seedvr2'; "
-                f"model {model_key!r} has family={family!r}."
-            )
-
         if ctx_exec.cancel_token.is_cancelled():
             return None
 
@@ -66,8 +60,12 @@ class ImageUpscalePipeline:
         if bundle_root is None:
             raise RuntimeError(
                 f"Model {model_key!r} has no installed bundle (version={version_key or 'default'}); "
-                "cannot run SeedVR2 upscale."
+                f"cannot run {family!r} upscale."
             )
+
+        from backend.engine.upscale_job_registry import get_upscale_job_runner
+
+        run_upscale = get_upscale_job_runner(family)
 
         from PIL import Image
 
@@ -89,9 +87,28 @@ class ImageUpscalePipeline:
             if on_log:
                 on_log(level, msg)
 
-        from backend.engine.families.seedvr2.job_mlx import run_seedvr2_upscale
+        from backend.engine.common.weights import parse_size_gb
+        from backend.engine.families.seedvr2.job_mlx import SeedVR2UpscalePipeline
+        from backend.engine.families.seedvr2.weights_mlx import ModelConfig
 
-        extra = run_seedvr2_upscale(
+        run_upscale_job = get_upscale_job_runner(family)
+
+        seedvr2_pipeline = None
+        cache_key = f"upscale:image:{entry.id}:{version_key or 'default'}"
+        if self._cache is not None:
+            seedvr2_pipeline = self._cache.get(cache_key)
+        if seedvr2_pipeline is None:
+            if "7b" in model_key.lower():
+                model_config = ModelConfig.seedvr2_7b()
+            else:
+                model_config = ModelConfig.seedvr2_3b()
+            seedvr2_pipeline = SeedVR2UpscalePipeline.from_bundle(bundle_root, model_config)
+            if self._cache is not None:
+                ver = self._resolve_version_block(entry, version_key)
+                size_str = str((ver or {}).get("size") or (getattr(entry, "raw", {}) or {}).get("size") or "8GB")
+                self._cache.put(cache_key, seedvr2_pipeline, parse_size_gb(size_str))
+
+        extra = run_upscale_job(
             bundle_path=bundle_root,
             model_key=model_key,
             source_image=src_path,
@@ -100,6 +117,7 @@ class ImageUpscalePipeline:
             seed=seed,
             output_png=out_path,
             on_log=_log,
+            pipeline=seedvr2_pipeline,
         )
 
         if ctx_exec.cancel_token.is_cancelled():

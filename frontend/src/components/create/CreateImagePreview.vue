@@ -8,7 +8,7 @@
       class="studio-preview-stage__media"
       :src="src"
       :alt="alt || 'Preview'"
-      loading="lazy"
+      :loading="eagerLoad ? 'eager' : 'lazy'"
     />
     <div class="studio-preview-stage__shade" aria-hidden="true" />
     <div class="studio-preview-stage__toolbar">
@@ -41,6 +41,7 @@ defineProps({
   alt: { type: String, default: '' },
   hue: { type: Number, default: 210 },
   showExpand: { type: Boolean, default: true },
+  eagerLoad: { type: Boolean, default: false },
 });
 
 const emit = defineEmits(['download', 'expand']);

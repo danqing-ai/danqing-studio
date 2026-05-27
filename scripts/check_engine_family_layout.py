@@ -20,6 +20,12 @@ ALLOWLIST = ROOT / "scripts" / "engine_family_layout_allowlist.txt"
 
 FORBIDDEN_DIR_NAMES = {"mlx", "torch", "runtime", "common"}
 
+# Parallel codec wrapper trees under backend/engine/ (use vae_codec_registry.py instead).
+FORBIDDEN_ENGINE_CODEC_DIRS = (
+    "backend/engine/vae_codecs",
+    "backend/engine/video_codecs",
+)
+
 
 def _load_allowlist() -> list[str]:
     if not ALLOWLIST.is_file():
@@ -57,6 +63,18 @@ def _collect_violations(allowlist: list[str]) -> list[str]:
     return violations
 
 
+def _collect_engine_codec_violations() -> list[str]:
+    violations: list[str] = []
+    for rel in FORBIDDEN_ENGINE_CODEC_DIRS:
+        path = ROOT / rel
+        if path.is_dir():
+            violations.append(
+                f"{rel}/: forbidden engine codec wrapper directory "
+                "(register handlers in vae_codec_registry.py / video_codec_registry.py)"
+            )
+    return violations
+
+
 def _write_allowlist() -> int:
     found: list[str] = []
     for family_dir in sorted(p for p in FAMILIES.iterdir() if p.is_dir()):
@@ -83,6 +101,7 @@ def main() -> int:
 
     allowlist = _load_allowlist()
     violations = _collect_violations(allowlist)
+    violations.extend(_collect_engine_codec_violations())
     if violations:
         print("Forbidden family layout patterns:\n", file=sys.stderr)
         for item in violations:

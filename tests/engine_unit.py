@@ -21,7 +21,12 @@ class RuntimeContractTests(unittest.TestCase):
 
         flux1 = FamilyRuntimeContract(
             family="flux1",
-            config=SimpleNamespace(supports_guidance=False, structured_prompt=False),
+            config=SimpleNamespace(
+                supports_guidance=False,
+                structured_prompt=False,
+                preserve_guidance_when_disabled=True,
+                cfg_negative_eligible=False,
+            ),
         )
         self.assertEqual(flux1.resolve_guidance_scalar(3.5), 3.5)
         self.assertFalse(flux1.should_encode_negative_prompt(3.5))
@@ -33,7 +38,12 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertTrue(zimg.should_encode_negative_prompt(2.0))
         structured = FamilyRuntimeContract(
             family="fibo",
-            config=SimpleNamespace(supports_guidance=True, structured_prompt=True),
+            config=SimpleNamespace(
+                supports_guidance=True,
+                structured_prompt=True,
+                skip_negative_when_structured_prompt=True,
+                cfg_negative_eligible=True,
+            ),
         )
         self.assertFalse(structured.should_encode_negative_prompt(2.0))
 
@@ -61,7 +71,12 @@ class RuntimeContractTests(unittest.TestCase):
 
         contract = FamilyRuntimeContract(
             family="z_image",
-            config=SimpleNamespace(supports_guidance=True, structured_prompt=False),
+            config=SimpleNamespace(
+                supports_guidance=True,
+                structured_prompt=False,
+                z_image_noise_layout=True,
+                noise_sample_fp32=True,
+            ),
         )
         out = contract.sample_txt2img_noise(
             _FakeCtx(),
@@ -135,6 +150,25 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertEqual(len(sigmas), 4)
         self.assertAlmostEqual(sigmas[0], 1.0)
         self.assertAlmostEqual(sigmas[-1], 0.25)
+
+
+class VideoRuntimeContractTests(unittest.TestCase):
+    def test_video_contract_config_flags(self) -> None:
+        from backend.engine.common.video_runtime_contracts import video_encoder_type
+        from backend.engine.config.model_configs import CogVideoXConfig, WanConfig
+        from backend.engine.video_codec_registry import get_video_decode_handler
+
+        wan = WanConfig()
+        self.assertEqual(str(getattr(wan, "video_vae_backend", "")), "wan")
+        self.assertTrue(bool(getattr(wan, "uses_wan_shift", False)))
+        self.assertTrue(bool(getattr(wan, "release_t5_after_encode", False)))
+        self.assertIsNotNone(get_video_decode_handler("wan"))
+
+        cog = CogVideoXConfig()
+        self.assertEqual(str(getattr(cog, "video_vae_backend", "")), "cogvideox")
+        self.assertTrue(bool(getattr(cog, "uses_prediction_type", False)))
+        self.assertTrue(bool(getattr(cog, "release_t5_after_encode", False)))
+        self.assertEqual(video_encoder_type(cog), "t5")
 
 
 class MlxAffineQuantInferenceTests(unittest.TestCase):
@@ -463,6 +497,8 @@ class HeartMulaGenerationTests(unittest.TestCase):
             top_k=80,
             codec_steps=12,
             codec_guidance=1.4,
+            long_form_temperature=1.1,
+            long_form_topk=70,
         )
         prepared = prepare_heartmula_request(req, HeartMulaConfig())
         self.assertIn("pop", prepared.tags)
@@ -472,6 +508,8 @@ class HeartMulaGenerationTests(unittest.TestCase):
         self.assertEqual(prepared.topk, 80)
         self.assertEqual(prepared.codec_steps, 12)
         self.assertEqual(prepared.codec_guidance, 1.4)
+        self.assertEqual(prepared.long_form_temperature, 1.1)
+        self.assertEqual(prepared.long_form_topk, 70)
         self.assertEqual(prepared.lyrics, "[verse]\nHello world")
         self.assertTrue(callable(create_heartmula_generator))
         self.assertEqual(prompt_to_tags("  jazz  "), "jazz")
@@ -496,6 +534,7 @@ class HeartMulaGenerationTests(unittest.TestCase):
                 "heartmula-oss-3b-happy-new-year": {
                     "media": "audio",
                     "engine": "danqing-audio",
+                    "family": "heartmula",
                     "actions": {"create": {}},
                 }
             },
@@ -531,7 +570,7 @@ class HeartMulaGenerationTests(unittest.TestCase):
         self.assertNotIn("extra_companions", ver)
         hm = reg["models"]["heartmula-oss-3b-happy-new-year"]
         self.assertFalse(hm["parameters"]["negative_prompt_support"])
-        for key in ("temperature", "top_k", "codec_steps", "codec_guidance"):
+        for key in ("temperature", "top_k", "codec_steps", "codec_guidance", "long_form_temperature", "long_form_topk"):
             self.assertIn(key, hm["parameters"])
         hooks = ver.get("install_hooks")
         self.assertEqual(len(hooks), 1)
@@ -539,7 +578,7 @@ class HeartMulaGenerationTests(unittest.TestCase):
 
     def test_mlx_stack_imports(self) -> None:
         from backend.engine.families.heartmula.generation_mlx import HeartMulaMlxGenerator
-        from backend.engine.families.heartmula.mlx.heartmula.modeling import HeartMuLa
+        from backend.engine.families.heartmula.mula_mlx import HeartMuLa
         from backend.engine.families.heartmula.weights_mlx import (
             convert_heartmula_weights,
             load_pytorch_weights,
@@ -553,10 +592,7 @@ class HeartMulaGenerationTests(unittest.TestCase):
     def test_codec_normalize_codes_layout(self) -> None:
         import mlx.core as mx
 
-        from backend.engine.families.heartmula.mlx.heartcodec.configuration import (
-            HeartCodecConfig,
-        )
-        from backend.engine.families.heartmula.mlx.heartcodec.modeling import HeartCodec
+        from backend.engine.families.heartmula.codec_mlx import HeartCodec, HeartCodecConfig
 
         codec = HeartCodec(HeartCodecConfig())
         heartlib = mx.zeros((1, 8, 125), dtype=mx.int32)
@@ -565,6 +601,23 @@ class HeartMulaGenerationTests(unittest.TestCase):
         already = mx.zeros((1, 125, 8), dtype=mx.int32)
         self.assertEqual(tuple(codec._normalize_codes_layout(already).shape), (1, 125, 8))
 
+    def test_codec_chunk_code_frames_and_routing(self) -> None:
+        from backend.engine.families.heartmula.codec_mlx import (
+            HeartCodec,
+            HeartCodecConfig,
+            chunk_code_frames,
+            single_pass_frame_limit,
+        )
+
+        cfg = HeartCodecConfig()
+        codec = HeartCodec(cfg)
+        chunk_frames = chunk_code_frames(cfg.frame_rate)
+        single_frames = single_pass_frame_limit(cfg.frame_rate)
+        self.assertGreater(chunk_frames, int(25 * cfg.frame_rate))
+        self.assertLess(chunk_frames, int(35 * cfg.frame_rate))
+        self.assertGreaterEqual(single_frames, int(120 * cfg.frame_rate))
+        # 300s → thousands of code frames → must exceed single-pass threshold
+        self.assertGreater(int(300 * cfg.frame_rate), single_frames)
 
 class HunyuanWeightTests(unittest.TestCase):
     def test_remap_strips_transformer_prefix(self) -> None:
@@ -618,6 +671,22 @@ class HunyuanWeightTests(unittest.TestCase):
         self.assertTrue(hasattr(CogVideoXTransformer3D, "predict_noise_cfg"))
         self.assertTrue(hasattr(WanModelMLX, "predict_noise_cfg"))
         self.assertTrue(hasattr(WanTransformer, "predict_noise_cfg"))
+
+    def test_cogvideox_param_map_flattens_mlx_modules(self) -> None:
+        from backend.engine.config.model_configs import CogVideoXConfig
+        from backend.engine.families.cogvideox.transformer_mlx import CogVideoXTransformer3D
+        from backend.engine.runtime.mlx import MLXContext
+
+        model = CogVideoXTransformer3D(CogVideoXConfig(), MLXContext(), num_frames=13)
+        model._build_param_map()
+        self.assertGreater(len(model._param_map), 600)
+        self.assertIn("time_embedding.linear_1.weight", model._param_map)
+        self.assertIn("transformer_blocks.0.attn1.to_out.0.weight", model._param_map)
+        for key, param in model._param_map.items():
+            self.assertFalse(
+                isinstance(param, dict),
+                msg=f"param_map leaf {key!r} must be a tensor, not a nested dict",
+            )
 
     def test_wan_mlx_perf_hooks(self) -> None:
         from backend.engine.config.model_configs import WanConfig
@@ -1168,6 +1237,26 @@ class InstallHooksTests(unittest.TestCase):
             self.assertTrue(mlx_weights_ready(root))
 
 
+class PipelineProgressBridgeTests(unittest.TestCase):
+    def test_denoise_emit_matches_execution_context(self) -> None:
+        from backend.core.contracts import ProgressEvent
+        from backend.engine.pipelines.image_pipeline import _image_pipeline_emit_denoise_progress
+        from backend.engine.progress_bridge import make_pipeline_progress_callback
+
+        events: list[ProgressEvent] = []
+
+        class _Ctx:
+            def on_progress(self, ev: ProgressEvent) -> None:
+                events.append(ev)
+
+        on_progress = make_pipeline_progress_callback(_Ctx())  # type: ignore[arg-type]
+        _image_pipeline_emit_denoise_progress(on_progress, 1, 40)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].step, 1)
+        self.assertEqual(events[0].total, 40)
+        self.assertEqual(events[0].phase, "denoising")
+
+
 class BenchmarkMetadataTests(unittest.TestCase):
     def test_exit_exempt_nonempty(self) -> None:
         self.assertIn("z-image-create", BENCHMARK_EXIT_EXEMPT_MISMATCH_VS_MFLUX)
@@ -1187,6 +1276,66 @@ class BenchmarkMetadataTests(unittest.TestCase):
             turbo["parameters"].get("enable_thinking"),
             "z-image-turbo must keep enable_thinking=true to align tokenizer chat-template semantics with mflux",
         )
+
+
+class MemoryPolicyTests(unittest.TestCase):
+    def test_clamp_mlx_memory_limit_gb(self) -> None:
+        from backend.engine.memory_policy import clamp_mlx_memory_limit_gb
+
+        self.assertEqual(clamp_mlx_memory_limit_gb(120), 120)
+        self.assertEqual(clamp_mlx_memory_limit_gb(8), 16)
+        self.assertEqual(clamp_mlx_memory_limit_gb(999), 512)
+        self.assertEqual(clamp_mlx_memory_limit_gb("bad", default=64), 64)
+
+    def test_model_cache_single_slot(self) -> None:
+        from backend.engine.common.cache import ModelCache
+
+        cache = ModelCache(lambda: 120.0, max_entries=1, ttl_minutes=60)
+        cache.put("a", object(), 5.0)
+        self.assertEqual(cache.stats["cached_models"], 1)
+        cache.put("b", object(), 3.0)
+        stats = cache.stats
+        self.assertEqual(stats["cached_models"], 1)
+        self.assertEqual(stats["models"][0]["key"], "b")
+        self.assertIsNone(cache.get("a"))
+        self.assertIsNotNone(cache.get("b"))
+
+    def test_model_cache_set_ttl_and_evict(self) -> None:
+        from backend.engine.common.cache import ModelCache
+
+        cache = ModelCache(lambda: 120.0, max_entries=2, ttl_minutes=10)
+        cache.set_ttl_minutes(45)
+        self.assertEqual(cache.stats["ttl_minutes"], 45)
+        cache.put("x", {"v": 1}, 1.0)
+        cache.evict("x")
+        self.assertIsNone(cache.get("x"))
+
+    def test_model_cache_purge_idle_after_ttl(self) -> None:
+        from datetime import datetime, timedelta
+
+        from backend.engine.common.cache import ModelCache
+
+        cache = ModelCache(lambda: 120.0, ttl_minutes=30)
+        cache.put("idle-model", object(), 2.0)
+        with cache._lock:
+            entry = cache._cache["idle-model"]
+            entry.last_used = datetime.now() - timedelta(minutes=31)
+        evicted = cache.purge_idle()
+        self.assertEqual(evicted, ["idle-model"])
+        self.assertEqual(cache.stats["cached_models"], 0)
+        self.assertIsNone(cache.get("idle-model"))
+
+    def test_mlx_context_apply_memory_limit(self) -> None:
+        import os
+
+        from backend.engine.runtime.mlx import MLXContext
+
+        ctx = MLXContext(memory_limit_gb=80)
+        self.assertEqual(ctx.memory_limit_gb, 80)
+        self.assertEqual(os.environ.get("MLX_METAL_MEMORY_LIMIT"), "80")
+        ctx.apply_memory_limit_gb(96)
+        self.assertEqual(ctx.memory_limit_gb, 96)
+        self.assertEqual(os.environ.get("MLX_METAL_MEMORY_LIMIT"), "96")
 
 
 if __name__ == "__main__":

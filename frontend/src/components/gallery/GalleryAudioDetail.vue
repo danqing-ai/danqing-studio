@@ -84,6 +84,7 @@ import { toast } from '@/utils/feedback';
 import { $tt } from '@/utils/i18n';
 import AudioMusicPlayer from '@/components/audio/AudioMusicPlayer.vue';
 import type { GalleryItem } from '@/types';
+import { assetDisplayLabel } from '@/utils/assetDisplay';
 
 const props = defineProps({
   item: { type: Object as () => GalleryItem, required: true },
@@ -97,10 +98,7 @@ const emit = defineEmits(['download']);
 
 const { t: $t } = useI18n();
 
-const displayTitle = computed(() => {
-  const p = (props.item.prompt || '').trim();
-  return p || props.item.name || '—';
-});
+const displayTitle = computed(() => assetDisplayLabel(props.item));
 
 const displaySubtitle = computed(() => {
   const parts: string[] = [];

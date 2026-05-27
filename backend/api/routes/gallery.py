@@ -27,6 +27,7 @@ class GalleryItemResponse(BaseModel):
     width: int
     height: int
     created_at: str
+    title: str = ""
     prompt: str
     model: str
     thumbnail: Optional[str] = None
@@ -59,7 +60,13 @@ def list_images(limit: int = 50, offset: int = 0):
     if not store:
         raise HTTPException(status_code=503, detail="asset store unavailable")
     rows: list[GalleryItemResponse] = []
-    for a in store.list_assets(kind=None, exclude_upload_refs=True, limit=limit, offset=offset):
+    for a in store.list_assets(
+        kind=None,
+        exclude_upload_refs=True,
+        exclude_step_previews=True,
+        limit=limit,
+        offset=offset,
+    ):
         aid = a["id"]
         meta = dict(a.get("metadata") or {})
         p = Path(str(a.get("path", "")))
@@ -80,6 +87,7 @@ def list_images(limit: int = 50, offset: int = 0):
                 width=w,
                 height=h,
                 created_at=str(a.get("created_at") or ""),
+                title=str(meta.get("title") or ""),
                 prompt=str(meta.get("prompt") or ""),
                 model=str(meta.get("model") or ""),
                 thumbnail=str(a.get("thumbnail_url") or f"/api/assets/{aid}/thumbnail"),

@@ -155,7 +155,7 @@ class CogVideoXPatchEmbed:
 
         post_h = H // cfg.patch_size
         post_w = W // cfg.patch_size
-        temporal_slots = (cfg.sample_frames - 1) // cfg.temporal_compression_ratio + 1
+        temporal_slots = int(T)
 
         pos_np = build_joint_pos_embedding(
             cfg.inner_dim,
@@ -353,7 +353,6 @@ class CogVideoXTransformer3D(TransformerBase):
         out_dim = cfg.patch_size * cfg.patch_size * cfg.out_channels
         self.proj_out = nn_ctx.Linear(cfg.inner_dim, out_dim, bias=True)
 
-        self._init_num_frames = num_frames
         self._compiled_forward = None
 
     def _activation_dtype(self) -> Any:

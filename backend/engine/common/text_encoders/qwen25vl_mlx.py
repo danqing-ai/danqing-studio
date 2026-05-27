@@ -1,4 +1,9 @@
-"""Qwen2.5-VL 文本编码 — MLX 张量封装；HF / PyTorch CPU 前向在 ``qwen25vl_cuda``（非桌面 MLX 包）。"""
+"""Qwen2.5-VL 文本编码 — MLX 张量封装；HF / PyTorch CPU 前向在 ``qwen25vl_cuda``（非桌面 MLX 包）。
+
+Deprecated for runtime generation: Qwen-Image and HunyuanVideo use pure MLX via
+``families/qwen/text_encoder_mlx.load_qwen25vl_mlx_encoder``. Kept for CUDA packaging
+hidden imports only.
+"""
 from __future__ import annotations
 
 from pathlib import Path

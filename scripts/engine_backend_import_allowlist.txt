@@ -1,18 +1,2 @@
-# Temporary exceptions for legacy HeartMuLa MLX subtree.
-# Shrink this list as files migrate to standard layout/import policy.
-backend/engine/families/heartmula/mlx/heartcodec/activations.py
-backend/engine/families/heartmula/mlx/heartcodec/flow_matching.py
-backend/engine/families/heartmula/mlx/heartcodec/modeling.py
-backend/engine/families/heartmula/mlx/heartcodec/quantizer.py
-backend/engine/families/heartmula/mlx/heartcodec/scalar_codec.py
-backend/engine/families/heartmula/mlx/heartmula/backbone.py
-backend/engine/families/heartmula/mlx/heartmula/decoder.py
-backend/engine/families/heartmula/mlx/heartmula/embeddings.py
-backend/engine/families/heartmula/mlx/heartmula/modeling.py
-backend/engine/families/heartmula/mlx/nn/conv.py
-backend/engine/families/heartmula/mlx/nn/kv_cache.py
-backend/engine/families/heartmula/mlx/nn/rope.py
-backend/engine/families/heartmula/mlx/nn/transformer.py
-backend/engine/families/heartmula/mlx/ode/neural_ode.py
-backend/engine/families/heartmula/mlx/ode/solver.py
-backend/engine/families/heartmula/mlx/sampling.py
+# Qwen Image weight apply/remap is MLX-only (merged weights_mlx into weights.py).
+backend/engine/families/qwen/weights.py

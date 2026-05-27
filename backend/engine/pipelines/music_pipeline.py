@@ -23,6 +23,7 @@ from backend.core.contracts import (
     LogEvent,
     ProgressEvent,
     parse_model_version,
+    work_title_metadata,
 )
 from backend.engine.common.cache import ModelCache
 from backend.engine.common.pipeline_registry import (
@@ -36,9 +37,9 @@ from backend.engine.config.model_configs import (
     HeartMulaConfig,
     get_config_class,
 )
+from backend.engine._transformer_registry import get_audio_generation_factory
 from backend.engine.families.ace_step.generation import (
     AceStepLyricsCapture,
-    create_ace_step_generator,
     lyrics_capture_log_message,
     lyrics_capture_metadata,
     prepare_music_request,
@@ -47,7 +48,6 @@ from backend.engine.families.ace_step.generation import (
 from backend.engine.families.heartmula.generation import (
     FRAME_RATE as HEARTMULA_FRAME_RATE,
     SAMPLE_RATE as HEARTMULA_SAMPLE_RATE,
-    create_heartmula_generator,
     prepare_heartmula_request,
 )
 from backend.engine.runtime._base import RuntimeContext
@@ -73,8 +73,6 @@ class MusicPipeline:
         self._asset_store = asset_store
         self._cache = model_cache
         self._project_root = project_root or Path.cwd()
-        self._generator: Any = None
-        self._generator_key: str | None = None
 
     def _resolve_path(self, local_path: str) -> Path:
         return _resolve_project_path_fn(self._project_root, local_path)
@@ -89,19 +87,32 @@ class MusicPipeline:
     def _local_bundle_root(self, entry, version_key: str | None) -> Path | None:
         return _local_bundle_root_fn(self._project_root, entry, version_key)
 
-    def _get_generator(self, family: str, bundle_root: Path):
-        key = f"{family}:{bundle_root}"
-        if self._generator is None or self._generator_key != key:
-            if family == "ace_step":
-                gen = create_ace_step_generator(self.ctx, bundle_root)
-            elif family == "heartmula":
-                gen = create_heartmula_generator(self.ctx, bundle_root)
-            else:
-                raise RuntimeError(f"MusicPipeline: unsupported audio family {family!r}")
-            gen.load()
-            self._generator = gen
-            self._generator_key = key
-        return self._generator
+    def _generator_cache_key(self, entry, version_key: str | None, family: str) -> str:
+        return f"audio:{entry.id}:{version_key or 'default'}:{family}"
+
+    def _get_generator(self, entry: Any, version_key: str | None, family: str, bundle_root: Path):
+        cache_key = self._generator_cache_key(entry, version_key, family)
+        if self._cache is not None:
+            cached = self._cache.get(cache_key)
+            if cached is not None:
+                return cached
+
+        factory = get_audio_generation_factory(family)
+        gen = factory(self.ctx, bundle_root)
+        gen.load()
+
+        if self._cache is not None:
+            from backend.engine.common.weights import parse_size_gb
+
+            ver = self._resolve_version_block(entry, version_key)
+            size_str = ""
+            if ver:
+                size_str = str(ver.get("size") or "")
+            if not size_str:
+                raw = getattr(entry, "raw", {}) or {}
+                size_str = str(raw.get("size") or "10GB")
+            self._cache.put(cache_key, gen, parse_size_gb(size_str))
+        return gen
 
     @staticmethod
     def _raise_if_cancelled(exec_ctx: ExecutionContext) -> None:
@@ -126,21 +137,24 @@ class MusicPipeline:
 
         family = entry.family
         cfg_cls = get_config_class(family)
-        if family == "ace_step":
-            return self._run_ace_step(
-                request, exec_ctx, model_id, entry, bundle_root, cfg_cls(), t0
-            )
-        if family == "heartmula":
-            return self._run_heartmula(
-                request, exec_ctx, model_id, entry, bundle_root, cfg_cls(), t0
-            )
-        raise RuntimeError(f"MusicPipeline: unknown audio family {family!r}")
+        config = cfg_cls()
+        runners = {
+            "ace_step": self._run_ace_step,
+            "heartmula": self._run_heartmula,
+        }
+        runner = runners.get(family)
+        if runner is None:
+            raise RuntimeError(f"MusicPipeline: unknown audio family {family!r}")
+        return runner(
+            request, exec_ctx, model_id, version_key, entry, bundle_root, config, t0
+        )
 
     def _run_heartmula(
         self,
         request: AudioGenerationRequest,
         exec_ctx: ExecutionContext,
         model_id: str,
+        version_key: str | None,
         entry: Any,
         bundle_root: Path,
         config: HeartMulaConfig,
@@ -156,7 +170,7 @@ class MusicPipeline:
                 message=f"Loading HeartMuLa: {model_id} from {bundle_root}",
             )
         )
-        generator = self._get_generator("heartmula", bundle_root)
+        generator = self._get_generator(entry, version_key, "heartmula", bundle_root)
         seed = (
             request.seed
             if request.seed is not None and request.seed >= 0
@@ -242,6 +256,8 @@ class MusicPipeline:
                     cfg_scale=prepared.cfg_scale,
                     codec_steps=prepared.codec_steps,
                     codec_guidance=prepared.codec_guidance,
+                    long_form_temperature=prepared.long_form_temperature,
+                    long_form_topk=prepared.long_form_topk,
                     seed=batch_seed,
                     progress_callback=_lm_progress,
                 )
@@ -264,15 +280,62 @@ class MusicPipeline:
             gen_s = time.monotonic() - t_gen
             frames = getattr(generator, "last_frame_count", 0)
             eos_early = getattr(generator, "last_eos_early", False)
+            hf_noise = getattr(generator, "last_hf_noise_ratio", 0.0)
+            codec_mode = getattr(generator, "last_codec_decode_mode", "single")
             exec_ctx.on_log(
                 LogEvent(
                     level="info",
                     message=(
                         f"HeartMuLa done ({i + 1}/{n}): {gen_s:.1f}s, "
-                        f"frames={frames}, eos_early={eos_early}"
+                        f"frames={frames}, eos_early={eos_early}, hf_noise={hf_noise:.3f}, "
+                        f"codec={codec_mode}"
                     ),
                 )
             )
+            code_diag_lines = list(getattr(generator, "last_code_diagnostics", []) or [])
+            for line in code_diag_lines:
+                exec_ctx.on_log(LogEvent(level="info", message=line))
+            chunk_diags = list(getattr(generator, "last_codec_chunk_diagnostics", []) or [])
+            for row in chunk_diags:
+                cidx = int(row.get("chunk_idx", 0))
+                ctot = int(row.get("chunk_total", 0))
+                peak = float(row.get("peak", 0.0))
+                rms = float(row.get("rms", 0.0))
+                dc = float(row.get("dc", 0.0))
+                hf = float(row.get("hf_noise", 0.0))
+                clip = float(row.get("clip_ratio", 0.0))
+                seam = float(row.get("seam", 0.0))
+                stabilized = bool(int(row.get("stabilized", 0.0)))
+                exec_ctx.on_log(
+                    LogEvent(
+                        level="info",
+                        message=(
+                            f"HeartCodec chunk {cidx}/{ctot}: peak={peak:.3f}, rms={rms:.4f}, "
+                            f"dc={dc:.4f}, hf={hf:.3f}, clip={clip:.3f}, seam={seam:.3f}, "
+                            f"stabilized={stabilized}"
+                        ),
+                    )
+                )
+                if hf > 0.55 or seam > 0.5:
+                    exec_ctx.on_log(
+                        LogEvent(
+                            level="warning",
+                            message=(
+                                f"HeartCodec chunk anomaly {cidx}/{ctot}: hf={hf:.3f}, seam={seam:.3f}"
+                            ),
+                        )
+                    )
+            if hf_noise > 0.55:
+                exec_ctx.on_log(
+                    LogEvent(
+                        level="warning",
+                        message=(
+                            f"音频 {i + 1}/{n} 高频噪声偏高 (hf_noise={hf_noise:.3f})；"
+                            "若持续有沙沙声/电流声，请尝试提高 Codec ODE 步数（≥10）或更换 seed；"
+                            "若曾用旧版安装 HeartCodec，请在下载中心重新安装以获取 fp32 Codec 权重"
+                        ),
+                    )
+                )
             if eos_early:
                 exec_ctx.on_log(
                     LogEvent(
@@ -341,6 +404,7 @@ class MusicPipeline:
         request: AudioGenerationRequest,
         exec_ctx: ExecutionContext,
         model_id: str,
+        version_key: str | None,
         entry: Any,
         bundle_root: Path,
         config: AceStepConfig,
@@ -356,7 +420,7 @@ class MusicPipeline:
                 message=f"Loading ACE-Step model: {model_id} from {bundle_root}",
             )
         )
-        generator = self._get_generator("ace_step", bundle_root)
+        generator = self._get_generator(entry, version_key, "ace_step", bundle_root)
 
         steps = prepared.steps
         lyrics = prepared.lyrics
@@ -616,6 +680,7 @@ class MusicPipeline:
                 "elapsed_seconds": elapsed,
                 "output_path": str(p),
             }
+            asset_meta.update(work_title_metadata(request.title))
             if lyrics_capture is not None:
                 asset_meta.update(lyrics_capture_metadata(lyrics_capture))
                 sidecar = Path(p).with_name(f"{Path(p).stem}_lyrics.txt")

@@ -4,6 +4,8 @@ defineProps<{
   params: Record<string, unknown>;
   currentModelConfig: Record<string, unknown> | null;
   audioFormats: string[];
+  hideCodecParams?: boolean;
+  batchMax?: number;
 }>();
 
 const emit = defineEmits<{
@@ -109,7 +111,7 @@ const emit = defineEmits<{
     </DqPrefRow>
 
     <DqPrefRow
-      v-if="currentModelConfig?.parameters?.codec_steps"
+      v-if="!hideCodecParams && currentModelConfig?.parameters?.codec_steps"
       :label="$t('audio.codecSteps')"
       class="settings-pref-row--slider"
     >
@@ -134,7 +136,7 @@ const emit = defineEmits<{
     </DqPrefRow>
 
     <DqPrefRow
-      v-if="currentModelConfig?.parameters?.codec_guidance"
+      v-if="!hideCodecParams && currentModelConfig?.parameters?.codec_guidance"
       :label="$t('audio.codecGuidance')"
       class="settings-pref-row--slider"
     >
@@ -171,18 +173,21 @@ const emit = defineEmits<{
       </div>
     </DqPrefRow>
 
-    <DqPrefRow :label="$t('audio.batchCount')" stacked>
-      <DqInputNumber
-        v-model="params.n"
-        :min="1"
-        :max="8"
-        controls-position="right"
-        class="studio-w-full"
-      />
+    <DqPrefRow :label="$t('audio.batchCount')">
+      <div class="param-control-row settings-pref-slider-row">
+        <div class="param-slider param-slider--spacer" aria-hidden="true" />
+        <DqInputNumber
+          v-model="params.n"
+          :min="1"
+          :max="batchMax ?? 8"
+          controls-position="right"
+          class="param-input-number"
+        />
+      </div>
     </DqPrefRow>
 
-    <DqPrefRow :label="$t('audio.audioFormat')" stacked>
-      <DqSelect v-model="params.audio_format" class="studio-w-full">
+    <DqPrefRow v-if="audioFormats.length > 1" :label="$t('audio.audioFormat')">
+      <DqSelect v-model="params.audio_format" class="studio-pref-field-select">
         <DqOption v-for="f in audioFormats" :key="f" :label="f" :value="f" />
       </DqSelect>
     </DqPrefRow>

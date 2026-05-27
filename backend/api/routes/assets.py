@@ -20,6 +20,10 @@ class AssetReconcileRequest(BaseModel):
         True,
         description="为 true 时只返回 missing 列表，不修改数据库；为 false 时删除对应 assets 行",
     )
+    purge_legacy_step_previews: bool = Field(
+        False,
+        description="同时删除误入库的去噪步进预览（metadata.preview=true）；与 dry_run 无关，会真实删库",
+    )
 
 
 @router.post("", status_code=201)
@@ -63,6 +67,10 @@ async def list_assets(
     model: str | None = Query(None, description="按 metadata.model 筛选"),
     search: str | None = Query(None, description="搜索 metadata 中的关键词"),
     exclude_upload_refs: bool = Query(False, description="排除创作页上传的参考图/蒙版（source_task_id 为空且 source_action 为 upload）"),
+    exclude_step_previews: bool = Query(
+        True,
+        description="排除去噪步进预览（512px 临时图，不应出现在作品库）",
+    ),
     sort_by: str = Query("created_at", description="排序字段：created_at|name|width|height"),
     sort_order: str = Query("desc", description="排序方向：asc|desc"),
     limit: int = Query(40, ge=1, le=500),
@@ -78,6 +86,7 @@ async def list_assets(
             model=model,
             search=search,
             exclude_upload_refs=exclude_upload_refs,
+            exclude_step_previews=exclude_step_previews,
             sort_by=sort_by,
             sort_order=sort_order,
             limit=limit,
@@ -95,7 +104,10 @@ async def reconcile_assets_disk(
 ):
     """比对 DB 登记的主文件路径与磁盘；默认 dry_run 不删库。须声明 `dry_run: false` 才会移除孤儿行。"""
     opts = body or AssetReconcileRequest()
-    return store.reconcile_disk_vs_db(dry_run=opts.dry_run)
+    out = store.reconcile_disk_vs_db(dry_run=opts.dry_run)
+    if opts.purge_legacy_step_previews:
+        out["purged_step_previews"] = store.purge_all_generation_step_previews()
+    return out
 
 
 @router.get("/{asset_id}/thumbnail")

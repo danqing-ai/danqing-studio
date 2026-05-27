@@ -10,23 +10,17 @@ from pathlib import Path
 from typing import Any, Literal, Optional
 
 from backend.core.contracts import (
-    AudioEditRequest,
-    AudioGenerationRequest,
     CancelToken,
     ExecutionContext,
-    ImageEditRequest,
-    ImageGenerationRequest,
-    ImageUpscaleRequest,
     LogEvent,
     ProgressEvent,
-    VideoEditRequest,
-    VideoGenerationRequest,
     new_task_id,
 )
 from backend.core.interfaces import IConfigStore, IV3TaskStore, TaskStatus
 import backend.core.task_kinds as TK
 from backend.engine.engine_registry import EngineRegistry
 from backend.persistence.asset_store import SQLiteAssetStore
+from backend.scheduler.task_dispatch import dispatch_task
 
 
 class TaskScheduler:
@@ -86,6 +80,11 @@ class TaskScheduler:
         d = self._paths.get_outputs_dir() / "work" / task_id
         d.mkdir(parents=True, exist_ok=True)
         return d
+
+    def task_preview_path(self, task_id: str) -> Path | None:
+        """Latest step-preview PNG in task work dir (ephemeral, not in assets DB)."""
+        p = self._work_dir(task_id) / "preview_latest.png"
+        return p if p.is_file() else None
 
     def _queue_band(self, *, kind: str, priority: str) -> int:
         if priority == "high":
@@ -364,6 +363,7 @@ class TaskScheduler:
                 "total": ev.total,
                 "eta_seconds": ev.eta_seconds,
                 "message": ev.message,
+                "phase": ev.phase,
             }
             loop.call_soon_threadsafe(_put_rt, "progress", ev)
 
@@ -386,29 +386,13 @@ class TaskScheduler:
             if tok.is_cancelled():
                 self._tasks.mark_cancelled(tid)
                 return
-            if kind == TK.IMAGE_GENERATION:
-                req = ImageGenerationRequest.model_validate(params)
-                res = await self._engines.get_image(model_id).generate(req, ctx)
-            elif kind == TK.IMAGE_EDIT:
-                req = ImageEditRequest.model_validate(params)
-                res = await self._engines.get_image(model_id).edit(req, ctx)
-            elif kind == TK.IMAGE_UPSCALE:
-                req = ImageUpscaleRequest.model_validate(params)
-                res = await self._engines.get_image(model_id).upscale(req, ctx)
-            elif kind == TK.VIDEO_GENERATION:
-                req = VideoGenerationRequest.model_validate(params)
-                res = await self._engines.get_video(model_id).generate(req, ctx)
-            elif kind == TK.VIDEO_EDIT:
-                req = VideoEditRequest.model_validate(params)
-                res = await self._engines.get_video(model_id).edit(req, ctx)
-            elif kind == TK.AUDIO_GENERATION:
-                req = AudioGenerationRequest.model_validate(params)
-                res = await self._engines.get_audio(model_id).generate(req, ctx)
-            elif kind == TK.AUDIO_EDIT:
-                req = AudioEditRequest.model_validate(params)
-                res = await self._engines.get_audio(model_id).edit(req, ctx)
-            else:
-                raise RuntimeError(f"unknown kind {kind}")
+            res = await dispatch_task(
+                kind=kind,
+                model_id=model_id,
+                params=params,
+                engines=self._engines,
+                ctx=ctx,
+            )
 
             if tok.is_cancelled():
                 self._tasks.mark_cancelled(tid)
@@ -430,6 +414,16 @@ class TaskScheduler:
             self._tasks.mark_failed(tid, str(e))
             self._tasks.append_log(tid, str(e), "error")
         finally:
+            try:
+                self._assets.purge_generation_step_previews(tid)
+            except Exception:
+                pass
+            try:
+                preview_png = self._work_dir(tid) / "preview_latest.png"
+                if preview_png.is_file():
+                    preview_png.unlink()
+            except OSError:
+                pass
             self._progress_meta.pop(tid, None)
             self._tokens.pop(tid, None)
             self._realtime_queues.pop(tid, None)

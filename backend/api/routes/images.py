@@ -1,8 +1,9 @@
 """POST /api/images/* — plan images.py"""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 
 from backend.api.deps import get_engine_registry, get_task_scheduler
+from backend.api.routes.submit_helpers import submit_media_task
 from backend.core import task_kinds as TK
 from backend.core.contracts import ImageEditRequest, ImageGenerationRequest, ImageUpscaleRequest
 from backend.engine.engine_registry import EngineRegistry
@@ -17,16 +18,14 @@ async def post_image_generation(
     sched: TaskScheduler = Depends(get_task_scheduler),
     engines: EngineRegistry = Depends(get_engine_registry),
 ):
-    eng = engines.get_image(body.model)
-    if not eng.supports(body.model, "generate"):
-        raise HTTPException(409, detail={"code": "unsupported", "message": "model does not support generate"})
-    r = await sched.submit(
-        kind=TK.IMAGE_GENERATION,
-        model_id=body.model,
-        params=body.model_dump(),
-        priority=body.priority,
+    return await submit_media_task(
+        body=body,
+        media="image",
+        api_action="generate",
+        task_kind=TK.IMAGE_GENERATION,
+        sched=sched,
+        engines=engines,
     )
-    return {"task": r}
 
 
 @router.post("/edits", status_code=202)
@@ -35,16 +34,14 @@ async def post_image_edit(
     sched: TaskScheduler = Depends(get_task_scheduler),
     engines: EngineRegistry = Depends(get_engine_registry),
 ):
-    eng = engines.get_image(body.model)
-    if not eng.supports(body.model, "edit"):
-        raise HTTPException(409, detail={"code": "unsupported", "message": "model does not support edit"})
-    r = await sched.submit(
-        kind=TK.IMAGE_EDIT,
-        model_id=body.model,
-        params=body.model_dump(),
-        priority=body.priority,
+    return await submit_media_task(
+        body=body,
+        media="image",
+        api_action="edit",
+        task_kind=TK.IMAGE_EDIT,
+        sched=sched,
+        engines=engines,
     )
-    return {"task": r}
 
 
 @router.post("/upscales", status_code=202)
@@ -53,13 +50,11 @@ async def post_image_upscale(
     sched: TaskScheduler = Depends(get_task_scheduler),
     engines: EngineRegistry = Depends(get_engine_registry),
 ):
-    eng = engines.get_image(body.model)
-    if not eng.supports(body.model, "upscale"):
-        raise HTTPException(409, detail={"code": "unsupported", "message": "model does not support upscale"})
-    r = await sched.submit(
-        kind=TK.IMAGE_UPSCALE,
-        model_id=body.model,
-        params=body.model_dump(),
-        priority=body.priority,
+    return await submit_media_task(
+        body=body,
+        media="image",
+        api_action="upscale",
+        task_kind=TK.IMAGE_UPSCALE,
+        sched=sched,
+        engines=engines,
     )
-    return {"task": r}

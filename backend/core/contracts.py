@@ -50,8 +50,15 @@ class StyleGuide(BaseModel):
     weight: float = 1.0
 
 
+def work_title_metadata(title: str) -> dict[str, str]:
+    """Optional user-facing work title stored in asset metadata JSON."""
+    t = (title or "").strip()
+    return {"title": t} if t else {}
+
+
 class ImageGenerationRequest(BaseModel):
     model: str  # "z-image-turbo:fp16" or "z-image-turbo" (no version uses registry default)
+    title: str = ""
     prompt: str
     negative_prompt: str = ""
     size: str = "1024x1024"
@@ -76,6 +83,7 @@ class ImageEditRequest(BaseModel):
     model: str
     operation: Literal["rewrite", "retouch", "extend"]
     source_asset_id: str
+    title: str = ""
     prompt: str
     source_fidelity: float = Field(0.6, ge=0.0, le=1.0)
     mask_asset_id: Optional[str] = None
@@ -97,12 +105,6 @@ class ImageEditRequest(BaseModel):
     def _rewrite_mode_consistency(self) -> "ImageEditRequest":
         if self.rewrite_mode is not None and self.operation != "rewrite":
             raise ValueError("rewrite_mode is only valid when operation is rewrite")
-        if self.operation == "rewrite" and self.rewrite_mode == "instruct":
-            base = self.model.split(":", 1)[0].strip()
-            if base != "flux1-kontext":
-                raise ValueError(
-                    "rewrite_mode instruct requires model flux1-kontext; use rewrite_mode reference or omit rewrite_mode"
-                )
         return self
 
 
@@ -121,6 +123,7 @@ class ImageUpscaleRequest(BaseModel):
 
 class VideoGenerationRequest(BaseModel):
     model: str
+    title: str = ""
     prompt: str
     negative_prompt: str = ""
     size: str = "832x480"
@@ -140,6 +143,7 @@ class VideoEditRequest(BaseModel):
     operation: Literal["animate"] = "animate"
     source_asset_id: str
     tail_asset_id: Optional[str] = None
+    title: str = ""
     prompt: str
     negative_prompt: str = ""
     size: str = "832x480"
@@ -171,6 +175,7 @@ class VideoUpscaleRequest(BaseModel):
 
 class AudioGenerationRequest(BaseModel):
     model: str  # e.g. "audio-stub" or "audio-stub:stub"
+    title: str = ""
     prompt: str
     negative_prompt: str = ""
     duration: Optional[int] = None  # seconds (10-600)
@@ -187,6 +192,8 @@ class AudioGenerationRequest(BaseModel):
     top_k: Optional[int] = None  # HeartMuLa LM top-k
     codec_steps: Optional[int] = None  # HeartMuLa codec ODE steps
     codec_guidance: Optional[float] = None  # HeartMuLa codec CFG
+    long_form_temperature: Optional[float] = None  # HeartMuLa long-form (>120s) LM temperature
+    long_form_topk: Optional[int] = None  # HeartMuLa long-form (>120s) LM top-k
     seed: Optional[int] = None
     n: int = Field(2, ge=1, le=8)
     audio_format: str = "mp3"
@@ -236,6 +243,8 @@ class ProgressEvent:
     total: Optional[int] = None
     eta_seconds: Optional[float] = None
     message: Optional[str] = None
+    # UX phases: encoding | loading_model | denoising | decoding | saving
+    phase: Optional[str] = None
 
 
 @dataclass

@@ -11,6 +11,8 @@ const props = defineProps<{
   showBpm?: boolean;
   showKeyScale?: boolean;
   showTimeSignature?: boolean;
+  codecStepsDef?: { min: number; max: number; default?: number } | null;
+  codecGuidanceDef?: { min: number; max: number; step?: number; default?: number } | null;
 }>();
 
 /** Presets capped by registry ``duration.max`` (HeartMuLa product limit). */
@@ -27,7 +29,7 @@ const durationSegmentOptions = computed(() => {
 
 <template>
   <DqPrefPane class="studio-create-pref-pane">
-    <DqPrefRow :label="$t('audio.duration')" stacked>
+    <DqPrefRow :label="$t('audio.duration')">
       <DqSegmented
         v-if="durationSegmentOptions.length > 0"
         v-model="params.duration"
@@ -45,21 +47,21 @@ const durationSegmentOptions = computed(() => {
       <p class="studio-field-footnote">{{ $t('audio.durationHint', { max: durationMax ?? 600 }) }}</p>
     </DqPrefRow>
 
-    <DqPrefRow v-if="showBpm !== false" :label="$t('audio.bpm')" stacked>
+    <DqPrefRow v-if="showBpm !== false" :label="$t('audio.bpm')">
       <DqInputNumber
         v-model="params.bpm"
         :min="30"
         :max="300"
         controls-position="right"
-        class="studio-w-full"
+        class="studio-pref-field-select"
         :placeholder="$t('audio.bpmAuto')"
       />
     </DqPrefRow>
 
-    <DqPrefRow v-if="showKeyScale !== false" :label="$t('audio.keyScale')" stacked>
+    <DqPrefRow v-if="showKeyScale !== false" :label="$t('audio.keyScale')">
       <DqSelect
         v-model="params.key_scale"
-        class="studio-w-full"
+        class="studio-pref-field-select"
         clearable
         :placeholder="$t('audio.keyScaleAuto')"
       >
@@ -67,10 +69,10 @@ const durationSegmentOptions = computed(() => {
       </DqSelect>
     </DqPrefRow>
 
-    <DqPrefRow v-if="showTimeSignature !== false" :label="$t('audio.timeSignature')" stacked>
+    <DqPrefRow v-if="showTimeSignature !== false" :label="$t('audio.timeSignature')">
       <DqSelect
         v-model="params.time_signature"
-        class="studio-w-full"
+        class="studio-pref-field-select"
         clearable
         :placeholder="$t('audio.timeSignatureAuto')"
       >
@@ -81,6 +83,54 @@ const durationSegmentOptions = computed(() => {
           :value="ts.value"
         />
       </DqSelect>
+    </DqPrefRow>
+
+    <DqPrefRow
+      v-if="codecStepsDef"
+      :label="$t('audio.codecSteps')"
+      class="settings-pref-row--slider"
+    >
+      <div class="param-control-row settings-pref-slider-row">
+        <div class="param-slider">
+          <DqSlider
+            v-model="params.codec_steps"
+            :min="codecStepsDef.min"
+            :max="codecStepsDef.max"
+            :step="1"
+          />
+        </div>
+        <DqInputNumber
+          v-model="params.codec_steps"
+          :min="codecStepsDef.min"
+          :max="codecStepsDef.max"
+          controls-position="right"
+          class="param-input-number"
+        />
+      </div>
+      <p class="studio-field-footnote">{{ $t('audio.codecStepsDesc') }}</p>
+    </DqPrefRow>
+
+    <DqPrefRow
+      v-if="codecGuidanceDef"
+      :label="$t('audio.codecGuidance')"
+      class="settings-pref-row--slider"
+    >
+      <div class="param-control-row settings-pref-slider-row">
+        <div class="param-slider">
+          <DqSlider
+            v-model="params.codec_guidance"
+            :min="codecGuidanceDef.min"
+            :max="codecGuidanceDef.max"
+            :step="codecGuidanceDef.step ?? 0.05"
+          />
+        </div>
+        <DqInputNumber
+          v-model="params.codec_guidance"
+          :step="codecGuidanceDef.step ?? 0.05"
+          controls-position="right"
+          class="param-input-number"
+        />
+      </div>
     </DqPrefRow>
   </DqPrefPane>
 </template>

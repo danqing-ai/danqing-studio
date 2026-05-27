@@ -79,8 +79,8 @@ class VideoUpscalePipeline:
         if not src_id:
             raise RuntimeError("Video upscale requires source_asset_id (low-res video latents or asset).")
 
-        src_asset = self._asset_store.get_asset(src_id)
-        if src_asset is None or not src_asset.file_path:
+        src_path = self._asset_store.get_file_path(src_id)
+        if src_path is None or not src_path.exists():
             raise RuntimeError(f"Source asset not found: {src_id!r}")
 
         prompt = request.prompt or ""
@@ -92,7 +92,6 @@ class VideoUpscalePipeline:
         import numpy as np
         from PIL import Image
 
-        src_path = Path(src_asset.file_path)
         if src_path.suffix.lower() in (".mp4", ".webm", ".mov"):
             raise RuntimeError(
                 "HunyuanVideo SR from file video is not yet wired; pass latents via future asset metadata."
@@ -110,6 +109,13 @@ class VideoUpscalePipeline:
         sr_steps = int(getattr(request, "steps", None) or 6)
         chunk = VideoPipeline._resolve_hunyuan_vae_temporal_chunk(entry, low_latents)
         spatial = VideoPipeline._resolve_hunyuan_vae_spatial_tiling(entry)
+        from backend.engine.common.pipeline_registry import resolve_version_block
+        from backend.engine.common.weights import parse_size_gb
+
+        ver = resolve_version_block(entry, version_key)
+        raw = getattr(entry, "raw", {}) or {}
+        size_str = str((ver or {}).get("size") or raw.get("size") or "10GB")
+        sr_cache_key = f"upscale:video:{entry.id}:{version_key or 'default'}"
         _, frames = run_hunyuan_video_sr(
             self.ctx,
             config,
@@ -123,6 +129,9 @@ class VideoUpscalePipeline:
             steps=sr_steps,
             temporal_chunk_size=chunk,
             spatial_tiling=spatial or getattr(config, "vae_spatial_tiling", True),
+            model_cache=self._cache,
+            cache_key=sr_cache_key,
+            cache_size_gb=parse_size_gb(size_str),
         )
 
         work = Path(ctx_exec.work_dir)

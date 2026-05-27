@@ -77,6 +77,21 @@
           </DqSurfaceCard>
           <template v-if="audioWorkTab === 'create'">
 
+            <!-- Work title -->
+            <DqSurfaceCard class="studio-surface-card studio-card-mb">
+              <template #header>
+                <div class="card-title">
+                  <DqIcon><document /></DqIcon>
+                  {{ $t('studio.workTitle') }}
+                </div>
+              </template>
+              <DqInput
+                v-model="params.title"
+                clearable
+                :placeholder="$t('studio.workTitlePlaceholder')"
+              />
+            </DqSurfaceCard>
+
             <!-- Prompt input -->
             <DqSurfaceCard class="studio-surface-card studio-card-mb">
               <template #header>
@@ -189,29 +204,28 @@
                 :show-bpm="supportsBpm"
                 :show-key-scale="supportsKeyScale"
                 :show-time-signature="supportsTimeSignature"
+                :codec-steps-def="heartMuLaCodecStepsDef"
+                :codec-guidance-def="heartMuLaCodecGuidanceDef"
               />
             </DqSurfaceCard>
 
             <!-- Advanced params -->
             <DqSurfaceCard class="studio-surface-card studio-card-mb">
-              <DqCollapse v-model="advancedOpen" class="studio-collapse-plain">
-                <DqCollapseItem name="advanced">
-                  <template #title>
-                    <div class="studio-collapse-title-row">
-                      <DqIcon><setting /></DqIcon>
-                      <span>{{ $t('studio.advancedParams') }}</span>
-                      <DqTag v-if="hasCustomParams" size="small" type="warning">{{ $t('studio.hasCustom') }}</DqTag>
-                    </div>
-                  </template>
-                  <AudioCreateAdvancedParams
-                    :params="params"
-                    :current-model-config="currentModelConfig"
-                    :audio-formats="audioFormats"
-                    @restore-defaults="restoreDefaults"
-                    @randomize-seed="randomizeSeed"
-                  />
-                </DqCollapseItem>
-              </DqCollapse>
+              <template #header>
+                <div class="card-title">
+                  <DqIcon><setting /></DqIcon>
+                  {{ $t('studio.advancedParams') }}
+                  <DqTag v-if="hasCustomParams" size="small" type="warning">{{ $t('studio.hasCustom') }}</DqTag>
+                </div>
+              </template>
+              <AudioCreateAdvancedParams
+                :params="params"
+                :current-model-config="advancedParamModelConfig"
+                :audio-formats="audioFormats"
+                :hide-codec-params="currentModelConfig?.family === 'heartmula'"
+                @restore-defaults="restoreDefaults"
+                @randomize-seed="randomizeSeed"
+              />
             </DqSurfaceCard>
           </template>
 
@@ -351,7 +365,7 @@
                     <DqIcon :size="18"><Headset /></DqIcon>
                   </span>
                   <span class="studio-audio-recent-item__text">
-                    <span class="studio-audio-recent-title">{{ ra.prompt || ra.name || 'Audio' }}</span>
+                    <span class="studio-audio-recent-title">{{ recentAudioLabel(ra) }}</span>
                     <span class="studio-audio-recent-meta">
                       <template v-if="isRecentActive(ra) && previewIsPlaying">{{ $t('audio.nowPlaying') }}</template>
                       <template v-else-if="ra.duration">{{ formatTime(ra.duration) }}</template>
@@ -405,6 +419,7 @@ import AudioCreateMusicParams from '@/components/audio/AudioCreateMusicParams.vu
 import AudioCreateAdvancedParams from '@/components/audio/AudioCreateAdvancedParams.vue';
 import AudioMusicPlayer from '@/components/audio/AudioMusicPlayer.vue';
 import StudioPreviewPane from '@/components/create/StudioPreviewPane.vue';
+import { assetDisplayLabel, previewDisplayCaption } from '@/utils/assetDisplay';
 import { Download } from '@danqing/dq-shell';
 
 const tasksStore = useTasksStore();
@@ -457,7 +472,6 @@ const audioWorkSegmentOptions = computed(() => [
 // ---- State ----
 const generating = ref(false);
 const modelsLoading = ref(false);
-const advancedOpen = ref<string[]>(['advanced']);
 const logContainer = ref<HTMLElement | null>(null);
 const previewPlayerRef = ref(null);
 const previewIsPlaying = ref(false);
@@ -468,6 +482,7 @@ const modelsDetailedStatus = ref<Record<string, any>>({});
 
 const params = reactive({
   model: '',
+  title: '',
   prompt: '',
   negative_prompt: '',
   duration: 30,
@@ -590,6 +605,46 @@ const promptPlaceholder = computed(() => {
   }
   return $tt('audio.promptPlaceholder');
 });
+
+/** HeartMuLa codec controls — always shown in music params (registry may be stale). */
+const heartMuLaCodecStepsDef = computed(() => {
+  if (currentModelConfig.value?.family !== 'heartmula') return null;
+  const p = currentModelConfig.value?.parameters?.codec_steps;
+  return {
+    default: p?.default ?? 10,
+    min: p?.min ?? 4,
+    max: p?.max ?? 24,
+  };
+});
+
+const heartMuLaCodecGuidanceDef = computed(() => {
+  if (currentModelConfig.value?.family !== 'heartmula') return null;
+  const p = currentModelConfig.value?.parameters?.codec_guidance;
+  return {
+    default: p?.default ?? 1.25,
+    min: p?.min ?? 1.0,
+    max: p?.max ?? 2.0,
+    step: p?.step ?? 0.05,
+  };
+});
+
+/** Merge HeartMuLa fallbacks so advanced sliders work on older workspace registries. */
+const advancedParamModelConfig = computed(() => {
+  const cfg = currentModelConfig.value;
+  if (!cfg || cfg.family !== 'heartmula') return cfg;
+  const p = cfg.parameters || {};
+  return {
+    ...cfg,
+    parameters: {
+      ...p,
+      temperature: p.temperature ?? { default: 1.0, min: 0.5, max: 1.5, step: 0.1 },
+      top_k: p.top_k ?? { default: 50, min: 10, max: 100 },
+      guidance: p.guidance ?? { default: 1.5, min: 1.0, max: 3.0, step: 0.1 },
+      codec_steps: p.codec_steps ?? heartMuLaCodecStepsDef.value,
+      codec_guidance: p.codec_guidance ?? heartMuLaCodecGuidanceDef.value,
+    },
+  };
+});
 const vocalLanguages = [
   { label: 'English', value: 'en' }, { label: '中文', value: 'zh' }, { label: '日本語', value: 'ja' },
   { label: '한국어', value: 'ko' }, { label: 'Français', value: 'fr' }, { label: 'Deutsch', value: 'de' },
@@ -711,9 +766,14 @@ function applyDefaults(modelConfig: any) {
   if (p.guidance && p.guidance.default != null) params.guidance = p.guidance.default;
   if (p.temperature && p.temperature.default != null) params.temperature = p.temperature.default;
   if (p.top_k && p.top_k.default != null) params.top_k = p.top_k.default;
-  if (p.codec_steps && p.codec_steps.default != null) params.codec_steps = p.codec_steps.default;
-  if (p.codec_guidance && p.codec_guidance.default != null) {
-    params.codec_guidance = p.codec_guidance.default;
+  if (modelConfig.family === 'heartmula') {
+    params.codec_steps = p.codec_steps?.default ?? 10;
+    params.codec_guidance = p.codec_guidance?.default ?? 1.25;
+  } else {
+    if (p.codec_steps && p.codec_steps.default != null) params.codec_steps = p.codec_steps.default;
+    if (p.codec_guidance && p.codec_guidance.default != null) {
+      params.codec_guidance = p.codec_guidance.default;
+    }
   }
   if (p.duration) {
     if (p.duration.default != null) params.duration = p.duration.default;
@@ -824,6 +884,7 @@ async function startGeneration() {
   try {
     const body = {
       model: params.model,
+      title: String(params.title || '').trim(),
       prompt: params.prompt.trim(),
       negative_prompt: params.negative_prompt || '',
       duration: params.duration ?? null,
@@ -877,6 +938,7 @@ async function startGeneration() {
       recentAudio.unshift({
         id: aid,
         url,
+        title: String(params.title || '').trim(),
         prompt: params.prompt,
         lyrics: eff,
         duration: 0,
@@ -888,7 +950,7 @@ async function startGeneration() {
       const url = assetFileUrl(aid);
       const changed = previewAudioSrc.value !== url;
       previewAudioSrc.value = url;
-      previewPrompt.value = params.prompt;
+      previewPrompt.value = previewDisplayCaption(String(params.title || ''), params.prompt);
       applyResultMeta(meta);
       previewIsPlaying.value = false;
       if (changed) previewAudioKey.value += 1;
@@ -965,6 +1027,10 @@ async function startGeneration() {
   }
 }
 
+function recentAudioLabel(item: { title?: string; prompt?: string; name?: string }) {
+  return assetDisplayLabel(item, 'Audio');
+}
+
 function isRecentActive(ra: any) {
   return !!ra?.url && ra.url === previewAudioSrc.value;
 }
@@ -979,7 +1045,7 @@ function previewAudio(item: any) {
   const nextUrl = String(item?.url || '');
   const changed = previewAudioSrc.value !== nextUrl;
   previewAudioSrc.value = nextUrl;
-  previewPrompt.value = item.prompt || '';
+  previewPrompt.value = recentAudioLabel(item);
   previewLyrics.value = item.lyrics || '';
   previewLyricsDownload.value = item.lyrics || '';
   previewDurationSec.value = item.duration || 0;
@@ -1032,6 +1098,7 @@ function loadRecentAudio() {
       recentAudio.push({
         id: aid,
         url,
+        title: String(meta.title || ''),
         prompt: String(meta.prompt || ''),
         lyrics: String(meta.lyrics_effective || '').trim(),
         name: item.name || '',

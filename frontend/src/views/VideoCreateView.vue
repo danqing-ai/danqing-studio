@@ -76,33 +76,20 @@
             </DqAlert>
           </DqSurfaceCard>
 
-          <DqAlert
-            v-if="videoWorkMode !== 'upscale'"
-            type="info"
-            :closable="false"
-            show-icon
-            class="studio-alert-mb studio-runtime-alert"
-          >
-            <template #title>{{ $t('video.runtimeCardTitle') }}</template>
-            <div class="studio-alert-body">
-              <p>{{ $tt('video.runtimeClipSecs', { sec: outputClipSecRounded }) }}</p>
-              <p>{{ $t('video.runtimeGenWarning') }}</p>
-              <p v-if="currentVersionDiskSize">{{ $tt('video.runtimeModelSize', { size: currentVersionDiskSize }) }}</p>
-            </div>
-          </DqAlert>
-          <DqAlert
-            v-else
-            type="warning"
-            :closable="false"
-            show-icon
-            class="studio-alert-mb studio-runtime-alert"
-          >
-            <template #title>{{ $t('video.runtimeCardTitle') }}</template>
-            <div class="studio-alert-body">
-              <p>{{ $t('video.runtimeUpscaleNote') }}</p>
-              <p v-if="currentVersionDiskSize">{{ $tt('video.runtimeModelSize', { size: currentVersionDiskSize }) }}</p>
-            </div>
-          </DqAlert>
+          <!-- Work title -->
+          <DqSurfaceCard class="studio-surface-card studio-card-mb">
+            <template #header>
+              <div class="card-title">
+                <DqIcon><document /></DqIcon>
+                {{ $t('studio.workTitle') }}
+              </div>
+            </template>
+            <DqInput
+              v-model="params.title"
+              clearable
+              :placeholder="$t('studio.workTitlePlaceholder')"
+            />
+          </DqSurfaceCard>
 
           <!-- Animate: start image (required) -->
           <DqSurfaceCard v-if="videoWorkMode === 'animate'" class="studio-surface-card studio-card-mb">
@@ -258,8 +245,11 @@
                 </DqSelect>
               </DqCol>
               <DqCol :span="6" class="studio-presets-row__action">
-                <DqButton class="studio-presets-row__control" @click="loadPreset">
-                  {{ $t('create.loadPreset') }}
+                <DqButton class="studio-presets-row__control studio-presets-row__load-btn" @click="loadPreset">
+                  <span class="studio-inline-btn">
+                    <DqIcon :size="14"><folder-opened /></DqIcon>
+                    {{ $t('create.loadPreset') }}
+                  </span>
                 </DqButton>
               </DqCol>
             </DqRow>
@@ -291,23 +281,19 @@
           <DqSurfaceCard v-if="videoWorkMode !== 'upscale'"
             class="studio-surface-card studio-card-mb"
           >
-            <DqCollapse v-model="advancedParamsOpen" class="studio-collapse-plain">
-              <DqCollapseItem name="advanced">
-                <template #title>
-                  <div class="studio-collapse-title-row">
-                    <DqIcon><setting /></DqIcon>
-                    <span>{{ $t('studio.advancedParams') }}</span>
-                    <DqTag v-if="hasCustomParams" size="small" type="warning">{{ $t('studio.hasCustom') }}</DqTag>
-                  </div>
-                </template>
+            <template #header>
+              <div class="card-title">
+                <DqIcon><setting /></DqIcon>
+                {{ $t('studio.advancedParams') }}
+                <DqTag v-if="hasCustomParams" size="small" type="warning">{{ $t('studio.hasCustom') }}</DqTag>
+              </div>
+            </template>
 
-                <VideoCreateAdvancedParams
-                  :params="params"
-                  :current-model-config="currentModelConfig"
-                  @reset-to-defaults="resetToDefaults"
-                />
-              </DqCollapseItem>
-            </DqCollapse>
+            <VideoCreateAdvancedParams
+              :params="params"
+              :current-model-config="currentModelConfig"
+              @reset-to-defaults="resetToDefaults"
+            />
           </DqSurfaceCard>
 
           <!-- LoRA selector -->
@@ -370,6 +356,34 @@
               />
             </DqSelect>
           </DqSurfaceCard>
+
+          <DqAlert
+            v-if="videoWorkMode !== 'upscale'"
+            type="info"
+            :closable="false"
+            show-icon
+            class="studio-alert-mb studio-runtime-alert"
+          >
+            <template #title>{{ $t('video.runtimeCardTitle') }}</template>
+            <div class="studio-alert-body">
+              <p>{{ $tt('video.runtimeClipSecs', { sec: outputClipSecRounded }) }}</p>
+              <p>{{ $t('video.runtimeGenWarning') }}</p>
+              <p v-if="currentVersionDiskSize">{{ $tt('video.runtimeModelSize', { size: currentVersionDiskSize }) }}</p>
+            </div>
+          </DqAlert>
+          <DqAlert
+            v-else
+            type="warning"
+            :closable="false"
+            show-icon
+            class="studio-alert-mb studio-runtime-alert"
+          >
+            <template #title>{{ $t('video.runtimeCardTitle') }}</template>
+            <div class="studio-alert-body">
+              <p>{{ $t('video.runtimeUpscaleNote') }}</p>
+              <p v-if="currentVersionDiskSize">{{ $tt('video.runtimeModelSize', { size: currentVersionDiskSize }) }}</p>
+            </div>
+          </DqAlert>
 
           <!-- Generate button -->
           <DqSurfaceCard class="studio-surface-card studio-card-mb">
@@ -479,6 +493,9 @@
                 <div class="gallery-image-wrapper studio-recent-video-wrap">
                   <video :src="getVideoUrl(video)" preload="metadata" muted></video>
                 </div>
+                <p v-if="assetDisplayLabel(video)" class="studio-recent-grid__caption" :title="assetDisplayLabel(video)">
+                  {{ truncateDisplayLabel(assetDisplayLabel(video), 40) }}
+                </p>
               </div>
             </div>
           </StudioPreviewPane>
@@ -502,7 +519,7 @@
     <!-- Video preview dialog -->
     <DqDialog
       v-model:open="videoPreviewVisible"
-      :title="selectedVideo?.name ?? ''"
+      :title="selectedVideo ? assetDisplayLabel(selectedVideo) : ''"
       width="80%"
       center
       destroy-on-close
@@ -522,6 +539,7 @@ import { toast } from '@/utils/feedback';
 import { api, taskIdFromSubmitResponse } from '@/utils/api';
 import { $tt, $mn, $mvn, $pn } from '@/utils/i18n';
 import { useRegistryStore } from '@/stores/registry';
+import { useTasksStore } from '@/stores/tasks';
 import { DQ_STORAGE } from '@/utils/storage';
 import type { SystemInfo, GalleryItem } from '@/types';
 import { warnIfRiskyMemory } from '@/composables/memoryHint';
@@ -537,9 +555,11 @@ import VideoCreateAdvancedParams from '@/components/create/VideoCreateAdvancedPa
 import CreateUpscaleParams from '@/components/create/CreateUpscaleParams.vue';
 import StudioPreviewPane from '@/components/create/StudioPreviewPane.vue';
 import CreateVideoPlayer from '@/components/create/CreateVideoPlayer.vue';
+import { assetDisplayLabel, previewDisplayCaption, truncateDisplayLabel } from '@/utils/assetDisplay';
 
 const router = useRouter();
 const registryStore = useRegistryStore();
+const tasksStore = useTasksStore();
 const systemInfo = inject<Ref<SystemInfo>>('systemInfo');
 
 // Inline legacy helpers
@@ -593,6 +613,7 @@ function parseModelVersionValue(value: string) {
 
 // Params
 const params = reactive({
+  title: '',
   prompt: '',
   negative_prompt: '',
   model: '',
@@ -625,7 +646,9 @@ const previewVideoPlayerRef = ref<{ load?: () => void; togglePlay?: () => void }
 const previewVideoPlaying = ref(false);
 const previewVideoDurationSec = ref(0);
 
-const previewCaption = computed(() => (params.prompt || '').trim());
+const previewCaption = computed(() =>
+  previewDisplayCaption(String(params.title || ''), String(params.prompt || '')),
+);
 
 function formatPreviewClock(sec: number) {
   const s = Math.max(0, Math.floor(sec || 0));
@@ -653,7 +676,6 @@ function downloadPreviewVideo() {
 }
 const recentVideos = ref<GalleryItem[]>([]);
 const recentStartImages = ref<GalleryItem[]>([]);
-const advancedParamsOpen = ref<string[]>(['advanced']);
 
 /** Plan §3.1: Create (text-to-video) and Animate (image-to-video) */
 const videoWorkMode = ref('create');
@@ -1219,6 +1241,7 @@ const startGeneration = async () => {
         model: modelStr,
         operation: 'animate',
         source_asset_id,
+        title: String(params.title || '').trim(),
         prompt: params.prompt,
         negative_prompt: params.negative_prompt || '',
         size: `${params.width}x${params.height}`,
@@ -1273,6 +1296,7 @@ const startGeneration = async () => {
     } else {
       const body: Record<string, unknown> = {
         model: modelStr,
+        title: String(params.title || '').trim(),
         prompt: params.prompt,
         negative_prompt: params.negative_prompt || '',
         size: `${params.width}x${params.height}`,
@@ -1302,8 +1326,9 @@ const startGeneration = async () => {
       total: 0,
       status: 'queued',
       progressMessage: null,
-      params: { model: modelStr },
+      params: { model: modelStr, title: String(params.title || '').trim(), prompt: params.prompt },
     };
+    tasksStore.closeTaskLogStream(tid);
     api.gen.streamMediaTask(tid, {
       onLog: (logData: any) => ingestServerLog(logData),
       onStatus: (statusData: any) => {
@@ -1330,7 +1355,7 @@ const startGeneration = async () => {
             addLog(
               $tt('studio.noOutputAsset', {
                 msg:
-                  (updated.error_message || '').trim() ||
+                  (updated.error || updated.error_message || '').trim() ||
                   $tt('studio.noOutputAssetHint'),
               }),
               'warning'
@@ -1340,7 +1365,7 @@ const startGeneration = async () => {
         } else if (doneData.status === 'failed') {
           const updated = await api.gen.getMediaTask(tid) as any;
           currentTask.value = updated;
-          addLog($tt('studio.genFailed', { msg: updated.error_message || '' }), 'error');
+          addLog($tt('studio.genFailed', { msg: updated.error || updated.error_message || '' }), 'error');
         }
       },
       onError: () => addLog($tt('studio.connectionLost'), 'warning'),

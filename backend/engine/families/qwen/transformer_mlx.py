@@ -9,6 +9,7 @@ import numpy as np
 
 from backend.engine.common.attention import (
     build_padding_attention_bias,
+    scaled_dot_product_attention_bhsd_mx,
 )
 from backend.engine.common._base import TransformerBase
 from backend.engine.common.embeddings import apply_complex_rope_bshd
@@ -319,7 +320,8 @@ class QwenAttention(nn.Module):
         value_bhsd = mx.transpose(value, (0, 2, 1, 3))
         head_dim = query.shape[-1]
         scale_value = 1.0 / (head_dim**0.5)
-        hidden_states_bhsd = mx.fast.scaled_dot_product_attention(
+        hidden_states_bhsd = scaled_dot_product_attention_bhsd_mx(
+            mx,
             query_bhsd,
             key_bhsd,
             value_bhsd,

@@ -1,0 +1,109 @@
+"""GPU memory budget and shared :class:`ModelCache` wiring (MLX + CUDA, REST + CLI)."""
+from __future__ import annotations
+
+import gc
+from typing import Any, Callable, Mapping, TYPE_CHECKING
+
+from backend.core.interfaces import AppSettings
+
+if TYPE_CHECKING:
+    from backend.engine.common.cache import ModelCache
+
+
+def clamp_mlx_memory_limit_gb(gb: int | float | None, *, default: int = 120) -> int:
+    try:
+        value = int(float(gb))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        value = default
+    return max(16, min(value, 512))
+
+
+def release_cached_model(model: Any) -> None:
+    """Drop a cached model and release allocator caches (MLX Metal + CUDA VRAM)."""
+    del model
+    gc.collect()
+    try:
+        from backend.engine.memory_policy_mlx import clear_mlx_cache
+
+        clear_mlx_cache()
+    except Exception:
+        pass
+    try:
+        from backend.engine.memory_policy_cuda import clear_cuda_cache
+
+        clear_cuda_cache()
+    except Exception:
+        pass
+
+
+def build_shared_model_cache(
+    load_settings: Callable[[], AppSettings],
+    *,
+    reserve_gb: float = 20.0,
+    max_entries: int = 1,
+) -> ModelCache:
+    from backend.engine.common.cache import ModelCache
+
+    settings = load_settings()
+    ttl = int(getattr(settings, "model_cache_ttl_minutes", 30) or 30)
+    return ModelCache(
+        get_memory_limit=lambda: float(load_settings().mlx_memory_limit),
+        reserve_gb=reserve_gb,
+        ttl_minutes=max(1, ttl),
+        max_entries=max_entries,
+        release_fn=release_cached_model,
+    )
+
+
+def build_gpu_runtimes(settings: AppSettings) -> dict[str, Any]:
+    from backend.engine.platform import PlatformInfo
+
+    platforms = PlatformInfo.detect()
+    runtimes: dict[str, Any] = {}
+    limit_gb = clamp_mlx_memory_limit_gb(settings.mlx_memory_limit)
+    if "mlx" in platforms:
+        from backend.engine.runtime.mlx import MLXContext
+
+        runtimes["mlx"] = MLXContext(memory_limit_gb=limit_gb)
+    if "cuda" in platforms:
+        from backend.engine.runtime.cuda import CudaContext
+
+        runtimes["cuda"] = CudaContext()
+    return runtimes
+
+
+def apply_memory_settings(
+    settings: AppSettings,
+    runtimes: Mapping[str, Any] | None,
+    cache: ModelCache | None,
+) -> None:
+    """MLX: Metal limit; CUDA: no PyTorch global cap (driver manages VRAM). Cache TTL always."""
+    limit_gb = clamp_mlx_memory_limit_gb(settings.mlx_memory_limit)
+    mlx = (runtimes or {}).get("mlx")
+    if mlx is not None and hasattr(mlx, "apply_memory_limit_gb"):
+        mlx.apply_memory_limit_gb(limit_gb)
+    cuda = (runtimes or {}).get("cuda")
+    if cuda is not None and hasattr(cuda, "clear_cache"):
+        cuda.clear_cache()
+    if cache is not None:
+        ttl = int(getattr(settings, "model_cache_ttl_minutes", 30) or 30)
+        cache.set_ttl_minutes(max(1, ttl))
+
+
+def apply_memory_settings_from_container(settings: AppSettings) -> None:
+    from backend.core.container import get_container
+
+    c = get_container()
+    apply_memory_settings(
+        settings,
+        c.try_resolve_named("gpu_runtimes"),
+        c.try_resolve_named("shared_model_cache"),
+    )
+
+
+def unload_model_cache_if_present() -> None:
+    from backend.core.container import get_container
+
+    cache = get_container().try_resolve_named("shared_model_cache")
+    if cache is not None:
+        cache.unload_all()

@@ -9,9 +9,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from backend.core.contracts import CancelToken, ExecutionContext, LogEvent, ProgressEvent
+from backend.core.contracts import CancelToken, ExecutionContext
 from backend.core.model_registry import ModelRegistry
 from backend.engine.common.cache import ModelCache
+from backend.engine.memory_policy import (
+    apply_memory_settings,
+    build_gpu_runtimes,
+    build_shared_model_cache,
+)
 from backend.engine.danqing_audio_engine import DanQingAudioEngine
 from backend.engine.danqing_image_engine import DanQingImageEngine
 from backend.engine.danqing_video_engine import DanQingVideoEngine
@@ -45,24 +50,13 @@ def build_engine_context(project_root: Path | None = None) -> EngineContext:
     model_registry = ModelRegistry.load(registry_json)
     config_store = JsonConfigStore(path_resolver)
 
-    shared_cache = ModelCache(
-        get_memory_limit=lambda: float(config_store.load().mlx_memory_limit),
-        reserve_gb=20.0,
-    )
-
+    app_settings = config_store.load()
+    shared_cache = build_shared_model_cache(config_store.load)
     platforms = PlatformInfo.detect()
-    runtimes: dict[str, Any] = {}
-    if "mlx" in platforms:
-        from backend.engine.runtime.mlx import MLXContext
-
-        runtimes["mlx"] = MLXContext()
-    if "cuda" in platforms:
-        from backend.engine.runtime.cuda import CudaContext
-
-        runtimes["cuda"] = CudaContext()
-
+    runtimes = build_gpu_runtimes(app_settings)
     if not runtimes:
         raise RuntimeError("No GPU backend available (need MLX on Apple Silicon or CUDA on NVIDIA)")
+    apply_memory_settings(app_settings, runtimes, shared_cache)
 
     image_engine = DanQingImageEngine(
         path_resolver, model_registry, runtimes, model_cache=shared_cache,
@@ -122,6 +116,28 @@ def build_exec_context(
         work_dir=work_dir,
         asset_store=asset_store or _NullAssetStore(),
     )
+
+
+async def run_engine_task(
+    *,
+    ctx: EngineContext,
+    kind: str,
+    model_id: str,
+    request: Any,
+) -> Any:
+    """Shared async engine dispatch for CLI (mirrors TaskScheduler dispatch table)."""
+    from backend.scheduler.task_dispatch import TASK_DISPATCH
+
+    spec = TASK_DISPATCH.get(kind)
+    if spec is None:
+        raise RuntimeError(f"unknown task kind {kind!r}")
+    if not isinstance(request, spec.request_cls):
+        request = spec.request_cls.model_validate(request)
+    exec_ctx = build_exec_context(asset_store=ctx.asset_store)
+    getter = getattr(ctx.engine_registry, spec.engine_getter)
+    engine = getter(model_id)
+    method = getattr(engine, spec.method_name)
+    return await method(request, exec_ctx)
 
 
 class _NullAssetStore:

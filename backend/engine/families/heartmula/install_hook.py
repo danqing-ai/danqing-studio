@@ -88,10 +88,20 @@ def run_heartmula_mlx_weights(
                 f"heartmula_mlx_weights: unsupported dtype {dtype!r} "
                 "(use float32, float16, or bfloat16)"
             )
-        logger.info("HeartMuLa MLX hook: converting LM at %s", paths.mula_torch)
+        codec_dtype = str(hook_spec.get("codec_dtype") or "float32").strip().lower()
+        if codec_dtype not in ("float32", "float16", "bfloat16"):
+            raise ValueError(
+                f"heartmula_mlx_weights: unsupported codec_dtype {codec_dtype!r} "
+                "(use float32, float16, or bfloat16)"
+            )
+        logger.info("HeartMuLa MLX hook: converting LM at %s (%s)", paths.mula_torch, dtype)
         _convert_component(paths.mula_torch, model_type="heartmula", dtype=dtype)
-        logger.info("HeartMuLa MLX hook: converting Codec at %s", paths.codec_torch)
-        _convert_component(paths.codec_torch, model_type="heartcodec", dtype=dtype)
+        logger.info(
+            "HeartMuLa MLX hook: converting Codec at %s (%s; heartlib default is fp32)",
+            paths.codec_torch,
+            codec_dtype,
+        )
+        _convert_component(paths.codec_torch, model_type="heartcodec", dtype=codec_dtype)
         if not mlx_weights_ready(root):
             raise RuntimeError(f"HeartMuLa MLX hook finished but cache incomplete: {root}")
     else:

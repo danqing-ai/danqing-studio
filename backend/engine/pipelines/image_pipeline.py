@@ -16,7 +16,7 @@ import numpy as np
 from backend.core.contracts import (
     EngineResult, ExecutionContext, ImageGenerationRequest,
     ImageEditRequest,
-    LogEvent, parse_model_version, parse_size,
+    LogEvent, parse_model_version, parse_size, work_title_metadata,
 )
 from backend.engine.common.cache import ModelCache
 from backend.engine.common.pipeline_registry import (
@@ -39,11 +39,36 @@ from backend.engine._transformer_registry import (
 )
 from backend.engine.config.model_configs import assert_image_family_contract, get_config_class
 from backend.engine.runtime._base import RuntimeContext
+from backend.engine.vae_codec_registry import (
+    get_vae_decode_handler,
+    get_vae_encode_handler,
+    qwen_pack_latents_nchw,
+    qwen_unpack_latents_nchw,
+)
 
 # Bar semantics: denoise uses most of the range; VAE decode + save use the tail so we do not
 # sit at 100% while post-processing (queue ETA uses ``1 - progress``).
 _IMAGE_PIPELINE_DENOISE_PROGRESS_SHARE = 0.88
 _IMAGE_PIPELINE_POST_PROGRESS_SHARE = 0.12
+
+
+def _resolve_image_preview_settings(entry: Any) -> tuple[str, int, int]:
+    """Return (preview_mode, interval_steps, max_edge_px)."""
+    mode = _registry_scalar_default_fn(entry, "preview_mode", None)
+    if mode is None:
+        family = str(getattr(entry, "family", "") or "")
+        raw = getattr(entry, "raw", None) or {}
+        model_type = str(raw.get("type", "") if isinstance(raw, dict) else "")
+        if model_type != "diffusion" or family in ("seedvr2",):
+            mode = "none"
+        else:
+            mode = "stream"
+    mode = str(mode).strip().lower()
+    if mode not in ("stream", "none"):
+        mode = "none"
+    interval = int(_registry_scalar_default_fn(entry, "preview_interval_steps", 2) or 2)
+    max_edge = int(_registry_scalar_default_fn(entry, "preview_max_edge", 512) or 512)
+    return mode, max(1, interval), max(64, min(2048, max_edge))
 
 
 def _image_pipeline_cfg_noise_pred(
@@ -178,7 +203,7 @@ def _image_pipeline_emit_denoise_progress(
     n = max(1, int(n_steps))
     s = min(max(1, int(step_1based)), n)
     p = _IMAGE_PIPELINE_DENOISE_PROGRESS_SHARE * (s / n)
-    on_progress(p, s, n, "denoise")
+    on_progress(p, s, n, "denoise", "denoising")
 
 
 def _image_pipeline_emit_post_progress(
@@ -193,14 +218,27 @@ def _image_pipeline_emit_post_progress(
     n = max(1, int(n_steps))
     w = min(1.0, max(0.0, float(within_post)))
     p = _IMAGE_PIPELINE_DENOISE_PROGRESS_SHARE + _IMAGE_PIPELINE_POST_PROGRESS_SHARE * w
-    on_progress(p, n, n, "post")
+    on_progress(p, n, n, "post", "decoding")
 
 
 def _image_pipeline_emit_complete(on_progress: Callable[..., None] | None, n_steps: int) -> None:
     if on_progress is None:
         return
     n = max(1, int(n_steps))
-    on_progress(1.0, n, n, None)
+    on_progress(1.0, n, n, None, "saving")
+
+
+def _image_pipeline_emit_phase(
+    on_progress: Callable[..., None] | None,
+    *,
+    phase: str,
+    progress: float,
+    n_steps: int,
+) -> None:
+    if on_progress is None:
+        return
+    n = max(1, int(n_steps))
+    on_progress(min(1.0, max(0.0, float(progress))), 0, n, phase, phase)
 
 
 class ImagePipeline:
@@ -220,16 +258,6 @@ class ImagePipeline:
         self._cache = model_cache
         self._project_root = project_root or Path.cwd()
         self._scheduler_semantics_resolver = SchedulerSemanticsResolver()
-        self._vae_encode_handlers = {
-            "AutoencoderKLQwenImage": self._vae_encode_qwen_image,
-            "AutoencoderKLWan": self._vae_encode_wan,
-            "AutoencoderKLFlux2": self._vae_encode_flux2,
-        }
-        self._vae_decode_handlers = {
-            "AutoencoderKLQwenImage": self._vae_decode_qwen_image,
-            "AutoencoderKLFlux2": self._vae_decode_flux2,
-            "AutoencoderKLWan": self._vae_decode_wan,
-        }
 
     def _resolve_path(self, local_path: str) -> Path:
         return _resolve_project_path_fn(self._project_root, local_path)
@@ -350,84 +378,6 @@ class ImagePipeline:
         std = ctx.sqrt(bv + float(bn_eps))
         return (latents - bm) / std
 
-    def _vae_encode_qwen_image(
-        self,
-        *,
-        image_n11: Any,
-        entry: Any,
-        version_key: str | None,
-        height_px: int | None,
-        width_px: int | None,
-        on_log: Callable | None,
-    ) -> Any:
-        from backend.engine.common.vae.qwen_image import QwenVAE, apply_qwen_vae_weights_from_bundle
-
-        if height_px is None or width_px is None:
-            raise RuntimeError("Qwen VAE encode: height_px and width_px are required for latent packing.")
-        vae = QwenVAE()
-        br = self._local_bundle_root(entry, version_key)
-        if br is None:
-            raise RuntimeError("Qwen VAE encode: bundle_root missing")
-        apply_qwen_vae_weights_from_bundle(vae, br, project_root=self._project_root)
-        enc_out = vae.encode(image_n11)
-        if getattr(enc_out, "ndim", 0) == 5 and int(enc_out.shape[2]) == 1:
-            enc_out = enc_out[:, :, 0, :, :]
-        packed = self._qwen_pack_latents_nchw(enc_out, height_px, width_px)
-        if on_log:
-            on_log("info", f"vae_encode qwen packed_shape={tuple(packed.shape)}")
-        if getattr(self.ctx, "backend", None) == "mlx":
-            self.ctx.eval(packed)
-        return packed
-
-    def _vae_encode_fibo_wan(
-        self,
-        *,
-        image_n11: Any,
-        entry: Any,
-        version_key: str | None,
-        height_px: int | None,
-        width_px: int | None,
-        on_log: Callable | None,
-    ) -> Any:
-        del height_px, width_px
-        from backend.engine.families.fibo import vae_mlx
-
-        bundle_root = self._local_bundle_root(entry, version_key)
-        if bundle_root is None:
-            raise RuntimeError("FIBO VAE encode: model bundle is not installed at local_path.")
-        latents = vae_mlx.encode_image_n11(self.ctx, image_n11, bundle_root)
-        if on_log:
-            on_log("info", f"vae_encode fibo wan latent_shape={tuple(latents.shape)}")
-        return latents
-
-    def _vae_encode_wan(
-        self,
-        *,
-        image_n11: Any,
-        entry: Any,
-        version_key: str | None,
-        height_px: int | None,
-        width_px: int | None,
-        on_log: Callable | None,
-    ) -> Any:
-        del height_px, width_px
-        from backend.engine.families.wan.vae import encode_wan_image_to_latent
-
-        br = self._local_bundle_root(entry, version_key)
-        if br is None:
-            raise RuntimeError("Wan VAE encode: bundle_root missing")
-        if image_n11.ndim != 4 or int(image_n11.shape[1]) != 3:
-            raise RuntimeError(f"Wan VAE encode expects [1,3,H,W], got {tuple(image_n11.shape)}")
-        chw = image_n11[0]
-        latents = encode_wan_image_to_latent(self.ctx, chw, br)
-        if int(latents.shape[2]) == 1:
-            latents = latents[:, :, 0, :, :]
-        if on_log:
-            on_log("info", f"vae_encode wan latent_shape={tuple(latents.shape)}")
-        if getattr(self.ctx, "backend", None) == "mlx":
-            self.ctx.eval(latents)
-        return latents
-
     def _vae_encode_flux2(
         self,
         *,
@@ -482,23 +432,16 @@ class ImagePipeline:
 
         _, vae_cfg, vae_weights = self._load_vae_dir_cfg_weights(entry, version_key)
         vae_cls = str(vae_cfg.get("_class_name") or "")
+        entry_family = str(getattr(entry, "family", "") or "")
 
-        if getattr(entry, "family", "") == "fibo" and vae_cls == "AutoencoderKLWan":
-            return self._vae_encode_fibo_wan(
-                image_n11=image_n11,
-                entry=entry,
-                version_key=version_key,
-                height_px=height_px,
-                width_px=width_px,
-                on_log=on_log,
-            )
-
-        encode_handler = self._vae_encode_handlers.get(vae_cls)
-        if vae_cls in ("AutoencoderKLQwenImage", "AutoencoderKLWan") and encode_handler is not None:
+        encode_handler = get_vae_encode_handler(vae_cls, entry_family=entry_family)
+        if encode_handler is not None:
+            bundle_root = self._local_bundle_root(entry, version_key)
             return encode_handler(
+                ctx=self.ctx,
                 image_n11=image_n11,
-                entry=entry,
-                version_key=version_key,
+                bundle_root=bundle_root,
+                project_root=self._project_root,
                 height_px=height_px,
                 width_px=width_px,
                 on_log=on_log,
@@ -520,9 +463,7 @@ class ImagePipeline:
             getattr(self.ctx, "backend", None) == "mlx"
             and str(getattr(entry, "family", "")).lower() == "flux1"
         ):
-            import mlx.core as mx
-
-            enc.cast_floating_params(mx.bfloat16)
+            enc.cast_floating_params(self.ctx.bfloat16())
         if on_log:
             on_log(
                 "info",
@@ -551,26 +492,10 @@ class ImagePipeline:
         return z
 
     def _qwen_pack_latents_nchw(self, encoded_b16hw: Any, height_px: int, width_px: int) -> Any:
-        """[B,16,H_lat,W_lat] → [B,64,H_px/16,W_px/16] (mflux ``FluxLatentCreator.pack_latents``, NCHW)."""
-        ctx = self.ctx
-        B = int(encoded_b16hw.shape[0])
-        Hg = height_px // 16
-        Wg = width_px // 16
-        x = ctx.reshape(encoded_b16hw, (B, 16, Hg, 2, Wg, 2))
-        x = ctx.permute(x, (0, 2, 4, 1, 3, 5))
-        x = ctx.reshape(x, (B, Hg * Wg, 64))
-        x = ctx.reshape(x, (B, Hg, Wg, 64))
-        return ctx.permute(x, (0, 3, 1, 2))
+        return qwen_pack_latents_nchw(self.ctx, encoded_b16hw, height_px, width_px)
 
     def _qwen_unpack_latents_nchw(self, packed_b64hw: Any) -> Any:
-        """Inverse of ``_qwen_pack_latents_nchw`` → [B,16,H_lat,W_lat]."""
-        ctx = self.ctx
-        B = int(packed_b64hw.shape[0])
-        Hg, Wg = int(packed_b64hw.shape[2]), int(packed_b64hw.shape[3])
-        x = ctx.permute(packed_b64hw, (0, 2, 3, 1))
-        x = ctx.reshape(x, (B, Hg, Wg, 16, 2, 2))
-        x = ctx.permute(x, (0, 3, 1, 4, 2, 5))
-        return ctx.reshape(x, (B, 16, Hg * 2, Wg * 2))
+        return qwen_unpack_latents_nchw(self.ctx, packed_b64hw)
 
     def _apply_registry_config_overrides(self, entry: Any, config: Any) -> None:
         for param_key in (
@@ -671,6 +596,271 @@ class ImagePipeline:
             encoder_type,
         )
 
+    def _build_vae_preview_session(
+        self,
+        entry: Any,
+        version_key: str | None,
+        *,
+        on_log: Callable | None = None,
+    ) -> dict[str, Any] | None:
+        """Load VAE decoder once for step previews (standard AutoencoderKL path only)."""
+        from backend.engine.common.vae import VAEDecoder, remap_vae_weights
+
+        bundle_root = self._local_bundle_root(entry, version_key)
+        vae_dir = (bundle_root / "vae") if bundle_root else None
+        vae_cfg: dict[str, Any] = {}
+        if vae_dir and (vae_dir / "config.json").exists():
+            import json
+
+            with open(vae_dir / "config.json") as f:
+                vae_cfg = json.load(f)
+        vae_cls = str(vae_cfg.get("_class_name") or "")
+        entry_family = str(getattr(entry, "family", "") or "")
+        if get_vae_decode_handler(vae_cls, entry_family=entry_family) is not None:
+            return None
+
+        scaling_factor = float(vae_cfg.get("scaling_factor", 1.0))
+        shift_factor = float(vae_cfg.get("shift_factor", 0.0))
+        vae_weights: dict[str, Any] = {}
+        if vae_dir and vae_dir.exists():
+            for sf in sorted(vae_dir.glob("*.safetensors")):
+                vae_weights.update(self.ctx.load_weights(str(sf)))
+        if not vae_weights:
+            return None
+
+        use_quant_path = bool(vae_cfg.get("use_quant_conv", False))
+        use_post_quant_path = bool(vae_cfg.get("use_post_quant_conv", False))
+        use_special_preprocess = (use_quant_path or use_post_quant_path) and (
+            "bn.running_mean" in vae_weights or "post_quant_conv.weight" in vae_weights
+        )
+        if use_special_preprocess:
+            scaling_factor = 1.0
+            shift_factor = 0.0
+
+        latent_c = 16
+        if vae_cfg.get("latent_channels") is not None:
+            latent_c = int(vae_cfg["latent_channels"])
+        vae = VAEDecoder(
+            latent_channels=latent_c,
+            ctx=self.ctx,
+            scaling_factor=scaling_factor,
+            shift_factor=shift_factor,
+        )
+        decoder_w = remap_vae_weights(vae_weights)
+        if not decoder_w:
+            return None
+        loaded, skipped = vae.load_weights(list(decoder_w.items()), strict=False)
+        if not any(k.startswith("conv_in.") for k in loaded):
+            raise RuntimeError(
+                "VAE preview session failed to load conv_in weights; "
+                f"skipped_sample={skipped[:8]}"
+            )
+        if on_log:
+            on_log(
+                "info",
+                f"preview VAE session ready decoder_tensors={len(decoder_w)} "
+                f"loaded_params={len(loaded)}",
+            )
+        return {
+            "kind": "standard",
+            "vae": vae,
+            "vae_weights": vae_weights,
+            "use_special_preprocess": use_special_preprocess,
+            "orig_scaling": float(vae_cfg.get("scaling_factor", 1.0)),
+            "orig_shift": float(vae_cfg.get("shift_factor", 0.0)),
+        }
+
+    def _vae_decode_with_preview_session(
+        self,
+        latents: Any,
+        entry: Any,
+        version_key: str | None,
+        preview_state: dict[str, Any],
+        *,
+        on_log: Callable | None = None,
+    ) -> Any:
+        from backend.engine.common.vae import vae_output_to_uint8_hwc
+        from PIL import Image
+
+        session = preview_state.get("vae_session")
+        if session is None:
+            try:
+                session = self._build_vae_preview_session(
+                    entry, version_key, on_log=on_log
+                )
+            except Exception as exc:
+                preview_state["vae_session"] = False
+                if on_log:
+                    on_log("warning", f"preview VAE session build failed: {exc}")
+                return self._vae_decode(
+                    latents, entry, version_key, on_log=on_log
+                )
+            preview_state["vae_session"] = session if session else False
+
+        if not session or session is False:
+            return self._vae_decode(latents, entry, version_key, on_log=on_log)
+
+        z = self._latents_for_vae_preview(latents)
+        if z.ndim == 3:
+            b, seq_len, channels = z.shape
+            latent_h = int(seq_len ** 0.5)
+            latent_w = seq_len // latent_h
+            z = z.reshape(b, latent_h, latent_w, channels).transpose(0, 3, 1, 2)
+
+        if session.get("use_special_preprocess"):
+            z = self._vae_preprocess_special(
+                z,
+                session["vae_weights"],
+                session["orig_scaling"],
+                session["orig_shift"],
+            )
+
+        image = session["vae"].forward(z)
+        pixels = vae_output_to_uint8_hwc(image, self.ctx)
+        return Image.fromarray(pixels)
+
+    @staticmethod
+    def _latents_for_vae_preview(latents: Any) -> Any:
+        z = latents
+        if getattr(z, "ndim", None) == 5 and int(z.shape[2]) == 1:
+            z = z[:, :, 0, :, :]
+        return z
+
+    def _warm_step_preview_decoders(
+        self,
+        entry: Any,
+        version_key: str | None,
+        preview_state: dict[str, Any],
+        *,
+        config: Any = None,
+        on_log: Callable | None = None,
+    ) -> None:
+        bundle_root = self._local_bundle_root(entry, version_key)
+        if bool(getattr(config, "vae_preview_warmup", False)) and bundle_root and preview_state.get("flux2_vae") is None:
+            from backend.engine.families.flux2.vae_mlx import load_flux2_vae_decoder
+
+            try:
+                preview_state["flux2_vae"] = load_flux2_vae_decoder(
+                    self.ctx, bundle_root, on_log=on_log
+                )
+            except Exception as exc:
+                preview_state["flux2_vae"] = False
+                if on_log:
+                    on_log("warning", f"flux2 preview VAE warmup failed: {exc}")
+
+    def _decode_latents_for_step_preview(
+        self,
+        latents: Any,
+        entry: Any,
+        version_key: str | None,
+        preview_state: dict[str, Any],
+        *,
+        packed_denoise: bool,
+        flux_unpack: Callable[..., Any] | None,
+        latent_h: int,
+        latent_w: int,
+        on_log: Callable | None = None,
+    ) -> Any:
+        """Same decode semantics as final frame; prefer warmed VAE session when available."""
+        decode_latents = self._latents_for_vae_preview(latents)
+        if packed_denoise and flux_unpack is not None:
+            decode_latents = flux_unpack(self.ctx, latents, latent_h, latent_w)
+            decode_latents = self._latents_for_vae_preview(decode_latents)
+
+        flux2_vae = preview_state.get("flux2_vae")
+        if flux2_vae not in (None, False):
+            from backend.engine.families.flux2.vae_mlx import decode_flux2_latents_with_model
+
+            return decode_flux2_latents_with_model(
+                self.ctx, flux2_vae, decode_latents, on_log=on_log
+            )
+
+        session = preview_state.get("vae_session")
+        if session and session is not False:
+            return self._vae_decode_with_preview_session(
+                decode_latents,
+                entry,
+                version_key,
+                preview_state,
+                on_log=on_log,
+            )
+
+        return self._vae_decode(decode_latents, entry, version_key, on_log=on_log)
+
+    def _maybe_emit_step_preview(
+        self,
+        *,
+        step_index_0based: int,
+        n_steps: int,
+        latents: Any,
+        entry: Any,
+        version_key: str | None,
+        ctx_exec: ExecutionContext,
+        on_progress: Callable[..., None] | None,
+        preview_interval: int,
+        preview_max_edge: int,
+        preview_state: dict[str, Any],
+        packed_denoise: bool,
+        flux_unpack: Callable[..., Any] | None,
+        latent_h: int,
+        latent_w: int,
+    ) -> None:
+        interval = max(1, int(preview_interval))
+        step_1 = step_index_0based + 1
+        is_last = step_1 >= n_steps
+        if step_1 > 1 and step_1 % interval != 0 and not is_last:
+            return
+        step_log = preview_state.get("on_log")
+        try:
+            from PIL import Image
+
+            image = self._decode_latents_for_step_preview(
+                latents,
+                entry,
+                version_key,
+                preview_state,
+                packed_denoise=packed_denoise,
+                flux_unpack=flux_unpack,
+                latent_h=latent_h,
+                latent_w=latent_w,
+                on_log=step_log,
+            )
+            if image is None:
+                return
+            if not hasattr(image, "save"):
+                return
+            pil = image
+            if max(pil.size) > preview_max_edge:
+                pil = pil.copy()
+                pil.thumbnail(
+                    (preview_max_edge, preview_max_edge),
+                    Image.Resampling.BILINEAR,
+                )
+            work = Path(ctx_exec.work_dir)
+            work.mkdir(parents=True, exist_ok=True)
+            out_path = work / "preview_latest.png"
+            pil.save(str(out_path), format="PNG", optimize=True)
+            nbytes = out_path.stat().st_size if out_path.is_file() else 0
+            n = max(1, int(n_steps))
+            p = _IMAGE_PIPELINE_DENOISE_PROGRESS_SHARE * (step_1 / n)
+            # Step preview image: frontend polls GET /api/tasks/{task_id}/preview (not SSE).
+            if on_progress is not None:
+                on_progress(p, step_1, n, None, "denoising")
+            if preview_state.get("on_log"):
+                preview_state["on_log"](
+                    "info",
+                    f"preview step {step_1}/{n_steps} saved {nbytes} bytes -> {out_path.name}",
+                )
+            if getattr(self.ctx, "backend", None) == "mlx":
+                self.ctx.eval()
+        except Exception as exc:
+            shape = getattr(latents, "shape", None)
+            if preview_state.get("on_log"):
+                preview_state["on_log"](
+                    "error",
+                    f"step preview failed at {step_1}/{n_steps}: {exc} latent_shape={shape}",
+                )
+
     def _denoise_steps(
         self,
         *,
@@ -698,6 +888,12 @@ class ImagePipeline:
         ctx_exec: ExecutionContext,
         on_progress: Callable[..., None] | None,
         on_log: Callable[..., None] | None,
+        preview_mode: str = "none",
+        preview_interval: int = 2,
+        preview_max_edge: int = 512,
+        preview_state: dict[str, Any] | None = None,
+        entry: Any = None,
+        version_key: str | None = None,
         timestep_offset: int = 0,
         packed_denoise: bool = False,
         flux_pack: Callable[..., Any] | None = None,
@@ -775,7 +971,28 @@ class ImagePipeline:
                 self.ctx.eval(latents)
             model.step_callback(i, latents, noise_pred)
             _image_pipeline_emit_denoise_progress(on_progress, i + 1, len(timesteps))
-            if on_log:
+            if (
+                preview_mode == "stream"
+                and preview_state is not None
+                and entry is not None
+            ):
+                self._maybe_emit_step_preview(
+                    step_index_0based=i,
+                    n_steps=len(timesteps),
+                    latents=latents,
+                    entry=entry,
+                    version_key=version_key,
+                    ctx_exec=ctx_exec,
+                    on_progress=on_progress,
+                    preview_interval=preview_interval,
+                    preview_max_edge=preview_max_edge,
+                    preview_state=preview_state,
+                    packed_denoise=packed_denoise,
+                    flux_unpack=flux_unpack,
+                    latent_h=latent_h,
+                    latent_w=latent_w,
+                )
+            if on_log and (i == 0 or (i + 1) % max(1, preview_interval) == 0 or i + 1 == len(timesteps)):
                 extra = f" t_embed={t_embed:.6g}" if t_embed is not None else ""
                 on_log("info", f"Step {i + 1}/{len(timesteps)}{extra}")
         return latents
@@ -826,6 +1043,10 @@ class ImagePipeline:
         steps = max(1, steps)
         guidance = float(request.guidance) if request.guidance is not None else float(guidance_default)
         guidance = runtime_contract.resolve_guidance_scalar(guidance)
+        preview_mode, preview_interval, preview_max_edge = _resolve_image_preview_settings(entry)
+        preview_state: dict[str, Any] = {}
+
+        _image_pipeline_emit_phase(on_progress, phase="encoding", progress=0.02, n_steps=steps)
 
         (
             txt_embeds,
@@ -847,8 +1068,13 @@ class ImagePipeline:
         if ctx_exec.cancel_token.is_cancelled():
             return None
 
+        _image_pipeline_emit_phase(on_progress, phase="loading_model", progress=0.08, n_steps=steps)
+
         # 2. Load model
-        model = self._load_model(family, config, entry, version_key or None)
+        allow_cache = not (getattr(request, "adapters", None) or [])
+        model = self._load_model(
+            family, config, entry, version_key or None, allow_cache=allow_cache
+        )
         if model is None:
             raise RuntimeError(f"Failed to load model: {model_key}")
 
@@ -968,6 +1194,19 @@ class ImagePipeline:
                 **extra_cond,
             )
 
+        preview_state["on_log"] = on_log
+        if preview_mode == "stream":
+            self._warm_step_preview_decoders(
+                entry, version_key or None, preview_state, config=config, on_log=on_log
+            )
+            try:
+                preview_state["vae_session"] = self._build_vae_preview_session(
+                    entry, version_key or None, on_log=on_log
+                )
+            except Exception as exc:
+                preview_state["vae_session"] = False
+                if on_log:
+                    on_log("warning", f"preview VAE warmup skipped: {exc}")
         latents = self._denoise_steps(
             model=model,
             scheduler=scheduler,
@@ -993,6 +1232,12 @@ class ImagePipeline:
             ctx_exec=ctx_exec,
             on_progress=on_progress,
             on_log=on_log,
+            preview_mode=preview_mode,
+            preview_interval=preview_interval,
+            preview_max_edge=preview_max_edge,
+            preview_state=preview_state,
+            entry=entry,
+            version_key=version_key or None,
             packed_denoise=_packed_denoise,
             flux_pack=_flux_pack,
             flux_unpack=_flux_unpack,
@@ -1025,12 +1270,14 @@ class ImagePipeline:
         _image_pipeline_emit_post_progress(on_progress, n_steps=len(timesteps), within_post=1.0)
         _image_pipeline_emit_complete(on_progress, len(timesteps))
 
-        return str(out_path), {
+        meta = {
             "model": request.model, "seed": seed,
             "prompt": request.prompt, "steps": steps,
             "guidance": guidance,
             "width": w, "height": h, "mime_type": "image/png",
         }
+        meta.update(work_title_metadata(request.title))
+        return str(out_path), meta
 
     def run_edit(
         self,
@@ -1152,6 +1399,10 @@ class ImagePipeline:
         else:
             guidance = float(guidance_default)
         guidance = runtime_contract.resolve_guidance_scalar(guidance)
+        preview_mode, preview_interval, preview_max_edge = _resolve_image_preview_settings(entry)
+        preview_state: dict[str, Any] = {}
+
+        _image_pipeline_emit_phase(on_progress, phase="encoding", progress=0.02, n_steps=steps)
 
         (
             txt_embeds,
@@ -1173,7 +1424,12 @@ class ImagePipeline:
         if ctx_exec.cancel_token.is_cancelled():
             return None
 
-        model = self._load_model(family, config, entry, version_key or None)
+        _image_pipeline_emit_phase(on_progress, phase="loading_model", progress=0.08, n_steps=steps)
+
+        allow_cache = not (getattr(request, "adapters", None) or [])
+        model = self._load_model(
+            family, config, entry, version_key or None, allow_cache=allow_cache
+        )
         if model is None:
             raise RuntimeError(f"Failed to load model: {model_key}")
         model.after_load_weights(bundle_root=str(bundle_root) if bundle_root else None)
@@ -1214,7 +1470,7 @@ class ImagePipeline:
 
         _lnd_edit = runtime_contract.denoise_latent_noise_dtype(self.ctx)
         _noise_sample_dtype_edit = runtime_contract.noise_sample_dtype(self.ctx, _lnd_edit)
-        if encoder_type == "qwen_image":
+        if getattr(config, "encoder_step_kwargs", None) == "qwen_image":
             q_h = int(encoded.shape[2])
             q_w = int(encoded.shape[3])
             q_seq = q_h * q_w
@@ -1269,6 +1525,33 @@ class ImagePipeline:
             **extra_cond,
         )
 
+        _packed_edit = getattr(config, "latent_noise_packed", False)
+        _flux_unpack_edit = None
+        _lh_edit = _lw_edit = 0
+        if _packed_edit:
+            from backend.engine.families.flux1.transformer_mlx import _unpack_flux1_latents
+
+            _flux_unpack_edit = _unpack_flux1_latents
+            if latents.ndim == 3:
+                _, seq_len, _ = latents.shape
+                _lh_edit = int(seq_len ** 0.5)
+                _lw_edit = seq_len // max(_lh_edit, 1)
+            elif latents.ndim == 4:
+                _, _, _lh_edit, _lw_edit = latents.shape
+
+        preview_state["on_log"] = on_log
+        if preview_mode == "stream":
+            self._warm_step_preview_decoders(
+                entry, version_key or None, preview_state, config=config, on_log=on_log
+            )
+            try:
+                preview_state["vae_session"] = self._build_vae_preview_session(
+                    entry, version_key or None, on_log=on_log
+                )
+            except Exception as exc:
+                preview_state["vae_session"] = False
+                if on_log:
+                    on_log("warning", f"preview VAE warmup skipped: {exc}")
         latents = self._denoise_steps(
             model=model,
             scheduler=scheduler,
@@ -1294,13 +1577,26 @@ class ImagePipeline:
             ctx_exec=ctx_exec,
             on_progress=on_progress,
             on_log=on_log,
+            preview_mode=preview_mode,
+            preview_interval=preview_interval,
+            preview_max_edge=preview_max_edge,
+            preview_state=preview_state,
+            entry=entry,
+            version_key=version_key or None,
             timestep_offset=init_timestep,
+            packed_denoise=_packed_edit and latents.ndim == 3,
+            flux_unpack=_flux_unpack_edit,
+            latent_h=_lh_edit,
+            latent_w=_lw_edit,
         )
         if latents is None:
             return None
 
         if ctx_exec.cancel_token.is_cancelled():
             return None
+
+        if _packed_edit and latents.ndim == 3 and _flux_unpack_edit is not None:
+            latents = _flux_unpack_edit(self.ctx, latents, _lh_edit, _lw_edit)
 
         image = self._vae_decode(latents, entry, version_key or None, on_log=on_log)
         _image_pipeline_emit_post_progress(on_progress, n_steps=len(timesteps), within_post=0.5)
@@ -1316,7 +1612,7 @@ class ImagePipeline:
         _image_pipeline_emit_post_progress(on_progress, n_steps=len(timesteps), within_post=1.0)
         _image_pipeline_emit_complete(on_progress, len(timesteps))
 
-        return str(out_path), {
+        meta = {
             "model": request.model,
             "seed": seed,
             "prompt": request.prompt,
@@ -1328,6 +1624,8 @@ class ImagePipeline:
             "operation": request.operation,
             "source_fidelity": fidelity,
         }
+        meta.update(work_title_metadata(request.title))
+        return str(out_path), meta
 
     # ------------------------------------------------------------------
     # Internal methods
@@ -1362,7 +1660,24 @@ class ImagePipeline:
             on_log=on_log,
         )
 
-    def _load_model(self, family: str, config, entry, version_key: str | None):
+    def _model_cache_key(self, entry, version_key: str | None) -> str:
+        return f"image:{entry.id}:{version_key or 'default'}"
+
+    def _load_model(
+        self,
+        family: str,
+        config,
+        entry,
+        version_key: str | None,
+        *,
+        allow_cache: bool = True,
+    ):
+        cache_key = self._model_cache_key(entry, version_key)
+        if allow_cache and self._cache is not None:
+            cached = self._cache.get(cache_key)
+            if cached is not None:
+                return cached
+
         trans_cls = _get_transformer_class(family)
         model = trans_cls(config, self.ctx)
         remap_fn = _get_weight_remap(family)
@@ -1389,6 +1704,17 @@ class ImagePipeline:
             bundle_affine_bits=bundle_affine_bits,
         )
         self.ctx.eval(*[p for _, p in model.parameters()])
+        if allow_cache and self._cache is not None:
+            from backend.engine.common.weights import parse_size_gb
+
+            ver = self._resolve_version_block(entry, version_key)
+            size_str = ""
+            if ver:
+                size_str = str(ver.get("size") or "")
+            if not size_str:
+                raw = getattr(entry, "raw", {}) or {}
+                size_str = str(raw.get("size") or "10GB")
+            self._cache.put(cache_key, model, parse_size_gb(size_str))
         return model
 
     def _vae_preprocess_special(self, latents, vae_weights, scaling_factor, shift_factor):
@@ -1415,105 +1741,6 @@ class ImagePipeline:
 
         latents = ctx.permute(latents, (0, 3, 1, 2))
         return latents
-
-    def _vae_decode_qwen_image(
-        self,
-        *,
-        latents: Any,
-        bundle_root: Path | None,
-        on_log: Callable | None,
-        vae_output_to_uint8_hwc: Callable[..., Any],
-        image_cls: Any,
-    ) -> Any:
-        from backend.engine.common.vae.qwen_image import QwenVAE, apply_qwen_vae_weights_from_bundle
-
-        if bundle_root is None:
-            raise RuntimeError("Qwen VAE decode: missing bundle_root")
-        z = self._qwen_unpack_latents_nchw(latents)
-        vae_q = QwenVAE()
-        apply_qwen_vae_weights_from_bundle(vae_q, bundle_root, project_root=self._project_root)
-        decoded = vae_q.decode(z)
-        if getattr(decoded, "ndim", 0) == 5 and int(decoded.shape[2]) == 1:
-            decoded = decoded[:, :, 0, :, :]
-        if on_log:
-            on_log("info", f"vae_decode qwen unpacked_z_shape={tuple(z.shape)} decoded_shape={tuple(decoded.shape)}")
-        pixels = vae_output_to_uint8_hwc(decoded, self.ctx)
-        return image_cls.fromarray(pixels)
-
-    def _vae_decode_flux2(
-        self,
-        *,
-        latents: Any,
-        bundle_root: Path | None,
-        on_log: Callable | None,
-        vae_output_to_uint8_hwc: Callable[..., Any],
-        image_cls: Any,
-    ) -> Any:
-        del vae_output_to_uint8_hwc, image_cls
-        from backend.engine.families.flux2.vae_mlx import decode_flux2_packed_latents_to_pil
-
-        if bundle_root is None:
-            raise RuntimeError("Flux2 VAE decode: missing bundle_root")
-        return decode_flux2_packed_latents_to_pil(
-            self.ctx,
-            latents,
-            bundle_root,
-            on_log=(lambda level, msg: on_log(level, msg)) if on_log else None,
-        )
-
-    def _vae_decode_fibo_wan(
-        self,
-        *,
-        latents: Any,
-        bundle_root: Path | None,
-        on_log: Callable | None,
-        vae_output_to_uint8_hwc: Callable[..., Any],
-        image_cls: Any,
-    ) -> Any:
-        del vae_output_to_uint8_hwc
-        from backend.engine.families.fibo import vae_mlx
-
-        if bundle_root is None:
-            raise RuntimeError("FIBO VAE decode: missing bundle_root")
-        import mlx.core as mx
-
-        pixels = vae_mlx.decode_latents_nchw(self.ctx, latents, bundle_root)
-        pixels = mx.clip((pixels + 1.0) * 0.5, 0.0, 1.0)
-        arr = np.asarray(pixels)
-        if arr.ndim == 4:
-            arr = arr[0].transpose(1, 2, 0)
-        if on_log:
-            on_log("info", f"vae_decode fibo frame_size={(int(arr.shape[1]), int(arr.shape[0]))}")
-        return image_cls.fromarray((arr * 255.0).astype(np.uint8))
-
-    def _vae_decode_wan(
-        self,
-        *,
-        latents: Any,
-        bundle_root: Path | None,
-        on_log: Callable | None,
-        vae_output_to_uint8_hwc: Callable[..., Any],
-        image_cls: Any,
-    ) -> Any:
-        del vae_output_to_uint8_hwc
-        from backend.engine.families.wan.vae import decode_wan_latents_to_pil_frames
-
-        if bundle_root is None:
-            raise RuntimeError("Wan VAE decode: missing bundle_root")
-        z = latents
-        if z.ndim == 4:
-            z = z[:, :, None, :, :]
-        frames = decode_wan_latents_to_pil_frames(
-            self.ctx,
-            z,
-            bundle_root,
-            on_log=(lambda msg: on_log("info", msg)) if on_log else None,
-        )
-        if not frames:
-            raise RuntimeError("Wan VAE decode produced no frames")
-        if on_log:
-            on_log("info", f"vae_decode wan frame_size={frames[0].size}")
-        return frames[0]
 
     def _vae_decode(
         self,
@@ -1548,22 +1775,14 @@ class ImagePipeline:
             latents = latents.reshape(B, latent_h, latent_w, channels).transpose(0, 3, 1, 2)
 
         vae_cls = str(vae_cfg.get("_class_name") or "")
-        entry_family = ""
-        if entry is not None:
-            entry_family = str(getattr(entry, "family", "") or "")
-        if entry_family == "fibo" and vae_cls == "AutoencoderKLWan":
-            return self._vae_decode_fibo_wan(
+        entry_family = str(getattr(entry, "family", "") or "") if entry is not None else ""
+        decode_handler = get_vae_decode_handler(vae_cls, entry_family=entry_family)
+        if decode_handler is not None:
+            return decode_handler(
+                ctx=self.ctx,
                 latents=latents,
                 bundle_root=bundle_root,
-                on_log=on_log,
-                vae_output_to_uint8_hwc=vae_output_to_uint8_hwc,
-                image_cls=Image,
-            )
-        handler = self._vae_decode_handlers.get(vae_cls)
-        if handler is not None:
-            return handler(
-                latents=latents,
-                bundle_root=bundle_root,
+                project_root=self._project_root,
                 on_log=on_log,
                 vae_output_to_uint8_hwc=vae_output_to_uint8_hwc,
                 image_cls=Image,

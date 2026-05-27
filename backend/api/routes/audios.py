@@ -1,8 +1,9 @@
 """POST /api/audios/* — plan audios.py"""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 
 from backend.api.deps import get_engine_registry, get_task_scheduler
+from backend.api.routes.submit_helpers import submit_media_task
 from backend.core import task_kinds as TK
 from backend.core.contracts import AudioEditRequest, AudioGenerationRequest
 from backend.engine.engine_registry import EngineRegistry
@@ -17,16 +18,14 @@ async def post_audio_generation(
     sched: TaskScheduler = Depends(get_task_scheduler),
     engines: EngineRegistry = Depends(get_engine_registry),
 ):
-    eng = engines.get_audio(body.model)
-    if not eng.supports(body.model, "create_music"):
-        raise HTTPException(409, detail={"code": "unsupported", "message": "model does not support create_music"})
-    r = await sched.submit(
-        kind=TK.AUDIO_GENERATION,
-        model_id=body.model,
-        params=body.model_dump(),
-        priority=body.priority,
+    return await submit_media_task(
+        body=body,
+        media="audio",
+        api_action="create_music",
+        task_kind=TK.AUDIO_GENERATION,
+        sched=sched,
+        engines=engines,
     )
-    return {"task": r}
 
 
 @router.post("/edits", status_code=202)
@@ -35,13 +34,11 @@ async def post_audio_edit(
     sched: TaskScheduler = Depends(get_task_scheduler),
     engines: EngineRegistry = Depends(get_engine_registry),
 ):
-    eng = engines.get_audio(body.model)
-    if not eng.supports(body.model, "edit"):
-        raise HTTPException(409, detail={"code": "unsupported", "message": "model does not support audio edit"})
-    r = await sched.submit(
-        kind=TK.AUDIO_EDIT,
-        model_id=body.model,
-        params=body.model_dump(),
-        priority=body.priority,
+    return await submit_media_task(
+        body=body,
+        media="audio",
+        api_action="edit",
+        task_kind=TK.AUDIO_EDIT,
+        sched=sched,
+        engines=engines,
     )
-    return {"task": r}

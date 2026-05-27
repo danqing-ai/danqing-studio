@@ -405,21 +405,35 @@ def _assign_param_tensor(param: Any, tensor: Any) -> None:
     param[:] = tensor
 
 
+def _is_param_leaf(obj: Any) -> bool:
+    """True when ``obj`` is a concrete MLX array or torch parameter tensor."""
+    if obj is None:
+        return False
+    cls = obj.__class__
+    module_name = getattr(cls, "__module__", "")
+    qual_name = getattr(cls, "__qualname__", "")
+    full_type_name = f"{module_name}.{qual_name}".lower()
+    if full_type_name.startswith("torch.") and "tensor" in full_type_name:
+        return True
+    if full_type_name.startswith("mlx.") and "array" in full_type_name:
+        return True
+    return False
+
+
 def _collect_params(obj, prefix: str, result: dict):
     """Recursively collect MLX dict trees and torch/MLX module parameter leaves."""
     if obj is None or isinstance(obj, (int, float, str, bool, type)):
+        return
+
+    if _is_param_leaf(obj):
+        if prefix:
+            result[prefix] = obj
         return
 
     cls = obj.__class__
     module_name = getattr(cls, "__module__", "")
     qual_name = getattr(cls, "__qualname__", "")
     full_type_name = f"{module_name}.{qual_name}".lower()
-
-    # Skip tensor leaves without importing backend modules.
-    if full_type_name.startswith("torch.") and "tensor" in full_type_name:
-        return
-    if full_type_name.startswith("mlx.") and "array" in full_type_name:
-        return
 
     # Collect PyTorch nn.Module leaves without importing torch.
     if full_type_name.startswith("torch.nn.") and hasattr(obj, "named_parameters"):
@@ -434,10 +448,20 @@ def _collect_params(obj, prefix: str, result: dict):
     if hasattr(obj, "parameters") and callable(obj.parameters):
         try:
             params = obj.parameters()
-            if isinstance(params, dict):
+            if isinstance(params, dict) and params:
                 for pname, ptensor in params.items():
                     key = f"{prefix}.{pname}" if prefix else pname
-                    result[key] = ptensor
+                    if isinstance(ptensor, dict):
+                        for subname, subtensor in ptensor.items():
+                            subkey = f"{key}.{subname}"
+                            if _is_param_leaf(subtensor):
+                                result[subkey] = subtensor
+                            else:
+                                _collect_params(subtensor, subkey, result)
+                    elif _is_param_leaf(ptensor):
+                        result[key] = ptensor
+                    else:
+                        _collect_params(ptensor, key, result)
                 return
         except Exception:
             pass

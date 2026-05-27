@@ -283,7 +283,7 @@
                 </div>
               </button>
               <div class="gallery-ios-row__body">
-                <p class="gallery-ios-row__title">{{ truncatePrompt(row.prompt) }}</p>
+                <p class="gallery-ios-row__title">{{ truncateDisplayLabel(assetDisplayLabel(row)) }}</p>
                 <div class="gallery-ios-row__meta">
                   <span v-if="row.model" class="gallery-list-tag">{{ row.model }}</span>
                   <span v-if="row.width && row.height" class="gallery-list-meta">
@@ -366,6 +366,12 @@
         </div>
 
         <!-- Prompt -->
+        <div v-if="assetTitleFrom(detailItem)" class="gallery-detail-prompt-box">
+          <div class="gallery-detail-prompt-head">
+            <span class="gallery-detail-prompt-label">{{ $t('studio.workTitle') }}</span>
+          </div>
+          <div class="gallery-detail-prompt-text">{{ assetTitleFrom(detailItem) }}</div>
+        </div>
         <div class="gallery-detail-prompt-box">
           <div class="gallery-detail-prompt-head">
             <span class="gallery-detail-prompt-label">{{ $t('gallery.prompt') }}</span>
@@ -537,7 +543,7 @@
             </div>
 
             <div v-if="selectedItem" class="lightbox-info">
-              <span>{{ selectedItem.name }}</span>
+              <span>{{ assetDisplayLabel(selectedItem) }}</span>
               <span class="gallery-lightbox-muted">
                 {{ selectedItem.width }}×{{ selectedItem.height }}
                 · {{ selectedIndex + 1 }} / {{ flatItems.length }}
@@ -586,6 +592,7 @@ import { api } from '@/utils/api';
 import { $tt } from '@/utils/i18n';
 import { DQ_STORAGE } from '@/utils/storage';
 import type { GalleryItem } from '@/types';
+import { assetDisplayLabel, truncateDisplayLabel, assetTitleFrom } from '@/utils/assetDisplay';
 import { useDocumentEvent } from '@/composables/useDocumentEvent';
 import GalleryAdvancedFilterDrawer from '@/components/gallery/GalleryAdvancedFilterDrawer.vue';
 import GalleryAudioDetail from '@/components/gallery/GalleryAudioDetail.vue';

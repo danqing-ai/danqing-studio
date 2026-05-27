@@ -50,7 +50,7 @@
               <div class="dq-task-queue-model">
                 {{ task.params?.model || $tt('queue.unspecifiedModel') }}
               </div>
-              <div class="dq-queue-prompt-line">{{ queueTruncate(task.params?.prompt || '', 40) }}</div>
+              <div class="dq-queue-prompt-line">{{ queueTaskLabel(task) }}</div>
             </div>
             <DqIconButton
               type="danger"
@@ -115,7 +115,7 @@
                 <div class="dq-task-queue-row-model">
                   {{ task.params?.model || $tt('queue.unspecifiedModel') }}
                 </div>
-                <div class="dq-queue-prompt-line">{{ queueTruncate(task.params?.prompt || '', 40) }}</div>
+                <div class="dq-queue-prompt-line">{{ queueTaskLabel(task) }}</div>
                 <div
                   v-if="task.estimated_wait_seconds != null"
                   class="dq-task-queue-wait"
@@ -272,6 +272,12 @@ async function loadSystemInfo() {
   } catch (e) {
     console.error('Failed to load system info:', e);
   }
+}
+
+function queueTaskLabel(task: { params?: { title?: string; prompt?: string } }) {
+  const title = String(task.params?.title || '').trim();
+  const prompt = String(task.params?.prompt || '').trim();
+  return queueTruncate(title || prompt, 40);
 }
 
 function queueTruncate(text: string, length: number): string {

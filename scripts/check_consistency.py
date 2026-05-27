@@ -70,6 +70,9 @@ def main():
             failures.append(
                 f"Model '{model_id}': recommended=true requires commercial_use_allowed=true"
             )
+        fam = m.get("family")
+        if fam is None or (isinstance(fam, str) and not str(fam).strip()):
+            failures.append(f"Model '{model_id}': missing required non-empty 'family' field")
 
     # =========================================================================
     # 3. 预设 media_scope 校验

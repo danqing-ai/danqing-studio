@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-"""SeedVR2 权重与 bundle：``ModelConfig``、``load_flat_bundle``、键映射与 ``WeightLoader`` 组件定义。
+"""SeedVR2 权重与 bundle：``ModelConfig``（bundle 加载元数据）、``load_flat_bundle``、键映射。
 
-扁平 bundle 键 → MLX 模块树映射见 ``SeedVR2WeightDefinition*`` 引用的 ``SeedVR2WeightMapping``。
+架构超参见 ``backend.engine.config.model_configs.SeedVR2Config``。
+本模块 ``ModelConfig`` 仅对齐上游扁平 safetensors 布局，不是 Pipeline 级架构配置。
 """
 
 from functools import lru_cache
@@ -17,7 +18,7 @@ from backend.engine.common.bundle_weights import ComponentDefinition, LoadedWeig
 
 
 class ModelConfig:
-    """与上游扁平 safetensors 布局对齐的最小配置。"""
+    """Bundle-loader metadata aligned with upstream flat safetensors layout."""
 
     precision: Any = mx.bfloat16
 
@@ -68,6 +69,9 @@ class ModelConfig:
     @lru_cache
     def seedvr2_7b() -> "ModelConfig":
         return AVAILABLE_MODELS["seedvr2-7b"]
+
+
+SeedVR2BundleConfig = ModelConfig  # bundle-loader metadata (not ``config.model_configs.SeedVR2Config``)
 
 
 AVAILABLE_MODELS = {

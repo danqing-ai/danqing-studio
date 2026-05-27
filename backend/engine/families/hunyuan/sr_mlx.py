@@ -9,15 +9,21 @@ import numpy as np
 from backend.engine.families.hunyuan.transformer_mlx import HunyuanVideoTransformer
 from backend.engine.families.hunyuan.weights import remap_hunyuan_weights
 
-_sr_model_cache: dict[str, HunyuanVideoTransformer] = {}
 
-
-def load_hunyuan_sr_transformer(ctx: Any, config: Any, bundle_root: Path) -> HunyuanVideoTransformer:
+def load_hunyuan_sr_transformer(
+    ctx: Any,
+    config: Any,
+    bundle_root: Path,
+    *,
+    model_cache: Any | None = None,
+    cache_key: str | None = None,
+    cache_size_gb: float = 10.0,
+) -> HunyuanVideoTransformer:
     """Load SR DiT from ``bundle_root/transformer/`` (community 1080p-2SR layout)."""
-    cache_key = str(Path(bundle_root).resolve())
-    cached = _sr_model_cache.get(cache_key)
-    if cached is not None:
-        return cached
+    if model_cache is not None and cache_key:
+        cached = model_cache.get(cache_key)
+        if cached is not None:
+            return cached
 
     tp = bundle_root / "transformer"
     if not tp.is_dir():
@@ -38,7 +44,8 @@ def load_hunyuan_sr_transformer(ctx: Any, config: Any, bundle_root: Path) -> Hun
     model = HunyuanVideoTransformer(sr_config, ctx)
     model.load_weights(list(w.items()), strict=False, ctx=ctx)
     ctx.eval(*[p for _, p in model.parameters()])
-    _sr_model_cache[cache_key] = model
+    if model_cache is not None and cache_key:
+        model_cache.put(cache_key, model, float(cache_size_gb))
     return model
 
 

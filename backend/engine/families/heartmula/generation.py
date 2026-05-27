@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, List, Optional, Protocol, Tuple
 
+import numpy as np
+
 from backend.core.contracts import AudioGenerationRequest
 from backend.engine.config.model_configs import HeartMulaConfig
 
@@ -28,6 +30,18 @@ def prompt_to_tags(prompt: str) -> str:
 
 def duration_to_max_frames(duration: float) -> int:
     return max(1, int(float(duration) * FRAME_RATE))
+
+
+def estimate_hf_noise_ratio(wf: np.ndarray, sample_rate: int = SAMPLE_RATE) -> float:
+    """High-frequency energy share — elevated values often indicate codec hiss/static."""
+    mono = np.asarray(wf, dtype=np.float64).reshape(-1)
+    if mono.size < sample_rate // 4:
+        return 0.0
+    spec = np.abs(np.fft.rfft(mono))
+    freqs = np.fft.rfftfreq(mono.size, 1.0 / sample_rate)
+    total = float(np.sum(spec) + 1e-12)
+    hf = float(np.sum(spec[freqs >= 8_000.0]))
+    return hf / total
 
 
 def _clamp_float(value: Optional[float], default: float, lo: float, hi: float) -> float:
@@ -52,6 +66,8 @@ class HeartMulaPreparedRequest:
     cfg_scale: float
     codec_steps: int
     codec_guidance: float
+    long_form_temperature: float
+    long_form_topk: int
     log_events: List[Tuple[str, str]] = field(default_factory=list)
 
 
@@ -111,8 +127,9 @@ def prepare_heartmula_request(
         events.append(
             (
                 "warning",
-                f"时长 {duration:.0f}s 较长（约 {est_frames} 帧自回归），MLX 上耗时会显著增加；"
-                f"上限 {config.max_duration_seconds:.0f}s，建议先 30–90s 试听后加长。",
+                f"时长 {duration:.0f}s 较长（约 {est_frames} 帧自回归），MLX 上 LM 耗时会显著增加；"
+                f"Codec 将自动分块解码（~30s/块 overlap-add）。上限 {config.max_duration_seconds:.0f}s，"
+                "建议先 30–90s 试听后加长。",
             )
         )
 
@@ -147,6 +164,19 @@ def prepare_heartmula_request(
         config.codec_guidance_max,
     )
 
+    lf_temp = _clamp_float(
+        request.long_form_temperature,
+        config.long_form_temperature,
+        config.long_form_temperature_min,
+        config.long_form_temperature_max,
+    )
+    lf_topk = _clamp_int(
+        request.long_form_topk,
+        config.long_form_topk,
+        config.long_form_topk_min,
+        config.long_form_topk_max,
+    )
+
     return HeartMulaPreparedRequest(
         tags=tags,
         lyrics=lyrics,
@@ -156,5 +186,7 @@ def prepare_heartmula_request(
         cfg_scale=cfg,
         codec_steps=codec_steps,
         codec_guidance=codec_guidance,
+        long_form_temperature=lf_temp,
+        long_form_topk=lf_topk,
         log_events=events,
     )

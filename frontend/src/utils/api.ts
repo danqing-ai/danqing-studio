@@ -42,6 +42,7 @@ function assetRowToGalleryItem(a: AssetRow): GalleryItem {
     height: Number(a.height || meta.height || 0),
     duration_seconds,
     created_at: String(a.created_at || ''),
+    title: String(meta.title || ''),
     prompt: String(meta.prompt || ''),
     model: String(meta.model || ''),
     thumbnail: thumb,
@@ -196,6 +197,11 @@ export const api = {
   tasks: {
     logStreamUrl(taskId: string): string {
       return `${API_BASE}/api/tasks/${encodeURIComponent(taskId)}/stream`;
+    },
+
+    /** Denoise step preview (work_dir PNG); polled by create view — not SSE. */
+    previewUrl(taskId: string): string {
+      return `${API_BASE}/api/tasks/${encodeURIComponent(taskId)}/preview`;
     },
   },
 

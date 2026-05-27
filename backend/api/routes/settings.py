@@ -80,6 +80,10 @@ class SystemInfoResponse(BaseModel):
     processor: str
     python_version: str
     memory_gb: float
+    memory_used_gb: Optional[float] = None
+    memory_available_gb: Optional[float] = None
+    mlx_active_gb: Optional[float] = None
+    mlx_peak_gb: Optional[float] = None
     env_ready: bool
     dependencies: Optional[Dict[str, str]] = None
     mlx_memory_limit: int = 120
@@ -119,6 +123,17 @@ def update_settings(request: SettingsUpdateRequest, req: Request):
             setattr(settings, key, value)
 
     service.update_settings(settings)
+
+    memory_keys = {"mlx_memory_limit", "model_cache_ttl_minutes"}
+    if memory_keys.intersection(payload.keys()):
+        from backend.engine.memory_policy import (
+            apply_memory_settings_from_container,
+            unload_model_cache_if_present,
+        )
+
+        apply_memory_settings_from_container(settings)
+        unload_model_cache_if_present()
+
     return {"success": True, "restart_required": False}
 
 
@@ -276,6 +291,16 @@ def get_system_info():
     info["env_ready"] = service.check_environment()
     settings = service.get_settings()
     info["mlx_memory_limit"] = int(getattr(settings, "mlx_memory_limit", 120) or 120)
+    try:
+        from backend.engine.platform import PlatformInfo
+
+        mlx = PlatformInfo.get_mlx_memory_stats()
+        if mlx.get("active_gb") is not None:
+            info["mlx_active_gb"] = mlx["active_gb"]
+        if mlx.get("peak_gb") is not None:
+            info["mlx_peak_gb"] = mlx["peak_gb"]
+    except Exception:
+        pass
     return SystemInfoResponse(**info)
 
 

@@ -11,6 +11,7 @@ import mlx.core as mx
 import mlx.nn as nn
 
 from backend.engine.common.embeddings import sinusoidal_timestep_proj
+from backend.engine.common.attention import scaled_dot_product_attention_bhsd_mx
 from backend.engine.common.norm import AdaLayerNormContinuous, apply_scale_shift
 from backend.engine.runtime._base import RuntimeContext
 from backend.engine.common._base import TransformerBase
@@ -179,7 +180,7 @@ class Flux2Attention:
 
         # Attention (mflux AttentionUtils.compute_attention)
         attn_scale = 1 / mx.sqrt(q.shape[-1])
-        out = mx.fast.scaled_dot_product_attention(q, k, v, scale=attn_scale)
+        out = scaled_dot_product_attention_bhsd_mx(mx, q, k, v, scale=float(attn_scale))
         out = ctx.permute(out, (0, 2, 1, 3))
         out = ctx.reshape(out, (B, -1, self.heads * head_dim))
 
@@ -288,7 +289,7 @@ class Flux2ParallelSelfAttention:
 
         # Attention
         scale = 1 / mx.sqrt(q.shape[-1])
-        hidden_states = mx.fast.scaled_dot_product_attention(q, k, v, scale=scale)
+        hidden_states = scaled_dot_product_attention_bhsd_mx(mx, q, k, v, scale=float(scale))
         hidden_states = ctx.permute(hidden_states, (0, 2, 1, 3))
         hidden_states = ctx.reshape(hidden_states, (B, S, self.inner_dim))
 

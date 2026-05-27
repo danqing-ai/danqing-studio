@@ -8,8 +8,8 @@ from typing import Any
 
 import mlx.core as mx
 import mlx.nn as nn
-from mlx.core.fast import scaled_dot_product_attention
 
+from backend.engine.common.attention import scaled_dot_product_attention_bhsd_mx
 from backend.engine.common.mlx_runtime_fallback import load_weights_dict
 from backend.engine.common.text_encoders.qwen3_mlx import MlxRMSNorm
 
@@ -99,7 +99,9 @@ class _SmolLM3Attention(nn.Module):
                     causal_mask, (batch_size, self.num_attention_heads, seq_len, seq_len_k)
                 )
             attn_mask = causal_mask.astype(q.dtype)
-        attn_output = scaled_dot_product_attention(q, k, v, scale=self.scale, mask=attn_mask)
+        attn_output = scaled_dot_product_attention_bhsd_mx(
+            mx, q, k, v, scale=self.scale, mask=attn_mask,
+        )
         attn_output = attn_output.transpose(0, 2, 1, 3).reshape(batch_size, seq_len, -1)
         return self.o_proj(attn_output)
 

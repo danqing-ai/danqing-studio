@@ -9,6 +9,7 @@ import mlx.nn as nn
 from PIL import Image
 
 from backend.engine.common.vae import vae_output_to_uint8_hwc
+from backend.engine.common.attention import scaled_dot_product_attention_bhsd_mx
 from backend.engine.runtime._base import RuntimeContext
 
 
@@ -63,7 +64,9 @@ class _Flux2AttentionBlock(nn.Module):
         q = mx.transpose(q, (0, 2, 1, 3))
         k = mx.transpose(k, (0, 2, 1, 3))
         v = mx.transpose(v, (0, 2, 1, 3))
-        out = mx.fast.scaled_dot_product_attention(q, k, v, scale=1 / mx.sqrt(q.shape[-1]))
+        out = scaled_dot_product_attention_bhsd_mx(
+            mx, q, k, v, scale=float(1 / mx.sqrt(q.shape[-1])),
+        )
         out = mx.transpose(out, (0, 2, 1, 3)).reshape(b, hh, ww, c)
         out = self.to_out(out)
         return _to_nchw(h + out)
@@ -238,13 +241,13 @@ def _flatten_param_tree(node: Any, prefix: str, out: dict[str, Any]) -> None:
     out[prefix] = node
 
 
-def decode_flux2_packed_latents_to_pil(
+def load_flux2_vae_decoder(
     ctx: RuntimeContext,
-    packed_latents: Any,
     bundle_root: Path,
     *,
     on_log: Any | None = None,
-) -> Image.Image:
+) -> _Flux2VAE:
+    """Load Flux2 VAE once; reuse for step previews to avoid reloading every denoise step."""
     vae_dir = bundle_root / "vae"
     if not vae_dir.exists():
         raise RuntimeError(f"Flux2 VAE decode: missing vae dir at {vae_dir}")
@@ -296,12 +299,40 @@ def decode_flux2_packed_latents_to_pil(
         param[:] = tensor
         loaded += 1
     ctx.eval(model.parameters())
-    decoded = model.decode_packed_latents(packed_latents)
     if on_log:
         on_log(
             "info",
-            f"vae_decode flux2 packed_shape={tuple(packed_latents.shape)} decoded_shape={tuple(decoded.shape)} loaded={loaded}",
+            f"flux2 preview VAE loaded decoder_tensors={len(w)} loaded_params={loaded}",
+        )
+    return model
+
+
+def decode_flux2_latents_with_model(
+    ctx: RuntimeContext,
+    model: _Flux2VAE,
+    latents: Any,
+    *,
+    on_log: Any | None = None,
+) -> Image.Image:
+    decoded = model.decode_packed_latents(latents)
+    if on_log:
+        on_log(
+            "info",
+            f"vae_decode flux2 preview latent_shape={tuple(latents.shape)} decoded_shape={tuple(decoded.shape)}",
         )
     pixels = vae_output_to_uint8_hwc(decoded, ctx)
     return Image.fromarray(pixels)
+
+
+def decode_flux2_packed_latents_to_pil(
+    ctx: RuntimeContext,
+    packed_latents: Any,
+    bundle_root: Path,
+    *,
+    on_log: Any | None = None,
+) -> Image.Image:
+    model = load_flux2_vae_decoder(ctx, bundle_root, on_log=on_log)
+    return decode_flux2_latents_with_model(
+        ctx, model, packed_latents, on_log=on_log
+    )
 

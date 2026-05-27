@@ -1,0 +1,52 @@
+"""Task kind → engine dispatch table for TaskScheduler."""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Callable, Awaitable
+
+from backend.core.contracts import (
+    AudioEditRequest,
+    AudioGenerationRequest,
+    ImageEditRequest,
+    ImageGenerationRequest,
+    ImageUpscaleRequest,
+    VideoEditRequest,
+    VideoGenerationRequest,
+)
+import backend.core.task_kinds as TK
+
+
+@dataclass(frozen=True)
+class TaskDispatchSpec:
+    request_cls: type
+    engine_getter: str  # get_image | get_video | get_audio
+    method_name: str
+
+
+TASK_DISPATCH: dict[str, TaskDispatchSpec] = {
+    TK.IMAGE_GENERATION: TaskDispatchSpec(ImageGenerationRequest, "get_image", "generate"),
+    TK.IMAGE_EDIT: TaskDispatchSpec(ImageEditRequest, "get_image", "edit"),
+    TK.IMAGE_UPSCALE: TaskDispatchSpec(ImageUpscaleRequest, "get_image", "upscale"),
+    TK.VIDEO_GENERATION: TaskDispatchSpec(VideoGenerationRequest, "get_video", "generate"),
+    TK.VIDEO_EDIT: TaskDispatchSpec(VideoEditRequest, "get_video", "edit"),
+    TK.AUDIO_GENERATION: TaskDispatchSpec(AudioGenerationRequest, "get_audio", "generate"),
+    TK.AUDIO_EDIT: TaskDispatchSpec(AudioEditRequest, "get_audio", "edit"),
+}
+
+
+async def dispatch_task(
+    *,
+    kind: str,
+    model_id: str,
+    params: dict[str, Any],
+    engines: Any,
+    ctx: Any,
+) -> Any:
+    spec = TASK_DISPATCH.get(kind)
+    if spec is None:
+        raise RuntimeError(f"unknown task kind {kind!r}")
+    req = spec.request_cls.model_validate(params)
+    getter = getattr(engines, spec.engine_getter)
+    engine = getter(model_id)
+    method: Callable[..., Awaitable[Any]] = getattr(engine, spec.method_name)
+    return await method(req, ctx)

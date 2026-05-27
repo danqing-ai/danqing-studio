@@ -5,7 +5,7 @@ import json
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from backend.api.deps import get_task_scheduler
@@ -109,6 +109,21 @@ async def delete_task(task_id: str, sched: TaskScheduler = Depends(get_task_sche
     return {"ok": True}
 
 
+@router.api_route("/{task_id}/preview", methods=["GET", "HEAD"])
+async def get_task_preview(task_id: str, sched: TaskScheduler = Depends(get_task_scheduler)):
+    """Ephemeral denoise-step preview (work_dir); not in assets / gallery."""
+    if not sched.get_task(task_id):
+        raise HTTPException(404, "task not found")
+    path = sched.task_preview_path(task_id)
+    if path is None:
+        raise HTTPException(404, "preview not available")
+    return FileResponse(
+        path,
+        media_type="image/png",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate"},
+    )
+
+
 @router.get("/{task_id}/stream")
 async def stream_task(task_id: str, sched: TaskScheduler = Depends(get_task_scheduler)):
     async def gen():
@@ -138,7 +153,15 @@ async def stream_task(task_id: str, sched: TaskScheduler = Depends(get_task_sche
                         if ev_type == "progress" and hasattr(ev_data, "progress"):
                             prog = float(ev_data.progress or 0.0)
                             msg = getattr(ev_data, "message", None)
-                            pkey = (prog, ev_data.step, ev_data.total, ev_data.eta_seconds, msg)
+                            phase = getattr(ev_data, "phase", None)
+                            pkey = (
+                                prog,
+                                ev_data.step,
+                                ev_data.total,
+                                ev_data.eta_seconds,
+                                msg,
+                                phase,
+                            )
                             if pkey != last_progress_key:
                                 last_progress_key = pkey
                                 yield (
@@ -150,6 +173,7 @@ async def stream_task(task_id: str, sched: TaskScheduler = Depends(get_task_sche
                                             "total": ev_data.total,
                                             "eta_seconds": ev_data.eta_seconds,
                                             "message": msg,
+                                            "phase": phase,
                                         }
                                     )
                                     + "\n\n"
@@ -165,6 +189,7 @@ async def stream_task(task_id: str, sched: TaskScheduler = Depends(get_task_sche
                 meta.get("total"),
                 meta.get("eta_seconds"),
                 meta.get("message"),
+                meta.get("phase"),
             )
             if pkey != last_progress_key:
                 last_progress_key = pkey
@@ -177,6 +202,7 @@ async def stream_task(task_id: str, sched: TaskScheduler = Depends(get_task_sche
                             "total": meta.get("total"),
                             "eta_seconds": meta.get("eta_seconds"),
                             "message": meta.get("message"),
+                            "phase": meta.get("phase"),
                         }
                     )
                     + "\n\n"

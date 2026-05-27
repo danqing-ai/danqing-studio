@@ -12,40 +12,14 @@ from backend.core.registry_format import api_action_frozenset, media_from_record
 MediaKind = Literal["image", "video", "audio"]
 
 
-def _infer_audio_family(model_id: str) -> str:
-    return "stub"
-
-
-def _infer_image_family(model_id: str) -> str:
-    m = model_id.split(":", 1)[0]
-    if m.startswith("seedvr2"):
-        return "seedvr2"
-    if m == "flux-redux":
-        return "redux"
-    if "controlnet" in m or m in (
-        "flux-canny-controlnet",
-        "flux-depth-controlnet",
-        "flux-fill-controlnet",
-    ):
-        return "controlnet"
-    if m == "flux1-kontext":
-        return "kontext"
-    if m.startswith("flux2-"):
-        return "flux2"
-    if m.startswith("z-image"):
-        return "z_image"
-    if m.startswith("fibo"):
-        return "fibo"
-    if m == "qwen-image":
-        return "qwen_image"
-    return "flux1"
-
-
-def _infer_video_family(model_id: str) -> str:
-    m = model_id.split(":", 1)[0].lower()
-    if m.startswith("ltx"):
-        return "ltx"
-    return "wan"
+def _require_family(model_id: str, raw: dict[str, Any], media: MediaKind) -> str:
+    fam = raw.get("family")
+    if fam is None or (isinstance(fam, str) and not fam.strip()):
+        raise ValueError(
+            f"Model {model_id!r} (media={media}) missing required non-empty 'family' "
+            "in models_registry.json; do not rely on inference heuristics."
+        )
+    return str(fam).strip()
 
 
 @dataclass(frozen=True)
@@ -92,16 +66,11 @@ class ModelRegistry:
             eng = str(raw.get("engine") or "")
             acts_block = raw.get("actions") if isinstance(raw.get("actions"), dict) else {}
             actions = api_action_frozenset(acts_block, media=media)
-            if media == "video":
-                fam = raw.get("family") or _infer_video_family(mid)
-            elif media == "audio":
-                fam = raw.get("family") or _infer_audio_family(mid)
-            else:
-                fam = raw.get("family") or _infer_image_family(mid)
+            fam = _require_family(mid, raw, media)
             built[mid] = ModelEntry(
                 id=mid,
                 raw=raw,
-                family=str(fam),
+                family=fam,
                 media=media,
                 engine=eng,
                 actions=actions,

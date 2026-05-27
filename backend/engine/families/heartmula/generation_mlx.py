@@ -19,19 +19,67 @@ from backend.engine.families.heartmula.bundle import (
     mlx_weights_ready,
     resolve_heartmula_bundle,
 )
-from backend.engine.families.heartmula.mlx.heartcodec.configuration import HeartCodecConfig
-from backend.engine.families.heartmula.mlx.heartcodec.modeling import HeartCodec
-from backend.engine.families.heartmula.mlx.heartmula.configuration import HeartMuLaConfig
-from backend.engine.families.heartmula.mlx.heartmula.modeling import HeartMuLa
+from backend.engine.families.heartmula.generation import estimate_hf_noise_ratio
+from backend.engine.families.heartmula.generation import FRAME_RATE, SAMPLE_RATE
+from backend.engine.families.heartmula.codec_mlx import HeartCodec, HeartCodecConfig
+from backend.engine.families.heartmula.mula_mlx import HeartMuLa, HeartMuLaConfig
 from backend.engine.families.heartmula.weights_mlx import load_mlx_weights_into_module
 
 logger = logging.getLogger(__name__)
 
-SAMPLE_RATE = 48_000
-FRAME_RATE = 12.5
-LM_EVAL_INTERVAL = 1
 CODEC_CODEBOOK_SIZE = 8192  # RVQ indices 0..8191
 CODEC_INVALID_TOKEN = 8192  # LM specials >= this must not be clipped into 8191
+
+
+def _collect_code_diagnostics(codes_np: np.ndarray, valid_len: int) -> list[str]:
+    """Collect LM code health diagnostics for long-sequence collapse triage.
+
+    Metrics:
+    - frame_repeat_ratio: fraction of code positions equal to previous frame.
+    - avg_unique_per_codebook: average unique token count per codebook.
+    - first/second-half stats to detect post-120s degeneration.
+    """
+    lines: list[str] = []
+    if valid_len < 2:
+        return lines
+    codes = np.asarray(codes_np[:valid_len], dtype=np.int32)
+    if codes.ndim != 2:
+        return lines
+    repeat_ratio = float(np.mean(codes[1:] == codes[:-1]))
+    nq = int(codes.shape[1])
+
+    def _slice_stats(name: str, sl: np.ndarray) -> None:
+        if sl.shape[0] <= 1:
+            return
+        uniq_counts = [int(np.unique(sl[:, k]).size) for k in range(nq)]
+        avg_unique = float(np.mean(uniq_counts))
+        local_repeat = float(np.mean(sl[1:] == sl[:-1]))
+        lines.append(
+            "HeartMuLa LM code stats "
+            f"({name}): frames={int(sl.shape[0])}, repeat={local_repeat:.3f}, "
+            f"avg_unique/codebook={avg_unique:.1f}",
+        )
+
+    lines.append(
+        "HeartMuLa LM code stats "
+        f"(all): frames={valid_len}, repeat={repeat_ratio:.3f}",
+    )
+    split = int(120 * FRAME_RATE)
+    _slice_stats("first_120s", codes[: min(valid_len, split)])
+    if valid_len > split:
+        _slice_stats("after_120s", codes[split:valid_len])
+    return lines
+
+
+def _lm_eval_interval(max_frames: int) -> int:
+    # Quality-first: keep per-frame eval for stable autoregressive sampling under MLX lazy execution.
+    # Sparse eval (every N frames) can accumulate long deferred graphs and drift token quality.
+    _ = max_frames
+    return 1
+
+
+def _lm_progress_stride(max_frames: int) -> int:
+    return 25 if max_frames <= 500 else 50
 
 
 def _apply_mlx_memory_budget() -> None:
@@ -61,6 +109,10 @@ class HeartMulaMlxGenerator:
         self._tags_encode_cache: dict[str, List[int]] = {}
         self.last_frame_count: int = 0
         self.last_eos_early: bool = False
+        self.last_hf_noise_ratio: float = 0.0
+        self.last_codec_decode_mode: str = "single"
+        self.last_code_diagnostics: list[str] = []
+        self.last_codec_chunk_diagnostics: list[dict[str, float]] = []
 
     def load(self) -> None:
         paths = resolve_heartmula_bundle(self._bundle_root)
@@ -146,6 +198,110 @@ class HeartMulaMlxGenerator:
         self._tags_encode_cache[tags_s] = list(tags_ids)
         return tags_ids
 
+    @staticmethod
+    def _crossfade_concat(prev: np.ndarray, cur: np.ndarray, fade_samples: int) -> np.ndarray:
+        if prev.size == 0:
+            return cur
+        if cur.size == 0:
+            return prev
+        ov = max(0, min(int(fade_samples), int(prev.shape[0]), int(cur.shape[0])))
+        if ov <= 0:
+            return np.concatenate([prev, cur], axis=0)
+        t = np.linspace(0.0, 1.0, ov, dtype=np.float32)
+        mixed = prev[-ov:] * (1.0 - t) + cur[:ov] * t
+        return np.concatenate([prev[:-ov], mixed, cur[ov:]], axis=0)
+
+    def _generate_waveform_segmented(
+        self,
+        *,
+        tags: str,
+        lyrics: str,
+        duration: float,
+        temperature: float,
+        topk: int,
+        cfg_scale: float,
+        codec_steps: int,
+        codec_guidance: float,
+        long_form_temperature: float,
+        long_form_topk: int,
+        seed: int,
+        progress_callback: Optional[Callable[[int, int], None]],
+    ) -> np.ndarray:
+        seg_max_sec = 120.0
+        fade_sec = 2.0
+        total_target = max(1, int(round(float(duration) * SAMPLE_RATE)))
+        fade_samples = int(round(fade_sec * SAMPLE_RATE))
+        stitched = np.zeros((0,), dtype=np.float32)
+        remaining = float(duration)
+        seg_idx = 0
+        agg_frames = 0
+        any_eos = False
+        logger.info(
+            "HeartMuLa segmented long-form enabled: duration=%.1fs, seg_max=%.1fs, fade=%.1fs",
+            duration,
+            seg_max_sec,
+            fade_sec,
+        )
+        while remaining > 1e-6:
+            if seg_idx == 0:
+                seg_dur = min(seg_max_sec, remaining)
+                stitched_contrib = seg_dur
+            else:
+                seg_dur = min(seg_max_sec, remaining + fade_sec)
+                stitched_contrib = max(0.0, seg_dur - fade_sec)
+            seg_seed = int(seed) + seg_idx * 10007
+            logger.info(
+                "HeartMuLa segmented pass %d: seg_dur=%.1fs, contrib=%.1fs, seed=%d",
+                seg_idx + 1,
+                seg_dur,
+                stitched_contrib,
+                seg_seed,
+            )
+            try:
+                cur = self.generate_waveform(
+                    tags=tags,
+                    lyrics=lyrics,
+                    duration=seg_dur,
+                    temperature=temperature,
+                    topk=topk,
+                    cfg_scale=cfg_scale,
+                    codec_steps=codec_steps,
+                    codec_guidance=codec_guidance,
+                    long_form_temperature=long_form_temperature,
+                    long_form_topk=long_form_topk,
+                    seed=seg_seed,
+                    progress_callback=progress_callback,
+                    _allow_segmented=False,
+                )
+            except Exception as exc:
+                raise RuntimeError(
+                    f"HeartMuLa segmented pass {seg_idx + 1} failed: {exc}"
+                ) from exc
+            stitched = self._crossfade_concat(stitched, np.asarray(cur, dtype=np.float32), fade_samples)
+            agg_frames += int(getattr(self, "last_frame_count", 0))
+            any_eos = any_eos or bool(getattr(self, "last_eos_early", False))
+            remaining -= stitched_contrib
+            seg_idx += 1
+            if seg_idx >= 16:
+                logger.warning("HeartMuLa segmented mode hit safety segment cap (16)")
+                break
+        if stitched.shape[0] > total_target:
+            stitched = stitched[:total_target]
+        elif stitched.shape[0] < total_target:
+            pad = np.zeros((total_target - stitched.shape[0],), dtype=np.float32)
+            stitched = np.concatenate([stitched, pad], axis=0)
+        self.last_frame_count = agg_frames
+        self.last_eos_early = any_eos
+        self.last_codec_decode_mode = "segmented"
+        self.last_hf_noise_ratio = estimate_hf_noise_ratio(stitched, SAMPLE_RATE)
+        logger.info(
+            "HeartMuLa segmented done: segments=%d, stitched=%.1fs, hf_noise=%.3f",
+            seg_idx,
+            stitched.shape[0] / float(SAMPLE_RATE),
+            self.last_hf_noise_ratio,
+        )
+        return stitched
+
     def generate_waveform(
         self,
         *,
@@ -155,13 +311,33 @@ class HeartMulaMlxGenerator:
         temperature: float = 1.0,
         topk: int = 50,
         cfg_scale: float = 1.5,
-        codec_steps: int = 10,
+        codec_steps: int = 20,
         codec_guidance: float = 1.25,
+        long_form_temperature: float = 1.04,
+        long_form_topk: int = 60,
         seed: int = 0,
         progress_callback: Optional[Callable[[int, int], None]] = None,
+        _allow_segmented: bool = True,
     ) -> np.ndarray:
+        if _allow_segmented and float(duration) > 120.0:
+            return self._generate_waveform_segmented(
+                tags=tags,
+                lyrics=lyrics,
+                duration=float(duration),
+                temperature=temperature,
+                topk=topk,
+                cfg_scale=cfg_scale,
+                codec_steps=codec_steps,
+                codec_guidance=codec_guidance,
+                long_form_temperature=long_form_temperature,
+                long_form_topk=long_form_topk,
+                seed=seed,
+                progress_callback=progress_callback,
+            )
         if self._codec is None or self._tokenizer is None:
             raise RuntimeError("HeartMuLa MLX generator not loaded")
+        self.last_code_diagnostics = []
+        self.last_codec_chunk_diagnostics = []
         mula = self._ensure_mula_loaded()
         _apply_mlx_memory_budget()
         set_random_seed(None, seed)
@@ -221,6 +397,8 @@ class HeartMulaMlxGenerator:
 
         max_frames = max(1, int(duration * FRAME_RATE))
         max_seq_len = prompt_len + max_frames + 8
+        lm_eval_interval = _lm_eval_interval(max_frames)
+        progress_stride = _lm_progress_stride(max_frames)
         self.last_eos_early = False
         mula.setup_caches(bs, max_seq_len)
 
@@ -232,16 +410,17 @@ class HeartMulaMlxGenerator:
         def _report_progress(n_frames: int, *, force: bool = False) -> None:
             if progress_callback is None:
                 return
-            if force or n_frames <= 1 or n_frames % 25 == 0 or n_frames >= max_frames:
+            if force or n_frames <= 1 or n_frames % progress_stride == 0 or n_frames >= max_frames:
                 progress_callback(n_frames, max_frames)
 
         logger.info(
-            "HeartMuLa LM: up to %d frames (~%.1fs), prompt_len=%d, cfg=%.2f, topk=%d",
+            "HeartMuLa LM: up to %d frames (~%.1fs), prompt_len=%d, cfg=%.2f, topk=%d, eval_every=%d",
             max_frames,
             duration,
             prompt_len,
             cfg_scale,
             topk,
+            lm_eval_interval,
         )
 
         t_prefill = time.monotonic()
@@ -263,22 +442,41 @@ class HeartMulaMlxGenerator:
 
         t_loop = time.monotonic()
         base_pos = int(np.asarray(pos[0, -1]))
+        long_form_start = int(120 * FRAME_RATE)
+        long_form_temp = max(float(temperature), float(long_form_temperature))
+        long_form_topk = max(int(topk), int(long_form_topk))
+        long_form_boost_logged = False
         for i in range(max_frames - 1):
             t_frame = time.monotonic()
             padded_buf[:, 0, :num_codebooks] = curr
             padded_buf[:, 0, -1] = empty_id
             next_pos = self._ctx.array([[base_pos + i + 1]] * bs, dtype=mx.int32)
+            step_index = i + 2  # includes prefill frame as step 1
+            if max_frames > long_form_start and step_index >= long_form_start:
+                step_temp = long_form_temp
+                step_topk = long_form_topk
+                if not long_form_boost_logged:
+                    logger.info(
+                        "HeartMuLa long-form stabilize: from frame %d use temperature=%.2f topk=%d",
+                        long_form_start,
+                        step_temp,
+                        step_topk,
+                    )
+                    long_form_boost_logged = True
+            else:
+                step_temp = temperature
+                step_topk = topk
             curr = mula.generate_frame(
                 tokens=padded_buf,
                 tokens_mask=pad_mask_buf,
                 input_pos=next_pos,
-                temperature=temperature,
-                topk=topk,
+                temperature=step_temp,
+                topk=step_topk,
                 cfg_scale=cfg_scale,
                 continuous_segments=None,
                 starts=None,
             )
-            if (i + 1) % LM_EVAL_INTERVAL == 0:
+            if (i + 1) % lm_eval_interval == 0:
                 self._ctx.eval(curr)
             frame_s = time.monotonic() - t_frame
             if frame_s >= 8.0 or (i + 1) % 10 == 0:
@@ -307,12 +505,19 @@ class HeartMulaMlxGenerator:
             codec_steps,
         )
 
-        codes_np = np.asarray(codes_buf[:n_frames])
+        codes_np = np.asarray(codes_buf[:n_frames], dtype=np.int32)
         valid_len = n_frames
         for t in range(n_frames):
             if np.any(codes_np[t] >= CODEC_CODEBOOK_SIZE):
                 valid_len = t
                 break
+        invalid = int(np.sum(codes_np[:valid_len] >= CODEC_CODEBOOK_SIZE))
+        if invalid:
+            logger.warning(
+                "HeartMuLa LM emitted %d special/invalid code(s) (>= %d) before trim",
+                invalid,
+                CODEC_CODEBOOK_SIZE,
+            )
         if valid_len == 0:
             raise RuntimeError("HeartMuLa produced no valid audio codes before EOS/special tokens")
         if valid_len < n_frames:
@@ -322,25 +527,44 @@ class HeartMulaMlxGenerator:
                 valid_len,
                 n_frames,
             )
+        self.last_code_diagnostics = _collect_code_diagnostics(codes_np, valid_len)
+        for line in self.last_code_diagnostics:
+            logger.info(line)
         codes_batch = self._ctx.array(codes_np[:valid_len][None, :, :], dtype=mx.int32)
 
         self._unload_mula()
 
-        # Chunk hop uses heartlib default duration (~29.76s); output length follows code frames.
+        # Codec flow-matching uses fresh Gaussian noise; re-seed after LM sampling.
+        set_random_seed(None, int(seed) + 1_000_003)
+
+        codec_frame_rate = float(self._codec.config.frame_rate)
+        codec_duration = valid_len / codec_frame_rate
         audio = self._codec.detokenize(
             codes=codes_batch,
+            duration=codec_duration,
             num_steps=codec_steps,
             guidance_scale=codec_guidance,
+        )
+        self.last_codec_decode_mode = getattr(self._codec, "last_detokenize_mode", "single")
+        self.last_codec_chunk_diagnostics = list(
+            getattr(self._codec, "last_chunk_diagnostics", []) or []
+        )
+        logger.info(
+            "HeartMuLa Codec done: mode=%s, frames=%d, ~%.1fs",
+            self.last_codec_decode_mode,
+            valid_len,
+            codec_duration,
         )
         self._ctx.eval(audio)
 
         wf = np.array(audio.astype(mx.float32)).flatten()
+        wf = wf - float(wf.mean())
         peak = float(np.abs(wf).max())
         if peak < 1e-8:
             raise RuntimeError("HeartMuLa decode produced near-silent audio")
-        # heartlib saves float waveform as-is; avoid peak-norm that turns codec rumble into full-scale noise
         if peak > 1.0:
             wf = (wf / peak * 0.99).astype(np.float32)
         else:
             wf = wf.astype(np.float32)
+        self.last_hf_noise_ratio = estimate_hf_noise_ratio(wf, SAMPLE_RATE)
         return wf

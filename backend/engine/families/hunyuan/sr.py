@@ -22,9 +22,19 @@ def run_hunyuan_video_sr(
     steps: int = 6,
     temporal_chunk_size: int = 0,
     spatial_tiling: bool = True,
+    model_cache: Any | None = None,
+    cache_key: str | None = None,
+    cache_size_gb: float = 10.0,
 ) -> tuple[Any, list]:
     """SR latents then decode to PIL frames."""
-    sr_model = load_hunyuan_sr_transformer(ctx, config, bundle_root)
+    sr_model = load_hunyuan_sr_transformer(
+        ctx,
+        config,
+        bundle_root,
+        model_cache=model_cache,
+        cache_key=cache_key,
+        cache_size_gb=cache_size_gb,
+    )
     hr_latents = upscale_latents_to_1080p(
         ctx,
         low_res_latents,

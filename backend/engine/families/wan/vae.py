@@ -4,10 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
-import numpy as np
-from PIL import Image
-
-from backend.engine.common.vae.decoder import vae_output_to_uint8_hwc
+from backend.engine.common.vae.video_frames import ncthw_pixels_to_pil_frames
 
 from .vae_mlx import decode_wan_vae_latents, encode_wan_vae_image
 
@@ -21,7 +18,7 @@ def decode_wan_latents_to_pil_frames(
     *,
     spatial_tiling: bool = False,
     spatial_scale: int = 16,
-) -> list[Image.Image]:
+) -> list:
     """Decode ``[B,C,T,H,W]`` latents to RGB ``PIL.Image`` frame list."""
     if bundle_root is None:
         raise RuntimeError("Wan VAE decode requires a local model bundle path.")
@@ -38,26 +35,10 @@ def decode_wan_latents_to_pil_frames(
         spatial_tiling=spatial_tiling,
         spatial_scale=spatial_scale,
     )
-    if getattr(ctx, "is_tensor", lambda _x: False)(pixels_ncthw):
-        ctx.eval(pixels_ncthw)
-
-    arr = np.asarray(pixels_ncthw)
-    if arr.ndim != 5:
-        raise RuntimeError(f"Wan decoder expected 5D output, got shape {arr.shape}")
-
-    b, c, t, h, w = arr.shape
-    if b != 1:
-        raise RuntimeError(f"Wan VAE batch size must be 1 for decode, got {b}")
-
-    frames: list[Image.Image] = []
-    for ti in range(t):
-        frame_chw = arr[0, :, ti, :, :]
-        hwc = vae_output_to_uint8_hwc(frame_chw, ctx)
-        frames.append(Image.fromarray(hwc))
-
-    if on_log is not None:
+    frames = ncthw_pixels_to_pil_frames(ctx, pixels_ncthw, model_label="Wan")
+    if on_log is not None and frames:
+        w, h = frames[0].size
         on_log(f"Wan VAE decode done ({len(frames)} frames, {w}x{h})")
-
     return frames
 
 

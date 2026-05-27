@@ -151,7 +151,27 @@
         "negative_prompt_support": true,
         "supports_guidance": false,
         "requires_sigma_shift": false,
-        "max_seq_len": 256
+        "max_seq_len": 256,
+        "preview_mode": {
+          "type": "enum",
+          "default": "stream",
+          "options": [
+            "stream",
+            "none"
+          ]
+        },
+        "preview_interval_steps": {
+          "type": "int",
+          "default": 2,
+          "min": 1,
+          "max": 8
+        },
+        "preview_max_edge": {
+          "type": "int",
+          "default": 512,
+          "min": 128,
+          "max": 1024
+        }
       },
       "recommended": true,
       "source": "modelscope",
@@ -263,7 +283,27 @@
         "seed_support": true,
         "negative_prompt_support": true,
         "supports_guidance": true,
-        "requires_sigma_shift": true
+        "requires_sigma_shift": true,
+        "preview_mode": {
+          "type": "enum",
+          "default": "stream",
+          "options": [
+            "stream",
+            "none"
+          ]
+        },
+        "preview_interval_steps": {
+          "type": "int",
+          "default": 2,
+          "min": 1,
+          "max": 8
+        },
+        "preview_max_edge": {
+          "type": "int",
+          "default": 512,
+          "min": 128,
+          "max": 1024
+        }
       },
       "recommended": false,
       "source": "modelscope",
@@ -373,7 +413,27 @@
         "seed_support": true,
         "negative_prompt_support": true,
         "supports_guidance": true,
-        "requires_sigma_shift": true
+        "requires_sigma_shift": true,
+        "preview_mode": {
+          "type": "enum",
+          "default": "stream",
+          "options": [
+            "stream",
+            "none"
+          ]
+        },
+        "preview_interval_steps": {
+          "type": "int",
+          "default": 2,
+          "min": 1,
+          "max": 8
+        },
+        "preview_max_edge": {
+          "type": "int",
+          "default": 512,
+          "min": 128,
+          "max": 1024
+        }
       },
       "recommended": false,
       "source": "modelscope",
@@ -494,7 +554,27 @@
         "num_heads": 24,
         "joint_attention_dim": 7680,
         "num_layers": 5,
-        "num_single_layers": 20
+        "num_single_layers": 20,
+        "preview_mode": {
+          "type": "enum",
+          "default": "stream",
+          "options": [
+            "stream",
+            "none"
+          ]
+        },
+        "preview_interval_steps": {
+          "type": "int",
+          "default": 2,
+          "min": 1,
+          "max": 8
+        },
+        "preview_max_edge": {
+          "type": "int",
+          "default": 512,
+          "min": 128,
+          "max": 1024
+        }
       },
       "recommended": true,
       "source": "modelscope",
@@ -633,7 +713,27 @@
           9,
           18,
           27
-        ]
+        ],
+        "preview_mode": {
+          "type": "enum",
+          "default": "stream",
+          "options": [
+            "stream",
+            "none"
+          ]
+        },
+        "preview_interval_steps": {
+          "type": "int",
+          "default": 2,
+          "min": 1,
+          "max": 8
+        },
+        "preview_max_edge": {
+          "type": "int",
+          "default": 512,
+          "min": 128,
+          "max": 1024
+        }
       },
       "recommended": false,
       "source": "modelscope",
@@ -752,7 +852,27 @@
         "num_heads": 24,
         "joint_attention_dim": 7680,
         "num_layers": 5,
-        "num_single_layers": 20
+        "num_single_layers": 20,
+        "preview_mode": {
+          "type": "enum",
+          "default": "stream",
+          "options": [
+            "stream",
+            "none"
+          ]
+        },
+        "preview_interval_steps": {
+          "type": "int",
+          "default": 2,
+          "min": 1,
+          "max": 8
+        },
+        "preview_max_edge": {
+          "type": "int",
+          "default": 512,
+          "min": 128,
+          "max": 1024
+        }
       },
       "recommended": false,
       "source": "modelscope",
@@ -866,7 +986,27 @@
           9,
           18,
           27
-        ]
+        ],
+        "preview_mode": {
+          "type": "enum",
+          "default": "stream",
+          "options": [
+            "stream",
+            "none"
+          ]
+        },
+        "preview_interval_steps": {
+          "type": "int",
+          "default": 2,
+          "min": 1,
+          "max": 8
+        },
+        "preview_max_edge": {
+          "type": "int",
+          "default": 512,
+          "min": 128,
+          "max": 1024
+        }
       },
       "recommended": false,
       "source": "modelscope",
@@ -981,7 +1121,27 @@
         "negative_prompt_support": true,
         "enable_thinking": true,
         "requires_sigma_shift": true,
-        "vae_scale": 8
+        "vae_scale": 8,
+        "preview_mode": {
+          "type": "enum",
+          "default": "stream",
+          "options": [
+            "stream",
+            "none"
+          ]
+        },
+        "preview_interval_steps": {
+          "type": "int",
+          "default": 2,
+          "min": 1,
+          "max": 8
+        },
+        "preview_max_edge": {
+          "type": "int",
+          "default": 512,
+          "min": 128,
+          "max": 1024
+        }
       },
       "recommended": false,
       "source": "modelscope",
@@ -1107,7 +1267,27 @@
           "type": "enum"
         },
         "requires_sigma_shift": true,
-        "vae_scale": 8
+        "vae_scale": 8,
+        "preview_mode": {
+          "type": "enum",
+          "default": "stream",
+          "options": [
+            "stream",
+            "none"
+          ]
+        },
+        "preview_interval_steps": {
+          "type": "int",
+          "default": 2,
+          "min": 1,
+          "max": 8
+        },
+        "preview_max_edge": {
+          "type": "int",
+          "default": 512,
+          "min": 128,
+          "max": 1024
+        }
       },
       "recommended": true,
       "source": "modelscope",
@@ -1228,7 +1408,27 @@
         "lora_support": false,
         "seed_support": true,
         "negative_prompt_support": false,
-        "vae_scale": 16
+        "vae_scale": 16,
+        "preview_mode": {
+          "type": "enum",
+          "default": "stream",
+          "options": [
+            "stream",
+            "none"
+          ]
+        },
+        "preview_interval_steps": {
+          "type": "int",
+          "default": 2,
+          "min": 1,
+          "max": 8
+        },
+        "preview_max_edge": {
+          "type": "int",
+          "default": 512,
+          "min": 128,
+          "max": 1024
+        }
       },
       "recommended": false,
       "source": "modelscope",
@@ -1336,7 +1536,27 @@
         },
         "lora_support": false,
         "seed_support": true,
-        "negative_prompt_support": false
+        "negative_prompt_support": false,
+        "preview_mode": {
+          "type": "enum",
+          "default": "stream",
+          "options": [
+            "stream",
+            "none"
+          ]
+        },
+        "preview_interval_steps": {
+          "type": "int",
+          "default": 2,
+          "min": 1,
+          "max": 8
+        },
+        "preview_max_edge": {
+          "type": "int",
+          "default": 512,
+          "min": 128,
+          "max": 1024
+        }
       },
       "recommended": false,
       "source": "modelscope",
@@ -1436,7 +1656,27 @@
         },
         "lora_support": false,
         "seed_support": true,
-        "negative_prompt_support": false
+        "negative_prompt_support": false,
+        "preview_mode": {
+          "type": "enum",
+          "default": "stream",
+          "options": [
+            "stream",
+            "none"
+          ]
+        },
+        "preview_interval_steps": {
+          "type": "int",
+          "default": 2,
+          "min": 1,
+          "max": 8
+        },
+        "preview_max_edge": {
+          "type": "int",
+          "default": 512,
+          "min": 128,
+          "max": 1024
+        }
       },
       "edit_config": {
         "text_editing": {
@@ -1542,7 +1782,27 @@
         },
         "lora_support": false,
         "seed_support": true,
-        "negative_prompt_support": false
+        "negative_prompt_support": false,
+        "preview_mode": {
+          "type": "enum",
+          "default": "stream",
+          "options": [
+            "stream",
+            "none"
+          ]
+        },
+        "preview_interval_steps": {
+          "type": "int",
+          "default": 2,
+          "min": 1,
+          "max": 8
+        },
+        "preview_max_edge": {
+          "type": "int",
+          "default": 512,
+          "min": 128,
+          "max": 1024
+        }
       },
       "edit_config": {
         "background_removal": {
@@ -1666,7 +1926,27 @@
         },
         "lora_support": true,
         "seed_support": true,
-        "negative_prompt_support": false
+        "negative_prompt_support": false,
+        "preview_mode": {
+          "type": "enum",
+          "default": "stream",
+          "options": [
+            "stream",
+            "none"
+          ]
+        },
+        "preview_interval_steps": {
+          "type": "int",
+          "default": 2,
+          "min": 1,
+          "max": 8
+        },
+        "preview_max_edge": {
+          "type": "int",
+          "default": 512,
+          "min": 128,
+          "max": 1024
+        }
       },
       "recommended": false,
       "source": "modelscope",
@@ -2139,7 +2419,27 @@
         },
         "lora_support": true,
         "seed_support": true,
-        "negative_prompt_support": false
+        "negative_prompt_support": false,
+        "preview_mode": {
+          "type": "enum",
+          "default": "stream",
+          "options": [
+            "stream",
+            "none"
+          ]
+        },
+        "preview_interval_steps": {
+          "type": "int",
+          "default": 2,
+          "min": 1,
+          "max": 8
+        },
+        "preview_max_edge": {
+          "type": "int",
+          "default": 512,
+          "min": 128,
+          "max": 1024
+        }
       },
       "recommended": false,
       "source": "modelscope",
@@ -4403,9 +4703,9 @@
         },
         "codec_steps": {
           "type": "int",
-          "default": 8,
+          "default": 20,
           "min": 4,
-          "max": 24,
+          "max": 32,
           "label": "Codec ODE steps"
         },
         "codec_guidance": {
@@ -4415,6 +4715,21 @@
           "max": 2.0,
           "step": 0.05,
           "label": "Codec guidance"
+        },
+        "long_form_temperature": {
+          "type": "float",
+          "default": 1.04,
+          "min": 0.9,
+          "max": 1.5,
+          "step": 0.02,
+          "label": "Long-form temperature"
+        },
+        "long_form_topk": {
+          "type": "int",
+          "default": 60,
+          "min": 20,
+          "max": 150,
+          "label": "Long-form top-k"
         },
         "min_unified_memory_gb": 24,
         "supports_lyrics": true,
@@ -4455,7 +4770,8 @@
           "install_hooks": [
             {
               "type": "heartmula_mlx_weights",
-              "dtype": "bfloat16"
+              "dtype": "bfloat16",
+              "codec_dtype": "float32"
             }
           ],
           "install_notes": {

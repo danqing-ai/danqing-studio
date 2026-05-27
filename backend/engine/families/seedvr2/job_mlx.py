@@ -322,6 +322,7 @@ def run_seedvr2_upscale(
     seed: int | None,
     output_png: Path,
     on_log: Callable[[str, str], None] | None = None,
+    pipeline: SeedVR2UpscalePipeline | None = None,
 ) -> dict[str, Any]:
     """执行 SeedVR2 超分并写出 PNG。由 ``ImageUpscalePipeline`` 在 MLX 路径下调用。"""
     validate_seedvr2_bundle(bundle_path, model_key)
@@ -336,7 +337,8 @@ def run_seedvr2_upscale(
     else:
         model_config = ModelConfig.seedvr2_3b()
 
-    pipeline = SeedVR2UpscalePipeline.from_bundle(bundle_path, model_config)
+    if pipeline is None:
+        pipeline = SeedVR2UpscalePipeline.from_bundle(bundle_path, model_config)
     resolution = ScaleFactor.parse(f"{int(scale)}x")
     soft = max(0.0, min(1.0, float(softness)))
     sd = int(seed) if seed is not None else random.randint(0, 2 ** 31 - 1)

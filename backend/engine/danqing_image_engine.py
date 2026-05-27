@@ -17,6 +17,7 @@ from backend.core.interfaces import IPathResolver
 from .common.cache import ModelCache
 from .pipelines.image_pipeline import ImagePipeline
 from .pipelines.image_upscale_pipeline import ImageUpscalePipeline
+from .progress_bridge import make_pipeline_progress_callback
 from .runtime._base import RuntimeContext
 
 
@@ -86,9 +87,7 @@ class DanQingImageEngine(IImageEngine):
             project_root=self._paths.get_project_root(),
         )
 
-        def on_progress(p, s, t, msg=None):
-            from backend.core.contracts import ProgressEvent
-            ctx.on_progress(ProgressEvent(progress=p, step=s, total=t, message=msg))
+        on_progress = make_pipeline_progress_callback(ctx)
 
         def on_log(lvl, msg):
             from backend.core.contracts import LogEvent
@@ -122,9 +121,7 @@ class DanQingImageEngine(IImageEngine):
             project_root=self._paths.get_project_root(),
         )
 
-        def on_progress(p, s, t, msg=None):
-            from backend.core.contracts import ProgressEvent
-            ctx.on_progress(ProgressEvent(progress=p, step=s, total=t, message=msg))
+        on_progress = make_pipeline_progress_callback(ctx)
 
         def on_log(lvl, msg):
             from backend.core.contracts import LogEvent
@@ -160,9 +157,7 @@ class DanQingImageEngine(IImageEngine):
         )
         import asyncio
 
-        def on_progress(p, s, t, msg=None):
-            from backend.core.contracts import ProgressEvent
-            ctx.on_progress(ProgressEvent(progress=p, step=s, total=t, message=msg))
+        on_progress = make_pipeline_progress_callback(ctx)
 
         def on_log(lvl, msg):
             from backend.core.contracts import LogEvent
