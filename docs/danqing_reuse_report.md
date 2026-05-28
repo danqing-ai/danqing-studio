@@ -69,7 +69,7 @@
 | **fibo** | `transformer_mlx.py` ~636 行 | embeddings、SDPA | **仅 MLX** | 文本 encoder 仍族内 |
 | **cogvideox** | `transformer_mlx.py` ~486 行 | attention、embeddings、norm | **仅 MLX**；VAE 已在族内 | RoPE 在 `rotary_mlx.py`（合规） |
 | **qwen** | `transformer_mlx.py` ~690 行 | **已接** common 函数层 | **仅 MLX**；`weights.py` 在 import allowlist | DiT 改 ctx/`SelfAttention` 或补 `transformer_cuda`；去掉 allowlist |
-| **seedvr2** | 8× `*_mlx.py` + `upscale.py` stem | `dit_mlx`/`vae_mlx` 用 SDPA、RMS 等 | **仅 MLX** upscale 孤岛 | 继续合并 schedule 等；补 CUDA |
+| **seedvr2** | 7× `*_mlx.py` + `upscale.py` / `weights.py` stem | `dit_mlx`/`vae_mlx` 用 SDPA、RMS 等 | **仅 MLX** upscale 孤岛 | `job_mlx` 含 schedule+result；`video_restore_mlx` 可再收 |
 | **hunyuan** | `transformer_mlx.py` + 族内 VAE/SR | 部分 common | **仅 MLX** | 与视频族治理对齐 |
 | **ace_step** | `transformer.py` + **mlx/cuda** | common 全套 | **音频族范例：双端** | 非图像 DiT，作参考 |
 
@@ -173,7 +173,7 @@ families/z_image/       → text_encoder_{mlx,cuda}.py（双端较好）
 ### P1 — 结构与一致性
 
 3. **图像 DiT 双端模板**：以 ace_step / z_image text encoder 为参考，为 flux/ltx/wan 等补 `transformer_cuda.py` 或等价 ctx 路径（与 registry `backends` 一致）。
-4. **SeedVR2 合并 stem**：`embed_mlx` 已并入 `preprocess_mlx`，`schedule_mlx` 已并入 `job_mlx`（保留 deprecated 重导出）；目标仍 ≤4 逻辑单位 + CUDA。
+4. **SeedVR2 合并 stem**：`embed`/`schedule`/`result` 已并入 `preprocess_mlx` / `job_mlx`；`weights.py` + `upscale.py` 对外 stem；目标仍收拢 `video_restore_mlx` 与 CUDA。
 
 ### P2 — 持续治理（已存在，保持收紧）
 

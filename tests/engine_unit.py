@@ -234,6 +234,65 @@ class ZImageCudaTests(unittest.TestCase):
         self.assertEqual(out, cond + g * (cond - uncond))
 
 
+class QwenImageTransformerTests(unittest.TestCase):
+    def test_transformer_dispatch_mlx(self) -> None:
+        from backend.engine.config.model_configs import QwenImageConfig
+        from backend.engine.families.qwen.transformer import QwenImageTransformer
+        from backend.engine.families.qwen.transformer_mlx import QwenImageTransformer as QwenMLX
+        from backend.engine.runtime.mlx import MLXContext
+
+        model = QwenImageTransformer(QwenImageConfig(), MLXContext())
+        self.assertIsInstance(model._inner, QwenMLX)
+
+    def test_transformer_dispatch_cuda(self) -> None:
+        from backend.engine.config.model_configs import QwenImageConfig
+        from backend.engine.families.qwen.transformer import QwenImageTransformer
+        from backend.engine.families.qwen.transformer_cuda import QwenImageTransformerCuda
+        from backend.engine.runtime.cuda import CudaContext
+
+        model = QwenImageTransformer(QwenImageConfig(), CudaContext("cpu"))
+        self.assertIsInstance(model._inner, QwenImageTransformerCuda)
+
+    def test_transformer_unsupported_backend(self) -> None:
+        from backend.engine.config.model_configs import QwenImageConfig
+        from backend.engine.families.qwen.transformer import QwenImageTransformer
+
+        ctx = SimpleNamespace(backend="unknown")
+        with self.assertRaises(RuntimeError):
+            QwenImageTransformer(QwenImageConfig(), ctx)
+
+    def test_qwen_image_registry_declares_cuda_backend(self) -> None:
+        import json
+        from pathlib import Path
+
+        reg = json.loads(
+            (Path(__file__).resolve().parents[1] / "default_config/models_registry.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        entry = reg["models"]["qwen-image"]
+        self.assertIn("cuda", entry.get("backends", []))
+        self.assertIn("mlx", entry.get("backends", []))
+
+
+class SeedVR2StemTests(unittest.TestCase):
+    def test_upscale_and_job_stems(self) -> None:
+        from backend.engine.families.seedvr2.job_mlx import (
+            GeneratedImage,
+            SeedVR2EulerScheduler,
+            SCHEDULER_REGISTRY,
+        )
+        from backend.engine.families.seedvr2.schedule_mlx import SeedVR2EulerScheduler as SchedAlias
+        from backend.engine.families.seedvr2.upscale import ModelConfig, SeedVR2UpscalePipeline
+        from backend.engine.families.seedvr2.weights import ModelConfig as MC2
+
+        self.assertIs(SchedAlias, SeedVR2EulerScheduler)
+        self.assertIs(MC2, ModelConfig)
+        self.assertIn("seedvr2_euler", SCHEDULER_REGISTRY)
+        self.assertTrue(SeedVR2UpscalePipeline)
+        self.assertTrue(GeneratedImage)
+
+
 class TaskKindMappingTests(unittest.TestCase):
     def test_registry_action_maps_to_audio_generation(self) -> None:
         from backend.core.task_kinds import AUDIO_GENERATION, task_kind_for_registry_action

@@ -2,15 +2,17 @@
 from __future__ import annotations
 
 from backend.engine.families.seedvr2.job_mlx import (
+    GeneratedImage,
     SeedVR2UpscalePipeline,
     SeedVR2UpscaleRuntime,
     expected_seedvr2_weight_files,
     run_seedvr2_upscale,
     validate_seedvr2_bundle,
 )
-from backend.engine.families.seedvr2.weights_mlx import ModelConfig
+from backend.engine.families.seedvr2.weights import ModelConfig
 
 __all__ = [
+    "GeneratedImage",
     "ModelConfig",
     "SeedVR2UpscalePipeline",
     "SeedVR2UpscaleRuntime",
