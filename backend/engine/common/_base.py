@@ -405,6 +405,36 @@ def _assign_param_tensor(param: Any, tensor: Any) -> None:
     param[:] = tensor
 
 
+def collect_params_legacy_tree(obj: Any, prefix: str, result: dict) -> None:
+    """Attribute-tree param walk for Flux1-style MLX models (mflux weight parity)."""
+    if hasattr(obj, "parameters") and callable(obj.parameters):
+        try:
+            for pname, ptensor in obj.parameters().items():
+                if isinstance(ptensor, dict):
+                    continue
+                result[f"{prefix}.{pname}" if prefix else pname] = ptensor
+            return
+        except Exception:
+            pass
+    for attr_name in sorted(dir(obj)):
+        if attr_name.startswith("_") or attr_name in ("ctx", "config", "freqs_cis", "_param_map"):
+            continue
+        try:
+            attr = getattr(obj, attr_name)
+        except Exception:
+            continue
+        if attr is None or isinstance(attr, (int, float, str, bool, type)):
+            continue
+        new_prefix = f"{prefix}.{attr_name}" if prefix else attr_name
+        if hasattr(attr, "parameters") and callable(attr.parameters):
+            collect_params_legacy_tree(attr, new_prefix, result)
+        elif isinstance(attr, (list, tuple)):
+            for i, item in enumerate(attr):
+                collect_params_legacy_tree(item, f"{new_prefix}.{i}", result)
+        elif hasattr(attr, "__dict__") and not isinstance(attr, type):
+            collect_params_legacy_tree(attr, new_prefix, result)
+
+
 def _is_param_leaf(obj: Any) -> bool:
     """True when ``obj`` is a concrete MLX array or torch parameter tensor."""
     if obj is None:
