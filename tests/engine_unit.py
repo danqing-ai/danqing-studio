@@ -228,11 +228,11 @@ class ZImageCudaTests(unittest.TestCase):
     def test_transformer_dispatch_cuda(self) -> None:
         from backend.engine.config.model_configs import ZImageConfig
         from backend.engine.families.z_image.transformer import ZImageTransformer
-        from backend.engine.families.z_image.transformer_cuda import ZImageTransformerCuda
+        from backend.engine.families.z_image.transformer_mlx import ZImageTransformer as ZImageMLX
         from backend.engine.runtime.cuda import CudaContext
 
         model = ZImageTransformer(ZImageConfig(), CudaContext("cpu"))
-        self.assertIs(model._inner.__class__, ZImageTransformerCuda)
+        self.assertIs(model._inner.__class__, ZImageMLX)
 
     def test_transformer_param_map_on_cuda_context(self) -> None:
         from backend.engine.config.model_configs import ZImageConfig
@@ -384,17 +384,17 @@ class DiTBackendDispatchTests(unittest.TestCase):
 
 
 class TextEncoderStemTests(unittest.TestCase):
-    def test_flux1_wan_fibo_stems_use_common(self) -> None:
-        from backend.engine.common.text_encoders.fibo_smollm3_mlx import FiboTextEncoder as FiboCommon
-        from backend.engine.common.text_encoders.flux1_dual import Flux1TextEncoder as Flux1Common
-        from backend.engine.common.text_encoders.wan_umt5_mlx import WanUMT5EncoderMLX as WanCommon
+    def test_flux1_wan_fibo_stems_reexport_impl(self) -> None:
         from backend.engine.families.fibo.text_encoder import FiboTextEncoder
+        from backend.engine.families.fibo.text_encoder_mlx import FiboTextEncoder as FiboImpl
+        from backend.engine.families.flux1.flux1_dual import Flux1TextEncoder as Flux1Impl
         from backend.engine.families.flux1.text_encoder import Flux1TextEncoder
         from backend.engine.families.wan.text_encoder import WanUMT5EncoderMLX
+        from backend.engine.families.wan.text_encoder_mlx import WanUMT5EncoderMLX as WanImpl
 
-        self.assertIs(Flux1TextEncoder, Flux1Common)
-        self.assertIs(WanUMT5EncoderMLX, WanCommon)
-        self.assertIs(FiboTextEncoder, FiboCommon)
+        self.assertIs(Flux1TextEncoder, Flux1Impl)
+        self.assertIs(WanUMT5EncoderMLX, WanImpl)
+        self.assertIs(FiboTextEncoder, FiboImpl)
 
 
 class SeedVR2StemTests(unittest.TestCase):
@@ -890,7 +890,7 @@ class HunyuanWeightTests(unittest.TestCase):
 
         import mlx.core as mx
 
-        from backend.engine.common.text_encoders.wan_umt5_mlx import (
+        from backend.engine.families.wan.text_encoder_mlx import (
             WanUMT5EncoderMLX,
             _apply_umt5_weights,
             _build_umt5_param_map,
@@ -908,7 +908,7 @@ class HunyuanWeightTests(unittest.TestCase):
         pth, tok = resolved
 
         sd = _load_umt5_state_dict(pth)
-        from backend.engine.common.text_encoders.wan_umt5_mlx import _UMT5Encoder
+        from backend.engine.families.wan.text_encoder_mlx import _UMT5Encoder
 
         model = _UMT5Encoder()
         _apply_umt5_weights(model, sd)

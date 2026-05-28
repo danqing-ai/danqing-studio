@@ -15,7 +15,7 @@ class ZImageTransformer(TransformerBase):
         if backend == "mlx":
             from .transformer_mlx import ZImageTransformer as _Impl
         elif backend == "cuda":
-            from .transformer_cuda import ZImageTransformerCuda as _Impl
+            from .transformer_mlx import ZImageTransformer as _Impl
         else:
             raise RuntimeError(f"Unsupported backend for Z-Image: {backend!r}")
         self._inner = _Impl(config, ctx)

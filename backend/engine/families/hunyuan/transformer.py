@@ -17,9 +17,9 @@ class HunyuanVideoTransformer(TransformerBase):
 
             self._inner = _MLX(config, ctx)
         elif backend == "cuda":
-            from .transformer_cuda import HunyuanVideoTransformerCuda
+            from backend.engine.common.dit_cuda_unavailable import raise_cuda_dit_unavailable
 
-            self._inner = HunyuanVideoTransformerCuda(config, ctx)
+            raise_cuda_dit_unavailable("Hunyuan Video")
         else:
             raise RuntimeError(f"Unsupported backend for Hunyuan Video: {backend!r}")
         self.ctx = self._inner.ctx

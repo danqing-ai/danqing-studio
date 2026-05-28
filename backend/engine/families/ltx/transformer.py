@@ -17,9 +17,9 @@ class LTXTransformer(TransformerBase):
 
             self._inner = _MLX(config, ctx, num_frames=num_frames)
         elif backend == "cuda":
-            from .transformer_cuda import LTXTransformerCuda
+            from backend.engine.common.dit_cuda_unavailable import raise_cuda_dit_unavailable
 
-            self._inner = LTXTransformerCuda(config, ctx, num_frames=num_frames)
+            raise_cuda_dit_unavailable("LTX Video")
         else:
             raise RuntimeError(f"Unsupported backend for LTX: {backend!r}")
         self.config = self._inner.config

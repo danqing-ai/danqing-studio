@@ -4,7 +4,6 @@ from __future__ import annotations
 __all__ = (
     "T5Encoder",
     "CLIPEncoder",
-    "Qwen25VLEncoder",
     "build_zimage_mlx_encoder",
     "Flux2TextEncoder",
     "MlxRMSNorm",
@@ -20,10 +19,6 @@ def __getattr__(name: str):
         from backend.engine.common.text_encoders.clip_mlx import CLIPEncoder
 
         return CLIPEncoder
-    if name == "Qwen25VLEncoder":
-        from backend.engine.common.text_encoders.qwen25vl_mlx import Qwen25VLEncoder
-
-        return Qwen25VLEncoder
     if name == "build_zimage_mlx_encoder":
         from backend.engine.common.text_encoders.qwen3_mlx import build_zimage_mlx_encoder
 

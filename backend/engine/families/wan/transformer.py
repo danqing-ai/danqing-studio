@@ -19,9 +19,9 @@ class WanTransformer(TransformerBase):
     def __init__(self, config: WanConfig, ctx: RuntimeContext, num_frames: int = 81):
         backend = getattr(ctx, "backend", "mlx")
         if backend == "cuda":
-            from .transformer_cuda import WanTransformerCuda
+            from backend.engine.common.dit_cuda_unavailable import raise_cuda_dit_unavailable
 
-            WanTransformerCuda(config, ctx, num_frames=num_frames)
+            raise_cuda_dit_unavailable("Wan")
         if backend != "mlx":
             raise RuntimeError(f"Unsupported backend for Wan: {backend!r}")
         self.config = config

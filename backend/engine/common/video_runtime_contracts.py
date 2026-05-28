@@ -242,7 +242,7 @@ def video_snap_pixel_dims_if_needed(
 
 
 def wan_t5_bundle_paths(bundle_root: Path) -> tuple[str, str]:
-    from backend.engine.common.text_encoders.wan_umt5_mlx import resolve_wan_umt5_pth
+    from backend.engine.families.wan.text_encoder_mlx import resolve_wan_umt5_pth
 
     assets = resolve_wan_umt5_pth(bundle_root)
     if assets is None:

@@ -1,6 +1,6 @@
-"""Flux.1 双编码器 — 对外入口（实现见 ``common.text_encoders.flux1_dual``）。"""
+"""Flux.1 双编码器 — 对外入口（T5 + CLIP 见族内 ``flux1_*_mlx``）。"""
 from __future__ import annotations
 
-from backend.engine.common.text_encoders.flux1_dual import Flux1TextEncoder
+from backend.engine.families.flux1.flux1_dual import Flux1TextEncoder
 
 __all__ = ["Flux1TextEncoder"]

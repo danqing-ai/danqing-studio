@@ -17,9 +17,9 @@ class CogVideoXTransformer(TransformerBase):
 
             self._inner = _MLX(config, ctx, num_frames=num_frames)
         elif backend == "cuda":
-            from .transformer_cuda import CogVideoXTransformerCuda
+            from backend.engine.common.dit_cuda_unavailable import raise_cuda_dit_unavailable
 
-            self._inner = CogVideoXTransformerCuda(config, ctx, num_frames=num_frames)
+            raise_cuda_dit_unavailable("CogVideoX")
         else:
             raise RuntimeError(f"Unsupported backend for CogVideoX: {backend!r}")
         self.ctx = self._inner.ctx

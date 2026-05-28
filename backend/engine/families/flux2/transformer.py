@@ -17,9 +17,9 @@ class Flux2Transformer(TransformerBase):
 
             self._inner = _MLX(config, ctx)
         elif backend == "cuda":
-            from .transformer_cuda import Flux2TransformerCuda
+            from backend.engine.common.dit_cuda_unavailable import raise_cuda_dit_unavailable
 
-            self._inner = Flux2TransformerCuda(config, ctx)
+            raise_cuda_dit_unavailable("Flux.2")
         else:
             raise RuntimeError(f"Unsupported backend for Flux.2: {backend!r}")
         self.ctx = self._inner.ctx

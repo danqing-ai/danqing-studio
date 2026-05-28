@@ -27,5 +27,5 @@ if _profile in ("cuda", "full") or (
         "backend.engine.families.seedvr2.upscale",
         "backend.engine.families.wan.transformer_mlx",
         "backend.engine.families.wan.vae_mlx",
-        "backend.engine.common.text_encoders.wan_umt5_mlx",
+        "backend.engine.families.wan.text_encoder_mlx",
     ]

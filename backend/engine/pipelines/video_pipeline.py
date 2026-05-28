@@ -1116,7 +1116,7 @@ class VideoPipeline:
         max_seq_len = int(getattr(self, "_t5_max_seq_len", 512))
         if contract is not None and bool(getattr(contract, "uses_wan_t5_bundle", False)):
             if self._t5 is None:
-                from backend.engine.common.text_encoders.wan_umt5_mlx import WanUMT5EncoderMLX
+                from backend.engine.families.wan.text_encoder_mlx import WanUMT5EncoderMLX
 
                 pth_path, tok_dir = wan_t5_bundle_paths(bundle_root)
                 self._t5 = WanUMT5EncoderMLX(

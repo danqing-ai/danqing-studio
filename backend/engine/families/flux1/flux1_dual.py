@@ -4,8 +4,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from backend.engine.common.text_encoders.flux1_clip_mlx import Flux1CLIPEncoder
-from backend.engine.common.text_encoders.flux1_t5_mlx import Flux1T5Encoder
+from backend.engine.families.flux1.flux1_clip_mlx import Flux1CLIPEncoder
+from backend.engine.families.flux1.flux1_t5_mlx import Flux1T5Encoder
 
 
 def _t5_paths(bundle_root: Path) -> tuple[str, str]:

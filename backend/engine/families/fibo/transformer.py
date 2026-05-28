@@ -17,9 +17,9 @@ class FIBOTransformer(TransformerBase):
 
             self._inner = _MLX(config, ctx)
         elif backend == "cuda":
-            from .transformer_cuda import FIBOTransformerCuda
+            from backend.engine.common.dit_cuda_unavailable import raise_cuda_dit_unavailable
 
-            self._inner = FIBOTransformerCuda(config, ctx)
+            raise_cuda_dit_unavailable("FIBO")
         else:
             raise RuntimeError(f"Unsupported backend for FIBO: {backend!r}")
         self.ctx = self._inner.ctx
