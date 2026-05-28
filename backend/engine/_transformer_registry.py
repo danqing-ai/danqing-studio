@@ -27,7 +27,7 @@ _TEXT_ENCODER = {
     "flux2":    ("backend.engine.families.flux2.text_encoder",     "Flux2TextEncoder"),
     "z_image":  ("backend.engine.families.z_image.text_encoder",   "ZImageTextEncoder"),
     "qwen_image": ("backend.engine.families.qwen.text_encoder", "QwenImageTextEncoder"),
-    "fibo":     ("backend.engine.families.fibo.text_encoder_mlx", "FiboTextEncoder"),
+    "fibo":     ("backend.engine.families.fibo.text_encoder", "FiboTextEncoder"),
 }
 
 _IMAGE_LORA_MERGE = {

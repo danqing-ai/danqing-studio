@@ -154,7 +154,9 @@ families/z_image/       → text_encoder_{mlx,cuda}.py（双端较好）
 
 ### 已完成或部分完成
 
-- [x] **mlx/torch 导入边界**：`make check-engine-imports`（allowlist 仅 `qwen/weights.py` 等极少数）。
+- [x] **mlx/torch 导入边界**：`make check-engine-imports`（allowlist 已清空；`qwen/weights.py` 仅为懒加载 facade，`weights_mlx.py` 承载 MLX 映射）。
+- [x] **Flux2 文本编码器**：`Flux2TextEncoder` 迁入 `common/text_encoders/qwen3_mlx.py`，族内 `text_encoder.py` 薄封装。
+- [x] **FIBO / SeedVR2 对外 stem**：`fibo/text_encoder.py`、`seedvr2/upscale.py` + registry / Pipeline 经 stem 引用。
 - [x] **族目录平行树禁令**：`make check-engine-family-layout`。
 - [x] **CogVideoX VAE 族内化**：`families/cogvideox/vae.py`。
 - [x] **公共 text_encoders 目录**：`common/text_encoders/`。
@@ -162,7 +164,7 @@ families/z_image/       → text_encoder_{mlx,cuda}.py（双端较好）
 
 ### P0 — 最大复用/双端缺口
 
-1. **Qwen 图像 DiT CUDA 路径**（或整体 ctx 化 + `transformer_cuda.py`），并 **移除** `qwen/weights.py` 的 import allowlist。
+1. **Qwen 图像 DiT CUDA 路径**（或整体 ctx 化 + `transformer_cuda.py`）；权重 allowlist 已通过 `weights_mlx` 拆分清除。
 2. **文本编码器收敛**：flux1/flux2/qwen/wan 族内 encoder → `common/text_encoders/` + 薄 stem（z_image 为参考）。
 
 ### P1 — 结构与一致性

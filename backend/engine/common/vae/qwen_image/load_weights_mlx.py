@@ -19,7 +19,7 @@ def apply_qwen_vae_weights_from_bundle(
     if not vae_dir.is_dir():
         raise RuntimeError(f"Qwen Image VAE: missing directory {vae_dir}")
 
-    from backend.engine.families.qwen.weights import apply_qwen_vae_weights
+    from backend.engine.families.qwen.weights_mlx import apply_qwen_vae_weights
 
     raw: dict = {}
     for sf in sorted(vae_dir.glob("*.safetensors")):

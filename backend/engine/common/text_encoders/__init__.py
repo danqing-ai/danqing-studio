@@ -1,7 +1,14 @@
 """文本编码器 — T5 / CLIP / Qwen2.5-VL / Qwen3 MLX（PEP 562 懒加载，避免 import 即拉起重依赖）。"""
 from __future__ import annotations
 
-__all__ = ("T5Encoder", "CLIPEncoder", "Qwen25VLEncoder", "build_zimage_mlx_encoder", "MlxRMSNorm")
+__all__ = (
+    "T5Encoder",
+    "CLIPEncoder",
+    "Qwen25VLEncoder",
+    "build_zimage_mlx_encoder",
+    "Flux2TextEncoder",
+    "MlxRMSNorm",
+)
 
 
 def __getattr__(name: str):
@@ -25,6 +32,10 @@ def __getattr__(name: str):
         from backend.engine.common.text_encoders.qwen3_mlx import MlxRMSNorm
 
         return MlxRMSNorm
+    if name == "Flux2TextEncoder":
+        from backend.engine.common.text_encoders.qwen3_mlx import Flux2TextEncoder
+
+        return Flux2TextEncoder
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

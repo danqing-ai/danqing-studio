@@ -6,7 +6,7 @@ from typing import Any, Callable
 
 _UPSCALE_JOBS: dict[str, tuple[str, str]] = {
     "seedvr2": (
-        "backend.engine.families.seedvr2.job_mlx",
+        "backend.engine.families.seedvr2.upscale",
         "run_seedvr2_upscale",
     ),
 }

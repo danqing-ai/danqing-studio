@@ -21,7 +21,7 @@ from backend.engine.common.embeddings import (
     pad_ragged_2d_sequences,
 )
 from backend.engine.common.mlx_runtime_fallback import load_weights_dict, run_eval
-from backend.engine.families.qwen.weights import apply_qwen_text_encoder_weights
+from backend.engine.families.qwen.weights_mlx import apply_qwen_text_encoder_weights
 from backend.engine.common.text_encoders.qwen3_mlx import MlxSwiGLUMLP
 
 _MLX_CTX = MLXContext()

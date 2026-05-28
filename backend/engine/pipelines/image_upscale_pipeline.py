@@ -16,7 +16,7 @@ from backend.engine.runtime._base import RuntimeContext
 
 
 class ImageUpscalePipeline:
-    """注册表驱动的图像超分；当前 MLX 路径经 SeedVR2 ``job_mlx.run_seedvr2_upscale``。"""
+    """注册表驱动的图像超分；当前 MLX 路径经 SeedVR2 ``upscale.run_seedvr2_upscale``。"""
 
     def __init__(
         self,
@@ -88,8 +88,7 @@ class ImageUpscalePipeline:
                 on_log(level, msg)
 
         from backend.engine.common.weights import parse_size_gb
-        from backend.engine.families.seedvr2.job_mlx import SeedVR2UpscalePipeline
-        from backend.engine.families.seedvr2.weights_mlx import ModelConfig
+        from backend.engine.families.seedvr2.upscale import ModelConfig, SeedVR2UpscalePipeline
 
         run_upscale_job = get_upscale_job_runner(family)
 

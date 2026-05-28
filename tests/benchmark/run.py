@@ -79,7 +79,7 @@ def _seedvr2_flat_bundle_ready(model_id: str) -> bool:
     if not root.is_dir():
         return False
     try:
-        from backend.engine.families.seedvr2.job_mlx import expected_seedvr2_weight_files
+        from backend.engine.families.seedvr2.upscale import expected_seedvr2_weight_files
     except Exception:
         return False
     for name in expected_seedvr2_weight_files(base):
