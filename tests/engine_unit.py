@@ -275,6 +275,17 @@ class QwenImageTransformerTests(unittest.TestCase):
         self.assertIn("mlx", entry.get("backends", []))
 
 
+class TextEncoderStemTests(unittest.TestCase):
+    def test_flux1_and_wan_stems_use_common(self) -> None:
+        from backend.engine.common.text_encoders.flux1_dual import Flux1TextEncoder as Flux1Common
+        from backend.engine.common.text_encoders.wan_umt5_mlx import WanUMT5EncoderMLX as WanCommon
+        from backend.engine.families.flux1.text_encoder import Flux1TextEncoder
+        from backend.engine.families.wan.text_encoder import WanUMT5EncoderMLX
+
+        self.assertIs(Flux1TextEncoder, Flux1Common)
+        self.assertIs(WanUMT5EncoderMLX, WanCommon)
+
+
 class SeedVR2StemTests(unittest.TestCase):
     def test_upscale_and_job_stems(self) -> None:
         from backend.engine.families.seedvr2.job_mlx import (
@@ -282,26 +293,21 @@ class SeedVR2StemTests(unittest.TestCase):
             SeedVR2EulerScheduler,
             SCHEDULER_REGISTRY,
         )
-        from backend.engine.families.seedvr2.schedule_mlx import SeedVR2EulerScheduler as SchedAlias
         from backend.engine.families.seedvr2.upscale import (
             ModelConfig,
             SeedVR2UpscalePipeline,
+            restore_video_chunk_spatiotemporal,
             run_seedvr2_spatiotemporal_video,
-        )
-        from backend.engine.families.seedvr2.video_restore_mlx import (
-            restore_video_chunk_spatiotemporal as restore_alias,
-            run_seedvr2_spatiotemporal_video as run_video_alias,
         )
         from backend.engine.families.seedvr2.weights import ModelConfig as MC2
         from backend.engine.families.seedvr2 import job_mlx
 
-        self.assertIs(SchedAlias, SeedVR2EulerScheduler)
         self.assertIs(MC2, ModelConfig)
         self.assertIn("seedvr2_euler", SCHEDULER_REGISTRY)
         self.assertTrue(SeedVR2UpscalePipeline)
         self.assertTrue(GeneratedImage)
-        self.assertIs(restore_alias, job_mlx.restore_video_chunk_spatiotemporal)
-        self.assertIs(run_video_alias, run_seedvr2_spatiotemporal_video)
+        self.assertIs(restore_video_chunk_spatiotemporal, job_mlx.restore_video_chunk_spatiotemporal)
+        self.assertIs(run_seedvr2_spatiotemporal_video, job_mlx.run_seedvr2_spatiotemporal_video)
 
 
 class TaskKindMappingTests(unittest.TestCase):

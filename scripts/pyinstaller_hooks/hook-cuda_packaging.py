@@ -23,8 +23,9 @@ if _profile in ("cuda", "full") or (
         "backend.engine.families.heartmula.mula_mlx",
         "backend.engine.families.heartmula.nn_mlx",
         "backend.engine.families.heartmula.ode_mlx",
-        "backend.engine.families.seedvr2.video_restore_mlx",
+        "backend.engine.families.seedvr2.job_mlx",
+        "backend.engine.families.seedvr2.upscale",
         "backend.engine.families.wan.transformer_mlx",
         "backend.engine.families.wan.vae_mlx",
-        "backend.engine.families.wan.text_encoder_mlx",
+        "backend.engine.common.text_encoders.wan_umt5_mlx",
     ]

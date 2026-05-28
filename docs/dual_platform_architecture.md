@@ -579,11 +579,11 @@ grep -rln "import torch\|from torch" backend/engine/ --include="*.py" \
 | `common/bundle_weight_mapping.py` | `common/bundle_weights/remap.py` | 0 |
 | `seedvr2/sv2_dit.py` | `families/seedvr2/dit_mlx.py` | done |
 | `seedvr2/sv2_vae_net.py` | `families/seedvr2/vae_mlx.py` | done |
-| `seedvr2/sv2_embed.py` | `families/seedvr2/embed_mlx.py` | done |
-| `seedvr2/sv2_schedule.py` | `families/seedvr2/schedule_mlx.py` | done |
+| `seedvr2/sv2_embed.py` | merged into `families/seedvr2/preprocess_mlx.py` | done |
+| `seedvr2/sv2_schedule.py` | merged into `families/seedvr2/job_mlx.py` | done |
 | `seedvr2/sv2_preprocess.py` | `families/seedvr2/preprocess_mlx.py` | done |
-| `seedvr2/sv2_job.py` | `families/seedvr2/job_mlx.py` | done |
-| `seedvr2/sv2_result.py` | `families/seedvr2/result_mlx.py` | done |
+| `seedvr2/sv2_job.py` | `families/seedvr2/job_mlx.py` (+ schedule/result/video) | done |
+| `seedvr2/sv2_result.py` | merged into `families/seedvr2/job_mlx.py` | done |
 | `seedvr2/sv2_weight_schema.py` | `families/seedvr2/weights_mlx.py` | done |
 | `seedvr2/sv2_model_spec.py` | merged into `families/seedvr2/weights_mlx.py` | done |
 | `seedvr2/sv2_dispatch.py` | merged into `families/seedvr2/job_mlx.py` (`run_seedvr2_upscale`) | done |

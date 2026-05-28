@@ -69,7 +69,7 @@
 | **fibo** | `transformer_mlx.py` ~636 行 | embeddings、SDPA | **仅 MLX** | 文本 encoder 仍族内 |
 | **cogvideox** | `transformer_mlx.py` ~486 行 | attention、embeddings、norm | **仅 MLX**；VAE 已在族内 | RoPE 在 `rotary_mlx.py`（合规） |
 | **qwen** | `transformer_mlx.py` ~690 行 + `transformer_cuda.py`（diffusers） | **已接** common 函数层 | **MLX + CUDA**（registry `backends`）；`weights.py` 为 facade | 真机 bundle parity；长期可选手写 CUDA DiT |
-| **seedvr2** | 5× `*_mlx.py`（`dit`/`vae`/`job`/`preprocess`/`weights`）+ `upscale.py`/`weights.py` stem | `dit_mlx`/`vae_mlx` 用 SDPA、RMS 等 | **仅 MLX** upscale 孤岛 | `job_mlx` 含 schedule+result+video；`schedule`/`result`/`video_restore` 为 deprecated 重导出 |
+| **seedvr2** | 5× `*_mlx.py` + `upscale.py`/`weights.py` stem | `dit_mlx`/`vae_mlx` 用 SDPA、RMS 等 | **仅 MLX** upscale 孤岛 | `job_mlx` 含 schedule+result+video；无多余重导出壳 |
 | **hunyuan** | `transformer_mlx.py` + 族内 VAE/SR | 部分 common | **仅 MLX** | 与视频族治理对齐 |
 | **ace_step** | `transformer.py` + **mlx/cuda** | common 全套 | **音频族范例：双端** | 非图像 DiT，作参考 |
 
@@ -135,7 +135,7 @@ families/z_image/       → text_encoder_{mlx,cuda}.py（双端较好）
 
 ### 4.4 SeedVR2 文件预算
 
-当前族根目录 **5 个** 热路径 `*_mlx.py`（`dit`、`vae`、`job`、`preprocess`、`weights`），另有 **3 个** deprecated 重导出（`schedule_mlx`、`result_mlx`、`video_restore_mlx` → `job_mlx`）。对外 stem：`upscale.py`、`weights.py`。目标：补 CUDA stem 或保持 MLX-only 并 fail loud。
+当前族根目录 **5 个** `*_mlx.py`（`dit`、`vae`、`job`、`preprocess`、`weights`）；对外 stem：`upscale.py`、`weights.py`（含图像超分与时空视频修复 API）。目标：补 CUDA stem 或 registry 保持 MLX-only 并 fail loud。
 
 ---
 
@@ -157,7 +157,7 @@ families/z_image/       → text_encoder_{mlx,cuda}.py（双端较好）
 - [x] **mlx/torch 导入边界**：`make check-engine-imports`（allowlist 已清空；`qwen/weights.py` 仅为懒加载 facade，`weights_mlx.py` 承载 MLX 映射）。
 - [x] **Flux2 文本编码器**：`Flux2TextEncoder` 迁入 `common/text_encoders/qwen3_mlx.py`，族内 `text_encoder.py` 薄封装。
 - [x] **FIBO / SeedVR2 对外 stem**：`fibo/text_encoder.py`、`seedvr2/upscale.py` + registry / Pipeline 经 stem 引用。
-- [x] **文本编码器迁入 common**：`flux1_dual` + `flux1_t5/clip_mlx`、`qwen_image_mlx`、`wan_umt5_mlx`；族内保留 deprecated 重导出路径。
+- [x] **文本编码器迁入 common**：`flux1_dual` + `flux1_t5/clip_mlx`、`qwen_image_mlx`、`wan_umt5_mlx`；族内 `text_encoder.py` stem；已移除 flux1/wan 旧重导出路径。
 - [x] **SeedVR2 文件合并**：`embed`→`preprocess_mlx`；`schedule`/`result`/`video_restore`→`job_mlx`（热路径 5× `*_mlx.py`）。
 - [x] **Qwen DiT stem**：`transformer.py` dispatch；`transformer_cuda.py` + `text_encoder_cuda.py`；registry `backends: [mlx, cuda]`。
 - [x] **族目录平行树禁令**：`make check-engine-family-layout`。
@@ -173,7 +173,7 @@ families/z_image/       → text_encoder_{mlx,cuda}.py（双端较好）
 ### P1 — 结构与一致性
 
 3. **图像 DiT 双端模板**：以 ace_step / z_image text encoder 为参考，为 flux/ltx/wan 等补 `transformer_cuda.py` 或等价 ctx 路径（与 registry `backends` 一致）。
-4. **SeedVR2**：热路径已收拢至 `job_mlx` + `preprocess_mlx`；可删 deprecated `schedule_mlx`/`result_mlx`/`video_restore_mlx`（需确认无外部 import）。**CUDA** 仍缺。
+4. **SeedVR2 CUDA**：热路径已收拢；**CUDA** 仍缺或 registry 显式 MLX-only。
 
 ### P2 — 持续治理（已存在，保持收紧）
 

@@ -136,6 +136,15 @@ Complete **all five** before merging:
 - [ ] Minimal inference path validated (CLI/bench equivalent)
 - [ ] Desktop packaging reachability verified for added runtime modules
 
+### Phase E2: Qwen-Image CUDA parity (when `backends` includes `cuda`)
+
+Requires NVIDIA + local `qwen-image` bundle under `./models/` (sync registry first).
+
+- [ ] `make sync-models-registry`
+- [ ] Smoke: `bin/danqing-generate --model qwen-image --prompt "a red cube" --runtime cuda --steps 4 --width 512 --height 512 --output /tmp/qwen-cuda.png`
+- [ ] Compare against MLX on same seed/steps (visual or `make bench-mflux-case` if reference exists)
+- [ ] If DiT diverges: verify `transformer_cuda.py` timestep scaling (`sigma → int(t×1000)`) and packed latent layout vs diffusers pipeline
+
 ---
 
 ## 4) Implementation Decision Tree
