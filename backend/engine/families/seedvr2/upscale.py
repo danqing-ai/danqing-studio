@@ -6,6 +6,8 @@ from backend.engine.families.seedvr2.job_mlx import (
     SeedVR2UpscalePipeline,
     SeedVR2UpscaleRuntime,
     expected_seedvr2_weight_files,
+    restore_video_chunk_spatiotemporal,
+    run_seedvr2_spatiotemporal_video,
     run_seedvr2_upscale,
     validate_seedvr2_bundle,
 )
@@ -17,6 +19,8 @@ __all__ = [
     "SeedVR2UpscalePipeline",
     "SeedVR2UpscaleRuntime",
     "expected_seedvr2_weight_files",
+    "restore_video_chunk_spatiotemporal",
+    "run_seedvr2_spatiotemporal_video",
     "run_seedvr2_upscale",
     "validate_seedvr2_bundle",
 ]

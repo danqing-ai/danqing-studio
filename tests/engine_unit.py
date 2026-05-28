@@ -283,14 +283,25 @@ class SeedVR2StemTests(unittest.TestCase):
             SCHEDULER_REGISTRY,
         )
         from backend.engine.families.seedvr2.schedule_mlx import SeedVR2EulerScheduler as SchedAlias
-        from backend.engine.families.seedvr2.upscale import ModelConfig, SeedVR2UpscalePipeline
+        from backend.engine.families.seedvr2.upscale import (
+            ModelConfig,
+            SeedVR2UpscalePipeline,
+            run_seedvr2_spatiotemporal_video,
+        )
+        from backend.engine.families.seedvr2.video_restore_mlx import (
+            restore_video_chunk_spatiotemporal as restore_alias,
+            run_seedvr2_spatiotemporal_video as run_video_alias,
+        )
         from backend.engine.families.seedvr2.weights import ModelConfig as MC2
+        from backend.engine.families.seedvr2 import job_mlx
 
         self.assertIs(SchedAlias, SeedVR2EulerScheduler)
         self.assertIs(MC2, ModelConfig)
         self.assertIn("seedvr2_euler", SCHEDULER_REGISTRY)
         self.assertTrue(SeedVR2UpscalePipeline)
         self.assertTrue(GeneratedImage)
+        self.assertIs(restore_alias, job_mlx.restore_video_chunk_spatiotemporal)
+        self.assertIs(run_video_alias, run_seedvr2_spatiotemporal_video)
 
 
 class TaskKindMappingTests(unittest.TestCase):

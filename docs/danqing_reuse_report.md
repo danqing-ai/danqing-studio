@@ -68,8 +68,8 @@
 | **flux2** | `transformer_mlx.py` ~564 行 | 同上 | **仅 MLX** | 同上 + VAE 在 `vae_mlx.py` |
 | **fibo** | `transformer_mlx.py` ~636 行 | embeddings、SDPA | **仅 MLX** | 文本 encoder 仍族内 |
 | **cogvideox** | `transformer_mlx.py` ~486 行 | attention、embeddings、norm | **仅 MLX**；VAE 已在族内 | RoPE 在 `rotary_mlx.py`（合规） |
-| **qwen** | `transformer_mlx.py` ~690 行 | **已接** common 函数层 | **仅 MLX**；`weights.py` 在 import allowlist | DiT 改 ctx/`SelfAttention` 或补 `transformer_cuda`；去掉 allowlist |
-| **seedvr2** | 7× `*_mlx.py` + `upscale.py` / `weights.py` stem | `dit_mlx`/`vae_mlx` 用 SDPA、RMS 等 | **仅 MLX** upscale 孤岛 | `job_mlx` 含 schedule+result；`video_restore_mlx` 可再收 |
+| **qwen** | `transformer_mlx.py` ~690 行 + `transformer_cuda.py`（diffusers） | **已接** common 函数层 | **MLX + CUDA**（registry `backends`）；`weights.py` 为 facade | 真机 bundle parity；长期可选手写 CUDA DiT |
+| **seedvr2** | 5× `*_mlx.py`（`dit`/`vae`/`job`/`preprocess`/`weights`）+ `upscale.py`/`weights.py` stem | `dit_mlx`/`vae_mlx` 用 SDPA、RMS 等 | **仅 MLX** upscale 孤岛 | `job_mlx` 含 schedule+result+video；`schedule`/`result`/`video_restore` 为 deprecated 重导出 |
 | **hunyuan** | `transformer_mlx.py` + 族内 VAE/SR | 部分 common | **仅 MLX** | 与视频族治理对齐 |
 | **ace_step** | `transformer.py` + **mlx/cuda** | common 全套 | **音频族范例：双端** | 非图像 DiT，作参考 |
 
@@ -135,7 +135,7 @@ families/z_image/       → text_encoder_{mlx,cuda}.py（双端较好）
 
 ### 4.4 SeedVR2 文件预算
 
-当前族根目录 **9 个** `*_mlx.py`（`dit`、`vae`、`embed`、`job`、`preprocess`、`schedule`、`result`、`video_restore`、`weights`），**无** 对外 `transformer.py` / `pipeline.py` stem。目标仍是合并为少量 stem（各配 `_mlx`/`_cuda`，同 stem 计 1 单位）。
+当前族根目录 **5 个** 热路径 `*_mlx.py`（`dit`、`vae`、`job`、`preprocess`、`weights`），另有 **3 个** deprecated 重导出（`schedule_mlx`、`result_mlx`、`video_restore_mlx` → `job_mlx`）。对外 stem：`upscale.py`、`weights.py`。目标：补 CUDA stem 或保持 MLX-only 并 fail loud。
 
 ---
 
@@ -158,8 +158,8 @@ families/z_image/       → text_encoder_{mlx,cuda}.py（双端较好）
 - [x] **Flux2 文本编码器**：`Flux2TextEncoder` 迁入 `common/text_encoders/qwen3_mlx.py`，族内 `text_encoder.py` 薄封装。
 - [x] **FIBO / SeedVR2 对外 stem**：`fibo/text_encoder.py`、`seedvr2/upscale.py` + registry / Pipeline 经 stem 引用。
 - [x] **文本编码器迁入 common**：`flux1_dual` + `flux1_t5/clip_mlx`、`qwen_image_mlx`、`wan_umt5_mlx`；族内保留 deprecated 重导出路径。
-- [x] **SeedVR2 文件合并**：`embed_mlx` 并入 `preprocess_mlx`（少 1 个 mlx 文件）。
-- [x] **Qwen DiT stem**：`transformer.py` 双端 dispatch 占位（CUDA 显式 fail loud）。
+- [x] **SeedVR2 文件合并**：`embed`→`preprocess_mlx`；`schedule`/`result`/`video_restore`→`job_mlx`（热路径 5× `*_mlx.py`）。
+- [x] **Qwen DiT stem**：`transformer.py` dispatch；`transformer_cuda.py` + `text_encoder_cuda.py`；registry `backends: [mlx, cuda]`。
 - [x] **族目录平行树禁令**：`make check-engine-family-layout`。
 - [x] **CogVideoX VAE 族内化**：`families/cogvideox/vae.py`。
 - [x] **公共 text_encoders 目录**：`common/text_encoders/`。
@@ -167,13 +167,13 @@ families/z_image/       → text_encoder_{mlx,cuda}.py（双端较好）
 
 ### P0 — 最大复用/双端缺口
 
-1. **Qwen 图像 DiT CUDA**：初版 `transformer_cuda.py`（diffusers `QwenImageTransformer2DModel` + bundle 加载）与 `text_encoder_cuda.py`；registry `backends: [mlx, cuda]`。需在真机 bundle 上跑通生成 parity。
+1. **Qwen 图像 CUDA parity**：`transformer_cuda.py` / `text_encoder_cuda.py` 已接线；需在 NVIDIA + 本地 `qwen-image` bundle 上跑通生成与 MLX/diffusers 对齐（timestep `×1000` 等待验）。
 2. **文本编码器收敛**：flux1/flux2/qwen/wan 已迁入 `common/text_encoders/`；flux1 仍保留 mflux 对齐 T5/CLIP（未改用 generic `T5Encoder`）。
 
 ### P1 — 结构与一致性
 
 3. **图像 DiT 双端模板**：以 ace_step / z_image text encoder 为参考，为 flux/ltx/wan 等补 `transformer_cuda.py` 或等价 ctx 路径（与 registry `backends` 一致）。
-4. **SeedVR2 合并 stem**：`embed`/`schedule`/`result` 已并入 `preprocess_mlx` / `job_mlx`；`weights.py` + `upscale.py` 对外 stem；目标仍收拢 `video_restore_mlx` 与 CUDA。
+4. **SeedVR2**：热路径已收拢至 `job_mlx` + `preprocess_mlx`；可删 deprecated `schedule_mlx`/`result_mlx`/`video_restore_mlx`（需确认无外部 import）。**CUDA** 仍缺。
 
 ### P2 — 持续治理（已存在，保持收紧）
 
