@@ -28,6 +28,9 @@ class ZImageTransformer(TransformerBase):
             raise AttributeError(name)
         return getattr(self._inner, name)
 
+    def forward(self, *args: Any, **kwargs: Any) -> Any:
+        return self._inner.forward(*args, **kwargs)
+
     def load_weights(self, *args: Any, **kwargs: Any):
         out = self._inner.load_weights(*args, **kwargs)
         self._param_map = self._inner._param_map

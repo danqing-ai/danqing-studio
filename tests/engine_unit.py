@@ -216,6 +216,15 @@ class ZImageCudaTests(unittest.TestCase):
 
         model = ZImageTransformer(ZImageConfig(), MLXContext())
         self.assertIsInstance(model._inner, ZImageMLX)
+        self.assertIs(model.forward, model._inner.forward)
+
+    def test_transformer_call_delegates_to_inner(self) -> None:
+        from backend.engine.config.model_configs import ZImageConfig
+        from backend.engine.families.z_image.transformer import ZImageTransformer
+        from backend.engine.runtime.mlx import MLXContext
+
+        model = ZImageTransformer(ZImageConfig(), MLXContext())
+        self.assertIs(model.__class__.forward, ZImageTransformer.forward)
 
     def test_transformer_dispatch_cuda(self) -> None:
         from backend.engine.config.model_configs import ZImageConfig
