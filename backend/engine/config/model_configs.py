@@ -132,6 +132,9 @@ class FIBOConfig:
     use_mlx_cfg_fusion: bool = True
     vae_scale: int = 16
     text_encoder_mask_key: str = "text_encoder_layers"
+    # FIBO-Edit: mflux concat VAE-packed source latents on the sequence axis (not img2img blend).
+    edit_conditioning_concat: bool = False
+    edit_rmbg_composite_output: bool = False
 
 
 @dataclass

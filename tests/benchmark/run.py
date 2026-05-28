@@ -366,7 +366,6 @@ class BenchmarkRunner:
             "--source-image", str(_benchmark_source_path(case)),
             "--prompt", case.prompt,
             "--seed", str(case.seed),
-            "--source-fidelity", str(case.image_strength),
             "--guidance", str(case.guidance),
             "--output", str(output_path),
         ]
@@ -374,6 +373,8 @@ class BenchmarkRunner:
             cmd += ["--steps", str(case.steps)]
         if getattr(case, "scheduler", None):
             cmd += ["--scheduler", str(case.scheduler)]
+        if not getattr(case, "_mflux_omit_image_strength", False):
+            cmd += ["--source-fidelity", str(case.image_strength)]
         try:
             t0 = time.time()
             env = os.environ.copy()
@@ -432,11 +433,20 @@ class BenchmarkRunner:
                 f"{scale}x",
             ]
         elif case.action == "rewrite" and case.source_image:
-            cmd += ["--image-path", str(_benchmark_source_path(case)),
-                    "--image-strength", str(case.image_strength),
-                    "--prompt", case.prompt,
-                    "--width", str(case.width), "--height", str(case.height),
-                    "--guidance", str(case.guidance)]
+            cmd += [
+                "--image-path",
+                str(_benchmark_source_path(case)),
+                "--prompt",
+                case.prompt,
+                "--width",
+                str(case.width),
+                "--height",
+                str(case.height),
+                "--guidance",
+                str(case.guidance),
+            ]
+            if not getattr(case, "_mflux_omit_image_strength", False):
+                cmd += ["--image-strength", str(case.image_strength)]
         elif case.prompt:
             cmd += ["--prompt", case.prompt,
                     "--width", str(case.width), "--height", str(case.height),

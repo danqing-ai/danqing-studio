@@ -1657,6 +1657,7 @@
         "lora_support": false,
         "seed_support": true,
         "negative_prompt_support": false,
+        "edit_conditioning_concat": true,
         "preview_mode": {
           "type": "enum",
           "default": "stream",
@@ -1783,6 +1784,8 @@
         "lora_support": false,
         "seed_support": true,
         "negative_prompt_support": false,
+        "edit_conditioning_concat": true,
+        "edit_rmbg_composite_output": true,
         "preview_mode": {
           "type": "enum",
           "default": "stream",
@@ -2000,6 +2003,7 @@
       },
       "media": "image",
       "actions": {
+        "create": {},
         "rewrite": {}
       },
       "family": "qwen_image",

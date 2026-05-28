@@ -47,6 +47,19 @@ def unpack_latents(latents: mx.array, height: int, width: int) -> mx.array:
     return latents
 
 
+def create_conditioning_image_ids(height: int, width: int, *, dtype: Any = mx.float32) -> mx.array:
+    """mflux ``FiboEditUtil.create_conditioning_image_ids`` — RoPE ids with channel-0 = 1."""
+    vae_scale = 16
+    lh, lw = height // vae_scale, width // vae_scale
+    row_indices = mx.arange(0, lh, dtype=dtype)[:, None]
+    row_indices = mx.broadcast_to(row_indices, (lh, lw))
+    col_indices = mx.arange(0, lw, dtype=dtype)[None, :]
+    col_indices = mx.broadcast_to(col_indices, (lh, lw))
+    ones_channel = mx.ones((lh, lw), dtype=dtype)
+    latent_image_ids = mx.stack([ones_channel, row_indices, col_indices], axis=-1)
+    return mx.reshape(latent_image_ids, (1, lh * lw, 3))
+
+
 def encode_image_n11(ctx: Any, image_n11: mx.array, bundle_root: Path | str) -> mx.array:
     """``image_n11``: [1,3,H,W] in [-1,1] → latents [1,48,h,w]."""
     vae = _load_vae_model(str(Path(bundle_root) / "vae"))
@@ -74,6 +87,7 @@ def decode_latents_nchw(ctx: Any, latents: mx.array, bundle_root: Path | str) ->
 
 __all__ = [
     "FiboVaeWeightMapping",
+    "create_conditioning_image_ids",
     "decode_latents_nchw",
     "encode_image_n11",
     "pack_latents",

@@ -9,9 +9,12 @@ mflux 对比仅包含有 **真实 mflux 子命令** 的路径；用例按 ``defa
 - **FLUX.2 Klein 蒸馏版**：``mflux-generate-flux2`` 在蒸馏权重上要求 ``--guidance 1.0``。
 - **FIBO / FIBO-Lite**：``mflux-generate-fibo`` 对 ``--prompt`` 做 ``json.loads``；基准固定为合法 JSON，
   避免走 VLM 路径导致与丹青不可复现对比。
-- **FIBO-Edit / FIBO-Edit-RMBG**：``mflux-generate-fibo-edit``；RMBG 使用与 mflux 默认一致的
-  ``edit_instruction`` JSON（见 ``FIBO_EDIT_RMBG_JSON``）。
-- **Qwen-Image**：注册表仅 ``rewrite``，PSNR 套件只含 ``rewrite``。
+- **FIBO-Edit / FIBO-Edit-RMBG**：``mflux-generate-fibo-edit`` 不支持 ``--image-strength``；丹青走 registry
+  ``edit_conditioning_concat``（VAE 源图 latent 拼接到序列维，非 img2img 混合）。RMBG 另设
+  ``edit_rmbg_composite_output`` 与 mflux 一致输出 RGBA 合成图。基准 omit ``--image-strength`` /
+  ``--source-fidelity``（见 ``_mflux_omit_image_strength``）。
+- **Qwen-Image**：注册表 ``create`` + ``rewrite``；PSNR 套件含文生图与图生图（``mflux-generate-qwen``）。
+  ``mflux-generate-qwen-edit`` 为独立 Edit 权重，丹青未注册，不在本套件。
 - **FLUX.1 Kontext**：``mflux-generate-kontext`` 将 ``--image-path`` 设为必填；无「纯文生」对位，
   故 PSNR 仅覆盖 ``rewrite``；``create`` 见 README 对照表。
 - **FLUX.2 + ``vae_scale: 16`` 的 rewrite**：丹青管线若尚未与 16× VAE 网格对齐，``rewrite`` 可能在
@@ -30,6 +33,19 @@ SeedVR2 超分健全性：若 ``models/Upscaler/seedvr2-*-fp16`` 下缺少 ``job
 
 小分辨率 (256px) 快速对比。
 
+**mflux 图像 CLI 与 PSNR 套件对照（有意未建用例）**：
+
+| mflux CLI | 说明 |
+|-----------|------|
+| ``mflux-generate-qwen-edit`` | 独立 Qwen-Image-Edit 权重；丹青注册表未接入 |
+| ``mflux-generate-flux2-edit`` | FLUX.2 编辑变体；丹青未注册 |
+| ``mflux-generate-redux`` | Redux 风格参考；无对应 base 模型 |
+| ``mflux-generate-kontext`` | 仅 ``flux1-kontext-rewrite``（CLI 强制 ``--image-path``，无纯文生） |
+| ``mflux-generate-fill`` / ``depth`` / ``controlnet`` | ControlNet 管线；非 base 文生/图生 |
+| ``mflux-generate-in-context*`` | In-context 变体；丹青未注册 |
+| ``mflux-inspire-fibo`` / ``mflux-refine-fibo`` | FIBO VLM 灵感/精修；非 ImagePipeline 标准 create/rewrite |
+| ``mflux-upscale-controlnet`` | 超分 ControlNet；非 SeedVR2 |
+
 模型目录：读取 ``default_config/workspace.pointer.json`` 的 ``custom_workspace_dir``（见
 ``resolve_benchmark_data_root()``）；未配置时回退仓库根 ``models/``。
 
@@ -42,7 +58,9 @@ SeedVR2 超分健全性：若 ``models/Upscaler/seedvr2-*-fp16`` 下缺少 ``job
 | SKIP 无权重 | seedvr2-3b；flux1-kontext；fibo-lite；fibo-edit |
 | PASS | flux1-schnell/dev/krea-dev create（2026-05-19；RMSNorm eps + registry max_seq_len + 禁用 Flux.1 双路 CFG） |
 | PASS | fibo-create；fibo-rewrite（2026-05-24；MLX SmolLM3 + batched CFG + FIBO Wan2.2 VAE） |
-| SKIP 丹青未跑通 | fibo-edit-rmbg（VAE encoder） |
+| PASS | fibo-edit-rmbg-rewrite（2026-05-28；FIBO-Edit conditioning concat + RGBA composite） |
+| PASS | qwen-image-create（2026-05-28；Qwen packed latent 噪声与 mflux 对齐） |
+| SKIP 无权重 | seedvr2-3b；flux1-kontext；fibo-lite；fibo-edit |
 """
 from __future__ import annotations
 
@@ -254,6 +272,7 @@ class BenchmarkCase:
     _mflux_cli: str = "mflux-generate"
     _mflux_model_flag: str = ""
     _mflux_extra_args: list[str] = field(default_factory=list)
+    _mflux_omit_image_strength: bool = False
 
     def __post_init__(self):
         if not self.description:
@@ -827,7 +846,19 @@ ALL_CASES: list[BenchmarkCase] = [
         _mflux_cli="mflux-generate-z-image",
         description="Z-Image 图生图",
     ),
-    # ----- Qwen-Image（仅 rewrite）-----
+    # ----- Qwen-Image（create + rewrite；mflux-generate-qwen）-----
+    BenchmarkCase(
+        id="qwen-image-create",
+        model="qwen-image",
+        action="create",
+        prompt="a ceramic teapot on a wooden table, warm morning light",
+        seed=42,
+        steps=4,
+        guidance=1.0,
+        scheduler="flow_match_euler_discrete",
+        _mflux_cli="mflux-generate-qwen",
+        description="Qwen-Image 文生图",
+    ),
     BenchmarkCase(
         id="qwen-image-rewrite",
         model="qwen-image",
@@ -909,6 +940,7 @@ ALL_CASES: list[BenchmarkCase] = [
         source_image=SRC_IMAGE,
         image_strength=0.55,
         _mflux_cli="mflux-generate-fibo-edit",
+        _mflux_omit_image_strength=True,
         description="FIBO-Edit 图像编辑 (JSON)",
     ),
     BenchmarkCase(
@@ -923,6 +955,7 @@ ALL_CASES: list[BenchmarkCase] = [
         source_image=SRC_IMAGE,
         image_strength=0.55,
         _mflux_cli="mflux-generate-fibo-edit",
+        _mflux_omit_image_strength=True,
         description="FIBO-Edit-RMBG 抠像 (JSON)",
     ),
 ]

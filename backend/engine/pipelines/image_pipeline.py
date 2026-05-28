@@ -510,6 +510,8 @@ class ImagePipeline:
             "num_layers",
             "num_single_layers",
             "joint_attention_dim",
+            "edit_conditioning_concat",
+            "edit_rmbg_composite_output",
         ):
             val = self._registry_scalar_default(entry, param_key, None)
             if val is not None and hasattr(config, param_key):
@@ -1162,6 +1164,19 @@ class ImagePipeline:
                 latents = self.ctx.randn(packed_shape, dtype=_noise_sample_dtype)
             if _noise_sample_dtype != _lnd:
                 latents = latents.astype(_lnd)
+        elif getattr(config, "encoder_step_kwargs", None) == "qwen_image":
+            lh, lw = h // vae_scale, w // vae_scale
+            q_seq = lh * lw
+            if seed is not None:
+                packed_noise = self.ctx.seeded_randn(
+                    (1, q_seq, 64), seed, dtype=_noise_sample_dtype
+                )
+            else:
+                packed_noise = self.ctx.randn((1, q_seq, 64), dtype=_noise_sample_dtype)
+            if _noise_sample_dtype != _lnd:
+                packed_noise = packed_noise.astype(_lnd)
+            packed_noise = self.ctx.reshape(packed_noise, (1, lh, lw, 64))
+            latents = self.ctx.permute(packed_noise, (0, 3, 1, 2))
         else:
             latent_shape = (1, config.in_channels, h // vae_scale, w // vae_scale)
             latents = runtime_contract.sample_txt2img_noise(
@@ -1383,6 +1398,7 @@ class ImagePipeline:
         # source_fidelity ↔ mflux ``--image-strength`` (clamped [0, 1]).
         fidelity = float(request.source_fidelity)
         fidelity = max(0.0, min(1.0, fidelity))
+        edit_conditioning_concat = bool(getattr(config, "edit_conditioning_concat", False))
 
         steps_default = self._registry_scalar_default(entry, "steps", 4)
         _meta_ed = request.metadata or {}
@@ -1391,7 +1407,7 @@ class ImagePipeline:
         # mflux ``Config.init_time_step``: img2img starts denoising at this index; latent noise
         # uses ``sigmas[init]`` in ``(1 - sigma) * encoded + sigma * noise`` (not linear f·x+(1-f)·ε).
         init_timestep = 0
-        if fidelity > 0.0:
+        if fidelity > 0.0 and not edit_conditioning_concat:
             init_timestep = max(1, int(steps * fidelity))
         guidance_default = self._registry_scalar_default(entry, "guidance", 0.0)
         if request.guidance is not None:
@@ -1435,6 +1451,12 @@ class ImagePipeline:
         model.after_load_weights(bundle_root=str(bundle_root) if bundle_root else None)
         self._apply_image_lora_adapters(family, model, request, on_log)
         extra_cond = model.prepare_conditioning(request, bundle_root=str(bundle_root) if bundle_root else None)
+        if edit_conditioning_concat:
+            from backend.engine.families.fibo import vae_mlx as fibo_vae_mlx
+
+            extra_cond = dict(extra_cond)
+            extra_cond["conditioning_latents"] = encoded
+            extra_cond["conditioning_image_ids"] = fibo_vae_mlx.create_conditioning_image_ids(h, w)
 
         semantics = self._scheduler_semantics_resolver.resolve(
             entry=entry,
@@ -1513,7 +1535,8 @@ class ImagePipeline:
                 "info",
                 f"edit rewrite model={model_key} family={family} size={w}x{h} seed={seed} "
                 f"steps={steps} init_timestep={init_timestep} scheduler={scheduler_default} "
-                f"source_fidelity={fidelity}",
+                f"source_fidelity={fidelity}"
+                + (" edit_conditioning_concat=1" if edit_conditioning_concat else ""),
             )
 
         latents, extra_cond = model.before_denoise(
@@ -1599,6 +1622,11 @@ class ImagePipeline:
             latents = _flux_unpack_edit(self.ctx, latents, _lh_edit, _lw_edit)
 
         image = self._vae_decode(latents, entry, version_key or None, on_log=on_log)
+        if getattr(config, "edit_rmbg_composite_output", False):
+            matte = image.convert("L")
+            composite = pil.copy()
+            composite.putalpha(matte.resize(composite.size, Image.LANCZOS))
+            image = composite
         _image_pipeline_emit_post_progress(on_progress, n_steps=len(timesteps), within_post=0.5)
         if ctx_exec.cancel_token.is_cancelled():
             return None

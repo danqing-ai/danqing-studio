@@ -517,12 +517,31 @@ class FIBOTransformer(TransformerBase):
         B = latents.shape[0]
         _, _, H, W = latents.shape
         text_encoder_layers = conditioning.get("text_encoder_layers", text_encoder_layers)
+        conditioning_latents = conditioning.get("conditioning_latents")
+        conditioning_image_ids = conditioning.get("conditioning_image_ids")
 
-        # Pack latents [B,48,H,W] → [B, H*W, 48]
-        hidden_states = mx.transpose(latents, (0, 2, 3, 1))
-        hidden_states = mx.reshape(hidden_states, (B, H * W, cfg.in_channels))
+        # Pack noise latents [B,48,H,W] → [B, H*W, 48]; optional FIBO-Edit concat on sequence axis.
+        noise_packed = mx.transpose(latents, (0, 2, 3, 1))
+        noise_packed = mx.reshape(noise_packed, (B, H * W, cfg.in_channels))
+        img_seq_len = noise_packed.shape[1]
+        cond_seq_len = 0
+        if conditioning_latents is not None:
+            cond = conditioning_latents
+            if int(cond.shape[0]) == 1 and B > 1:
+                cond = mx.broadcast_to(cond, (B, *cond.shape[1:]))
+            _, _, c_h, c_w = cond.shape
+            if c_h != H or c_w != W:
+                raise RuntimeError(
+                    f"FIBO edit conditioning latents spatial {c_h}x{c_w} != noise latents {H}x{W}"
+                )
+            cond_packed = mx.transpose(cond, (0, 2, 3, 1))
+            cond_packed = mx.reshape(cond_packed, (B, c_h * c_w, cfg.in_channels))
+            cond_seq_len = int(cond_packed.shape[1])
+            hidden_states = mx.concatenate([noise_packed, cond_packed], axis=1)
+        else:
+            hidden_states = noise_packed
+
         hidden_states = self.x_embedder(hidden_states)
-        img_seq_len = hidden_states.shape[1]
 
         if txt_embeds is not None:
             encoder_hidden_states = self.context_embedder(txt_embeds)
@@ -559,14 +578,23 @@ class FIBOTransformer(TransformerBase):
         img_h = mx.reshape(mx.broadcast_to(img_h[:, None], (H, W)), (-1,))
         img_w = mx.reshape(mx.broadcast_to(img_w[None, :], (H, W)), (-1,))
         img_ids = mx.stack([mx.zeros(H * W, dtype=mx.float32), img_h, img_w], axis=1)
+        if conditioning_image_ids is not None:
+            cond_ids = conditioning_image_ids
+            if cond_ids.ndim == 3:
+                cond_ids = cond_ids[0]
+            img_ids = mx.concatenate([img_ids, cond_ids.astype(mx.float32)], axis=0)
         ids = mx.concatenate([txt_ids, img_ids], axis=0)
         ids = mx.expand_dims(ids, axis=0)
         cos, sin = self.pos_embed.forward(ids)
 
-        # Attention mask — mflux: full bidirectional over prompt + latent tokens
+        # Attention mask — mflux: full bidirectional over prompt + latent (+ conditioning) tokens
         prompt_mask = mx.ones((B, txt_len), dtype=mx.float32)
         latent_mask = mx.ones((B, img_seq_len), dtype=mx.float32)
-        attention_mask_2d = mx.concatenate([prompt_mask, latent_mask], axis=1)
+        if cond_seq_len > 0:
+            cond_mask = mx.ones((B, cond_seq_len), dtype=mx.float32)
+            attention_mask_2d = mx.concatenate([prompt_mask, latent_mask, cond_mask], axis=1)
+        else:
+            attention_mask_2d = mx.concatenate([prompt_mask, latent_mask], axis=1)
         attn_matrix = mx.einsum("bi,bj->bij", attention_mask_2d, attention_mask_2d)
         min_dtype = mx.finfo(mx.float32).min
         attn_matrix = mx.where(
@@ -622,6 +650,8 @@ class FIBOTransformer(TransformerBase):
                 ctx.eval(x)
 
         hidden_states = x[:, txt_len:, :]
+        if cond_seq_len > 0:
+            hidden_states = hidden_states[:, :img_seq_len, :]
         hidden_states = self.norm_out.forward(hidden_states, temb)
         hidden_states = self.proj_out(hidden_states)
 
