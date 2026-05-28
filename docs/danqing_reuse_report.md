@@ -69,7 +69,7 @@
 | **fibo** | `transformer_mlx.py` ~636 行 | embeddings、SDPA | **仅 MLX** | 文本 encoder 仍族内 |
 | **cogvideox** | `transformer_mlx.py` ~486 行 | attention、embeddings、norm | **仅 MLX**；VAE 已在族内 | RoPE 在 `rotary_mlx.py`（合规） |
 | **qwen** | `transformer_mlx.py` ~690 行 | **已接** common 函数层 | **仅 MLX**；`weights.py` 在 import allowlist | DiT 改 ctx/`SelfAttention` 或补 `transformer_cuda`；去掉 allowlist |
-| **seedvr2** | 9× `*_mlx.py`，无 `transformer.py` stem | `dit_mlx`/`vae_mlx` 用 SDPA、RMS 等 | **仅 MLX** upscale 孤岛 | 合并为 ≤4 stem（dit/vae/job/weights）+ CUDA |
+| **seedvr2** | 8× `*_mlx.py` + `upscale.py` stem | `dit_mlx`/`vae_mlx` 用 SDPA、RMS 等 | **仅 MLX** upscale 孤岛 | 继续合并 schedule 等；补 CUDA |
 | **hunyuan** | `transformer_mlx.py` + 族内 VAE/SR | 部分 common | **仅 MLX** | 与视频族治理对齐 |
 | **ace_step** | `transformer.py` + **mlx/cuda** | common 全套 | **音频族范例：双端** | 非图像 DiT，作参考 |
 
@@ -118,10 +118,10 @@ default_config/models_registry.json
 
 ```
 common/text_encoders/     → T5, CLIP, Qwen25VL, Qwen3（部分 CUDA）
-families/flux1/         → t5_encoder_mlx.py, clip_encoder_mlx.py
-families/flux2/         → text_encoder_mlx.py
-families/qwen/          → text_encoder_mlx.py
-families/wan/           → text_encoder_mlx.py
+families/flux1/         → text_encoder.py（实现 common/flux1_dual）
+families/flux2/         → text_encoder.py（实现 common/qwen3 Flux2TextEncoder）
+families/qwen/          → text_encoder.py（实现 common/qwen_image_mlx）
+families/wan/           → text_encoder.py（实现 common/wan_umt5_mlx）
 families/z_image/       → text_encoder_{mlx,cuda}.py（双端较好）
 ```
 
@@ -157,6 +157,9 @@ families/z_image/       → text_encoder_{mlx,cuda}.py（双端较好）
 - [x] **mlx/torch 导入边界**：`make check-engine-imports`（allowlist 已清空；`qwen/weights.py` 仅为懒加载 facade，`weights_mlx.py` 承载 MLX 映射）。
 - [x] **Flux2 文本编码器**：`Flux2TextEncoder` 迁入 `common/text_encoders/qwen3_mlx.py`，族内 `text_encoder.py` 薄封装。
 - [x] **FIBO / SeedVR2 对外 stem**：`fibo/text_encoder.py`、`seedvr2/upscale.py` + registry / Pipeline 经 stem 引用。
+- [x] **文本编码器迁入 common**：`flux1_dual` + `flux1_t5/clip_mlx`、`qwen_image_mlx`、`wan_umt5_mlx`；族内保留 deprecated 重导出路径。
+- [x] **SeedVR2 文件合并**：`embed_mlx` 并入 `preprocess_mlx`（少 1 个 mlx 文件）。
+- [x] **Qwen DiT stem**：`transformer.py` 双端 dispatch 占位（CUDA 显式 fail loud）。
 - [x] **族目录平行树禁令**：`make check-engine-family-layout`。
 - [x] **CogVideoX VAE 族内化**：`families/cogvideox/vae.py`。
 - [x] **公共 text_encoders 目录**：`common/text_encoders/`。

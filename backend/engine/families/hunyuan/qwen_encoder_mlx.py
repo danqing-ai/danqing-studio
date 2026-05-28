@@ -9,7 +9,7 @@ import numpy as np
 
 from backend.engine.common.hf_tokenizer_json import load_hf_tokenizer, render_qwen_chat_messages
 from backend.engine.common.mlx_runtime_fallback import run_clear_cache, run_eval
-from backend.engine.families.qwen.text_encoder_mlx import load_qwen25vl_mlx_encoder
+from backend.engine.common.text_encoders.qwen_image_mlx import load_qwen25vl_mlx_encoder
 
 
 class HunyuanQwen25VLEncoder:

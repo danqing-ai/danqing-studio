@@ -703,7 +703,7 @@ class HunyuanWeightTests(unittest.TestCase):
 
         import mlx.core as mx
 
-        from backend.engine.families.wan.text_encoder_mlx import (
+        from backend.engine.common.text_encoders.wan_umt5_mlx import (
             WanUMT5EncoderMLX,
             _apply_umt5_weights,
             _build_umt5_param_map,
@@ -721,7 +721,7 @@ class HunyuanWeightTests(unittest.TestCase):
         pth, tok = resolved
 
         sd = _load_umt5_state_dict(pth)
-        from backend.engine.families.wan.text_encoder_mlx import _UMT5Encoder
+        from backend.engine.common.text_encoders.wan_umt5_mlx import _UMT5Encoder
 
         model = _UMT5Encoder()
         _apply_umt5_weights(model, sd)

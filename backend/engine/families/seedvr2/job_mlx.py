@@ -23,8 +23,7 @@ from backend.engine.common.bundle_weights import WeightApplier
 from backend.engine.common.scale_factor import ScaleFactor
 from backend.engine.common.vae.mlx_tiling import TilingConfig, VAEUtil
 from .dit_mlx import SeedVR2DiT
-from .embed_mlx import SeedVR2PositiveEmbeddings
-from .preprocess_mlx import SeedVR2LatentCreator, SeedVR2Util
+from .preprocess_mlx import SeedVR2LatentCreator, SeedVR2PositiveEmbeddings, SeedVR2Util
 from .schedule_mlx import SCHEDULER_REGISTRY, SeedVR2EulerScheduler
 from .vae_mlx import SeedVR2VAE
 from .weights_mlx import ModelConfig, load_flat_bundle

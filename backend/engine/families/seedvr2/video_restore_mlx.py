@@ -16,8 +16,11 @@ from PIL import Image
 from backend.engine.common.mlx_runtime_fallback import seeded_random_normal
 from backend.engine.common.scale_factor import ScaleFactor
 from backend.engine.common.vae.mlx_tiling import VAEUtil
-from backend.engine.families.seedvr2.embed_mlx import SeedVR2PositiveEmbeddings
-from backend.engine.families.seedvr2.preprocess_mlx import SeedVR2LatentCreator, SeedVR2Util
+from backend.engine.families.seedvr2.preprocess_mlx import (
+    SeedVR2LatentCreator,
+    SeedVR2PositiveEmbeddings,
+    SeedVR2Util,
+)
 
 from .job_mlx import (
     SeedVR2UpscalePipeline,
