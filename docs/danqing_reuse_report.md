@@ -37,7 +37,7 @@
 | `embeddings.py` | timestep、RoPE、patch embed 等 | 同上 |
 | `schedulers.py` | FlowMatch、DDPM 等 | Pipeline |
 | `vae/` | 通用 decoder/encoder、tiling、`qwen_image/` 子树 | 跨族 + Qwen 图像 VAE |
-| `text_encoders/` | T5、CLIP、Qwen2.5-VL、Qwen3（懒加载） | 部分族仍保留族内 encoder 文件 |
+| `text_encoders/` | T5、CLIP、Qwen2.5-VL、Qwen3、Flux1、Qwen-Image、Wan UMT5、FIBO SmolLM3 | 族内仅 `text_encoder.py` stem（z_image 仍 split mlx/cuda） |
 | `bundle_weights/` | 权重加载与 remap 辅助 | Pipeline / 各 `weights.py` |
 
 ### Layer 2: `families/<id>/`（Go 式 stem）
@@ -122,6 +122,7 @@ families/flux1/         → text_encoder.py（实现 common/flux1_dual）
 families/flux2/         → text_encoder.py（实现 common/qwen3 Flux2TextEncoder）
 families/qwen/          → text_encoder.py（实现 common/qwen_image_mlx）
 families/wan/           → text_encoder.py（实现 common/wan_umt5_mlx）
+families/fibo/          → text_encoder.py（实现 common/fibo_smollm3_mlx）
 families/z_image/       → text_encoder_{mlx,cuda}.py（双端较好）
 ```
 
@@ -208,8 +209,8 @@ families/<family>/
 
 ## 8. 结论
 
-> **当前复用问题的主因，已从「common 粒度不对」转为「双端与 stem 未收敛、族内仍有重复 encoder/Block」。**
+> **当前复用问题的主因，已从「common 粒度不对」转为「DiT 双端未收敛、部分族仍缺 CUDA」。**
 >
-> `common/` 已提供 SDPA、norm、embedding 原语及 `SelfAttention(ctx)`；多数族的 **导入边界** 已合规（`mx.*` 在 `*_mlx.py`）。剩余工作集中在：**(1) Qwen/SeedVR2 等 MLX-only 族的 CUDA 或 ctx 补齐；(2) 文本 encoder 从族目录迁入 `common/text_encoders/`；(3) SeedVR2 等超大 mlx 面合并为少量 stem。**
+> `common/` 已提供 SDPA、norm、embedding 原语及图像族 **text_encoders**（flux1/2、qwen、wan、fibo）；**导入边界** 已合规。剩余工作集中在：**(1) Qwen CUDA parity；(2) flux/ltx/wan/seedvr2 等 DiT `transformer_cuda` 或 registry MLX-only；(3) flux1 换 generic T5/CLIP 前需 bench。**
 >
 > 新模型 **~100 行** 仍是 registry + 治理下的目标态，不是当前默认现实；以 **ltx ~291 行单文件 ctx DiT** 为近期可参考下限。
