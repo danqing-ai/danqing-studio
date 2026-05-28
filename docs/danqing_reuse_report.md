@@ -66,7 +66,7 @@
 | **wan** | `transformer_mlx.py` | 部分 common + 族内 `WanSelfAttention` | VAE 有 mlx；**DiT 仅 MLX** | 族内 attention 与 common 收敛 |
 | **flux1** | `transformer_mlx.py` ~554 行 | SDPA、patch、norm | **仅 MLX**；T5/CLIP 在族内 `*_mlx.py` | 文本 encoder 迁入/复用 `common/text_encoders` |
 | **flux2** | `transformer_mlx.py` ~564 行 | 同上 | **仅 MLX** | 同上 + VAE 在 `vae_mlx.py` |
-| **fibo** | `transformer_mlx.py` ~636 行 | embeddings、SDPA | **仅 MLX** | 文本 encoder 仍族内 |
+| **fibo** | `transformer_mlx.py` ~636 行 | embeddings、SDPA | **仅 MLX** | TE 在 `common/text_encoders/fibo_smollm3_mlx` |
 | **cogvideox** | `transformer_mlx.py` ~486 行 | attention、embeddings、norm | **仅 MLX**；VAE 已在族内 | RoPE 在 `rotary_mlx.py`（合规） |
 | **qwen** | `transformer_mlx.py` ~690 行 + `transformer_cuda.py`（diffusers） | **已接** common 函数层 | **MLX + CUDA**（registry `backends`）；`weights.py` 为 facade | 真机 bundle parity；长期可选手写 CUDA DiT |
 | **seedvr2** | 5× `*_mlx.py` + `upscale.py`/`weights.py` stem | `dit_mlx`/`vae_mlx` 用 SDPA、RMS 等 | **仅 MLX** upscale 孤岛 | `job_mlx` 含 schedule+result+video；无多余重导出壳 |
@@ -157,7 +157,7 @@ families/z_image/       → text_encoder_{mlx,cuda}.py（双端较好）
 - [x] **mlx/torch 导入边界**：`make check-engine-imports`（allowlist 已清空；`qwen/weights.py` 仅为懒加载 facade，`weights_mlx.py` 承载 MLX 映射）。
 - [x] **Flux2 文本编码器**：`Flux2TextEncoder` 迁入 `common/text_encoders/qwen3_mlx.py`，族内 `text_encoder.py` 薄封装。
 - [x] **FIBO / SeedVR2 对外 stem**：`fibo/text_encoder.py`、`seedvr2/upscale.py` + registry / Pipeline 经 stem 引用。
-- [x] **文本编码器迁入 common**：`flux1_dual` + `flux1_t5/clip_mlx`、`qwen_image_mlx`、`wan_umt5_mlx`；族内 `text_encoder.py` stem；已移除 flux1/wan 旧重导出路径。
+- [x] **文本编码器迁入 common**：`flux1_dual`、`qwen_image_mlx`、`wan_umt5_mlx`、`fibo_smollm3_mlx`；族内 `text_encoder.py` stem；已移除族内 TE 重导出壳。
 - [x] **SeedVR2 文件合并**：`embed`→`preprocess_mlx`；`schedule`/`result`/`video_restore`→`job_mlx`（热路径 5× `*_mlx.py`）。
 - [x] **Qwen DiT stem**：`transformer.py` dispatch；`transformer_cuda.py` + `text_encoder_cuda.py`；registry `backends: [mlx, cuda]`。
 - [x] **族目录平行树禁令**：`make check-engine-family-layout`。
@@ -168,7 +168,7 @@ families/z_image/       → text_encoder_{mlx,cuda}.py（双端较好）
 ### P0 — 最大复用/双端缺口
 
 1. **Qwen 图像 CUDA parity**：`transformer_cuda.py` / `text_encoder_cuda.py` 已接线；需在 NVIDIA + 本地 `qwen-image` bundle 上跑通生成与 MLX/diffusers 对齐（timestep `×1000` 等待验）。
-2. **文本编码器收敛**：flux1/flux2/qwen/wan 已迁入 `common/text_encoders/`；flux1 仍保留 mflux 对齐 T5/CLIP（未改用 generic `T5Encoder`）。
+2. **文本编码器收敛**：flux1/flux2/qwen/wan/fibo 已迁入 `common/text_encoders/`；flux1 仍保留 mflux 对齐 T5/CLIP（未改用 generic `T5Encoder`）。
 
 ### P1 — 结构与一致性
 

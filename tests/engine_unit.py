@@ -276,14 +276,17 @@ class QwenImageTransformerTests(unittest.TestCase):
 
 
 class TextEncoderStemTests(unittest.TestCase):
-    def test_flux1_and_wan_stems_use_common(self) -> None:
+    def test_flux1_wan_fibo_stems_use_common(self) -> None:
+        from backend.engine.common.text_encoders.fibo_smollm3_mlx import FiboTextEncoder as FiboCommon
         from backend.engine.common.text_encoders.flux1_dual import Flux1TextEncoder as Flux1Common
         from backend.engine.common.text_encoders.wan_umt5_mlx import WanUMT5EncoderMLX as WanCommon
+        from backend.engine.families.fibo.text_encoder import FiboTextEncoder
         from backend.engine.families.flux1.text_encoder import Flux1TextEncoder
         from backend.engine.families.wan.text_encoder import WanUMT5EncoderMLX
 
         self.assertIs(Flux1TextEncoder, Flux1Common)
         self.assertIs(WanUMT5EncoderMLX, WanCommon)
+        self.assertIs(FiboTextEncoder, FiboCommon)
 
 
 class SeedVR2StemTests(unittest.TestCase):

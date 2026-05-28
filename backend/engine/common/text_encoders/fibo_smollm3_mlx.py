@@ -1,4 +1,7 @@
-"""FIBO text encoder — MLX SmolLM3 (mflux-compatible) + PromptEncoder CFG batching."""
+"""FIBO text encoder — MLX SmolLM3 (mflux-compatible) + PromptEncoder CFG batching.
+
+Family stem: ``backend.engine.families.fibo.text_encoder.FiboTextEncoder``.
+"""
 from __future__ import annotations
 
 import json
