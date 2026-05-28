@@ -66,7 +66,7 @@
 | **wan** | `transformer.py` dispatch + `transformer_mlx.py` | 部分 common + 族内 `WanSelfAttention` | **DiT 仅 MLX**（cuda fail loud） | CUDA DiT；attention 与 common 收敛 |
 | **flux1** | `transformer_mlx.py` + stem dispatch | SDPA、patch、norm | **仅 MLX**（`transformer_cuda` fail loud）；TE 在 common | CUDA DiT + generic T5/CLIP（需 bench） |
 | **flux2** | `transformer_mlx.py` + stem dispatch | 同上 | **仅 MLX**（cuda fail loud） | CUDA DiT；TE 在 common |
-| **fibo** | `transformer_mlx.py` ~636 行 | embeddings、SDPA | **仅 MLX** | TE 在 `common/text_encoders/fibo_smollm3_mlx` |
+| **fibo** | `transformer_mlx.py` ~636 行 | embeddings、SDPA | **仅 MLX** | TE 在 `families/fibo/text_encoder_mlx`（common 仅 ≥2 消费者） |
 | **cogvideox** | `transformer_mlx.py` + stem dispatch | attention、embeddings、norm | **仅 MLX**（cuda fail loud）；VAE 族内 | RoPE 在 `rotary_mlx.py`（合规） |
 | **qwen** | `transformer_mlx.py` ~690 行 + `transformer_cuda.py`（diffusers） | **已接** common 函数层 | **MLX + CUDA**（registry `backends`）；`weights.py` 为 facade | 真机 bundle parity；长期可选手写 CUDA DiT |
 | **seedvr2** | 5× `*_mlx.py` + `upscale.py`/`weights.py` stem | `dit_mlx`/`vae_mlx` 用 SDPA、RMS 等 | **仅 MLX** upscale 孤岛 | `job_mlx` 含 schedule+result+video；无多余重导出壳 |
@@ -114,19 +114,19 @@ default_config/models_registry.json
 - Qwen 已使用 `scaled_dot_product_attention_bhsd_mx`、`apply_complex_rope_bshd`、`unpack_modulation_3way` 等，但 **未** 提供 `transformer_cuda.py`，且 `weights.py` 仍依赖 MLX remap（allowlist 明示）。
 - 多数图像族 DiT 仅有 `transformer_mlx.py`；**ace_step** 是少数具备 `transformer_cuda.py` 的族。
 
-### 4.2 文本编码器：common 已有，族内重复未清完
+### 4.2 文本编码器：common 仅保留 ≥2 消费者（2026-05 治理）
 
 ```
-common/text_encoders/     → T5, CLIP, Qwen25VL, Qwen3（部分 CUDA）
-families/flux1/         → text_encoder.py（实现 common/flux1_dual）
-families/flux2/         → text_encoder.py（实现 common/qwen3 Flux2TextEncoder）
-families/qwen/          → text_encoder.py（实现 common/qwen_image_mlx）
-families/wan/           → text_encoder.py（实现 common/wan_umt5_mlx）
-families/fibo/          → text_encoder.py（实现 common/fibo_smollm3_mlx）
-families/z_image/       → text_encoder_{mlx,cuda}.py（双端较好）
+common/text_encoders/     → T5, CLIP, qwen_image_mlx（qwen+hunyuan）, qwen3 共享块, *_cuda
+families/flux1/         → flux1_t5_mlx + flux1_clip_mlx + flux1_dual（单族）
+families/flux2/         → text_encoder_mlx（Flux2TextEncoder）
+families/qwen/          → text_encoder.py → common/qwen_image_mlx
+families/wan/           → text_encoder_mlx（UMT5）
+families/fibo/          → text_encoder_mlx（SmolLM3）
+families/z_image/       → text_encoder_{mlx,cuda}.py
 ```
 
-统一方向不变：按 registry `encoder_type` 收敛到 `common/text_encoders/`，族内只保留薄 dispatch。
+**禁止**把仅一族使用的 TE/DiT 块放进 `common/`；共享 dispatch 用 `common/dit_stem.py` + `dit_cuda_unavailable.py`（≥2 族）。
 
 ### 4.3 `common/vae/` 边界
 

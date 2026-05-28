@@ -317,7 +317,12 @@ class TransformerStemDispatchTests(unittest.TestCase):
             self.assertTrue(stem.is_file(), f"missing stem: {stem}")
             text = stem.read_text(encoding="utf-8")
             self.assertIn("backend", text, family)
-            has_dispatch = "_inner" in text or 'backend == "cuda"' in text
+            has_dispatch = (
+                "_inner" in text
+                or 'backend == "cuda"' in text
+                or "DelegatingDiTStem" in text
+                or "dispatch_dit_implementation" in text
+            )
             self.assertTrue(has_dispatch, f"{family} transformer.py lacks backend dispatch")
 
     def test_get_transformer_class_resolves_stems(self) -> None:

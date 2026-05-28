@@ -111,6 +111,8 @@ _MLX_ONLY_HIDDEN_IMPORTS: tuple[str, ...] = (
     "backend.engine.families.wan.text_encoder",
     "backend.engine.common.text_encoders.qwen_image_mlx",
     "backend.engine.common.dit_cuda_unavailable",
+    "backend.engine.common.dit_stem",
+    "backend.engine.families.flux2.text_encoder_mlx",
     "backend.engine.families.wan.text_encoder_mlx",
     "backend.engine.families.flux1.flux1_dual",
     "backend.engine.families.flux1.flux1_t5_mlx",

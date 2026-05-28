@@ -576,8 +576,9 @@ class FIBOTransformer(TransformerBase):
         )
         attn_matrix = mx.expand_dims(attn_matrix, axis=1).astype(mx.bfloat16)
 
-        # Caption projection (mflux applies before DiT blocks)
+        # Caption projection — mflux projects all layers once, then splices per block
         total_layers = cfg.num_joint_layers + cfg.num_single_layers
+        projected_layers: list[Any | None]
         if text_encoder_layers is not None and len(text_encoder_layers) > 0:
             if len(text_encoder_layers) >= total_layers:
                 text_encoder_layers = text_encoder_layers[len(text_encoder_layers) - total_layers :]
@@ -596,7 +597,9 @@ class FIBOTransformer(TransformerBase):
         for i, block in enumerate(self.transformer_blocks):
             if projected_layers[i] is not None:
                 encoder_half = encoder_hidden_states[:, :, : dim // 2]
-                encoder_hidden_states = mx.concatenate([encoder_half, projected_layers[i]], axis=-1)
+                encoder_hidden_states = mx.concatenate(
+                    [encoder_half, projected_layers[i]], axis=-1
+                )
             encoder_hidden_states, hidden_states = block.forward(
                 hidden_states, encoder_hidden_states, temb, (cos, sin), attn_matrix
             )

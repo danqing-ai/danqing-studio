@@ -16,13 +16,44 @@ from backend.engine.common._base import TransformerBase
 from backend.engine.common.attention import scaled_dot_product_attention_bhsd_mx
 from backend.engine.common.embeddings import sinusoidal_timestep_proj
 from backend.engine.common.norm import apply_rms_norm
-from backend.engine.common.text_encoders.qwen3_mlx import MlxRMSNorm, SeedVR2SwiGLUMLP
+from backend.engine.common.text_encoders.qwen3_mlx import MlxRMSNorm, MlxSwiGLUMLP
 from backend.engine.runtime.mlx import MLXContext
 
 _MLX_CTX = MLXContext()
 
 
 # ----- swiglu_mlp.py -----
+
+
+def _seedvr2_swi_glu_hidden_dim(
+    dim: int,
+    expand_ratio: int = 4,
+    multiple_of: int = 256,
+) -> int:
+    hidden_dim = int(2 * dim * expand_ratio / 3)
+    return multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
+
+
+class SeedVR2SwiGLUMLP(MlxSwiGLUMLP):
+    """SeedVR2 SwiGLU — checkpoint keys ``proj_in_gate`` / ``proj_in`` / ``proj_out``."""
+
+    def __init__(
+        self,
+        dim: int,
+        expand_ratio: int = 4,
+        multiple_of: int = 256,
+        bias: bool = False,
+    ):
+        hidden_dim = _seedvr2_swi_glu_hidden_dim(dim, expand_ratio, multiple_of)
+        super().__init__(
+            dim,
+            hidden_dim,
+            bias=bias,
+            gate_name="proj_in_gate",
+            up_name="proj_in",
+            down_name="proj_out",
+        )
+
 
 SwiGLUMLP = SeedVR2SwiGLUMLP
 class GELUMLP(nn.Module):

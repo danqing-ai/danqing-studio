@@ -5,7 +5,6 @@ __all__ = (
     "T5Encoder",
     "CLIPEncoder",
     "build_zimage_mlx_encoder",
-    "Flux2TextEncoder",
     "MlxRMSNorm",
 )
 
@@ -27,10 +26,6 @@ def __getattr__(name: str):
         from backend.engine.common.text_encoders.qwen3_mlx import MlxRMSNorm
 
         return MlxRMSNorm
-    if name == "Flux2TextEncoder":
-        from backend.engine.common.text_encoders.qwen3_mlx import Flux2TextEncoder
-
-        return Flux2TextEncoder
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
