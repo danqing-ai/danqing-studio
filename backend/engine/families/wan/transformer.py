@@ -17,6 +17,13 @@ class WanTransformer(TransformerBase):
     """Wan TI2V / T2V / I2V DiT — delegates to ``WanModelMLX``."""
 
     def __init__(self, config: WanConfig, ctx: RuntimeContext, num_frames: int = 81):
+        backend = getattr(ctx, "backend", "mlx")
+        if backend == "cuda":
+            from .transformer_cuda import WanTransformerCuda
+
+            WanTransformerCuda(config, ctx, num_frames=num_frames)
+        if backend != "mlx":
+            raise RuntimeError(f"Unsupported backend for Wan: {backend!r}")
         self.config = config
         self.ctx = ctx
         self._core = WanModelMLX(config, ctx, num_frames=num_frames)

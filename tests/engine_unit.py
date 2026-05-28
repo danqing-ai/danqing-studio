@@ -275,6 +275,50 @@ class QwenImageTransformerTests(unittest.TestCase):
         self.assertIn("mlx", entry.get("backends", []))
 
 
+class DiTBackendDispatchTests(unittest.TestCase):
+    def test_flux1_dispatch_mlx(self) -> None:
+        from backend.engine.config.model_configs import Flux1Config
+        from backend.engine.families.flux1.transformer import Flux1Transformer
+        from backend.engine.families.flux1.transformer_mlx import Flux1Transformer as Flux1MLX
+        from backend.engine.runtime.mlx import MLXContext
+
+        model = Flux1Transformer(Flux1Config(), MLXContext())
+        self.assertIsInstance(model._inner, Flux1MLX)
+
+    def test_flux1_dispatch_cuda_fail_loud(self) -> None:
+        from backend.engine.config.model_configs import Flux1Config
+        from backend.engine.families.flux1.transformer import Flux1Transformer
+        from backend.engine.runtime.cuda import CudaContext
+
+        with self.assertRaises(RuntimeError):
+            Flux1Transformer(Flux1Config(), CudaContext("cpu"))
+
+    def test_ltx_dispatch_mlx(self) -> None:
+        from backend.engine.config.model_configs import LTXConfig
+        from backend.engine.families.ltx.transformer import LTXTransformer
+        from backend.engine.families.ltx.transformer_mlx import LTXTransformer as LTXMLX
+        from backend.engine.runtime.mlx import MLXContext
+
+        model = LTXTransformer(LTXConfig(), MLXContext())
+        self.assertIsInstance(model._inner, LTXMLX)
+
+    def test_ltx_dispatch_cuda_fail_loud(self) -> None:
+        from backend.engine.config.model_configs import LTXConfig
+        from backend.engine.families.ltx.transformer import LTXTransformer
+        from backend.engine.runtime.cuda import CudaContext
+
+        with self.assertRaises(RuntimeError):
+            LTXTransformer(LTXConfig(), CudaContext("cpu"))
+
+    def test_wan_dispatch_cuda_fail_loud(self) -> None:
+        from backend.engine.config.model_configs import WanConfig
+        from backend.engine.families.wan.transformer import WanTransformer
+        from backend.engine.runtime.cuda import CudaContext
+
+        with self.assertRaises(RuntimeError):
+            WanTransformer(WanConfig(), CudaContext("cpu"))
+
+
 class TextEncoderStemTests(unittest.TestCase):
     def test_flux1_wan_fibo_stems_use_common(self) -> None:
         from backend.engine.common.text_encoders.fibo_smollm3_mlx import FiboTextEncoder as FiboCommon

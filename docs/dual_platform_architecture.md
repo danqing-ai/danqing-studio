@@ -203,7 +203,8 @@ backend/engine/
 │
 ├── ltx/                                  # ALREADY CLEAN
 │   ├── __init__.py
-│   ├── transformer.py                    # LTXTransformer (already ctx-only)
+│   ├── transformer.py                    # LTXTransformer stem (dispatch)
+│   ├── transformer_mlx.py                # ctx-only DiT implementation
 │   └── weights.py                        # remap_ltx_weights
 │
 ├── wan/                                  # ALREADY CLEAN

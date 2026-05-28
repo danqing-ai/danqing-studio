@@ -62,9 +62,9 @@
 | 模型族 | DiT / 主路径 | `common/` 算子 | 双端（MLX+CUDA） | 主要缺口 |
 |--------|--------------|----------------|-----------------|----------|
 | **z_image** | `transformer_mlx.py` ~764 行 | attention、embeddings、norm | 文本 encoder 有 `text_encoder_cuda.py`；**DiT 仅 MLX** | DiT CUDA stem |
-| **ltx** | 单文件 `transformer.py` ~291 行 | 同上（ctx 贯穿） | **仅 MLX**（无 `transformer_cuda`） | 拆 stem + CUDA |
-| **wan** | `transformer_mlx.py` | 部分 common + 族内 `WanSelfAttention` | VAE 有 mlx；**DiT 仅 MLX** | 族内 attention 与 common 收敛 |
-| **flux1** | `transformer_mlx.py` ~554 行 | SDPA、patch、norm | **仅 MLX**；T5/CLIP 在族内 `*_mlx.py` | 文本 encoder 迁入/复用 `common/text_encoders` |
+| **ltx** | `transformer_mlx.py`（ctx 贯穿）+ stem dispatch | 同上 | **仅 MLX**（`transformer_cuda` fail loud） | 实现 CUDA DiT |
+| **wan** | `transformer.py` dispatch + `transformer_mlx.py` | 部分 common + 族内 `WanSelfAttention` | **DiT 仅 MLX**（cuda fail loud） | CUDA DiT；attention 与 common 收敛 |
+| **flux1** | `transformer_mlx.py` + stem dispatch | SDPA、patch、norm | **仅 MLX**（`transformer_cuda` fail loud）；TE 在 common | CUDA DiT + generic T5/CLIP（需 bench） |
 | **flux2** | `transformer_mlx.py` ~564 行 | 同上 | **仅 MLX** | 同上 + VAE 在 `vae_mlx.py` |
 | **fibo** | `transformer_mlx.py` ~636 行 | embeddings、SDPA | **仅 MLX** | TE 在 `common/text_encoders/fibo_smollm3_mlx` |
 | **cogvideox** | `transformer_mlx.py` ~486 行 | attention、embeddings、norm | **仅 MLX**；VAE 已在族内 | RoPE 在 `rotary_mlx.py`（合规） |
