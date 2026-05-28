@@ -1039,7 +1039,7 @@ def list_skipped_external_ref_cases_by_backend(backend: str) -> list[tuple[str, 
 
 # Open-source reference parity cases:
 # 1) video: compare against mlx-video
-# 2) image: compare against diffusers for models that do not rely on mflux parity.
+# 2) image diffusers: only when ``make bench-mflux`` has no matching case (see ``ALL_CASES``).
 ALL_EXTERNAL_REF_CASES: list[ExternalRefCase] = [
     ExternalRefCase(
         id="wan-2.2-ti2v-5b-mlx-video",
@@ -1120,22 +1120,5 @@ ALL_EXTERNAL_REF_CASES: list[ExternalRefCase] = [
         timeout_sec=3600,
         local_bundle_rel="models/Image/z-image-turbo-fp16",
         description="Z-Image-Turbo parity vs mflux (create)",
-    ),
-    ExternalRefCase(
-        id="z-image-turbo-diffusers-create",
-        model="z-image-turbo",
-        media="image",
-        action="create",
-        prompt="a serene lake at sunset, mountains, oil painting style",
-        seed=42,
-        steps=8,
-        guidance=0.0,
-        width=512,
-        height=512,
-        ref_backend="diffusers",
-        ref_model="Tongyi-MAI/Z-Image-Turbo",
-        timeout_sec=3600,
-        local_bundle_rel="models/Image/z-image-turbo-fp16",
-        description="Z-Image-Turbo parity vs diffusers",
     ),
 ]

@@ -8,7 +8,7 @@
 | `make bench-mflux-case ID=…` | `mflux --case ID` | 单个 mflux 用例 |
 | `make bench-mlx-video` | `mlx-video --all` | 视频模型对比 mlx-video 参考实现 |
 | `make bench-mlx-video-case ID=…` | `mlx-video --case ID` | 单个 mlx-video 对比用例 |
-| `make bench-diffusers` | `diffusers --all` | 图像模型对比 diffusers 参考实现 |
+| `make bench-diffusers` | `diffusers --all` | 图像 diffusers 对照（仅无 mflux 对位时注册；当前可能 0 条） |
 | `make bench-diffusers-case ID=…` | `diffusers --case ID` | 单个 diffusers 对比用例 |
 | `make bench-sanity` | `sanity --all` | 全模型成片健全性（反噪声/反平场 + 质量评分） |
 | `make bench-sanity-case ID=…` | `sanity --case ID` | 单个健全性用例 |
@@ -29,7 +29,7 @@
 
 参考对比说明（对齐 mflux 模式）：
 - 视频参考默认走 `mlx-video`，命令可用 `DANQING_BENCH_MLX_VIDEO_CMD` 覆盖（默认 `mlx-video-generate`）
-- 图像参考分两套：`mflux`（`mflux` 子命令）与 `diffusers`（`diffusers` 子命令）
+- 图像 PSNR 主对照：`make bench-mflux`（`ALL_CASES`）。`diffusers` 子命令仅收录 **没有** 对应 mflux 用例的模型；已有 mflux 的（如 z-image-turbo）不在此套件重复。
 - `--list-runnable` 会按本地 bundle 过滤可跑用例：`python -m tests.benchmark mlx-video --list-runnable`
 
 质量门禁可在 `SanityCase` 里按模型覆写：`image_quality_thresholds` / `audio_quality_thresholds` /
