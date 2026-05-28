@@ -61,16 +61,16 @@
 
 | 模型族 | DiT / 主路径 | `common/` 算子 | 双端（MLX+CUDA） | 主要缺口 |
 |--------|--------------|----------------|-----------------|----------|
-| **z_image** | `transformer_mlx.py` ~764 行 | attention、embeddings、norm | 文本 encoder 有 `text_encoder_cuda.py`；**DiT 仅 MLX** | DiT CUDA stem |
+| **z_image** | `transformer_mlx.py` + stem dispatch | attention、embeddings、norm | **MLX + CUDA**（DiT 经 ctx；registry 双 backend） | 与 diffusers parity / compile 路径 |
 | **ltx** | `transformer_mlx.py`（ctx 贯穿）+ stem dispatch | 同上 | **仅 MLX**（`transformer_cuda` fail loud） | 实现 CUDA DiT |
 | **wan** | `transformer.py` dispatch + `transformer_mlx.py` | 部分 common + 族内 `WanSelfAttention` | **DiT 仅 MLX**（cuda fail loud） | CUDA DiT；attention 与 common 收敛 |
 | **flux1** | `transformer_mlx.py` + stem dispatch | SDPA、patch、norm | **仅 MLX**（`transformer_cuda` fail loud）；TE 在 common | CUDA DiT + generic T5/CLIP（需 bench） |
-| **flux2** | `transformer_mlx.py` ~564 行 | 同上 | **仅 MLX** | 同上 + VAE 在 `vae_mlx.py` |
+| **flux2** | `transformer_mlx.py` + stem dispatch | 同上 | **仅 MLX**（cuda fail loud） | CUDA DiT；TE 在 common |
 | **fibo** | `transformer_mlx.py` ~636 行 | embeddings、SDPA | **仅 MLX** | TE 在 `common/text_encoders/fibo_smollm3_mlx` |
-| **cogvideox** | `transformer_mlx.py` ~486 行 | attention、embeddings、norm | **仅 MLX**；VAE 已在族内 | RoPE 在 `rotary_mlx.py`（合规） |
+| **cogvideox** | `transformer_mlx.py` + stem dispatch | attention、embeddings、norm | **仅 MLX**（cuda fail loud）；VAE 族内 | RoPE 在 `rotary_mlx.py`（合规） |
 | **qwen** | `transformer_mlx.py` ~690 行 + `transformer_cuda.py`（diffusers） | **已接** common 函数层 | **MLX + CUDA**（registry `backends`）；`weights.py` 为 facade | 真机 bundle parity；长期可选手写 CUDA DiT |
 | **seedvr2** | 5× `*_mlx.py` + `upscale.py`/`weights.py` stem | `dit_mlx`/`vae_mlx` 用 SDPA、RMS 等 | **仅 MLX** upscale 孤岛 | `job_mlx` 含 schedule+result+video；无多余重导出壳 |
-| **hunyuan** | `transformer_mlx.py` + 族内 VAE/SR | 部分 common | **仅 MLX** | 与视频族治理对齐 |
+| **hunyuan** | `transformer_mlx.py` + stem dispatch | 部分 common | **仅 MLX**（cuda fail loud） | CUDA DiT |
 | **ace_step** | `transformer.py` + **mlx/cuda** | common 全套 | **音频族范例：双端** | 非图像 DiT，作参考 |
 
 **说明**：在 `*_mlx.py` 内使用 `mx.*` **不是**「漏网」，而是当前治理允许的 Tier-2 实现；初稿将「`transformer.forward` 里 `mx.reshape`」列为 P1，**已不再适用**。
@@ -173,7 +173,7 @@ families/z_image/       → text_encoder_{mlx,cuda}.py（双端较好）
 
 ### P1 — 结构与一致性
 
-3. **图像 DiT 双端模板**：以 ace_step / z_image text encoder 为参考，为 flux/ltx/wan 等补 `transformer_cuda.py` 或等价 ctx 路径（与 registry `backends` 一致）。
+3. **图像/视频 DiT dispatch**：主要族已有 `transformer.py` stem + `transformer_cuda`（实现或 fail loud）；待补真 CUDA：flux1/2、fibo、ltx、wan、cogvideox、hunyuan 等。
 4. **SeedVR2 CUDA**：热路径已收拢；**CUDA** 仍缺或 registry 显式 MLX-only。
 
 ### P2 — 持续治理（已存在，保持收紧）

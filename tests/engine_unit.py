@@ -208,6 +208,24 @@ class LtxWeightTests(unittest.TestCase):
 
 
 class ZImageCudaTests(unittest.TestCase):
+    def test_transformer_dispatch_mlx(self) -> None:
+        from backend.engine.config.model_configs import ZImageConfig
+        from backend.engine.families.z_image.transformer import ZImageTransformer
+        from backend.engine.families.z_image.transformer_mlx import ZImageTransformer as ZImageMLX
+        from backend.engine.runtime.mlx import MLXContext
+
+        model = ZImageTransformer(ZImageConfig(), MLXContext())
+        self.assertIsInstance(model._inner, ZImageMLX)
+
+    def test_transformer_dispatch_cuda(self) -> None:
+        from backend.engine.config.model_configs import ZImageConfig
+        from backend.engine.families.z_image.transformer import ZImageTransformer
+        from backend.engine.families.z_image.transformer_cuda import ZImageTransformerCuda
+        from backend.engine.runtime.cuda import CudaContext
+
+        model = ZImageTransformer(ZImageConfig(), CudaContext("cpu"))
+        self.assertIs(model._inner.__class__, ZImageTransformerCuda)
+
     def test_transformer_param_map_on_cuda_context(self) -> None:
         from backend.engine.config.model_configs import ZImageConfig
         from backend.engine.families.z_image.transformer import ZImageTransformer
@@ -317,6 +335,18 @@ class DiTBackendDispatchTests(unittest.TestCase):
 
         with self.assertRaises(RuntimeError):
             WanTransformer(WanConfig(), CudaContext("cpu"))
+
+    def test_flux2_and_fibo_cuda_fail_loud(self) -> None:
+        from backend.engine.config.model_configs import FIBOConfig, Flux2Config
+        from backend.engine.families.fibo.transformer import FIBOTransformer
+        from backend.engine.families.flux2.transformer import Flux2Transformer
+        from backend.engine.runtime.cuda import CudaContext
+
+        ctx = CudaContext("cpu")
+        with self.assertRaises(RuntimeError):
+            Flux2Transformer(Flux2Config(), ctx)
+        with self.assertRaises(RuntimeError):
+            FIBOTransformer(FIBOConfig(), ctx)
 
 
 class TextEncoderStemTests(unittest.TestCase):
