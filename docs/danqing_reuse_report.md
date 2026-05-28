@@ -167,13 +167,13 @@ families/z_image/       → text_encoder_{mlx,cuda}.py（双端较好）
 
 ### P0 — 最大复用/双端缺口
 
-1. **Qwen 图像 DiT CUDA 路径**（或整体 ctx 化 + `transformer_cuda.py`）；权重 allowlist 已通过 `weights_mlx` 拆分清除。
-2. **文本编码器收敛**：flux1/flux2/qwen/wan 族内 encoder → `common/text_encoders/` + 薄 stem（z_image 为参考）。
+1. **Qwen 图像 DiT CUDA**：初版 `transformer_cuda.py`（diffusers `QwenImageTransformer2DModel` + bundle 加载）与 `text_encoder_cuda.py`；registry `backends: [mlx, cuda]`。需在真机 bundle 上跑通生成 parity。
+2. **文本编码器收敛**：flux1/flux2/qwen/wan 已迁入 `common/text_encoders/`；flux1 仍保留 mflux 对齐 T5/CLIP（未改用 generic `T5Encoder`）。
 
 ### P1 — 结构与一致性
 
 3. **图像 DiT 双端模板**：以 ace_step / z_image text encoder 为参考，为 flux/ltx/wan 等补 `transformer_cuda.py` 或等价 ctx 路径（与 registry `backends` 一致）。
-4. **SeedVR2 合并 stem**：9 个 mlx 文件 → ≤4 逻辑单位（dit、vae、job、weights 等），复用 common Primitives。
+4. **SeedVR2 合并 stem**：`embed_mlx` 已并入 `preprocess_mlx`，`schedule_mlx` 已并入 `job_mlx`（保留 deprecated 重导出）；目标仍 ≤4 逻辑单位 + CUDA。
 
 ### P2 — 持续治理（已存在，保持收紧）
 

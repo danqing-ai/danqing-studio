@@ -534,6 +534,14 @@ class QwenImageTextEncoder:
         self.ctx = ctx
         te_path = Path(model_path)
         self.bundle_root = te_path.parent if te_path.name == "text_encoder" else te_path
+        if getattr(ctx, "backend", None) == "cuda":
+            from backend.engine.families.qwen.text_encoder_cuda import QwenImageTextEncoderCuda
+
+            self._cuda_enc = QwenImageTextEncoderCuda(ctx, self.bundle_root, **_kw)
+            self.model = None
+            self._hf = None
+            return
+        self._cuda_enc = None
         raw_tok = tokenizer_path.strip() if tokenizer_path else ""
         tok_root = Path(raw_tok) if raw_tok and Path(raw_tok).is_dir() else self.bundle_root / "tokenizer"
         if not tok_root.is_dir():
@@ -556,6 +564,8 @@ class QwenImageTextEncoder:
         )
 
     def encode(self, texts: list[str]) -> tuple[Any, Any]:
+        if self._cuda_enc is not None:
+            return self._cuda_enc.encode(texts)
         prompt = texts[0] if texts else ""
         filled = self._prompt_template.format(prompt)
         batch = self._hf(

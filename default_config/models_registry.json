@@ -1865,6 +1865,10 @@
     },
     "qwen-image": {
       "category": "base_models",
+      "backends": [
+        "mlx",
+        "cuda"
+      ],
       "engine": "danqing-image",
       "type": "diffusion",
       "parameters": {

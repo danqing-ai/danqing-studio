@@ -24,11 +24,76 @@ from backend.engine.common.scale_factor import ScaleFactor
 from backend.engine.common.vae.mlx_tiling import TilingConfig, VAEUtil
 from .dit_mlx import SeedVR2DiT
 from .preprocess_mlx import SeedVR2LatentCreator, SeedVR2PositiveEmbeddings, SeedVR2Util
-from .schedule_mlx import SCHEDULER_REGISTRY, SeedVR2EulerScheduler
 from .vae_mlx import SeedVR2VAE
 from .weights_mlx import ModelConfig, load_flat_bundle
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Job-local Euler scheduler (multi-step upscale; not interchangeable with common/schedulers)
+# ---------------------------------------------------------------------------
+
+
+class SeedVR2EulerScheduler:
+    def __init__(self, config):
+        self.config = config
+        self.num_inference_steps = config.num_inference_steps
+        self.num_train_timesteps = (
+            config.num_train_steps if config.num_train_steps is not None else 1000
+        )
+        self.cfg_scale = config.guidance
+        self.T = float(self.num_train_timesteps)
+        self._timesteps, self._sigmas = self._compute_timesteps_and_sigmas()
+
+    @property
+    def timesteps(self) -> mx.array:
+        return self._timesteps
+
+    @property
+    def sigmas(self) -> mx.array:
+        return self._sigmas
+
+    def _compute_timesteps_and_sigmas(self) -> tuple[mx.array, mx.array]:
+        timesteps_arr = mx.linspace(
+            self.T, 0.0, self.num_inference_steps + 1, dtype=mx.float32
+        )
+        sigmas_arr = timesteps_arr / self.T
+        return timesteps_arr, sigmas_arr
+
+    def step(
+        self,
+        noise: mx.array,
+        timestep: int,
+        latents: mx.array,
+        **kwargs,
+    ) -> mx.array:
+        model_output = noise
+        sample = latents
+        timestep_idx = timestep
+        t = self._timesteps[timestep_idx]
+        s = self._timesteps[timestep_idx + 1]
+        t_norm = t / self.T
+        s_norm = s / self.T
+        pred_x_0 = sample - t_norm * model_output
+        pred_noise = sample + (1 - t_norm) * model_output
+        if s > 0:
+            next_sample = (1 - s_norm) * pred_x_0 + s_norm * pred_noise
+        else:
+            next_sample = pred_x_0
+        return next_sample
+
+
+SCHEDULER_REGISTRY: dict[str, type] = {
+    "seedvr2_euler": SeedVR2EulerScheduler,
+    "SeedVR2EulerScheduler": SeedVR2EulerScheduler,
+}
+
+
+def try_import_external_scheduler(scheduler_object_path: str) -> None:
+    raise RuntimeError(
+        f"External scheduler {scheduler_object_path!r} is not supported for SeedVR2 in DanQing."
+    )
 
 
 @dataclass
