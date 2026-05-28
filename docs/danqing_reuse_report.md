@@ -165,6 +165,7 @@ families/z_image/       → text_encoder_{mlx,cuda}.py（双端较好）
 - [x] **CogVideoX VAE 族内化**：`families/cogvideox/vae.py`。
 - [x] **公共 text_encoders 目录**：`common/text_encoders/`。
 - [x] **多族 DiT 使用 common SDPA/embed/norm 函数**（含 qwen、seedvr2 dit）。
+- [x] **图像/视频 DiT dispatch stem**：flux1/2、qwen、z_image、fibo、ltx、wan、cogvideox、hunyuan 均有 `transformer.py` + `transformer_cuda`（实现或 fail loud）。
 
 ### P0 — 最大复用/双端缺口
 
@@ -173,7 +174,7 @@ families/z_image/       → text_encoder_{mlx,cuda}.py（双端较好）
 
 ### P1 — 结构与一致性
 
-3. **图像/视频 DiT dispatch**：主要族已有 `transformer.py` stem + `transformer_cuda`（实现或 fail loud）；待补真 CUDA：flux1/2、fibo、ltx、wan、cogvideox、hunyuan 等。
+3. **真 CUDA DiT 实现**：dispatch 已齐；待替换 fail-loud stub：flux1/2、fibo、ltx、wan、cogvideox、hunyuan（z_image/qwen 已有 CUDA 路径）。
 4. **SeedVR2 CUDA**：热路径已收拢；**CUDA** 仍缺或 registry 显式 MLX-only。
 
 ### P2 — 持续治理（已存在，保持收紧）

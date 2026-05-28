@@ -293,6 +293,32 @@ class QwenImageTransformerTests(unittest.TestCase):
         self.assertIn("mlx", entry.get("backends", []))
 
 
+class TransformerStemDispatchTests(unittest.TestCase):
+    _FAMILY_PKG = {"qwen_image": "qwen"}
+
+    def test_registry_transformer_stems_have_backend_dispatch(self) -> None:
+        from pathlib import Path
+
+        from backend.engine import _transformer_registry as reg
+
+        root = Path(__file__).resolve().parents[1]
+        families = list(reg._TRANSFORMER.keys()) + list(reg._VIDEO_TRANSFORMER.keys())
+        for family in families:
+            pkg = self._FAMILY_PKG.get(family, family)
+            stem = root / "backend" / "engine" / "families" / pkg / "transformer.py"
+            self.assertTrue(stem.is_file(), f"missing stem: {stem}")
+            text = stem.read_text(encoding="utf-8")
+            self.assertIn("backend", text, family)
+            has_dispatch = "_inner" in text or 'backend == "cuda"' in text
+            self.assertTrue(has_dispatch, f"{family} transformer.py lacks backend dispatch")
+
+    def test_get_transformer_class_resolves_stems(self) -> None:
+        from backend.engine._transformer_registry import get_transformer_class, get_video_transformer_class
+
+        self.assertTrue(get_transformer_class("flux1"))
+        self.assertTrue(get_video_transformer_class("ltx"))
+
+
 class DiTBackendDispatchTests(unittest.TestCase):
     def test_flux1_dispatch_mlx(self) -> None:
         from backend.engine.config.model_configs import Flux1Config
