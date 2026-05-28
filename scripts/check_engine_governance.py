@@ -1,0 +1,472 @@
+#!/usr/bin/env python3
+"""Unified engine architecture governance gates (imports, layout, family patterns, registry)."""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+from collections.abc import Callable
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+ENGINE = ROOT / "backend" / "engine"
+FAMILIES = ENGINE / "families"
+ALLOWLIST = ROOT / "scripts" / "engine_governance_allowlist.txt"
+REGISTRY = ROOT / "default_config" / "models_registry.json"
+
+ALLOWLIST_SECTIONS = ("imports", "layout", "primitives", "attention")
+
+IMPORT_FORBIDDEN_PREFIXES = (
+    "import mlx",
+    "from mlx",
+    "import torch",
+    "from torch",
+)
+LAYOUT_FORBIDDEN_DIRS = {"mlx", "torch", "runtime", "common"}
+FORBIDDEN_ENGINE_CODEC_DIRS = (
+    "backend/engine/vae_codecs",
+    "backend/engine/video_codecs",
+)
+
+PRIMITIVE_PATTERNS = (
+    re.compile(r"^\s*class\s+SelfAttention\s*[\(:]", re.M),
+    re.compile(r"^\s*class\s+RMSNorm\s*[\(:]", re.M),
+    re.compile(r"^\s*class\s+_RMSNorm\s*[\(:]", re.M),
+)
+ATTENTION_RE = re.compile(r"\bctx\.attention\s*\(")
+SDPA_PATTERNS = (
+    re.compile(r"\bmx\.fast\.scaled_dot_product_attention\s*\("),
+    re.compile(r"^\s*from\s+mlx\.core\.fast\s+import\s+scaled_dot_product_attention\b", re.M),
+    re.compile(r"\bF\.scaled_dot_product_attention\s*\("),
+    re.compile(r"\btorch\.nn\.functional\.scaled_dot_product_attention\s*\("),
+    re.compile(r"(?<![A-Za-z0-9_\.])scaled_dot_product_attention\s*\("),
+)
+ROPE_PATTERNS = (
+    re.compile(r"^\s*def\s+_apply_rope_bshd\s*\(", re.M),
+    re.compile(r"^\s*def\s+_apply_rope_qwen\s*\(", re.M),
+    re.compile(r"^\s*def\s+_apply_rotary\s*\(\s*self\s*,\s*x\s*,\s*freqs_cis\s*\)", re.M),
+)
+MODULATION_PATTERNS = (
+    re.compile(r"modulation\.chunk\(\s*6\s*,\s*dim\s*=\s*1\s*\)"),
+    re.compile(r"modulation\.shape\[-1\]\s*//\s*4"),
+    re.compile(r"gate_msa\s*=\s*v\[:,\s*:D\]\s*\[:,\s*None,\s*:\]"),
+    re.compile(r"scale\s*=\s*v\[\.\.\.,\s*:D\]"),
+)
+
+HUNYUAN_REQUIRED_IDS = (
+    "hunyuan-video-1.5-480p-t2v",
+    "hunyuan-video-1.5-480p-i2v",
+    "hunyuan-video-1.5-i2v-step-distill",
+    "hunyuan-video-1.5-1080p-sr",
+)
+HUNYUAN_REPO_ID = "Tencent-Hunyuan/HunyuanVideo-1.5"
+
+ALL_RULES = (
+    "imports",
+    "layout",
+    "primitives",
+    "attention",
+    "sdpa",
+    "rope",
+    "modulation",
+    "registry",
+)
+
+
+def _section_marker(name: str) -> str:
+    return f"# --- {name} ---"
+
+
+def load_allowlist() -> dict[str, list[str]]:
+    sections: dict[str, list[str]] = {k: [] for k in ALLOWLIST_SECTIONS}
+    if not ALLOWLIST.is_file():
+        return sections
+    current: str | None = None
+    for line in ALLOWLIST.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        for name in ALLOWLIST_SECTIONS:
+            if stripped.lower() == _section_marker(name).lower():
+                current = name
+                break
+        else:
+            if not stripped or stripped.startswith("#"):
+                continue
+            if current:
+                sections[current].append(stripped.rstrip("/"))
+    return sections
+
+
+def _write_allowlist_section(section: str, paths: list[str]) -> None:
+    markers = {name: _section_marker(name) for name in ALLOWLIST_SECTIONS}
+    blocks: dict[str, list[str]] = {name: [] for name in ALLOWLIST_SECTIONS}
+    preamble: list[str] = []
+    if ALLOWLIST.is_file():
+        current: str | None = None
+        for line in ALLOWLIST.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            matched = False
+            for name in ALLOWLIST_SECTIONS:
+                if stripped.lower() == markers[name].lower():
+                    current = name
+                    matched = True
+                    break
+            if matched:
+                continue
+            if not stripped or stripped.startswith("#"):
+                if current is None:
+                    preamble.append(line)
+                else:
+                    blocks[current].append(line)
+                continue
+            if current:
+                blocks[current].append(stripped.rstrip("/"))
+    blocks[section] = paths
+    out: list[str] = list(preamble) if preamble else [
+        "# Engine governance allowlists (shrink over time; do not grow without review).",
+        "# Sections: imports | layout | primitives | attention",
+        "# Paths are repo-relative. Prefix matching for layout/primitives/attention.",
+        "",
+    ]
+    for name in ALLOWLIST_SECTIONS:
+        if out and out[-1] != "":
+            out.append("")
+        out.append(markers[name])
+        out.extend(blocks[name])
+        if blocks[name]:
+            out.append("")
+    ALLOWLIST.write_text("\n".join(out).rstrip() + "\n", encoding="utf-8")
+    print(f"Wrote {len(paths)} paths to {ALLOWLIST} [{section}]")
+
+
+def _path_allowed(rel: str, allowlist: list[str]) -> bool:
+    return any(rel == prefix or rel.startswith(prefix + "/") for prefix in allowlist)
+
+
+def _import_path_allowed(rel: str) -> bool:
+    if rel.startswith("backend/engine/runtime/"):
+        return True
+    name = Path(rel).name
+    return name.endswith("_mlx.py") or name.endswith("_cuda.py")
+
+
+def _scan_family_py() -> list[Path]:
+    if not FAMILIES.is_dir():
+        return []
+    return sorted(FAMILIES.rglob("*.py"))
+
+
+def _violations_regex(
+    paths: list[Path],
+    patterns: tuple[re.Pattern[str], ...],
+    *,
+    allowlist: list[str] | None = None,
+    line_filter: Callable[[str], bool] | None = None,
+) -> list[str]:
+    violations: list[str] = []
+    for path in paths:
+        rel = str(path.relative_to(ROOT)).replace("\\", "/")
+        if allowlist and _path_allowed(rel, allowlist):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        lines = text.splitlines()
+        for pat in patterns:
+            for m in pat.finditer(text):
+                line_no = text.count("\n", 0, m.start()) + 1
+                snippet = lines[line_no - 1].strip() if 0 < line_no <= len(lines) else "<unknown>"
+                if line_filter and not line_filter(snippet):
+                    continue
+                violations.append(f"{rel}:{line_no}: {snippet}")
+    return violations
+
+
+def check_imports(allow: dict[str, list[str]]) -> list[str]:
+    violations: list[str] = []
+    exempt = set(allow["imports"])
+    for path in sorted(ENGINE.rglob("*.py")):
+        rel = str(path.relative_to(ROOT)).replace("\\", "/")
+        if _import_path_allowed(rel) or rel in exempt:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for i, line in enumerate(text.splitlines(), 1):
+            s = line.strip()
+            if s.startswith("#") or not s:
+                continue
+            if s.startswith(IMPORT_FORBIDDEN_PREFIXES):
+                violations.append(f"{rel}:{i}: {s[:80]}")
+    return violations
+
+
+def check_layout(allow: dict[str, list[str]]) -> list[str]:
+    violations: list[str] = []
+    if FAMILIES.is_dir():
+        for family_dir in sorted(p for p in FAMILIES.iterdir() if p.is_dir()):
+            for path in sorted(family_dir.rglob("*")):
+                if not path.is_dir() or path.name not in LAYOUT_FORBIDDEN_DIRS:
+                    continue
+                rel = str(path.relative_to(ROOT)).replace("\\", "/")
+                if _path_allowed(rel, allow["layout"]):
+                    continue
+                violations.append(
+                    f"{rel}: forbidden family subtree directory '{path.name}' "
+                    "(use common/ or *_mlx.py/*_cuda.py hooks instead)"
+                )
+    for rel in FORBIDDEN_ENGINE_CODEC_DIRS:
+        if (ROOT / rel).is_dir():
+            violations.append(
+                f"{rel}/: forbidden engine codec wrapper directory "
+                "(register handlers in vae_codec_registry.py / video_codec_registry.py)"
+            )
+    return violations
+
+
+def check_primitives(allow: dict[str, list[str]]) -> list[str]:
+    return _violations_regex(_scan_family_py(), PRIMITIVE_PATTERNS, allowlist=allow["primitives"])
+
+
+def check_attention(allow: dict[str, list[str]]) -> list[str]:
+    violations: list[str] = []
+    for path in _scan_family_py():
+        rel = str(path.relative_to(ROOT)).replace("\\", "/")
+        if _path_allowed(rel, allow["attention"]):
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for i, line in enumerate(text.splitlines(), 1):
+            s = line.strip()
+            if not s or s.startswith("#"):
+                continue
+            if ATTENTION_RE.search(s):
+                violations.append(f"{rel}:{i}: {s[:120]}")
+    return violations
+
+
+def check_sdpa() -> list[str]:
+    return _violations_regex(_scan_family_py(), SDPA_PATTERNS)
+
+
+def check_rope() -> list[str]:
+    return _violations_regex(_scan_family_py(), ROPE_PATTERNS)
+
+
+def check_modulation() -> list[str]:
+    return _violations_regex(_scan_family_py(), MODULATION_PATTERNS)
+
+
+def check_registry() -> list[str]:
+    with REGISTRY.open(encoding="utf-8") as f:
+        models = json.load(f).get("models") or {}
+    failures: list[str] = []
+
+    for mid in HUNYUAN_REQUIRED_IDS:
+        if mid not in models:
+            failures.append(f"missing required Hunyuan model: {mid}")
+
+    for mid in HUNYUAN_REQUIRED_IDS:
+        model = models.get(mid)
+        if not isinstance(model, dict):
+            continue
+        if model.get("source") != "modelscope":
+            failures.append(f"{mid}: source must be modelscope")
+        versions = model.get("versions")
+        if not isinstance(versions, dict) or "original" not in versions:
+            failures.append(f"{mid}: versions.original is required")
+            continue
+        ver = versions["original"]
+        if not isinstance(ver, dict):
+            failures.append(f"{mid}: versions.original must be object")
+            continue
+        if not ver.get("hunyuan_ms_variant"):
+            failures.append(f"{mid}: versions.original.hunyuan_ms_variant is required")
+        bundle = ver.get("bundle_repos")
+        if not isinstance(bundle, list) or not bundle:
+            failures.append(f"{mid}: versions.original.bundle_repos must be non-empty array")
+            continue
+        first = bundle[0] if isinstance(bundle[0], dict) else {}
+        if first.get("repo_id") != HUNYUAN_REPO_ID:
+            failures.append(f"{mid}: first bundle repo must be {HUNYUAN_REPO_ID}")
+        if "companion_repo_id" in ver:
+            failures.append(f"{mid}: versions.original should not contain companion_repo_id")
+        if "shared_te_local_path" in ver:
+            failures.append(f"{mid}: versions.original should not contain shared_te_local_path")
+
+    mid = "hunyuan-video-1.5-480p-t2v"
+    model = models.get(mid)
+    if isinstance(model, dict):
+        params = model.get("parameters", {})
+        if params.get("text_encoder_qwen_local") != "models/Text/qwen2.5-vl-7b-instruct":
+            failures.append(f"{mid}: parameters.text_encoder_qwen_local mismatch")
+        if not params.get("text_encoder_release_after_encode"):
+            failures.append(f"{mid}: parameters.text_encoder_release_after_encode must be true")
+        ver = ((model.get("versions") or {}).get("original") or {})
+        bundle = ver.get("bundle_repos") if isinstance(ver, dict) else None
+        if not isinstance(bundle, list) or len(bundle) < 3:
+            failures.append(f"{mid}: bundle_repos must include Hunyuan + Qwen + ByT5")
+        else:
+            repo_ids = [r.get("repo_id") for r in bundle if isinstance(r, dict)]
+            if "Qwen/Qwen2.5-VL-7B-Instruct" not in repo_ids:
+                failures.append(f"{mid}: bundle_repos must include Qwen/Qwen2.5-VL-7B-Instruct")
+            if "google/byt5-small" not in repo_ids:
+                failures.append(f"{mid}: bundle_repos must include google/byt5-small")
+
+    mid = "hunyuan-video-1.5-i2v-step-distill"
+    model = models.get(mid)
+    if isinstance(model, dict):
+        params = model.get("parameters", {})
+        if params.get("supports_guidance") is not False:
+            failures.append(f"{mid}: parameters.supports_guidance must be false")
+        if params.get("negative_prompt_support") is not False:
+            failures.append(f"{mid}: parameters.negative_prompt_support must be false")
+        if "guide_scale" in params:
+            failures.append(f"{mid}: parameters.guide_scale must not be present")
+
+    mid = "hunyuan-video-1.5-1080p-sr"
+    model = models.get(mid)
+    if isinstance(model, dict):
+        params = model.get("parameters", {})
+        if not params.get("vae_spatial_tiling"):
+            failures.append(f"{mid}: parameters.vae_spatial_tiling must be true")
+
+    return failures
+
+
+RULE_RUNNERS: dict[str, Callable[[dict[str, list[str]]], list[str]]] = {
+    "imports": check_imports,
+    "layout": check_layout,
+    "primitives": check_primitives,
+    "attention": check_attention,
+    "sdpa": lambda _a: check_sdpa(),
+    "rope": lambda _a: check_rope(),
+    "modulation": lambda _a: check_modulation(),
+    "registry": lambda _a: check_registry(),
+}
+
+RULE_HINTS: dict[str, str] = {
+    "imports": "Move imports to *_mlx.py / *_cuda.py / runtime/, or shrink allowlist in "
+    f"{ALLOWLIST} [imports]",
+    "layout": f"Flatten family layout or shrink allowlist in {ALLOWLIST} [layout]",
+    "primitives": f"Reuse common primitives or shrink allowlist in {ALLOWLIST} [primitives]",
+    "attention": "Use backend/engine/common/attention.py helpers or shrink allowlist "
+    f"in {ALLOWLIST} [attention]",
+    "sdpa": "Use backend/engine/common/attention.py helpers",
+    "rope": "Use backend/engine/common/embeddings.py helpers",
+    "modulation": "Use backend/engine/common/norm.py helpers",
+    "registry": "Fix default_config/models_registry.json Hunyuan contracts",
+}
+
+
+def _write_allowlist_for_rule(rule: str) -> int:
+    if rule == "imports":
+        found: list[str] = []
+        for path in sorted(ENGINE.rglob("*.py")):
+            rel = str(path.relative_to(ROOT)).replace("\\", "/")
+            if _import_path_allowed(rel):
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            for line in text.splitlines():
+                s = line.strip()
+                if s.startswith("#") or not s:
+                    continue
+                if s.startswith(IMPORT_FORBIDDEN_PREFIXES):
+                    found.append(rel)
+                    break
+        _write_allowlist_section("imports", sorted(set(found)))
+        return 0
+
+    if rule == "layout":
+        found = []
+        if FAMILIES.is_dir():
+            for family_dir in sorted(p for p in FAMILIES.iterdir() if p.is_dir()):
+                for path in sorted(family_dir.rglob("*")):
+                    if path.is_dir() and path.name in LAYOUT_FORBIDDEN_DIRS:
+                        found.append(str(path.relative_to(ROOT)).replace("\\", "/"))
+        _write_allowlist_section("layout", found)
+        return 0
+
+    if rule == "primitives":
+        found = []
+        for path in _scan_family_py():
+            rel = str(path.relative_to(ROOT)).replace("\\", "/")
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            if any(p.search(text) for p in PRIMITIVE_PATTERNS):
+                found.append(rel)
+        _write_allowlist_section("primitives", found)
+        return 0
+
+    if rule == "attention":
+        found = []
+        for path in _scan_family_py():
+            rel = str(path.relative_to(ROOT)).replace("\\", "/")
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            if ATTENTION_RE.search(text):
+                found.append(rel)
+        _write_allowlist_section("attention", found)
+        return 0
+
+    print(f"--write-allowlist not supported for rule '{rule}'", file=sys.stderr)
+    return 2
+
+
+def run_rules(rules: tuple[str, ...]) -> int:
+    allow = load_allowlist()
+    failed = False
+    for rule in rules:
+        violations = RULE_RUNNERS[rule](allow)
+        if violations:
+            failed = True
+            print(f"[{rule}] governance failed ({len(violations)}):", file=sys.stderr)
+            for item in violations[:40]:
+                print(f"  - {item}", file=sys.stderr)
+            if len(violations) > 40:
+                print(f"  … and {len(violations) - 40} more", file=sys.stderr)
+            print(f"  → {RULE_HINTS[rule]}", file=sys.stderr)
+    if failed:
+        return 1
+    if len(rules) == 1:
+        print(f"Engine governance [{rules[0]}] OK")
+    else:
+        print("Engine governance OK")
+    return 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument(
+        "--rule",
+        choices=ALL_RULES,
+        action="append",
+        help="Run one rule (repeatable). Default: all engine rules.",
+    )
+    ap.add_argument(
+        "--write-allowlist",
+        choices=("imports", "layout", "primitives", "attention"),
+        help="Regenerate allowlist section from current tree (migration utility).",
+    )
+    args = ap.parse_args()
+
+    if args.write_allowlist:
+        return _write_allowlist_for_rule(args.write_allowlist)
+
+    rules = tuple(args.rule) if args.rule else ALL_RULES
+    return run_rules(rules)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

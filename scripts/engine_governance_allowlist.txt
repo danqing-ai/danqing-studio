@@ -1,0 +1,15 @@
+# Engine governance allowlists (shrink over time; do not grow without review).
+# Sections: imports | layout | primitives | attention
+# Paths are repo-relative. Prefix matching for layout/primitives/attention.
+
+# --- imports ---
+# mlx/torch top-level import exemptions (exact path per line)
+
+# --- layout ---
+# Forbidden family subtree dirs (mlx/torch/runtime/common) and codec wrappers
+
+# --- primitives ---
+# Files exempt from generic SelfAttention / RMSNorm class ban
+
+# --- attention ---
+# Files exempt from direct ctx.attention(...) ban

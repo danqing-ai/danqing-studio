@@ -1,2 +1,0 @@
-# Temporary exceptions for family vendor-like subtree directories.
-# Shrink this list as families are migrated to the standard layout.

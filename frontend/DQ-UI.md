@@ -29,7 +29,7 @@ Hosts mount via `installDanQingFeedback` in `plugins/dq-ui.ts`.
 | Icons | Lucide via `registerDqIcons` + `DqIcon` |
 | Layout CSS | `studio-*` / `settings-*` classes in `theme*.css` |
 
-`make check-consistency` runs `check-ep-boundary`, `check-theme-legacy`, and `check-ui-compat`.
+`make check-consistency` runs `check_frontend_governance.py` (EP boundary, theme legacy, dq-ui compat).
 
 ## Local dev
 

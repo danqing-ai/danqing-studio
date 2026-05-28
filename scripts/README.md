@@ -1,30 +1,46 @@
 # Scripts
 
-## 桌面打包
+仓库根目录执行；路径常量见 `out_paths.py` / `out_paths.sh`。
+
+## 日常开发
 
 | 脚本 | 说明 |
 |------|------|
-| `build_desktop.sh` | 全流程：前端 → MLX sidecar → Tauri |
-| `build_sidecar.py` | PyInstaller → `out/sidecar/danqing-api/` |
-| `clean_build.py` | 清理 `out/` 与遗留 `dist/`、`build/` |
-| `out_paths.py` | 统一构建路径 |
-| `pyinstaller_common.py` | PyInstaller 元数据（MLX / full profile） |
-| `pyinstaller_runtime_hook.py` | 冻结运行时钩子（由 common 生成） |
-| `pyinstaller_hooks/` | PyInstaller 排除钩子 |
+| `start.sh` / `stop.sh` | `make dev` / `make stop`（依赖 `dev_process.sh`） |
+| `sync_workspace_registry.py` | `make sync-models-registry` |
+| `repair_asset_paths.py` | 修复 DB 中资产路径 |
 
-## 代码门禁
+## 质量门禁
 
 | 脚本 | Make 目标 |
 |------|-----------|
-| `check_consistency.py` | `make check-consistency` |
-| `check_engine_backend_imports.py` | `make check-engine-imports` |
-| `check_engine_family_primitives.py` | `make check-engine-family-primitives` |
-| `check_engine_attention_paths.py` | `make check-engine-attention-paths` |
-| `check_engine_sdpa_paths.py` | `make check-engine-sdpa-paths`（禁止 families 直呼 MLX/Torch SDPA） |
-| `check_engine_rope_paths.py` | `make check-engine-rope-paths` |
-| `check_engine_modulation_paths.py` | `make check-engine-modulation-paths` |
-| `check_models_registry_contracts.py` | `make check-models-registry-contracts` |
-| `check-engine-governance`（Make 聚合目标） | 一次执行全部 engine 架构门禁 + `check-consistency` |
-| `verify-engine-stack`（Make 聚合目标） | 一次执行 `check-engine-governance` + `test-engine-unit` |
-| `test_engine_unit.py` | `make test-engine-unit` |
-| `make_lint.py` | `make lint` |
+| `check_engine_governance.py` | `check-engine-rules`（全部 engine 规则）；`--rule imports\|layout\|…` 跑单项 |
+| `check_frontend_governance.py` | `check-frontend-governance`；`--rule ep\|theme\|ui` |
+| `check_consistency.py` | `check-consistency`（注册表/路由/i18n + 调用 frontend governance） |
+| `test_engine_unit.py` | `test-engine-unit` |
+| `make_lint.py` | `lint` |
+
+Allowlist：`engine_governance_allowlist.txt`（`# --- imports ---` 等分段）。
+
+聚合：`make check-engine-governance` = `check-engine-rules` + `check-consistency`；`make verify-engine-stack` 在此基础上加单元测试。
+
+旧 Make 目标（`check-engine-imports`、`check-ep-boundary` 等）仍可用，内部转发到上述两个脚本。
+
+## 桌面 / 服务端打包
+
+| 脚本 | 说明 |
+|------|------|
+| `build_desktop.sh` | 前端 + `make pack-macos-desktop` |
+| `build_sidecar.py` | PyInstaller sidecar |
+| `prune_sidecar.py` / `prune_sidecar_cuda.py` | sidecar 瘦身 |
+| `pyinstaller_common.py` / `pyinstaller_runtime_hook.py` / `pyinstaller_hooks/` | 冻结打包 |
+| `prepare_tauri_resources.py` / `set_desktop_version.py` / `stage_desktop_bundle.py` | Tauri |
+| `tauri_build_macos.sh` / `tauri_build.sh` / `tauri_build.py` | Tauri 构建 |
+| `package_linux_cuda_release.py` / `package_windows_cuda_release.py` | CUDA 发行包 |
+| `clean_build.py` | `make clean` |
+
+## 可选工具
+
+| 脚本 | 说明 |
+|------|------|
+| `scaffold_image_family.py` | 新图像 family 脚手架 |

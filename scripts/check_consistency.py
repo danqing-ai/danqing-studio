@@ -181,6 +181,8 @@ def main():
         failures.append("FAIL: Makefile missing check-engine-governance target")
     if "verify-engine-stack:" not in makefile_body:
         failures.append("FAIL: Makefile missing verify-engine-stack target")
+    if "check-engine-rules:" not in makefile_body:
+        failures.append("FAIL: Makefile missing check-engine-rules target")
     if "check-models-registry-contracts" not in makefile_body:
         failures.append("FAIL: Makefile missing check-models-registry-contracts target")
 
@@ -195,10 +197,12 @@ def main():
 
     import subprocess
 
-    for script in ("check_ep_boundary.py", "check_theme_legacy.py", "check_ui_compat.py"):
-        rc = subprocess.call([sys.executable, str(ROOT / "scripts" / script)], cwd=ROOT)
-        if rc != 0:
-            failures.append(f"{script} failed (exit {rc})")
+    rc = subprocess.call(
+        [sys.executable, str(ROOT / "scripts" / "check_frontend_governance.py")],
+        cwd=ROOT,
+    )
+    if rc != 0:
+        failures.append(f"check_frontend_governance.py failed (exit {rc})")
 
     if failures:
         print(f"Consistency check failed ({len(failures)} errors):")

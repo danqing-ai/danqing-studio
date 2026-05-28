@@ -3,7 +3,7 @@
 	bench-setup bench-src bench-mflux bench-mflux-case bench-mlx-video bench-mlx-video-case bench-diffusers bench-diffusers-case bench-sanity bench-sanity-case \
 	bench-audio-sanity bench-audio-sanity-lm bench-audio-sanity-heartmula \
 	bench-wan-sanity bench-wan-baseline \
-	check-consistency check-models-registry-contracts check-ep-boundary check-theme-legacy check-ui-compat check-engine-imports check-engine-family-layout check-engine-family-primitives check-engine-attention-paths check-engine-sdpa-paths check-engine-rope-paths check-engine-modulation-paths check-engine-governance verify-engine-stack \
+	check-consistency check-models-registry-contracts check-ep-boundary check-theme-legacy check-ui-compat check-engine-rules check-engine-imports check-engine-family-layout check-engine-family-primitives check-engine-attention-paths check-engine-sdpa-paths check-engine-rope-paths check-engine-modulation-paths check-frontend-governance check-engine-governance verify-engine-stack \
 	sync-models-registry \
 	strip-el-tokens test-engine-unit \
 	pack-prereqs \
@@ -155,60 +155,52 @@ check-consistency:
 sync-models-registry:
 	$(PYTHON) scripts/sync_workspace_registry.py
 
+ENGINE_GOV := scripts/check_engine_governance.py
+FRONTEND_GOV := scripts/check_frontend_governance.py
+
+check-frontend-governance:
+	$(PYTHON) $(FRONTEND_GOV)
+
 check-ep-boundary:
-	$(PYTHON) scripts/check_ep_boundary.py
+	$(PYTHON) $(FRONTEND_GOV) --rule ep
 
 check-theme-legacy:
-	$(PYTHON) scripts/check_theme_legacy.py
+	$(PYTHON) $(FRONTEND_GOV) --rule theme
 
 check-ui-compat:
-	$(PYTHON) scripts/check_ui_compat.py
+	$(PYTHON) $(FRONTEND_GOV) --rule ui
 
 strip-el-tokens:
 	$(PYTHON) scripts/strip_el_tokens.py
 
+check-engine-rules:
+	$(PYTHON) $(ENGINE_GOV)
+
 check-engine-imports:
-	$(PYTHON) scripts/check_engine_backend_imports.py
-	@echo "Engine backend import gate OK"
+	$(PYTHON) $(ENGINE_GOV) --rule imports
 
 check-engine-family-layout:
-	$(PYTHON) scripts/check_engine_family_layout.py
-	@echo "Engine family layout gate OK"
+	$(PYTHON) $(ENGINE_GOV) --rule layout
 
 check-engine-family-primitives:
-	$(PYTHON) scripts/check_engine_family_primitives.py
-	@echo "Engine family primitive gate OK"
+	$(PYTHON) $(ENGINE_GOV) --rule primitives
 
 check-engine-attention-paths:
-	$(PYTHON) scripts/check_engine_attention_paths.py
-	@echo "Engine attention path gate OK"
+	$(PYTHON) $(ENGINE_GOV) --rule attention
 
 check-engine-sdpa-paths:
-	$(PYTHON) scripts/check_engine_sdpa_paths.py
-	@echo "Engine SDPA path gate OK"
+	$(PYTHON) $(ENGINE_GOV) --rule sdpa
 
 check-engine-rope-paths:
-	$(PYTHON) scripts/check_engine_rope_paths.py
-	@echo "Engine RoPE path gate OK"
+	$(PYTHON) $(ENGINE_GOV) --rule rope
 
 check-engine-modulation-paths:
-	$(PYTHON) scripts/check_engine_modulation_paths.py
-	@echo "Engine modulation path gate OK"
+	$(PYTHON) $(ENGINE_GOV) --rule modulation
 
 check-models-registry-contracts:
-	$(PYTHON) scripts/check_models_registry_contracts.py
-	@echo "Models registry contract gate OK"
+	$(PYTHON) $(ENGINE_GOV) --rule registry
 
-check-engine-governance: \
-	check-engine-imports \
-	check-engine-family-layout \
-	check-engine-family-primitives \
-	check-engine-attention-paths \
-	check-engine-sdpa-paths \
-	check-engine-rope-paths \
-	check-engine-modulation-paths \
-	check-models-registry-contracts \
-	check-consistency
+check-engine-governance: check-engine-rules check-consistency
 	@echo "Engine governance suite OK"
 
 verify-engine-stack: check-engine-governance test-engine-unit

@@ -1,1 +1,0 @@
-# Paths exempt from mlx/torch top-level import gate (shrink over time; do not grow without review).

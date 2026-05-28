@@ -297,11 +297,12 @@ make pack-linux-server   # release Linux server tar.gz
 | `bench-sanity` / `bench-sanity-case ID=` | output sanity |
 | `test-engine-unit` | `scripts/test_engine_unit.py` |
 | `check-consistency` | registry/routes/i18n |
-| `check-engine-imports` | mlx/torch gate |
-| `check-models-registry-contracts` | required Hunyuan ModelScope registry contracts |
-| `check-engine-governance` | aggregate engine gates + consistency |
+| `check-engine-rules` | unified engine governance (`check_engine_governance.py`) |
+| `check-engine-imports` | alias: `--rule imports` |
+| `check-models-registry-contracts` | alias: `--rule registry` |
+| `check-engine-governance` | engine rules + consistency |
 | `verify-engine-stack` | governance + unit tests |
-| `check-engine-family-layout` | family subtree layout gate |
+| `check-engine-family-layout` | alias: `--rule layout` |
 | `lint` | Python syntax |
 | `frontend-install` / `frontend-dev` / `frontend-build` / `frontend-typecheck` | frontend |
 | `pack-macos-desktop` | macOS Tauri `.app` / `.dmg` (MLX sidecar) |
@@ -331,7 +332,7 @@ Makefile pattern: `pack-<platform>-<product>-<step>` (`desktop` \| `server`; `ve
 
 - No Element Plus: templates use `Dq*` only; tokens from `@danqing/dq-tokens` (`--dq-*`).
 - Shell layout: `App.vue` → `.dq-app-header` + `.dq-app-main`; `TopNav` is native `<nav class="dq-top-nav-menu">`.
-- Governance: `make check-ep-boundary`, `make check-theme-legacy`. See `frontend/DQ-UI.md`.
+- Governance: `make check-frontend-governance` (or `check-ep-boundary` / `check-theme-legacy` aliases). See `frontend/DQ-UI.md`.
 
 ### App.vue routing
 
