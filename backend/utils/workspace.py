@@ -100,7 +100,11 @@ def _assert_workspace_paths_safe(old_root: Path, new_root: Path) -> None:
 
 
 def migrate_workspace_data(old_root: Path, new_root: Path) -> None:
-    """Move workspace data directories from old_root into an empty new_root."""
+    """Move workspace data directories from old_root into an empty new_root.
+
+    On any failure, completed moves are rolled back so the source workspace stays intact
+    (avoids losing ``db/`` or ``config/`` when a later directory move fails).
+    """
     old_r = old_root.resolve()
     new_r = new_root.resolve()
     if old_r == new_r:
@@ -110,17 +114,26 @@ def migrate_workspace_data(old_root: Path, new_root: Path) -> None:
         raise RuntimeError(f"Target workspace directory is not empty: {new_r}")
 
     new_r.mkdir(parents=True, exist_ok=True)
-    for name in _WORKSPACE_TOP_LEVEL:
-        src = old_r / name
-        dst = new_r / name
-        if src.exists():
-            if dst.exists():
-                shutil.rmtree(dst)
-            shutil.move(str(src), str(dst))
-        elif name == "models":
-            (new_r / "models" / "Lora").mkdir(parents=True, exist_ok=True)
-        else:
-            (new_r / name).mkdir(parents=True, exist_ok=True)
+    moved: list[tuple[Path, Path]] = []
+    try:
+        for name in _WORKSPACE_TOP_LEVEL:
+            src = old_r / name
+            dst = new_r / name
+            if src.exists():
+                if dst.exists():
+                    shutil.rmtree(dst)
+                shutil.move(str(src), str(dst))
+                moved.append((src, dst))
+            elif name == "models":
+                (new_r / "models" / "Lora").mkdir(parents=True, exist_ok=True)
+            else:
+                (new_r / name).mkdir(parents=True, exist_ok=True)
+    except Exception:
+        for src, dst in reversed(moved):
+            if dst.exists() and not src.exists():
+                src.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(dst), str(src))
+        raise
 
 
 def apply_workspace_relocation(
