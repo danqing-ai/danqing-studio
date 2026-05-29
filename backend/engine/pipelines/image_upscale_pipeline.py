@@ -7,13 +7,11 @@ from typing import Any, Callable
 
 from backend.core.contracts import ExecutionContext, ImageUpscaleRequest, parse_model_version
 from backend.engine.common.cache import ModelCache
-from backend.engine.common.bundle_layout import assert_media_bundle_ready
 from backend.engine.common.pipeline_registry import (
     local_bundle_root as _local_bundle_root_fn,
-    resolve_project_path as _resolve_project_path_fn,
     resolve_version_block as _resolve_version_block_fn,
 )
-from backend.engine.pipelines.pipeline_progress import pipeline_graph_step
+from backend.engine.pipelines.pipeline_progress import pipeline_graph_step, validate_bundle_graph_step
 from backend.engine.runtime._base import RuntimeContext
 
 
@@ -34,15 +32,6 @@ class ImageUpscalePipeline:
         self._cache = model_cache
         self._project_root = project_root or Path.cwd()
 
-    def _resolve_path(self, local_path: str) -> Path:
-        return _resolve_project_path_fn(self._project_root, local_path)
-
-    def _resolve_version_block(self, entry, version_key: str | None) -> dict | None:
-        return _resolve_version_block_fn(entry, version_key)
-
-    def _local_bundle_root(self, entry, version_key: str | None) -> Path | None:
-        return _local_bundle_root_fn(self._project_root, entry, version_key)
-
     def run(
         self,
         request: ImageUpscaleRequest,
@@ -58,12 +47,9 @@ class ImageUpscalePipeline:
         if ctx_exec.cancel_token.is_cancelled():
             return None
 
-        bundle_root = self._local_bundle_root(entry, version_key or None)
-        assert_media_bundle_ready(bundle_root, family=family, model_id=model_key)
-        pipeline_graph_step(
-            "validate_bundle",
-            on_log,
-            message=f"ok family={family} root={bundle_root}",
+        bundle_root = _local_bundle_root_fn(self._project_root, entry, version_key or None)
+        validate_bundle_graph_step(
+            bundle_root, family=family, model_id=model_key, on_log=on_log
         )
 
         from backend.engine.upscale_job_registry import get_upscale_job_runner
@@ -104,7 +90,7 @@ class ImageUpscalePipeline:
                 model_config = ModelConfig.seedvr2_3b()
             seedvr2_pipeline = SeedVR2UpscalePipeline.from_bundle(bundle_root, model_config)
             if self._cache is not None:
-                ver = self._resolve_version_block(entry, version_key)
+                ver = _resolve_version_block_fn(entry, version_key)
                 size_str = str((ver or {}).get("size") or (getattr(entry, "raw", {}) or {}).get("size") or "8GB")
                 self._cache.put(cache_key, seedvr2_pipeline, parse_size_gb(size_str))
 

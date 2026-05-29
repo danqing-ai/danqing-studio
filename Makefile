@@ -203,6 +203,15 @@ check-models-registry-contracts:
 check-weight-parity:
 	$(PYTHON) $(ENGINE_GOV) --rule parity
 
+report-registry-audit:
+	$(PYTHON) $(ENGINE_GOV) --report registry
+
+report-family-budget:
+	$(PYTHON) $(ENGINE_GOV) --report family-budget
+
+report-family-reuse:
+	$(PYTHON) $(ENGINE_GOV) --report reuse
+
 check-engine-governance: check-engine-rules check-consistency check-weight-parity
 	@echo "Engine governance suite OK"
 

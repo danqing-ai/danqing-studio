@@ -55,12 +55,14 @@ from backend.engine._transformer_registry import (
 )
 from backend.engine.config.model_configs import get_config_class
 from backend.engine.families.ltx.weights import restore_diffusers_names_from_mlx_forge_ltx
-from backend.engine.common.bundle_layout import assert_media_bundle_ready, t5_encoder_bundle_paths
+from backend.engine.common.bundle_layout import t5_encoder_bundle_paths
 from backend.engine.pipelines.pipeline_progress import (
     emit_complete,
     emit_denoise_progress,
     emit_post_progress,
     pipeline_graph_step,
+    timestep_embed_schedule_from_scheduler,
+    validate_bundle_graph_step,
 )
 from backend.engine.pipelines.video_bundle_layout import (
     looks_like_mlx_forge_ltx_transformer_keys,
@@ -73,18 +75,6 @@ from backend.engine.runtime._base import RuntimeContext
 
 def _video_post_denoise_clear_cache(config: Any) -> bool:
     return bool(getattr(config, "post_denoise_clear_cache", False))
-
-
-def _timestep_embed_schedule_from_scheduler(scheduler: Any) -> list[float] | None:
-    """Match :class:`ImagePipeline`: ``FlowMatchEulerScheduler.set_timesteps`` returns step *indices*;
-
-    continuous noise-level values for time-MLP live on ``scheduler.timesteps``.
-    """
-    sched_ts = getattr(scheduler, "timesteps", None)
-    if sched_ts is None:
-        return None
-    arr = np.asarray(sched_ts, dtype=np.float64).reshape(-1)
-    return [float(x) for x in arr.tolist()]
 
 
 class VideoPipeline:
@@ -111,19 +101,6 @@ class VideoPipeline:
     # ------------------------------------------------------------------
     # Path / registry helpers (mirrors ImagePipeline)
     # ------------------------------------------------------------------
-
-    def _resolve_path(self, local_path: str) -> Path:
-        return _resolve_project_path_fn(self._project_root, local_path)
-
-    @staticmethod
-    def _registry_scalar_default(entry, key: str, fallback):
-        return _registry_scalar_default_fn(entry, key, fallback)
-
-    def _resolve_version_block(self, entry, version_key: str | None) -> dict | None:
-        return _resolve_version_block_fn(entry, version_key)
-
-    def _local_bundle_root(self, entry, version_key: str | None) -> Path | None:
-        return _local_bundle_root_fn(self._project_root, entry, version_key)
 
     def _inject_hunyuan_text_encoder_paths(self, entry, config) -> None:
         """Resolve registry-declared native TE roots (ModelScope Qwen + ByT5)."""
@@ -152,7 +129,7 @@ class VideoPipeline:
         lp = (ob.get("local_path") or "").strip()
         if not lp:
             return None
-        p = self._resolve_path(lp)
+        p = _resolve_project_path_fn(self._project_root, lp)
         return p if p.is_dir() else None
 
     def _effective_t5_bundle_root(self, entry, bundle_root: Path | None, config: Any) -> Path | None:
@@ -184,10 +161,10 @@ class VideoPipeline:
             ) from err
 
     def _resolve_guidance_default(self, entry) -> float:
-        g = self._registry_scalar_default(entry, "guidance", None)
+        g = _registry_scalar_default_fn(entry, "guidance", None)
         if g is not None:
             return float(g)
-        gs = self._registry_scalar_default(entry, "guide_scale", None)
+        gs = _registry_scalar_default_fn(entry, "guide_scale", None)
         if gs is not None:
             return float(gs)
         return 0.0
@@ -195,7 +172,7 @@ class VideoPipeline:
     def _resolve_num_frames(self, request: VideoGenerationRequest | VideoEditRequest, entry) -> int:
         if request.num_frames is not None:
             return int(request.num_frames)
-        reg = self._registry_scalar_default(entry, "num_frames", None)
+        reg = _registry_scalar_default_fn(entry, "num_frames", None)
         if reg is not None:
             return int(reg)
         return 81
@@ -203,7 +180,7 @@ class VideoPipeline:
     def _resolve_fps(self, request: VideoGenerationRequest | VideoEditRequest, entry) -> int:
         if request.fps is not None:
             return int(request.fps)
-        reg = self._registry_scalar_default(entry, "fps", None)
+        reg = _registry_scalar_default_fn(entry, "fps", None)
         if reg is not None:
             return int(reg)
         return 16
@@ -241,16 +218,16 @@ class VideoPipeline:
 
     def _apply_video_registry_config_overrides(self, entry: Any, config: Any) -> None:
         for param_key in ("vae_scale", "default_scheduler", "text_encoder_device", "vae_temporal_chunk_size"):
-            val = self._registry_scalar_default(entry, param_key, None)
+            val = _registry_scalar_default_fn(entry, param_key, None)
             if val is not None:
                 setattr(config, param_key, val)
-        sg = self._registry_scalar_default(entry, "supports_guidance", None)
+        sg = _registry_scalar_default_fn(entry, "supports_guidance", None)
         if sg is not None:
             config.supports_guidance = bool(sg)
-        sd = self._registry_scalar_default(entry, "step_distill", None)
+        sd = _registry_scalar_default_fn(entry, "step_distill", None)
         if sd is not None:
             config.step_distill = bool(sd)
-        vst = self._registry_scalar_default(entry, "vae_spatial_tiling", None)
+        vst = _registry_scalar_default_fn(entry, "vae_spatial_tiling", None)
         if vst is not None:
             config.vae_spatial_tiling = bool(vst)
         if getattr(config, "inject_text_encoder_paths", False):
@@ -270,12 +247,9 @@ class VideoPipeline:
         request: VideoGenerationRequest | VideoEditRequest,
         on_log: Callable | None,
     ) -> tuple[Path | None, int, int, int, float, bool, str]:
-        bundle_root = self._local_bundle_root(entry, version_key or None)
-        assert_media_bundle_ready(bundle_root, family=family, model_id=model_key)
-        pipeline_graph_step(
-            "validate_bundle",
-            on_log,
-            message=f"ok family={family} root={bundle_root}",
+        bundle_root = _local_bundle_root_fn(self._project_root, entry, version_key or None)
+        validate_bundle_graph_step(
+            bundle_root, family=family, model_id=model_key, on_log=on_log
         )
         merge_video_bundle_config(config, bundle_root)
         w, h = self._snap_wan_pixel_dims_if_needed(config, w, h, on_log=on_log)
@@ -288,16 +262,16 @@ class VideoPipeline:
             self._t5_bundle_root = bundle_root
             self._video_config = config
 
-        steps_default = self._registry_scalar_default(entry, "steps", 40)
+        steps_default = _registry_scalar_default_fn(entry, "steps", 40)
         guidance_default = self._resolve_guidance_default(entry)
-        scheduler_registry = self._registry_scalar_default(entry, "scheduler", None)
+        scheduler_registry = _registry_scalar_default_fn(entry, "scheduler", None)
         scheduler_default = scheduler_registry or getattr(config, "default_scheduler", "unipc")
 
         steps = int(request.steps) if request.steps is not None else int(steps_default)
         steps = max(1, steps)
         step_distill = bool(
             getattr(config, "step_distill", False)
-            or self._registry_scalar_default(entry, "step_distill", False)
+            or _registry_scalar_default_fn(entry, "step_distill", False)
         )
         guidance = float(request.guidance) if request.guidance is not None else float(guidance_default)
         if step_distill or not getattr(config, "supports_guidance", True):
@@ -398,7 +372,7 @@ class VideoPipeline:
             )
         else:
             sched_kwargs: dict[str, Any] = {}
-            shift_default = self._registry_scalar_default(entry, "shift", None)
+            shift_default = _registry_scalar_default_fn(entry, "shift", None)
             shift_val = video_resolve_shift_value(
                 config,
                 request_shift=request.shift,
@@ -414,7 +388,7 @@ class VideoPipeline:
                     sched_kwargs.get("shift", getattr(scheduler, "_default_shift", 1.0))
                 )
         sigmas = getattr(scheduler, "sigmas", None)
-        timestep_embed_schedule = _timestep_embed_schedule_from_scheduler(scheduler)
+        timestep_embed_schedule = timestep_embed_schedule_from_scheduler(scheduler)
         return scheduler, timesteps, sigmas, timestep_embed_schedule, wan_shift
 
     def _finalize_video_from_latents(
@@ -748,8 +722,8 @@ class VideoPipeline:
             )
         )
         vae_scale = getattr(config, "vae_scale", 8)
-        _cfg_renorm = bool(self._registry_scalar_default(entry, "enable_cfg_renorm", False))
-        _cfg_renorm_min = float(self._registry_scalar_default(entry, "cfg_renorm_min", 0.0))
+        _cfg_renorm = bool(_registry_scalar_default_fn(entry, "enable_cfg_renorm", False))
+        _cfg_renorm_min = float(_registry_scalar_default_fn(entry, "cfg_renorm_min", 0.0))
 
         if on_log:
             parts = [
@@ -908,8 +882,8 @@ class VideoPipeline:
             )
         )
         vae_scale = getattr(config, "vae_scale", 8)
-        _cfg_renorm = bool(self._registry_scalar_default(entry, "enable_cfg_renorm", False))
-        _cfg_renorm_min = float(self._registry_scalar_default(entry, "cfg_renorm_min", 0.0))
+        _cfg_renorm = bool(_registry_scalar_default_fn(entry, "enable_cfg_renorm", False))
+        _cfg_renorm_min = float(_registry_scalar_default_fn(entry, "cfg_renorm_min", 0.0))
 
         if on_log:
             parts = [
@@ -1197,7 +1171,7 @@ class VideoPipeline:
         model = trans_cls(config, self.ctx, num_frames=num_frames)
         remap_fn = _get_video_weight_remap(family)
 
-        bundle_root = self._local_bundle_root(entry, version_key)
+        bundle_root = _local_bundle_root_fn(self._project_root, entry, version_key)
         tensor_root, shard_paths = resolve_video_transformer_weight_sources(
             bundle_root, family, entry.id
         )
@@ -1240,7 +1214,7 @@ class VideoPipeline:
         if self._cache is not None:
             from backend.engine.common.weights import parse_size_gb
 
-            ver = self._resolve_version_block(entry, version_key)
+            ver = _resolve_version_block_fn(entry, version_key)
             size_str = ""
             if ver:
                 size_str = str(ver.get("size") or "")
@@ -1273,104 +1247,64 @@ class VideoPipeline:
                 latents=latents,
                 entry=entry,
                 version_key=version_key,
-                local_bundle_root=self._local_bundle_root,
-                registry_scalar_default=self._registry_scalar_default,
+                local_bundle_root=lambda entry, vk: _local_bundle_root_fn(
+                    self._project_root, entry, vk
+                ),
+                registry_scalar_default=_registry_scalar_default_fn,
                 on_post_progress=on_post_progress,
                 on_post_log=on_post_log,
             )
 
-        from PIL import Image
-        from backend.engine.common.vae import VAEDecoder, remap_vae_weights, vae_output_to_uint8_hwc
+        from backend.engine.common.vae import (
+            apply_flux2_latent_preprocess_if_enabled,
+            create_loaded_vae_decoder,
+            load_vae_weight_dict,
+            read_vae_dir_config,
+            vae_forward_to_pil,
+        )
 
         ctx = self.ctx
-        bundle_root = self._local_bundle_root(entry, version_key)
+        bundle_root = _local_bundle_root_fn(self._project_root, entry, version_key)
         vae_dir = (bundle_root / "vae") if bundle_root else None
+        vae_cfg, scaling_factor, shift_factor = read_vae_dir_config(vae_dir)
+        latent_cfg = int(vae_cfg.get("latent_channels", 16)) if vae_cfg else 16
 
-        scaling_factor = 1.0
-        shift_factor = 0.0
-        latent_cfg = 16
-        vae_cfg: dict[str, Any] = {}
-        if vae_dir and (vae_dir / "config.json").exists():
-            import json
-            with open(vae_dir / "config.json") as f:
-                vae_cfg = json.load(f)
-            scaling_factor = float(vae_cfg.get("scaling_factor", 1.0))
-            shift_factor = float(vae_cfg.get("shift_factor", 0.0))
-            latent_cfg = int(vae_cfg.get("latent_channels", 16))
-
-        use_quant_path = bool(vae_cfg.get("use_quant_conv", False))
-        use_post_quant_path = bool(vae_cfg.get("use_post_quant_conv", False))
-
-        vae_weights = {}
-        if vae_dir and vae_dir.exists():
-            for sf in sorted(vae_dir.glob("*.safetensors")):
-                vae_weights.update(ctx.load_weights(str(sf)))
-        elif bool(getattr(config, "uses_ltx_flat_vae_decoder", False)) and bundle_root is not None:
+        vae_weights = load_vae_weight_dict(ctx, vae_dir)
+        if not vae_weights and bool(getattr(config, "uses_ltx_flat_vae_decoder", False)) and bundle_root is not None:
             dec_path = ltx_flat_vae_decoder_file(bundle_root)
             if dec_path is not None:
                 raw_dec = ctx.load_weights(str(dec_path))
                 vae_weights = {f"decoder.{k}": v for k, v in raw_dec.items()}
 
-        # Extract frame dim
         if latents.ndim == 5:
             B, C, T, H, W = latents.shape
         else:
             B, C, H, W = latents.shape
             T = 1
 
+        sample_latent = latents[:, :, 0, :, :]
+        sample_latent, vae_sf, vae_shf = apply_flux2_latent_preprocess_if_enabled(
+            ctx, sample_latent, vae_cfg, vae_weights, scaling_factor, shift_factor
+        )
+        vae, _, _, _ = create_loaded_vae_decoder(
+            ctx,
+            sample_latent,
+            vae_weights,
+            vae_sf,
+            vae_shf,
+            default_channels=latent_cfg,
+            require_conv_in=False,
+        )
+
         frames = []
         for t_idx in range(T):
-            frame_latent = latents[:, :, t_idx, :, :]  # [B, C, H, W]
-
-            # Flux2-style latent path — only when config enables quant/post_quant (see ImagePipeline._vae_decode).
-            if (use_quant_path or use_post_quant_path) and (
-                "bn.running_mean" in vae_weights or "post_quant_conv.weight" in vae_weights
-            ):
-                frame_latent = self._vae_preprocess_special(frame_latent, vae_weights, scaling_factor, shift_factor)
-                sf = 1.0
-                shf = 0.0
-                ci = vae_weights.get("decoder.conv_in.weight", ctx.zeros((1,))).shape[0] if "decoder.conv_in.weight" in vae_weights else 16
-            else:
-                sf = scaling_factor
-                shf = shift_factor
-                ci = latent_cfg
-
-            C_ = frame_latent.shape[1] if frame_latent.ndim >= 4 else ci
-            vae = VAEDecoder(latent_channels=C_, ctx=ctx, scaling_factor=sf, shift_factor=shf)
-            if vae_weights:
-                decoder_w = remap_vae_weights(vae_weights)
-                vae.load_weights(list(decoder_w.items()), strict=False)
-
-            image = vae.forward(frame_latent)
-            pixels = vae_output_to_uint8_hwc(image, ctx)
-            frames.append(Image.fromarray(pixels))
+            frame_latent = latents[:, :, t_idx, :, :]
+            frame_latent, _, _ = apply_flux2_latent_preprocess_if_enabled(
+                ctx, frame_latent, vae_cfg, vae_weights, scaling_factor, shift_factor
+            )
+            frames.append(vae_forward_to_pil(ctx, vae, frame_latent))
 
         return frames
-
-    def _vae_preprocess_special(self, latents, vae_weights, scaling_factor, shift_factor):
-        """特殊 VAE 预处理 — flux2 风格（通过权重检测触发，非 family 硬编码）。"""
-        ctx = self.ctx
-
-        bn_mean = vae_weights.get("bn.running_mean", ctx.zeros((128,))).reshape(1, -1, 1, 1)
-        bn_var = vae_weights.get("bn.running_var", ctx.ones((128,))).reshape(1, -1, 1, 1)
-        latents = latents * ctx.sqrt(bn_var + 1e-4) + bn_mean
-
-        B, C_, H_, W_ = latents.shape
-        latents = latents.reshape(B, C_ // 4, 2, 2, H_, W_)
-        latents = ctx.permute(latents, (0, 1, 4, 2, 5, 3))
-        latents = latents.reshape(B, C_ // 4, H_ * 2, W_ * 2)
-
-        latents = (latents / scaling_factor) + shift_factor
-        latents = ctx.permute(latents, (0, 2, 3, 1))
-
-        pw = vae_weights.get("post_quant_conv.weight")
-        pb = vae_weights.get("post_quant_conv.bias")
-        if pw is not None and pb is not None:
-            latents = ctx.conv2d(latents, ctx.permute(pw, (0, 2, 3, 1)), stride=1, padding=0)
-            latents = latents + pb.reshape(1, 1, 1, -1)
-
-        latents = ctx.permute(latents, (0, 3, 1, 2))
-        return latents
 
     def _vae_encode_frame(
         self,
@@ -1389,8 +1323,10 @@ class VideoPipeline:
             image_tensor=image_tensor,
             entry=entry,
             version_key=version_key,
-            local_bundle_root=self._local_bundle_root,
-            registry_scalar_default=self._registry_scalar_default,
+            local_bundle_root=lambda entry, vk: _local_bundle_root_fn(
+                self._project_root, entry, vk
+            ),
+            registry_scalar_default=_registry_scalar_default_fn,
         )
 
     # ------------------------------------------------------------------

@@ -61,6 +61,7 @@ HUNYUAN_REQUIRED_IDS = (
     "hunyuan-video-1.5-1080p-sr",
 )
 HUNYUAN_REPO_ID = "Tencent-Hunyuan/HunyuanVideo-1.5"
+MAX_FAMILY_UNITS = 8
 
 ALL_RULES = (
     "imports",
@@ -207,7 +208,9 @@ def check_imports(allow: dict[str, list[str]]) -> list[str]:
 def check_layout(allow: dict[str, list[str]]) -> list[str]:
     violations: list[str] = []
     if FAMILIES.is_dir():
-        for family_dir in sorted(p for p in FAMILIES.iterdir() if p.is_dir()):
+        for family_dir in sorted(
+            p for p in FAMILIES.iterdir() if p.is_dir() and not p.name.startswith("_")
+        ):
             for path in sorted(family_dir.rglob("*")):
                 if not path.is_dir() or path.name not in LAYOUT_FORBIDDEN_DIRS:
                     continue
@@ -339,6 +342,60 @@ def check_registry() -> list[str]:
     return failures
 
 
+def _family_dirs() -> list[Path]:
+    if not FAMILIES.is_dir():
+        return []
+    return sorted(p for p in FAMILIES.iterdir() if p.is_dir() and not p.name.startswith("_"))
+
+
+def _family_logical_units(family_dir: Path) -> int:
+    stems: set[str] = set()
+    for path in family_dir.glob("*.py"):
+        if path.name == "__init__.py":
+            continue
+        stem = path.stem
+        if stem.endswith("_mlx"):
+            stem = stem[:-4]
+        elif stem.endswith("_cuda"):
+            stem = stem[:-5]
+        stems.add(stem)
+    return len(stems)
+
+
+def _report_family(mode: str) -> list[str]:
+    if mode == "registry":
+        if not REGISTRY.is_file():
+            return ["models_registry.json missing"]
+        from backend.core.registry_profiles import audit_registry_document
+
+        return audit_registry_document(json.loads(REGISTRY.read_text(encoding="utf-8")))
+
+    lines: list[str] = []
+    for family_dir in _family_dirs():
+        if mode == "budget":
+            units = _family_logical_units(family_dir)
+            status = "OK" if units <= MAX_FAMILY_UNITS else "OVER"
+            lines.append(f"{family_dir.name}: {units} logical units [{status}]")
+            continue
+        common_imports = 0
+        total = 0
+        for path in family_dir.rglob("*.py"):
+            try:
+                text = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            total += len(text.splitlines())
+            common_imports += sum(
+                1
+                for line in text.splitlines()
+                if "backend.engine.common" in line
+                and line.strip().startswith(("import ", "from "))
+            )
+        rate = common_imports / max(total, 1)
+        lines.append(f"{family_dir.name}: common imports/lines={common_imports}/{total} ({rate:.1%})")
+    return lines
+
+
 def check_parity() -> list[str]:
     from backend.engine import _transformer_registry as tr
     from backend.engine._transformer_registry import get_transformer_class
@@ -412,7 +469,9 @@ def _write_allowlist_for_rule(rule: str) -> int:
     if rule == "layout":
         found = []
         if FAMILIES.is_dir():
-            for family_dir in sorted(p for p in FAMILIES.iterdir() if p.is_dir()):
+            for family_dir in sorted(
+                p for p in FAMILIES.iterdir() if p.is_dir() and not p.name.startswith("_")
+            ):
                 for path in sorted(family_dir.rglob("*")):
                     if path.is_dir() and path.name in LAYOUT_FORBIDDEN_DIRS:
                         found.append(str(path.relative_to(ROOT)).replace("\\", "/"))
@@ -484,10 +543,27 @@ def main() -> int:
         choices=("imports", "layout", "primitives", "attention"),
         help="Regenerate allowlist section from current tree (migration utility).",
     )
+    ap.add_argument(
+        "--report",
+        choices=("registry", "family-budget", "reuse"),
+        help="Print non-blocking audit report (registry shrink hints, family budget, reuse).",
+    )
     args = ap.parse_args()
 
     if str(ROOT) not in sys.path:
         sys.path.insert(0, str(ROOT))
+
+    if args.report:
+        reporters = {
+            "registry": lambda: _report_family("registry"),
+            "family-budget": lambda: _report_family("budget"),
+            "reuse": lambda: _report_family("reuse"),
+        }
+        lines = reporters[args.report]()
+        for line in lines:
+            print(line)
+        print(f"Report [{args.report}]: {len(lines)} line(s)")
+        return 0
 
     if args.write_allowlist:
         return _write_allowlist_for_rule(args.write_allowlist)

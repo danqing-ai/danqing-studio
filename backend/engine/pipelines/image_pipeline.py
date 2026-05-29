@@ -18,7 +18,7 @@ from backend.core.contracts import (
     ImageEditRequest,
     LogEvent, parse_model_version, parse_size, work_title_metadata,
 )
-from backend.engine.common.bundle_layout import assert_media_bundle_ready, t5_encoder_bundle_paths
+from backend.engine.common.bundle_layout import t5_encoder_bundle_paths
 from backend.engine.common.cache import ModelCache
 from backend.engine.common.pipeline_registry import (
     local_bundle_root as _local_bundle_root_fn,
@@ -53,6 +53,8 @@ from backend.engine.pipelines.pipeline_progress import (
     emit_phase,
     emit_post_progress,
     pipeline_graph_step,
+    timestep_embed_schedule_from_scheduler,
+    validate_bundle_graph_step,
 )
 
 
@@ -160,19 +162,6 @@ class ImagePipeline:
         self._project_root = project_root or Path.cwd()
         self._scheduler_semantics_resolver = SchedulerSemanticsResolver()
 
-    def _resolve_path(self, local_path: str) -> Path:
-        return _resolve_project_path_fn(self._project_root, local_path)
-
-    @staticmethod
-    def _registry_scalar_default(entry, key: str, fallback):
-        return _registry_scalar_default_fn(entry, key, fallback)
-
-    def _resolve_version_block(self, entry, version_key: str | None) -> dict | None:
-        return _resolve_version_block_fn(entry, version_key)
-
-    def _local_bundle_root(self, entry, version_key: str | None) -> Path | None:
-        return _local_bundle_root_fn(self._project_root, entry, version_key)
-
     @staticmethod
     def _align_hw_multiples(w0: int, h0: int, *, align: int) -> tuple[int, int]:
         """Width/height floored to multiples of ``align`` (at least ``align``)."""
@@ -204,49 +193,20 @@ class ImagePipeline:
         t = self.ctx.array(arr)
         return self.ctx.permute(t, (0, 3, 1, 2))
 
-    def _vae_latent_channels_from_bundle(self, entry, version_key: str | None) -> int:
-        bundle_root = self._local_bundle_root(entry, version_key)
-        vae_dir = (bundle_root / "vae") if bundle_root else None
-        if vae_dir and (vae_dir / "config.json").exists():
-            import json
-
-            with open(vae_dir / "config.json") as f:
-                cfg = json.load(f)
-            lc = cfg.get("latent_channels")
-            if lc is not None:
-                return int(lc)
-        vae_weights: dict[str, Any] = {}
-        if vae_dir and vae_dir.exists():
-            for sf in sorted(vae_dir.glob("*.safetensors")):
-                vae_weights.update(self.ctx.load_weights(str(sf)))
-        wkey = "encoder.conv_out.weight"
-        if wkey in vae_weights:
-            t = vae_weights[wkey]
-            sh = getattr(t, "shape", ())
-            if len(sh) >= 1:
-                return int(sh[0]) // 2
-        return 16
-
     def _load_vae_dir_cfg_weights(
         self,
         entry,
         version_key: str | None,
     ) -> tuple[Path, dict[str, Any], dict[str, Any]]:
-        bundle_root = self._local_bundle_root(entry, version_key)
+        from backend.engine.common.vae import load_vae_weight_dict, read_vae_dir_config
+
+        bundle_root = _local_bundle_root_fn(self._project_root, entry, version_key)
         vae_dir = (bundle_root / "vae") if bundle_root else None
         if vae_dir is None or not vae_dir.exists():
             raise RuntimeError(f"VAE: no vae directory under bundle {bundle_root}")
 
-        vae_cfg: dict[str, Any] = {}
-        if (vae_dir / "config.json").exists():
-            import json
-
-            with open(vae_dir / "config.json") as f:
-                vae_cfg = json.load(f)
-
-        vae_weights: dict[str, Any] = {}
-        for sf in sorted(vae_dir.glob("*.safetensors")):
-            vae_weights.update(self.ctx.load_weights(str(sf)))
+        vae_cfg, _, _ = read_vae_dir_config(vae_dir)
+        vae_weights = load_vae_weight_dict(self.ctx, vae_dir)
         if not vae_weights:
             raise RuntimeError(f"VAE encode: no weights under {vae_dir}")
         return vae_dir, vae_cfg, vae_weights
@@ -337,7 +297,7 @@ class ImagePipeline:
 
         encode_handler = get_vae_encode_handler(vae_cls, entry_family=entry_family)
         if encode_handler is not None:
-            bundle_root = self._local_bundle_root(entry, version_key)
+            bundle_root = _local_bundle_root_fn(self._project_root, entry, version_key)
             return encode_handler(
                 ctx=self.ctx,
                 image_n11=image_n11,
@@ -348,10 +308,12 @@ class ImagePipeline:
                 on_log=on_log,
             )
 
+        from backend.engine.common.vae import infer_latent_channels
+
         scaling_factor = float(vae_cfg.get("scaling_factor", 1.0))
         shift_factor = float(vae_cfg.get("shift_factor", 0.0))
 
-        latent_c = self._vae_latent_channels_from_bundle(entry, version_key)
+        latent_c = infer_latent_channels(vae_cfg, vae_weights)
         enc = VAEEncoder(
             latent_channels=latent_c,
             ctx=self.ctx,
@@ -414,13 +376,13 @@ class ImagePipeline:
             "edit_conditioning_concat",
             "edit_rmbg_composite_output",
         ):
-            val = self._registry_scalar_default(entry, param_key, None)
+            val = _registry_scalar_default_fn(entry, param_key, None)
             if val is not None and hasattr(config, param_key):
                 if param_key == "text_encoder_out_layers" and isinstance(val, list):
                     setattr(config, param_key, tuple(int(x) for x in val))
                 else:
                     setattr(config, param_key, val)
-        sg = self._registry_scalar_default(entry, "supports_guidance", None)
+        sg = _registry_scalar_default_fn(entry, "supports_guidance", None)
         if sg is not None:
             config.supports_guidance = bool(sg)
 
@@ -624,72 +586,16 @@ class ImagePipeline:
         *,
         on_log: Callable | None = None,
     ) -> dict[str, Any] | None:
-        """Load VAE decoder once for step previews (standard AutoencoderKL path only)."""
-        from backend.engine.common.vae import VAEDecoder, remap_vae_weights
+        from backend.engine.common.vae import build_standard_vae_preview_session, read_vae_dir_config
 
-        bundle_root = self._local_bundle_root(entry, version_key)
+        bundle_root = _local_bundle_root_fn(self._project_root, entry, version_key)
         vae_dir = (bundle_root / "vae") if bundle_root else None
-        vae_cfg: dict[str, Any] = {}
-        if vae_dir and (vae_dir / "config.json").exists():
-            import json
-
-            with open(vae_dir / "config.json") as f:
-                vae_cfg = json.load(f)
+        vae_cfg, _, _ = read_vae_dir_config(vae_dir)
         vae_cls = str(vae_cfg.get("_class_name") or "")
         entry_family = str(getattr(entry, "family", "") or "")
         if get_vae_decode_handler(vae_cls, entry_family=entry_family) is not None:
             return None
-
-        scaling_factor = float(vae_cfg.get("scaling_factor", 1.0))
-        shift_factor = float(vae_cfg.get("shift_factor", 0.0))
-        vae_weights: dict[str, Any] = {}
-        if vae_dir and vae_dir.exists():
-            for sf in sorted(vae_dir.glob("*.safetensors")):
-                vae_weights.update(self.ctx.load_weights(str(sf)))
-        if not vae_weights:
-            return None
-
-        use_quant_path = bool(vae_cfg.get("use_quant_conv", False))
-        use_post_quant_path = bool(vae_cfg.get("use_post_quant_conv", False))
-        use_special_preprocess = (use_quant_path or use_post_quant_path) and (
-            "bn.running_mean" in vae_weights or "post_quant_conv.weight" in vae_weights
-        )
-        if use_special_preprocess:
-            scaling_factor = 1.0
-            shift_factor = 0.0
-
-        latent_c = 16
-        if vae_cfg.get("latent_channels") is not None:
-            latent_c = int(vae_cfg["latent_channels"])
-        vae = VAEDecoder(
-            latent_channels=latent_c,
-            ctx=self.ctx,
-            scaling_factor=scaling_factor,
-            shift_factor=shift_factor,
-        )
-        decoder_w = remap_vae_weights(vae_weights)
-        if not decoder_w:
-            return None
-        loaded, skipped = vae.load_weights(list(decoder_w.items()), strict=False)
-        if not any(k.startswith("conv_in.") for k in loaded):
-            raise RuntimeError(
-                "VAE preview session failed to load conv_in weights; "
-                f"skipped_sample={skipped[:8]}"
-            )
-        if on_log:
-            on_log(
-                "info",
-                f"preview VAE session ready decoder_tensors={len(decoder_w)} "
-                f"loaded_params={len(loaded)}",
-            )
-        return {
-            "kind": "standard",
-            "vae": vae,
-            "vae_weights": vae_weights,
-            "use_special_preprocess": use_special_preprocess,
-            "orig_scaling": float(vae_cfg.get("scaling_factor", 1.0)),
-            "orig_shift": float(vae_cfg.get("shift_factor", 0.0)),
-        }
+        return build_standard_vae_preview_session(self.ctx, vae_dir, on_log=on_log)
 
     def _vae_decode_with_preview_session(
         self,
@@ -700,8 +606,11 @@ class ImagePipeline:
         *,
         on_log: Callable | None = None,
     ) -> Any:
-        from backend.engine.common.vae import vae_output_to_uint8_hwc
-        from PIL import Image
+        from backend.engine.common.vae import (
+            apply_flux2_latent_preprocess_if_enabled,
+            reshape_packed_latents_to_nchw,
+            vae_forward_to_pil,
+        )
 
         session = preview_state.get("vae_session")
         if session is None:
@@ -721,24 +630,23 @@ class ImagePipeline:
         if not session or session is False:
             return self._vae_decode(latents, entry, version_key, on_log=on_log)
 
-        z = self._latents_for_vae_preview(latents)
-        if z.ndim == 3:
-            b, seq_len, channels = z.shape
-            latent_h = int(seq_len ** 0.5)
-            latent_w = seq_len // latent_h
-            z = z.reshape(b, latent_h, latent_w, channels).transpose(0, 3, 1, 2)
+        from backend.engine.common.vae import reshape_packed_latents_to_nchw
+
+        z = reshape_packed_latents_to_nchw(self._latents_for_vae_preview(latents))
 
         if session.get("use_special_preprocess"):
-            z = self._vae_preprocess_special(
+            from backend.engine.common.vae import apply_flux2_latent_preprocess_if_enabled
+
+            z, _, _ = apply_flux2_latent_preprocess_if_enabled(
+                self.ctx,
                 z,
+                session["vae_cfg"],
                 session["vae_weights"],
                 session["orig_scaling"],
                 session["orig_shift"],
             )
 
-        image = session["vae"].forward(z)
-        pixels = vae_output_to_uint8_hwc(image, self.ctx)
-        return Image.fromarray(pixels)
+        return vae_forward_to_pil(self.ctx, session["vae"], z)
 
     @staticmethod
     def _latents_for_vae_preview(latents: Any) -> Any:
@@ -756,7 +664,7 @@ class ImagePipeline:
         config: Any = None,
         on_log: Callable | None = None,
     ) -> None:
-        bundle_root = self._local_bundle_root(entry, version_key)
+        bundle_root = _local_bundle_root_fn(self._project_root, entry, version_key)
         if bool(getattr(config, "vae_preview_warmup", False)) and bundle_root and preview_state.get("flux2_vae") is None:
             from backend.engine.families.flux2.vae_mlx import load_flux2_vae_decoder
 
@@ -1054,11 +962,13 @@ class ImagePipeline:
         if ctx_exec.cancel_token.is_cancelled():
             return None
 
-        bundle_root = self._local_bundle_root(entry, version_key or None)
-        assert_media_bundle_ready(bundle_root, family=family, model_id=model_key)
+        bundle_root = _local_bundle_root_fn(self._project_root, entry, version_key or None)
+        validate_bundle_graph_step(
+            bundle_root, family=family, model_id=model_key, on_log=on_log
+        )
 
-        steps_default = self._registry_scalar_default(entry, "steps", 4)
-        guidance_default = self._registry_scalar_default(entry, "guidance", 0.0)
+        steps_default = _registry_scalar_default_fn(entry, "steps", 4)
+        guidance_default = _registry_scalar_default_fn(entry, "guidance", 0.0)
         _meta = request.metadata or {}
 
         steps = int(request.steps) if request.steps is not None else int(steps_default)
@@ -1067,12 +977,6 @@ class ImagePipeline:
         guidance = runtime_contract.resolve_guidance_scalar(guidance)
         preview_mode, preview_interval, preview_max_edge = _resolve_image_preview_settings(entry)
         preview_state: dict[str, Any] = {}
-
-        pipeline_graph_step(
-            "validate_bundle",
-            on_log,
-            message=f"ok family={family} root={bundle_root}",
-        )
 
         enc_loaded = self._image_encode_load_for_inference(
             request=request,
@@ -1119,12 +1023,8 @@ class ImagePipeline:
         image_seq_len = (h // 16) * (w // 16)
         timesteps = scheduler.set_timesteps(**semantics.set_timesteps_kwargs)
         sigmas = getattr(scheduler, 'sigmas', None)
-        # Match diffusers: time MLP input = scheduler.timesteps[i] (not unsafe float() on MLX sigmas).
         sched_ts = getattr(scheduler, "timesteps", None)
-        timestep_embed_schedule: list[float] | None = None
-        if sched_ts is not None:
-            arr = np.asarray(sched_ts, dtype=np.float64).reshape(-1)
-            timestep_embed_schedule = [float(x) for x in arr.tolist()]
+        timestep_embed_schedule = timestep_embed_schedule_from_scheduler(scheduler)
 
         if on_log:
             parts = [
@@ -1355,12 +1255,9 @@ class ImagePipeline:
         if ctx_exec.cancel_token.is_cancelled():
             return None
 
-        bundle_root = self._local_bundle_root(entry, version_key or None)
-        assert_media_bundle_ready(bundle_root, family=family, model_id=model_key)
-        pipeline_graph_step(
-            "validate_bundle",
-            on_log,
-            message=f"ok family={family} root={bundle_root}",
+        bundle_root = _local_bundle_root_fn(self._project_root, entry, version_key or None)
+        validate_bundle_graph_step(
+            bundle_root, family=family, model_id=model_key, on_log=on_log
         )
         from PIL import Image
 
@@ -1370,13 +1267,10 @@ class ImagePipeline:
         w, h = self._align_hw_multiples(w0, h0, align=16)
         pil = self._center_crop_pil(pil, w, h)
 
-        vae_cfg_pre: dict[str, Any] = {}
         vae_dir_pre = (bundle_root / "vae") if bundle_root else None
-        if vae_dir_pre and (vae_dir_pre / "config.json").exists():
-            import json
+        from backend.engine.common.vae import read_vae_dir_config
 
-            with open(vae_dir_pre / "config.json") as f:
-                vae_cfg_pre = json.load(f)
+        vae_cfg_pre, _, _ = read_vae_dir_config(vae_dir_pre)
         vae_cls_pre = str(vae_cfg_pre.get("_class_name") or "")
         uses_encode_bridge = vae_cls_pre in (
             "AutoencoderKLFlux2",
@@ -1414,7 +1308,7 @@ class ImagePipeline:
         fidelity = max(0.0, min(1.0, fidelity))
         edit_conditioning_concat = bool(getattr(config, "edit_conditioning_concat", False))
 
-        steps_default = self._registry_scalar_default(entry, "steps", 4)
+        steps_default = _registry_scalar_default_fn(entry, "steps", 4)
         _meta_ed = request.metadata or {}
         steps = int(request.steps) if request.steps is not None else int(steps_default)
         steps = max(1, steps)
@@ -1423,7 +1317,7 @@ class ImagePipeline:
         init_timestep = 0
         if fidelity > 0.0 and not edit_conditioning_concat:
             init_timestep = max(1, int(steps * fidelity))
-        guidance_default = self._registry_scalar_default(entry, "guidance", 0.0)
+        guidance_default = _registry_scalar_default_fn(entry, "guidance", 0.0)
         if request.guidance is not None:
             guidance = float(request.guidance)
         else:
@@ -1482,10 +1376,7 @@ class ImagePipeline:
         timesteps = scheduler.set_timesteps(**semantics.set_timesteps_kwargs)
         sigmas = getattr(scheduler, "sigmas", None)
         sched_ts = getattr(scheduler, "timesteps", None)
-        timestep_embed_schedule: list[float] | None = None
-        if sched_ts is not None:
-            arr = np.asarray(sched_ts, dtype=np.float64).reshape(-1)
-            timestep_embed_schedule = [float(x) for x in arr.tolist()]
+        timestep_embed_schedule = timestep_embed_schedule_from_scheduler(scheduler)
 
         if init_timestep > 0 and (not timesteps or int(timesteps[0]) != int(init_timestep)):
             raise RuntimeError(
@@ -1679,7 +1570,7 @@ class ImagePipeline:
         base_model_id, _ = parse_model_version(request.model)
         entry = self._registry.get(base_model_id)
         if entry is not None:
-            lora_support = self._registry_scalar_default(entry, "lora_support", False)
+            lora_support = _registry_scalar_default_fn(entry, "lora_support", False)
             if not lora_support:
                 raise RuntimeError(
                     f"Model {base_model_id!r} does not declare LoRA support; "
@@ -1725,7 +1616,7 @@ class ImagePipeline:
         model = trans_cls(config, self.ctx)
         remap_fn = _get_weight_remap(family)
 
-        bundle_root = self._local_bundle_root(entry, version_key)
+        bundle_root = _local_bundle_root_fn(self._project_root, entry, version_key)
         tp = (bundle_root / "transformer") if bundle_root else None
         if tp is None or not tp.exists():
             return None
@@ -1750,7 +1641,7 @@ class ImagePipeline:
         if allow_cache and self._cache is not None:
             from backend.engine.common.weights import parse_size_gb
 
-            ver = self._resolve_version_block(entry, version_key)
+            ver = _resolve_version_block_fn(entry, version_key)
             size_str = ""
             if ver:
                 size_str = str(ver.get("size") or "")
@@ -1759,31 +1650,6 @@ class ImagePipeline:
                 size_str = str(raw.get("size") or "10GB")
             self._cache.put(cache_key, model, parse_size_gb(size_str))
         return model
-
-    def _vae_preprocess_special(self, latents, vae_weights, scaling_factor, shift_factor):
-        """Special VAE preprocessing — flux2 style (triggered by weight detection, not family-hardcoded)."""
-        ctx = self.ctx
-
-        bn_mean = vae_weights.get("bn.running_mean", ctx.zeros((128,))).reshape(1, -1, 1, 1)
-        bn_var = vae_weights.get("bn.running_var", ctx.ones((128,))).reshape(1, -1, 1, 1)
-        latents = latents * ctx.sqrt(bn_var + 1e-4) + bn_mean
-
-        B, C_, H_, W_ = latents.shape
-        latents = latents.reshape(B, C_ // 4, 2, 2, H_, W_)
-        latents = ctx.permute(latents, (0, 1, 4, 2, 5, 3))
-        latents = latents.reshape(B, C_ // 4, H_ * 2, W_ * 2)
-
-        latents = (latents / scaling_factor) + shift_factor
-        latents = ctx.permute(latents, (0, 2, 3, 1))
-
-        pw = vae_weights.get("post_quant_conv.weight")
-        pb = vae_weights.get("post_quant_conv.bias")
-        if pw is not None and pb is not None:
-            latents = ctx.conv2d(latents, ctx.permute(pw, (0, 2, 3, 1)), stride=1, padding=0)
-            latents = latents + pb.reshape(1, 1, 1, -1)
-
-        latents = ctx.permute(latents, (0, 3, 1, 2))
-        return latents
 
     def _vae_decode(
         self,
@@ -1795,27 +1661,21 @@ class ImagePipeline:
     ):
         """VAE decode latent → PIL Image."""
         ctx = self.ctx
+        from backend.engine.common.vae import (
+            apply_flux2_latent_preprocess_if_enabled,
+            create_loaded_vae_decoder,
+            load_vae_weight_dict,
+            read_vae_dir_config,
+            reshape_packed_latents_to_nchw,
+            vae_forward_to_pil,
+            vae_output_to_uint8_hwc,
+        )
         from PIL import Image
-        from backend.engine.common.vae import VAEDecoder, remap_vae_weights, vae_output_to_uint8_hwc
 
-        bundle_root = self._local_bundle_root(entry, version_key)
+        bundle_root = _local_bundle_root_fn(self._project_root, entry, version_key)
         vae_dir = (bundle_root / "vae") if bundle_root else None
-
-        scaling_factor = 1.0
-        shift_factor = 0.0
-        vae_cfg: dict[str, Any] = {}
-        if vae_dir and (vae_dir / "config.json").exists():
-            import json
-            with open(vae_dir / "config.json") as f:
-                vae_cfg = json.load(f)
-            scaling_factor = float(vae_cfg.get("scaling_factor", 1.0))
-            shift_factor = float(vae_cfg.get("shift_factor", 0.0))
-
-        if latents.ndim == 3:
-            B, seq_len, channels = latents.shape
-            latent_h = int(seq_len ** 0.5)
-            latent_w = seq_len // latent_h
-            latents = latents.reshape(B, latent_h, latent_w, channels).transpose(0, 3, 1, 2)
+        vae_cfg, scaling_factor, shift_factor = read_vae_dir_config(vae_dir)
+        latents = reshape_packed_latents_to_nchw(latents)
 
         vae_cls = str(vae_cfg.get("_class_name") or "")
         entry_family = str(getattr(entry, "family", "") or "") if entry is not None else ""
@@ -1831,45 +1691,17 @@ class ImagePipeline:
                 image_cls=Image,
             )
 
-        vae_weights: dict[str, Any] = {}
-        if vae_dir and vae_dir.exists():
-            saf_paths = sorted(vae_dir.glob("*.safetensors"))
-            if saf_paths:
-                for sf in saf_paths:
-                    vae_weights.update(ctx.load_weights(str(sf)))
-            elif (vae_dir / "config.json").is_file():
-                raise RuntimeError(
-                    f"VAE directory has config but no *.safetensors under {vae_dir}; "
-                    "cannot decode (install model weights)."
-                )
-
-        # Flux2-style BN/post_quant path — only when config enables quant/post_quant paths.
-        # LongCat / standard AutoencoderKL has use_quant_conv=false; stray key names in files
-        # must NOT trigger this branch or latents are corrupted before decode.
-        use_quant_path = bool(vae_cfg.get("use_quant_conv", False))
-        use_post_quant_path = bool(vae_cfg.get("use_post_quant_conv", False))
-        if (use_quant_path or use_post_quant_path) and (
-            "bn.running_mean" in vae_weights or "post_quant_conv.weight" in vae_weights
-        ):
-            latents = self._vae_preprocess_special(latents, vae_weights, scaling_factor, shift_factor)
-            scaling_factor = 1.0
-            shift_factor = 0.0
-
-        C = latents.shape[1] if latents.ndim >= 4 else 16
-        vae = VAEDecoder(latent_channels=C, ctx=ctx, scaling_factor=scaling_factor, shift_factor=shift_factor)
-
-        if not vae_weights:
-            raise RuntimeError(
-                f"No VAE weights loaded for decode (bundle_root={bundle_root}, vae_dir={vae_dir}). "
-                "Ensure models/.../vae/*.safetensors exists."
-            )
-
-        decoder_w = remap_vae_weights(vae_weights)
+        vae_weights = load_vae_weight_dict(self.ctx, vae_dir, fail_if_config_only=True)
+        latents, scaling_factor, shift_factor = apply_flux2_latent_preprocess_if_enabled(
+            ctx, latents, vae_cfg, vae_weights, scaling_factor, shift_factor
+        )
+        vae, decoder_w, loaded, skipped = create_loaded_vae_decoder(
+            ctx, latents, vae_weights, scaling_factor, shift_factor
+        )
         if not decoder_w:
             raise RuntimeError(
                 f"VAE weights under {vae_dir} produced no decoder tensors after remap; check bundle."
             )
-        loaded, skipped = vae.load_weights(list(decoder_w.items()), strict=False)
         if on_log:
             on_log(
                 "info",
@@ -1884,11 +1716,4 @@ class ImagePipeline:
                     ]
                 ),
             )
-        if not any(k.startswith("conv_in.") for k in loaded):
-            raise RuntimeError(
-                "VAE decoder failed to load conv_in weights; decode would be garbage. "
-                f"skipped_sample={skipped[:8]}"
-            )
-        image = vae.forward(latents)
-        pixels = vae_output_to_uint8_hwc(image, self.ctx)
-        return Image.fromarray(pixels)
+        return vae_forward_to_pil(ctx, vae, latents)

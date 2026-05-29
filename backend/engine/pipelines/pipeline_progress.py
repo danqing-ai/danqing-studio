@@ -1,7 +1,10 @@
 """Shared progress + graph-step helpers for image/video pipelines."""
 from __future__ import annotations
 
-from typing import Callable
+from pathlib import Path
+from typing import Any, Callable
+
+import numpy as np
 
 # Denoise uses most of the bar; VAE decode + save use the tail (queue ETA uses 1 - progress).
 DENOISE_PROGRESS_SHARE = 0.88
@@ -16,6 +19,32 @@ def pipeline_graph_step(
 ) -> None:
     if on_log is not None:
         on_log("info", f"[{node_id}] {message}")
+
+
+def validate_bundle_graph_step(
+    bundle_root: Path | None,
+    *,
+    family: str,
+    model_id: str,
+    on_log: Callable[[str, str], None] | None,
+) -> None:
+    from backend.engine.common.bundle_layout import assert_media_bundle_ready
+
+    assert_media_bundle_ready(bundle_root, family=family, model_id=model_id)
+    pipeline_graph_step(
+        "validate_bundle",
+        on_log,
+        message=f"ok family={family} root={bundle_root}",
+    )
+
+
+def timestep_embed_schedule_from_scheduler(scheduler: Any) -> list[float] | None:
+    """Continuous noise-level values for time-MLP live on ``scheduler.timesteps``."""
+    sched_ts = getattr(scheduler, "timesteps", None)
+    if sched_ts is None:
+        return None
+    arr = np.asarray(sched_ts, dtype=np.float64).reshape(-1)
+    return [float(x) for x in arr.tolist()]
 
 
 def emit_denoise_progress(

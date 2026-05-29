@@ -10,14 +10,7 @@ from typing import Any
 
 import numpy as np
 
-
-def _registry_scalar_default(entry: Any, key: str, fallback: Any) -> Any:
-    spec = (entry.parameters or {}).get(key)
-    if spec is None:
-        return fallback
-    if isinstance(spec, dict):
-        return spec.get("default", fallback)
-    return spec
+from backend.engine.common.pipeline_registry import registry_scalar_default
 
 
 @dataclass(frozen=True)
@@ -237,13 +230,13 @@ class SchedulerSemanticsResolver:
         height: int,
         init_timestep: int | None = None,
     ) -> SchedulerSemantics:
-        scheduler_registry = _registry_scalar_default(entry, "scheduler", None)
+        scheduler_registry = registry_scalar_default(entry, "scheduler", None)
         scheduler_meta = (request_metadata or {}).get("scheduler")
         scheduler_name = request_scheduler or scheduler_meta or scheduler_registry or "flow_match_euler"
 
         image_seq_len = (height // 16) * (width // 16)
         sched_extra: dict[str, Any] = {}
-        mu = _registry_scalar_default(entry, "scheduler_mu", None)
+        mu = registry_scalar_default(entry, "scheduler_mu", None)
         if mu is not None:
             sched_extra["mu"] = float(mu)
         for key in (
@@ -252,27 +245,27 @@ class SchedulerSemanticsResolver:
             "scheduler_base_shift",
             "scheduler_max_shift",
         ):
-            value = _registry_scalar_default(entry, key, None)
+            value = registry_scalar_default(entry, key, None)
             if value is not None:
                 sched_extra[key] = value
 
-        sigma_schedule = _registry_scalar_default(entry, "scheduler_sigma_schedule", None)
+        sigma_schedule = registry_scalar_default(entry, "scheduler_sigma_schedule", None)
         if sigma_schedule == "linspace_1_to_inv_steps":
             sched_extra["sigmas"] = np.linspace(
                 1.0, 1.0 / float(steps), steps, dtype=np.float64
             ).tolist()
 
-        req_sigma_reg = _registry_scalar_default(entry, "requires_sigma_shift", None)
+        req_sigma_reg = registry_scalar_default(entry, "requires_sigma_shift", None)
         requires_sigma_shift = (
             bool(req_sigma_reg)
             if req_sigma_reg is not None
             else bool(getattr(config, "requires_sigma_shift", False))
         )
-        use_emu_reg = _registry_scalar_default(entry, "use_empirical_mu", None)
+        use_emu_reg = registry_scalar_default(entry, "use_empirical_mu", None)
         use_empirical_mu = bool(use_emu_reg) if use_emu_reg is not None else requires_sigma_shift
 
-        cfg_renorm = bool(_registry_scalar_default(entry, "enable_cfg_renorm", False))
-        cfg_renorm_min = float(_registry_scalar_default(entry, "cfg_renorm_min", 0.0))
+        cfg_renorm = bool(registry_scalar_default(entry, "enable_cfg_renorm", False))
+        cfg_renorm_min = float(registry_scalar_default(entry, "cfg_renorm_min", 0.0))
 
         kwargs: dict[str, Any] = {
             "num_inference_steps": int(steps),

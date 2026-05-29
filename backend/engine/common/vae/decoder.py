@@ -6,7 +6,8 @@ Standard SD VAE architecture. Shared by all Flux/Z-Image/Qwen/FIBO image models.
 from __future__ import annotations
 
 import importlib
-from typing import Any
+from pathlib import Path
+from typing import Any, Callable
 
 from backend.engine.runtime._base import RuntimeContext
 
@@ -308,6 +309,191 @@ def vae_output_to_uint8_hwc(image: Any, ctx: Any | None = None) -> Any:
     arr = (arr + 1.0) / 2.0 * 255.0
     np.clip(arr, 0.0, 255.0, out=arr)
     return np.rint(arr).astype(np.uint8)
+
+
+def flux2_preprocess_latents_for_decode(
+    ctx: RuntimeContext,
+    latents: Any,
+    vae_weights: dict,
+    scaling_factor: float,
+    shift_factor: float,
+) -> Any:
+    """Flux2-style BN + post_quant path before standard VAE decode."""
+    bn_mean = vae_weights.get("bn.running_mean", ctx.zeros((128,))).reshape(1, -1, 1, 1)
+    bn_var = vae_weights.get("bn.running_var", ctx.ones((128,))).reshape(1, -1, 1, 1)
+    latents = latents * ctx.sqrt(bn_var + 1e-4) + bn_mean
+
+    b, c_, h_, w_ = latents.shape
+    latents = latents.reshape(b, c_ // 4, 2, 2, h_, w_)
+    latents = ctx.permute(latents, (0, 1, 4, 2, 5, 3))
+    latents = latents.reshape(b, c_ // 4, h_ * 2, w_ * 2)
+
+    latents = (latents / scaling_factor) + shift_factor
+    latents = ctx.permute(latents, (0, 2, 3, 1))
+
+    pw = vae_weights.get("post_quant_conv.weight")
+    pb = vae_weights.get("post_quant_conv.bias")
+    if pw is not None and pb is not None:
+        latents = ctx.conv2d(latents, ctx.permute(pw, (0, 2, 3, 1)), stride=1, padding=0)
+        latents = latents + pb.reshape(1, 1, 1, -1)
+
+    return ctx.permute(latents, (0, 3, 1, 2))
+
+
+def reshape_packed_latents_to_nchw(latents: Any) -> Any:
+    """``[B, seq, C]`` packed tokens → ``[B, C, H, W]`` for standard VAE decode."""
+    if getattr(latents, "ndim", None) != 3:
+        return latents
+    b, seq_len, channels = latents.shape
+    latent_h = int(seq_len ** 0.5)
+    latent_w = seq_len // latent_h
+    return latents.reshape(b, latent_h, latent_w, channels).transpose(0, 3, 1, 2)
+
+
+def infer_latent_channels(vae_cfg: dict[str, Any], vae_weights: dict[str, Any], *, default: int = 16) -> int:
+    lc = vae_cfg.get("latent_channels")
+    if lc is not None:
+        return int(lc)
+    wkey = "encoder.conv_out.weight"
+    if wkey in vae_weights:
+        sh = getattr(vae_weights[wkey], "shape", ())
+        if len(sh) >= 1:
+            return int(sh[0]) // 2
+    return default
+
+
+def read_vae_dir_config(vae_dir: Path | None) -> tuple[dict[str, Any], float, float]:
+    vae_cfg: dict[str, Any] = {}
+    scaling_factor = 1.0
+    shift_factor = 0.0
+    if vae_dir and (vae_dir / "config.json").exists():
+        import json
+
+        with open(vae_dir / "config.json") as f:
+            vae_cfg = json.load(f)
+        scaling_factor = float(vae_cfg.get("scaling_factor", 1.0))
+        shift_factor = float(vae_cfg.get("shift_factor", 0.0))
+    return vae_cfg, scaling_factor, shift_factor
+
+
+def load_vae_weight_dict(
+    ctx: RuntimeContext,
+    vae_dir: Path | None,
+    *,
+    fail_if_config_only: bool = False,
+) -> dict[str, Any]:
+    vae_weights: dict[str, Any] = {}
+    if not vae_dir or not vae_dir.exists():
+        return vae_weights
+    saf_paths = sorted(vae_dir.glob("*.safetensors"))
+    if saf_paths:
+        for sf in saf_paths:
+            vae_weights.update(ctx.load_weights(str(sf)))
+    elif fail_if_config_only and (vae_dir / "config.json").is_file():
+        raise RuntimeError(
+            f"VAE directory has config but no *.safetensors under {vae_dir}; "
+            "cannot decode (install model weights)."
+        )
+    return vae_weights
+
+
+def flux2_quant_preprocess_gate(vae_cfg: dict[str, Any], vae_weights: dict[str, Any]) -> bool:
+    use_quant = bool(vae_cfg.get("use_quant_conv", False))
+    use_post = bool(vae_cfg.get("use_post_quant_conv", False))
+    return (use_quant or use_post) and (
+        "bn.running_mean" in vae_weights or "post_quant_conv.weight" in vae_weights
+    )
+
+
+def apply_flux2_latent_preprocess_if_enabled(
+    ctx: RuntimeContext,
+    latents: Any,
+    vae_cfg: dict[str, Any],
+    vae_weights: dict[str, Any],
+    scaling_factor: float,
+    shift_factor: float,
+) -> tuple[Any, float, float]:
+    if not flux2_quant_preprocess_gate(vae_cfg, vae_weights):
+        return latents, scaling_factor, shift_factor
+    latents = flux2_preprocess_latents_for_decode(
+        ctx, latents, vae_weights, scaling_factor, shift_factor
+    )
+    return latents, 1.0, 0.0
+
+
+def build_standard_vae_preview_session(
+    ctx: RuntimeContext,
+    vae_dir: Path | None,
+    *,
+    on_log: Callable[[str, str], None] | None = None,
+) -> dict[str, Any] | None:
+    """Load a standard AutoencoderKL decoder once for step previews."""
+    from backend.engine.common.vae.weight_remap import load_vae_decoder_from_weights
+
+    vae_cfg, scaling_factor, shift_factor = read_vae_dir_config(vae_dir)
+    vae_weights = load_vae_weight_dict(ctx, vae_dir)
+    if not vae_weights:
+        return None
+
+    use_special_preprocess = flux2_quant_preprocess_gate(vae_cfg, vae_weights)
+    if use_special_preprocess:
+        scaling_factor, shift_factor = 1.0, 0.0
+
+    vae = VAEDecoder(
+        latent_channels=infer_latent_channels(vae_cfg, vae_weights),
+        ctx=ctx,
+        scaling_factor=scaling_factor,
+        shift_factor=shift_factor,
+    )
+    decoder_w, loaded, _skipped = load_vae_decoder_from_weights(vae, vae_weights)
+    if not decoder_w:
+        return None
+    if on_log:
+        on_log(
+            "info",
+            f"preview VAE session ready decoder_tensors={len(decoder_w)} "
+            f"loaded_params={len(loaded)}",
+        )
+    return {
+        "kind": "standard",
+        "vae": vae,
+        "vae_cfg": vae_cfg,
+        "vae_weights": vae_weights,
+        "use_special_preprocess": use_special_preprocess,
+        "orig_scaling": float(vae_cfg.get("scaling_factor", 1.0)),
+        "orig_shift": float(vae_cfg.get("shift_factor", 0.0)),
+    }
+
+
+def create_loaded_vae_decoder(
+    ctx: RuntimeContext,
+    latents: Any,
+    vae_weights: dict[str, Any],
+    scaling_factor: float,
+    shift_factor: float,
+    *,
+    default_channels: int = 16,
+    require_conv_in: bool = True,
+) -> tuple[VAEDecoder, dict[str, Any], list[Any], list[Any]]:
+    from backend.engine.common.vae.weight_remap import load_vae_decoder_from_weights
+
+    channels = latents.shape[1] if getattr(latents, "ndim", 0) >= 4 else default_channels
+    vae = VAEDecoder(
+        latent_channels=channels,
+        ctx=ctx,
+        scaling_factor=scaling_factor,
+        shift_factor=shift_factor,
+    )
+    decoder_w, loaded, skipped = load_vae_decoder_from_weights(
+        vae, vae_weights, require_conv_in=require_conv_in
+    )
+    return vae, decoder_w, loaded, skipped
+
+
+def vae_forward_to_pil(ctx: RuntimeContext, vae: Any, latents: Any):
+    from PIL import Image
+
+    return Image.fromarray(vae_output_to_uint8_hwc(vae.forward(latents), ctx))
 
 
 def _collect_nn_params(obj: Any, prefix: str, result: dict):

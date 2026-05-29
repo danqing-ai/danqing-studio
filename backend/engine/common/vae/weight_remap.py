@@ -58,6 +58,25 @@ def remap_vae_weights(weights: dict) -> dict:
     return remapped
 
 
+def load_vae_decoder_from_weights(
+    vae: Any,
+    vae_weights: dict,
+    *,
+    require_conv_in: bool = True,
+) -> tuple[dict, list, list]:
+    """Attach remapped VAE weights; return ``(decoder_w, loaded, skipped)``."""
+    decoder_w = remap_vae_weights(vae_weights)
+    if not decoder_w:
+        return {}, [], []
+    loaded, skipped = vae.load_weights(list(decoder_w.items()), strict=False)
+    if require_conv_in and not any(k.startswith("conv_in.") for k in loaded):
+        raise RuntimeError(
+            "VAE decoder failed to load conv_in weights; decode would be garbage. "
+            f"skipped_sample={skipped[:8]}"
+        )
+    return decoder_w, loaded, skipped
+
+
 def prepare_vae_encoder_weight_items(weights: dict) -> list[tuple[str, Any]]:
     """Pick ``encoder.*`` tensors from a full VAE checkpoint and remap keys for ``VAEEncoder.load_weights``.
 

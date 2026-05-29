@@ -28,8 +28,6 @@ from backend.core.contracts import (
 from backend.engine.common.cache import ModelCache
 from backend.engine.common.pipeline_registry import (
     local_bundle_root as _local_bundle_root_fn,
-    registry_scalar_default as _registry_scalar_default_fn,
-    resolve_project_path as _resolve_project_path_fn,
     resolve_version_block as _resolve_version_block_fn,
 )
 from backend.engine.config.model_configs import (
@@ -74,19 +72,6 @@ class MusicPipeline:
         self._cache = model_cache
         self._project_root = project_root or Path.cwd()
 
-    def _resolve_path(self, local_path: str) -> Path:
-        return _resolve_project_path_fn(self._project_root, local_path)
-
-    @staticmethod
-    def _registry_scalar_default(entry, key: str, fallback):
-        return _registry_scalar_default_fn(entry, key, fallback)
-
-    def _resolve_version_block(self, entry, version_key: str | None) -> dict | None:
-        return _resolve_version_block_fn(entry, version_key)
-
-    def _local_bundle_root(self, entry, version_key: str | None) -> Path | None:
-        return _local_bundle_root_fn(self._project_root, entry, version_key)
-
     def _generator_cache_key(self, entry, version_key: str | None, family: str) -> str:
         return f"audio:{entry.id}:{version_key or 'default'}:{family}"
 
@@ -104,7 +89,7 @@ class MusicPipeline:
         if self._cache is not None:
             from backend.engine.common.weights import parse_size_gb
 
-            ver = self._resolve_version_block(entry, version_key)
+            ver = _resolve_version_block_fn(entry, version_key)
             size_str = ""
             if ver:
                 size_str = str(ver.get("size") or "")
@@ -131,7 +116,7 @@ class MusicPipeline:
         if entry is None:
             raise RuntimeError(f"Model {model_id!r} not found in registry")
 
-        bundle_root = self._local_bundle_root(entry, version_key)
+        bundle_root = _local_bundle_root_fn(self._project_root, entry, version_key)
         if bundle_root is None or not bundle_root.is_dir():
             raise RuntimeError(f"Model bundle not found for {request.model!r}")
 

@@ -132,6 +132,64 @@ def validate_registry_document(data: dict[str, Any]) -> list[str]:
     return errors
 
 
+def audit_registry_document(data: dict[str, Any]) -> list[str]:
+    """Non-blocking shrink hints: duplicate profile fields, unused profiles, inheritance chain."""
+    hints: list[str] = []
+    if not isinstance(data, dict):
+        return hints
+
+    profiles = data.get("profiles") or {}
+    models = data.get("models") or {}
+    if not isinstance(profiles, dict) or not isinstance(models, dict):
+        return hints
+
+    referenced: set[str] = set()
+    for raw in models.values():
+        if isinstance(raw, dict):
+            profile_name = raw.get("profile")
+            if isinstance(profile_name, str) and profile_name.strip():
+                referenced.add(profile_name.strip())
+
+    for profile_id in profiles:
+        if profile_id not in referenced:
+            hints.append(f"profile {profile_id!r}: unused (no model references it)")
+
+    try:
+        expanded = expand_registry_document(data)
+    except ValueError:
+        return hints
+
+    for model_id, raw in models.items():
+        if not isinstance(raw, dict):
+            continue
+        profile_name = raw.get("profile")
+        if not isinstance(profile_name, str) or not profile_name.strip():
+            continue
+        profile_key = profile_name.strip()
+        profile = profiles.get(profile_key)
+        if not isinstance(profile, dict):
+            continue
+
+        for key in _STRIP_TOP_KEYS:
+            if key in raw and raw.get(key) == profile.get(key):
+                hints.append(
+                    f"model {model_id!r}: top-level {key!r} duplicates profile "
+                    f"{profile_key!r} (strip via apply_standard_profile)"
+                )
+
+        raw_params = raw.get("parameters")
+        profile_params = profile.get("parameters") if isinstance(profile.get("parameters"), dict) else {}
+        if isinstance(raw_params, dict) and isinstance(profile_params, dict):
+            for param_key, param_val in raw_params.items():
+                if param_key in profile_params and profile_params.get(param_key) == param_val:
+                    hints.append(
+                        f"model {model_id!r}: parameters.{param_key!r} duplicates profile "
+                        f"{profile_key!r}"
+                    )
+
+    return hints
+
+
 PROFILE_STANDARD = "image_dit_standard"
 PROFILE_VIDEO = "video_dit_standard"
 _STRIP_PARAM_KEYS = frozenset({"preview_mode", "preview_interval_steps", "preview_max_edge"})

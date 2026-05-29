@@ -6,6 +6,10 @@ from typing import Any, Callable
 
 from backend.core.contracts import ExecutionContext, VideoUpscaleRequest, parse_model_version
 from backend.engine.common.cache import ModelCache
+from backend.engine.common.pipeline_registry import (
+    local_bundle_root as _local_bundle_root_fn,
+    registry_scalar_default as _registry_scalar_default_fn,
+)
 from backend.engine.config.model_configs import get_config_class
 from backend.engine.families.hunyuan.sr import run_hunyuan_video_sr
 from backend.engine.families.hunyuan.text_encoder import get_hunyuan_text_encoder
@@ -29,13 +33,6 @@ class VideoUpscalePipeline:
         self._asset_store = asset_store
         self._cache = model_cache
         self._project_root = project_root or Path.cwd()
-
-    def _local_bundle_root(self, entry, version_key: str | None) -> Path | None:
-        vp = VideoPipeline(
-            self.ctx, self._registry, self._asset_store,
-            model_cache=self._cache, project_root=self._project_root,
-        )
-        return vp._local_bundle_root(entry, version_key)
 
     def run(
         self,
@@ -63,14 +60,14 @@ class VideoUpscalePipeline:
                 "only hunyuan SR bundles are supported."
             )
 
-        bundle_root = self._local_bundle_root(entry, version_key)
+        bundle_root = _local_bundle_root_fn(self._project_root, entry, version_key)
         if bundle_root is None:
             raise RuntimeError(f"HunyuanVideo SR bundle not installed for {model_key!r}")
 
         config_cls = get_config_class(family)
         config = config_cls()
         object.__setattr__(config, "use_meanflow", True)
-        vst = VideoPipeline._registry_scalar_default(entry, "vae_spatial_tiling", None)
+        vst = _registry_scalar_default_fn(entry, "vae_spatial_tiling", None)
         if vst is not None:
             config.vae_spatial_tiling = bool(vst)
         VideoPipeline.apply_hunyuan_text_encoder_paths(entry, config, self._project_root)

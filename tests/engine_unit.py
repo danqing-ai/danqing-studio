@@ -1621,6 +1621,28 @@ class RegistryProfilesTests(unittest.TestCase):
         self.assertEqual(before, after)
         self.assertEqual(doc["models"]["demo"]["profile"], "image_dit_standard")
 
+    def test_audit_registry_document_flags_duplicate_params(self) -> None:
+        from backend.core.registry_profiles import audit_registry_document
+
+        doc = {
+            "profiles": {
+                "p1": {
+                    "engine": "danqing-image",
+                    "parameters": {"steps": {"type": "int", "default": 4}},
+                }
+            },
+            "models": {
+                "demo": {
+                    "profile": "p1",
+                    "family": "flux2",
+                    "engine": "danqing-image",
+                    "parameters": {"steps": {"type": "int", "default": 4}},
+                }
+            },
+        }
+        hints = audit_registry_document(doc)
+        self.assertTrue(any("steps" in h and "duplicates profile" in h for h in hints))
+
 
 class BundleManifestTests(unittest.TestCase):
     def test_scan_components_classifies_files(self) -> None:

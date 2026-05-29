@@ -104,6 +104,18 @@ def remap_{family}_weights(weights: dict) -> dict:
     print(f'  _TRANSFORMER["{family}"] = ("backend.engine.families.{family}.transformer", "{cls_name}")')
     print(f'  _WEIGHT_REMAP["{family}"] = ("backend.engine.families.{family}.weights", "remap_{family}_weights")')
     print(f'  bundle_manifest.FAMILY_BUNDLE_CONTRACTS: add "{family}" required components')
+    units = len(
+        {
+            p.stem.removesuffix("_mlx").removesuffix("_cuda")
+            for p in family_dir.glob("*.py")
+            if p.name != "__init__.py"
+        }
+    )
+    if units > 8:
+        print(
+            f"\nWARN: {family} has {units} logical units (budget 8); consolidate stems before merge.",
+            file=sys.stderr,
+        )
     print("\nNext: model_configs dataclass + FAMILY_CONFIG_MAP + models_registry.json entry")
     print("See docs/engine_new_model_checklist.md")
     return 0
