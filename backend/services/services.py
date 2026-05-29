@@ -316,19 +316,42 @@ class SettingsService(ISettingsService):
                     }
                 else:
                     has_weights = self._path_has_bundle_weights(model_dir)
+                    family = getattr(config, "family", None) or ""
+                    components: dict[str, Any] | None = None
+                    if has_weights and family:
+                        from backend.core.bundle_manifest import bundle_component_status
+
+                        components = bundle_component_status(model_dir, family=family)
+
+                    version_entry: dict[str, Any] = {
+                        "status": "not_downloaded",
+                        "label": "Not downloaded",
+                        "ready": False,
+                    }
                     if has_weights:
-                        model_status["versions"][version_key] = {
-                            "status": "ready",
-                            "label": "Ready",
-                            "ready": True
-                        }
-                        any_ready = True
+                        if components is not None and not components.get("complete", True):
+                            version_entry = {
+                                "status": "incomplete",
+                                "label": "Missing components",
+                                "ready": False,
+                                "bundle_components": components,
+                            }
+                        else:
+                            version_entry = {
+                                "status": "ready",
+                                "label": "Ready",
+                                "ready": True,
+                            }
+                            if components is not None:
+                                version_entry["bundle_components"] = components
+                            any_ready = True
                     else:
-                        model_status["versions"][version_key] = {
+                        version_entry = {
                             "status": "incomplete",
                             "label": "Files missing",
-                            "ready": False
+                            "ready": False,
                         }
+                    model_status["versions"][version_key] = version_entry
             
             # Set overall model status
             if any_ready:

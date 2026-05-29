@@ -296,6 +296,14 @@
                         >
                           {{ $t('studio.ready') }}
                         </DqTag>
+                        <DqTag
+                          v-for="comp in versionBundleComponents(row.model.id, row.verKey)"
+                          :key="`${row.verKey}-${comp.name}`"
+                          :type="comp.ok ? 'success' : 'warning'"
+                          effect="plain"
+                        >
+                          {{ $t(`download.component.${comp.name}`) }}
+                        </DqTag>
                       </div>
                       <div
                         v-if="row.ver.source_type === 'derived'"
@@ -1006,6 +1014,19 @@ function modelVersionTableRows(model: ModelRow) {
     ver: ver as ModelVersion,
     model,
     vstatus: getVersionStatus(model.id, verKey),
+  }));
+}
+
+const BUNDLE_COMPONENT_ORDER = ['transformer', 'text_encoder', 'vae', 'tokenizer'] as const;
+
+function versionBundleComponents(modelId: string, verKey: string) {
+  const detail = modelsDetailedStatus.value[modelId];
+  const verStatus = detail?.versions?.[verKey];
+  const components = verStatus?.bundle_components?.components;
+  if (!components || typeof components !== 'object') return [];
+  return BUNDLE_COMPONENT_ORDER.filter((name) => name in components).map((name) => ({
+    name,
+    ok: Boolean(components[name]),
   }));
 }
 

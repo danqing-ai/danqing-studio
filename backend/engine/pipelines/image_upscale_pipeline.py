@@ -7,16 +7,18 @@ from typing import Any, Callable
 
 from backend.core.contracts import ExecutionContext, ImageUpscaleRequest, parse_model_version
 from backend.engine.common.cache import ModelCache
+from backend.engine.common.bundle_layout import assert_media_bundle_ready
 from backend.engine.common.pipeline_registry import (
     local_bundle_root as _local_bundle_root_fn,
     resolve_project_path as _resolve_project_path_fn,
     resolve_version_block as _resolve_version_block_fn,
 )
+from backend.engine.pipelines.pipeline_progress import pipeline_graph_step
 from backend.engine.runtime._base import RuntimeContext
 
 
 class ImageUpscalePipeline:
-    """注册表驱动的图像超分；当前 MLX 路径经 SeedVR2 ``upscale.run_seedvr2_upscale``。"""
+    """注册表驱动的图像超分；当前 MLX 路径经 SeedVR2 ``stem`` / ``stem_mlx``。"""
 
     def __init__(
         self,
@@ -57,17 +59,17 @@ class ImageUpscalePipeline:
             return None
 
         bundle_root = self._local_bundle_root(entry, version_key or None)
-        if bundle_root is None:
-            raise RuntimeError(
-                f"Model {model_key!r} has no installed bundle (version={version_key or 'default'}); "
-                f"cannot run {family!r} upscale."
-            )
+        assert_media_bundle_ready(bundle_root, family=family, model_id=model_key)
+        pipeline_graph_step(
+            "validate_bundle",
+            on_log,
+            message=f"ok family={family} root={bundle_root}",
+        )
 
         from backend.engine.upscale_job_registry import get_upscale_job_runner
-
-        run_upscale = get_upscale_job_runner(family)
-
         from PIL import Image
+
+        run_upscale_job = get_upscale_job_runner(family)
 
         src_path = ctx_exec.asset_store.get_file_path(request.source_asset_id)
         if not src_path.is_file():
@@ -88,15 +90,14 @@ class ImageUpscalePipeline:
                 on_log(level, msg)
 
         from backend.engine.common.weights import parse_size_gb
-        from backend.engine.families.seedvr2.upscale import ModelConfig, SeedVR2UpscalePipeline
-
-        run_upscale_job = get_upscale_job_runner(family)
+        from backend.engine.families.seedvr2.stem import ModelConfig, SeedVR2UpscalePipeline
 
         seedvr2_pipeline = None
         cache_key = f"upscale:image:{entry.id}:{version_key or 'default'}"
         if self._cache is not None:
             seedvr2_pipeline = self._cache.get(cache_key)
         if seedvr2_pipeline is None:
+            pipeline_graph_step("load_transformer", on_log)
             if "7b" in model_key.lower():
                 model_config = ModelConfig.seedvr2_7b()
             else:
@@ -107,6 +108,7 @@ class ImageUpscalePipeline:
                 size_str = str((ver or {}).get("size") or (getattr(entry, "raw", {}) or {}).get("size") or "8GB")
                 self._cache.put(cache_key, seedvr2_pipeline, parse_size_gb(size_str))
 
+        pipeline_graph_step("denoise", on_log, message="upscale")
         extra = run_upscale_job(
             bundle_path=bundle_root,
             model_key=model_key,
@@ -122,6 +124,7 @@ class ImageUpscalePipeline:
         if ctx_exec.cancel_token.is_cancelled():
             return None
 
+        pipeline_graph_step("save_asset", on_log)
         with Image.open(out_path) as pil:
             w, h = pil.size
         if on_progress:

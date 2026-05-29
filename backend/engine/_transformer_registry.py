@@ -207,8 +207,9 @@ def encode_video_prompt(
     """
     enc_cls = get_video_text_encoder_class(encoder_type)
     if encoder_type == "t5":
-        from backend.engine.pipelines.image_pipeline import _t5_encoder_bundle_paths
-        t5_dir, t5_tok_dir = _t5_encoder_bundle_paths(bundle_root)
+        from backend.engine.common.bundle_layout import t5_encoder_bundle_paths
+
+        t5_dir, t5_tok_dir = t5_encoder_bundle_paths(bundle_root)
         max_seq = int(getattr(config, "max_text_seq_length", 512))
         enc = enc_cls(ctx, t5_dir, max_seq_len=max_seq, tokenizer_path=t5_tok_dir)
         return enc.encode([text]), None, None, None, None, None

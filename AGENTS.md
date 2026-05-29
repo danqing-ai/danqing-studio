@@ -30,6 +30,11 @@ DanQing Studio — plugin-style **image / video** generation on **MLX** (Apple S
 | Task kinds | `backend/core/task_kinds.py` (do not hardcode kind strings) |
 | Cursor rules | `.cursor/rules/model-migration.mdc`, `.cursor/rules/no-silent-degrade.mdc`, `.cursor/rules/models-registry-maintain.mdc` |
 | Dual-platform design | `docs/dual_platform_architecture.md` |
+| Registry profiles (expand / shrink) | `backend/core/registry_profiles.py` |
+| Bundle manifest + family contracts | `backend/core/bundle_manifest.py` |
+| Bundle layout (T5 paths, ready assert) | `backend/engine/common/bundle_layout.py` |
+| Pipeline progress + graph step logs | `backend/engine/pipelines/pipeline_progress.py` |
+| Engine refactor index | `docs/engine_refactor_plan.md` → `docs/danqing_architecture_reference.md` |
 | New model integration checklist | `docs/engine_new_model_checklist.md` |
 | Desktop | `desktop/`, `make pack-macos-desktop` |
 
@@ -189,7 +194,7 @@ make verify-engine-stack
 |-------|--------|------|--------|
 | flux2-klein-9b | create | 31.9 dB | PASS |
 | z-image | create | 28.6 dB | WARN |
-| z-image-turbo | create | 16.7 dB | FAIL |
+| z-image-turbo | create | 44.7 dB | PASS |
 
 ---
 

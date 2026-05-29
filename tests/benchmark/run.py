@@ -70,7 +70,7 @@ STDERR_HEAD_CHARS = 4000
 
 
 def _seedvr2_flat_bundle_ready(model_id: str) -> bool:
-    """与 ``job_mlx.validate_seedvr2_bundle`` 一致：扁平目录下两份 safetensors 齐全。"""
+    """与 ``stem.validate_seedvr2_bundle`` 一致：扁平目录下两份 safetensors 齐全。"""
     base = model_id.split(":", 1)[0].strip()
     try:
         root = resolve_fp16_bundle_dir(base)
@@ -79,7 +79,7 @@ def _seedvr2_flat_bundle_ready(model_id: str) -> bool:
     if not root.is_dir():
         return False
     try:
-        from backend.engine.families.seedvr2.upscale import expected_seedvr2_weight_files
+        from backend.engine.families.seedvr2.stem import expected_seedvr2_weight_files
     except Exception:
         return False
     for name in expected_seedvr2_weight_files(base):

@@ -36,6 +36,9 @@ def _load_text(path):
 
 
 def main():
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+
     failures = []
 
     # =========================================================================
@@ -50,10 +53,20 @@ def main():
     # =========================================================================
     # 2. models 与 actions
     # =========================================================================
+    from backend.core.registry_profiles import validate_registry_document
+
+    failures.extend(validate_registry_document(data))
+
     models = data.get("models", {})
     for m in models.values():
         engine = m.get("engine", "")
-        actions = set(m.get("actions", []))
+        actions_raw = m.get("actions", {})
+        if isinstance(actions_raw, dict):
+            actions = set(actions_raw.keys())
+        elif isinstance(actions_raw, list):
+            actions = set(actions_raw)
+        else:
+            actions = set()
         if engine.startswith("danqing-image"):
             invalid = actions - REGISTRY_IMAGE_ACTION_KEYS
         elif engine.startswith("danqing-video"):

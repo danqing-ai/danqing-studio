@@ -72,6 +72,7 @@ ALL_RULES = (
     "modulation",
     "registry",
 )
+RULE_CHOICES = ALL_RULES + ("parity",)
 
 
 def _section_marker(name: str) -> str:
@@ -338,6 +339,28 @@ def check_registry() -> list[str]:
     return failures
 
 
+def check_parity() -> list[str]:
+    from backend.engine import _transformer_registry as tr
+    from backend.engine._transformer_registry import get_transformer_class
+    from backend.engine.config.model_configs import get_config_class
+    from backend.engine.runtime.mlx import MLXContext
+
+    failures: list[str] = []
+    for family in sorted(tr._TRANSFORMER.keys()):
+        try:
+            config = get_config_class(family)()
+            ctx = MLXContext()
+            model = get_transformer_class(family)(config, ctx)
+            if hasattr(model, "_build_param_map"):
+                model._build_param_map()
+            param_map = getattr(model, "_param_map", None)
+            if not isinstance(param_map, dict) or not param_map:
+                failures.append(f"{family}: empty or missing _param_map")
+        except Exception as exc:
+            failures.append(f"{family}: failed to collect param keys: {exc}")
+    return failures
+
+
 RULE_RUNNERS: dict[str, Callable[[dict[str, list[str]]], list[str]]] = {
     "imports": check_imports,
     "layout": check_layout,
@@ -347,6 +370,7 @@ RULE_RUNNERS: dict[str, Callable[[dict[str, list[str]]], list[str]]] = {
     "rope": lambda _a: check_rope(),
     "modulation": lambda _a: check_modulation(),
     "registry": lambda _a: check_registry(),
+    "parity": lambda _a: check_parity(),
 }
 
 RULE_HINTS: dict[str, str] = {
@@ -360,6 +384,7 @@ RULE_HINTS: dict[str, str] = {
     "rope": "Use backend/engine/common/embeddings.py helpers",
     "modulation": "Use backend/engine/common/norm.py helpers",
     "registry": "Fix default_config/models_registry.json Hunyuan contracts",
+    "parity": "Fix remap_* vs Transformer _param_map key mismatch (make check-engine-governance --rule parity)",
 }
 
 
@@ -450,7 +475,7 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
         "--rule",
-        choices=ALL_RULES,
+        choices=RULE_CHOICES,
         action="append",
         help="Run one rule (repeatable). Default: all engine rules.",
     )
@@ -460,6 +485,9 @@ def main() -> int:
         help="Regenerate allowlist section from current tree (migration utility).",
     )
     args = ap.parse_args()
+
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
 
     if args.write_allowlist:
         return _write_allowlist_for_rule(args.write_allowlist)

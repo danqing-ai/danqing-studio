@@ -726,7 +726,7 @@ def run_seedvr2_upscale(
             "info",
             " ".join(
                 [
-                    "seedvr2_upscale backend=backend.engine.families.seedvr2.upscale",
+                    "seedvr2_upscale backend=backend.engine.families.seedvr2.stem_mlx",
                     f"bundle={bundle_path}",
                     f"model_key={model_key}",
                     f"resolution={resolution}",
@@ -746,7 +746,7 @@ def run_seedvr2_upscale(
     generated.image.save(str(output_png))
 
     return {
-        "upscale_backend": "backend.engine.families.seedvr2.upscale",
+        "upscale_backend": "backend.engine.families.seedvr2.stem_mlx",
         "seed": sd,
         "softness": soft,
         "scale": int(scale),

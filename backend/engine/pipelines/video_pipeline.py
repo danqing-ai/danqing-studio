@@ -54,6 +54,21 @@ from backend.engine._transformer_registry import (
     get_video_weight_remap as _get_video_weight_remap,
 )
 from backend.engine.config.model_configs import get_config_class
+from backend.engine.families.ltx.weights import restore_diffusers_names_from_mlx_forge_ltx
+from backend.engine.common.bundle_layout import assert_media_bundle_ready, t5_encoder_bundle_paths
+from backend.engine.pipelines.pipeline_progress import (
+    emit_complete,
+    emit_denoise_progress,
+    emit_post_progress,
+    pipeline_graph_step,
+)
+from backend.engine.pipelines.video_bundle_layout import (
+    looks_like_mlx_forge_ltx_transformer_keys,
+    ltx_flat_vae_decoder_file,
+    max_remapped_ltx_block_index,
+    resolve_video_transformer_weight_sources,
+)
+from backend.engine.runtime._base import RuntimeContext
 
 
 def _video_post_denoise_clear_cache(config: Any) -> bool:
@@ -70,21 +85,6 @@ def _timestep_embed_schedule_from_scheduler(scheduler: Any) -> list[float] | Non
         return None
     arr = np.asarray(sched_ts, dtype=np.float64).reshape(-1)
     return [float(x) for x in arr.tolist()]
-
-from backend.engine.families.ltx.weights import restore_diffusers_names_from_mlx_forge_ltx
-from backend.engine.pipelines.image_pipeline import (
-    _image_pipeline_emit_complete,
-    _image_pipeline_emit_denoise_progress,
-    _image_pipeline_emit_post_progress,
-    _t5_encoder_bundle_paths,
-)
-from backend.engine.pipelines.video_bundle_layout import (
-    looks_like_mlx_forge_ltx_transformer_keys,
-    ltx_flat_vae_decoder_file,
-    max_remapped_ltx_block_index,
-    resolve_video_transformer_weight_sources,
-)
-from backend.engine.runtime._base import RuntimeContext
 
 
 class VideoPipeline:
@@ -163,7 +163,7 @@ class VideoPipeline:
             if bool(getattr(config, "uses_wan_t5_bundle", False)):
                 wan_t5_bundle_paths(bundle_root)
             else:
-                _t5_encoder_bundle_paths(bundle_root)
+                t5_encoder_bundle_paths(bundle_root)
             return bundle_root
         except RuntimeError as err:
             alt = self._resolved_original_video_bundle_root(entry)
@@ -171,7 +171,7 @@ class VideoPipeline:
                 if bool(getattr(config, "uses_wan_t5_bundle", False)):
                     wan_t5_bundle_paths(alt)
                 else:
-                    _t5_encoder_bundle_paths(alt)
+                    t5_encoder_bundle_paths(alt)
                 return alt
             raise RuntimeError(
                 f"T5 text encoder assets not found under {bundle_root}, "
@@ -238,6 +238,261 @@ class VideoPipeline:
         on_log: Callable | None = None,
     ) -> tuple[int, int]:
         return video_snap_pixel_dims_if_needed(config, w, h, on_log=on_log)
+
+    def _apply_video_registry_config_overrides(self, entry: Any, config: Any) -> None:
+        for param_key in ("vae_scale", "default_scheduler", "text_encoder_device", "vae_temporal_chunk_size"):
+            val = self._registry_scalar_default(entry, param_key, None)
+            if val is not None:
+                setattr(config, param_key, val)
+        sg = self._registry_scalar_default(entry, "supports_guidance", None)
+        if sg is not None:
+            config.supports_guidance = bool(sg)
+        sd = self._registry_scalar_default(entry, "step_distill", None)
+        if sd is not None:
+            config.step_distill = bool(sd)
+        vst = self._registry_scalar_default(entry, "vae_spatial_tiling", None)
+        if vst is not None:
+            config.vae_spatial_tiling = bool(vst)
+        if getattr(config, "inject_text_encoder_paths", False):
+            self._inject_hunyuan_text_encoder_paths(entry, config)
+
+    def _prepare_video_bundle_and_schedule(
+        self,
+        *,
+        entry: Any,
+        config: Any,
+        family: str,
+        model_key: str,
+        version_key: str | None,
+        w: int,
+        h: int,
+        num_frames: int,
+        request: VideoGenerationRequest | VideoEditRequest,
+        on_log: Callable | None,
+    ) -> tuple[Path | None, int, int, int, float, bool, str]:
+        bundle_root = self._local_bundle_root(entry, version_key or None)
+        assert_media_bundle_ready(bundle_root, family=family, model_id=model_key)
+        pipeline_graph_step(
+            "validate_bundle",
+            on_log,
+            message=f"ok family={family} root={bundle_root}",
+        )
+        merge_video_bundle_config(config, bundle_root)
+        w, h = self._snap_wan_pixel_dims_if_needed(config, w, h, on_log=on_log)
+        self._validate_generate_geometry(config, w, h, num_frames)
+        encoder_type = video_encoder_type(config)
+        if encoder_type == "t5":
+            self._t5_bundle_root = self._effective_t5_bundle_root(entry, bundle_root, config)
+            self._prepare_t5_context(config)
+        else:
+            self._t5_bundle_root = bundle_root
+            self._video_config = config
+
+        steps_default = self._registry_scalar_default(entry, "steps", 40)
+        guidance_default = self._resolve_guidance_default(entry)
+        scheduler_registry = self._registry_scalar_default(entry, "scheduler", None)
+        scheduler_default = scheduler_registry or getattr(config, "default_scheduler", "unipc")
+
+        steps = int(request.steps) if request.steps is not None else int(steps_default)
+        steps = max(1, steps)
+        step_distill = bool(
+            getattr(config, "step_distill", False)
+            or self._registry_scalar_default(entry, "step_distill", False)
+        )
+        guidance = float(request.guidance) if request.guidance is not None else float(guidance_default)
+        if step_distill or not getattr(config, "supports_guidance", True):
+            guidance = 0.0
+        return bundle_root, w, h, steps, guidance, step_distill, scheduler_default
+
+    def _video_encode_load_and_condition(
+        self,
+        *,
+        request: VideoGenerationRequest | VideoEditRequest,
+        entry: Any,
+        config: Any,
+        family: str,
+        bundle_root: Path | None,
+        version_key: str | None,
+        model_key: str,
+        num_frames: int,
+        guidance: float,
+        ctx_exec: ExecutionContext,
+        on_log: Callable | None,
+    ) -> tuple[Any, dict[str, Any], Any, Any, int] | None:
+        pipeline_graph_step("encode_prompt", on_log)
+        txt_embeds = neg_embeds = None
+        txt_mask = txt_mask_2 = neg_mask = neg_mask_2 = None
+        neg_embeds_2 = txt_embeds_2 = None
+        if request.prompt and config.text_dim > 0:
+            (
+                txt_embeds, txt_mask, txt_embeds_2, txt_mask_2,
+                neg_embeds, neg_mask, neg_embeds_2, neg_mask_2,
+            ) = self._encode_video_text_with_cfg(
+                prompt=request.prompt,
+                negative_prompt=request.negative_prompt,
+                config=config,
+                family=family,
+                bundle_root=bundle_root,
+                guidance=guidance,
+            )
+            self._validate_wan_umt5_embeddings(config, txt_embeds, on_log)
+
+        if ctx_exec.cancel_token.is_cancelled():
+            return None
+
+        encoder_type = video_encoder_type(config)
+        self._release_video_t5_after_encode(config, encoder_type)
+
+        pipeline_graph_step("load_transformer", on_log)
+        latent_frames = self._latent_frame_count(config, num_frames)
+        model = self._load_model(config, entry, version_key or None, latent_frames)
+        if model is None:
+            raise RuntimeError(f"Failed to load model: {model_key}")
+
+        model.after_load_weights(bundle_root=str(bundle_root) if bundle_root else None)
+        extra_cond = model.prepare_conditioning(
+            request,
+            bundle_root=str(bundle_root) if bundle_root else None,
+        )
+        extra_cond = self._apply_video_text_to_extra_cond(
+            extra_cond,
+            txt_embeds=txt_embeds,
+            txt_mask=txt_mask,
+            txt_embeds_2=txt_embeds_2,
+            txt_mask_2=txt_mask_2,
+            neg_embeds=neg_embeds,
+            neg_mask=neg_mask,
+            neg_embeds_2=neg_embeds_2,
+            neg_mask_2=neg_mask_2,
+        )
+        return model, extra_cond, txt_embeds, neg_embeds, latent_frames
+
+    def _create_timesteps_for_video(
+        self,
+        *,
+        entry: Any,
+        config: Any,
+        request: VideoGenerationRequest | VideoEditRequest,
+        steps: int,
+        step_distill: bool,
+        scheduler_default: str,
+        bundle_root: Path | None,
+        on_log: Callable | None,
+    ) -> tuple[Any, Any, Any, list[float] | None, float | None]:
+        scheduler = self._create_video_scheduler(
+            config=config,
+            scheduler_name=scheduler_default,
+            bundle_root=bundle_root,
+        )
+        wan_shift: float | None = None
+        if step_distill and scheduler_default == "flow_match_euler":
+            sigmas_arr = np.linspace(1.0, 0.0, steps + 1, dtype=np.float32)[:-1]
+            timesteps = scheduler.set_timesteps(steps, use_empirical_mu=False)
+            scheduler._sigmas = self.ctx.concat([
+                self.ctx.array(sigmas_arr, dtype=self.ctx.float32()),
+                self.ctx.zeros((1,), dtype=self.ctx.float32()),
+            ], axis=0)
+            scheduler._timesteps = self.ctx.array(
+                sigmas_arr * float(scheduler.num_train_timesteps),
+                dtype=self.ctx.float32(),
+            )
+        else:
+            sched_kwargs: dict[str, Any] = {}
+            shift_default = self._registry_scalar_default(entry, "shift", None)
+            shift_val = video_resolve_shift_value(
+                config,
+                request_shift=request.shift,
+                registry_shift=shift_default,
+                scheduler_default_shift=getattr(scheduler, "_default_shift", None),
+                on_log=on_log,
+            )
+            if shift_val is not None:
+                sched_kwargs["shift"] = shift_val
+            timesteps = scheduler.set_timesteps(steps, **sched_kwargs)
+            if bool(getattr(config, "uses_wan_shift", False)):
+                wan_shift = float(
+                    sched_kwargs.get("shift", getattr(scheduler, "_default_shift", 1.0))
+                )
+        sigmas = getattr(scheduler, "sigmas", None)
+        timestep_embed_schedule = _timestep_embed_schedule_from_scheduler(scheduler)
+        return scheduler, timesteps, sigmas, timestep_embed_schedule, wan_shift
+
+    def _finalize_video_from_latents(
+        self,
+        *,
+        latents: Any,
+        timesteps: Any,
+        entry: Any,
+        version_key: str | None,
+        config: Any,
+        model_key: str,
+        seed: int,
+        request: VideoGenerationRequest | VideoEditRequest,
+        ctx_exec: ExecutionContext,
+        fps: int,
+        num_frames: int,
+        w: int,
+        h: int,
+        steps: int,
+        guidance: float,
+        on_progress: Callable | None,
+        on_log: Callable | None,
+    ) -> tuple[str, dict[str, Any]] | None:
+        if getattr(self.ctx, "backend", None) == "mlx":
+            if on_log:
+                on_log("info", "Materializing denoised latents for VAE decode...")
+            self.ctx.eval(latents)
+            if _video_post_denoise_clear_cache(config):
+                self.ctx.clear_cache()
+
+        n_steps = len(timesteps)
+        if on_log:
+            on_log("info", "Decoding video latents (VAE)...")
+        emit_post_progress(on_progress, n_steps=n_steps, within_post=0.1)
+
+        def _vae_post_progress(frac: float) -> None:
+            emit_post_progress(
+                on_progress, n_steps=n_steps, within_post=0.1 + 0.75 * min(1.0, max(0.0, frac)),
+            )
+
+        def _vae_post_log(msg: str) -> None:
+            if on_log:
+                on_log("info", msg)
+
+        pipeline_graph_step("decode_vae", on_log)
+        frames = self._vae_decode_video(
+            latents, entry, version_key or None, config,
+            on_post_progress=_vae_post_progress,
+            on_post_log=_vae_post_log,
+        )
+
+        if ctx_exec.cancel_token.is_cancelled():
+            return None
+
+        emit_post_progress(on_progress, n_steps=n_steps, within_post=0.85)
+        if on_log:
+            on_log("info", f"Saving video ({len(frames)} frames)...")
+
+        pipeline_graph_step("save_asset", on_log)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        work = Path(ctx_exec.work_dir)
+        work.mkdir(parents=True, exist_ok=True)
+        out_path = str(work / f"{model_key}_{seed}_{timestamp}.mp4")
+        self._save_video(frames, out_path, fps=fps)
+
+        emit_complete(on_progress, n_steps)
+
+        metadata = {
+            "model": request.model, "seed": seed,
+            "prompt": request.prompt,
+            "negative_prompt": request.negative_prompt or "",
+            "steps": steps,
+            "guidance": guidance, "num_frames": num_frames,
+            "fps": fps, "width": w, "height": h,
+            "mime_type": "video/mp4",
+        }
+        metadata.update(work_title_metadata(request.title))
+        return out_path, metadata
 
     def _prepare_t5_context(self, config: Any) -> None:
         self._video_config = config
@@ -408,7 +663,7 @@ class VideoPipeline:
             model.step_callback(i, latents, noise_pred)
 
             if on_progress:
-                _image_pipeline_emit_denoise_progress(on_progress, i + 1, n_steps)
+                emit_denoise_progress(on_progress, i + 1, n_steps)
             if on_log:
                 on_log("info", f"Step {i+1}/{n_steps}")
 
@@ -442,141 +697,57 @@ class VideoPipeline:
         seed = request.seed if request.seed is not None else random.randint(0, 2 ** 32 - 1)
 
         # ── Registry-driven parameter injection ──
-        for param_key in ("vae_scale", "default_scheduler", "text_encoder_device", "vae_temporal_chunk_size"):
-            val = self._registry_scalar_default(entry, param_key, None)
-            if val is not None:
-                setattr(config, param_key, val)
-
-        sg = self._registry_scalar_default(entry, "supports_guidance", None)
-        if sg is not None:
-            config.supports_guidance = bool(sg)
-        sd = self._registry_scalar_default(entry, "step_distill", None)
-        if sd is not None:
-            config.step_distill = bool(sd)
-        vst = self._registry_scalar_default(entry, "vae_spatial_tiling", None)
-        if vst is not None:
-            config.vae_spatial_tiling = bool(vst)
-        if getattr(config, "inject_text_encoder_paths", False):
-            self._inject_hunyuan_text_encoder_paths(entry, config)
+        self._apply_video_registry_config_overrides(entry, config)
 
         if ctx_exec.cancel_token.is_cancelled():
             return None
 
-        bundle_root = self._local_bundle_root(entry, version_key or None)
-        merge_video_bundle_config(config, bundle_root)
-        w, h = self._snap_wan_pixel_dims_if_needed(config, w, h, on_log=on_log)
-        self._validate_generate_geometry(config, w, h, num_frames)
-        encoder_type = video_encoder_type(config)
-        if encoder_type == "t5":
-            self._t5_bundle_root = self._effective_t5_bundle_root(entry, bundle_root, config)
-            self._prepare_t5_context(config)
-        else:
-            self._t5_bundle_root = bundle_root
-            self._video_config = config
-
-        steps_default = self._registry_scalar_default(entry, "steps", 40)
-        guidance_default = self._resolve_guidance_default(entry)
-        scheduler_registry = self._registry_scalar_default(entry, "scheduler", None)
-        scheduler_default = scheduler_registry or getattr(config, "default_scheduler", "unipc")
-
-        steps = int(request.steps) if request.steps is not None else int(steps_default)
-        steps = max(1, steps)
-        step_distill = bool(
-            getattr(config, "step_distill", False)
-            or self._registry_scalar_default(entry, "step_distill", False)
-        )
-        guidance = float(request.guidance) if request.guidance is not None else float(guidance_default)
-        if step_distill or not getattr(config, "supports_guidance", True):
-            guidance = 0.0
-
-        # 1. Text encoding
-        txt_embeds = None
-        neg_embeds = None
-        txt_mask = txt_mask_2 = neg_mask = neg_mask_2 = None
-        neg_embeds_2 = None
-        txt_embeds_2 = None
-        if request.prompt and config.text_dim > 0:
-            (
-                txt_embeds, txt_mask, txt_embeds_2, txt_mask_2,
-                neg_embeds, neg_mask, neg_embeds_2, neg_mask_2,
-            ) = self._encode_video_text_with_cfg(
-                prompt=request.prompt,
-                negative_prompt=request.negative_prompt,
+        bundle_root, w, h, steps, guidance, step_distill, scheduler_default = (
+            self._prepare_video_bundle_and_schedule(
+                entry=entry,
                 config=config,
                 family=family,
-                bundle_root=bundle_root,
-                guidance=guidance,
-            )
-            self._validate_wan_umt5_embeddings(config, txt_embeds, on_log)
-
-        if ctx_exec.cancel_token.is_cancelled():
-            return None
-
-        self._release_video_t5_after_encode(config, encoder_type)
-
-        # 2. Load model (registry-driven, zero family branching)
-        latent_frames = self._latent_frame_count(config, num_frames)
-        model = self._load_model(config, entry, version_key or None, latent_frames)
-        if model is None:
-            raise RuntimeError(f"Failed to load model: {model_key}")
-
-        # ── Hook ①: after weight loading (LoRA / Adapter merging) ──
-        model.after_load_weights(bundle_root=str(bundle_root) if bundle_root else None)
-
-        # ── Hook ②: condition preparation ──
-        extra_cond = model.prepare_conditioning(request,
-                                                bundle_root=str(bundle_root) if bundle_root else None)
-        extra_cond = self._apply_video_text_to_extra_cond(
-            extra_cond,
-            txt_embeds=txt_embeds,
-            txt_mask=txt_mask,
-            txt_embeds_2=txt_embeds_2,
-            txt_mask_2=txt_mask_2,
-            neg_embeds=neg_embeds,
-            neg_mask=neg_mask,
-            neg_embeds_2=neg_embeds_2,
-            neg_mask_2=neg_mask_2,
-        )
-
-        # 3. Scheduler
-        scheduler = self._create_video_scheduler(
-            config=config,
-            scheduler_name=scheduler_default,
-            bundle_root=bundle_root,
-        )
-        vae_scale = getattr(config, "vae_scale", 8)
-        wan_shift: float | None = None
-        if step_distill and scheduler_default == "flow_match_euler":
-            import numpy as np
-            sigmas_arr = np.linspace(1.0, 0.0, steps + 1, dtype=np.float32)[:-1]
-            timesteps = scheduler.set_timesteps(steps, use_empirical_mu=False)
-            scheduler._sigmas = self.ctx.concat([
-                self.ctx.array(sigmas_arr, dtype=self.ctx.float32()),
-                self.ctx.zeros((1,), dtype=self.ctx.float32()),
-            ], axis=0)
-            scheduler._timesteps = self.ctx.array(
-                sigmas_arr * float(scheduler.num_train_timesteps),
-                dtype=self.ctx.float32(),
-            )
-        else:
-            sched_kwargs: dict[str, Any] = {}
-            shift_default = self._registry_scalar_default(entry, "shift", None)
-            shift_val = video_resolve_shift_value(
-                config,
-                request_shift=request.shift,
-                registry_shift=shift_default,
-                scheduler_default_shift=getattr(scheduler, "_default_shift", None),
+                model_key=model_key,
+                version_key=version_key,
+                w=w,
+                h=h,
+                num_frames=num_frames,
+                request=request,
                 on_log=on_log,
             )
-            if shift_val is not None:
-                sched_kwargs["shift"] = shift_val
-            timesteps = scheduler.set_timesteps(steps, **sched_kwargs)
-            if bool(getattr(config, "uses_wan_shift", False)):
-                wan_shift = float(
-                    sched_kwargs.get("shift", getattr(scheduler, "_default_shift", 1.0))
-                )
-        sigmas = getattr(scheduler, 'sigmas', None)
-        timestep_embed_schedule = _timestep_embed_schedule_from_scheduler(scheduler)
+        )
+
+        enc_loaded = self._video_encode_load_and_condition(
+            request=request,
+            entry=entry,
+            config=config,
+            family=family,
+            bundle_root=bundle_root,
+            version_key=version_key,
+            model_key=model_key,
+            num_frames=num_frames,
+            guidance=guidance,
+            ctx_exec=ctx_exec,
+            on_log=on_log,
+        )
+        if enc_loaded is None:
+            return None
+        model, extra_cond, txt_embeds, neg_embeds, latent_frames = enc_loaded
+
+        # 3. Scheduler
+        scheduler, timesteps, sigmas, timestep_embed_schedule, wan_shift = (
+            self._create_timesteps_for_video(
+                entry=entry,
+                config=config,
+                request=request,
+                steps=steps,
+                step_distill=step_distill,
+                scheduler_default=scheduler_default,
+                bundle_root=bundle_root,
+                on_log=on_log,
+            )
+        )
+        vae_scale = getattr(config, "vae_scale", 8)
         _cfg_renorm = bool(self._registry_scalar_default(entry, "enable_cfg_renorm", False))
         _cfg_renorm_min = float(self._registry_scalar_default(entry, "cfg_renorm_min", 0.0))
 
@@ -616,6 +787,7 @@ class VideoPipeline:
         latents, extra_cond = model.before_denoise(latents, timesteps, sigmas, **extra_cond)
         rope_kw = video_rotary_model_kwargs(config, self.ctx, h, w, latents)
 
+        pipeline_graph_step("denoise", on_log)
         latents = self._denoise_video(
             latents=latents,
             timesteps=timesteps,
@@ -641,62 +813,25 @@ class VideoPipeline:
         if ctx_exec.cancel_token.is_cancelled():
             return None
 
-        if getattr(self.ctx, "backend", None) == "mlx":
-            if on_log:
-                on_log("info", "Materializing denoised latents for VAE decode...")
-            self.ctx.eval(latents)
-            if _video_post_denoise_clear_cache(config):
-                self.ctx.clear_cache()
-
-        n_steps = len(timesteps)
-        if on_log:
-            on_log("info", "Decoding video latents (VAE)...")
-        _image_pipeline_emit_post_progress(on_progress, n_steps=n_steps, within_post=0.1)
-
-        # 6. VAE decode (frame-by-frame for video latents)
-        def _vae_post_progress(frac: float) -> None:
-            _image_pipeline_emit_post_progress(
-                on_progress, n_steps=n_steps, within_post=0.1 + 0.75 * min(1.0, max(0.0, frac)),
-            )
-
-        def _vae_post_log(msg: str) -> None:
-            if on_log:
-                on_log("info", msg)
-
-        frames = self._vae_decode_video(
-            latents, entry, version_key or None, config,
-            on_post_progress=_vae_post_progress,
-            on_post_log=_vae_post_log,
+        return self._finalize_video_from_latents(
+            latents=latents,
+            timesteps=timesteps,
+            entry=entry,
+            version_key=version_key,
+            config=config,
+            model_key=model_key,
+            seed=seed,
+            request=request,
+            ctx_exec=ctx_exec,
+            fps=fps,
+            num_frames=num_frames,
+            w=w,
+            h=h,
+            steps=steps,
+            guidance=guidance,
+            on_progress=on_progress,
+            on_log=on_log,
         )
-
-        if ctx_exec.cancel_token.is_cancelled():
-            return None
-
-        _image_pipeline_emit_post_progress(on_progress, n_steps=n_steps, within_post=0.85)
-        if on_log:
-            on_log("info", f"Saving video ({len(frames)} frames)...")
-
-        # 7. Save (task work dir)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        work = Path(ctx_exec.work_dir)
-        work.mkdir(parents=True, exist_ok=True)
-        out_path = str(work / f"{model_key}_{seed}_{timestamp}.mp4")
-        self._save_video(frames, out_path, fps=fps)
-
-        _image_pipeline_emit_complete(on_progress, n_steps)
-
-        metadata = {
-            "model": request.model, "seed": seed,
-            "prompt": request.prompt,
-            "negative_prompt": request.negative_prompt or "",
-            "steps": steps,
-            "guidance": guidance, "num_frames": num_frames,
-            "fps": fps, "width": w, "height": h,
-            "mime_type": "video/mp4",
-        }
-        metadata.update(work_title_metadata(request.title))
-
-        return str(out_path), metadata
 
     def run_edit(
         self,
@@ -722,133 +857,57 @@ class VideoPipeline:
         seed = request.seed if request.seed is not None else random.randint(0, 2 ** 32 - 1)
 
         # Registry-driven parameter injection
-        for param_key in ("vae_scale", "default_scheduler", "text_encoder_device", "vae_temporal_chunk_size"):
-            val = self._registry_scalar_default(entry, param_key, None)
-            if val is not None:
-                setattr(config, param_key, val)
-        sg = self._registry_scalar_default(entry, "supports_guidance", None)
-        if sg is not None:
-            config.supports_guidance = bool(sg)
-        sd = self._registry_scalar_default(entry, "step_distill", None)
-        if sd is not None:
-            config.step_distill = bool(sd)
-        vst = self._registry_scalar_default(entry, "vae_spatial_tiling", None)
-        if vst is not None:
-            config.vae_spatial_tiling = bool(vst)
-        if getattr(config, "inject_text_encoder_paths", False):
-            self._inject_hunyuan_text_encoder_paths(entry, config)
+        self._apply_video_registry_config_overrides(entry, config)
 
         if ctx_exec.cancel_token.is_cancelled():
             return None
 
-        bundle_root = self._local_bundle_root(entry, version_key or None)
-        merge_video_bundle_config(config, bundle_root)
-        w, h = self._snap_wan_pixel_dims_if_needed(config, w, h, on_log=on_log)
-        self._validate_generate_geometry(config, w, h, num_frames)
-        encoder_type = video_encoder_type(config)
-        if encoder_type == "t5":
-            self._t5_bundle_root = self._effective_t5_bundle_root(entry, bundle_root, config)
-            self._prepare_t5_context(config)
-        else:
-            self._t5_bundle_root = bundle_root
-            self._video_config = config
-
-        steps_default = self._registry_scalar_default(entry, "steps", 40)
-        guidance_default = self._resolve_guidance_default(entry)
-        scheduler_registry = self._registry_scalar_default(entry, "scheduler", None)
-        scheduler_default = scheduler_registry or getattr(config, "default_scheduler", "unipc")
-
-        steps = int(request.steps) if request.steps is not None else int(steps_default)
-        steps = max(1, steps)
-        step_distill = bool(
-            getattr(config, "step_distill", False)
-            or self._registry_scalar_default(entry, "step_distill", False)
-        )
-        guidance = float(request.guidance) if request.guidance is not None else float(guidance_default)
-        if step_distill or not getattr(config, "supports_guidance", True):
-            guidance = 0.0
-
-        # 1. Text encoding
-        txt_embeds = None
-        neg_embeds = None
-        txt_mask = txt_mask_2 = neg_mask = neg_mask_2 = None
-        neg_embeds_2 = None
-        txt_embeds_2 = None
-        if request.prompt and config.text_dim > 0:
-            (
-                txt_embeds, txt_mask, txt_embeds_2, txt_mask_2,
-                neg_embeds, neg_mask, neg_embeds_2, neg_mask_2,
-            ) = self._encode_video_text_with_cfg(
-                prompt=request.prompt,
-                negative_prompt=request.negative_prompt,
+        bundle_root, w, h, steps, guidance, step_distill, scheduler_default = (
+            self._prepare_video_bundle_and_schedule(
+                entry=entry,
                 config=config,
                 family=family,
-                bundle_root=bundle_root,
-                guidance=guidance,
-            )
-            self._validate_wan_umt5_embeddings(config, txt_embeds, on_log)
-
-        if ctx_exec.cancel_token.is_cancelled():
-            return None
-
-        self._release_video_t5_after_encode(config, encoder_type)
-
-        # 2. Load model
-        latent_frames = self._latent_frame_count(config, num_frames)
-        model = self._load_model(config, entry, version_key or None, latent_frames)
-        if model is None:
-            raise RuntimeError(f"Failed to load model: {model_key}")
-
-        model.after_load_weights(bundle_root=str(bundle_root) if bundle_root else None)
-
-        extra_cond = model.prepare_conditioning(request,
-                                                bundle_root=str(bundle_root) if bundle_root else None)
-        extra_cond = self._apply_video_text_to_extra_cond(
-            extra_cond,
-            txt_embeds=txt_embeds,
-            txt_mask=txt_mask,
-            txt_embeds_2=txt_embeds_2,
-            txt_mask_2=txt_mask_2,
-            neg_embeds=neg_embeds,
-            neg_mask=neg_mask,
-            neg_embeds_2=neg_embeds_2,
-            neg_mask_2=neg_mask_2,
-        )
-
-        # 3. Scheduler
-        scheduler = self._create_video_scheduler(
-            config=config,
-            scheduler_name=scheduler_default,
-            bundle_root=bundle_root,
-        )
-        vae_scale = getattr(config, "vae_scale", 8)
-        if step_distill and scheduler_default == "flow_match_euler":
-            import numpy as np
-            sigmas_arr = np.linspace(1.0, 0.0, steps + 1, dtype=np.float32)[:-1]
-            timesteps = scheduler.set_timesteps(steps, use_empirical_mu=False)
-            scheduler._sigmas = self.ctx.concat([
-                self.ctx.array(sigmas_arr, dtype=self.ctx.float32()),
-                self.ctx.zeros((1,), dtype=self.ctx.float32()),
-            ], axis=0)
-            scheduler._timesteps = self.ctx.array(
-                sigmas_arr * float(scheduler.num_train_timesteps),
-                dtype=self.ctx.float32(),
-            )
-        else:
-            sched_kwargs: dict[str, Any] = {}
-            shift_default = self._registry_scalar_default(entry, "shift", None)
-            shift_val = video_resolve_shift_value(
-                config,
-                request_shift=request.shift,
-                registry_shift=shift_default,
-                scheduler_default_shift=getattr(scheduler, "_default_shift", None),
+                model_key=model_key,
+                version_key=version_key,
+                w=w,
+                h=h,
+                num_frames=num_frames,
+                request=request,
                 on_log=on_log,
             )
-            if shift_val is not None:
-                sched_kwargs["shift"] = shift_val
-            timesteps = scheduler.set_timesteps(steps, **sched_kwargs)
-        sigmas = getattr(scheduler, 'sigmas', None)
-        timestep_embed_schedule = _timestep_embed_schedule_from_scheduler(scheduler)
+        )
+
+        enc_loaded = self._video_encode_load_and_condition(
+            request=request,
+            entry=entry,
+            config=config,
+            family=family,
+            bundle_root=bundle_root,
+            version_key=version_key,
+            model_key=model_key,
+            num_frames=num_frames,
+            guidance=guidance,
+            ctx_exec=ctx_exec,
+            on_log=on_log,
+        )
+        if enc_loaded is None:
+            return None
+        model, extra_cond, txt_embeds, neg_embeds, latent_frames = enc_loaded
+
+        # 3. Scheduler
+        scheduler, timesteps, sigmas, timestep_embed_schedule, wan_shift = (
+            self._create_timesteps_for_video(
+                entry=entry,
+                config=config,
+                request=request,
+                steps=steps,
+                step_distill=step_distill,
+                scheduler_default=scheduler_default,
+                bundle_root=bundle_root,
+                on_log=on_log,
+            )
+        )
+        vae_scale = getattr(config, "vae_scale", 8)
         _cfg_renorm = bool(self._registry_scalar_default(entry, "enable_cfg_renorm", False))
         _cfg_renorm_min = float(self._registry_scalar_default(entry, "cfg_renorm_min", 0.0))
 
@@ -869,6 +928,8 @@ class VideoPipeline:
                 f"vae_scale={vae_scale}",
                 "mode=video_edit",
             ]
+            if wan_shift is not None:
+                parts.append(f"shift={wan_shift}")
             if _cfg_renorm:
                 parts.append(f"cfg_renorm=True cfg_renorm_min={_cfg_renorm_min}")
             parts.extend(video_infer_log_extras(config, scheduler, extra_cond))
@@ -905,6 +966,7 @@ class VideoPipeline:
         latents, extra_cond = model.before_denoise(latents, timesteps, sigmas, **extra_cond)
         rope_kw = video_rotary_model_kwargs(config, self.ctx, h, w, latents)
 
+        pipeline_graph_step("denoise", on_log)
         latents = self._denoise_video(
             latents=latents,
             timesteps=timesteps,
@@ -930,62 +992,25 @@ class VideoPipeline:
         if ctx_exec.cancel_token.is_cancelled():
             return None
 
-        if getattr(self.ctx, "backend", None) == "mlx":
-            if on_log:
-                on_log("info", "Materializing denoised latents for VAE decode...")
-            self.ctx.eval(latents)
-            if _video_post_denoise_clear_cache(config):
-                self.ctx.clear_cache()
-
-        n_steps = len(timesteps)
-        if on_log:
-            on_log("info", "Decoding video latents (VAE)...")
-        _image_pipeline_emit_post_progress(on_progress, n_steps=n_steps, within_post=0.1)
-
-        # 6. VAE decode
-        def _vae_post_progress(frac: float) -> None:
-            _image_pipeline_emit_post_progress(
-                on_progress, n_steps=n_steps, within_post=0.1 + 0.75 * min(1.0, max(0.0, frac)),
-            )
-
-        def _vae_post_log(msg: str) -> None:
-            if on_log:
-                on_log("info", msg)
-
-        frames = self._vae_decode_video(
-            latents, entry, version_key or None, config,
-            on_post_progress=_vae_post_progress,
-            on_post_log=_vae_post_log,
+        return self._finalize_video_from_latents(
+            latents=latents,
+            timesteps=timesteps,
+            entry=entry,
+            version_key=version_key,
+            config=config,
+            model_key=model_key,
+            seed=seed,
+            request=request,
+            ctx_exec=ctx_exec,
+            fps=fps,
+            num_frames=num_frames,
+            w=w,
+            h=h,
+            steps=steps,
+            guidance=guidance,
+            on_progress=on_progress,
+            on_log=on_log,
         )
-
-        if ctx_exec.cancel_token.is_cancelled():
-            return None
-
-        _image_pipeline_emit_post_progress(on_progress, n_steps=n_steps, within_post=0.85)
-        if on_log:
-            on_log("info", f"Saving video ({len(frames)} frames)...")
-
-        # 7. Save
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        work = Path(ctx_exec.work_dir)
-        work.mkdir(parents=True, exist_ok=True)
-        out_path = str(work / f"{model_key}_{seed}_{timestamp}.mp4")
-        self._save_video(frames, out_path, fps=fps)
-
-        _image_pipeline_emit_complete(on_progress, n_steps)
-
-        metadata = {
-            "model": request.model, "seed": seed,
-            "prompt": request.prompt,
-            "negative_prompt": request.negative_prompt or "",
-            "steps": steps,
-            "guidance": guidance, "num_frames": num_frames,
-            "fps": fps, "width": w, "height": h,
-            "mime_type": "video/mp4",
-        }
-        metadata.update(work_title_metadata(request.title))
-
-        return str(out_path), metadata
 
     def _encode_video_text(
         self,
@@ -1126,7 +1151,7 @@ class VideoPipeline:
                     text_len=max_seq_len,
                 )
             return self._t5.encode(texts)
-        t5_dir, t5_tok_dir = _t5_encoder_bundle_paths(bundle_root)
+        t5_dir, t5_tok_dir = t5_encoder_bundle_paths(bundle_root)
         if self._t5 is None:
             self._t5 = T5Encoder(
                 self.ctx, t5_dir, max_seq_len=max_seq_len, tokenizer_path=t5_tok_dir,

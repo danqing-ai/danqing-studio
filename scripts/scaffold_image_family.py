@@ -46,12 +46,19 @@ def main() -> int:
 
     _write(
         family_dir / "transformer.py",
-        f'''"""{cls_name} — public stem; MLX implementation in ``transformer_mlx``."""
+        f'''"""{cls_name} — public stem; MLX in ``transformer_mlx``."""
 from __future__ import annotations
 
-from .transformer_mlx import {cls_name}
+from typing import Any
 
-__all__ = ["{cls_name}"]
+from backend.engine.common.dit_stem import DelegatingDiTStem
+
+
+class {cls_name}(DelegatingDiTStem):
+    def __init__(self, config: Any, ctx: Any):
+        from .transformer_mlx import {cls_name} as _MLX
+
+        super().__init__(config, ctx, mlx_cls=_MLX, unavailable_product="{cls_name}")
 ''',
         force=args.force,
     )
@@ -96,8 +103,9 @@ def remap_{family}_weights(weights: dict) -> dict:
     print("\nRegistry snippets (manual):")
     print(f'  _TRANSFORMER["{family}"] = ("backend.engine.families.{family}.transformer", "{cls_name}")')
     print(f'  _WEIGHT_REMAP["{family}"] = ("backend.engine.families.{family}.weights", "remap_{family}_weights")')
+    print(f'  bundle_manifest.FAMILY_BUNDLE_CONTRACTS: add "{family}" required components')
     print("\nNext: model_configs dataclass + FAMILY_CONFIG_MAP + models_registry.json entry")
-    print("See docs/canonical_image_family_flux2.md")
+    print("See docs/engine_new_model_checklist.md")
     return 0
 
 

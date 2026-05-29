@@ -93,11 +93,48 @@
       "icon": "🎵"
     }
   },
-  "models": {
-    "flux1-schnell": {
-      "category": "base_models",
+  "profiles": {
+    "image_dit_standard": {
       "engine": "danqing-image",
       "type": "diffusion",
+      "category": "base_models",
+      "parameters": {
+        "lora_support": true,
+        "seed_support": true,
+        "preview_mode": {
+          "type": "enum",
+          "default": "stream",
+          "options": [
+            "stream",
+            "none"
+          ]
+        },
+        "preview_interval_steps": {
+          "type": "int",
+          "default": 2,
+          "min": 1,
+          "max": 8
+        },
+        "preview_max_edge": {
+          "type": "int",
+          "default": 512,
+          "min": 128,
+          "max": 1024
+        }
+      }
+    },
+    "video_dit_standard": {
+      "engine": "danqing-video",
+      "type": "video",
+      "category": "video_models",
+      "parameters": {
+        "seed_support": true
+      }
+    }
+  },
+  "parameter_templates": {},
+  "models": {
+    "flux1-schnell": {
       "parameters": {
         "steps": {
           "default": 4,
@@ -146,32 +183,10 @@
           "label": "去噪强度",
           "type": "float"
         },
-        "lora_support": true,
-        "seed_support": true,
         "negative_prompt_support": true,
         "supports_guidance": false,
         "requires_sigma_shift": false,
-        "max_seq_len": 256,
-        "preview_mode": {
-          "type": "enum",
-          "default": "stream",
-          "options": [
-            "stream",
-            "none"
-          ]
-        },
-        "preview_interval_steps": {
-          "type": "int",
-          "default": 2,
-          "min": 1,
-          "max": 8
-        },
-        "preview_max_edge": {
-          "type": "int",
-          "default": 512,
-          "min": 128,
-          "max": 1024
-        }
+        "max_seq_len": 256
       },
       "recommended": true,
       "source": "modelscope",
@@ -225,12 +240,10 @@
         "rewrite": {}
       },
       "family": "flux1",
-      "commercial_use_allowed": true
+      "commercial_use_allowed": true,
+      "profile": "image_dit_standard"
     },
     "flux1-dev": {
-      "category": "base_models",
-      "engine": "danqing-image",
-      "type": "diffusion",
       "parameters": {
         "steps": {
           "default": 28,
@@ -279,31 +292,9 @@
           "label": "去噪强度",
           "type": "float"
         },
-        "lora_support": true,
-        "seed_support": true,
         "negative_prompt_support": true,
         "supports_guidance": true,
-        "requires_sigma_shift": true,
-        "preview_mode": {
-          "type": "enum",
-          "default": "stream",
-          "options": [
-            "stream",
-            "none"
-          ]
-        },
-        "preview_interval_steps": {
-          "type": "int",
-          "default": 2,
-          "min": 1,
-          "max": 8
-        },
-        "preview_max_edge": {
-          "type": "int",
-          "default": 512,
-          "min": 128,
-          "max": 1024
-        }
+        "requires_sigma_shift": true
       },
       "recommended": false,
       "source": "modelscope",
@@ -357,12 +348,10 @@
         "rewrite": {}
       },
       "family": "flux1",
-      "commercial_use_allowed": false
+      "commercial_use_allowed": false,
+      "profile": "image_dit_standard"
     },
     "flux1-krea-dev": {
-      "category": "base_models",
-      "engine": "danqing-image",
-      "type": "diffusion",
       "parameters": {
         "steps": {
           "default": 25,
@@ -409,31 +398,9 @@
           "label": "去噪强度",
           "type": "float"
         },
-        "lora_support": true,
-        "seed_support": true,
         "negative_prompt_support": true,
         "supports_guidance": true,
-        "requires_sigma_shift": true,
-        "preview_mode": {
-          "type": "enum",
-          "default": "stream",
-          "options": [
-            "stream",
-            "none"
-          ]
-        },
-        "preview_interval_steps": {
-          "type": "int",
-          "default": 2,
-          "min": 1,
-          "max": 8
-        },
-        "preview_max_edge": {
-          "type": "int",
-          "default": 512,
-          "min": 128,
-          "max": 1024
-        }
+        "requires_sigma_shift": true
       },
       "recommended": false,
       "source": "modelscope",
@@ -487,12 +454,10 @@
         "rewrite": {}
       },
       "family": "flux1",
-      "commercial_use_allowed": false
+      "commercial_use_allowed": false,
+      "profile": "image_dit_standard"
     },
     "flux2-klein-4b": {
-      "category": "base_models",
-      "engine": "danqing-image",
-      "type": "diffusion",
       "parameters": {
         "steps": {
           "default": 4,
@@ -541,8 +506,6 @@
           "label": "去噪强度",
           "type": "float"
         },
-        "lora_support": true,
-        "seed_support": true,
         "negative_prompt_support": false,
         "vae_scale": 16,
         "text_encoder_out_layers": [
@@ -554,27 +517,7 @@
         "num_heads": 24,
         "joint_attention_dim": 7680,
         "num_layers": 5,
-        "num_single_layers": 20,
-        "preview_mode": {
-          "type": "enum",
-          "default": "stream",
-          "options": [
-            "stream",
-            "none"
-          ]
-        },
-        "preview_interval_steps": {
-          "type": "int",
-          "default": 2,
-          "min": 1,
-          "max": 8
-        },
-        "preview_max_edge": {
-          "type": "int",
-          "default": 512,
-          "min": 128,
-          "max": 1024
-        }
+        "num_single_layers": 20
       },
       "recommended": true,
       "source": "modelscope",
@@ -640,12 +583,11 @@
         "rewrite": {}
       },
       "family": "flux2",
-      "commercial_use_allowed": true
+      "commercial_use_allowed": true,
+      "profile": "image_dit_standard"
     },
     "flux2-klein-9b": {
-      "category": "base_models",
-      "engine": "danqing-image",
-      "type": "diffusion",
+      "profile": "image_dit_standard",
       "parameters": {
         "steps": {
           "default": 10,
@@ -705,35 +647,13 @@
           "note": "图生图/编辑时控制原图保留程度，越高变化越大",
           "type": "float"
         },
-        "lora_support": true,
-        "seed_support": true,
         "negative_prompt_support": false,
         "vae_scale": 16,
         "text_encoder_out_layers": [
           9,
           18,
           27
-        ],
-        "preview_mode": {
-          "type": "enum",
-          "default": "stream",
-          "options": [
-            "stream",
-            "none"
-          ]
-        },
-        "preview_interval_steps": {
-          "type": "int",
-          "default": 2,
-          "min": 1,
-          "max": 8
-        },
-        "preview_max_edge": {
-          "type": "int",
-          "default": 512,
-          "min": 128,
-          "max": 1024
-        }
+        ]
       },
       "recommended": false,
       "source": "modelscope",
@@ -790,9 +710,6 @@
       "commercial_use_allowed": false
     },
     "flux2-klein-base-4b": {
-      "category": "base_models",
-      "engine": "danqing-image",
-      "type": "diffusion",
       "parameters": {
         "steps": {
           "default": 50,
@@ -839,8 +756,6 @@
           "label": "去噪强度",
           "type": "float"
         },
-        "lora_support": true,
-        "seed_support": true,
         "negative_prompt_support": false,
         "vae_scale": 16,
         "text_encoder_out_layers": [
@@ -852,27 +767,7 @@
         "num_heads": 24,
         "joint_attention_dim": 7680,
         "num_layers": 5,
-        "num_single_layers": 20,
-        "preview_mode": {
-          "type": "enum",
-          "default": "stream",
-          "options": [
-            "stream",
-            "none"
-          ]
-        },
-        "preview_interval_steps": {
-          "type": "int",
-          "default": 2,
-          "min": 1,
-          "max": 8
-        },
-        "preview_max_edge": {
-          "type": "int",
-          "default": 512,
-          "min": 128,
-          "max": 1024
-        }
+        "num_single_layers": 20
       },
       "recommended": false,
       "source": "modelscope",
@@ -926,12 +821,10 @@
         "rewrite": {}
       },
       "family": "flux2",
-      "commercial_use_allowed": true
+      "commercial_use_allowed": true,
+      "profile": "image_dit_standard"
     },
     "flux2-klein-base-9b": {
-      "category": "base_models",
-      "engine": "danqing-image",
-      "type": "diffusion",
       "parameters": {
         "steps": {
           "default": 50,
@@ -978,35 +871,13 @@
           "label": "去噪强度",
           "type": "float"
         },
-        "lora_support": true,
-        "seed_support": true,
         "negative_prompt_support": false,
         "vae_scale": 16,
         "text_encoder_out_layers": [
           9,
           18,
           27
-        ],
-        "preview_mode": {
-          "type": "enum",
-          "default": "stream",
-          "options": [
-            "stream",
-            "none"
-          ]
-        },
-        "preview_interval_steps": {
-          "type": "int",
-          "default": 2,
-          "min": 1,
-          "max": 8
-        },
-        "preview_max_edge": {
-          "type": "int",
-          "default": 512,
-          "min": 128,
-          "max": 1024
-        }
+        ]
       },
       "recommended": false,
       "source": "modelscope",
@@ -1060,16 +931,15 @@
         "rewrite": {}
       },
       "family": "flux2",
-      "commercial_use_allowed": false
+      "commercial_use_allowed": false,
+      "profile": "image_dit_standard"
     },
     "z-image": {
-      "category": "base_models",
+      "profile": "image_dit_standard",
       "backends": [
         "mlx",
         "cuda"
       ],
-      "engine": "danqing-image",
-      "type": "diffusion",
       "parameters": {
         "steps": {
           "default": 50,
@@ -1116,32 +986,10 @@
           "label": "去噪强度",
           "type": "float"
         },
-        "lora_support": true,
-        "seed_support": true,
         "negative_prompt_support": true,
         "enable_thinking": true,
         "requires_sigma_shift": true,
-        "vae_scale": 8,
-        "preview_mode": {
-          "type": "enum",
-          "default": "stream",
-          "options": [
-            "stream",
-            "none"
-          ]
-        },
-        "preview_interval_steps": {
-          "type": "int",
-          "default": 2,
-          "min": 1,
-          "max": 8
-        },
-        "preview_max_edge": {
-          "type": "int",
-          "default": 512,
-          "min": 128,
-          "max": 1024
-        }
+        "vae_scale": 8
       },
       "recommended": false,
       "source": "modelscope",
@@ -1198,13 +1046,10 @@
       "commercial_use_allowed": true
     },
     "z-image-turbo": {
-      "category": "base_models",
       "backends": [
         "mlx",
         "cuda"
       ],
-      "engine": "danqing-image",
-      "type": "diffusion",
       "parameters": {
         "steps": {
           "default": 10,
@@ -1253,8 +1098,6 @@
           ],
           "type": "enum"
         },
-        "lora_support": true,
-        "seed_support": true,
         "negative_prompt_support": true,
         "supports_guidance": false,
         "enable_thinking": true,
@@ -1267,27 +1110,7 @@
           "type": "enum"
         },
         "requires_sigma_shift": true,
-        "vae_scale": 8,
-        "preview_mode": {
-          "type": "enum",
-          "default": "stream",
-          "options": [
-            "stream",
-            "none"
-          ]
-        },
-        "preview_interval_steps": {
-          "type": "int",
-          "default": 2,
-          "min": 1,
-          "max": 8
-        },
-        "preview_max_edge": {
-          "type": "int",
-          "default": 512,
-          "min": 128,
-          "max": 1024
-        }
+        "vae_scale": 8
       },
       "recommended": true,
       "source": "modelscope",
@@ -1353,12 +1176,10 @@
         "rewrite": {}
       },
       "family": "z_image",
-      "commercial_use_allowed": true
+      "commercial_use_allowed": true,
+      "profile": "image_dit_standard"
     },
     "fibo": {
-      "category": "base_models",
-      "engine": "danqing-image",
-      "type": "diffusion",
       "parameters": {
         "steps": {
           "default": 10,
@@ -1406,29 +1227,8 @@
           "type": "float"
         },
         "lora_support": false,
-        "seed_support": true,
         "negative_prompt_support": false,
-        "vae_scale": 16,
-        "preview_mode": {
-          "type": "enum",
-          "default": "stream",
-          "options": [
-            "stream",
-            "none"
-          ]
-        },
-        "preview_interval_steps": {
-          "type": "int",
-          "default": 2,
-          "min": 1,
-          "max": 8
-        },
-        "preview_max_edge": {
-          "type": "int",
-          "default": 512,
-          "min": 128,
-          "max": 1024
-        }
+        "vae_scale": 16
       },
       "recommended": false,
       "source": "modelscope",
@@ -1482,12 +1282,10 @@
         "rewrite": {}
       },
       "family": "fibo",
-      "commercial_use_allowed": null
+      "commercial_use_allowed": null,
+      "profile": "image_dit_standard"
     },
     "fibo-lite": {
-      "category": "base_models",
-      "engine": "danqing-image",
-      "type": "diffusion",
       "parameters": {
         "steps": {
           "default": 10,
@@ -1535,28 +1333,7 @@
           "type": "float"
         },
         "lora_support": false,
-        "seed_support": true,
-        "negative_prompt_support": false,
-        "preview_mode": {
-          "type": "enum",
-          "default": "stream",
-          "options": [
-            "stream",
-            "none"
-          ]
-        },
-        "preview_interval_steps": {
-          "type": "int",
-          "default": 2,
-          "min": 1,
-          "max": 8
-        },
-        "preview_max_edge": {
-          "type": "int",
-          "default": 512,
-          "min": 128,
-          "max": 1024
-        }
+        "negative_prompt_support": false
       },
       "recommended": false,
       "source": "modelscope",
@@ -1610,12 +1387,10 @@
         "rewrite": {}
       },
       "family": "fibo",
-      "commercial_use_allowed": true
+      "commercial_use_allowed": true,
+      "profile": "image_dit_standard"
     },
     "fibo-edit": {
-      "category": "base_models",
-      "engine": "danqing-image",
-      "type": "diffusion",
       "parameters": {
         "steps": {
           "default": 10,
@@ -1655,29 +1430,8 @@
           "type": "enum"
         },
         "lora_support": false,
-        "seed_support": true,
         "negative_prompt_support": false,
-        "edit_conditioning_concat": true,
-        "preview_mode": {
-          "type": "enum",
-          "default": "stream",
-          "options": [
-            "stream",
-            "none"
-          ]
-        },
-        "preview_interval_steps": {
-          "type": "int",
-          "default": 2,
-          "min": 1,
-          "max": 8
-        },
-        "preview_max_edge": {
-          "type": "int",
-          "default": 512,
-          "min": 128,
-          "max": 1024
-        }
+        "edit_conditioning_concat": true
       },
       "edit_config": {
         "text_editing": {
@@ -1736,12 +1490,10 @@
         "rewrite": {}
       },
       "family": "fibo",
-      "commercial_use_allowed": null
+      "commercial_use_allowed": null,
+      "profile": "image_dit_standard"
     },
     "fibo-edit-rmbg": {
-      "category": "base_models",
-      "engine": "danqing-image",
-      "type": "diffusion",
       "parameters": {
         "steps": {
           "default": 10,
@@ -1782,30 +1534,9 @@
           "type": "enum"
         },
         "lora_support": false,
-        "seed_support": true,
         "negative_prompt_support": false,
         "edit_conditioning_concat": true,
-        "edit_rmbg_composite_output": true,
-        "preview_mode": {
-          "type": "enum",
-          "default": "stream",
-          "options": [
-            "stream",
-            "none"
-          ]
-        },
-        "preview_interval_steps": {
-          "type": "int",
-          "default": 2,
-          "min": 1,
-          "max": 8
-        },
-        "preview_max_edge": {
-          "type": "int",
-          "default": 512,
-          "min": 128,
-          "max": 1024
-        }
+        "edit_rmbg_composite_output": true
       },
       "edit_config": {
         "background_removal": {
@@ -1864,16 +1595,15 @@
         "rewrite": {}
       },
       "family": "fibo",
-      "commercial_use_allowed": null
+      "commercial_use_allowed": null,
+      "profile": "image_dit_standard"
     },
     "qwen-image": {
-      "category": "base_models",
+      "profile": "image_dit_standard",
       "backends": [
         "mlx",
         "cuda"
       ],
-      "engine": "danqing-image",
-      "type": "diffusion",
       "parameters": {
         "vae_scale": 16,
         "requires_sigma_shift": true,
@@ -1931,29 +1661,7 @@
           "label": "去噪强度",
           "type": "float"
         },
-        "lora_support": true,
-        "seed_support": true,
-        "negative_prompt_support": false,
-        "preview_mode": {
-          "type": "enum",
-          "default": "stream",
-          "options": [
-            "stream",
-            "none"
-          ]
-        },
-        "preview_interval_steps": {
-          "type": "int",
-          "default": 2,
-          "min": 1,
-          "max": 8
-        },
-        "preview_max_edge": {
-          "type": "int",
-          "default": 512,
-          "min": 128,
-          "max": 1024
-        }
+        "negative_prompt_support": false
       },
       "recommended": false,
       "source": "modelscope",
@@ -2376,9 +2084,6 @@
       "commercial_use_allowed": false
     },
     "flux1-kontext": {
-      "category": "base_models",
-      "engine": "danqing-image",
-      "type": "diffusion",
       "parameters": {
         "steps": {
           "default": 28,
@@ -2425,29 +2130,7 @@
           "label": "去噪强度",
           "type": "float"
         },
-        "lora_support": true,
-        "seed_support": true,
-        "negative_prompt_support": false,
-        "preview_mode": {
-          "type": "enum",
-          "default": "stream",
-          "options": [
-            "stream",
-            "none"
-          ]
-        },
-        "preview_interval_steps": {
-          "type": "int",
-          "default": 2,
-          "min": 1,
-          "max": 8
-        },
-        "preview_max_edge": {
-          "type": "int",
-          "default": 512,
-          "min": 128,
-          "max": 1024
-        }
+        "negative_prompt_support": false
       },
       "recommended": false,
       "source": "modelscope",
@@ -2501,7 +2184,8 @@
         "rewrite": {}
       },
       "family": "flux1",
-      "commercial_use_allowed": false
+      "commercial_use_allowed": false,
+      "profile": "image_dit_standard"
     },
     "realism-lora-nsfw": {
       "category": "loras",
@@ -3670,9 +3354,6 @@
       "commercial_use_allowed": true
     },
     "ltx-2.3-distilled": {
-      "category": "video_models",
-      "engine": "danqing-video",
-      "type": "video",
       "parameters": {
         "steps": {
           "default": 4,
@@ -3725,7 +3406,6 @@
           "label": "FPS",
           "type": "int"
         },
-        "seed_support": true,
         "negative_prompt_support": false,
         "vae_scale": 32,
         "supports_guidance": false,
@@ -3787,12 +3467,10 @@
         "animate": {}
       },
       "family": "ltx",
-      "commercial_use_allowed": false
+      "commercial_use_allowed": false,
+      "profile": "video_dit_standard"
     },
     "ltx-2.3-dev": {
-      "category": "video_models",
-      "engine": "danqing-video",
-      "type": "video",
       "parameters": {
         "steps": {
           "default": 28,
@@ -3843,7 +3521,6 @@
           "label": "FPS",
           "type": "int"
         },
-        "seed_support": true,
         "negative_prompt_support": true,
         "vae_scale": 32,
         "supports_guidance": true,
@@ -3905,12 +3582,10 @@
         "animate": {}
       },
       "family": "ltx",
-      "commercial_use_allowed": false
+      "commercial_use_allowed": false,
+      "profile": "video_dit_standard"
     },
     "hunyuan-video-1.5-480p-t2v": {
-      "category": "video_models",
-      "engine": "danqing-video",
-      "type": "video",
       "parameters": {
         "steps": {
           "default": 50,
@@ -3958,7 +3633,6 @@
           "label": "FPS",
           "type": "int"
         },
-        "seed_support": true,
         "negative_prompt_support": true,
         "text_encoder_qwen_local": "models/Text/qwen2.5-vl-7b-instruct",
         "text_encoder_byt5_local": "models/Text/byt5-small",
@@ -4016,12 +3690,10 @@
       "commercial_use_allowed": true,
       "backends": [
         "mlx"
-      ]
+      ],
+      "profile": "video_dit_standard"
     },
     "hunyuan-video-1.5-480p-i2v": {
-      "category": "video_models",
-      "engine": "danqing-video",
-      "type": "video",
       "parameters": {
         "steps": {
           "default": 50,
@@ -4061,7 +3733,6 @@
           "note": "必须为 4n+1",
           "type": "int"
         },
-        "seed_support": true,
         "negative_prompt_support": true
       },
       "recommended": false,
@@ -4102,12 +3773,10 @@
       "commercial_use_allowed": true,
       "backends": [
         "mlx"
-      ]
+      ],
+      "profile": "video_dit_standard"
     },
     "hunyuan-video-1.5-i2v-step-distill": {
-      "category": "video_models",
-      "engine": "danqing-video",
-      "type": "video",
       "parameters": {
         "steps": {
           "default": 6,
@@ -4139,7 +3808,6 @@
           "note": "必须为 4n+1",
           "type": "int"
         },
-        "seed_support": true,
         "supports_guidance": false,
         "negative_prompt_support": false
       },
@@ -4181,12 +3849,10 @@
       "commercial_use_allowed": true,
       "backends": [
         "mlx"
-      ]
+      ],
+      "profile": "video_dit_standard"
     },
     "hunyuan-video-1.5-1080p-sr": {
-      "category": "video_models",
-      "engine": "danqing-video",
-      "type": "video",
       "parameters": {
         "steps": {
           "default": 6,
@@ -4195,7 +3861,6 @@
           "label": "步数",
           "type": "int"
         },
-        "seed_support": true,
         "negative_prompt_support": false,
         "supports_guidance": false,
         "vae_spatial_tiling": true
@@ -4238,12 +3903,10 @@
       "commercial_use_allowed": true,
       "backends": [
         "mlx"
-      ]
+      ],
+      "profile": "video_dit_standard"
     },
     "wan-2.2-t2v-14b": {
-      "category": "video_models",
-      "engine": "danqing-video",
-      "type": "video",
       "parameters": {
         "steps": {
           "default": 40,
@@ -4293,7 +3956,6 @@
           "note": "必须为 4n+1",
           "type": "int"
         },
-        "seed_support": true,
         "negative_prompt_support": true
       },
       "recommended": false,
@@ -4321,12 +3983,10 @@
         "create": {}
       },
       "family": "wan",
-      "commercial_use_allowed": true
+      "commercial_use_allowed": true,
+      "profile": "video_dit_standard"
     },
     "wan-2.2-i2v-14b": {
-      "category": "video_models",
-      "engine": "danqing-video",
-      "type": "video",
       "parameters": {
         "steps": {
           "default": 40,
@@ -4376,7 +4036,6 @@
           "note": "必须为 4n+1",
           "type": "int"
         },
-        "seed_support": true,
         "negative_prompt_support": true,
         "lora_support": true,
         "lora_scale": {
@@ -4413,12 +4072,10 @@
         "animate": {}
       },
       "family": "wan",
-      "commercial_use_allowed": true
+      "commercial_use_allowed": true,
+      "profile": "video_dit_standard"
     },
     "wan-2.2-ti2v-5b": {
-      "category": "video_models",
-      "engine": "danqing-video",
-      "type": "video",
       "parameters": {
         "steps": {
           "default": 50,
@@ -4481,7 +4138,6 @@
           "label": "FPS",
           "type": "int"
         },
-        "seed_support": true,
         "negative_prompt_support": true,
         "vae_spatial_tiling": false
       },
@@ -4514,12 +4170,10 @@
       "commercial_use_allowed": true,
       "backends": [
         "mlx"
-      ]
+      ],
+      "profile": "video_dit_standard"
     },
     "cogvideox-5b": {
-      "category": "video_models",
-      "engine": "danqing-video",
-      "type": "video",
       "parameters": {
         "steps": {
           "default": 50,
@@ -4568,7 +4222,6 @@
           "label": "FPS",
           "type": "int"
         },
-        "seed_support": true,
         "negative_prompt_support": true
       },
       "recommended": true,
@@ -4599,7 +4252,8 @@
       "commercial_use_allowed": true,
       "backends": [
         "mlx"
-      ]
+      ],
+      "profile": "video_dit_standard"
     },
     "ace-step-xl-sft": {
       "category": "music_models",

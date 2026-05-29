@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, FrozenSet, Literal, Optional, cast
 
 from backend.core.registry_format import api_action_frozenset, media_from_record
+from backend.core.registry_profiles import expand_registry_document
 
 MediaKind = Literal["image", "video", "audio"]
 
@@ -57,7 +58,8 @@ class ModelRegistry:
     @classmethod
     def load(cls, registry_json: Path) -> ModelRegistry:
         data = json.loads(registry_json.read_text(encoding="utf-8"))
-        raw_models = data.get("models") or {}
+        expanded = expand_registry_document(data)
+        raw_models = expanded.get("models") or {}
         built: dict[str, ModelEntry] = {}
         for mid, raw in raw_models.items():
             if not isinstance(raw, dict):
@@ -76,6 +78,12 @@ class ModelRegistry:
                 actions=actions,
             )
         return cls(registry_json, built)
+
+    @classmethod
+    def expanded_document(cls, registry_json: Path) -> dict[str, Any]:
+        """Parse registry JSON and apply profiles/templates (for API responses)."""
+        data = json.loads(registry_json.read_text(encoding="utf-8"))
+        return expand_registry_document(data)
 
     def get(self, model_id: str) -> Optional[ModelEntry]:
         key = model_id.split(":", 1)[0]

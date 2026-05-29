@@ -560,6 +560,12 @@
     "readyTag": "已就绪",
     "forceDownload": "强制下载",
     "incompleteTag": "文件缺失",
+    "component": {
+      "transformer": "Transformer",
+      "text_encoder": "文本编码器",
+      "vae": "VAE",
+      "tokenizer": "Tokenizer"
+    },
     "notDownloadedTag": "未下载",
     "recommendedBadge": "推荐",
     "commercialUseBadge": "可商用",

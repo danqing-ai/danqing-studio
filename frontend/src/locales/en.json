@@ -560,6 +560,12 @@
     "readyTag": "Ready",
     "forceDownload": "Force Download",
     "incompleteTag": "Incomplete",
+    "component": {
+      "transformer": "Transformer",
+      "text_encoder": "Text Encoder",
+      "vae": "VAE",
+      "tokenizer": "Tokenizer"
+    },
     "notDownloadedTag": "Not Downloaded",
     "recommendedBadge": "Recommended",
     "commercialUseBadge": "Commercial",

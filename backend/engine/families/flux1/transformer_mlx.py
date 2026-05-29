@@ -55,9 +55,9 @@ class _Flux1EmbedND:
         scale = ctx.arange(0, dim, 2, dtype=ctx.float32()) / dim
         omega = 1.0 / (theta ** scale)
         out = pos[:, :, None] * omega[None, None, :]
-        cos_out = mx.cos(out)
-        sin_out = mx.sin(out)
-        stacked = mx.stack([cos_out, -sin_out, sin_out, cos_out], axis=-1)
+        cos_out = ctx.cos(out)
+        sin_out = ctx.sin(out)
+        stacked = ctx.stack([cos_out, -sin_out, sin_out, cos_out], axis=-1)
         return ctx.reshape(stacked, (batch_size, seq_length, dim // 2, 2, 2))
 
     def forward(self, ids: Any) -> Any:
@@ -67,18 +67,18 @@ class _Flux1EmbedND:
             for i, dim in enumerate(self.axes_dims)
         ]
         emb = ctx.concat(parts, axis=2)
-        return mx.expand_dims(emb, axis=1)
+        return ctx.expand_dims(emb, axis=1)
 
 
 def _apply_flux1_rope(ctx: RuntimeContext, xq: Any, xk: Any, freqs_cis: Any) -> tuple[Any, Any]:
     """mflux ``AttentionUtils.apply_rope`` — ``xq``/``xk`` are [B, H, S, D]."""
-    xq_ = mx.reshape(xq.astype(mx.float32), (*xq.shape[:-1], -1, 1, 2))
-    xk_ = mx.reshape(xk.astype(mx.float32), (*xk.shape[:-1], -1, 1, 2))
+    xq_ = ctx.reshape(xq.astype(ctx.float32()), (*xq.shape[:-1], -1, 1, 2))
+    xk_ = ctx.reshape(xk.astype(ctx.float32()), (*xk.shape[:-1], -1, 1, 2))
     xq_out = freqs_cis[..., 0] * xq_[..., 0] + freqs_cis[..., 1] * xq_[..., 1]
     xk_out = freqs_cis[..., 0] * xk_[..., 0] + freqs_cis[..., 1] * xk_[..., 1]
     return (
-        mx.reshape(xq_out, xq.shape).astype(mx.float32),
-        mx.reshape(xk_out, xk.shape).astype(mx.float32),
+        ctx.reshape(xq_out, xq.shape).astype(ctx.float32()),
+        ctx.reshape(xk_out, xk.shape).astype(ctx.float32()),
     )
 
 
@@ -145,8 +145,8 @@ class _Flux1JointAttention:
         attn_out = scaled_dot_product_attention_bhsd_mx(
             mx, q_joint, k_joint, v_joint, scale=scale
         )
-        attn_out = mx.reshape(
-            mx.transpose(attn_out, (0, 2, 1, 3)),
+        attn_out = ctx.reshape(
+            ctx.permute(attn_out, (0, 2, 1, 3)),
             (B, -1, self.heads * self.dim_head),
         )
         txt_raw = attn_out[:, :S_txt]
@@ -188,7 +188,7 @@ class _Flux1SingleAttention:
 
         scale = float(q.shape[-1]) ** -0.5
         out = scaled_dot_product_attention_bhsd_mx(mx, q, k, v, scale=scale)
-        return mx.reshape(mx.transpose(out, (0, 2, 1, 3)), (B, S, self.dim))
+        return ctx.reshape(ctx.permute(out, (0, 2, 1, 3)), (B, S, self.dim))
 
 
 class _Flux1FeedForward:
@@ -239,6 +239,7 @@ class _Flux1JointBlock:
 
     @staticmethod
     def _apply_norm_and_feed_forward(
+        ctx: RuntimeContext,
         hidden_states: Any,
         attn_output: Any,
         gate_mlp: Any,
@@ -249,14 +250,14 @@ class _Flux1JointBlock:
         ff_layer: _Flux1FeedForward,
     ) -> Any:
         """mflux ``JointTransformerBlock.apply_norm_and_feed_forward``."""
-        attn_output = mx.expand_dims(gate_msa, axis=1) * attn_output
+        attn_output = ctx.expand_dims(gate_msa, axis=1) * attn_output
         hidden_states = hidden_states + attn_output
         norm_hidden_states = norm_layer(hidden_states)
         norm_hidden_states = apply_scale_shift(
             norm_hidden_states, scale_mlp[:, None], shift_mlp[:, None], add_one=True
         )
         ff_output = ff_layer.forward(norm_hidden_states)
-        ff_output = mx.expand_dims(gate_mlp, axis=1) * ff_output
+        ff_output = ctx.expand_dims(gate_mlp, axis=1) * ff_output
         return hidden_states + ff_output
 
     def forward(self, hidden_states, encoder_hidden_states, temb, rotary_emb=None):
@@ -265,9 +266,10 @@ class _Flux1JointBlock:
 
         img_out, txt_out = self.attn.forward(n_img, n_txt, rotary_emb)
         hidden_states = self._apply_norm_and_feed_forward(
-            hidden_states, img_out, g_mlp_i, g_msa_i, sc_mlp_i, s_mlp_i, self.norm2, self.ff,
+            self.ctx, hidden_states, img_out, g_mlp_i, g_msa_i, sc_mlp_i, s_mlp_i, self.norm2, self.ff,
         )
         encoder_hidden_states = self._apply_norm_and_feed_forward(
+            self.ctx,
             encoder_hidden_states,
             txt_out,
             g_mlp_t,
@@ -324,7 +326,7 @@ class _AdaLayerNormContinuousOut:
 
     def forward(self, x, c):
         ctx = self.ctx
-        v = self.linear(ctx.silu(c).astype(mx.bfloat16))
+        v = self.linear(ctx.silu(c).astype(ctx.bfloat16()))
         scale, shift = unpack_modulation_2way(v)
         x = self.norm(x)
         return apply_scale_shift(x, scale[:, None, :], shift[:, None, :], add_one=True)
@@ -472,13 +474,13 @@ class Flux1Transformer(TransformerBase):
                 if tv.ndim == 0:
                     t_val = float(tv)
                 else:
-                    t_val = float(mx.reshape(tv, (-1,))[0])
+                    t_val = float(ctx.reshape(tv, (-1,))[0])
             else:
                 t_val = float(tv)
             if t_val <= 1.0 + 1e-5:
                 t_val *= 1000.0
         # mflux ``compute_text_embeddings``: timestep as ModelConfig.precision (bfloat16)
-        t_batch = mx.full((B,), t_val, dtype=mx.bfloat16)
+        t_batch = ctx.full((B,), t_val, dtype=ctx.bfloat16())
 
         hidden_states = self._patch_embed_packed(_pack_flux1_latents(ctx, latents))
         img_seq_len = hidden_states.shape[1]
@@ -499,17 +501,16 @@ class Flux1Transformer(TransformerBase):
         guidance_scale = conditioning.get("guidance_scale")
         if self.guidance_in is not None and guidance_scale is not None:
             g_val = float(guidance_scale) * 1000.0
-            g_batch = mx.full((B,), g_val, dtype=mx.bfloat16)
+            g_batch = ctx.full((B,), g_val, dtype=ctx.bfloat16())
             c = c + self.guidance_in.forward(
                 sinusoidal_timestep_proj(ctx, g_batch, 256, flip_sin_to_cos=True)
             )
         if pooled_embeds is not None:
             c = c + self.vector_in(pooled_embeds)
-        c = c.astype(mx.bfloat16)
+        c = c.astype(ctx.bfloat16())
 
         txt_ids, img_ids = self._prepare_pos_ids(H, W, txt_len)
-        rotary_emb = self.pos_embed.forward(mx.concatenate([txt_ids, img_ids], axis=1))
-
+        rotary_emb = self.pos_embed.forward(ctx.concat([txt_ids, img_ids], axis=1))
         for block in self.transformer_blocks:
             encoder_hidden_states, hidden_states = block.forward(
                 hidden_states, encoder_hidden_states, c, rotary_emb=rotary_emb,
@@ -530,16 +531,16 @@ class Flux1Transformer(TransformerBase):
 
     def _prepare_pos_ids(self, latent_h: int, latent_w: int, txt_len: int):
         """mflux ``_prepare_text_ids`` + ``_prepare_latent_image_ids``（packed 格 H//2 × W//2）。"""
+        ctx = self.ctx
         ph, pw = latent_h // 2, latent_w // 2
-        txt_ids = mx.zeros((1, txt_len, 3), dtype=mx.int32)
-        img_h = mx.arange(0, ph, dtype=mx.int32)
-        img_w = mx.arange(0, pw, dtype=mx.int32)
-        h_grid = mx.reshape(mx.broadcast_to(img_h[:, None], (ph, pw)), (-1,))
-        w_grid = mx.reshape(mx.broadcast_to(img_w[None, :], (ph, pw)), (-1,))
-        zeros_img = mx.zeros(ph * pw, dtype=mx.int32)
-        img_ids = mx.stack([zeros_img, h_grid, w_grid], axis=1)
-        img_ids = mx.reshape(img_ids, (1, ph * pw, 3))
-        return txt_ids, img_ids
+        txt_ids = ctx.zeros((1, txt_len, 3), dtype=ctx.int32())
+        img_h = ctx.arange(0, ph, dtype=ctx.int32())
+        img_w = ctx.arange(0, pw, dtype=ctx.int32())
+        h_grid = ctx.reshape(ctx.broadcast_to(ctx.expand_dims(img_h, axis=1), (ph, pw)), (-1,))
+        w_grid = ctx.reshape(ctx.broadcast_to(ctx.expand_dims(img_w, axis=0), (ph, pw)), (-1,))
+        zeros_img = ctx.zeros((ph * pw,), dtype=ctx.int32())
+        img_ids = ctx.stack([zeros_img, h_grid, w_grid], axis=1)
+        return txt_ids, ctx.reshape(img_ids, (1, ph * pw, 3))
 
     def load_weights(self, weights, strict=False, ctx=None, *, bundle_affine_bits=None):
         """Load weights and cast to bfloat16 (matches mflux / Flux2 reference precision)."""
@@ -550,5 +551,5 @@ class Flux1Transformer(TransformerBase):
             ctx=load_ctx,
             bundle_affine_bits=bundle_affine_bits,
         )
-        self._cast_param_map_dtype(mx.bfloat16)
+        self._cast_param_map_dtype(load_ctx.bfloat16())
         return loaded, skipped

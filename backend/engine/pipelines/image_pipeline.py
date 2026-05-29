@@ -18,6 +18,7 @@ from backend.core.contracts import (
     ImageEditRequest,
     LogEvent, parse_model_version, parse_size, work_title_metadata,
 )
+from backend.engine.common.bundle_layout import assert_media_bundle_ready, t5_encoder_bundle_paths
 from backend.engine.common.cache import ModelCache
 from backend.engine.common.pipeline_registry import (
     local_bundle_root as _local_bundle_root_fn,
@@ -45,11 +46,14 @@ from backend.engine.vae_codec_registry import (
     qwen_pack_latents_nchw,
     qwen_unpack_latents_nchw,
 )
-
-# Bar semantics: denoise uses most of the range; VAE decode + save use the tail so we do not
-# sit at 100% while post-processing (queue ETA uses ``1 - progress``).
-_IMAGE_PIPELINE_DENOISE_PROGRESS_SHARE = 0.88
-_IMAGE_PIPELINE_POST_PROGRESS_SHARE = 0.12
+from backend.engine.pipelines.pipeline_progress import (
+    DENOISE_PROGRESS_SHARE,
+    emit_complete,
+    emit_denoise_progress,
+    emit_phase,
+    emit_post_progress,
+    pipeline_graph_step,
+)
 
 
 def _resolve_image_preview_settings(entry: Any) -> tuple[str, int, int]:
@@ -136,109 +140,6 @@ def _image_pipeline_cfg_noise_pred(
             )
         return noise_pred
     return noise_cond
-
-
-def _t5_encoder_bundle_paths(bundle_root: Path | None) -> tuple[str, str]:
-    """从已安装的 Diffusers 风格 bundle 解析 T5 **权重**目录与 **tokenizer** 目录（须分离）。
-
-    **FluxPipeline**（FLUX.1）：``text_encoder`` 为 CLIP，**T5-xxl 在 ``text_encoder_2``**，词表在 ``tokenizer_2``。
-    单 T5 管线（如部分视频权重）：仅 ``text_encoder`` + ``tokenizer``。
-
-    禁止用 ``text_encoder/`` 代替 tokenizer（FIBO 等 bundle 内另有词表格式，会触发 ``TypeError``）。
-    禁止在已声明 ``local_path`` 的模型上隐式使用 ``google/t5-v1_1-xxl`` 走 Hub（首跑极慢、易超时）。
-    """
-    if bundle_root is None:
-        raise RuntimeError(
-            "T5 text encoding requires an installed model bundle (registry versions.local_path). "
-            "Refusing implicit Hugging Face hub download (google/t5-v1_1-xxl)."
-        )
-    te2 = bundle_root / "text_encoder_2"
-    te1 = bundle_root / "text_encoder"
-    enc_dir: Path | None = None
-    tok_candidates: list[Path] = []
-
-    if te2.is_dir() and any(te2.iterdir()):
-        enc_dir = te2
-        tok_candidates = [
-            bundle_root / "tokenizer_2",
-            te2 / "tokenizer",
-        ]
-    elif te1.is_dir() and any(te1.iterdir()):
-        enc_dir = te1
-        tok_candidates = [
-            bundle_root / "tokenizer",
-            te1 / "tokenizer",
-        ]
-
-    if enc_dir is None:
-        raise RuntimeError(
-            f"T5 text encoder directory missing: expected ``{te2}`` or ``{te1}``. "
-            "Re-install or sync the model bundle."
-        )
-
-    tok_dir: Path | None = None
-    for c in tok_candidates:
-        if c.is_dir() and any(c.iterdir()):
-            tok_dir = c
-            break
-    if tok_dir is None and (bundle_root / "tokenizer_config.json").is_file():
-        tok_dir = bundle_root
-    if tok_dir is None:
-        raise RuntimeError(
-            f"T5 tokenizer not found under {bundle_root}. Tried: "
-            + ", ".join(str(c) for c in tok_candidates)
-            + ". Re-install the upstream tokenizer assets."
-        )
-
-    return str(enc_dir), str(tok_dir)
-
-
-def _image_pipeline_emit_denoise_progress(
-    on_progress: Callable[..., None] | None,
-    step_1based: int,
-    n_steps: int,
-) -> None:
-    if on_progress is None:
-        return
-    n = max(1, int(n_steps))
-    s = min(max(1, int(step_1based)), n)
-    p = _IMAGE_PIPELINE_DENOISE_PROGRESS_SHARE * (s / n)
-    on_progress(p, s, n, "denoise", "denoising")
-
-
-def _image_pipeline_emit_post_progress(
-    on_progress: Callable[..., None] | None,
-    *,
-    n_steps: int,
-    within_post: float,
-) -> None:
-    """``within_post`` in [0, 1]: position inside the post-denoise segment (VAE / save)."""
-    if on_progress is None:
-        return
-    n = max(1, int(n_steps))
-    w = min(1.0, max(0.0, float(within_post)))
-    p = _IMAGE_PIPELINE_DENOISE_PROGRESS_SHARE + _IMAGE_PIPELINE_POST_PROGRESS_SHARE * w
-    on_progress(p, n, n, "post", "decoding")
-
-
-def _image_pipeline_emit_complete(on_progress: Callable[..., None] | None, n_steps: int) -> None:
-    if on_progress is None:
-        return
-    n = max(1, int(n_steps))
-    on_progress(1.0, n, n, None, "saving")
-
-
-def _image_pipeline_emit_phase(
-    on_progress: Callable[..., None] | None,
-    *,
-    phase: str,
-    progress: float,
-    n_steps: int,
-) -> None:
-    if on_progress is None:
-        return
-    n = max(1, int(n_steps))
-    on_progress(min(1.0, max(0.0, float(progress))), 0, n, phase, phase)
 
 
 class ImagePipeline:
@@ -585,7 +486,7 @@ class ImagePipeline:
                     config=config,
                 )
         elif prompt and config.text_dim > 0:
-            t5_dir, t5_tok = _t5_encoder_bundle_paths(bundle_root)
+            t5_dir, t5_tok = t5_encoder_bundle_paths(bundle_root)
             enc = T5Encoder(self.ctx, t5_dir, tokenizer_path=t5_tok)
             txt_embeds = enc.encode([prompt])
         return (
@@ -597,6 +498,124 @@ class ImagePipeline:
             neg_pooled_embeds,
             encoder_type,
         )
+
+    def _image_encode_load_for_inference(
+        self,
+        *,
+        request: ImageGenerationRequest | ImageEditRequest,
+        bundle_root: Path | None,
+        config: Any,
+        guidance: float,
+        runtime_contract: FamilyRuntimeContract,
+        family: str,
+        entry: Any,
+        version_key: str | None,
+        model_key: str,
+        steps: int,
+        ctx_exec: ExecutionContext,
+        on_progress: Callable | None,
+        on_log: Callable | None,
+    ) -> tuple[Any, dict[str, Any], Any, Any, Any, Any, Any, Any, str] | None:
+        emit_phase(on_progress, phase="encoding", progress=0.02, n_steps=steps)
+        pipeline_graph_step("encode_prompt", on_log)
+        (
+            txt_embeds,
+            neg_embeds,
+            txt_attn_mask,
+            neg_attn_mask,
+            pooled_embeds,
+            neg_pooled_embeds,
+            encoder_type,
+        ) = self._encode_image_text_conditioning(
+            prompt=request.prompt,
+            negative_prompt=request.negative_prompt,
+            bundle_root=bundle_root,
+            config=config,
+            guidance=guidance,
+            runtime_contract=runtime_contract,
+        )
+        if ctx_exec.cancel_token.is_cancelled():
+            return None
+
+        emit_phase(on_progress, phase="loading_model", progress=0.08, n_steps=steps)
+        pipeline_graph_step("load_transformer", on_log)
+        allow_cache = not (getattr(request, "adapters", None) or [])
+        model = self._load_model(
+            family, config, entry, version_key or None, allow_cache=allow_cache
+        )
+        if model is None:
+            raise RuntimeError(f"Failed to load model: {model_key}")
+
+        model.after_load_weights(bundle_root=str(bundle_root) if bundle_root else None)
+        self._apply_image_lora_adapters(family, model, request, on_log)
+        extra_cond = model.prepare_conditioning(
+            request, bundle_root=str(bundle_root) if bundle_root else None
+        )
+        return (
+            model,
+            extra_cond,
+            txt_embeds,
+            neg_embeds,
+            txt_attn_mask,
+            neg_attn_mask,
+            pooled_embeds,
+            neg_pooled_embeds,
+            encoder_type,
+        )
+
+    def _finalize_image_from_latents(
+        self,
+        *,
+        latents: Any,
+        timesteps: Any,
+        entry: Any,
+        version_key: str | None,
+        model_key: str,
+        seed: int,
+        request: ImageGenerationRequest | ImageEditRequest,
+        ctx_exec: ExecutionContext,
+        steps: int,
+        guidance: float,
+        w: int,
+        h: int,
+        on_progress: Callable | None,
+        on_log: Callable | None,
+        name_infix: str = "",
+        post_decode: Callable[[Any], Any] | None = None,
+        extra_meta: dict[str, Any] | None = None,
+    ) -> tuple[str, dict[str, Any]] | None:
+        pipeline_graph_step("decode_vae", on_log)
+        image = self._vae_decode(latents, entry, version_key or None, on_log=on_log)
+        if post_decode is not None:
+            image = post_decode(image)
+        emit_post_progress(on_progress, n_steps=len(timesteps), within_post=0.5)
+        if ctx_exec.cancel_token.is_cancelled():
+            return None
+
+        pipeline_graph_step("save_asset", on_log)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        work = Path(ctx_exec.work_dir)
+        work.mkdir(parents=True, exist_ok=True)
+        out_path = work / f"{model_key}{name_infix}_{seed}_{timestamp}.png"
+        if hasattr(image, "save"):
+            image.save(str(out_path))
+        emit_post_progress(on_progress, n_steps=len(timesteps), within_post=1.0)
+        emit_complete(on_progress, len(timesteps))
+
+        meta: dict[str, Any] = {
+            "model": request.model,
+            "seed": seed,
+            "prompt": request.prompt,
+            "steps": steps,
+            "guidance": guidance,
+            "width": w,
+            "height": h,
+            "mime_type": "image/png",
+        }
+        if extra_meta:
+            meta.update(extra_meta)
+        meta.update(work_title_metadata(request.title))
+        return str(out_path), meta
 
     def _build_vae_preview_session(
         self,
@@ -844,7 +863,7 @@ class ImagePipeline:
             pil.save(str(out_path), format="PNG", optimize=True)
             nbytes = out_path.stat().st_size if out_path.is_file() else 0
             n = max(1, int(n_steps))
-            p = _IMAGE_PIPELINE_DENOISE_PROGRESS_SHARE * (step_1 / n)
+            p = DENOISE_PROGRESS_SHARE * (step_1 / n)
             # Step preview image: frontend polls GET /api/tasks/{task_id}/preview (not SSE).
             if on_progress is not None:
                 on_progress(p, step_1, n, None, "denoising")
@@ -972,7 +991,7 @@ class ImagePipeline:
             if getattr(self.ctx, "backend", None) == "mlx":
                 self.ctx.eval(latents)
             model.step_callback(i, latents, noise_pred)
-            _image_pipeline_emit_denoise_progress(on_progress, i + 1, len(timesteps))
+            emit_denoise_progress(on_progress, i + 1, len(timesteps))
             if (
                 preview_mode == "stream"
                 and preview_state is not None
@@ -1036,6 +1055,7 @@ class ImagePipeline:
             return None
 
         bundle_root = self._local_bundle_root(entry, version_key or None)
+        assert_media_bundle_ready(bundle_root, family=family, model_id=model_key)
 
         steps_default = self._registry_scalar_default(entry, "steps", 4)
         guidance_default = self._registry_scalar_default(entry, "guidance", 0.0)
@@ -1048,9 +1068,32 @@ class ImagePipeline:
         preview_mode, preview_interval, preview_max_edge = _resolve_image_preview_settings(entry)
         preview_state: dict[str, Any] = {}
 
-        _image_pipeline_emit_phase(on_progress, phase="encoding", progress=0.02, n_steps=steps)
+        pipeline_graph_step(
+            "validate_bundle",
+            on_log,
+            message=f"ok family={family} root={bundle_root}",
+        )
 
+        enc_loaded = self._image_encode_load_for_inference(
+            request=request,
+            bundle_root=bundle_root,
+            config=config,
+            guidance=guidance,
+            runtime_contract=runtime_contract,
+            family=family,
+            entry=entry,
+            version_key=version_key,
+            model_key=model_key,
+            steps=steps,
+            ctx_exec=ctx_exec,
+            on_progress=on_progress,
+            on_log=on_log,
+        )
+        if enc_loaded is None:
+            return None
         (
+            model,
+            extra_cond,
             txt_embeds,
             neg_embeds,
             txt_attn_mask,
@@ -1058,34 +1101,7 @@ class ImagePipeline:
             pooled_embeds,
             neg_pooled_embeds,
             encoder_type,
-        ) = self._encode_image_text_conditioning(
-            prompt=request.prompt,
-            negative_prompt=request.negative_prompt,
-            bundle_root=bundle_root,
-            config=config,
-            guidance=guidance,
-            runtime_contract=runtime_contract,
-        )
-
-        if ctx_exec.cancel_token.is_cancelled():
-            return None
-
-        _image_pipeline_emit_phase(on_progress, phase="loading_model", progress=0.08, n_steps=steps)
-
-        # 2. Load model
-        allow_cache = not (getattr(request, "adapters", None) or [])
-        model = self._load_model(
-            family, config, entry, version_key or None, allow_cache=allow_cache
-        )
-        if model is None:
-            raise RuntimeError(f"Failed to load model: {model_key}")
-
-        # ── Hook ①: after weight loading (LoRA / Adapter merging) ──
-        model.after_load_weights(bundle_root=str(bundle_root) if bundle_root else None)
-        self._apply_image_lora_adapters(family, model, request, on_log)
-
-        # ── Hook ②: condition preparation (ControlNet encode control image) ──
-        extra_cond = model.prepare_conditioning(request, bundle_root=str(bundle_root) if bundle_root else None)
+        ) = enc_loaded
 
         # 3. Scheduler (registry default + request params, zero family branching)
         semantics = self._scheduler_semantics_resolver.resolve(
@@ -1222,6 +1238,7 @@ class ImagePipeline:
                 preview_state["vae_session"] = False
                 if on_log:
                     on_log("warning", f"preview VAE warmup skipped: {exc}")
+        pipeline_graph_step("denoise", on_log)
         latents = self._denoise_steps(
             model=model,
             scheduler=scheduler,
@@ -1268,31 +1285,22 @@ class ImagePipeline:
         if _packed_denoise:
             latents = _flux_unpack(self.ctx, latents, _lh, _lw)
 
-        # 5. VAE decode
-        image = self._vae_decode(latents, entry, version_key or None, on_log=on_log)
-        _image_pipeline_emit_post_progress(on_progress, n_steps=len(timesteps), within_post=0.5)
-
-        if ctx_exec.cancel_token.is_cancelled():
-            return None
-
-        # 6. Save (task work dir, see TaskScheduler._work_dir)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        work = Path(ctx_exec.work_dir)
-        work.mkdir(parents=True, exist_ok=True)
-        out_path = work / f"{model_key}_{seed}_{timestamp}.png"
-        if hasattr(image, 'save'):
-            image.save(str(out_path))
-        _image_pipeline_emit_post_progress(on_progress, n_steps=len(timesteps), within_post=1.0)
-        _image_pipeline_emit_complete(on_progress, len(timesteps))
-
-        meta = {
-            "model": request.model, "seed": seed,
-            "prompt": request.prompt, "steps": steps,
-            "guidance": guidance,
-            "width": w, "height": h, "mime_type": "image/png",
-        }
-        meta.update(work_title_metadata(request.title))
-        return str(out_path), meta
+        return self._finalize_image_from_latents(
+            latents=latents,
+            timesteps=timesteps,
+            entry=entry,
+            version_key=version_key,
+            model_key=model_key,
+            seed=seed,
+            request=request,
+            ctx_exec=ctx_exec,
+            steps=steps,
+            guidance=guidance,
+            w=w,
+            h=h,
+            on_progress=on_progress,
+            on_log=on_log,
+        )
 
     def run_edit(
         self,
@@ -1348,6 +1356,12 @@ class ImagePipeline:
             return None
 
         bundle_root = self._local_bundle_root(entry, version_key or None)
+        assert_media_bundle_ready(bundle_root, family=family, model_id=model_key)
+        pipeline_graph_step(
+            "validate_bundle",
+            on_log,
+            message=f"ok family={family} root={bundle_root}",
+        )
         from PIL import Image
 
         src_path = ctx_exec.asset_store.get_file_path(request.source_asset_id)
@@ -1418,9 +1432,26 @@ class ImagePipeline:
         preview_mode, preview_interval, preview_max_edge = _resolve_image_preview_settings(entry)
         preview_state: dict[str, Any] = {}
 
-        _image_pipeline_emit_phase(on_progress, phase="encoding", progress=0.02, n_steps=steps)
-
+        enc_loaded = self._image_encode_load_for_inference(
+            request=request,
+            bundle_root=bundle_root,
+            config=config,
+            guidance=guidance,
+            runtime_contract=runtime_contract,
+            family=family,
+            entry=entry,
+            version_key=version_key,
+            model_key=model_key,
+            steps=steps,
+            ctx_exec=ctx_exec,
+            on_progress=on_progress,
+            on_log=on_log,
+        )
+        if enc_loaded is None:
+            return None
         (
+            model,
+            extra_cond,
             txt_embeds,
             neg_embeds,
             txt_attn_mask,
@@ -1428,29 +1459,7 @@ class ImagePipeline:
             pooled_embeds,
             neg_pooled_embeds,
             encoder_type,
-        ) = self._encode_image_text_conditioning(
-            prompt=request.prompt,
-            negative_prompt=request.negative_prompt,
-            bundle_root=bundle_root,
-            config=config,
-            guidance=guidance,
-            runtime_contract=runtime_contract,
-        )
-
-        if ctx_exec.cancel_token.is_cancelled():
-            return None
-
-        _image_pipeline_emit_phase(on_progress, phase="loading_model", progress=0.08, n_steps=steps)
-
-        allow_cache = not (getattr(request, "adapters", None) or [])
-        model = self._load_model(
-            family, config, entry, version_key or None, allow_cache=allow_cache
-        )
-        if model is None:
-            raise RuntimeError(f"Failed to load model: {model_key}")
-        model.after_load_weights(bundle_root=str(bundle_root) if bundle_root else None)
-        self._apply_image_lora_adapters(family, model, request, on_log)
-        extra_cond = model.prepare_conditioning(request, bundle_root=str(bundle_root) if bundle_root else None)
+        ) = enc_loaded
         if edit_conditioning_concat:
             from backend.engine.families.fibo import vae_mlx as fibo_vae_mlx
 
@@ -1575,6 +1584,7 @@ class ImagePipeline:
                 preview_state["vae_session"] = False
                 if on_log:
                     on_log("warning", f"preview VAE warmup skipped: {exc}")
+        pipeline_graph_step("denoise", on_log)
         latents = self._denoise_steps(
             model=model,
             scheduler=scheduler,
@@ -1621,39 +1631,36 @@ class ImagePipeline:
         if _packed_edit and latents.ndim == 3 and _flux_unpack_edit is not None:
             latents = _flux_unpack_edit(self.ctx, latents, _lh_edit, _lw_edit)
 
-        image = self._vae_decode(latents, entry, version_key or None, on_log=on_log)
-        if getattr(config, "edit_rmbg_composite_output", False):
-            matte = image.convert("L")
-            composite = pil.copy()
-            composite.putalpha(matte.resize(composite.size, Image.LANCZOS))
-            image = composite
-        _image_pipeline_emit_post_progress(on_progress, n_steps=len(timesteps), within_post=0.5)
-        if ctx_exec.cancel_token.is_cancelled():
-            return None
+        def _edit_post_decode(image: Any) -> Any:
+            if getattr(config, "edit_rmbg_composite_output", False):
+                matte = image.convert("L")
+                composite = pil.copy()
+                composite.putalpha(matte.resize(composite.size, Image.LANCZOS))
+                return composite
+            return image
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        work = Path(ctx_exec.work_dir)
-        work.mkdir(parents=True, exist_ok=True)
-        out_path = work / f"{model_key}_edit_{seed}_{timestamp}.png"
-        if hasattr(image, "save"):
-            image.save(str(out_path))
-        _image_pipeline_emit_post_progress(on_progress, n_steps=len(timesteps), within_post=1.0)
-        _image_pipeline_emit_complete(on_progress, len(timesteps))
-
-        meta = {
-            "model": request.model,
-            "seed": seed,
-            "prompt": request.prompt,
-            "steps": steps,
-            "guidance": guidance,
-            "width": w,
-            "height": h,
-            "mime_type": "image/png",
-            "operation": request.operation,
-            "source_fidelity": fidelity,
-        }
-        meta.update(work_title_metadata(request.title))
-        return str(out_path), meta
+        return self._finalize_image_from_latents(
+            latents=latents,
+            timesteps=timesteps,
+            entry=entry,
+            version_key=version_key,
+            model_key=model_key,
+            seed=seed,
+            request=request,
+            ctx_exec=ctx_exec,
+            steps=steps,
+            guidance=guidance,
+            w=w,
+            h=h,
+            on_progress=on_progress,
+            on_log=on_log,
+            name_infix="_edit",
+            post_decode=_edit_post_decode,
+            extra_meta={
+                "operation": request.operation,
+                "source_fidelity": fidelity,
+            },
+        )
 
     # ------------------------------------------------------------------
     # Internal methods
@@ -1669,6 +1676,15 @@ class ImagePipeline:
         adapters = getattr(request, "adapters", None) or []
         if not adapters:
             return
+        base_model_id, _ = parse_model_version(request.model)
+        entry = self._registry.get(base_model_id)
+        if entry is not None:
+            lora_support = self._registry_scalar_default(entry, "lora_support", False)
+            if not lora_support:
+                raise RuntimeError(
+                    f"Model {base_model_id!r} does not declare LoRA support; "
+                    "remove adapters from the request or use a LoRA-capable base model."
+                )
         from backend.engine.runtime.mlx import MLXContext
 
         if not isinstance(self.ctx, MLXContext):
@@ -1676,7 +1692,6 @@ class ImagePipeline:
                 "LoRA merging for Flux.1 / Flux2 / Z-Image / Qwen Image is only implemented on the MLX runtime; "
                 f"current runtime is {type(self.ctx).__name__}."
             )
-        base_model_id, _ = parse_model_version(request.model)
         _merge_image_lora_adapters(
             family=family,
             model=model,

@@ -25,7 +25,7 @@ mflux 对比仅包含有 **真实 mflux 子命令** 的路径；用例按 ``defa
   可对齐 PSNR。详见 ``BENCHMARK_EXIT_EXEMPT_MISMATCH_VS_MFLUX`` 中注释。
 
 ``ALL_SANITY_CASES``：无上游对照时，仅用像素统计拒绝白/黑/近单色平场（见 ``sanity.py``）。
-SeedVR2 超分健全性：若 ``models/Upscaler/seedvr2-*-fp16`` 下缺少 ``job_mlx.expected_seedvr2_weight_files``
+SeedVR2 超分健全性：若 ``models/Upscaler/seedvr2-*-fp16`` 下缺少 ``stem.expected_seedvr2_weight_files``
   所列文件，运行器 **SKIP**（不计 FAIL），与 ``make bench-seedvr2-mflux`` 对 3b 缺权重行为一致。
 
 ``python -m tests.benchmark mflux --all`` 的进程退出码：仅统计「非豁免」FAIL；豁免集合为

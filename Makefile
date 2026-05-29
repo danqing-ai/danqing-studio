@@ -3,7 +3,7 @@
 	bench-setup bench-src bench-mflux bench-mflux-case bench-mlx-video bench-mlx-video-case bench-diffusers bench-diffusers-case bench-sanity bench-sanity-case \
 	bench-audio-sanity bench-audio-sanity-lm bench-audio-sanity-heartmula \
 	bench-wan-sanity bench-wan-baseline \
-	check-consistency check-models-registry-contracts check-ep-boundary check-theme-legacy check-ui-compat check-engine-rules check-engine-imports check-engine-family-layout check-engine-family-primitives check-engine-attention-paths check-engine-sdpa-paths check-engine-rope-paths check-engine-modulation-paths check-frontend-governance check-engine-governance verify-engine-stack \
+	check-consistency check-models-registry-contracts check-ep-boundary check-theme-legacy check-ui-compat check-engine-rules check-engine-imports check-engine-family-layout check-engine-family-primitives check-engine-attention-paths check-engine-sdpa-paths check-engine-rope-paths check-engine-modulation-paths check-frontend-governance check-weight-parity check-engine-governance verify-engine-stack \
 	sync-models-registry \
 	strip-el-tokens test-engine-unit \
 	pack-prereqs \
@@ -200,7 +200,10 @@ check-engine-modulation-paths:
 check-models-registry-contracts:
 	$(PYTHON) $(ENGINE_GOV) --rule registry
 
-check-engine-governance: check-engine-rules check-consistency
+check-weight-parity:
+	$(PYTHON) $(ENGINE_GOV) --rule parity
+
+check-engine-governance: check-engine-rules check-consistency check-weight-parity
 	@echo "Engine governance suite OK"
 
 verify-engine-stack: check-engine-governance test-engine-unit

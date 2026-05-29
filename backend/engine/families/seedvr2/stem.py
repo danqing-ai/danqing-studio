@@ -1,7 +1,7 @@
-"""SeedVR2 图像超分 — 对外入口（MLX 编排见 ``job_mlx``）。"""
+"""SeedVR2 upscaler — public stem (MLX impl in ``stem_mlx``)."""
 from __future__ import annotations
 
-from backend.engine.families.seedvr2.job_mlx import (
+from backend.engine.families.seedvr2.stem_mlx import (
     GeneratedImage,
     SeedVR2UpscalePipeline,
     SeedVR2UpscaleRuntime,

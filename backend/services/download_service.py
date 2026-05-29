@@ -23,6 +23,7 @@ from backend.core.bundle_repos import (
     version_primary_local_path,
 )
 from backend.core.install_hooks import install_hooks_from_version, run_install_hooks
+from backend.core.bundle_manifest import write_bundle_manifest
 from backend.core.interfaces import (
     IDownloadService, IPathResolver, IConfigStore,
     DownloadTask, DownloadProgress, TaskStatus, ConversionTask
@@ -254,41 +255,60 @@ class DownloadService(IDownloadService):
         display_name: str,
         on_progress: Callable[[DownloadProgress], Any],
     ) -> None:
-        """Post-download steps: Hunyuan MS assembly + registry ``install_hooks``."""
+        """Post-download steps: Hunyuan MS assembly + install_hooks + bundle manifest."""
         if ver_config and ver_config.get("hunyuan_ms_variant"):
             self._maybe_assemble_hunyuan_ms_bundle(target, ver_config)
 
         hooks = install_hooks_from_version(ver_config)
-        if not hooks:
-            return
-
-        logger.info(
-            "Running %d install hook(s) for %s:%s at %s",
-            len(hooks),
-            model_name,
-            version or "default",
-            target,
-        )
-        await on_progress(
-            DownloadProgress(
-                task_id=task_id,
-                status="running",
-                progress=0.99,
-                filename=display_name,
-                speed="",
+        if hooks:
+            logger.info(
+                "Running %d install hook(s) for %s:%s at %s",
+                len(hooks),
+                model_name,
+                version or "default",
+                target,
             )
-        )
-        loop = asyncio.get_event_loop()
-
-        def _run_hooks() -> None:
-            run_install_hooks(
-                model_name=model_name,
-                version_key=version,
-                ver_config=ver_config,
-                bundle_root=target,
+            await on_progress(
+                DownloadProgress(
+                    task_id=task_id,
+                    status="running",
+                    progress=0.99,
+                    filename=display_name,
+                    speed="",
+                )
             )
+            loop = asyncio.get_event_loop()
 
-        await loop.run_in_executor(None, _run_hooks)
+            def _run_hooks() -> None:
+                run_install_hooks(
+                    model_name=model_name,
+                    version_key=version,
+                    ver_config=ver_config,
+                    bundle_root=target,
+                )
+
+            await loop.run_in_executor(None, _run_hooks)
+
+        config = self.get_model_download_config(model_name) or {}
+        family = str(config.get("family") or "").strip()
+        if family and target.is_dir():
+            try:
+                manifest_path = write_bundle_manifest(
+                    target,
+                    model_id=model_name,
+                    family=family,
+                )
+                logger.info("Wrote bundle manifest: %s", manifest_path)
+            except Exception as exc:
+                logger.error(
+                    "Failed to write bundle.manifest.json for %s at %s: %s",
+                    model_name,
+                    target,
+                    exc,
+                )
+                raise RuntimeError(
+                    f"Post-download manifest generation failed for {model_name!r}: {exc}"
+                ) from exc
 
     def _sync_download_bundle_repo(
         self,

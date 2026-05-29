@@ -17,7 +17,7 @@ Pick **one** shape before writing code:
 | Shape | When | Entry | Copy template |
 |-------|------|-------|---------------|
 | **A — DiT + ImagePipeline** | Standard txt2img / edit with `TransformerBase.forward(latents, t, txt_embeds=…)` | `ImagePipeline.run()` | **flux2** (`docs/canonical_image_family_flux2.md`) |
-| **B — Job Pipeline** | Upscale / MM-DiT with non-standard denoise API | `ImageUpscalePipeline` → `families/<family>/job_*.py` | seedvr2 |
+| **B — Job Pipeline** | Upscale / MM-DiT with non-standard denoise API | `ImageUpscalePipeline` → `families/<family>/stem.py` + `stem_mlx.py` | seedvr2 |
 | **C — Generation Facade** | End-to-end audio or whole-stack generator | `MusicPipeline` → `families/<family>/generation.py` | ace_step, heartmula |
 
 **Do not** mirror upstream directory trees (e.g. `families/<family>/mlx/`). HeartMuLa's `mlx/` subtree is allowlisted temporarily only.
@@ -107,6 +107,10 @@ Complete **all five** before merging:
 
 - [ ] Update `default_config/models_registry.json`
 - [ ] Run `make sync-models-registry`
+- [ ] Optional profile shrink: `apply_standard_profile()` in `backend/core/registry_profiles.py` (expanded doc must stay identical)
+- [ ] Register bundle components in `backend/core/bundle_manifest.py` (`FAMILY_BUNDLE_CONTRACTS`) when enabling install validation
+- [ ] Pipelines call `assert_media_bundle_ready()` from `backend/engine/common/bundle_layout.py` before load
+- [ ] Optional graph steps: `pipeline_graph_step` from `backend/engine/pipelines/pipeline_progress.py`
 - [ ] Update `backend/engine/config/model_configs.py`
 - [ ] Update `backend/engine/_transformer_registry.py`:
   - transformer map

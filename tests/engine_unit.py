@@ -404,26 +404,26 @@ class TextEncoderStemTests(unittest.TestCase):
 
 class SeedVR2StemTests(unittest.TestCase):
     def test_upscale_and_job_stems(self) -> None:
-        from backend.engine.families.seedvr2.job_mlx import (
+        from backend.engine.families.seedvr2.stem_mlx import (
             GeneratedImage,
             SeedVR2EulerScheduler,
             SCHEDULER_REGISTRY,
         )
-        from backend.engine.families.seedvr2.upscale import (
+        from backend.engine.families.seedvr2.stem import (
             ModelConfig,
             SeedVR2UpscalePipeline,
             restore_video_chunk_spatiotemporal,
             run_seedvr2_spatiotemporal_video,
         )
         from backend.engine.families.seedvr2.weights import ModelConfig as MC2
-        from backend.engine.families.seedvr2 import job_mlx
+        from backend.engine.families.seedvr2 import stem_mlx
 
         self.assertIs(MC2, ModelConfig)
         self.assertIn("seedvr2_euler", SCHEDULER_REGISTRY)
         self.assertTrue(SeedVR2UpscalePipeline)
         self.assertTrue(GeneratedImage)
-        self.assertIs(restore_video_chunk_spatiotemporal, job_mlx.restore_video_chunk_spatiotemporal)
-        self.assertIs(run_seedvr2_spatiotemporal_video, job_mlx.run_seedvr2_spatiotemporal_video)
+        self.assertIs(restore_video_chunk_spatiotemporal, stem_mlx.restore_video_chunk_spatiotemporal)
+        self.assertIs(run_seedvr2_spatiotemporal_video, stem_mlx.run_seedvr2_spatiotemporal_video)
 
 
 class TaskKindMappingTests(unittest.TestCase):
@@ -1432,7 +1432,7 @@ class InstallHooksTests(unittest.TestCase):
 class PipelineProgressBridgeTests(unittest.TestCase):
     def test_denoise_emit_matches_execution_context(self) -> None:
         from backend.core.contracts import ProgressEvent
-        from backend.engine.pipelines.image_pipeline import _image_pipeline_emit_denoise_progress
+        from backend.engine.pipelines.pipeline_progress import emit_denoise_progress
         from backend.engine.progress_bridge import make_pipeline_progress_callback
 
         events: list[ProgressEvent] = []
@@ -1442,7 +1442,7 @@ class PipelineProgressBridgeTests(unittest.TestCase):
                 events.append(ev)
 
         on_progress = make_pipeline_progress_callback(_Ctx())  # type: ignore[arg-type]
-        _image_pipeline_emit_denoise_progress(on_progress, 1, 40)
+        emit_denoise_progress(on_progress, 1, 40)
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0].step, 1)
         self.assertEqual(events[0].total, 40)
@@ -1528,6 +1528,158 @@ class MemoryPolicyTests(unittest.TestCase):
         ctx.apply_memory_limit_gb(96)
         self.assertEqual(ctx.memory_limit_gb, 96)
         self.assertEqual(os.environ.get("MLX_METAL_MEMORY_LIMIT"), "96")
+
+
+class RegistryProfilesTests(unittest.TestCase):
+    def test_expand_profile_merges_fields(self) -> None:
+        from backend.core.registry_profiles import expand_registry_document
+
+        doc = {
+            "profiles": {
+                "flux2-base": {
+                    "engine": "danqing-image",
+                    "media": "image",
+                    "parameters": {"steps": {"type": "int", "default": 4}},
+                }
+            },
+            "models": {
+                "flux2-klein-9b": {
+                    "profile": "flux2-base",
+                    "family": "flux2",
+                    "name": {"en": "Flux2 Klein"},
+                }
+            },
+        }
+        expanded = expand_registry_document(doc)
+        model = expanded["models"]["flux2-klein-9b"]
+        self.assertEqual(model["engine"], "danqing-image")
+        self.assertEqual(model["family"], "flux2")
+        self.assertEqual(model["parameters"]["steps"]["default"], 4)
+
+    def test_unknown_profile_fails_loud(self) -> None:
+        from backend.core.registry_profiles import expand_registry_document
+
+        with self.assertRaises(ValueError):
+            expand_registry_document(
+                {"models": {"x": {"profile": "missing", "family": "flux2"}}}
+            )
+
+    def test_validate_registry_document_catches_bad_profile(self) -> None:
+        from backend.core.registry_profiles import validate_registry_document
+
+        errors = validate_registry_document(
+            {"models": {"x": {"profile": "nope", "family": "flux2"}}}
+        )
+        self.assertTrue(any("nope" in e for e in errors))
+
+    def test_apply_standard_profile_preserves_expansion(self) -> None:
+        import copy
+
+        from backend.core.registry_profiles import apply_standard_profile, expand_registry_document
+
+        doc = {
+            "profiles": {
+                "image_dit_standard": {
+                    "engine": "danqing-image",
+                    "type": "diffusion",
+                    "category": "base_models",
+                    "parameters": {
+                        "lora_support": True,
+                        "seed_support": True,
+                        "preview_mode": {"type": "enum", "default": "stream", "options": ["stream", "none"]},
+                        "preview_interval_steps": {"type": "int", "default": 2, "min": 1, "max": 8},
+                        "preview_max_edge": {"type": "int", "default": 512, "min": 128, "max": 1024},
+                    },
+                },
+                "video_dit_standard": {
+                    "engine": "danqing-video",
+                    "type": "video",
+                    "category": "video_models",
+                    "parameters": {"seed_support": True},
+                },
+            },
+            "models": {
+                "demo": {
+                    "engine": "danqing-image",
+                    "category": "base_models",
+                    "type": "diffusion",
+                    "family": "flux2",
+                    "parameters": {
+                        "steps": {"type": "int", "default": 4},
+                        "preview_mode": {"type": "enum", "default": "stream", "options": ["stream", "none"]},
+                        "preview_interval_steps": {"type": "int", "default": 2, "min": 1, "max": 8},
+                        "preview_max_edge": {"type": "int", "default": 512, "min": 128, "max": 1024},
+                        "lora_support": True,
+                        "seed_support": True,
+                    },
+                }
+            },
+        }
+        before = expand_registry_document(copy.deepcopy(doc))
+        apply_standard_profile(doc)
+        after = expand_registry_document(doc)
+        self.assertEqual(before, after)
+        self.assertEqual(doc["models"]["demo"]["profile"], "image_dit_standard")
+
+
+class BundleManifestTests(unittest.TestCase):
+    def test_scan_components_classifies_files(self) -> None:
+        from backend.core.bundle_manifest import scan_components
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "transformer.safetensors").write_bytes(b"x")
+            (root / "vae").mkdir(parents=True)
+            (root / "vae" / "diffusion_pytorch_model.safetensors").write_bytes(b"y")
+            (root / "text_encoder").mkdir(parents=True)
+            (root / "text_encoder" / "model.safetensors").write_bytes(b"z")
+
+            components = scan_components(root)
+            self.assertIn("transformer", components)
+            self.assertIn("vae", components)
+            self.assertIn("text_encoder", components)
+
+    def test_t5_encoder_bundle_paths_flux_layout(self) -> None:
+        from backend.engine.common.bundle_layout import t5_encoder_bundle_paths
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "text_encoder_2").mkdir()
+            (root / "text_encoder_2" / "model.safetensors").write_bytes(b"x")
+            (root / "tokenizer_2").mkdir()
+            (root / "tokenizer_2" / "tokenizer.json").write_text("{}", encoding="utf-8")
+            enc, tok = t5_encoder_bundle_paths(root)
+            self.assertTrue(enc.endswith("text_encoder_2"))
+            self.assertTrue(tok.endswith("tokenizer_2"))
+
+    def test_assert_media_bundle_ready_none_raises(self) -> None:
+        from backend.engine.common.bundle_layout import assert_media_bundle_ready
+
+        with self.assertRaises(RuntimeError) as ctx:
+            assert_media_bundle_ready(None, family="flux2", model_id="demo")
+        self.assertIn("no installed bundle", str(ctx.exception))
+
+    def test_assert_bundle_ready_missing_component(self) -> None:
+        from backend.core.bundle_manifest import assert_bundle_ready_for_family
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "transformer.safetensors").write_bytes(b"x")
+            with self.assertRaises(RuntimeError) as ctx:
+                assert_bundle_ready_for_family(root, family="flux2", model_id="test-model")
+            self.assertIn("text_encoder", str(ctx.exception))
+
+    def test_bundle_component_status_flags_missing(self) -> None:
+        from backend.core.bundle_manifest import bundle_component_status
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "transformer.safetensors").write_bytes(b"x")
+            status = bundle_component_status(root, family="flux2")
+            self.assertIsNotNone(status)
+            assert status is not None
+            self.assertFalse(status["complete"])
+            self.assertIn("text_encoder", status["missing"])
 
 
 if __name__ == "__main__":
