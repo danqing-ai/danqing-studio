@@ -47,7 +47,8 @@
                   :value="item.modelKey + '|' + item.versionKey"
                   :disabled="!item.ready"
                 >
-                  <ModelVersionPickerExtras
+                  <ModelVersionPickerOption
+                    :description="String(item.description || '')"
                     :recommended="item.recommended"
                     :commercial-use-allowed="item.commercialUseAllowed"
                     :status="String(item.status || '')"
@@ -60,6 +61,7 @@
                 :show-installed-filter="false"
               />
             </div>
+            <CreateModelDescription :model-config="currentModelConfig" />
             <DqAlert
               v-if="selectedModelNotReady"
               :title="$t('studio.modelNotReady', { name: currentModelDisplayName })"
@@ -405,12 +407,14 @@ import { useRouter } from 'vue-router';
 import { toast } from '@/utils/feedback';
 import { api, taskIdFromSubmitResponse } from '@/utils/api';
 import { formatGenLogMessage, isDuplicateDenoiseStepLog } from '@/utils/genTaskLog';
-import { $tt, $mn, $mvn } from '@/utils/i18n';
+import { $tt, $mn, $md, $mvn } from '@/utils/i18n';
 import { useTasksStore } from '@/stores/tasks';
 import { useRegistryStore } from '@/stores/registry';
 import { pickDefaultVersionKey, resolveDefaultModelRegistryKey } from '@/utils/defaultModelSettings';
 import ModelPickerFilters from '@/components/model/ModelPickerFilters.vue';
 import ModelVersionPickerExtras from '@/components/model/ModelVersionPickerExtras.vue';
+import CreateModelDescription from '@/components/model/CreateModelDescription.vue';
+import ModelVersionPickerOption from '@/components/model/ModelVersionPickerOption.vue';
 import { useModelRegistryFilters } from '@/composables/useModelRegistryFilters';
 import { applyModelVersionFilters } from '@/utils/modelPickerFilters';
 import { warnIfRiskyMemory } from '@/composables/memoryHint';
@@ -695,6 +699,7 @@ const allAudioVersions = computed(() => {
         modelKey,
         versionKey,
         name: $mvn(modelKey, config, versionConfig),
+        description: $md(config as { description?: string | { zh?: string; en?: string }; description_en?: string }),
         size: (versionConfig as Record<string, unknown>).size || '',
         status: ready ? 'ready' : (vst.status || 'not_downloaded'),
         ready,

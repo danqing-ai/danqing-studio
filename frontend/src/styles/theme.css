@@ -3264,6 +3264,59 @@ body {
  margin-left: 0;
 }
 
+.studio-model-desc,
+.studio-picker-option__desc {
+ margin: 0;
+ font-size: 12px;
+ line-height: 1.4;
+ color: var(--dq-label-secondary);
+ display: -webkit-box;
+ -webkit-box-orient: vertical;
+ overflow: hidden;
+}
+
+.studio-model-desc {
+ padding-top: 2px;
+ -webkit-line-clamp: 2;
+}
+
+/* 下拉项：第一行仅模型名（DqOption label），第二行说明 + 状态标签 */
+.create-page .dq-select__option {
+ flex-wrap: wrap;
+ align-items: flex-start;
+ row-gap: 2px;
+}
+
+.create-page .dq-select__option-text {
+ flex: 1 1 100%;
+ max-width: 100%;
+ white-space: normal;
+}
+
+.create-page .dq-select__option-suffix {
+ flex: 1 1 100%;
+ justify-content: space-between;
+ align-items: flex-start;
+ gap: 8px;
+}
+
+.studio-picker-option-suffix {
+ display: flex;
+ flex: 1 1 auto;
+ align-items: flex-start;
+ justify-content: space-between;
+ gap: 8px;
+ min-width: 0;
+ width: 100%;
+}
+
+.studio-picker-option__desc {
+ flex: 1 1 auto;
+ min-width: 0;
+ padding: 0;
+ -webkit-line-clamp: 1;
+}
+
 .studio-alert-mt {
  margin-top: 12px;
 }

@@ -1179,6 +1179,85 @@
       "commercial_use_allowed": true,
       "profile": "image_dit_standard"
     },
+    "longcat-image": {
+      "profile": "image_dit_standard",
+      "backends": [
+        "mlx"
+      ],
+      "parameters": {
+        "steps": {
+          "default": 8,
+          "min": 1,
+          "max": 50,
+          "label": "步数",
+          "type": "int"
+        },
+        "guidance": {
+          "default": 3.5,
+          "min": 0.0,
+          "max": 20.0,
+          "step": 0.5,
+          "label": "CFG引导",
+          "type": "float"
+        },
+        "width": {
+          "default": 1024,
+          "options": [
+            512,
+            768,
+            1024
+          ],
+          "type": "enum"
+        },
+        "height": {
+          "default": 1024,
+          "options": [
+            512,
+            768,
+            1024
+          ],
+          "type": "enum"
+        },
+        "scheduler": {
+          "default": "flow_match_euler_flux_dynamic",
+          "options": [
+            "flow_match_euler_flux_dynamic"
+          ],
+          "label": "调度器",
+          "type": "enum"
+        },
+        "use_empirical_mu": false,
+        "scheduler_mu": 3.0,
+        "negative_prompt_support": true,
+        "vae_scale": 8
+      },
+      "recommended": false,
+      "source": "modelscope",
+      "versions": {
+        "fp16": {
+          "name": "FP16 完整版",
+          "size": "27GB",
+          "default": true,
+          "repo_id": "meituan-longcat/LongCat-Image",
+          "local_path": "models/Image/longcat-image-fp16",
+          "source_type": "full"
+        }
+      },
+      "name": {
+        "zh": "LongCat-Image",
+        "en": "LongCat-Image"
+      },
+      "description": {
+        "zh": "美团 LongCat-Image — MM-DiT + Qwen2.5-VL 文生图模型",
+        "en": "Meituan LongCat-Image — MM-DiT + Qwen2.5-VL text-to-image"
+      },
+      "media": "image",
+      "actions": {
+        "create": {}
+      },
+      "family": "longcat",
+      "commercial_use_allowed": null
+    },
     "fibo": {
       "parameters": {
         "steps": {

@@ -200,6 +200,33 @@ class SeedVR2Config:
     denoise_strength: float = 0.3    # default denoising strength
 
 
+@dataclass
+class LongCatConfig:
+    """LongCat-Image — MM-DiT + Qwen2.5-VL.
+
+    Reference: meituan-longcat/LongCat-Image transformer/config.json
+    dim = num_heads * head_dim = 24 * 128 = 3072
+    in_channels=16: VAE latent channels (2x2 patchify → 64-dim tokens in DiT)
+    """
+    in_channels: int = 16
+    out_channels: int = 16
+    hidden_dim: int = 3072
+    num_heads: int = 24
+    attn_head_dim: int = 128
+    num_joint_layers: int = 10
+    num_single_layers: int = 20
+    text_dim: int = 3584
+    pooled_proj_dim: int = 3584
+    max_seq_len: int = 512
+    rope_dim: int = 64
+    mlp_ratio: float = 4.0
+    qk_norm: bool = True
+    supports_guidance: bool = True
+    supports_img2img: bool = True
+    encoder_type: str = "qwen25vl"
+    vae_scale: int = 8
+
+
 # =========================================================================
 # Audio models
 # =========================================================================
@@ -766,6 +793,7 @@ FAMILY_CONFIG_MAP: dict[str, type] = {
     "fibo": FIBOConfig,
     "z_image": ZImageConfig,
     "seedvr2": SeedVR2Config,
+    "longcat": LongCatConfig,
     # Audio
     "ace_step": AceStepConfig,
     "heartmula": HeartMulaConfig,
@@ -776,7 +804,7 @@ FAMILY_CONFIG_MAP: dict[str, type] = {
     "hunyuan": HunyuanVideoConfig,
 }
 
-IMAGE_FAMILY_REUSE_CONTRACT = frozenset({"flux1", "flux2", "z_image", "qwen_image", "fibo", "seedvr2"})
+IMAGE_FAMILY_REUSE_CONTRACT = frozenset({"flux1", "flux2", "z_image", "qwen_image", "fibo", "seedvr2", "longcat"})
 
 
 def get_config_class(family: str) -> type:

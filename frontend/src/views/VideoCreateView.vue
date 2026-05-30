@@ -47,7 +47,8 @@
                   :value="item.modelKey + '|' + item.versionKey"
                   :disabled="!item.ready"
                 >
-                  <ModelVersionPickerExtras
+                  <ModelVersionPickerOption
+                    :description="String(item.description || '')"
                     :recommended="item.recommended"
                     :commercial-use-allowed="item.commercialUseAllowed"
                     :status="String(item.status || '')"
@@ -60,6 +61,7 @@
                 :show-installed-filter="false"
               />
             </div>
+            <CreateModelDescription :model-config="currentModelConfig" />
             <DqAlert
               v-if="selectedModelNotReady"
               :title="$tt('studio.modelNotReady', { name: currentModelDisplayName })"
@@ -537,7 +539,7 @@ import type { Ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { toast } from '@/utils/feedback';
 import { api, taskIdFromSubmitResponse } from '@/utils/api';
-import { $tt, $mn, $mvn, $pn } from '@/utils/i18n';
+import { $tt, $mn, $md, $mvn, $pn } from '@/utils/i18n';
 import { useRegistryStore } from '@/stores/registry';
 import { useTasksStore } from '@/stores/tasks';
 import { DQ_STORAGE } from '@/utils/storage';
@@ -548,6 +550,8 @@ import { formatGenLogMessage, isDuplicateDenoiseStepLog } from '@/utils/genTaskL
 import ModelLicenseBadges from '@/components/model/ModelLicenseBadges.vue';
 import ModelPickerFilters from '@/components/model/ModelPickerFilters.vue';
 import ModelVersionPickerExtras from '@/components/model/ModelVersionPickerExtras.vue';
+import CreateModelDescription from '@/components/model/CreateModelDescription.vue';
+import ModelVersionPickerOption from '@/components/model/ModelVersionPickerOption.vue';
 import { useModelRegistryFilters, reconcileVersionPickerSelection } from '@/composables/useModelRegistryFilters';
 import { applyModelVersionFilters } from '@/utils/modelPickerFilters';
 import AssetPicker from '@/components/asset/AssetPicker.vue';
@@ -807,6 +811,7 @@ const allVersions = computed(() => {
         modelKey,
         versionKey,
         name: $mvn(modelKey, config, versionConfig as any),
+        description: $md(config as { description?: string | { zh?: string; en?: string }; description_en?: string }),
         size: (versionConfig as any).size || '',
         status: status.status,
         ready: status.ready,

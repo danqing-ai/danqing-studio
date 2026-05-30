@@ -62,6 +62,7 @@ _SHARED_HIDDEN_IMPORTS: tuple[str, ...] = (
     "backend.engine.families.flux2",
     "backend.engine.families.qwen",
     "backend.engine.families.z_image",
+    "backend.engine.families.longcat",
     "backend.engine.families.seedvr2",
     "backend.engine.families.ltx",
     "backend.engine.families.wan",
