@@ -14,7 +14,8 @@ mflux 对比仅包含有 **真实 mflux 子命令** 的路径；用例按 ``defa
   ``edit_rmbg_composite_output`` 与 mflux 一致输出 RGBA 合成图。基准 omit ``--image-strength`` /
   ``--source-fidelity``（见 ``_mflux_omit_image_strength``）。
 - **Qwen-Image**：注册表 ``create`` + ``rewrite``；PSNR 套件含文生图与图生图（``mflux-generate-qwen``）。
-  ``mflux-generate-qwen-edit`` 为独立 Edit 权重，丹青未注册，不在本套件。
+  **Qwen-Image-Edit**：独立 Edit 权重（``mflux-generate-qwen-edit``）；丹青 ``qwen-image-edit``。
+  PSNR 用例 ``qwen-image-edit-rewrite`` 使用 ``--image-paths``、omit ``--image-strength`` 与固定 ``width/height``（与丹青按源图比例算尺寸一致）。
 - **FLUX.1 Kontext**：``mflux-generate-kontext`` 将 ``--image-path`` 设为必填；无「纯文生」对位，
   故 PSNR 仅覆盖 ``rewrite``；``create`` 见 README 对照表。
 - **FLUX.2 + ``vae_scale: 16`` 的 rewrite**：丹青管线若尚未与 16× VAE 网格对齐，``rewrite`` 可能在
@@ -37,7 +38,6 @@ SeedVR2 超分健全性：若 ``models/Upscaler/seedvr2-*-fp16`` 下缺少 ``ste
 
 | mflux CLI | 说明 |
 |-----------|------|
-| ``mflux-generate-qwen-edit`` | 独立 Qwen-Image-Edit 权重；丹青注册表未接入 |
 | ``mflux-generate-flux2-edit`` | FLUX.2 编辑变体；丹青未注册 |
 | ``mflux-generate-redux`` | Redux 风格参考；无对应 base 模型 |
 | ``mflux-generate-kontext`` | 仅 ``flux1-kontext-rewrite``（CLI 强制 ``--image-path``，无纯文生） |
@@ -125,6 +125,7 @@ MFLUX_FP16_MODEL_ROOT: dict[str, str] = {
     "fibo-edit": "models/Image/fibo-edit-fp16",
     "fibo-edit-rmbg": "models/Image/fibo-edit-rmbg-fp16",
     "qwen-image": "models/Image/qwen-image-fp16",
+    "qwen-image-edit": "models/Image/qwen-image-edit-fp16",
     "seedvr2-3b": "models/Upscaler/seedvr2-3b-fp16",
     "seedvr2-7b": "models/Upscaler/seedvr2-7b-fp16",
 }
@@ -132,6 +133,7 @@ MFLUX_FP16_MODEL_ROOT: dict[str, str] = {
 # 可选 bundle：未安装时 sanity 音频用例 SKIP（不删用例，便于回归）
 ACE_STEP_AUDIO_BUNDLE = "models/Audio/acestep-v15-xl-sft"
 HEARTMULA_AUDIO_BUNDLE = "models/Audio/heartmula-oss-3b-happy-new-year"
+HEARTMULA_CODEC_PARITY_MANIFEST = "tests/benchmark/fixtures/heartmula/codec_parity_manifest.json"
 WAN_VIDEO_BUNDLE = "models/Video/wan-2.2-ti2v-5b-original"
 
 
@@ -184,6 +186,7 @@ MFLUX_OPTIONAL_FP16_MODELS: frozenset[str] = frozenset({
     "fibo-lite",
     "fibo-edit",
     "flux1-kontext",
+    "qwen-image-edit",
     "seedvr2-3b",
 })
 
@@ -273,6 +276,8 @@ class BenchmarkCase:
     _mflux_model_flag: str = ""
     _mflux_extra_args: list[str] = field(default_factory=list)
     _mflux_omit_image_strength: bool = False
+    _mflux_use_image_paths: bool = False
+    _mflux_omit_output_size: bool = False
 
     def __post_init__(self):
         if not self.description:
@@ -329,6 +334,11 @@ class SanityCase:
     codec_guidance: Optional[float] = None
     long_form_temperature: Optional[float] = None
     long_form_topk: Optional[int] = None
+    # HeartMuLa codec parity (fixed codes vs heartlib-mlx reference WAV)
+    codec_parity_manifest: str = ""
+    codec_parity_min_si_sdr_db: float = 18.0
+    codec_parity_min_correlation: float = 0.90
+    codec_parity_warn_si_sdr_db: float = 12.0
     # Quality gate overrides (per-case/per-model); keys are consumed by metrics.py
     image_quality_thresholds: dict[str, float] = field(default_factory=dict)
     audio_quality_thresholds: dict[str, float] = field(default_factory=dict)
@@ -458,6 +468,20 @@ ALL_SANITY_CASES: list[SanityCase] = [
         description="Qwen-Image rewrite — 健全性（注册表仅声明 rewrite）",
     ),
     SanityCase(
+        id="qwen-image-edit-rewrite-sanity",
+        model="qwen-image-edit",
+        action="rewrite",
+        prompt="slightly warmer color grading, keep composition",
+        seed=42,
+        steps=20,
+        guidance=4.0,
+        image_quality_thresholds=IMAGE_THRESHOLDS_REWRITE.copy(),
+        semantic_gate_enabled=ENABLE_SEMANTIC_CORE,
+        semantic_min_score=60.0,
+        semantic_backend="clip",
+        description="Qwen-Image-Edit 指令编辑 — 健全性（无 mflux 对照）",
+    ),
+    SanityCase(
         id="seedvr2-7b-upscale-sanity",
         model="seedvr2-7b",
         action="upscale",
@@ -557,7 +581,11 @@ ALL_SANITY_CASES: list[SanityCase] = [
         semantic_gate_enabled=ENABLE_SEMANTIC_AUDIO,
         semantic_min_score=55.0,
         semantic_backend="clap",
-        description="HeartMuLa MLX 10s audio — reject near-silent output (no upstream ref)",
+        codec_parity_manifest=HEARTMULA_CODEC_PARITY_MANIFEST,
+        description=(
+            "HeartMuLa MLX 10s audio sanity + HeartCodec parity "
+            "(fixed codes vs heartlib-mlx reference when fixtures present)"
+        ),
     ),
     SanityCase(
         id="wan-2.2-ti2v-5b-sanity",
@@ -872,6 +900,22 @@ ALL_CASES: list[BenchmarkCase] = [
         image_strength=0.6,
         _mflux_cli="mflux-generate-qwen",
         description="Qwen-Image 图生图",
+    ),
+    BenchmarkCase(
+        id="qwen-image-edit-rewrite",
+        model="qwen-image-edit",
+        action="rewrite",
+        prompt="change to a snowy winter scene",
+        seed=42,
+        steps=20,
+        guidance=4.0,
+        scheduler="flow_match_euler_discrete",
+        source_image=SRC_IMAGE,
+        _mflux_cli="mflux-generate-qwen-edit",
+        _mflux_omit_image_strength=True,
+        _mflux_use_image_paths=True,
+        _mflux_omit_output_size=True,
+        description="Qwen-Image-Edit 指令编辑",
     ),
     # ----- FIBO / FIBO-Lite（JSON 提示）-----
     BenchmarkCase(

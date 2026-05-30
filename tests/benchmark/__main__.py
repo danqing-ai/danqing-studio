@@ -18,7 +18,9 @@ from tests.benchmark.run import run_diffusers, run_mflux, run_mlx_video, run_san
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="DanQing benchmark (mflux | sanity | mlx-video | diffusers)")
+    parser = argparse.ArgumentParser(
+        description="DanQing benchmark (mflux | sanity | mlx-video | diffusers)"
+    )
     sub = parser.add_subparsers(dest="suite", required=True)
 
     suite_defs = (

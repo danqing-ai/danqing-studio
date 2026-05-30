@@ -101,7 +101,7 @@ class QwenImageTransformerCuda(TransformerBase):
         image_width: int | None = None,
         **conditioning: Any,
     ) -> torch.Tensor:
-        del timestep_embed_value, conditioning
+        del timestep_embed_value
         if txt_embeds is None:
             raise RuntimeError("Qwen Image requires txt_embeds.")
         if encoder_hidden_states_mask is None:
@@ -115,7 +115,18 @@ class QwenImageTransformerCuda(TransformerBase):
 
         lat = _to_torch(latents, device=device, dtype=dtype)
         b, c, h_lat, w_lat = lat.shape
-        hidden = lat.permute(0, 2, 3, 1).reshape(b, h_lat * w_lat, c)
+        edit_cond = conditioning.get("edit_conditioning_latents")
+        cond_image_grid = conditioning.get("edit_cond_image_grid")
+        target_seq_len: int | None = None
+
+        if edit_cond is not None:
+            cond = _to_torch(edit_cond, device=device, dtype=dtype)
+            noise = lat.permute(0, 2, 3, 1).reshape(b, h_lat * w_lat, c)
+            cond_packed = cond.permute(0, 2, 3, 1).reshape(b, cond.shape[2] * cond.shape[3], c)
+            target_seq_len = int(noise.shape[1])
+            hidden = torch.cat([noise, cond_packed], dim=1)
+        else:
+            hidden = lat.permute(0, 2, 3, 1).reshape(b, h_lat * w_lat, c)
 
         enc = _to_torch(txt_embeds, device=device, dtype=dtype)
         mask = _to_torch(encoder_hidden_states_mask, device=device, dtype=torch.float32)
@@ -132,6 +143,11 @@ class QwenImageTransformerCuda(TransformerBase):
         latent_h = int(image_height) // 16
         latent_w = int(image_width) // 16
         img_shapes = [(1, latent_h, latent_w)]
+        if cond_image_grid is not None:
+            if isinstance(cond_image_grid, (list, tuple)) and len(cond_image_grid) == 3:
+                img_shapes.append(tuple(int(x) for x in cond_image_grid))
+            else:
+                raise RuntimeError(f"Qwen edit cond_image_grid must be (f,h,w); got {cond_image_grid!r}")
 
         out = model(
             hidden_states=hidden,
@@ -144,6 +160,9 @@ class QwenImageTransformerCuda(TransformerBase):
         sample = out[0] if isinstance(out, tuple) else out
         if hasattr(sample, "sample"):
             sample = sample.sample
+
+        if target_seq_len is not None:
+            sample = sample[:, :target_seq_len, :]
 
         seq_len = sample.shape[1]
         side = int(seq_len**0.5)

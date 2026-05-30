@@ -509,6 +509,10 @@ def load_qwen25vl_mlx_encoder(
         raise RuntimeError("Qwen2.5-VL: weight remap did not produce encoder.* tree.")
     if strip_visual:
         enc_nested = {k: v for k, v in enc_nested.items() if k != "visual"}
+    elif "visual" in enc_nested:
+        from backend.engine.common.text_encoders.qwen_edit_mlx import VisionTransformer
+
+        encoder.visual = VisionTransformer()
 
     if weight_dtype is not None:
         from backend.engine.common.mlx_dtype import cast_floating_mx_tree

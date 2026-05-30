@@ -27,6 +27,20 @@ class CompareResult:
 
 
 @dataclass
+class AudioCompareResult:
+    """Waveform parity vs a reference clip (codec parity, E2E audio ref)."""
+
+    si_sdr_db: Optional[float] = None
+    correlation: Optional[float] = None
+    rmse: Optional[float] = None
+    max_abs_diff: Optional[float] = None
+    length_samples: int = 0
+    ref_length_samples: int = 0
+    product_ok: Optional[bool] = None
+    product_reason: str = ""
+
+
+@dataclass
 class SanityResult:
     ok: bool
     reason: str
@@ -377,6 +391,85 @@ def check_output_image_with_thresholds(
             "anti_garbage": _safe_score(anti_garbage),
             "semantic_proxy": _safe_score(semantic_proxy),
         },
+    )
+
+
+def _load_mono_wav(path: str | Path) -> tuple[np.ndarray, int]:
+    import soundfile as sf
+
+    data, sr = sf.read(str(path), dtype="float32", always_2d=True)
+    mono = data.mean(axis=1) if data.ndim == 2 else np.asarray(data, dtype=np.float32)
+    return np.asarray(mono, dtype=np.float64).reshape(-1), int(sr)
+
+
+def si_sdr_db(reference: np.ndarray, estimate: np.ndarray) -> float:
+    """Scale-invariant SDR (dB) after mean removal."""
+    ref = np.asarray(reference, dtype=np.float64).reshape(-1)
+    est = np.asarray(estimate, dtype=np.float64).reshape(-1)
+    n = min(ref.size, est.size)
+    if n < 64:
+        return float("-inf")
+    ref = ref[:n] - float(ref[:n].mean())
+    est = est[:n] - float(est[:n].mean())
+    denom = float(np.dot(ref, ref)) + 1e-12
+    scale = float(np.dot(est, ref)) / denom
+    projection = scale * ref
+    noise = est - projection
+    signal_power = float(np.sum(projection**2)) + 1e-12
+    noise_power = float(np.sum(noise**2)) + 1e-12
+    return float(10.0 * np.log10(signal_power / noise_power))
+
+
+def compare_audio_waveforms(
+    candidate: np.ndarray,
+    reference: np.ndarray | Path | str,
+    *,
+    sample_rate: int = 48_000,
+    resample_reference: bool = True,
+) -> AudioCompareResult:
+    """Compare mono waveforms; reference may be array or WAV path."""
+    cand = np.asarray(candidate, dtype=np.float64).reshape(-1)
+    if isinstance(reference, (str, Path)):
+        try:
+            ref, ref_sr = _load_mono_wav(reference)
+        except Exception as exc:
+            return AudioCompareResult(
+                product_ok=False,
+                product_reason=f"ref_load_error:{exc!r}",
+            )
+        if resample_reference and ref_sr != sample_rate:
+            return AudioCompareResult(
+                product_ok=False,
+                product_reason=f"ref_sample_rate_mismatch:{ref_sr}!={sample_rate}",
+            )
+    else:
+        ref = np.asarray(reference, dtype=np.float64).reshape(-1)
+
+    n = min(cand.size, ref.size)
+    if n < 64:
+        return AudioCompareResult(
+            product_ok=False,
+            product_reason="too_short_for_compare",
+            length_samples=int(cand.size),
+            ref_length_samples=int(ref.size),
+        )
+    cand = cand[:n]
+    ref = ref[:n]
+    diff = cand - ref
+    rmse = float(np.sqrt(np.mean(diff**2)))
+    max_abs = float(np.max(np.abs(diff)))
+    corr_mat = np.corrcoef(cand, ref)
+    corr = float(corr_mat[0, 1]) if corr_mat.shape == (2, 2) else 0.0
+    si = si_sdr_db(ref, cand)
+    return AudioCompareResult(
+        si_sdr_db=si,
+        correlation=corr,
+        rmse=rmse,
+        max_abs_diff=max_abs,
+        length_samples=int(n),
+        ref_length_samples=int(ref.size),
+        product_ok=True,
+        product_reason="",
     )
 
 

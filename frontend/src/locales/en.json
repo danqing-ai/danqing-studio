@@ -293,7 +293,7 @@
     "rewriteDriveReference": "From reference image",
     "rewriteDriveInstruct": "Prompt edit",
     "rewriteDriveReferenceDesc": "Image-guided full redraw (img2img): keeps more of the source; tune strength / fidelity in advanced parameters.",
-    "rewriteDriveInstructDesc": "Instruction-style edits with FLUX Kontext; follows the prompt more closely—use reference mode or another model if the look drifts.",
+    "rewriteDriveInstructDesc": "Instruction-style edits with FLUX Kontext or Qwen Image Edit; follows the prompt more closely—use reference mode or another model if the look drifts.",
     "savePreset": "Save",
     "batchGenerate": "Batch Generate",
     "stop": "Stop",

@@ -1796,6 +1796,97 @@
       "family": "qwen_image",
       "commercial_use_allowed": true
     },
+    "qwen-image-edit": {
+      "profile": "image_dit_standard",
+      "backends": [
+        "mlx",
+        "cuda"
+      ],
+      "parameters": {
+        "vae_scale": 16,
+        "requires_sigma_shift": true,
+        "edit_use_vl_vision": true,
+        "edit_conditioning_latent_concat": true,
+        "scheduler": {
+          "default": "flow_match_euler_discrete",
+          "options": [
+            "flow_match_euler_discrete",
+            "linear"
+          ],
+          "label": "调度器",
+          "type": "enum"
+        },
+        "steps": {
+          "default": 20,
+          "min": 1,
+          "max": 50,
+          "label": "步数",
+          "type": "int"
+        },
+        "guidance": {
+          "default": 4.0,
+          "min": 1.0,
+          "max": 20.0,
+          "step": 0.5,
+          "label": "CFG引导",
+          "type": "float"
+        },
+        "negative_prompt_support": true,
+        "lora_support": false
+      },
+      "recommended": false,
+      "source": "modelscope",
+      "versions": {
+        "fp16": {
+          "name": "FP16 完整版",
+          "size": "40GB",
+          "default": true,
+          "repo_id": "Qwen/Qwen-Image-Edit",
+          "local_path": "models/Image/qwen-image-edit-fp16",
+          "source_type": "full"
+        },
+        "int8": {
+          "name": "INT8 量化版",
+          "size": "20GB",
+          "default": false,
+          "repo_id": "Qwen/Qwen-Image-Edit",
+          "local_path": "models/Image/qwen-image-edit-int8",
+          "source_type": "derived",
+          "from_version": "fp16",
+          "quantization": {
+            "bits": 8,
+            "scheme": "mlx_affine"
+          }
+        },
+        "int4": {
+          "name": "INT4 量化版",
+          "size": "10GB",
+          "default": false,
+          "repo_id": "Qwen/Qwen-Image-Edit",
+          "local_path": "models/Image/qwen-image-edit-int4",
+          "source_type": "derived",
+          "from_version": "fp16",
+          "quantization": {
+            "bits": 4,
+            "scheme": "mlx_affine"
+          }
+        }
+      },
+      "name": {
+        "zh": "Qwen Image Edit",
+        "en": "Qwen Image Edit"
+      },
+      "description": {
+        "zh": "通义千问 Qwen Image Edit 指令编辑模型，VL 图文理解 + VAE 参考 latent，Apache 2.0 可商用",
+        "en": "Qwen Image Edit instruction-based editing, Apache 2.0"
+      },
+      "media": "image",
+      "actions": {
+        "rewrite": {}
+      },
+      "family": "qwen_image",
+      "commercial_use_allowed": true
+    },
     "seedvr2-3b": {
       "category": "upscalers",
       "engine": "danqing-image",

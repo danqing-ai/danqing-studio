@@ -103,6 +103,9 @@ class QwenImageConfig:
     vae_scale: int = 16
     encoder_type: str = "qwen_image"
     encoder_step_kwargs: str = "qwen_image"
+    # Qwen-Image-Edit（独立权重）：VL 图文编码 + VAE 参考 latent 序列拼接
+    edit_use_vl_vision: bool = False
+    edit_conditioning_latent_concat: bool = False
 
 
 @dataclass

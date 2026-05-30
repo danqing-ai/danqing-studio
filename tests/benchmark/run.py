@@ -52,7 +52,10 @@ from .metrics import (
     compare_videos,
     hash_image,
 )
-from .semantic import score_semantic_alignment
+from .heartmula_codec_parity import (
+    resolve_codec_parity_manifest,
+    run_codec_parity_check,
+)
 
 # 与参考图对比：PSNR 档位 + SSIM 下限（纯噪声 / 完全跑崩时相对参考图 SSIM 极低）
 MIN_PSNR_PASS = 30.0
@@ -433,18 +436,24 @@ class BenchmarkRunner:
                 f"{scale}x",
             ]
         elif case.action == "rewrite" and case.source_image:
+            src = str(_benchmark_source_path(case))
+            if getattr(case, "_mflux_use_image_paths", False):
+                cmd += ["--image-paths", src]
+            else:
+                cmd += ["--image-path", src]
             cmd += [
-                "--image-path",
-                str(_benchmark_source_path(case)),
                 "--prompt",
                 case.prompt,
-                "--width",
-                str(case.width),
-                "--height",
-                str(case.height),
                 "--guidance",
                 str(case.guidance),
             ]
+            if not getattr(case, "_mflux_omit_output_size", False):
+                cmd += [
+                    "--width",
+                    str(case.width),
+                    "--height",
+                    str(case.height),
+                ]
             if not getattr(case, "_mflux_omit_image_strength", False):
                 cmd += ["--image-strength", str(case.image_strength)]
         elif case.prompt:
@@ -1001,6 +1010,36 @@ class SanitySuiteRunner(BenchmarkRunner):
             )
         return res
 
+    def _apply_codec_parity_gate(self, case: SanityCase, res: SanityResult) -> SanityResult:
+        manifest_rel = (case.codec_parity_manifest or "").strip()
+        if not manifest_rel:
+            return res
+        manifest_path = resolve_codec_parity_manifest(
+            manifest_rel,
+            project_root=PROJECT_ROOT,
+        )
+        parity = run_codec_parity_check(
+            manifest_path,
+            output_dir=self.output_dir,
+            case_id=case.id,
+            min_si_sdr_db=float(case.codec_parity_min_si_sdr_db),
+            min_correlation=float(case.codec_parity_min_correlation),
+            warn_si_sdr_db=float(case.codec_parity_warn_si_sdr_db),
+        )
+        if parity.skipped:
+            print(f"    [codec-parity SKIP] {parity.reason}")
+            return res
+        tag = "PASS" if parity.ok else "FAIL"
+        if parity.reason.startswith("codec_parity_warn"):
+            tag = "WARN"
+        print(
+            f"    [codec-parity {tag}] {parity.reason} "
+            f"(si_sdr={parity.mean_luma:.2f}dB corr={parity.std_luma:.4f})"
+        )
+        if not parity.ok:
+            return parity
+        return res
+
     @staticmethod
     def _audio_model_base(case: SanityCase) -> str:
         return case.model.split(":", 1)[0].strip()
@@ -1308,6 +1347,8 @@ class SanitySuiteRunner(BenchmarkRunner):
                     entropy_bits=0.0,
                     laplacian_var=0.0,
                 )
+                if base.startswith("heartmula"):
+                    res = self._apply_codec_parity_gate(case, res)
                 self.sanity_results.append((case, res))
                 print(f"  FAIL: {res.reason} ({elapsed:.1f}s)")
                 return res
@@ -1316,6 +1357,7 @@ class SanitySuiteRunner(BenchmarkRunner):
                 thresholds=case.audio_quality_thresholds or None,
             )
             res = self._apply_semantic_gate(case, res, out_path, media="audio")
+            res = self._apply_codec_parity_gate(case, res)
             self.sanity_results.append((case, res))
             status = "PASS" if res.ok else "FAIL"
             detail = res.reason if not res.ok else (
@@ -1400,6 +1442,11 @@ class SanitySuiteRunner(BenchmarkRunner):
                         f"  model={case.model} seed={case.seed} duration={case.duration}s "
                         f"guidance={case.guidance} temperature={case.temperature} top_k={case.top_k}"
                     )
+                    if case.codec_parity_manifest:
+                        print(
+                            f"  codec_parity: manifest={case.codec_parity_manifest} "
+                            f"min_si_sdr={case.codec_parity_min_si_sdr_db}dB"
+                        )
                 else:
                     print(
                         f"  model={case.model} seed={case.seed} steps={case.steps} "

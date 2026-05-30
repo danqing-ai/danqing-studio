@@ -499,6 +499,22 @@ function imageEditingMatches(actions: Record<string, unknown>, subMode: string):
   }
   return hasAction(actions, 'rewrite');
 }
+function modelUsesVlInstructEdit(config: Record<string, unknown> | null | undefined): boolean {
+  const params = config?.parameters as Record<string, unknown> | undefined;
+  return params?.edit_use_vl_vision === true;
+}
+function imageInstructEditModel(modelKey: string, actions: Record<string, unknown>): boolean {
+  if (modelKey === 'flux1-kontext') {
+    return imageSupportsCreate(actions) && hasAction(actions, 'rewrite');
+  }
+  const cfg = modelRegistry.value[modelKey];
+  return hasAction(actions, 'rewrite') && modelUsesVlInstructEdit(cfg);
+}
+function imageReferenceRewriteModel(modelKey: string, actions: Record<string, unknown>): boolean {
+  if (!imageEditingMatches(actions, 'text_editing')) return false;
+  const cfg = modelRegistry.value[modelKey];
+  return !modelUsesVlInstructEdit(cfg);
+}
 function imageModelRow(config: Record<string, unknown>): boolean {
   return config && config.media === 'image' && config.category !== 'loras';
 }
@@ -875,7 +891,10 @@ const filteredAllVersions = computed(() => {
     return allVersions.value.filter((v) => {
       const acts = v.actions as Record<string, unknown> || {};
       if (imageWorkTab.value === 'rewrite_instruct') {
-        return imageSupportsCreate(acts) && v.modelKey === 'flux1-kontext';
+        return imageInstructEditModel(String(v.modelKey), acts);
+      }
+      if (imageWorkTab.value === 'rewrite_reference' && editingSubMode.value === 'text_editing') {
+        return imageReferenceRewriteModel(String(v.modelKey), acts);
       }
       return imageEditingMatches(acts, editingSubMode.value);
     });
@@ -1666,7 +1685,10 @@ const startGeneration = async () => {
         priority: 'normal',
       };
       if (operation === 'rewrite') {
-        editBody.rewrite_mode = rewriteDriveMode.value;
+        // Qwen Image Edit uses the dedicated VL edit path; backend rejects rewrite_mode=instruct.
+        if (!modelUsesVlInstructEdit(currentModelConfig.value)) {
+          editBody.rewrite_mode = rewriteDriveMode.value;
+        }
       }
       const submitRes = await api.gen.createImageEdit(editBody);
       attachStreamFromSubmit(submitRes);

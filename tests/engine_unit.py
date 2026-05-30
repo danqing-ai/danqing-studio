@@ -811,6 +811,58 @@ class HeartMulaGenerationTests(unittest.TestCase):
         # 300s → thousands of code frames → must exceed single-pass threshold
         self.assertGreater(int(300 * cfg.frame_rate), single_frames)
 
+
+class HeartMulaCodecParityTests(unittest.TestCase):
+    def test_compare_audio_waveforms_identical(self) -> None:
+        import numpy as np
+
+        from tests.benchmark.metrics import compare_audio_waveforms, si_sdr_db
+
+        sr = 48000
+        t = np.linspace(0, 1.0, sr, endpoint=False, dtype=np.float64)
+        sig = 0.3 * np.sin(2 * np.pi * 440.0 * t)
+        res = compare_audio_waveforms(sig, sig, sample_rate=sr)
+        self.assertTrue(res.product_ok)
+        self.assertIsNotNone(res.si_sdr_db)
+        assert res.si_sdr_db is not None
+        self.assertGreater(res.si_sdr_db, 80.0)
+        self.assertAlmostEqual(si_sdr_db(sig, sig), res.si_sdr_db, places=3)
+        assert res.correlation is not None
+        self.assertGreater(res.correlation, 0.999)
+
+    def test_codec_parity_skips_without_fixtures(self) -> None:
+        from tests.benchmark.heartmula_codec_parity import run_codec_parity_check
+
+        res = run_codec_parity_check(
+            Path("tests/benchmark/fixtures/heartmula/does_not_exist.json"),
+            output_dir=Path("tests/benchmark/outputs/_codec_parity_unit"),
+            case_id="test-missing-fixtures",
+        )
+        self.assertTrue(res.skipped)
+        self.assertIn("codec_parity_skip", res.reason)
+
+    def test_load_codes_layout(self) -> None:
+        import tempfile
+
+        import numpy as np
+
+        from tests.benchmark.heartmula_codec_parity import load_codes_npy
+
+        codes = np.random.randint(0, 8192, size=(125, 8), dtype=np.int32)
+        with tempfile.NamedTemporaryFile(suffix=".npy", delete=False) as tmp:
+            path = Path(tmp.name)
+            np.save(path, codes)
+        try:
+            loaded = load_codes_npy(path)
+            self.assertEqual(loaded.shape, (125, 8))
+            batched = codes[None, ...]
+            np.save(path, batched)
+            loaded_b = load_codes_npy(path)
+            self.assertEqual(loaded_b.shape, (125, 8))
+        finally:
+            path.unlink(missing_ok=True)
+
+
 class HunyuanWeightTests(unittest.TestCase):
     def test_remap_strips_transformer_prefix(self) -> None:
         from backend.engine.families.hunyuan.weights import remap_hunyuan_weights

@@ -88,3 +88,79 @@ class QwenImageTextEncoderCuda:
             {"_tokenizer": self._tokenizer, "_text_model": self._text_model},
         )()
         return encode_qwen_image_prompt_cuda(wrapper, prompt=prompt, device=self._device)
+
+
+_QWEN_EDIT_PROMPT_TEMPLATE = (
+    "<|im_start|>system\n"
+    "Describe the key features of the input image (color, shape, size, texture, objects, background), "
+    "then explain how the user's text instruction should alter or modify the image. "
+    "Generate a new image that meets the user's requirements while maintaining consistency "
+    "with the original input where appropriate.<|im_end|>\n"
+    "<|im_start|>user\n"
+    "<|vision_start|><|image_pad|><|vision_end|>{}<|im_end|>\n"
+    "<|im_start|>assistant\n"
+)
+_QWEN_EDIT_DROP_IDX = 64
+
+
+def _load_qwen_edit_torch_encoder(bundle_root: Path, device: torch.device) -> tuple[Any, Any, Any]:
+    from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
+
+    te_path = bundle_root / "text_encoder"
+    tok_path = bundle_root / "tokenizer"
+    if not te_path.is_dir():
+        raise RuntimeError(f"Qwen Image Edit CUDA: missing text_encoder under {bundle_root}")
+    processor = AutoProcessor.from_pretrained(str(tok_path if tok_path.is_dir() else te_path))
+    text_model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+        str(te_path),
+        torch_dtype=torch.bfloat16,
+        trust_remote_code=True,
+    ).to(device)
+    text_model.eval()
+    return processor, text_model, device
+
+
+def encode_qwen_edit_prompts_cuda(
+    *,
+    bundle_root: Path,
+    device: torch.device,
+    prompt: str,
+    negative_prompt: str,
+    source: Any,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    from PIL import Image
+
+    processor, text_model, device = _load_qwen_edit_torch_encoder(bundle_root, device)
+    pil = source.convert("RGB") if isinstance(source, Image.Image) else Image.open(source).convert("RGB")
+
+    def _encode_one(text: str) -> tuple[torch.Tensor, torch.Tensor]:
+        txt = _QWEN_EDIT_PROMPT_TEMPLATE.format(text)
+        model_inputs = processor(text=[txt], images=[pil], padding=True, return_tensors="pt").to(device)
+        with torch.no_grad():
+            outputs = text_model(
+                input_ids=model_inputs["input_ids"],
+                attention_mask=model_inputs["attention_mask"],
+                pixel_values=model_inputs.get("pixel_values"),
+                image_grid_thw=model_inputs.get("image_grid_thw"),
+                output_hidden_states=True,
+                return_dict=True,
+            )
+        hidden = outputs.hidden_states[-1]
+        mask = model_inputs["attention_mask"].bool()
+        valid_lengths = mask.sum(dim=1)
+        selected = hidden[mask]
+        split_result = torch.split(selected, valid_lengths.tolist(), dim=0)
+        trimmed = [e[_QWEN_EDIT_DROP_IDX:] for e in split_result]
+        attn_mask_list = [torch.ones(e.size(0), dtype=torch.long, device=device) for e in trimmed]
+        max_seq_len = max(e.size(0) for e in trimmed)
+        embeds = torch.stack(
+            [torch.cat([u, u.new_zeros(max_seq_len - u.size(0), u.size(1))]) for u in trimmed]
+        )
+        attn = torch.stack(
+            [torch.cat([u, u.new_zeros(max_seq_len - u.size(0))]) for u in attn_mask_list]
+        )
+        return embeds.to(dtype=torch.bfloat16), attn
+
+    pos_e, pos_m = _encode_one(prompt)
+    neg_e, neg_m = _encode_one(negative_prompt or "")
+    return pos_e, pos_m, neg_e, neg_m

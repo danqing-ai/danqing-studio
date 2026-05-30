@@ -644,7 +644,7 @@ class QwenImageTransformer(TransformerBase):
         image_width: int | None = None,
         **conditioning,
     ):
-        del timestep_embed_value, conditioning
+        del timestep_embed_value
         if txt_embeds is None:
             raise RuntimeError("Qwen Image requires txt_embeds.")
         if encoder_hidden_states_mask is None:
@@ -655,10 +655,21 @@ class QwenImageTransformer(TransformerBase):
             raise RuntimeError("Qwen Image requires image_height / image_width.")
 
         ctx = self.ctx
+        edit_cond = conditioning.get("edit_conditioning_latents")
+        cond_image_grid = conditioning.get("edit_cond_image_grid")
+        target_seq_len: int | None = None
+
         B, _C, H_lat, W_lat = latents.shape
-        x = ctx.permute(latents, (0, 2, 3, 1))
-        seq = ctx.reshape(x, (B, H_lat * W_lat, latents.shape[1]))
-        seq_mx = seq
+        if edit_cond is not None:
+            from backend.engine.families.qwen.edit_util import pack_qwen_latents_to_sequence
+
+            noise_seq = pack_qwen_latents_to_sequence(ctx, latents)
+            cond_seq = pack_qwen_latents_to_sequence(ctx, edit_cond)
+            target_seq_len = int(noise_seq.shape[1])
+            seq_mx = ctx.concat([noise_seq, cond_seq], axis=1)
+        else:
+            x = ctx.permute(latents, (0, 2, 3, 1))
+            seq_mx = ctx.reshape(x, (B, H_lat * W_lat, latents.shape[1]))
         enc_mx = txt_embeds
         mask_mx = encoder_hidden_states_mask.astype(mx.float32)
 
@@ -679,9 +690,12 @@ class QwenImageTransformer(TransformerBase):
             hidden_states=seq_mx,
             encoder_hidden_states=enc_mx,
             encoder_hidden_states_mask=mask_mx,
+            cond_image_grid=cond_image_grid,
         )
         ctx.eval(out_mx)
         out_f = out_mx.astype(mx.float32)
+        if target_seq_len is not None:
+            out_f = out_f[:, :target_seq_len, :]
         _, seq_len, c_out = out_f.shape
         side = int(seq_len**0.5)
         if side * side != seq_len:

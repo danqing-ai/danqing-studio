@@ -530,6 +530,14 @@ class HeartMulaMlxGenerator:
         self.last_code_diagnostics = _collect_code_diagnostics(codes_np, valid_len)
         for line in self.last_code_diagnostics:
             logger.info(line)
+
+        dump_path = (os.environ.get("DANQING_HEARTMULA_DUMP_CODES") or "").strip()
+        if dump_path:
+            out = Path(dump_path)
+            out.parent.mkdir(parents=True, exist_ok=True)
+            np.save(str(out), codes_np[:valid_len])
+            logger.info("HeartMuLa dumped LM codes to %s (%d frames)", out, valid_len)
+
         codes_batch = self._ctx.array(codes_np[:valid_len][None, :, :], dtype=mx.int32)
 
         self._unload_mula()

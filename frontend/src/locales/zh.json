@@ -293,7 +293,7 @@
     "rewriteDriveReference": "参考原图生成",
     "rewriteDriveInstruct": "按描述改图",
     "rewriteDriveReferenceDesc": "以原图为主，结合提示词做整图重绘（图生图）；可在高级参数中调节强度以控制与原图的相似度。",
-    "rewriteDriveInstructDesc": "以自然语言指令为主修改画面（使用 FLUX Kontext）；更贴提示描述，与原图差异可能更大。",
+    "rewriteDriveInstructDesc": "以自然语言指令为主修改画面（FLUX Kontext 或 Qwen Image Edit）；更贴提示描述，与原图差异可能更大。",
     "savePreset": "保存",
     "batchGenerate": "批量生成",
     "stop": "停止",
