@@ -45,3 +45,7 @@ node_modules/
 /build/
 /frontend/dist/
 *.spec
+
+# Rust
+/target/
+Cargo.lock
