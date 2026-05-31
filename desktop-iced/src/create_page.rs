@@ -1248,8 +1248,7 @@ impl CreatePage {
                 self.rebuild_filtered_models();
                 // When commercial filter changes, ensure current model is still valid
                 let required_action = ModelOption::mode_required_action(self.mode);
-                if !self.model.installed()
-                    || !self.model.supports_action(required_action)
+                if !self.model.supports_action(required_action)
                     || (self.commercial_only && !self.model.commercial_use_allowed())
                 {
                     let first_valid = self.filtered_models.first().cloned();
@@ -1561,9 +1560,11 @@ impl CreatePage {
                     if !m.supports_action(required_action) {
                         return false;
                     }
-                    if !m.installed() {
-                        return false;
-                    }
+                    // NOTE: Do not filter by installed status here.
+                    // The backend's /api/models endpoint already filters
+                    // when queried with installed=true. If the user
+                    // sees uninstalled models, the generate call will
+                    // fail with a clear error.
                     if self.commercial_only && !m.commercial_use_allowed() {
                         return false;
                     }
