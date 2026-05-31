@@ -1543,6 +1543,7 @@ impl CreatePage {
     /// Rebuild filtered_models based on current mode and commercial filter.
     pub fn rebuild_filtered_models(&mut self) {
         let required_action = ModelOption::mode_required_action(self.mode);
+        let before = self.available_models.len();
         self.filtered_models = if self.available_models.is_empty() {
             ModelOption::STATIC_ALL
                 .iter()
@@ -1560,11 +1561,6 @@ impl CreatePage {
                     if !m.supports_action(required_action) {
                         return false;
                     }
-                    // NOTE: Do not filter by installed status here.
-                    // The backend's /api/models endpoint already filters
-                    // when queried with installed=true. If the user
-                    // sees uninstalled models, the generate call will
-                    // fail with a clear error.
                     if self.commercial_only && !m.commercial_use_allowed() {
                         return false;
                     }
@@ -1573,6 +1569,25 @@ impl CreatePage {
                 .cloned()
                 .collect()
         };
+        let after = self.filtered_models.len();
+        if before > 0 && after == 0 {
+            // Collect debug info before logging to avoid borrow conflict
+            let debug_models: Vec<(String, String, Vec<String>)> = self.available_models
+                .iter()
+                .take(5)
+                .map(|m| (m.id(), m.category(), m.actions()))
+                .collect();
+            self.push_log(format!(
+                "模型过滤: {} -> 0 (action={}, commercial={})",
+                before, required_action, self.commercial_only
+            ));
+            for (id, category, actions) in debug_models {
+                self.push_log(format!(
+                    "  {}: category={}, actions={:?}",
+                    id, category, actions
+                ));
+            }
+        }
     }
 
     pub fn push_log(&mut self, message: String) {
