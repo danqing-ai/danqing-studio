@@ -127,9 +127,9 @@ def prepare_heartmula_request(
         events.append(
             (
                 "warning",
-                f"时长 {duration:.0f}s 较长（约 {est_frames} 帧自回归），MLX 上 LM 耗时会显著增加；"
-                f"Codec 将自动分块解码（~30s/块 overlap-add）。上限 {config.max_duration_seconds:.0f}s，"
-                "建议先 30–90s 试听后加长。",
+                f"时长 {duration:.0f}s 较长（约 {est_frames} 帧单次自回归，与官方 heartlib 一致），"
+                f"MLX 上 LM 耗时会显著增加；>120s 时 Codec 按 29.76s 模板分块 overlap-add 解码。"
+                f"上限 {config.max_duration_seconds:.0f}s，建议先 30–90s 试听后加长。",
             )
         )
 

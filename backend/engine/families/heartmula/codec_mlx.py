@@ -1618,6 +1618,15 @@ class FlowMatchingDecoder(nn.Module):
             if step < len(t_span) - 1:
                 dt = t_span[step + 1] - t_span[step]
 
+        if incontext_length > 0:
+            x = mx.concatenate(
+                [
+                    incontext_x[:, :incontext_length, :],
+                    x[:, incontext_length:, :],
+                ],
+                axis=1,
+            )
+
         return x
 
     def inference_codes(
@@ -1655,7 +1664,9 @@ class FlowMatchingDecoder(nn.Module):
             latent_length = num_frames
 
         if true_latents is None:
-            true_latents = random_normal(None, (batch_size, num_frames, self.out_channels))
+            # heartlib simple path uses zeros for in-context latents; do not draw RNG here
+            # or the subsequent latent noise init will be desynchronized.
+            true_latents = mx.zeros((batch_size, num_frames, self.out_channels))
         elif true_latents.shape[1] < num_frames:
             pad_t = num_frames - true_latents.shape[1]
             true_latents = mx.concatenate(
@@ -1711,6 +1722,30 @@ class FlowMatchingDecoder(nn.Module):
 
         return latents
 
+    def inference_codes_simple(
+        self,
+        codes: mx.array,
+        num_steps: int = 10,
+        guidance_scale: float = 1.25,
+    ) -> mx.array:
+        """Short-clip latent synthesis — matches heartlib-mlx ``inference_codes``."""
+        batch_size, _, _ = codes.shape
+        embeddings = self.vq_embed.from_codes(codes)
+        mu = self.cond_feature_emb(embeddings)
+        mu = mx.repeat(mu, 2, axis=1)
+        num_frames = int(mu.shape[1])
+        latents = random_normal(None, (batch_size, num_frames, self.out_channels))
+        incontext_latents = mx.zeros_like(latents)
+        t_span = mx.linspace(0, 1, num_steps + 1)
+        return self.solve_euler_compiled(
+            x=latents,
+            incontext_x=incontext_latents,
+            incontext_length=0,
+            t_span=t_span,
+            mu=mu,
+            guidance_scale=guidance_scale,
+        )
+
     def __call__(
         self,
         codes: mx.array,
@@ -1727,7 +1762,11 @@ class FlowMatchingDecoder(nn.Module):
         Returns:
             Generated latent.
         """
-        return self.inference_codes(codes, num_steps, guidance_scale)
+        return self.inference_codes_simple(
+            codes,
+            num_steps=num_steps,
+            guidance_scale=guidance_scale,
+        )
 
 # --- from mlx/heartcodec/modeling.py ---
 
@@ -1771,6 +1810,7 @@ class HeartCodec(nn.Module):
     def __init__(self, config: HeartCodecConfig):
         super().__init__()
         self.config = config
+        self.last_detokenize_mode = "unknown"
 
         # Scalar codec for audio encoding/decoding
         self.scalar_model = ScalarModel(
@@ -1858,26 +1898,52 @@ class HeartCodec(nn.Module):
         audio = mx.mean(audio, axis=1)
         return audio[0, :, 0]
 
-    def detokenize(
+    def _detokenize_simple(
         self,
         codes: mx.array,
-        duration: float = _HEARTLIB_CHUNK_DURATION_SEC,
-        num_steps: int = 10,
-        guidance_scale: float = 1.25,
+        duration: float,
+        num_steps: int,
+        guidance_scale: float,
     ) -> mx.array:
-        """Convert discrete codes to waveform (heartlib chunked overlap-add).
+        """Short-sequence decode — matches heartlib-mlx ``HeartCodec.detokenize``."""
+        batch_size = int(codes.shape[0])
+        frame_rate = float(self.config.frame_rate)
+        sample_rate = int(self.config.sample_rate)
+        target_frames = int(float(duration) * frame_rate)
 
-        Args:
-            codes: ``(batch, time, K)`` or ``(batch, K, time)``.
-            duration: Chunk template seconds for hop sizing (default 29.76, per heartlib).
-                Output length is derived from code frame count, not this value.
-            num_steps: Flow-matching ODE steps.
-            guidance_scale: Codec CFG scale.
+        current_frames = int(codes.shape[1])
+        if current_frames < target_frames:
+            pad_frames = target_frames - current_frames
+            padding = mx.zeros((batch_size, pad_frames, codes.shape[2]), dtype=codes.dtype)
+            codes = mx.concatenate([codes, padding], axis=1)
+        elif current_frames > target_frames:
+            codes = codes[:, :target_frames, :]
 
-        Returns:
-            Mono waveform ``(batch, samples, 1)``.
-        """
-        codes = self._normalize_codes_layout(codes)
+        latents = self.flow_matching.inference_codes_simple(
+            codes,
+            num_steps=num_steps,
+            guidance_scale=guidance_scale,
+        )
+
+        bsz, t, f = latents.shape
+        latents = latents.reshape(bsz, t, 2, f // 2)
+        latents = latents.transpose(0, 2, 1, 3)
+        latents = latents.reshape(bsz * 2, t, f // 2)
+        audio = self.scalar_model.decode(latents)
+        samples = int(audio.shape[1])
+        audio = audio.reshape(bsz, 2, samples, 1)
+        audio = mx.mean(audio, axis=1)
+        target_samples = int(float(duration) * sample_rate)
+        return audio[:, :target_samples, :]
+
+    def _detokenize_chunked(
+        self,
+        codes: mx.array,
+        duration: float,
+        num_steps: int,
+        guidance_scale: float,
+    ) -> mx.array:
+        """Long-sequence chunked overlap-add decode (heartlib PyTorch long-form path)."""
         batch_size = codes.shape[0]
         nq = int(codes.shape[2])
         content_frames = int(codes.shape[1])
@@ -1941,7 +2007,6 @@ class HeartCodec(nn.Module):
             else:
                 prev = latent_list[-1]
                 true_latent = prev[:, -ovlp_frames:, :]
-                # heartlib: incontext_length is overlap width *before* padding to latent_length
                 incontext_length = int(true_latent.shape[1])
                 len_add = latent_length - incontext_length
                 if len_add > 0:
@@ -1977,7 +2042,7 @@ class HeartCodec(nn.Module):
         ovlp_audio = min_audio_samples - hop_audio
 
         output: Optional[mx.array] = None
-        for i, latent in enumerate(latent_list):
+        for latent in latent_list:
             cur = self._latent_to_waveform_chunk(latent)
             cur = cur[:min_audio_samples]
             if output is None:
@@ -1997,6 +2062,50 @@ class HeartCodec(nn.Module):
         assert output is not None
         output = output[:target_samples]
         return output[:, None, None]
+
+    def detokenize(
+        self,
+        codes: mx.array,
+        duration: float = _HEARTLIB_CHUNK_DURATION_SEC,
+        num_steps: int = 10,
+        guidance_scale: float = 1.25,
+    ) -> mx.array:
+        """Convert discrete codes to waveform (heartlib chunked overlap-add).
+
+        Args:
+            codes: ``(batch, time, K)`` or ``(batch, K, time)``.
+            duration: Target seconds for short single-pass clips (``<=120s`` codes).
+                Long chunked decode always uses ``_HEARTLIB_CHUNK_DURATION_SEC`` (29.76s)
+                for hop/overlap sizing, matching official heartlib.
+            num_steps: Flow-matching ODE steps.
+            guidance_scale: Codec CFG scale.
+
+        Returns:
+            Mono waveform ``(batch, samples, 1)`` for simple path, or ``(samples, 1, 1)`` chunked.
+        """
+        codes = self._normalize_codes_layout(codes)
+        content_frames = int(codes.shape[1])
+        frame_rate = float(self.config.frame_rate)
+        decode_duration = float(duration)
+        if decode_duration * frame_rate > content_frames + 1e-6:
+            decode_duration = content_frames / frame_rate
+
+        if content_frames <= single_pass_frame_limit(frame_rate):
+            self.last_detokenize_mode = "simple"
+            return self._detokenize_simple(
+                codes,
+                decode_duration,
+                num_steps,
+                guidance_scale,
+            )
+
+        self.last_detokenize_mode = "chunked"
+        return self._detokenize_chunked(
+            codes,
+            _HEARTLIB_CHUNK_DURATION_SEC,
+            num_steps,
+            guidance_scale,
+        )
 
     def tokenize(self, audio: mx.array) -> mx.array:
         """Encode audio to discrete codes.
