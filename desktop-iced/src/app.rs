@@ -404,9 +404,10 @@ impl App {
                                     .cloned()
                                     .unwrap_or_else(|| {
                                         // Fallback: parse from registry config
+                                        // Registry actions is an object: { "create": {}, "rewrite": {} }
                                         let acts: Vec<String> = config.get("actions")
-                                            .and_then(|v| v.as_array())
-                                            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                                            .and_then(|v| v.as_object())
+                                            .map(|obj| obj.keys().cloned().collect())
                                             .unwrap_or_default();
                                         (false, acts)
                                     });
