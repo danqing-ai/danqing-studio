@@ -1,6 +1,17 @@
 use crate::create_page::{self, CreatePage, ModelOption};
 use crate::gallery;
 use crate::task_queue::{TaskQueue, TaskQueueMessage};
+
+// Stub modules for pages not yet fully implemented
+mod audio_page { use dq_tokens::{color, spacing, typography}; use iced::widget::{column, container, text}; use iced::{Alignment, Element, Length}; #[derive(Debug, Clone)] pub enum Message { NoOp } #[derive(Debug, Clone, Default)] pub struct AudioCreatePage; impl AudioCreatePage { pub fn new() -> Self { Self } pub fn update(&mut self, _msg: Message, _client: &Option<dq_api::ApiClient>) -> iced::Task<Message> { iced::Task::none() } pub fn view(&self, _client: &Option<dq_api::ApiClient>) -> Element<Message> { container(column![text("音频创作").size(typography::HEADING).color(color::TEXT_PRIMARY), text("即将推出").size(typography::BODY).color(color::TEXT_SECONDARY)].spacing(spacing::MD).align_x(Alignment::Center)).width(Length::Fill).height(Length::Fill).center_x(Length::Fill).center_y(Length::Fill).into() } } }
+
+mod models_page { use dq_tokens::{color, spacing, typography}; use iced::widget::{column, container, text}; use iced::{Alignment, Element, Length}; #[derive(Debug, Clone)] pub enum Message { NoOp } #[derive(Debug, Clone, Default)] pub struct ModelsPage; impl ModelsPage { pub fn new() -> Self { Self } pub fn update(&mut self, _msg: Message, _client: &Option<dq_api::ApiClient>) -> iced::Task<Message> { iced::Task::none() } pub fn view(&self, _client: &Option<dq_api::ApiClient>) -> Element<Message> { container(column![text("模型库").size(typography::HEADING).color(color::TEXT_PRIMARY), text("即将推出").size(typography::BODY).color(color::TEXT_SECONDARY)].spacing(spacing::MD).align_x(Alignment::Center)).width(Length::Fill).height(Length::Fill).center_x(Length::Fill).center_y(Length::Fill).into() } } }
+
+mod settings_page { use dq_tokens::{color, spacing, typography}; use iced::widget::{column, container, text}; use iced::{Alignment, Element, Length}; #[derive(Debug, Clone)] pub enum Message { NoOp } #[derive(Debug, Clone, Default)] pub struct SettingsPage; impl SettingsPage { pub fn new() -> Self { Self } pub fn update(&mut self, _msg: Message, _client: &Option<dq_api::ApiClient>) -> iced::Task<Message> { iced::Task::none() } pub fn view(&self, _client: &Option<dq_api::ApiClient>) -> Element<Message> { container(column![text("设置").size(typography::HEADING).color(color::TEXT_PRIMARY), text("即将推出").size(typography::BODY).color(color::TEXT_SECONDARY)].spacing(spacing::MD).align_x(Alignment::Center)).width(Length::Fill).height(Length::Fill).center_x(Length::Fill).center_y(Length::Fill).into() } } }
+
+use audio_page::AudioCreatePage;
+use models_page::ModelsPage;
+use settings_page::SettingsPage;
 use dq_api::ApiClient;
 use dq_components::StudioIcon;
 use dq_tokens::{color, spacing, typography};
@@ -11,7 +22,10 @@ pub enum Message {
     TaskQueue(TaskQueueMessage),
     GenerateShortcut,
     Create(create_page::Message),
+    Audio(audio_page::Message),
     Gallery(gallery::Message),
+    Models(models_page::Message),
+    Settings(settings_page::Message),
     DownloadImage,
     PreviewImage,
     RefreshRecent,
@@ -73,7 +87,10 @@ impl NavId {
 pub struct App {
     pub nav: NavId,
     pub create: CreatePage,
+    pub audio: AudioCreatePage,
     pub gallery: gallery::GalleryPage,
+    pub models: ModelsPage,
+    pub settings: SettingsPage,
     pub task_queue: TaskQueue,
     pub api_client: Option<ApiClient>,
     pub api_connected: bool,
@@ -95,7 +112,10 @@ impl App {
         let mut app = Self {
             nav: NavId::ImageCreate,
             create: CreatePage::default(),
+            audio: AudioCreatePage::default(),
             gallery: gallery::GalleryPage::new(),
+            models: ModelsPage::new(),
+            settings: SettingsPage::new(),
             task_queue: TaskQueue::new(),
             api_client,
             api_connected: false,
@@ -118,8 +138,11 @@ impl App {
         match message {
             Message::Nav(id) => {
                 self.nav = id;
-                if id == NavId::Gallery {
-                    return self.gallery.update(gallery::Message::LoadAssets, &self.api_client).map(Message::Gallery);
+                match id {
+                    NavId::Gallery => {
+                        return self.gallery.update(gallery::Message::LoadAssets, &self.api_client).map(Message::Gallery);
+                    }
+                    _ => {}
                 }
                 iced::Task::none()
             }
@@ -135,6 +158,15 @@ impl App {
             }
             Message::Gallery(msg) => {
                 self.gallery.update(msg, &self.api_client).map(Message::Gallery)
+            }
+            Message::Audio(msg) => {
+                self.audio.update(msg, &self.api_client).map(Message::Audio)
+            }
+            Message::Models(msg) => {
+                self.models.update(msg, &self.api_client).map(Message::Models)
+            }
+            Message::Settings(msg) => {
+                self.settings.update(msg, &self.api_client).map(Message::Settings)
             }
             Message::Create(msg) => {
                 let task = self.create.update(msg.clone()).map(Message::Create);
@@ -932,8 +964,17 @@ impl App {
                 .height(Length::Fill)
                 .into()
             }
+            NavId::AudioCreate => {
+                self.audio.view(&self.api_client).map(Message::Audio)
+            }
             NavId::Gallery => {
                 self.gallery.view(&self.api_client).map(Message::Gallery)
+            }
+            NavId::Models => {
+                self.models.view(&self.api_client).map(Message::Models)
+            }
+            NavId::Settings => {
+                self.settings.view(&self.api_client).map(Message::Settings)
             }
             _ => {
                 // Other pages still have a title bar
