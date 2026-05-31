@@ -203,7 +203,17 @@ pub enum ModelOption {
     Flux2Klein,
     Flux1Dev,
     ZImageTurbo,
-    Dynamic { id: String, label: String, steps: u8, cfg: f32 },
+    Dynamic {
+        id: String,
+        label: String,
+        name: String,
+        category: String,
+        actions: Vec<String>,
+        installed: bool,
+        commercial_use_allowed: bool,
+        steps: u8,
+        cfg: f32,
+    },
 }
 
 impl PartialEq for ModelOption {
@@ -251,6 +261,56 @@ impl ModelOption {
         }
     }
 
+    pub fn name(&self) -> String {
+        match self {
+            ModelOption::Flux2Klein => "flux2-klein".into(),
+            ModelOption::Flux1Dev => "flux1-dev".into(),
+            ModelOption::ZImageTurbo => "z-image-turbo".into(),
+            ModelOption::Dynamic { name, .. } => name.clone(),
+        }
+    }
+
+    pub fn category(&self) -> String {
+        match self {
+            ModelOption::Flux2Klein => "base_models".into(),
+            ModelOption::Flux1Dev => "base_models".into(),
+            ModelOption::ZImageTurbo => "base_models".into(),
+            ModelOption::Dynamic { category, .. } => category.clone(),
+        }
+    }
+
+    pub fn actions(&self) -> Vec<String> {
+        match self {
+            ModelOption::Flux2Klein => vec!["create".into()],
+            ModelOption::Flux1Dev => vec!["create".into(), "rewrite".into(), "retouch".into(), "extend".into(), "upscale".into()],
+            ModelOption::ZImageTurbo => vec!["create".into(), "rewrite".into(), "retouch".into(), "extend".into()],
+            ModelOption::Dynamic { actions, .. } => actions.clone(),
+        }
+    }
+
+    pub fn installed(&self) -> bool {
+        match self {
+            ModelOption::Flux2Klein => true,
+            ModelOption::Flux1Dev => true,
+            ModelOption::ZImageTurbo => true,
+            ModelOption::Dynamic { installed, .. } => *installed,
+        }
+    }
+
+    pub fn commercial_use_allowed(&self) -> bool {
+        match self {
+            ModelOption::Flux2Klein => true,
+            ModelOption::Flux1Dev => true,
+            ModelOption::ZImageTurbo => true,
+            ModelOption::Dynamic { commercial_use_allowed, .. } => *commercial_use_allowed,
+        }
+    }
+
+    /// Check if this model supports the given action
+    pub fn supports_action(&self, action: &str) -> bool {
+        self.actions().iter().any(|a| a == action)
+    }
+
     #[allow(dead_code)]
     fn description(&self) -> String {
         match self {
@@ -292,6 +352,18 @@ impl ModelOption {
             ModelOption::ZImageTurbo => 0.0,
             ModelOption::Dynamic { cfg, .. } => *cfg,
             _ => 5.0,
+        }
+    }
+
+    /// Returns the action required for the current image mode
+    pub fn mode_required_action(mode: ImageMode) -> &'static str {
+        match mode {
+            ImageMode::TextToImage => "create",
+            ImageMode::ReferenceImage => "rewrite",
+            ImageMode::EditByDescription => "rewrite",
+            ImageMode::Inpainting => "retouch",
+            ImageMode::Outpainting => "extend",
+            ImageMode::Upscale => "upscale",
         }
     }
 }
@@ -812,6 +884,8 @@ pub struct CreatePage {
     pub generated_image_path: Option<String>,
     // 后端动态模型列表
     pub available_models: Vec<ModelOption>,
+    // 当前过滤后的模型列表（用于显示）
+    pub filtered_models: Vec<ModelOption>,
 }
 
 impl CreatePage {
@@ -823,85 +897,145 @@ impl CreatePage {
         self.height.value()
     }
 
+    /// Compute total `n` from batch_size × batch_count (clamped to backend max 8).
+    fn total_n(&self) -> i32 {
+        let total = self.batch_size.value() as i32 * self.batch_count.value() as i32;
+        total.clamp(1, 8)
+    }
+
+    /// Build adapters array for LoRA.
+    fn build_adapters(&self) -> Vec<serde_json::Value> {
+        match self.lora {
+            LoraOption::None => vec![],
+            LoraOption::Portrait => vec![serde_json::json!({"id": "portrait", "weight": 0.8 })],
+            LoraOption::Anime => vec![serde_json::json!({"id": "anime", "weight": 0.8 })],
+        }
+    }
+
+    /// Build structural_guide for ControlNet if active.
+    fn build_structural_guide(&self, control_asset_id: Option<String>) -> Option<serde_json::Value> {
+        if matches!(self.controlnet, ControlNetOption::None) {
+            return None;
+        }
+        let control_id = control_asset_id?;
+        Some(serde_json::json!({
+            "asset_id": control_id,
+            "type": self.controlnet.id(),
+            "weight": self.controlnet_strength,
+        }))
+    }
+
     /// Build a JSON request body aligned with backend contracts.
-    /// Returns (endpoint, request_body) where endpoint is the API path.
-    pub fn build_request(&self, source_asset_id: Option<String>) -> (&'static str, serde_json::Value) {
+    /// Accepts uploaded asset IDs for source/mask/control images.
+    pub fn build_request(
+        &self,
+        source_asset_id: Option<String>,
+        mask_asset_id: Option<String>,
+        control_asset_id: Option<String>,
+    ) -> (&'static str, serde_json::Value) {
         use serde_json::json;
+
+        let n = self.total_n();
+        let adapters = self.build_adapters();
+        let structural_guide = self.build_structural_guide(control_asset_id);
+        let seed = self.seed.parse::<i64>().ok();
 
         match self.mode {
             ImageMode::TextToImage => {
-                let payload = json!({
+                let mut payload = json!({
                     "model": self.model.id(),
                     "title": self.title,
                     "prompt": self.prompt.text(),
                     "negative_prompt": self.negative_prompt.text(),
                     "size": format!("{}x{}", self.width.value(), self.height.value()),
-                    "n": self.batch_count.value(),
+                    "n": n,
                     "steps": self.steps as i32,
                     "guidance": self.cfg,
-                    "seed": self.seed.parse::<i64>().ok(),
+                    "seed": seed,
                     "scheduler": self.scheduler.id(),
+                    "adapters": adapters,
                     "priority": "normal",
+                    "metadata": {},
                 });
+                if let Some(sg) = structural_guide {
+                    payload["structural_guide"] = sg;
+                }
                 ("/api/images/generations", payload)
             }
             ImageMode::ReferenceImage => {
-                // Reference image generation is treated as image edit with rewrite operation
-                let payload = json!({
+                let mut payload = json!({
                     "model": self.model.id(),
                     "operation": "rewrite",
                     "source_asset_id": source_asset_id,
                     "title": self.title,
                     "prompt": self.prompt.text(),
                     "negative_prompt": self.negative_prompt.text(),
-                    "source_fidelity": 1.0 - self.reference_strength.value() as f32,
-                    "n": self.batch_count.value(),
+                    "source_fidelity": 1.0 - self.reference_strength.value(),
+                    "rewrite_mode": "reference",
+                    "n": n,
                     "steps": self.steps as i32,
                     "guidance": self.cfg,
-                    "seed": self.seed.parse::<i64>().ok(),
+                    "seed": seed,
                     "scheduler": self.scheduler.id(),
+                    "adapters": adapters,
                     "priority": "normal",
+                    "metadata": {},
                 });
+                if let Some(sg) = structural_guide {
+                    payload["structural_guide"] = sg;
+                }
                 ("/api/images/edits", payload)
             }
             ImageMode::EditByDescription => {
-                let payload = json!({
+                let mut payload = json!({
                     "model": self.model.id(),
                     "operation": "rewrite",
                     "source_asset_id": source_asset_id,
                     "title": self.title,
                     "prompt": self.prompt.text(),
                     "negative_prompt": self.negative_prompt.text(),
-                    "source_fidelity": self.denoise.value() as f32,
-                    "n": self.batch_count.value(),
+                    "source_fidelity": self.denoise.value(),
+                    "rewrite_mode": "instruct",
+                    "n": n,
                     "steps": self.steps as i32,
                     "guidance": self.cfg,
-                    "seed": self.seed.parse::<i64>().ok(),
+                    "seed": seed,
                     "scheduler": self.scheduler.id(),
+                    "adapters": adapters,
                     "priority": "normal",
+                    "metadata": {},
                 });
+                if let Some(sg) = structural_guide {
+                    payload["structural_guide"] = sg;
+                }
                 ("/api/images/edits", payload)
             }
             ImageMode::Inpainting => {
-                let payload = json!({
+                let mut payload = json!({
                     "model": self.model.id(),
                     "operation": "retouch",
                     "source_asset_id": source_asset_id,
+                    "mask_asset_id": mask_asset_id,
                     "title": self.title,
                     "prompt": self.prompt.text(),
                     "negative_prompt": self.negative_prompt.text(),
-                    "source_fidelity": self.denoise.value() as f32,
-                    "n": self.batch_count.value(),
+                    "source_fidelity": self.denoise.value(),
+                    "n": n,
                     "steps": self.steps as i32,
                     "guidance": self.cfg,
-                    "seed": self.seed.parse::<i64>().ok(),
+                    "seed": seed,
                     "scheduler": self.scheduler.id(),
+                    "adapters": adapters,
                     "priority": "normal",
+                    "metadata": {},
                 });
+                if let Some(sg) = structural_guide {
+                    payload["structural_guide"] = sg;
+                }
                 ("/api/images/edits", payload)
             }
             ImageMode::Outpainting => {
-                let payload = json!({
+                let mut payload = json!({
                     "model": self.model.id(),
                     "operation": "extend",
                     "source_asset_id": source_asset_id,
@@ -912,13 +1046,18 @@ impl CreatePage {
                         "directions": self.outpaint_direction.ids(),
                         "pixels": self.outpaint_pixels as u32,
                     },
-                    "n": self.batch_count.value(),
+                    "n": n,
                     "steps": self.steps as i32,
                     "guidance": self.cfg,
-                    "seed": self.seed.parse::<i64>().ok(),
+                    "seed": seed,
                     "scheduler": self.scheduler.id(),
+                    "adapters": adapters,
                     "priority": "normal",
+                    "metadata": {},
                 });
+                if let Some(sg) = structural_guide {
+                    payload["structural_guide"] = sg;
+                }
                 ("/api/images/edits", payload)
             }
             ImageMode::Upscale => {
@@ -926,9 +1065,10 @@ impl CreatePage {
                     "model": self.model.id(),
                     "source_asset_id": source_asset_id,
                     "scale": self.upscale_factor.value(),
-                    "denoise": self.denoise.value() as f32,
+                    "denoise": self.denoise.value(),
                     "tile_size": 1024,
                     "priority": "normal",
+                    "metadata": {},
                 });
                 ("/api/images/upscales", payload)
             }
@@ -937,7 +1077,7 @@ impl CreatePage {
 
     /// Legacy helper — builds a generic JSON value (used for preview / logging).
     pub fn build_generation_request(&self) -> serde_json::Value {
-        let (_, payload) = self.build_request(None);
+        let (_, payload) = self.build_request(None, None, None);
         payload
     }
 
@@ -945,6 +1085,20 @@ impl CreatePage {
         match message {
             Message::ModeChanged(m) => {
                 self.mode = m;
+                self.rebuild_filtered_models();
+                // When mode changes, ensure current model supports the new mode's action
+                let required_action = ModelOption::mode_required_action(m);
+                if !self.model.supports_action(required_action) {
+                    // Find first model that supports this action
+                    let first_valid = self.filtered_models.first().cloned();
+                    if let Some(model) = first_valid {
+                        self.model = model.clone();
+                        self.steps = model.default_steps();
+                        self.cfg = model.default_cfg();
+                        self.steps_input = format!("{:.0}", self.steps);
+                        self.cfg_input = format!("{:.1}", self.cfg);
+                    }
+                }
                 iced::Task::none()
             }
             Message::ModelSelected(m) => {
@@ -1091,6 +1245,22 @@ impl CreatePage {
             }
             Message::CommercialToggled(v) => {
                 self.commercial_only = v;
+                self.rebuild_filtered_models();
+                // When commercial filter changes, ensure current model is still valid
+                let required_action = ModelOption::mode_required_action(self.mode);
+                if !self.model.installed()
+                    || !self.model.supports_action(required_action)
+                    || (self.commercial_only && !self.model.commercial_use_allowed())
+                {
+                    let first_valid = self.filtered_models.first().cloned();
+                    if let Some(model) = first_valid {
+                        self.model = model.clone();
+                        self.steps = model.default_steps();
+                        self.cfg = model.default_cfg();
+                        self.steps_input = format!("{:.0}", self.steps);
+                        self.cfg_input = format!("{:.1}", self.cfg);
+                    }
+                }
                 iced::Task::none()
             }
             Message::RestoreDefaults => {
@@ -1369,6 +1539,39 @@ impl CreatePage {
         self.outpaint_direction = OutpaintDirectionOption::All;
         self.outpaint_pixels = 256.0;
         self.outpaint_pixels_input = "256".into();
+    }
+
+    /// Rebuild filtered_models based on current mode and commercial filter.
+    pub fn rebuild_filtered_models(&mut self) {
+        let required_action = ModelOption::mode_required_action(self.mode);
+        self.filtered_models = if self.available_models.is_empty() {
+            ModelOption::STATIC_ALL
+                .iter()
+                .filter(|m| m.supports_action(required_action))
+                .cloned()
+                .collect()
+        } else {
+            self.available_models
+                .iter()
+                .filter(|m| {
+                    let category = m.category();
+                    if category == "loras" || category == "controlnets" {
+                        return false;
+                    }
+                    if !m.supports_action(required_action) {
+                        return false;
+                    }
+                    if !m.installed() {
+                        return false;
+                    }
+                    if self.commercial_only && !m.commercial_use_allowed() {
+                        return false;
+                    }
+                    true
+                })
+                .cloned()
+                .collect()
+        };
     }
 
     pub fn push_log(&mut self, message: String) {
@@ -1722,16 +1925,23 @@ impl CreatePage {
     }
 
     fn model_section(&self) -> Element<'_, Message> {
-        // Single row: model picker + gear + commercial filter (no label, matching web)
-        let model_options: &[ModelOption] = if self.available_models.is_empty() {
+        // Use pre-filtered models (rebuilt on mode/commercial changes)
+        let display_models: &[ModelOption] = if self.filtered_models.is_empty() {
             ModelOption::STATIC_ALL
         } else {
-            &self.available_models
+            &self.filtered_models
         };
+
+        let selected = if display_models.iter().any(|m| m == &self.model) {
+            Some(&self.model)
+        } else {
+            display_models.first()
+        };
+
         let body = row![
             container(dq_pick_list(
-                model_options,
-                Some(&self.model),
+                display_models,
+                selected,
                 Message::ModelSelected,
                 "选择模型与版本",
             ))
@@ -2411,6 +2621,7 @@ impl Default for CreatePage {
             generated_image_path: None,
             // Dynamic models from backend
             available_models: Vec::new(),
+            filtered_models: Vec::new(),
         }
     }
 }

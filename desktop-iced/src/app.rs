@@ -1,4 +1,5 @@
 use crate::create_page::{self, CreatePage, ModelOption};
+use crate::gallery;
 use crate::task_queue::{TaskQueue, TaskQueueMessage};
 use dq_api::ApiClient;
 use dq_components::StudioIcon;
@@ -10,6 +11,7 @@ pub enum Message {
     TaskQueue(TaskQueueMessage),
     GenerateShortcut,
     Create(create_page::Message),
+    Gallery(gallery::Message),
     DownloadImage,
     PreviewImage,
     RefreshRecent,
@@ -24,6 +26,13 @@ pub enum Message {
     ApiTaskPoll(String),
     ApiTaskResult(Result<serde_json::Value, String>),
     ApiTaskStreamEvent { task_id: String, event: String, data: serde_json::Value },
+    ApiAssetsReady {
+        source_asset_id: Option<String>,
+        mask_asset_id: Option<String>,
+        control_asset_id: Option<String>,
+    },
+    ApiTaskListPoll,
+    ApiTaskListResult(Result<Vec<serde_json::Value>, String>),
     ImageSaved(Result<String, String>),
 }
 
@@ -64,6 +73,7 @@ impl NavId {
 pub struct App {
     pub nav: NavId,
     pub create: CreatePage,
+    pub gallery: gallery::GalleryPage,
     pub task_queue: TaskQueue,
     pub api_client: Option<ApiClient>,
     pub api_connected: bool,
@@ -85,6 +95,7 @@ impl App {
         let mut app = Self {
             nav: NavId::ImageCreate,
             create: CreatePage::default(),
+            gallery: gallery::GalleryPage::new(),
             task_queue: TaskQueue::new(),
             api_client,
             api_connected: false,
@@ -107,6 +118,9 @@ impl App {
         match message {
             Message::Nav(id) => {
                 self.nav = id;
+                if id == NavId::Gallery {
+                    return self.gallery.update(gallery::Message::LoadAssets, &self.api_client).map(Message::Gallery);
+                }
                 iced::Task::none()
             }
             Message::TaskQueue(msg) => {
@@ -119,152 +133,85 @@ impl App {
                     iced::Task::none()
                 }
             }
+            Message::Gallery(msg) => {
+                self.gallery.update(msg, &self.api_client).map(Message::Gallery)
+            }
             Message::Create(msg) => {
                 let task = self.create.update(msg.clone()).map(Message::Create);
                 // Intercept Generate to call backend API
                 if let create_page::Message::Generate = msg {
                     if let Some(client) = self.api_client.clone() {
-                        // Determine if we need to upload a source image first
-                        let needs_upload = !matches!(self.create.mode, create_page::ImageMode::TextToImage)
+                        // Check what assets need uploading
+                        let needs_source = !matches!(self.create.mode, create_page::ImageMode::TextToImage)
                             && matches!(self.create.source_image, create_page::SourceImageState::Uploaded(_));
+                        let needs_mask = matches!(self.create.mode, create_page::ImageMode::Inpainting)
+                            && matches!(self.create.mask_image, create_page::SourceImageState::Uploaded(_));
+                        let needs_control = !matches!(self.create.controlnet, create_page::ControlNetOption::None)
+                            && matches!(self.create.control_image, create_page::SourceImageState::Uploaded(_));
 
-                        if needs_upload {
-                            // Upload source image first, then submit generation
+                        if needs_source || needs_mask || needs_control {
+                            // Upload assets first, then submit generation
                             let client_clone = client.clone();
                             let source_path = match &self.create.source_image {
-                                create_page::SourceImageState::Uploaded(p) => p.clone(),
-                                _ => return task,
+                                create_page::SourceImageState::Uploaded(p) if needs_source => Some(p.clone()),
+                                _ => None,
                             };
-                            // Extract request fields upfront (avoids Clone)
-                            let req_mode = self.create.mode;
-                            let req_model = self.create.model.id().to_string();
-                            let req_title = self.create.title.clone();
-                            let req_prompt = self.create.prompt.text().to_string();
-                            let req_negative = self.create.negative_prompt.text().to_string();
-                            let req_width = self.create.width.value();
-                            let req_height = self.create.height.value();
-                            let req_steps = self.create.steps;
-                            let req_cfg = self.create.cfg;
-                            let req_seed = self.create.seed.clone();
-                            let req_scheduler = self.create.scheduler.id().to_string();
-                            let req_batch_count = self.create.batch_count.value();
-                            let req_denoise = self.create.denoise.value() as f32;
-                            let req_ref_strength = self.create.reference_strength.value() as f32;
-                            let req_upscale_factor = self.create.upscale_factor.value();
-                            let req_outpaint_dir = self.create.outpaint_direction;
-                            let req_outpaint_px = self.create.outpaint_pixels;
+                            let mask_path = match &self.create.mask_image {
+                                create_page::SourceImageState::Uploaded(p) if needs_mask => Some(p.clone()),
+                                _ => None,
+                            };
+                            let control_path = match &self.create.control_image {
+                                create_page::SourceImageState::Uploaded(p) if needs_control => Some(p.clone()),
+                                _ => None,
+                            };
                             let upload_task = iced::Task::perform(
                                 async move {
-                                    let path = std::path::Path::new(&source_path);
-                                    match client_clone.upload_asset(path, "image/png").await {
-                                        Ok(asset) => {
-                                            let asset_id = asset.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
-                                            Ok(asset_id.unwrap_or_default())
+                                    let mut source_id = None;
+                                    let mut mask_id = None;
+                                    let mut control_id = None;
+
+                                    if let Some(ref path) = source_path {
+                                        match client_clone.upload_asset(std::path::Path::new(path), "image/png").await {
+                                            Ok(asset) => {
+                                                source_id = asset.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                                            }
+                                            Err(e) => return Err(format!("上传源图失败: {}", e)),
                                         }
-                                        Err(e) => Err(e.to_string()),
                                     }
+
+                                    if let Some(ref path) = mask_path {
+                                        match client_clone.upload_asset(std::path::Path::new(path), "image/png").await {
+                                            Ok(asset) => {
+                                                mask_id = asset.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                                            }
+                                            Err(e) => return Err(format!("上传遮罩失败: {}", e)),
+                                        }
+                                    }
+
+                                    if let Some(ref path) = control_path {
+                                        match client_clone.upload_asset(std::path::Path::new(path), "image/png").await {
+                                            Ok(asset) => {
+                                                control_id = asset.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                                            }
+                                            Err(e) => return Err(format!("上传控制图失败: {}", e)),
+                                        }
+                                    }
+
+                                    Ok((source_id, mask_id, control_id))
                                 },
-                                move |result| match result {
-                                    Ok(asset_id) => {
-                                        use serde_json::json;
-                                        let (endpoint, request) = match req_mode {
-                                            create_page::ImageMode::ReferenceImage => {
-                                                ("/api/images/edits", json!({
-                                                    "model": req_model,
-                                                    "operation": "rewrite",
-                                                    "source_asset_id": asset_id,
-                                                    "title": req_title,
-                                                    "prompt": req_prompt,
-                                                    "negative_prompt": req_negative,
-                                                    "source_fidelity": 1.0 - req_ref_strength,
-                                                    "n": req_batch_count,
-                                                    "steps": req_steps as i32,
-                                                    "guidance": req_cfg,
-                                                    "seed": req_seed.parse::<i64>().ok(),
-                                                    "scheduler": req_scheduler,
-                                                    "priority": "normal",
-                                                }))
-                                            }
-                                            create_page::ImageMode::EditByDescription => {
-                                                ("/api/images/edits", json!({
-                                                    "model": req_model,
-                                                    "operation": "rewrite",
-                                                    "source_asset_id": asset_id,
-                                                    "title": req_title,
-                                                    "prompt": req_prompt,
-                                                    "negative_prompt": req_negative,
-                                                    "source_fidelity": req_denoise,
-                                                    "n": req_batch_count,
-                                                    "steps": req_steps as i32,
-                                                    "guidance": req_cfg,
-                                                    "seed": req_seed.parse::<i64>().ok(),
-                                                    "scheduler": req_scheduler,
-                                                    "priority": "normal",
-                                                }))
-                                            }
-                                            create_page::ImageMode::Inpainting => {
-                                                ("/api/images/edits", json!({
-                                                    "model": req_model,
-                                                    "operation": "retouch",
-                                                    "source_asset_id": asset_id,
-                                                    "title": req_title,
-                                                    "prompt": req_prompt,
-                                                    "negative_prompt": req_negative,
-                                                    "source_fidelity": req_denoise,
-                                                    "n": req_batch_count,
-                                                    "steps": req_steps as i32,
-                                                    "guidance": req_cfg,
-                                                    "seed": req_seed.parse::<i64>().ok(),
-                                                    "scheduler": req_scheduler,
-                                                    "priority": "normal",
-                                                }))
-                                            }
-                                            create_page::ImageMode::Outpainting => {
-                                                ("/api/images/edits", json!({
-                                                    "model": req_model,
-                                                    "operation": "extend",
-                                                    "source_asset_id": asset_id,
-                                                    "title": req_title,
-                                                    "prompt": req_prompt,
-                                                    "negative_prompt": req_negative,
-                                                    "extend": {
-                                                        "directions": req_outpaint_dir.ids(),
-                                                        "pixels": req_outpaint_px as u32,
-                                                    },
-                                                    "n": req_batch_count,
-                                                    "steps": req_steps as i32,
-                                                    "guidance": req_cfg,
-                                                    "seed": req_seed.parse::<i64>().ok(),
-                                                    "scheduler": req_scheduler,
-                                                    "priority": "normal",
-                                                }))
-                                            }
-                                            create_page::ImageMode::Upscale => {
-                                                ("/api/images/upscales", json!({
-                                                    "model": req_model,
-                                                    "source_asset_id": asset_id,
-                                                    "scale": req_upscale_factor,
-                                                    "denoise": req_denoise,
-                                                    "tile_size": 1024,
-                                                    "priority": "normal",
-                                                }))
-                                            }
-                                            create_page::ImageMode::TextToImage => {
-                                                unreachable!("text2image should not need upload")
-                                            }
-                                        };
-                                        Message::ApiSubmitWithEndpoint {
-                                            endpoint: endpoint.to_string(),
-                                            request,
-                                        }
-                                    }
+                                |result| match result {
+                                    Ok((source_id, mask_id, control_id)) => Message::ApiAssetsReady {
+                                        source_asset_id: source_id,
+                                        mask_asset_id: mask_id,
+                                        control_asset_id: control_id,
+                                    },
                                     Err(e) => Message::ApiGenerationSubmitted(Err(e)),
                                 },
                             );
                             return iced::Task::batch([task, upload_task]);
                         } else {
-                            // Direct generation (text2image)
-                            let (endpoint, request) = self.create.build_request(None);
+                            // Direct generation (text2image without assets)
+                            let (endpoint, request) = self.create.build_request(None, None, None);
                             let endpoint = endpoint.to_string();
                             let api_task = iced::Task::perform(
                                 async move {
@@ -280,6 +227,22 @@ impl App {
                     }
                 }
                 task
+            }
+            Message::ApiAssetsReady { source_asset_id, mask_asset_id, control_asset_id } => {
+                if let Some(client) = self.api_client.clone() {
+                    let (endpoint, request) = self.create.build_request(source_asset_id, mask_asset_id, control_asset_id);
+                    let endpoint = endpoint.to_string();
+                    return iced::Task::perform(
+                        async move {
+                            match client.post::<serde_json::Value, _>(&endpoint, &request).await {
+                                Ok(v) => Message::ApiGenerationSubmitted(Ok(v)),
+                                Err(e) => Message::ApiGenerationSubmitted(Err(e.to_string())),
+                            }
+                        },
+                        |msg| msg,
+                    );
+                }
+                iced::Task::none()
             }
             Message::DownloadImage => {
                 if let Some(src_path) = self.create.generated_image_path.clone() {
@@ -354,12 +317,20 @@ impl App {
                     Ok(_) => {
                         self.api_connected = true;
                         self.create.push_log("后端服务连接成功".into());
-                        // After health check, load models
+                        // After health check, load models from registry
                         if let Some(client) = self.api_client.clone() {
                             return iced::Task::perform(
                                 async move {
-                                    match client.list_models().await {
-                                        Ok(v) => Message::ApiModelsLoaded(Ok(serde_json::Value::Array(v))),
+                                    // Load registry for full model config + models status for installation state
+                                    let registry_future = client.get::<serde_json::Value>("/api/registry");
+                                    let models_future = client.get::<serde_json::Value>("/api/models?media=image");
+                                    match tokio::try_join!(registry_future, models_future) {
+                                        Ok((registry, models)) => {
+                                            let mut data = serde_json::Map::new();
+                                            data.insert("registry".into(), registry);
+                                            data.insert("models".into(), models);
+                                            Message::ApiModelsLoaded(Ok(serde_json::Value::Object(data)))
+                                        }
                                         Err(e) => Message::ApiModelsLoaded(Err(e.to_string())),
                                     }
                                 },
@@ -376,32 +347,91 @@ impl App {
             }
             Message::ApiModelsLoaded(result) => {
                 match result {
-                    Ok(models) => {
-                        let count = models.as_array().map_or(0, |a| a.len());
-                        self.create.push_log(format!("已加载 {} 个模型", count));
-                        // Parse dynamic models from backend
+                    Ok(data) => {
+                        let mut count = 0;
                         self.create.available_models.clear();
-                        if let Some(arr) = models.as_array() {
-                            for m in arr {
-                                if let (Some(id), Some(name)) = (
-                                    m.get("id").and_then(|v| v.as_str()),
-                                    m.get("name").and_then(|v| v.as_str()),
-                                ) {
-                                    let steps = m.get("default_steps").and_then(|v| v.as_u64()).unwrap_or(20) as u8;
-                                    let cfg = m.get("default_cfg").and_then(|v| v.as_f64()).unwrap_or(5.0) as f32;
+
+                        // Parse installed status from /api/models response
+                        let mut installed_models: std::collections::HashSet<String> = std::collections::HashSet::new();
+                        if let Some(models_obj) = data.get("models").and_then(|v| v.get("models")).and_then(|v| v.as_object()) {
+                            for (id, info) in models_obj {
+                                if info.get("installed").and_then(|v| v.as_bool()).unwrap_or(false) {
+                                    installed_models.insert(id.clone());
+                                }
+                            }
+                        }
+
+                        // Parse registry for model configs
+                        if let Some(registry) = data.get("registry").and_then(|v| v.as_object()) {
+                            // Registry has engines, categories, models, etc.
+                            if let Some(models_reg) = registry.get("models").and_then(|v| v.as_object()) {
+                                for (id, config) in models_reg {
+                                    let media = config.get("media").and_then(|v| v.as_str()).unwrap_or("");
+                                    if media != "image" {
+                                        continue;
+                                    }
+
+                                    let category = config.get("category").and_then(|v| v.as_str()).unwrap_or("base_models").to_string();
+
+                                    // Get model name (bilingual support)
+                                    let name = config.get("name")
+                                        .and_then(|v| v.as_object())
+                                        .and_then(|o| o.get("zh").or_else(|| o.get("en")))
+                                        .and_then(|v| v.as_str())
+                                        .or_else(|| config.get("name").and_then(|v| v.as_str()))
+                                        .unwrap_or(id)
+                                        .to_string();
+
+                                    let family = config.get("family").and_then(|v| v.as_str()).unwrap_or("");
+                                    let label = format!("{} · {}", name, family);
+
+                                    let actions: Vec<String> = config.get("actions")
+                                        .and_then(|v| v.as_array())
+                                        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                                        .unwrap_or_default();
+
+                                    let commercial = config.get("commercial_use_allowed").and_then(|v| v.as_bool()).unwrap_or(false);
+                                    let installed = installed_models.contains(id);
+
+                                    // Get default steps/guidance from parameters
+                                    let steps = config.get("parameters")
+                                        .and_then(|v| v.as_object())
+                                        .and_then(|p| p.get("steps"))
+                                        .and_then(|v| v.as_object())
+                                        .and_then(|s| s.get("default"))
+                                        .and_then(|v| v.as_u64())
+                                        .unwrap_or(20) as u8;
+
+                                    let cfg = config.get("parameters")
+                                        .and_then(|v| v.as_object())
+                                        .and_then(|p| p.get("guidance"))
+                                        .and_then(|v| v.as_object())
+                                        .and_then(|s| s.get("default"))
+                                        .and_then(|v| v.as_f64())
+                                        .unwrap_or(5.0) as f32;
+
                                     self.create.available_models.push(
                                         crate::create_page::ModelOption::Dynamic {
-                                            id: id.to_string(),
-                                            label: format!("{} · {}", name, id),
+                                            id: id.clone(),
+                                            label,
+                                            name,
+                                            category,
+                                            actions,
+                                            installed,
+                                            commercial_use_allowed: commercial,
                                             steps,
                                             cfg,
                                         }
                                     );
+                                    count += 1;
                                 }
                             }
                         }
-                        // If backend returned models, select the first one
-                        if let Some(first) = self.create.available_models.first().cloned() {
+                        self.create.push_log(format!("已加载 {} 个模型", count));
+                        // Rebuild filtered list and select first valid model
+                        self.create.rebuild_filtered_models();
+                        let first_valid = self.create.filtered_models.first().cloned();
+                        if let Some(first) = first_valid {
                             self.create.model = first.clone();
                             self.create.steps = first.default_steps();
                             self.create.cfg = first.default_cfg();
@@ -604,6 +634,84 @@ impl App {
                 let _ = (task_id, event, data);
                 iced::Task::none()
             }
+            Message::ApiTaskListPoll => {
+                if let Some(client) = self.api_client.clone() {
+                    return iced::Task::perform(
+                        async move {
+                            match client.get::<serde_json::Value>("/api/tasks?limit=50").await {
+                                Ok(v) => {
+                                    let tasks = v.get("tasks").and_then(|t| t.as_array()).cloned().unwrap_or_default();
+                                    Message::ApiTaskListResult(Ok(tasks))
+                                }
+                                Err(e) => Message::ApiTaskListResult(Err(e.to_string())),
+                            }
+                        },
+                        |msg| msg,
+                    );
+                }
+                iced::Task::none()
+            }
+            Message::ApiTaskListResult(result) => {
+                match result {
+                    Ok(tasks) => {
+                        let items: Vec<crate::task_queue::TaskItem> = tasks.into_iter().filter_map(|t| {
+                            let id = t.get("id")?.as_str()?.to_string();
+                            let status_str = t.get("status")?.as_str()?;
+                            let kind = t.get("kind")?.as_str().unwrap_or("unknown");
+                            let model = t.get("model_id")?.as_str().unwrap_or("");
+                            let title = t.get("prompt")?.as_str().unwrap_or("");
+                            let progress = t.get("progress").and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+                            let created_at_str = t.get("created_at")?.as_str()?;
+                            
+                            // Parse created_at
+                            let created_at = chrono::DateTime::parse_from_rfc3339(created_at_str)
+                                .ok()
+                                .map(|dt| std::time::Instant::now() - std::time::Duration::from_secs(
+                                    chrono::Utc::now().timestamp().max(0) as u64 - dt.timestamp().max(0) as u64
+                                ))
+                                .unwrap_or_else(std::time::Instant::now);
+                            
+                            let status = match status_str {
+                                "queued" => {
+                                    let pos = t.get("queue_position").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                                    let eta = t.get("estimated_wait_seconds").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                                    crate::task_queue::TaskStatus::Queued { position: pos, eta_seconds: eta }
+                                }
+                                "running" => {
+                                    let step = t.get("step").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                                    let total = t.get("total").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
+                                    let phase = t.get("phase").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                    crate::task_queue::TaskStatus::Running { step, total, phase }
+                                }
+                                "completed" => crate::task_queue::TaskStatus::Completed,
+                                "failed" => {
+                                    let error = t.get("error").and_then(|v| v.as_str()).unwrap_or("未知错误").to_string();
+                                    crate::task_queue::TaskStatus::Failed { error }
+                                }
+                                "cancelled" => crate::task_queue::TaskStatus::Cancelled,
+                                _ => crate::task_queue::TaskStatus::Pending,
+                            };
+                            
+                            Some(crate::task_queue::TaskItem {
+                                id,
+                                title: if title.is_empty() { kind.to_string() } else { title.chars().take(40).collect() },
+                                mode: kind.to_string(),
+                                model: model.to_string(),
+                                status,
+                                created_at,
+                                progress,
+                            })
+                        }).collect();
+                        
+                        return self.task_queue.update(crate::task_queue::TaskQueueMessage::SetTasks(items)).map(Message::TaskQueue);
+                    }
+                    Err(e) => {
+                        // Silently ignore task list poll errors
+                        let _ = e;
+                    }
+                }
+                iced::Task::none()
+            }
             Message::ImageSaved(result) => {
                 match result {
                     Ok(path) => self.create.push_log(format!("图片已保存: {}", path)),
@@ -637,6 +745,9 @@ impl App {
         let memory_poll = time::every(std::time::Duration::from_secs(5))
             .map(|_| Message::Create(create_page::Message::MemoryPoll));
 
+        let task_poll = time::every(std::time::Duration::from_secs(3))
+            .map(|_| Message::ApiTaskListPoll);
+
         let file_drop = iced::event::listen().filter_map(|event| {
             if let iced::Event::Window(iced::window::Event::FileDropped(path)) = event {
                 return Some(Message::Create(create_page::Message::SourceImageDropped(path.to_string_lossy().to_string())));
@@ -644,7 +755,7 @@ impl App {
             None
         });
 
-        iced::Subscription::batch(vec![keyboard_sub, memory_poll, file_drop])
+        iced::Subscription::batch(vec![keyboard_sub, memory_poll, task_poll, file_drop])
     }
 
     pub fn view(&self) -> iced::Element<'_, Message> {
@@ -773,6 +884,9 @@ impl App {
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .into()
+            }
+            NavId::Gallery => {
+                self.gallery.view(&self.api_client).map(Message::Gallery)
             }
             _ => {
                 // Other pages still have a title bar

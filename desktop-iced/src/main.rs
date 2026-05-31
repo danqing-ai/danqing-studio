@@ -1,6 +1,7 @@
 mod api;
 mod app;
 mod create_page;
+mod gallery;
 mod right_panel;
 mod task_queue;
 

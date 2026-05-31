@@ -96,58 +96,13 @@ pub enum TaskQueueMessage {
     CancelTask(String),
     ClearCompleted,
     Refresh,
+    SetTasks(Vec<TaskItem>),
 }
 
 impl TaskQueue {
     pub fn new() -> Self {
         Self {
-            tasks: vec![
-                TaskItem {
-                    id: "task-001".into(),
-                    title: "日系肖像".into(),
-                    mode: "文生图".into(),
-                    model: "z-image-turbo".into(),
-                    status: TaskStatus::Running {
-                        step: 12,
-                        total: 20,
-                        phase: "denoising".into(),
-                    },
-                    created_at: Instant::now() - Duration::from_secs(45),
-                    progress: 0.6,
-                },
-                TaskItem {
-                    id: "task-002".into(),
-                    title: "赛博朋克城市".into(),
-                    mode: "文生图".into(),
-                    model: "flux1-dev".into(),
-                    status: TaskStatus::Queued {
-                        position: 1,
-                        eta_seconds: 120,
-                    },
-                    created_at: Instant::now() - Duration::from_secs(10),
-                    progress: 0.05,
-                },
-                TaskItem {
-                    id: "task-003".into(),
-                    title: "精修放大".into(),
-                    mode: "精修放大".into(),
-                    model: "z-image-turbo".into(),
-                    status: TaskStatus::Completed,
-                    created_at: Instant::now() - Duration::from_secs(300),
-                    progress: 1.0,
-                },
-                TaskItem {
-                    id: "task-004".into(),
-                    title: "局部修饰".into(),
-                    mode: "局部修饰".into(),
-                    model: "flux2-klein".into(),
-                    status: TaskStatus::Failed {
-                        error: "内存不足".into(),
-                    },
-                    created_at: Instant::now() - Duration::from_secs(600),
-                    progress: 0.0,
-                },
-            ],
+            tasks: vec![],
             show_window: false,
         }
     }
@@ -174,6 +129,10 @@ impl TaskQueue {
                 iced::Task::none()
             }
             TaskQueueMessage::Refresh => {
+                iced::Task::none()
+            }
+            TaskQueueMessage::SetTasks(tasks) => {
+                self.tasks = tasks;
                 iced::Task::none()
             }
         }
