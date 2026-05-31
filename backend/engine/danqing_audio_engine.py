@@ -165,21 +165,32 @@ class DanQingAudioEngine(IAudioEngine):
         return result
 
     async def edit(self, request: AudioEditRequest, ctx: ExecutionContext) -> EngineResult:
-        if not self.supports(request.model, "edit"):
+        if not self.supports(request.model, request.operation):
             raise RuntimeError(
-                f"Model {request.model!r} does not declare audio edit (cover/repaint); "
-                "see config/models_registry.json."
+                f"Model {request.model!r} does not declare audio edit "
+                f"operation {request.operation!r}; see config/models_registry.json."
             )
+        entry = self._registry.get(parse_model_version(request.model)[0])
+        if entry is None:
+            raise RuntimeError(f"Model {request.model!r} not found in registry")
+
         ctx.on_log(
             LogEvent(
-                level="error",
-                message="Audio edit is not implemented; only the API surface is retained.",
+                level="info",
+                message=f"Initializing audio edit pipeline ({request.operation}) for {request.model}",
             )
         )
-        raise RuntimeError(
-            "Audio edit is not implemented (音频编辑未实现). "
-            "Only the HTTP API contract is retained."
+        runtime = self._resolve_runtime(entry)
+        from backend.engine.pipelines.music_pipeline import MusicPipeline
+
+        pipeline = MusicPipeline(
+            ctx=runtime,
+            model_registry=self._registry,
+            asset_store=ctx.asset_store,
+            model_cache=self._cache,
+            project_root=self._paths.get_project_root() if hasattr(self._paths, "get_project_root") else None,
         )
+        return await asyncio.to_thread(pipeline.run_edit, request, ctx)
 
     async def cancel(self, task_id: str) -> bool:
         return False

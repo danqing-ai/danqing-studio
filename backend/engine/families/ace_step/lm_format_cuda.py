@@ -7,12 +7,25 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
+from backend.engine.families.ace_step.constrained_generate import (
+    ConstrainedGenerationConfig,
+    create_constrained_processor,
+    generate_constrained_cuda,
+)
 from backend.engine.families.ace_step.lm_format import (
+    DEFAULT_LM_INSPIRED_INSTRUCTION,
     DEFAULT_LM_REWRITE_INSTRUCTION,
     LmFormatResult,
     build_lm_format_result,
+    ensure_vocal_lyrics_for_inspiration,
+    format_sample_understand_config,
+    inspiration_understand_config,
+    is_instrumental_lyrics,
+    normalize_lyrics_body,
+    parse_inspiration_understand_output,
     parse_lm_output,
     resolve_lm_dir,
+    run_planner_codes_phase,
 )
 
 logger = logging.getLogger(__name__)
@@ -21,22 +34,44 @@ logger = logging.getLogger(__name__)
 class AceStepLmFormatterCuda:
     """Expand caption/lyrics via 5Hz LM on CUDA (PyTorch)."""
 
-    def __init__(self, lm_dir: Path, device: Any = None):
+    def __init__(
+        self,
+        lm_dir: Path,
+        device: Any = None,
+        *,
+        simple_mode: bool = False,
+        max_duration: int = 600,
+    ):
         import torch
 
         self._lm_dir = Path(lm_dir)
         self._device = device or torch.device("cpu")
+        self._simple_mode = simple_mode
+        self._max_duration = max_duration
         self._model: Any = None
         self._tokenizer: Any = None
+        self._processor: Any = None
+        self.last_pmi: Any = None
 
     @classmethod
     def from_bundle(
-        cls, bundle_root: Path, device: Any = None
+        cls,
+        bundle_root: Path,
+        device: Any = None,
+        *,
+        lm_dir: Optional[Path] = None,
+        simple_mode: bool = False,
+        max_duration: int = 600,
     ) -> Optional["AceStepLmFormatterCuda"]:
-        lm_dir = resolve_lm_dir(bundle_root)
-        if lm_dir is None:
+        resolved = resolve_lm_dir(bundle_root, preferred=lm_dir)
+        if resolved is None:
             return None
-        return cls(lm_dir, device=device)
+        return cls(
+            resolved,
+            device=device,
+            simple_mode=simple_mode,
+            max_duration=max_duration,
+        )
 
     def load(self) -> None:
         import torch
@@ -53,19 +88,48 @@ class AceStepLmFormatterCuda:
         )
         self._model.eval()
         self._model.to(self._device)
+        self._processor = create_constrained_processor(
+            self._tokenizer,
+            max_duration=self._max_duration,
+        )
 
-    def _build_prompt(self, caption: str, lyrics: str) -> str:
-        user_content = f"# Caption\n{caption}\n\n# Lyric\n{lyrics}"
+    def _chat_prompt(self, instruction: str, user_content: str) -> str:
         return self._tokenizer.apply_chat_template(
             [
-                {
-                    "role": "system",
-                    "content": f"# Instruction\n{DEFAULT_LM_REWRITE_INSTRUCTION}\n\n",
-                },
+                {"role": "system", "content": f"# Instruction\n{instruction}\n\n"},
                 {"role": "user", "content": user_content},
             ],
             tokenize=False,
             add_generation_prompt=True,
+        )
+
+    def _generate(self, prompt: str, cfg: ConstrainedGenerationConfig) -> str:
+        if self._model is None:
+            self.load()
+        output_text = generate_constrained_cuda(
+            self._model,
+            self._tokenizer,
+            prompt,
+            self._processor,
+            cfg,
+        )
+        self.last_pmi = self._maybe_score_pmi(prompt, output_text)
+        return output_text
+
+    def _maybe_score_pmi(self, prompt: str, output_text: str) -> Any:
+        from backend.engine.families.ace_step.pmi_scoring import (
+            pmi_scoring_enabled,
+            score_lm_output_cuda,
+        )
+
+        if not pmi_scoring_enabled():
+            return None
+        return score_lm_output_cuda(
+            self._model,
+            self._tokenizer,
+            prompt,
+            output_text,
+            device=self._device,
         )
 
     def format_sample(
@@ -79,30 +143,44 @@ class AceStepLmFormatterCuda:
         timesignature: str = "",
         language: str = "",
     ) -> LmFormatResult:
-        import torch
-
         if self._model is None:
             self.load()
 
         caption_in = (caption or "").strip() or "NO USER INPUT"
-        lyrics_in = (lyrics or "").strip() or "[Instrumental]"
-        prompt = self._build_prompt(caption_in, lyrics_in)
-        inputs = self._tokenizer(prompt, return_tensors="pt")
-        inputs = {k: v.to(self._device) for k, v in inputs.items()}
+        lyrics_in = normalize_lyrics_body((lyrics or "").strip()) or "[Instrumental]"
+        user_has_vocals = not is_instrumental_lyrics(lyrics_in)
+        prompt = self._chat_prompt(
+            DEFAULT_LM_REWRITE_INSTRUCTION,
+            f"# Caption\n{caption_in}\n\n# Lyric\n{lyrics_in}",
+        )
+        user_meta = None
+        if language:
+            user_meta = {"language": language}
+        if duration is not None:
+            user_meta = dict(user_meta or {})
+            user_meta["duration"] = int(round(duration))
+        if bpm is not None:
+            user_meta = dict(user_meta or {})
+            user_meta["bpm"] = int(bpm)
+        if keyscale:
+            user_meta = dict(user_meta or {})
+            user_meta["keyscale"] = keyscale
+        if timesignature:
+            user_meta = dict(user_meta or {})
+            user_meta["timesignature"] = timesignature
 
-        with torch.inference_mode():
-            out_ids = self._model.generate(
-                **inputs,
-                max_new_tokens=1024,
-                temperature=0.85,
-                do_sample=True,
-                top_p=0.9,
-                pad_token_id=self._tokenizer.pad_token_id or self._tokenizer.eos_token_id,
-            )
-
-        gen_ids = out_ids[0, inputs["input_ids"].shape[1] :]
-        output_text = self._tokenizer.decode(gen_ids, skip_special_tokens=False)
-        meta = parse_lm_output(output_text)
+        output_text = self._generate(
+            prompt,
+            format_sample_understand_config(
+                duration=duration,
+                user_metadata=user_meta,
+                metadata_only=user_has_vocals,
+            ),
+        )
+        meta, _parsed_lyrics = parse_inspiration_understand_output(
+            output_text,
+            instrumental=not user_has_vocals,
+        )
         result = build_lm_format_result(
             meta,
             caption_in=caption_in,
@@ -112,12 +190,99 @@ class AceStepLmFormatterCuda:
             keyscale=keyscale,
             timesignature=timesignature,
             language=language,
+            want_vocals=user_has_vocals,
+            preserve_user_lyrics=user_has_vocals,
         )
+        try:
+            result = run_planner_codes_phase(
+                generate_fn=self._generate,
+                tokenizer=self._tokenizer,
+                result=result,
+                duration_hint=duration,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"ACE-Step LM planner codes phase failed (CUDA format_sample): {exc}"
+            ) from exc
         logger.info(
-            "ACE-Step LM format (CUDA): caption=%r -> %r (bpm=%s duration=%s)",
+            "ACE-Step LM format (CUDA): caption=%r -> %r (bpm=%s, codes=%d)",
             caption_in[:60],
             result.caption[:80],
             result.bpm,
-            result.duration,
+            len(result.audio_code_indices),
+        )
+        return result
+
+    def create_sample(
+        self,
+        *,
+        query: str,
+        instrumental: bool = False,
+        vocal_language: str = "",
+        duration: Optional[float] = None,
+    ) -> LmFormatResult:
+        if self._model is None:
+            self.load()
+
+        query_in = (query or "").strip() or "NO USER INPUT"
+        user_meta = None
+        if vocal_language and vocal_language.strip().lower() != "unknown":
+            user_meta = {"language": vocal_language.strip()}
+
+        if instrumental:
+            from backend.engine.families.ace_step.lm_format import build_inspiration_user_content
+
+            user_content = build_inspiration_user_content(
+                query_in,
+                instrumental=True,
+                vocal_language=vocal_language,
+            )
+            prompt = self._chat_prompt(DEFAULT_LM_INSPIRED_INSTRUCTION, user_content)
+            output_text = self._generate(
+                prompt,
+                inspiration_understand_config(duration=duration, user_metadata=user_meta),
+            )
+            meta, _lyrics = parse_inspiration_understand_output(
+                output_text,
+                instrumental=True,
+            )
+        else:
+            meta, _lyrics = ensure_vocal_lyrics_for_inspiration(
+                self._generate,
+                self._tokenizer,
+                self._chat_prompt,
+                query_in=query_in,
+                vocal_language=vocal_language,
+                duration=duration,
+                user_metadata=user_meta,
+            )
+
+        result = build_lm_format_result(
+            meta,
+            caption_in=query_in,
+            lyrics_in="",
+            duration=duration,
+            bpm=None,
+            keyscale="",
+            timesignature="",
+            language=vocal_language or "en",
+            want_vocals=not instrumental,
+        )
+        try:
+            result = run_planner_codes_phase(
+                generate_fn=self._generate,
+                tokenizer=self._tokenizer,
+                result=result,
+                duration_hint=duration,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                f"ACE-Step LM planner codes phase failed (CUDA create_sample): {exc}"
+            ) from exc
+        logger.info(
+            "ACE-Step LM create_sample (CUDA): query=%r -> caption=%r (codes=%d)",
+            query_in[:60],
+            result.caption[:80],
+            len(result.audio_code_indices),
         )
         return result

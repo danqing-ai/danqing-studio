@@ -96,7 +96,15 @@ bench-sanity-case:
 
 bench-audio-sanity:
 	$(PYTHON) -m tests.benchmark sanity --case ace-step-xl-sft-sanity
+	$(PYTHON) -m tests.benchmark sanity --case ace-step-xl-sft-inspiration-lm
+	$(PYTHON) -m tests.benchmark sanity --case ace-step-xl-sft-cover-sanity
 	$(PYTHON) -m tests.benchmark sanity --case heartmula-oss-3b-happy-new-year-sanity
+
+bench-audio-sanity-ace-step:
+	$(PYTHON) -m tests.benchmark sanity --case ace-step-xl-sft-sanity
+	$(PYTHON) -m tests.benchmark sanity --case ace-step-xl-sft-sanity-lm
+	$(PYTHON) -m tests.benchmark sanity --case ace-step-xl-sft-inspiration-lm
+	$(PYTHON) -m tests.benchmark sanity --case ace-step-xl-sft-cover-sanity
 
 bench-audio-sanity-lm:
 	$(PYTHON) -m tests.benchmark sanity --case ace-step-xl-sft-sanity-lm

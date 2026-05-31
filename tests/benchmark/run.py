@@ -1116,8 +1116,6 @@ class SanitySuiteRunner(BenchmarkRunner):
             case.model,
             "--prompt",
             case.prompt,
-            "--lyrics",
-            case.lyrics or "[Instrumental]",
             "--duration",
             str(int(case.duration)),
             "--guidance",
@@ -1131,6 +1129,9 @@ class SanitySuiteRunner(BenchmarkRunner):
             "--output",
             str(output_path),
         ]
+        if case.instrumental:
+            cmd.append("--instrumental")
+        cmd.extend(["--lyrics", case.lyrics or ""])
         if not is_heartmula and case.steps is not None:
             cmd.extend(["--steps", str(int(case.steps))])
         if case.temperature is not None:
@@ -1145,6 +1146,55 @@ class SanitySuiteRunner(BenchmarkRunner):
             cmd.extend(["--long-form-temperature", str(float(case.long_form_temperature))])
         if case.long_form_topk is not None:
             cmd.extend(["--long-form-topk", str(int(case.long_form_topk))])
+        return self._run_danqing_audio_cmd(cmd, case, timeout_sec=timeout_sec, label="danqing-audio")
+
+    def _run_danqing_audio_edit(
+        self, case: SanityCase, output_path: Path, *, timeout_sec: int | None = None
+    ) -> bool:
+        from tests.benchmark.cases import ensure_ace_step_cover_source
+
+        cli = PROJECT_ROOT / "bin" / "danqing-audio-edit"
+        src = case.source_audio or ""
+        if src and not Path(src).is_absolute():
+            src = str(PROJECT_ROOT / src)
+        src_path = ensure_ace_step_cover_source() if not src else Path(src)
+        if not src_path.is_file():
+            print(f"    [danqing-audio-edit] 缺少参考音频: {src_path}")
+            return False
+        cmd = [
+            sys.executable,
+            str(cli),
+            "--model",
+            case.model,
+            "--operation",
+            "cover",
+            "--source-audio",
+            str(src_path),
+            "--prompt",
+            case.prompt or "",
+            "--source-fidelity",
+            str(float(case.source_fidelity)),
+            "--seed",
+            str(case.seed),
+            "--n",
+            "1",
+            "--audio-format",
+            case.audio_format or "wav",
+            "--output",
+            str(output_path),
+        ]
+        return self._run_danqing_audio_cmd(cmd, case, timeout_sec=timeout_sec, label="danqing-audio-edit")
+
+    def _run_danqing_audio_cmd(
+        self,
+        cmd: list,
+        case: SanityCase,
+        *,
+        timeout_sec: int | None,
+        label: str,
+    ) -> bool:
+        base = self._audio_model_base(case)
+        is_heartmula = base.startswith("heartmula")
         try:
             t0 = time.time()
             env = os.environ.copy()
@@ -1158,6 +1208,7 @@ class SanitySuiteRunner(BenchmarkRunner):
                     env["ACESTEP_USE_LM"] = "0"
                 else:
                     env.setdefault("ACESTEP_USE_LM", "1")
+                    env.setdefault("ACESTEP_LM_CODES", "1")
             tout = int(timeout_sec) if timeout_sec is not None else DEFAULT_DANQING_CLI_TIMEOUT_SEC
             proc = subprocess.run(
                 cmd,
@@ -1169,18 +1220,17 @@ class SanitySuiteRunner(BenchmarkRunner):
             )
             elapsed = time.time() - t0
             if proc.returncode != 0:
-                print(f"    [danqing-audio] 失败 (exit={proc.returncode})")
+                print(f"    [{label}] 失败 (exit={proc.returncode})")
                 if proc.stderr:
-                    print(f"    [danqing-audio] stderr: {proc.stderr[:STDERR_HEAD_CHARS]}")
+                    print(f"    [{label}] stderr: {proc.stderr[:STDERR_HEAD_CHARS]}")
                 return False
-            print(f"    [danqing-audio] 生成完成 ({elapsed:.1f}s)")
-            print(f"    [danqing-audio] 输出: {output_path}")
+            print(f"    [{label}] 生成完成 ({elapsed:.1f}s)")
             return True
         except subprocess.TimeoutExpired:
-            print(f"    [danqing-audio] 超时 ({tout}s)")
+            print(f"    [{label}] 超时 ({tout}s)")
             return False
         except FileNotFoundError:
-            print(f"    [danqing-audio] 未找到 CLI: {cli}")
+            print(f"    [{label}] 未找到 CLI")
             return False
 
     def run_one_sanity(self, case: SanityCase) -> SanityResult:
@@ -1336,7 +1386,10 @@ class SanitySuiteRunner(BenchmarkRunner):
                 print(f"  SKIP: {res.reason}")
                 return res
             t0 = time.time()
-            ok = self._run_danqing_audio_generate(case, out_path, timeout_sec=tout)
+            if (case.audio_operation or "create") == "cover":
+                ok = self._run_danqing_audio_edit(case, out_path, timeout_sec=tout)
+            else:
+                ok = self._run_danqing_audio_generate(case, out_path, timeout_sec=tout)
             elapsed = time.time() - t0
             if not ok:
                 res = SanityResult(
@@ -1448,8 +1501,9 @@ class SanitySuiteRunner(BenchmarkRunner):
                             f"min_si_sdr={case.codec_parity_min_si_sdr_db}dB"
                         )
                 else:
+                    op = case.audio_operation or "create"
                     print(
-                        f"  model={case.model} seed={case.seed} steps={case.steps} "
+                        f"  model={case.model} op={op} seed={case.seed} steps={case.steps} "
                         f"duration={case.duration}s guidance={case.guidance} lm={case.ace_step_use_lm}"
                     )
             else:

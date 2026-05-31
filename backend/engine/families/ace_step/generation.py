@@ -6,6 +6,7 @@ Pipeline and engine must import from this module only, not from ``generation_*``
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -15,7 +16,11 @@ import numpy as np
 
 from backend.core.contracts import AudioGenerationRequest
 from backend.engine.config.model_configs import AceStepConfig
-from backend.engine.families.ace_step.lm_format import is_instrumental_lyrics
+from backend.engine.families.ace_step.lm_format import (
+    is_instrumental_lyrics,
+    normalize_lyrics_body,
+    vocal_lyrics_required_error,
+)
 from backend.engine.families.ace_step.vocal_prompt import apply_vocal_type_to_prompt
 
 SFT_GEN_PROMPT = """# Instruction
@@ -28,6 +33,12 @@ SFT_GEN_PROMPT = """# Instruction
 {metadata}<|endoftext|>"""
 
 DEFAULT_DIT_INSTRUCTION = "Fill the audio semantic mask based on the given conditions:"
+COVER_DIT_INSTRUCTION = (
+    "Generate audio semantic tokens based on the given conditions:"
+)
+DEFAULT_LM_SIMPLE_INSTRUCTION = (
+    "Generate audio semantic tokens based on the given conditions:"
+)
 
 SAMPLE_RATE = 48_000
 LATENT_HOP_SAMPLES = 1920
@@ -105,7 +116,25 @@ def vocal_language_mismatch_warning(lyrics: str, lang: str) -> Optional[str]:
 
 
 def format_lyrics(lyrics: str, language: str) -> str:
-    return f"# Languages\n{language}\n\n# Lyric\n{lyrics}<|endoftext|>"
+    body = normalize_lyrics_body(lyrics)
+    return f"# Languages\n{language}\n\n# Lyric\n{body}<|endoftext|>"
+
+
+def finalize_lyrics_for_inference(
+    lyrics: str,
+    *,
+    instrumental: bool,
+    lm_expanded: bool,
+) -> str:
+    """Normalize lyrics and fail loud when a vocal track has no singable text."""
+    if instrumental:
+        return "[Instrumental]"
+    body = normalize_lyrics_body(lyrics)
+    if body and not is_instrumental_lyrics(body):
+        return body
+    if lm_expanded:
+        raise RuntimeError(vocal_lyrics_required_error())
+    return "[Instrumental]"
 
 
 @dataclass
@@ -160,21 +189,36 @@ def lyrics_capture_log_message(
     )
 
 
-def lyrics_capture_metadata(cap: AceStepLyricsCapture) -> dict[str, Any]:
+def lyrics_capture_metadata(
+    cap: AceStepLyricsCapture,
+    *,
+    duration_sec: Optional[float] = None,
+) -> dict[str, Any]:
     """Serializable fields for task result / asset metadata."""
+    from backend.engine.families.ace_step.lyrics_alignment import estimate_lyrics_alignment
+
     if is_instrumental_lyrics(cap.lyrics_effective):
         return {
             "lyrics_alignment": "instrumental",
             "lm_expanded": cap.lm_expanded,
         }
-    return {
+    meta = {
         "lyrics_input": cap.lyrics_input,
         "lyrics_effective": cap.lyrics_effective,
         "lyrics_changed_by_lm": cap.lyrics_changed,
         "caption_effective": cap.caption_effective,
-        "lyrics_alignment": "conditioning_only",
         "lm_expanded": cap.lm_expanded,
     }
+    if duration_sec is not None and duration_sec > 0:
+        alignment = estimate_lyrics_alignment(
+            cap.lyrics_effective,
+            duration_sec=float(duration_sec),
+            instrumental=False,
+        )
+        meta.update(alignment.as_metadata())
+    else:
+        meta["lyrics_alignment"] = "conditioning_only"
+    return meta
 
 
 def write_lyrics_sidecar(audio_path: Path, lyrics: str) -> Optional[Path]:
@@ -186,6 +230,29 @@ def write_lyrics_sidecar(audio_path: Path, lyrics: str) -> Optional[Path]:
         return None
     sidecar = audio_path.with_name(f"{audio_path.stem}_lyrics.txt")
     sidecar.write_text(text + "\n", encoding="utf-8")
+    return sidecar
+
+
+def write_lrc_sidecar(
+    audio_path: Path,
+    lyrics: str,
+    *,
+    duration_sec: float,
+) -> Optional[Path]:
+    """Write ``<stem>.lrc`` when structure-based alignment is available."""
+    from backend.engine.families.ace_step.lyrics_alignment import (
+        estimate_lyrics_alignment,
+        format_lrc,
+    )
+
+    if is_instrumental_lyrics(lyrics) or duration_sec <= 0:
+        return None
+    alignment = estimate_lyrics_alignment(lyrics, duration_sec=float(duration_sec))
+    lrc_text = format_lrc(alignment)
+    if not lrc_text:
+        return None
+    sidecar = audio_path.with_name(f"{audio_path.stem}.lrc")
+    sidecar.write_text(lrc_text, encoding="utf-8")
     return sidecar
 
 
@@ -401,6 +468,20 @@ def format_metadata(
     )
 
 
+def load_reference_waveform(path: Path, *, sample_rate: int = SAMPLE_RATE) -> np.ndarray:
+    """Load mono/stereo WAV for cover/reference tasks → float32 [T, C]."""
+    import soundfile as sf
+
+    wf, sr = sf.read(str(path), always_2d=True, dtype="float32")
+    if sr != sample_rate:
+        raise RuntimeError(
+            f"Reference audio must be {sample_rate} Hz (got {sr} Hz): {path}"
+        )
+    if wf.shape[0] < sample_rate // 2:
+        raise RuntimeError(f"Reference audio too short (<0.5s): {path}")
+    return wf.astype(np.float32)
+
+
 def normalize_waveform(wf: np.ndarray) -> np.ndarray:
     if wf.ndim == 2:
         wf = wf - np.mean(wf, axis=0, keepdims=True)
@@ -425,6 +506,7 @@ def normalize_waveform(wf: np.ndarray) -> np.ndarray:
 class _AceStepGeneratorProto(Protocol):
     def load(self) -> None: ...
     def generate_waveform(self, **kwargs: Any) -> Any: ...
+    def generate_cover_waveform(self, **kwargs: Any) -> Any: ...
     @property
     def model_config(self) -> Any: ...
 
@@ -439,6 +521,11 @@ class AceStepPreparedRequest:
     steps: int
     shift: float
     is_turbo: bool
+    duration: float
+    simple_mode: bool = False
+    lm_enabled: bool = True
+    resource_tier: str = ""
+    lm_quantize_bits: Optional[int] = None
     log_events: List[Tuple[str, str]] = field(default_factory=list)
 
 
@@ -457,6 +544,117 @@ def create_ace_step_generator(ctx: Any, bundle_root: Path) -> _AceStepGeneratorP
     )
 
 
+_LM_SECTION_TAG = re.compile(
+    r"\[(verse|chorus|bridge|intro|outro|pre-chorus|hook)",
+    re.IGNORECASE,
+)
+
+_LM_EXPANSION_REASON_MESSAGES: dict[str, str] = {
+    "override_inspiration": (
+        "高级覆盖：强制 5Hz LM 灵感扩写（create_sample）。"
+    ),
+    "override_format": (
+        "高级覆盖：强制 5Hz LM 格式化扩写（format_sample）。"
+    ),
+    "override_off": "高级覆盖：已关闭 5Hz LM 扩写。",
+    "auto_vocal_inspiration": (
+        "已从短描述推断需生成歌词：5Hz LM 将规划 metadata/歌词并生成 audio codes（llm_dit）。"
+    ),
+    "auto_instrumental_prompt": (
+        "纯器乐：5Hz LM 将规划 metadata 并生成 audio codes（llm_dit）。"
+    ),
+    "auto_substantial_lyrics": (
+        "已提供歌词：5Hz LM 将格式化 caption/元数据并生成 audio codes（llm_dit）。"
+    ),
+    "auto_instrumental_no_prompt": "纯器乐且无描述：跳过 LM 灵感扩写。",
+    "auto_no_prompt": "无描述可扩写：跳过 LM 灵感扩写。",
+    "lm_disabled": "5Hz LM 已关闭（ACESTEP_USE_LM=0）。",
+}
+
+
+def has_substantial_user_lyrics(lyrics: str) -> bool:
+    """Heuristic: user supplied lyrics worth format_sample rewrite."""
+    text = (lyrics or "").strip()
+    if not text or is_instrumental_lyrics(text):
+        return False
+    if len(text) >= 40:
+        return True
+    if _LM_SECTION_TAG.search(text):
+        return True
+    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+    return len(lines) >= 2
+
+
+def _normalize_lm_expansion_mode(raw: Any) -> Optional[str]:
+    """Return inspiration | format | off, or None for auto."""
+    if raw is None:
+        return None
+    mode = str(raw).strip().lower()
+    if mode in ("", "auto"):
+        return None
+    if mode in ("inspiration", "create", "create_sample", "simple", "simple_mode"):
+        return "inspiration"
+    if mode in ("format", "format_sample", "understand"):
+        return "format"
+    if mode in ("off", "none", "skip"):
+        return "off"
+    raise RuntimeError(
+        f"Unknown lm_expansion mode {raw!r}; use auto, inspiration, format, or off"
+    )
+
+
+def resolve_lm_expansion_override(request: AudioGenerationRequest) -> Optional[str]:
+    """Explicit LM path override, or None to auto-infer."""
+    if bool(getattr(request, "simple_mode", False)):
+        return "inspiration"
+    meta = request.metadata or {}
+    raw = meta.get("lm_expansion")
+    if raw is None:
+        raw = getattr(request, "lm_expansion", None)
+    return _normalize_lm_expansion_mode(raw)
+
+
+def resolve_lm_inspiration_mode(
+    request: AudioGenerationRequest,
+    *,
+    raw_lyrics: str,
+    lm_enabled: bool,
+) -> Tuple[bool, str]:
+    """Return (use_create_sample, reason_key)."""
+    if not lm_enabled:
+        return False, "lm_disabled"
+
+    override = resolve_lm_expansion_override(request)
+    if override == "off":
+        return False, "override_off"
+    if override == "inspiration":
+        return True, "override_inspiration"
+    if override == "format":
+        return False, "override_format"
+
+    lyrics_stripped = (raw_lyrics or "").strip()
+    prompt_stripped = (request.prompt or "").strip()
+    want_instrumental = bool(request.instrumental)
+
+    if has_substantial_user_lyrics(lyrics_stripped):
+        return False, "auto_substantial_lyrics"
+
+    if want_instrumental:
+        if prompt_stripped:
+            return True, "auto_instrumental_prompt"
+        return False, "auto_instrumental_no_prompt"
+
+    if lyrics_stripped and is_instrumental_lyrics(lyrics_stripped):
+        if prompt_stripped:
+            return True, "auto_instrumental_prompt"
+        return False, "auto_instrumental_no_prompt"
+
+    if prompt_stripped:
+        return True, "auto_vocal_inspiration"
+
+    return False, "auto_no_prompt"
+
+
 def resolve_bundle_is_turbo(bundle_root: Path) -> bool:
     """Read ``is_turbo`` from installed DiT ``config.json`` (authoritative over static defaults)."""
     dit = resolve_dit_bundle(bundle_root)
@@ -472,24 +670,80 @@ def prepare_music_request(
     request: AudioGenerationRequest,
     config: AceStepConfig,
     bundle_root: Path,
+    *,
+    backend: str = "mlx",
 ) -> AceStepPreparedRequest:
     """Resolve lyrics/language/steps/shift from contract + registry config (no family branches in Pipeline)."""
+    from backend.engine.families.ace_step.resource_policy import (
+        clamp_duration,
+        resolve_resource_policy,
+    )
+
     events: List[Tuple[str, str]] = []
-    lyrics = (request.lyrics or "").strip()
-    vocal_lang = resolve_vocal_language(lyrics, request.vocal_language or "")
+    policy = resolve_resource_policy(backend=backend)
+    lm_enabled = os.environ.get("ACESTEP_USE_LM", "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+    if policy.tier in ("minimal", "low") and lm_enabled:
+        events.append(
+            (
+                "info",
+                f"内存档位 {policy.tier}（约 {policy.memory_gb:.0f}GB）："
+                f"建议 LM ≤ {policy.available_lm_models[-1] if policy.available_lm_models else '无'}，"
+                f"最长 {policy.max_duration_with_lm}s（含 LM）。",
+            )
+        )
+
+    registry_max = 600
+    raw_duration = float(request.duration if request.duration is not None else 30)
+    duration, dur_warn = clamp_duration(
+        raw_duration,
+        lm_enabled=lm_enabled,
+        policy=policy,
+        registry_max=600,
+    )
+    if dur_warn:
+        events.append(("warning", dur_warn))
+
+    raw_lyrics = (request.lyrics or "").strip()
+    lm_inspiration, lm_reason = resolve_lm_inspiration_mode(
+        request,
+        raw_lyrics=raw_lyrics,
+        lm_enabled=lm_enabled,
+    )
+    lm_reason_msg = _LM_EXPANSION_REASON_MESSAGES.get(lm_reason)
+    if lm_reason_msg and lm_reason not in ("lm_disabled", "override_off"):
+        events.append(("info", lm_reason_msg))
+    elif lm_reason == "override_off":
+        events.append(("info", lm_reason_msg or ""))
 
     if request.instrumental:
         lyrics = "[Instrumental]"
-    elif not lyrics:
+    elif raw_lyrics and not is_instrumental_lyrics(raw_lyrics):
+        lyrics = raw_lyrics
+    elif lm_inspiration:
+        lyrics = ""
+    elif not raw_lyrics:
         lyrics = "[Instrumental]"
         events.append(
             (
                 "warning",
-                "未填写歌词且未勾选纯器乐：将按纯音乐生成（无人声）。"
-                "要人声请在「歌词」中填写内容，并关闭「纯器乐」。",
+                "未填写歌词且 LM 未启用灵感扩写：将按纯音乐生成（无人声）。"
+                "要人声请填写歌词，或仅填描述让系统自动生成歌词。",
             )
         )
-    elif not is_instrumental_lyrics(lyrics):
+    else:
+        lyrics = raw_lyrics
+
+    vocal_lang = resolve_vocal_language(
+        lyrics or raw_lyrics,
+        request.vocal_language or "",
+    )
+
+    if raw_lyrics and not is_instrumental_lyrics(raw_lyrics) and not request.instrumental:
         preview = lyrics.replace("\n", " ")[:80]
         events.append(
             ("info", f"人声歌词已启用（约 {len(lyrics)} 字）: {preview!r}…"),
@@ -538,5 +792,10 @@ def prepare_music_request(
         steps=steps,
         shift=shift,
         is_turbo=is_turbo,
+        duration=duration,
+        simple_mode=lm_inspiration,
+        lm_enabled=lm_enabled and lm_reason != "override_off",
+        resource_tier=policy.tier,
+        lm_quantize_bits=policy.lm_quantize_bits,
         log_events=events,
     )

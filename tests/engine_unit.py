@@ -573,11 +573,300 @@ class AceStepGenerationTests(unittest.TestCase):
                 duration=10,
                 steps=24,
             )
-            prepared = prepare_music_request(req, AceStepConfig(), bundle)
+            prepared = prepare_music_request(req, AceStepConfig(), bundle, backend="mlx")
             self.assertEqual(prepared.vocal_language, "zh")
             self.assertEqual(prepared.steps, 8)
             self.assertEqual(prepared.shift, 1.0)
             self.assertTrue(prepared.is_turbo)
+            self.assertEqual(prepared.duration, 10.0)
+
+    def test_resolve_lm_inspiration_auto_vocal(self) -> None:
+        from backend.core.contracts import AudioGenerationRequest
+        from backend.engine.families.ace_step.generation import (
+            has_substantial_user_lyrics,
+            prepare_music_request,
+            resolve_lm_inspiration_mode,
+        )
+        from backend.engine.config.model_configs import AceStepConfig
+
+        req = AudioGenerationRequest(
+            model="ace-step-xl-sft",
+            prompt="upbeat pop song about summer",
+            lyrics="",
+            instrumental=False,
+        )
+        use_inspiration, reason = resolve_lm_inspiration_mode(
+            req, raw_lyrics="", lm_enabled=True
+        )
+        self.assertTrue(use_inspiration)
+        self.assertEqual(reason, "auto_vocal_inspiration")
+        self.assertFalse(has_substantial_user_lyrics("hi there"))
+
+        with __import__("tempfile").TemporaryDirectory() as tmp:
+            import json
+            from pathlib import Path
+
+            bundle = Path(tmp)
+            dit = bundle / "acestep-v15-turbo"
+            dit.mkdir()
+            (dit / "config.json").write_text("{}", encoding="utf-8")
+            (dit / "model.safetensors").write_bytes(b"")
+            prepared = prepare_music_request(req, AceStepConfig(), bundle, backend="mlx")
+            self.assertTrue(prepared.simple_mode)
+            self.assertEqual(prepared.lyrics, "")
+
+    def test_resolve_lm_inspiration_substantial_lyrics(self) -> None:
+        from backend.core.contracts import AudioGenerationRequest
+        from backend.engine.families.ace_step.generation import (
+            has_substantial_user_lyrics,
+            prepare_music_request,
+            resolve_lm_inspiration_mode,
+        )
+        from backend.engine.config.model_configs import AceStepConfig
+
+        lyrics = "[verse]\n" + ("la la la " * 10)
+        self.assertTrue(has_substantial_user_lyrics(lyrics))
+        req = AudioGenerationRequest(
+            model="ace-step-xl-sft",
+            prompt="pop",
+            lyrics=lyrics,
+        )
+        use_inspiration, reason = resolve_lm_inspiration_mode(
+            req, raw_lyrics=lyrics, lm_enabled=True
+        )
+        self.assertFalse(use_inspiration)
+        self.assertEqual(reason, "auto_substantial_lyrics")
+
+        with __import__("tempfile").TemporaryDirectory() as tmp:
+            import json
+            from pathlib import Path
+
+            bundle = Path(tmp)
+            dit = bundle / "acestep-v15-turbo"
+            dit.mkdir()
+            (dit / "config.json").write_text("{}", encoding="utf-8")
+            (dit / "model.safetensors").write_bytes(b"")
+            prepared = prepare_music_request(req, AceStepConfig(), bundle, backend="mlx")
+            self.assertFalse(prepared.simple_mode)
+            self.assertEqual(prepared.lyrics, lyrics.strip())
+
+    def test_resource_policy_clamps_duration(self) -> None:
+        from backend.engine.families.ace_step.resource_policy import (
+            AceStepResourcePolicy,
+            clamp_duration,
+        )
+
+        policy = AceStepResourcePolicy(
+            memory_gb=8.0,
+            tier="low",
+            max_duration_with_lm=120,
+            max_duration_without_lm=180,
+            available_lm_models=("acestep-5Hz-lm-0.6B",),
+            lm_quantize_bits=8,
+        )
+        dur, msg = clamp_duration(300.0, lm_enabled=True, policy=policy)
+        self.assertEqual(dur, 120.0)
+        self.assertIsNotNone(msg)
+
+    def test_quality_assessment_flags_hum(self) -> None:
+        from backend.engine.families.ace_step.quality_score import assess_generation_quality
+
+        q = assess_generation_quality(hum_ratio=0.4, mains_acf=0.5, latent_cos=0.5, latent_diff=0.2)
+        self.assertLess(q.score, 60.0)
+        self.assertEqual(q.grade, "poor")
+
+    def test_audio_codec_fsq_roundtrip(self) -> None:
+        import mlx.core as mx
+
+        from backend.engine.families.ace_step.audio_codec_mlx import _MlxResidualFSQ
+
+        levels = [8, 8, 8, 5, 5, 5]
+        rf = _MlxResidualFSQ(dim=64, levels=levels, num_quantizers=1)
+        x = mx.random.normal((1, 4, 64))
+        quantized, indices = rf(x)
+        restored = rf.get_output_from_indices(indices)
+        diff = float(mx.max(mx.abs(quantized - restored)))
+        self.assertLess(diff, 1e-5)
+
+    def test_audio_codec_indices_cast_float_to_int(self) -> None:
+        import mlx.core as mx
+
+        from backend.engine.families.ace_step.audio_codec_mlx import _MlxResidualFSQ
+
+        levels = [8, 8, 8, 5, 5, 5]
+        rf = _MlxResidualFSQ(dim=64, levels=levels, num_quantizers=1)
+        float_idx = mx.array([[[3.0]]], dtype=mx.float32)
+        out = rf.get_output_from_indices(float_idx)
+        mx.eval(out)
+        self.assertEqual(out.shape, (1, 1, 64))
+
+    def test_parse_audio_code_indices(self) -> None:
+        from backend.engine.families.ace_step.lm_format import parse_audio_code_indices
+
+        text = "<|audio_code_12|><|audio_code_345|>"
+        self.assertEqual(parse_audio_code_indices(text), (12, 345))
+
+    def test_instrumental_lyrics_normalization(self) -> None:
+        from backend.engine.families.ace_step.generation import finalize_lyrics_for_inference
+        from backend.engine.families.ace_step.lm_format import (
+            build_inspiration_user_content,
+            extract_lm_generated_lyrics,
+            is_instrumental_lyrics,
+            normalize_lyrics_body,
+            synthesize_fallback_vocal_lyrics,
+        )
+
+        self.assertTrue(is_instrumental_lyrics("# Lyric [Instrumental]"))
+        self.assertEqual(normalize_lyrics_body("# Lyric [Instrumental]"), "[Instrumental]")
+        self.assertIn("不要使用", build_inspiration_user_content("pop", instrumental=False, vocal_language="zh"))
+        self.assertEqual(
+            extract_lm_generated_lyrics("[Verse 1]\nhello", prefilled_think_end=True),
+            "[Verse 1]\nhello",
+        )
+        fb = synthesize_fallback_vocal_lyrics("夏天", vocal_language="zh")
+        self.assertIn("夏天", fb)
+        self.assertFalse(is_instrumental_lyrics(fb))
+        with self.assertRaises(RuntimeError):
+            finalize_lyrics_for_inference(
+                "# Lyric [Instrumental]",
+                instrumental=False,
+                lm_expanded=True,
+            )
+
+    def test_format_sample_preserves_user_lyrics(self) -> None:
+        from backend.engine.families.ace_step.lm_format import build_lm_format_result
+
+        user = "[Verse 1]\n夏天的风轻轻吹\n[Chorus]\n一起唱"
+        meta = {
+            "caption": "Expanded pop caption",
+            "lyrics_tail": "[Instrumental]",
+        }
+        result = build_lm_format_result(
+            meta,
+            caption_in="pop",
+            lyrics_in=user,
+            duration=60,
+            bpm=120,
+            keyscale="C major",
+            timesignature="4",
+            language="zh",
+            preserve_user_lyrics=True,
+        )
+        self.assertIn("夏天的风", result.lyrics)
+        self.assertNotEqual(result.lyrics.strip().lower(), "[instrumental]")
+
+    def test_format_metadata_as_cot_and_codes_prompt(self) -> None:
+        from backend.engine.families.ace_step.lm_format import (
+            build_codes_phase_prompt,
+            format_metadata_as_cot,
+            lm_planner_codes_enabled,
+        )
+
+        self.assertTrue(lm_planner_codes_enabled())
+        cot = format_metadata_as_cot(
+            {
+                "bpm": 120,
+                "caption": "upbeat pop",
+                "duration": 30,
+                "keyscale": "C Major",
+                "language": "en",
+                "timesignature": "4/4",
+            }
+        )
+        self.assertIn("<think>", cot)
+        self.assertIn("bpm: 120", cot)
+        self.assertIn("timesignature: 4", cot)
+
+        class _Tok:
+            def apply_chat_template(self, messages, *, tokenize=False, add_generation_prompt=False):
+                del tokenize, add_generation_prompt
+                return f"SYS:{messages[0]['content']}|USER:{messages[1]['content']}|ASSIST:"
+
+        prompt = build_codes_phase_prompt(
+            _Tok(),
+            caption="pop song",
+            lyrics="[Verse]\nhello",
+            cot_text=cot,
+        )
+        self.assertIn("pop song", prompt)
+        self.assertIn(cot, prompt)
+        self.assertTrue(prompt.endswith("\n\n"))
+
+    def test_lm_codes_cfg_defaults(self) -> None:
+        from backend.engine.families.ace_step.constrained_generate import (
+            ConstrainedGenerationConfig,
+            create_constrained_processor,
+            resolve_hf_tokenizer,
+        )
+        from backend.engine.families.ace_step.lm_format import (
+            build_codes_uncond_prompt,
+            default_lm_codes_cfg_scale,
+        )
+
+        self.assertGreaterEqual(default_lm_codes_cfg_scale(), 1.0)
+        uncond = build_codes_uncond_prompt(
+            type("_T", (), {"apply_chat_template": lambda self, m, **k: "PROMPT"})()
+        )
+        self.assertIn("<think>", uncond)
+        cfg = ConstrainedGenerationConfig(cfg_scale=2.0, uncond_prompt=uncond)
+        self.assertEqual(cfg.cfg_scale, 2.0)
+
+    def test_mlx_lm_tokenizer_wrapper_compat(self) -> None:
+        import numpy as np
+        import mlx.core as mx
+        import torch
+        from transformers import AutoTokenizer
+
+        from backend.engine.families.ace_step.constrained_generate import (
+            create_constrained_processor,
+            mlx_logits_to_torch,
+            resolve_hf_tokenizer,
+        )
+        from mlx_lm.tokenizer_utils import TokenizerWrapper
+
+        inner = AutoTokenizer.from_pretrained("gpt2")
+        wrapped = TokenizerWrapper(inner)
+        self.assertIs(resolve_hf_tokenizer(wrapped), inner)
+        processor = create_constrained_processor(wrapped)
+        self.assertEqual(processor.vocab_size, inner.vocab_size)
+        bf = mx.array([[[1.0, 2.0]]], dtype=mx.bfloat16)
+        mx.eval(bf)
+        t = mlx_logits_to_torch(bf)
+        self.assertEqual(t.dtype, torch.float32)
+        self.assertEqual(float(t[0, 0, 0].item()), 1.0)
+
+    def test_lyrics_alignment_structure_estimate(self) -> None:
+        from backend.engine.families.ace_step.lyrics_alignment import (
+            estimate_lyrics_alignment,
+            format_lrc,
+        )
+
+        lyrics = "[Verse 1]\nHello world\nSecond line\n[Chorus]\nSing it loud"
+        align = estimate_lyrics_alignment(lyrics, duration_sec=60.0)
+        self.assertEqual(align.mode, "structure_estimate")
+        self.assertGreaterEqual(len(align.segments), 3)
+        lrc = format_lrc(align)
+        self.assertIsNotNone(lrc)
+        self.assertIn("[00:", lrc or "")
+
+    def test_write_lrc_sidecar(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from backend.engine.families.ace_step.generation import write_lrc_sidecar
+
+        with tempfile.TemporaryDirectory() as td:
+            audio = Path(td) / "track.wav"
+            audio.write_bytes(b"RIFF")
+            lrc = write_lrc_sidecar(
+                audio,
+                "[Verse 1]\nHello\nWorld",
+                duration_sec=30.0,
+            )
+            self.assertIsNotNone(lrc)
+            assert lrc is not None
+            self.assertTrue(lrc.is_file())
+            self.assertIn("[00:", lrc.read_text(encoding="utf-8"))
 
     def test_import_public_generation_entry(self) -> None:
         from backend.engine.families.ace_step import generation

@@ -4435,7 +4435,8 @@
         "cuda"
       ],
       "actions": {
-        "create": {}
+        "create": {},
+        "cover": {}
       },
       "parameters": {
         "duration": {
@@ -4443,6 +4444,24 @@
           "default": 30,
           "min": 10,
           "max": 600
+        },
+        "lm_expansion": {
+          "type": "enum",
+          "default": "auto",
+          "options": [
+            "auto",
+            "inspiration",
+            "format",
+            "off"
+          ],
+          "label": {
+            "zh": "LM 扩写模式（高级）",
+            "en": "LM expansion (advanced)"
+          },
+          "description": {
+            "zh": "默认 auto：根据描述/歌词自动选择灵感扩写或格式化；一般无需修改。",
+            "en": "Default auto infers inspiration vs format from prompt/lyrics; usually leave unchanged."
+          }
         },
         "steps": {
           "type": "int",

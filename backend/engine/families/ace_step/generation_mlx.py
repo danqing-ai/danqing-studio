@@ -20,7 +20,9 @@ from backend.engine.families.ace_step.condition_mlx import (
     prepare_condition_mlx,
 )
 from backend.engine.families.ace_step.generation import (
+    COVER_DIT_INSTRUCTION,
     DEFAULT_DIT_INSTRUCTION,
+    LATENT_HOP_SAMPLES,
     SAMPLE_RATE,
     SFT_GEN_PROMPT,
     VAE_TILE_CHUNK_SIZE,
@@ -31,6 +33,7 @@ from backend.engine.families.ace_step.generation import (
     estimate_mains_correlation,
     capture_inference_lyrics,
     ensure_vocal_caption_hint,
+    finalize_lyrics_for_inference,
     resolve_vocal_language,
     vocal_language_mismatch_warning,
     warn_weak_vocal_lyrics,
@@ -39,6 +42,8 @@ from backend.engine.families.ace_step.generation import (
     format_lyrics,
     format_metadata,
     latents_collapsed_to_silence,
+    latent_cosine_similarity,
+    latent_diff_mean,
     load_silence_latent_numpy,
     normalize_waveform,
     resolve_dit_bundle,
@@ -60,6 +65,7 @@ class AceStepMlxGenerator:
         self._ctx = ctx
         self._bundle_root = Path(bundle_root)
         self._condition_encoder: Any = None
+        self._audio_codec: Any = None
         self._dit: AceStepTransformer | None = None
         self._vae: AceStepVAE | None = None
         self._text_encoder: Any = None
@@ -74,7 +80,11 @@ class AceStepMlxGenerator:
         self.last_decode_mode: str = "mlx_vae"
         self.last_lm_expanded: bool = False
         self.last_lyrics_capture: Any = None
+        self.last_quality: Any = None
+        self.last_audio_code_indices: tuple[int, ...] = ()
+        self.last_pmi: Any = None
         self._lm_formatter: Any = None
+        self._lm_formatter_key: tuple[Any, ...] | None = None
 
     @property
     def model_config(self) -> Any:
@@ -98,6 +108,11 @@ class AceStepMlxGenerator:
 
         logger.info("Loading ACE-Step MLX condition encoder + DiT + VAE from %s", dit_bundle)
         self._condition_encoder = load_condition_encoder_mlx(
+            dit_bundle, eval_fn=self._ctx.eval, array_fn=self._ctx.array
+        )
+        from backend.engine.families.ace_step.audio_codec_mlx import load_audio_codec_mlx
+
+        self._audio_codec = load_audio_codec_mlx(
             dit_bundle, eval_fn=self._ctx.eval, array_fn=self._ctx.array
         )
 
@@ -156,16 +171,33 @@ class AceStepMlxGenerator:
             "off",
         )
 
-    def _ensure_lm_formatter(self) -> Any:
-        if self._lm_formatter is not None:
+    def _ensure_lm_formatter(
+        self,
+        *,
+        simple_mode: bool = False,
+        quantize_bits: Optional[int] = None,
+        lm_dir: Optional[Path] = None,
+    ) -> Any:
+        key = (simple_mode, quantize_bits, str(lm_dir) if lm_dir else "")
+        if self._lm_formatter is not None and self._lm_formatter_key == key:
             return self._lm_formatter
         from backend.engine.families.ace_step.lm_format_mlx import AceStepLmFormatterMlx
+        from backend.engine.families.ace_step.resource_policy import resolve_lm_dir_for_policy, resolve_resource_policy
 
-        fmt = AceStepLmFormatterMlx.from_bundle(self._bundle_root, ctx=self._ctx)
+        policy = resolve_resource_policy(backend="mlx")
+        resolved_dir = lm_dir or resolve_lm_dir_for_policy(self._bundle_root, policy)
+        fmt = AceStepLmFormatterMlx.from_bundle(
+            self._bundle_root,
+            ctx=self._ctx,
+            lm_dir=resolved_dir,
+            quantize_bits=quantize_bits if quantize_bits is not None else policy.lm_quantize_bits,
+            simple_mode=simple_mode,
+        )
         if fmt is None:
             return None
         fmt.load()
         self._lm_formatter = fmt
+        self._lm_formatter_key = key
         return fmt
 
     def _silence_latent_slice(self, length: int) -> np.ndarray:
@@ -237,8 +269,13 @@ class AceStepMlxGenerator:
         key_scale: str = "",
         time_signature: str = "",
         shift: float = 3.0,
+        simple_mode: bool = False,
+        instrumental: bool = False,
+        lm_enabled: bool = True,
+        lm_quantize_bits: Optional[int] = None,
     ) -> np.ndarray:
         del steps, guidance  # turbo schedule is shift-driven
+        from backend.engine.families.ace_step.quality_score import assess_generation_quality
 
         if self._condition_encoder is None or self._dit is None or self._vae is None:
             raise RuntimeError("ACE-Step MLX generator not loaded; call load() first")
@@ -260,48 +297,88 @@ class AceStepMlxGenerator:
         if not instruction.endswith(":"):
             instruction = instruction + ":"
         caption = (prompt or "").strip()
-        lyrics_use = (lyrics or "").strip() or "[Instrumental]"
-        lyrics_input = lyrics_use
+        lyrics_input = (lyrics or "").strip()
+        if simple_mode and lm_enabled:
+            lyrics_use = lyrics_input if lyrics_input else (
+                "[Instrumental]" if instrumental else ""
+            )
+        else:
+            lyrics_use = lyrics_input or "[Instrumental]"
+        lang_use = resolve_vocal_language(lyrics_use or lyrics_input, vocal_language)
         bpm_use = bpm
         key_use = key_scale or ""
         ts_use = time_signature or ""
-        lang_use = resolve_vocal_language(lyrics_use, vocal_language)
+        from backend.engine.families.ace_step.lm_format import is_instrumental_lyrics
+
         self.last_lm_expanded = False
+        self.last_audio_code_indices = ()
+        self.last_pmi = None
         mismatch = vocal_language_mismatch_warning(lyrics_use, lang_use)
         if mismatch:
             logger.warning("ACE-Step: %s", mismatch)
 
-        if self._lm_enabled():
-            lm_fmt = self._ensure_lm_formatter()
+        if lm_enabled and self._lm_enabled():
+            lm_fmt = self._ensure_lm_formatter(
+                simple_mode=simple_mode,
+                quantize_bits=lm_quantize_bits,
+            )
             if lm_fmt is None:
                 logger.warning(
                     "ACE-Step 5Hz LM not found in bundle; caption/lyrics expansion skipped"
                 )
             else:
                 try:
-                    logger.info("ACE-Step: expanding prompt with 5Hz LM (MLX)...")
-                    expanded = lm_fmt.format_sample(
-                        caption=caption or "instrumental music",
-                        lyrics=lyrics_use,
-                        duration=duration,
-                        bpm=bpm_use,
-                        keyscale=key_use,
-                        timesignature=ts_use,
-                        language=lang_use,
-                    )
+                    if simple_mode:
+                        logger.info("ACE-Step inspiration LM: 5Hz create_sample (MLX)...")
+                        expanded = lm_fmt.create_sample(
+                            query=caption or "instrumental music",
+                            instrumental=instrumental or is_instrumental_lyrics(lyrics_input),
+                            vocal_language=lang_use,
+                            duration=duration,
+                        )
+                    else:
+                        logger.info("ACE-Step: expanding prompt with 5Hz LM (MLX)...")
+                        expanded = lm_fmt.format_sample(
+                            caption=caption or "instrumental music",
+                            lyrics=lyrics_use,
+                            duration=duration,
+                            bpm=bpm_use,
+                            keyscale=key_use,
+                            timesignature=ts_use,
+                            language=lang_use,
+                        )
                     caption = expanded.caption
                     lyrics_use = expanded.lyrics
                     if expanded.bpm is not None:
                         bpm_use = expanded.bpm
+                    if expanded.duration is not None:
+                        duration = float(expanded.duration)
+                        requested_samples = int(round(duration * SAMPLE_RATE))
+                        latent_frames = duration_to_latent_frames(duration)
+                        max_latent_length = snap_latent_frames_for_inference(latent_frames)
+                        self.last_latent_frames = max_latent_length
+                        silence_tiled = self._silence_latent_slice(max_latent_length)
                     key_use = expanded.keyscale or key_use
                     ts_use = expanded.timesignature or ts_use
                     lang_use = expanded.language or lang_use
                     self.last_lm_expanded = True
+                    self.last_audio_code_indices = tuple(expanded.audio_code_indices)
+                    self.last_pmi = getattr(lm_fmt, "last_pmi", None)
+                    if expanded.audio_code_indices:
+                        logger.info(
+                            "ACE-Step: LM produced %d audio codes for DiT hints",
+                            len(expanded.audio_code_indices),
+                        )
                 except Exception as exc:
                     raise RuntimeError(
                         f"ACE-Step 5Hz LM expansion failed: {exc}"
                     ) from exc
 
+        lyrics_use = finalize_lyrics_for_inference(
+            lyrics_use,
+            instrumental=instrumental,
+            lm_expanded=self.last_lm_expanded,
+        )
         caption = ensure_vocal_caption_hint(caption, lyrics_use, lang_use)
         self.last_lyrics_capture = capture_inference_lyrics(
             lyrics_input=lyrics_input,
@@ -309,7 +386,6 @@ class AceStepMlxGenerator:
             caption_effective=caption,
             lm_expanded=self.last_lm_expanded,
         )
-        from backend.engine.families.ace_step.lm_format import is_instrumental_lyrics
 
         vocal_warn = warn_weak_vocal_lyrics(lyrics_use)
         if vocal_warn:
@@ -375,6 +451,14 @@ class AceStepMlxGenerator:
         chunk_masks = mx.ones((1, max_latent_length, latent_dim), dtype=mx.float32)
         is_covers = mx.zeros((1,), dtype=mx.int32)
         attention_mask = mx.ones((1, max_latent_length), dtype=mx.float32)
+        silence_latent_mx = self._ctx.array(self._silence_latent.astype(np.float32))
+        audio_code_mx = None
+        if self.last_audio_code_indices:
+            pool = int(getattr(self._audio_codec, "pool_window_size", 5))
+            max_codes = max(1, max_latent_length // pool)
+            idx = np.array(self.last_audio_code_indices[:max_codes], dtype=np.int32)
+            audio_code_mx = mx.array(idx.reshape(1, -1, 1), dtype=mx.int32)
+            is_covers = mx.ones((1,), dtype=mx.int32)
 
         if self._is_turbo(self._model_config) and shift >= 2.5:
             shift = 1.0
@@ -390,6 +474,10 @@ class AceStepMlxGenerator:
             src_latents=src_latents,
             chunk_masks=chunk_masks,
             is_covers=is_covers,
+            silence_latent=silence_latent_mx,
+            attention_mask=attention_mask,
+            audio_codec=self._audio_codec,
+            audio_code_indices=audio_code_mx,
         )
         enc_np = np.array(enc_hs, dtype=np.float32)
         ctx_np = np.array(ctx, dtype=np.float32)
@@ -486,6 +574,232 @@ class AceStepMlxGenerator:
                 "ACE-Step MLX output may contain mains hum (acf=%.3f); try another seed",
                 mains_acf,
             )
+        self.last_quality = assess_generation_quality(
+            hum_ratio=hum_ratio,
+            mains_acf=mains_acf,
+            latent_cos=latent_cos,
+            latent_diff=latent_diff,
+            lm_expanded=self.last_lm_expanded,
+            near_silence=collapsed,
+            pmi_bonus=self.last_pmi.quality_bonus() if self.last_pmi is not None else 0.0,
+        )
+        return wf
+
+    def _encode_reference_latents(self, reference_waveform: np.ndarray) -> np.ndarray:
+        wf = np.asarray(reference_waveform, dtype=np.float32)
+        if wf.ndim == 1:
+            wf = wf[:, None]
+        if wf.shape[0] <= 8 and wf.shape[0] < wf.shape[1]:
+            wf = wf.T
+        audio = self._ctx.array(wf.astype(np.float32)[np.newaxis, ...])
+        latents = self._vae._vae.encode_mean(audio)
+        self._ctx.eval(latents)
+        out = np.array(latents, dtype=np.float32)
+        if out.ndim == 2:
+            out = out[np.newaxis, ...]
+        return out
+
+    def generate_cover_waveform(
+        self,
+        *,
+        reference_waveform: np.ndarray,
+        prompt: str = "",
+        lyrics: str = "[Instrumental]",
+        vocal_language: str = "en",
+        duration: Optional[float] = None,
+        seed: int = 0,
+        bpm: Optional[int] = None,
+        key_scale: str = "",
+        time_signature: str = "",
+        shift: float = 3.0,
+        audio_cover_strength: float = 1.0,
+        **kwargs: Any,
+    ) -> np.ndarray:
+        del kwargs
+        from backend.engine.families.ace_step.quality_score import assess_generation_quality
+
+        if (
+            self._condition_encoder is None
+            or self._dit is None
+            or self._vae is None
+            or self._audio_codec is None
+        ):
+            raise RuntimeError("ACE-Step MLX generator not loaded; call load() first")
+
+        ref_latents_np = self._encode_reference_latents(reference_waveform)
+        ref_len = int(ref_latents_np.shape[1])
+        if duration is not None:
+            max_latent_length = snap_latent_frames_for_inference(
+                duration_to_latent_frames(float(duration))
+            )
+        else:
+            max_latent_length = snap_latent_frames_for_inference(ref_len)
+        max_latent_length = max(max_latent_length, ref_len)
+        self.last_latent_frames = max_latent_length
+
+        if ref_len < max_latent_length:
+            pad = self._silence_latent_slice(max_latent_length - ref_len)
+            src_latents_np = np.concatenate(
+                [ref_latents_np[0], pad.astype(np.float32)],
+                axis=0,
+            )[np.newaxis, ...]
+        else:
+            src_latents_np = ref_latents_np[:, :max_latent_length, :].copy()
+
+        refer_len = min(750, int(src_latents_np.shape[1]))
+        refer_packed = self._ctx.array(src_latents_np[:, :refer_len, :].astype(np.float32))
+        refer_order_mx = self._ctx.array(np.array([0], dtype=np.int32))
+
+        duration_sec = max_latent_length * LATENT_HOP_SAMPLES / SAMPLE_RATE
+        requested_samples = int(round(duration_sec * SAMPLE_RATE))
+        caption = (prompt or "").strip() or "cover generation"
+        lyrics_use = (lyrics or "").strip() or "[Instrumental]"
+        lang_use = resolve_vocal_language(lyrics_use, vocal_language)
+        self.last_lm_expanded = False
+        self.last_lyrics_capture = capture_inference_lyrics(
+            lyrics_input=lyrics_use,
+            lyrics_effective=lyrics_use,
+            caption_effective=caption,
+            lm_expanded=False,
+        )
+
+        instruction = COVER_DIT_INSTRUCTION
+        if not instruction.endswith(":"):
+            instruction = instruction + ":"
+        metadata = format_metadata(
+            duration=duration_sec,
+            bpm=bpm,
+            key_scale=key_scale or "",
+            time_signature=time_signature or "",
+        )
+        text_prompt = SFT_GEN_PROMPT.format(
+            instruction=instruction,
+            caption=caption,
+            metadata=metadata,
+        )
+        lyrics_text = format_lyrics(lyrics_use, lang_use)
+
+        text_tok = self._text_tokenizer(
+            text_prompt,
+            padding="longest",
+            truncation=True,
+            max_length=256,
+            return_tensors="np",
+        )
+        lyric_tok = self._text_tokenizer(
+            lyrics_text,
+            padding="longest",
+            truncation=True,
+            max_length=LYRIC_TOKEN_MAX_LENGTH,
+            return_tensors="np",
+        )
+        text_ids = self._ctx.array(text_tok["input_ids"].astype(np.int32))
+        text_mask = self._ctx.array(text_tok["attention_mask"].astype(np.float32))
+        lyric_ids = self._ctx.array(lyric_tok["input_ids"].astype(np.int32))
+        lyric_mask = self._ctx.array(lyric_tok["attention_mask"].astype(np.float32))
+
+        text_hidden = self._text_encoder.encode(text_ids, text_mask)
+        lyric_hidden = self._text_encoder.token_embed(lyric_ids)
+
+        src_latents = self._ctx.array(src_latents_np.astype(np.float32))
+        latent_dim = int(src_latents.shape[-1])
+        chunk_masks = mx.ones((1, max_latent_length, latent_dim), dtype=mx.float32)
+        is_covers = mx.ones((1,), dtype=mx.int32)
+        attention_mask = mx.ones((1, max_latent_length), dtype=mx.float32)
+        silence_latent_mx = self._ctx.array(self._silence_latent.astype(np.float32))
+
+        if self._is_turbo(self._model_config) and shift >= 2.5:
+            shift = 1.0
+
+        strength = float(max(0.0, min(1.0, audio_cover_strength)))
+
+        enc_hs, _, ctx = prepare_condition_mlx(
+            self._condition_encoder,
+            text_hidden_states=text_hidden,
+            text_attention_mask=text_mask,
+            lyric_hidden_states=lyric_hidden,
+            lyric_attention_mask=lyric_mask,
+            refer_packed=refer_packed,
+            refer_order=refer_order_mx,
+            src_latents=src_latents,
+            chunk_masks=chunk_masks,
+            is_covers=is_covers,
+            silence_latent=silence_latent_mx,
+            attention_mask=attention_mask,
+            audio_codec=self._audio_codec,
+        )
+
+        enc_hs_nc, ctx_nc = None, None
+        if strength < 1.0:
+            silence_tiled = self._silence_latent_slice(max_latent_length)
+            silence_src = self._ctx.array(silence_tiled.astype(np.float32)[np.newaxis, ...])
+            is_covers_zero = mx.zeros((1,), dtype=mx.int32)
+            enc_hs_nc, _, ctx_nc = prepare_condition_mlx(
+                self._condition_encoder,
+                text_hidden_states=text_hidden,
+                text_attention_mask=text_mask,
+                lyric_hidden_states=lyric_hidden,
+                lyric_attention_mask=lyric_mask,
+                refer_packed=refer_packed,
+                refer_order=refer_order_mx,
+                src_latents=silence_src,
+                chunk_masks=chunk_masks,
+                is_covers=is_covers_zero,
+                silence_latent=silence_latent_mx,
+                attention_mask=attention_mask,
+                audio_codec=self._audio_codec,
+            )
+
+        enc_np = np.array(enc_hs, dtype=np.float32)
+        ctx_np = np.array(ctx, dtype=np.float32)
+        enc_np_nc = np.array(enc_hs_nc, dtype=np.float32) if enc_hs_nc is not None else None
+        ctx_np_nc = np.array(ctx_nc, dtype=np.float32) if ctx_nc is not None else None
+        src_shape = tuple(src_latents_np.shape)
+
+        run_seed = int(seed)
+        out = mlx_generate_diffusion(
+            self._dit._model,
+            encoder_hidden_states_np=enc_np,
+            context_latents_np=ctx_np,
+            src_latents_shape=src_shape,
+            seed=run_seed,
+            infer_method="ode",
+            shift=shift,
+            audio_cover_strength=strength,
+            encoder_hidden_states_non_cover_np=enc_np_nc,
+            context_latents_non_cover_np=ctx_np_nc,
+            eval_fn=self._ctx.eval,
+            array_fn=self._ctx.array,
+            randn_fn=getattr(self._ctx, "randn", None),
+            seeded_randn_fn=getattr(self._ctx, "seeded_randn", None),
+        )
+        latents = out["target_latents"]
+        latent_cos = latent_cosine_similarity(latents, src_latents_np)
+        latent_diff = latent_diff_mean(latents, src_latents_np)
+        self.last_latent_cos = latent_cos
+        self.last_latent_diff_mean = latent_diff
+
+        audio_nlc = self._decode_latents_mlx(latents)
+        wf = np.array(audio_nlc)
+        if wf.ndim == 3:
+            wf = wf[0]
+        if wf.ndim == 2 and wf.shape[0] <= 8 and wf.shape[0] < wf.shape[1]:
+            wf = wf.T
+        wf = normalize_waveform(wf.astype(np.float32))
+        if wf.shape[0] > requested_samples:
+            wf = wf[:requested_samples]
+
+        self.last_hum_ratio = estimate_hum_ratio(wf)
+        self.last_mains_acf = estimate_mains_correlation(wf)
+        collapsed, _, _ = latents_collapsed_to_silence(latents, src_latents_np)
+        self.last_quality = assess_generation_quality(
+            hum_ratio=self.last_hum_ratio,
+            mains_acf=self.last_mains_acf,
+            latent_cos=latent_cos,
+            latent_diff=latent_diff,
+            lm_expanded=False,
+            near_silence=collapsed,
+        )
         return wf
 
 

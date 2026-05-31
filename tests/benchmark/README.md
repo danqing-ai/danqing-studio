@@ -13,8 +13,11 @@
 | `make bench-sanity` | `sanity --all` | 全模型成片健全性（反噪声/反平场 + 质量评分） |
 | `make bench-sanity-case ID=…` | `sanity --case ID` | 单个健全性用例 |
 | `make bench-sanity-case ID=ace-step-xl-sft-sanity` | 同上 | ACE-Step MLX 10s 音频 RMS 健全性（需 `models/Audio/acestep-v15-xl-sft`） |
+| `make bench-sanity-case ID=ace-step-xl-sft-inspiration-lm` | 同上 | 短描述 + 空歌词 + planner/codes（llm_dit） |
+| `make bench-sanity-case ID=ace-step-xl-sft-cover-sanity` | 同上 | cover 编辑（`danqing-audio-edit` + fixture WAV） |
+| `make bench-audio-sanity-ace-step` | 快捷目标 | ACE-Step 四条 sanity 串联 |
 | `make bench-sanity-case ID=heartmula-oss-3b-happy-new-year-sanity` | 同上 | HeartMuLa MLX 10s 健全性 + Codec parity（固定 codes vs heartlib，需 fixtures） |
-| `make bench-audio-sanity` | 快捷目标 | ACE-Step + HeartMuLa 各跑一条 10s 健全性 |
+| `make bench-audio-sanity` | 快捷目标 | ACE-Step（含 inspiration + cover）+ HeartMuLa 各跑一条 10s 健全性 |
 | `make bench-audio-sanity-lm` | 快捷目标 | ACE-Step 含 5Hz LM 扩写 |
 | `make bench-audio-sanity-heartmula` | 快捷目标 | HeartMuLa 健全性（含 Codec parity，fixtures 缺失时 parity SKIP） |
 | `make bench-wan-sanity` | `sanity --case wan-2.2-ti2v-5b-sanity` | Wan 5B 快速视频健全性（4 步、17 帧） |

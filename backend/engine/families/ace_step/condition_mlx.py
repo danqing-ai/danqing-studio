@@ -1,8 +1,7 @@
 """
 ACE-Step condition encoder + Qwen3 embedding + ``prepare_condition`` (MLX only).
 
-For text2music (``is_covers`` all zero) tokenize/detokenize is skipped — identical to
-upstream when cover hints are unused.
+Cover mode uses ``audio_codec_mlx`` tokenize/detokenize when ``is_covers > 0``.
 """
 from __future__ import annotations
 
@@ -387,8 +386,12 @@ def prepare_condition_mlx(
     src_latents: mx.array,
     chunk_masks: mx.array,
     is_covers: mx.array,
+    silence_latent: mx.array | None = None,
+    attention_mask: mx.array | None = None,
+    audio_codec: Any | None = None,
+    audio_code_indices: mx.array | None = None,
 ) -> Tuple[mx.array, mx.array, mx.array]:
-    """Text2music path: skip tokenizer when ``is_covers`` is all zero."""
+    """Prepare encoder + context latents; cover mode tokenizes ``src_latents`` via audio codec."""
     enc_hs, enc_mask = encoder(
         text_hidden_states,
         text_attention_mask,
@@ -397,9 +400,33 @@ def prepare_condition_mlx(
         refer_packed,
         refer_order,
     )
-    if bool(mx.any(is_covers > 0).item()):
-        raise RuntimeError(
-            "ACE-Step MLX prepare_condition does not support cover mode (is_covers>0) yet"
+    if audio_code_indices is not None:
+        if audio_codec is None:
+            raise RuntimeError(
+                "ACE-Step MLX audio_code_indices require audio_codec to be loaded"
+            )
+        from backend.engine.families.ace_step.audio_codec_mlx import apply_audio_code_src_latents
+
+        src_latents = apply_audio_code_src_latents(
+            audio_codec,
+            src_latents=src_latents,
+            audio_code_indices=audio_code_indices,
+            is_covers=is_covers,
+        )
+    elif bool(mx.any(is_covers > 0).item()):
+        if audio_codec is None or silence_latent is None or attention_mask is None:
+            raise RuntimeError(
+                "ACE-Step MLX cover mode requires audio_codec, silence_latent, and attention_mask"
+            )
+        from backend.engine.families.ace_step.audio_codec_mlx import apply_cover_src_latents
+
+        src_latents = apply_cover_src_latents(
+            audio_codec,
+            hidden_states=src_latents,
+            src_latents=src_latents,
+            silence_latent=silence_latent,
+            attention_mask=attention_mask,
+            is_covers=is_covers,
         )
     context_latents = mx.concatenate([src_latents, chunk_masks.astype(src_latents.dtype)], axis=-1)
     return enc_hs, enc_mask, context_latents

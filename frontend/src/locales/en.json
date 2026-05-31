@@ -236,7 +236,16 @@
     "effectiveLyrics": "Effective lyrics (model conditioning)",
     "effectiveLyricsHint": "Full lyric text sent to ACE-Step (including 5Hz LM rewrite). Not word-synced to the waveform; sung words may differ.",
     "downloadLyrics": "Download lyrics",
-    "coverComingSoon": "Voice Clone Cover coming soon"
+    "coverSource": "Reference audio",
+    "coverSourceHint": "Upload the song or vocal track to restyle (ACE-Step cover).",
+    "coverPickFile": "Choose audio file",
+    "coverPrompt": "Style description",
+    "coverPromptPlaceholder": "Optional: jazz piano cover, female vocal, slower tempo…",
+    "coverPromptHint": "Optional caption hint; higher fidelity keeps more of the original performance.",
+    "coverFidelity": "Reference fidelity",
+    "coverFidelityHint": "1.0 = stay closest to the source; lower values allow more creative drift.",
+    "coverGenerate": "Generate Cover",
+    "coverNeedSource": "Please upload a reference audio file"
   },
   "create": {
     "title": "AI Image Creation",

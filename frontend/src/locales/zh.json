@@ -236,7 +236,16 @@
     "effectiveLyrics": "最终歌词（模型条件）",
     "effectiveLyricsHint": "为送入 ACE-Step 的整段歌词（含 5Hz LM 扩写）；与音频非逐字时间轴对齐，实际演唱可能省略或改写部分字句。",
     "downloadLyrics": "下载歌词",
-    "coverComingSoon": "同声翻唱功能即将推出"
+    "coverSource": "参考音频",
+    "coverSourceHint": "上传要翻唱/改编的源曲（ACE-Step cover）。",
+    "coverPickFile": "选择音频文件",
+    "coverPrompt": "风格描述",
+    "coverPromptPlaceholder": "可选：爵士钢琴翻唱、女声、慢板…",
+    "coverPromptHint": "可选的风格提示；保真度越高越贴近原曲。",
+    "coverFidelity": "参考保真度",
+    "coverFidelityHint": "1.0 最接近原曲；降低可允许更大创意偏离。",
+    "coverGenerate": "生成翻唱",
+    "coverNeedSource": "请先上传参考音频"
   },
   "create": {
     "title": "AI 图像创作",

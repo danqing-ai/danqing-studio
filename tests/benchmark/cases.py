@@ -134,7 +134,35 @@ MFLUX_FP16_MODEL_ROOT: dict[str, str] = {
 ACE_STEP_AUDIO_BUNDLE = "models/Audio/acestep-v15-xl-sft"
 HEARTMULA_AUDIO_BUNDLE = "models/Audio/heartmula-oss-3b-happy-new-year"
 HEARTMULA_CODEC_PARITY_MANIFEST = "tests/benchmark/fixtures/heartmula/codec_parity_manifest.json"
+ACE_STEP_COVER_SOURCE = "tests/benchmark/fixtures/ace_step/cover_source.wav"
 WAN_VIDEO_BUNDLE = "models/Video/wan-2.2-ti2v-5b-original"
+
+
+def ensure_ace_step_cover_source() -> Path:
+    """Write a short mono WAV fixture when missing (48 kHz for ACE-Step cover)."""
+    import math
+    import struct
+    import wave
+
+    root = Path(__file__).resolve().parents[2]
+    path = root / ACE_STEP_COVER_SOURCE
+    if path.is_file():
+        return path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    sr = 48_000
+    duration = 5
+    freq = 440.0
+    frames = int(sr * duration)
+    samples = [
+        int(32767 * 0.25 * math.sin(2.0 * math.pi * freq * i / sr))
+        for i in range(frames)
+    ]
+    with wave.open(str(path), "w") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sr)
+        wf.writeframes(struct.pack(f"<{len(samples)}h", *samples))
+    return path
 
 
 def ace_step_bundle_installed() -> bool:
@@ -327,6 +355,10 @@ class SanityCase:
     lyrics: str = ""
     audio_format: str = "wav"
     ace_step_use_lm: bool = False
+    audio_operation: str = "create"  # create | cover
+    source_audio: str = ""
+    source_fidelity: float = 1.0
+    instrumental: bool = False
     # HeartMuLa (optional; appended to ``danqing-audio-generate`` when set)
     temperature: Optional[float] = None
     top_k: Optional[int] = None
@@ -354,6 +386,8 @@ class SanityCase:
             self.description = f"{self.model} output sanity"
         if self.action in ("rewrite", "upscale") and not self.source_image:
             self.source_image = SRC_IMAGE
+        if self.audio_operation == "cover" and not self.source_audio:
+            self.source_audio = ACE_STEP_COVER_SOURCE
 
     def as_benchmark_case(self) -> BenchmarkCase:
         return BenchmarkCase(
@@ -561,6 +595,43 @@ ALL_SANITY_CASES: list[SanityCase] = [
         semantic_min_score=53.0,
         semantic_backend="clap",
         description="ACE-Step MLX 10s + 5Hz LM expansion — audio sanity",
+    ),
+    SanityCase(
+        id="ace-step-xl-sft-inspiration-lm",
+        model="ace-step-xl-sft",
+        media="audio",
+        prompt="upbeat summer pop with bright female vocals and catchy chorus",
+        lyrics="",
+        instrumental=False,
+        duration=10,
+        steps=8,
+        guidance=3.0,
+        seed=45,
+        audio_format="wav",
+        ace_step_use_lm=True,
+        timeout_sec=600,
+        audio_quality_thresholds=AUDIO_THRESHOLDS_ACE_STEP.copy(),
+        semantic_gate_enabled=ENABLE_SEMANTIC_AUDIO,
+        semantic_min_score=50.0,
+        semantic_backend="clap",
+        description="ACE-Step MLX inspiration + planner codes (empty lyrics, LM on)",
+    ),
+    SanityCase(
+        id="ace-step-xl-sft-cover-sanity",
+        model="ace-step-xl-sft",
+        media="audio",
+        audio_operation="cover",
+        prompt="warm jazz piano arrangement",
+        source_fidelity=0.85,
+        duration=10,
+        steps=8,
+        guidance=3.0,
+        seed=46,
+        audio_format="wav",
+        ace_step_use_lm=False,
+        timeout_sec=420,
+        audio_quality_thresholds=AUDIO_THRESHOLDS_ACE_STEP.copy(),
+        description="ACE-Step MLX cover edit from fixture WAV",
     ),
     SanityCase(
         id="heartmula-oss-3b-happy-new-year-sanity",

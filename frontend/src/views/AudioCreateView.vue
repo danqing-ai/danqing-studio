@@ -231,12 +231,15 @@
             </DqSurfaceCard>
           </template>
 
-          <!-- 同声翻唱 占位 -->
+          <!-- Cover -->
           <template v-if="audioWorkTab === 'cover'">
-            <DqSurfaceCard class="studio-surface-card studio-cover-placeholder">
-              <DqIcon class="studio-cover-placeholder-icon" :size="40"><clock /></DqIcon>
-              <p>{{ $t('audio.coverComingSoon') }}</p>
-            </DqSurfaceCard>
+            <AudioCreateCoverPanel
+              :params="coverParams"
+              :source-preview-src="coverSourceSrc"
+              :source-file-name="coverSourceName"
+              @pick-file="onCoverFilePicked"
+              @clear-source="clearCoverSource"
+            />
           </template>
 
           <!-- Generate button -->
@@ -251,6 +254,18 @@
               <DqIcon size="20"><headset /></DqIcon>
               <span class="studio-cta-gap">
                 {{ generating ? $t('audio.generating') : $t('audio.generate') }}
+              </span>
+            </DqButton>
+            <DqButton
+              v-else-if="audioWorkTab === 'cover'"
+              type="primary"
+              class="studio-primary-cta studio-primary-cta--simple dq-btn--cta"
+              :disabled="coverSubmitDisabled"
+              @click="startCoverGeneration"
+            >
+              <DqIcon size="20"><headset /></DqIcon>
+              <span class="studio-cta-gap">
+                {{ generating ? $t('audio.generating') : $t('audio.coverGenerate') }}
               </span>
             </DqButton>
             <div class="studio-micro-hint">
@@ -421,6 +436,7 @@ import { warnIfRiskyMemory } from '@/composables/memoryHint';
 import type { SystemInfo } from '@/types';
 import AudioCreateMusicParams from '@/components/audio/AudioCreateMusicParams.vue';
 import AudioCreateAdvancedParams from '@/components/audio/AudioCreateAdvancedParams.vue';
+import AudioCreateCoverPanel from '@/components/audio/AudioCreateCoverPanel.vue';
 import AudioMusicPlayer from '@/components/audio/AudioMusicPlayer.vue';
 import StudioPreviewPane from '@/components/create/StudioPreviewPane.vue';
 import { assetDisplayLabel, previewDisplayCaption } from '@/utils/assetDisplay';
@@ -507,6 +523,17 @@ const params = reactive({
   n: 1,
   audio_format: 'wav',
 });
+
+const coverParams = reactive({
+  prompt: '',
+  source_fidelity: 1.0,
+  seed: null as number | null,
+  audio_format: 'wav',
+});
+
+const coverSourceSrc = ref('');
+const coverSourceFile = ref<File | null>(null);
+const coverSourceName = ref('');
 
 const currentTask = reactive({ id: '', progress: 0, step: null as number | null, total: null as number | null, status: '' });
 const logs = reactive<Array<{ level: string; message: string; time: string }>>([]);
@@ -745,6 +772,19 @@ const submitDisabled = computed(() => {
   return false;
 });
 
+const supportsCoverAction = computed(() => {
+  return supportsAction(currentModelConfig.value?.actions, 'cover');
+});
+
+const coverSubmitDisabled = computed(() => {
+  if (!params.model) return true;
+  if (!modelReady.value) return true;
+  if (!supportsCoverAction.value) return true;
+  if (!coverSourceFile.value && !coverSourceSrc.value) return true;
+  if (generating.value) return true;
+  return false;
+});
+
 // ---- Methods ----
 async function loadModelRegistry() {
   modelsLoading.value = true;
@@ -852,6 +892,191 @@ function clearLogs() {
   logs.length = 0;
 }
 
+function onCoverFilePicked(file: File) {
+  if (coverSourceSrc.value && coverSourceSrc.value.startsWith('blob:')) {
+    URL.revokeObjectURL(coverSourceSrc.value);
+  }
+  coverSourceFile.value = file;
+  coverSourceName.value = file.name;
+  coverSourceSrc.value = URL.createObjectURL(file);
+}
+
+function clearCoverSource() {
+  if (coverSourceSrc.value && coverSourceSrc.value.startsWith('blob:')) {
+    URL.revokeObjectURL(coverSourceSrc.value);
+  }
+  coverSourceFile.value = null;
+  coverSourceName.value = '';
+  coverSourceSrc.value = '';
+}
+
+function attachTaskStream(tid: string) {
+  if (!api.gen?.streamMediaTask) {
+    generating.value = false;
+    return;
+  }
+
+  const assetFileUrl = (aid: string) =>
+    api.gallery?.getImageUrl
+      ? api.gallery.getImageUrl('asset:' + aid)
+      : '/api/assets/' + aid + '/file';
+
+  const applyResultMeta = (meta: Record<string, unknown> | undefined) => {
+    const m = meta || {};
+    const eff = String(m.lyrics_effective || '').trim();
+    previewLyrics.value = eff;
+    previewLyricsDownload.value = eff;
+  };
+
+  const addRecentFromAsset = (aid: string, meta?: Record<string, unknown>, promptLabel?: string) => {
+    const url = assetFileUrl(aid);
+    const eff = meta ? String(meta.lyrics_effective || '').trim() : '';
+    recentAudio.unshift({
+      id: aid,
+      url,
+      title: String(params.title || '').trim(),
+      prompt: promptLabel || params.prompt,
+      lyrics: eff,
+      duration: 0,
+      playing: false,
+    });
+  };
+
+  const setPreviewFromAsset = (aid: string, meta?: Record<string, unknown>, promptLabel?: string) => {
+    const url = assetFileUrl(aid);
+    const changed = previewAudioSrc.value !== url;
+    previewAudioSrc.value = url;
+    previewPrompt.value = previewDisplayCaption(String(params.title || ''), promptLabel || params.prompt);
+    applyResultMeta(meta);
+    previewIsPlaying.value = false;
+    if (changed) previewAudioKey.value += 1;
+  };
+
+  api.gen.streamMediaTask(tid, {
+    onLog: (logData: unknown) => {
+      const row = logData as Record<string, unknown>;
+      const raw = (row.message as string) || '';
+      const lvl = (row.level as string) || 'info';
+      if (isDuplicateDenoiseStepLog(logs, raw)) {
+        return;
+      }
+      const now = new Date();
+      const time =
+        String(now.getHours()).padStart(2, '0') +
+        ':' +
+        String(now.getMinutes()).padStart(2, '0') +
+        ':' +
+        String(now.getSeconds()).padStart(2, '0');
+      logs.push({
+        level: lvl,
+        message: formatGenLogMessage(raw),
+        time,
+      });
+      nextTick(() => {
+        if (logContainer.value) {
+          logContainer.value.scrollTop = logContainer.value.scrollHeight;
+        }
+      });
+    },
+    onStatus: (statusData: unknown) => {
+      const row = statusData as Record<string, unknown>;
+      if (row.status) currentTask.status = row.status as string;
+      if (row.progress != null) currentTask.progress = row.progress as number;
+    },
+    onProgress: (progressData: unknown) => {
+      const row = progressData as Record<string, unknown>;
+      if (row.progress != null) currentTask.progress = row.progress as number;
+      if (row.step != null) currentTask.step = row.step as number;
+      if (row.total != null) currentTask.total = row.total as number;
+    },
+    onResult: (resultData: unknown) => {
+      const row = resultData as Record<string, unknown>;
+      const meta = row.metadata as Record<string, unknown> | undefined;
+      applyResultMeta(meta);
+      const ids = row.asset_ids as string[] | undefined;
+      if (ids?.length) {
+        ids.forEach((aid) => addRecentFromAsset(aid, meta));
+        setPreviewFromAsset(ids[0], meta);
+      }
+    },
+    onDone: (doneData: unknown) => {
+      const row = doneData as Record<string, unknown>;
+      if (row.status === 'completed') {
+        const res = row.result as Record<string, unknown> | undefined;
+        const meta = res?.metadata as Record<string, unknown> | undefined;
+        applyResultMeta(meta);
+        const pid = res?.primary_asset_id;
+        if (pid) setPreviewFromAsset(String(pid), meta);
+      } else if (row.status === 'failed') {
+        toast.error($tt('studio.genFailed', { msg: String(row.error || '') }));
+      }
+      generating.value = false;
+    },
+    onError: () => {
+      toast.error($tt('studio.connectionLost'));
+      generating.value = false;
+    },
+  });
+}
+
+async function startCoverGeneration() {
+  if (generating.value) return;
+  if (!params.model) { toast.warning('Please select a model'); return; }
+  if (!modelReady.value) { toast.warning('Model is not ready'); return; }
+  if (!supportsCoverAction.value) {
+    toast.warning('Selected model does not support cover');
+    return;
+  }
+  if (!coverSourceFile.value) {
+    toast.warning($tt('audio.coverNeedSource'));
+    return;
+  }
+
+  generating.value = true;
+  currentTask.id = '';
+  currentTask.progress = 0;
+  currentTask.step = null;
+  currentTask.total = null;
+  currentTask.status = '';
+  logs.length = 0;
+  previewLyrics.value = '';
+  previewLyricsDownload.value = '';
+
+  try {
+    const up = await api.gen.uploadAsset(coverSourceFile.value);
+    const source_asset_id = (up as any)?.id;
+    if (!source_asset_id) {
+      toast.error($tt('studio.error', { msg: 'upload failed' }));
+      generating.value = false;
+      return;
+    }
+
+    const body = {
+      model: params.model,
+      operation: 'cover',
+      source_asset_id,
+      prompt: String(coverParams.prompt || '').trim(),
+      source_fidelity: coverParams.source_fidelity ?? 1.0,
+      seed: coverParams.seed ?? params.seed ?? null,
+      n: 1,
+      audio_format: coverParams.audio_format || params.audio_format || 'wav',
+    };
+
+    const resp = await api.audios.createEdit(body);
+    const tid = taskIdFromSubmitResponse(resp);
+    if (!tid) {
+      toast.error($tt('studio.error', { msg: 'missing task id in submit response' }));
+      generating.value = false;
+      return;
+    }
+    currentTask.id = tid;
+    attachTaskStream(tid);
+  } catch (e: any) {
+    toast.error((e.response && e.response.data && e.response.data.detail) || e.message || 'Cover failed');
+    generating.value = false;
+  }
+}
+
 async function startGeneration() {
   if (generating.value) return;
   if (!params.model) { toast.warning('Please select a model'); return; }
@@ -894,7 +1119,7 @@ async function startGeneration() {
       negative_prompt: params.negative_prompt || '',
       duration: params.duration ?? null,
       instrumental: !!params.instrumental,
-      // Empty lyrics → backend uses [Instrumental] (same as ACE-Step handler text2music default).
+      // Empty lyrics + prompt → backend auto-inspires lyrics via 5Hz LM when LM is enabled.
       lyrics: params.lyrics?.trim() || '',
       vocal_language: params.vocal_language?.trim() || '',
       vocal_type: params.vocal_type?.trim() || '',
@@ -920,112 +1145,7 @@ async function startGeneration() {
       return;
     }
     currentTask.id = tid;
-    if (!api.gen?.streamMediaTask) {
-      generating.value = false;
-      return;
-    }
-
-    const assetFileUrl = (aid: string) =>
-      api.gallery?.getImageUrl
-        ? api.gallery.getImageUrl('asset:' + aid)
-        : '/api/assets/' + aid + '/file';
-
-    const applyResultMeta = (meta: Record<string, unknown> | undefined) => {
-      const m = meta || {};
-      const eff = String(m.lyrics_effective || '').trim();
-      previewLyrics.value = eff;
-      previewLyricsDownload.value = eff;
-    };
-
-    const addRecentFromAsset = (aid: string, meta?: Record<string, unknown>) => {
-      const url = assetFileUrl(aid);
-      const eff = meta ? String(meta.lyrics_effective || '').trim() : '';
-      recentAudio.unshift({
-        id: aid,
-        url,
-        title: String(params.title || '').trim(),
-        prompt: params.prompt,
-        lyrics: eff,
-        duration: 0,
-        playing: false,
-      });
-    };
-
-    const setPreviewFromAsset = (aid: string, meta?: Record<string, unknown>) => {
-      const url = assetFileUrl(aid);
-      const changed = previewAudioSrc.value !== url;
-      previewAudioSrc.value = url;
-      previewPrompt.value = previewDisplayCaption(String(params.title || ''), params.prompt);
-      applyResultMeta(meta);
-      previewIsPlaying.value = false;
-      if (changed) previewAudioKey.value += 1;
-    };
-
-    api.gen.streamMediaTask(tid, {
-      onLog: (logData: unknown) => {
-        const row = logData as Record<string, unknown>;
-        const raw = (row.message as string) || '';
-        const lvl = (row.level as string) || 'info';
-        if (isDuplicateDenoiseStepLog(logs, raw)) {
-          return;
-        }
-        const now = new Date();
-        const time =
-          String(now.getHours()).padStart(2, '0') +
-          ':' +
-          String(now.getMinutes()).padStart(2, '0') +
-          ':' +
-          String(now.getSeconds()).padStart(2, '0');
-        logs.push({
-          level: lvl,
-          message: formatGenLogMessage(raw),
-          time,
-        });
-        nextTick(() => {
-          if (logContainer.value) {
-            logContainer.value.scrollTop = logContainer.value.scrollHeight;
-          }
-        });
-      },
-      onStatus: (statusData: unknown) => {
-        const row = statusData as Record<string, unknown>;
-        if (row.status) currentTask.status = row.status as string;
-        if (row.progress != null) currentTask.progress = row.progress as number;
-      },
-      onProgress: (progressData: unknown) => {
-        const row = progressData as Record<string, unknown>;
-        if (row.progress != null) currentTask.progress = row.progress as number;
-        if (row.step != null) currentTask.step = row.step as number;
-        if (row.total != null) currentTask.total = row.total as number;
-      },
-      onResult: (resultData: unknown) => {
-        const row = resultData as Record<string, unknown>;
-        const meta = row.metadata as Record<string, unknown> | undefined;
-        applyResultMeta(meta);
-        const ids = row.asset_ids as string[] | undefined;
-        if (ids?.length) {
-          ids.forEach((aid) => addRecentFromAsset(aid, meta));
-          setPreviewFromAsset(ids[0], meta);
-        }
-      },
-      onDone: (doneData: unknown) => {
-        const row = doneData as Record<string, unknown>;
-        if (row.status === 'completed') {
-          const res = row.result as Record<string, unknown> | undefined;
-          const meta = res?.metadata as Record<string, unknown> | undefined;
-          applyResultMeta(meta);
-          const pid = res?.primary_asset_id;
-          if (pid) setPreviewFromAsset(String(pid), meta);
-        } else if (row.status === 'failed') {
-          toast.error($tt('studio.genFailed', { msg: String(row.error || '') }));
-        }
-        generating.value = false;
-      },
-      onError: () => {
-        toast.error($tt('studio.connectionLost'));
-        generating.value = false;
-      },
-    });
+    attachTaskStream(tid);
   } catch (e: any) {
     toast.error((e.response && e.response.data && e.response.data.detail) || e.message || 'Generation failed');
     generating.value = false;

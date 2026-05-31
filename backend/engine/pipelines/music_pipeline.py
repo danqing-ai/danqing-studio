@@ -17,6 +17,7 @@ import numpy as np
 import soundfile as sf
 
 from backend.core.contracts import (
+    AudioEditRequest,
     AudioGenerationRequest,
     EngineResult,
     ExecutionContext,
@@ -38,11 +39,14 @@ from backend.engine.config.model_configs import (
 from backend.engine._transformer_registry import get_audio_generation_factory
 from backend.engine.families.ace_step.generation import (
     AceStepLyricsCapture,
+    load_reference_waveform,
     lyrics_capture_log_message,
     lyrics_capture_metadata,
     prepare_music_request,
     write_lyrics_sidecar,
+    write_lrc_sidecar,
 )
+from backend.engine.families.ace_step.quality_score import quality_log_message
 from backend.engine.families.heartmula.generation import (
     FRAME_RATE as HEARTMULA_FRAME_RATE,
     SAMPLE_RATE as HEARTMULA_SAMPLE_RATE,
@@ -133,6 +137,160 @@ class MusicPipeline:
         return runner(
             request, exec_ctx, model_id, version_key, entry, bundle_root, config, t0
         )
+
+    def run_edit(
+        self,
+        request: AudioEditRequest,
+        exec_ctx: ExecutionContext,
+    ) -> EngineResult:
+        self._raise_if_cancelled(exec_ctx)
+        t0 = time.monotonic()
+        model_id, version_key = parse_model_version(request.model)
+        entry = self._registry.get(model_id)
+        if entry is None:
+            raise RuntimeError(f"Model {model_id!r} not found in registry")
+        if entry.family != "ace_step":
+            raise RuntimeError(
+                f"Audio edit {request.operation!r} is only implemented for ace_step "
+                f"(got family {entry.family!r})"
+            )
+        if request.operation != "cover":
+            raise RuntimeError(f"Unsupported audio edit operation: {request.operation!r}")
+
+        bundle_root = _local_bundle_root_fn(self._project_root, entry, version_key)
+        if bundle_root is None or not bundle_root.is_dir():
+            raise RuntimeError(f"Model bundle not found for {request.model!r}")
+
+        src_path = exec_ctx.asset_store.get_file_path(request.source_asset_id)
+        if not src_path.is_file():
+            raise RuntimeError(f"Source audio asset not found: {request.source_asset_id!r}")
+
+        config = AceStepConfig()
+        from backend.engine.families.ace_step.generation import resolve_bundle_is_turbo
+
+        is_turbo = resolve_bundle_is_turbo(bundle_root)
+        shift = float(config.turbo_shift if is_turbo else config.default_shift)
+        generator = self._get_generator(entry, version_key, "ace_step", bundle_root)
+        ref_wf = load_reference_waveform(src_path)
+        seed = (
+            request.seed
+            if request.seed is not None and request.seed >= 0
+            else random.randint(0, 2**31 - 1)
+        )
+        n = max(request.n, 1)
+        exec_ctx.on_log(
+            LogEvent(
+                level="info",
+                message=(
+                    f"ACE-Step cover: source={src_path.name}, "
+                    f"strength={request.source_fidelity}, seed={seed}, n={n}"
+                ),
+            )
+        )
+
+        output_paths: List[str] = []
+        output_durations: List[float] = []
+        for i in range(n):
+            self._raise_if_cancelled(exec_ctx)
+            batch_seed = seed + i
+            exec_ctx.on_progress(
+                ProgressEvent(
+                    progress=(i + 0.1) / n,
+                    step=i + 1,
+                    total=n,
+                    message=f"Cover generation {i + 1}/{n}",
+                )
+            )
+            waveform = generator.generate_cover_waveform(
+                reference_waveform=ref_wf,
+                prompt=request.prompt or "",
+                seed=batch_seed,
+                shift=shift,
+                audio_cover_strength=float(request.source_fidelity),
+            )
+            quality = getattr(generator, "last_quality", None)
+            q_msg = quality_log_message(quality) if quality is not None else None
+            if q_msg:
+                exec_ctx.on_log(LogEvent(level="info", message=q_msg))
+            out_path = self._save_audio(
+                waveform,
+                model_id,
+                batch_seed,
+                family="ace_step_cover",
+                sample_rate=_ACE_STEP_SAMPLE_RATE,
+            )
+            n_samples = int(waveform.shape[0]) if hasattr(waveform, "shape") else 0
+            dur_written = n_samples / _ACE_STEP_SAMPLE_RATE if n_samples else 0.0
+            output_paths.append(str(out_path))
+            output_durations.append(dur_written)
+
+        elapsed = time.monotonic() - t0
+        asset_ids = self._persist_edit_assets(
+            output_paths,
+            request,
+            model_id,
+            elapsed,
+            exec_ctx.task_id,
+            output_durations,
+            quality=quality,
+        )
+        result_meta: dict[str, Any] = {
+            "model": model_id,
+            "operation": request.operation,
+            "source_asset_id": request.source_asset_id,
+            "source_fidelity": request.source_fidelity,
+            "seed": seed,
+        }
+        if quality is not None:
+            result_meta.update(quality.as_metadata())
+        return EngineResult(
+            primary_asset_id=asset_ids[0] if asset_ids else "",
+            asset_ids=asset_ids,
+            output_paths=output_paths,
+            metadata=result_meta,
+        )
+
+    def _persist_edit_assets(
+        self,
+        paths: List[str],
+        request: AudioEditRequest,
+        model_id: str,
+        elapsed: float,
+        task_id: str,
+        durations: List[float] | None,
+        *,
+        quality: Any = None,
+    ) -> List[str]:
+        ids = []
+        fmt = (request.audio_format or "wav").lower()
+        mime = "audio/mpeg" if fmt == "mp3" else f"audio/{fmt}"
+        for idx, p in enumerate(paths):
+            dur = None
+            if durations and idx < len(durations):
+                dur = durations[idx]
+            asset_meta: dict[str, Any] = {
+                "model": model_id,
+                "operation": request.operation,
+                "source_asset_id": request.source_asset_id,
+                "source_fidelity": request.source_fidelity,
+                "prompt": request.prompt,
+                "duration_seconds": dur,
+                "format": fmt,
+                "elapsed_seconds": elapsed,
+                "output_path": str(p),
+            }
+            if quality is not None:
+                asset_meta.update(quality.as_metadata())
+            aid = self._asset_store.create_from_file(
+                Path(p),
+                kind="audio",
+                mime_type=mime,
+                source_task_id=task_id,
+                metadata=asset_meta,
+                source_action="cover",
+            )
+            ids.append(aid)
+        return ids
 
     def _run_heartmula(
         self,
@@ -395,7 +553,9 @@ class MusicPipeline:
         config: AceStepConfig,
         t0: float,
     ) -> EngineResult:
-        prepared = prepare_music_request(request, config, bundle_root)
+        prepared = prepare_music_request(
+            request, config, bundle_root, backend=getattr(self.ctx, "backend", "mlx")
+        )
         for level, message in prepared.log_events:
             exec_ctx.on_log(LogEvent(level=level, message=message))
 
@@ -412,7 +572,7 @@ class MusicPipeline:
         vocal_lang = prepared.vocal_language
         shift = prepared.shift
         guidance = request.guidance if request.guidance is not None else 3.0
-        duration = float(request.duration or 30)
+        duration = float(prepared.duration)
         seed = (
             request.seed
             if request.seed is not None and request.seed >= 0
@@ -473,6 +633,10 @@ class MusicPipeline:
                     key_scale=request.key_scale or "",
                     time_signature=request.time_signature or "",
                     shift=shift,
+                    simple_mode=prepared.simple_mode,
+                    instrumental=bool(request.instrumental),
+                    lm_enabled=prepared.lm_enabled,
+                    lm_quantize_bits=prepared.lm_quantize_bits,
                 )
             except Exception as exc:
                 logger.exception(
@@ -498,6 +662,10 @@ class MusicPipeline:
             latent_cos = getattr(generator, "last_latent_cos", 0.0)
             latent_diff = getattr(generator, "last_latent_diff_mean", 0.0)
             lm_expanded = getattr(generator, "last_lm_expanded", False)
+            quality = getattr(generator, "last_quality", None)
+            q_msg = quality_log_message(quality) if quality is not None else None
+            if q_msg:
+                exec_ctx.on_log(LogEvent(level="info", message=q_msg))
             cap = getattr(generator, "last_lyrics_capture", None)
             if cap is not None:
                 lyrics_capture = cap
@@ -554,6 +722,8 @@ class MusicPipeline:
                 family="ace_step",
                 sample_rate=_ACE_STEP_SAMPLE_RATE,
             )
+            n_samples = int(waveform.shape[0]) if hasattr(waveform, "shape") else 0
+            dur_written = n_samples / _ACE_STEP_SAMPLE_RATE if n_samples else 0.0
             if lyrics_capture is not None:
                 sidecar = write_lyrics_sidecar(out_path, lyrics_capture.lyrics_effective)
                 if sidecar is not None:
@@ -563,8 +733,18 @@ class MusicPipeline:
                             message=f"歌词已写入: {sidecar.name}",
                         )
                     )
-            n_samples = int(waveform.shape[0]) if hasattr(waveform, "shape") else 0
-            dur_written = n_samples / _ACE_STEP_SAMPLE_RATE if n_samples else 0.0
+                lrc_path = write_lrc_sidecar(
+                    out_path,
+                    lyrics_capture.lyrics_effective,
+                    duration_sec=dur_written,
+                )
+                if lrc_path is not None:
+                    exec_ctx.on_log(
+                        LogEvent(
+                            level="info",
+                            message=f"歌词时间轴已写入: {lrc_path.name}",
+                        )
+                    )
             exec_ctx.on_log(
                 LogEvent(
                     level="success",
@@ -606,7 +786,12 @@ class MusicPipeline:
             "duration_seconds": duration,
         }
         if lyrics_capture is not None:
-            result_meta.update(lyrics_capture_metadata(lyrics_capture))
+            result_meta.update(
+                lyrics_capture_metadata(lyrics_capture, duration_sec=float(duration))
+            )
+        quality = getattr(generator, "last_quality", None)
+        if quality is not None:
+            result_meta.update(quality.as_metadata())
 
         return EngineResult(
             primary_asset_id=asset_ids[0] if asset_ids else "",
@@ -667,10 +852,19 @@ class MusicPipeline:
             }
             asset_meta.update(work_title_metadata(request.title))
             if lyrics_capture is not None:
-                asset_meta.update(lyrics_capture_metadata(lyrics_capture))
+                dur_meta = asset_meta.get("duration_seconds")
+                asset_meta.update(
+                    lyrics_capture_metadata(
+                        lyrics_capture,
+                        duration_sec=float(dur_meta) if dur_meta is not None else None,
+                    )
+                )
                 sidecar = Path(p).with_name(f"{Path(p).stem}_lyrics.txt")
                 if sidecar.is_file():
                     asset_meta["lyrics_sidecar"] = str(sidecar)
+                lrc_sidecar = Path(p).with_name(f"{Path(p).stem}.lrc")
+                if lrc_sidecar.is_file():
+                    asset_meta["lyrics_lrc_sidecar"] = str(lrc_sidecar)
             aid = self._asset_store.create_from_file(
                 Path(p),
                 kind="audio",

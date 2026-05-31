@@ -196,6 +196,8 @@ class AudioGenerationRequest(BaseModel):
     long_form_topk: Optional[int] = None  # HeartMuLa long-form (>120s) LM top-k
     seed: Optional[int] = None
     n: int = Field(2, ge=1, le=8)
+    simple_mode: bool = False  # advanced: force 5Hz LM inspiration (create_sample)
+    lm_expansion: Optional[str] = None  # auto | inspiration | format | off
     audio_format: str = "mp3"
     priority: Literal["normal", "high"] = "normal"
     metadata: dict[str, Any] = Field(default_factory=dict)

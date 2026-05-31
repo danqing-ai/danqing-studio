@@ -140,6 +140,7 @@ def cmd_decode_heartlib(args: argparse.Namespace) -> int:
     import mlx.core as mx
     import numpy as np
     import soundfile as sf
+    from safetensors import safe_open
 
     from heartlib_mlx.heartcodec.modeling import HeartCodec
 
@@ -149,6 +150,21 @@ def cmd_decode_heartlib(args: argparse.Namespace) -> int:
 
     mx.random.seed(int(manifest.get("codec_seed", args.codec_seed)))
     codec = HeartCodec.from_pretrained(str(codec_path), dtype=mx.float32)
+    # DanQing MLX bundles store TimestepEmbedder weights under ``.mlp.*``; heartlib
+    # expects ``.linear_*`` — remap so parity reference uses trained weights.
+    with safe_open(str(codec_path / "model.safetensors"), framework="numpy") as f:
+        remap: dict[str, mx.array] = {}
+        for key in f.keys():
+            if ".timestep_embedder.mlp." not in key:
+                continue
+            nk = key.replace(".timestep_embedder.mlp.linear_1.", ".timestep_embedder.linear_1.")
+            nk = nk.replace(".timestep_embedder.mlp.linear_2.", ".timestep_embedder.linear_2.")
+            remap[nk] = mx.array(f.get_tensor(key))
+    if remap:
+        codec.load_weights(list(remap.items()), strict=False)
+        mx.eval(codec.parameters())
+
+    mx.random.seed(int(manifest.get("codec_seed", args.codec_seed)))
     duration = float(codes.shape[0]) / 12.5
     codes_mx = mx.array(codes[None, :, :], dtype=mx.int32)
     audio = codec.detokenize(
