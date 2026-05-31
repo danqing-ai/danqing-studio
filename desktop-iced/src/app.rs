@@ -351,86 +351,132 @@ impl App {
                         let mut count = 0;
                         self.create.available_models.clear();
 
-                        // Parse installed status from /api/models response
-                        let mut installed_models: std::collections::HashSet<String> = std::collections::HashSet::new();
-                        if let Some(models_obj) = data.get("models").and_then(|v| v.get("models")).and_then(|v| v.as_object()) {
-                            for (id, info) in models_obj {
-                                if info.get("installed").and_then(|v| v.as_bool()).unwrap_or(false) {
-                                    installed_models.insert(id.clone());
-                                }
+                        // Build lookup: model_id -> (installed, actions from /api/models)
+                        let mut model_status: std::collections::HashMap<String, (bool, Vec<String>)> =
+                            std::collections::HashMap::new();
+                        if let Some(models_resp) = data.get("models").and_then(|v| v.get("models")).and_then(|v| v.as_object()) {
+                            for (id, info) in models_resp {
+                                let installed = info.get("installed").and_then(|v| v.as_bool()).unwrap_or(false);
+                                let actions: Vec<String> = info.get("actions")
+                                    .and_then(|v| v.as_array())
+                                    .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                                    .unwrap_or_default();
+                                model_status.insert(id.clone(), (installed, actions));
                             }
                         }
 
-                        // Parse registry for model configs
-                        if let Some(registry) = data.get("registry").and_then(|v| v.as_object()) {
-                            // Registry has engines, categories, models, etc.
-                            if let Some(models_reg) = registry.get("models").and_then(|v| v.as_object()) {
-                                for (id, config) in models_reg {
-                                    let media = config.get("media").and_then(|v| v.as_str()).unwrap_or("");
-                                    if media != "image" {
-                                        continue;
+                        // Parse registry for names, categories, parameters
+                        let registry = data.get("registry").and_then(|v| v.as_object());
+                        let models_reg = registry.and_then(|r| r.get("models")).and_then(|v| v.as_object());
+                        let index = registry.and_then(|r| r.get("_index")).and_then(|v| v.as_object());
+
+                        if let Some(models_reg) = models_reg {
+                            for (id, config) in models_reg {
+                                // Skip non-image models (web UI: imageModelRow checks media === 'image')
+                                let media = config.get("media").and_then(|v| v.as_str()).unwrap_or("");
+                                if media != "image" {
+                                    continue;
+                                }
+
+                                let category = config.get("category")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("base_models")
+                                    .to_string();
+
+                                // Web UI excludes only 'loras' from base model picker
+                                if category == "loras" {
+                                    continue;
+                                }
+
+                                // Get name from bilingual object or string
+                                let name = config.get("name")
+                                    .and_then(|v| v.as_object())
+                                    .and_then(|o| o.get("zh").or_else(|| o.get("en")))
+                                    .and_then(|v| v.as_str())
+                                    .or_else(|| config.get("name").and_then(|v| v.as_str()))
+                                    .unwrap_or(id)
+                                    .to_string();
+
+                                let family = config.get("family").and_then(|v| v.as_str()).unwrap_or("");
+
+                                // Use actions from /api/models if available, else from registry
+                                let (installed, actions) = model_status.get(id)
+                                    .cloned()
+                                    .unwrap_or_else(|| {
+                                        // Fallback: parse from registry config
+                                        let acts: Vec<String> = config.get("actions")
+                                            .and_then(|v| v.as_array())
+                                            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+                                            .unwrap_or_default();
+                                        (false, acts)
+                                    });
+
+                                let commercial = config.get("commercial_use_allowed")
+                                    .and_then(|v| v.as_bool())
+                                    .unwrap_or(false);
+
+                                // Default steps/guidance from parameters
+                                let steps = config.get("parameters")
+                                    .and_then(|v| v.as_object())
+                                    .and_then(|p| p.get("steps"))
+                                    .and_then(|v| v.as_object())
+                                    .and_then(|s| s.get("default"))
+                                    .and_then(|v| v.as_u64())
+                                    .unwrap_or(20) as u8;
+
+                                let cfg = config.get("parameters")
+                                    .and_then(|v| v.as_object())
+                                    .and_then(|p| p.get("guidance"))
+                                    .and_then(|v| v.as_object())
+                                    .and_then(|s| s.get("default"))
+                                    .and_then(|v| v.as_f64())
+                                    .unwrap_or(5.0) as f32;
+
+                                // Build display label: "Name · Family" (matching web UI style)
+                                let label = if family.is_empty() {
+                                    name.clone()
+                                } else {
+                                    format!("{} · {}", name, family)
+                                };
+
+                                self.create.available_models.push(
+                                    crate::create_page::ModelOption::Dynamic {
+                                        id: id.clone(),
+                                        label,
+                                        name,
+                                        category,
+                                        actions,
+                                        installed,
+                                        commercial_use_allowed: commercial,
+                                        steps,
+                                        cfg,
                                     }
-
-                                    let category = config.get("category").and_then(|v| v.as_str()).unwrap_or("base_models").to_string();
-
-                                    // Get model name (bilingual support)
-                                    let name = config.get("name")
-                                        .and_then(|v| v.as_object())
-                                        .and_then(|o| o.get("zh").or_else(|| o.get("en")))
-                                        .and_then(|v| v.as_str())
-                                        .or_else(|| config.get("name").and_then(|v| v.as_str()))
-                                        .unwrap_or(id)
-                                        .to_string();
-
-                                    let family = config.get("family").and_then(|v| v.as_str()).unwrap_or("");
-                                    let label = format!("{} · {}", name, family);
-
-                                    let actions: Vec<String> = config.get("actions")
-                                        .and_then(|v| v.as_array())
-                                        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
-                                        .unwrap_or_default();
-
-                                    let commercial = config.get("commercial_use_allowed").and_then(|v| v.as_bool()).unwrap_or(false);
-                                    let installed = installed_models.contains(id);
-
-                                    // Get default steps/guidance from parameters
-                                    let steps = config.get("parameters")
-                                        .and_then(|v| v.as_object())
-                                        .and_then(|p| p.get("steps"))
-                                        .and_then(|v| v.as_object())
-                                        .and_then(|s| s.get("default"))
-                                        .and_then(|v| v.as_u64())
-                                        .unwrap_or(20) as u8;
-
-                                    let cfg = config.get("parameters")
-                                        .and_then(|v| v.as_object())
-                                        .and_then(|p| p.get("guidance"))
-                                        .and_then(|v| v.as_object())
-                                        .and_then(|s| s.get("default"))
-                                        .and_then(|v| v.as_f64())
-                                        .unwrap_or(5.0) as f32;
-
-                                    self.create.available_models.push(
-                                        crate::create_page::ModelOption::Dynamic {
-                                            id: id.clone(),
-                                            label,
-                                            name,
-                                            category,
-                                            actions,
-                                            installed,
-                                            commercial_use_allowed: commercial,
-                                            steps,
-                                            cfg,
-                                        }
-                                    );
-                                    count += 1;
-                                }
+                                );
+                                count += 1;
                             }
                         }
+
                         self.create.push_log(format!("已加载 {} 个模型", count));
+
                         // Rebuild filtered list and select first valid model
                         self.create.rebuild_filtered_models();
-                        let first_valid = self.create.filtered_models.first().cloned();
+
+                        // If filtered list is empty but we have models, log warning
+                        if self.create.filtered_models.is_empty() && !self.create.available_models.is_empty() {
+                            self.create.push_log("警告: 过滤后无可用模型，显示全部".into());
+                        }
+
+                        // Select first model that supports current mode
+                        let required_action = crate::create_page::ModelOption::mode_required_action(self.create.mode);
+                        let first_valid = self.create.available_models
+                            .iter()
+                            .find(|m| {
+                                m.category() != "loras" &&
+                                m.supports_action(required_action) &&
+                                (!self.create.commercial_only || m.commercial_use_allowed())
+                            })
+                            .cloned();
+
                         if let Some(first) = first_valid {
                             self.create.model = first.clone();
                             self.create.steps = first.default_steps();

@@ -1541,10 +1541,11 @@ impl CreatePage {
     }
 
     /// Rebuild filtered_models based on current mode and commercial filter.
+    /// Matches web UI logic: imageModelRow (media=image, category!=loras) + action filter + commercial.
     pub fn rebuild_filtered_models(&mut self) {
         let required_action = ModelOption::mode_required_action(self.mode);
-        let before = self.available_models.len();
         self.filtered_models = if self.available_models.is_empty() {
+            // Fallback to static models when backend not connected
             ModelOption::STATIC_ALL
                 .iter()
                 .filter(|m| m.supports_action(required_action))
@@ -1554,13 +1555,16 @@ impl CreatePage {
             self.available_models
                 .iter()
                 .filter(|m| {
+                    // Web UI imageModelRow: exclude only loras
                     let category = m.category();
-                    if category == "loras" || category == "controlnets" {
+                    if category == "loras" {
                         return false;
                     }
+                    // Must support current mode's action
                     if !m.supports_action(required_action) {
                         return false;
                     }
+                    // Respect commercial filter
                     if self.commercial_only && !m.commercial_use_allowed() {
                         return false;
                     }
@@ -1569,25 +1573,6 @@ impl CreatePage {
                 .cloned()
                 .collect()
         };
-        let after = self.filtered_models.len();
-        if before > 0 && after == 0 {
-            // Collect debug info before logging to avoid borrow conflict
-            let debug_models: Vec<(String, String, Vec<String>)> = self.available_models
-                .iter()
-                .take(5)
-                .map(|m| (m.id(), m.category(), m.actions()))
-                .collect();
-            self.push_log(format!(
-                "模型过滤: {} -> 0 (action={}, commercial={})",
-                before, required_action, self.commercial_only
-            ));
-            for (id, category, actions) in debug_models {
-                self.push_log(format!(
-                    "  {}: category={}, actions={:?}",
-                    id, category, actions
-                ));
-            }
-        }
     }
 
     pub fn push_log(&mut self, message: String) {
@@ -1941,17 +1926,28 @@ impl CreatePage {
     }
 
     fn model_section(&self) -> Element<'_, Message> {
-        // Use pre-filtered models (rebuilt on mode/commercial changes)
-        let display_models: &[ModelOption] = if self.filtered_models.is_empty() {
-            ModelOption::STATIC_ALL
-        } else {
+        // Determine which models to display
+        // Priority: 1) filtered_models (backend + filters applied)
+        //          2) available_models filtered by action only (if commercial filter emptied the list)
+        //          3) STATIC_ALL (fallback when no backend)
+        let required_action = ModelOption::mode_required_action(self.mode);
+        let display_models: &[ModelOption] = if !self.filtered_models.is_empty() {
             &self.filtered_models
+        } else if !self.available_models.is_empty() {
+            // If filtered is empty but we have backend models, show all that support the action
+            // This prevents empty list when filters are too strict
+            &self.available_models
+        } else {
+            ModelOption::STATIC_ALL
         };
 
+        // Find currently selected model in the display list
         let selected = if display_models.iter().any(|m| m == &self.model) {
             Some(&self.model)
         } else {
-            display_models.first()
+            // If current model not in list, pick first that supports current action
+            display_models.iter().find(|m| m.supports_action(required_action))
+                .or_else(|| display_models.first())
         };
 
         let body = row![
