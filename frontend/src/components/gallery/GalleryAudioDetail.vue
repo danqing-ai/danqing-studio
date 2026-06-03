@@ -71,7 +71,6 @@
         </div>
       </dl>
 
-      <p v-if="indexLabel" class="gallery-audio-detail__index">{{ indexLabel }}</p>
     </template>
   </div>
 </template>
@@ -91,7 +90,7 @@ const props = defineProps({
   src: { type: String, required: true },
   variant: { type: String, default: 'sidebar' },
   durationLabel: { type: String, default: '' },
-  indexLabel: { type: String, default: '' },
+
 });
 
 const emit = defineEmits(['download']);
@@ -185,3 +184,27 @@ async function copyPrompt() {
   }
 }
 </script>
+
+<style scoped>
+/* Lightbox overrides for dark theme readability */
+.gallery-audio-detail--lightbox .gallery-audio-detail__lyrics-block {
+  background: var(--dq-surface-inset, var(--dq-fill-tertiary));
+  border: 0.5px solid var(--dq-border-subtle);
+}
+
+.gallery-audio-detail--lightbox .studio-audio-effective-lyrics__body {
+  color: var(--dq-label-primary);
+}
+
+.gallery-audio-detail__prompt-text {
+  color: var(--dq-label-primary);
+}
+
+.gallery-audio-detail__meta-row dd {
+  color: var(--dq-label-secondary);
+}
+
+.gallery-audio-detail__index {
+  color: var(--dq-label-tertiary);
+}
+</style>

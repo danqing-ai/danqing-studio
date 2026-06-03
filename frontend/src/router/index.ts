@@ -22,14 +22,14 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/AudioCreateView.vue'),
   },
   {
-    path: '/gallery',
-    name: 'gallery',
-    component: () => import('@/views/GalleryView.vue'),
-  },
-  {
     path: '/models',
     name: 'models',
     component: () => import('@/views/ModelsView.vue'),
+  },
+  {
+    path: '/prompts',
+    name: 'prompts',
+    component: () => import('@/views/PromptsView.vue'),
   },
   {
     path: '/settings',

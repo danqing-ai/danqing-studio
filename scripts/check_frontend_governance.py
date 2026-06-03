@@ -87,11 +87,30 @@ def check_ep() -> list[str]:
     return failures
 
 
+def _css_brace_depth(text: str) -> int:
+    depth = 0
+    for line in text.splitlines():
+        for ch in line:
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+        if depth < 0:
+            return depth
+    return depth
+
+
 def check_theme() -> list[str]:
     failures: list[str] = []
     if STUDIO_STYLES.is_dir():
         for path in STUDIO_STYLES.glob("*.css"):
-            for i, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            text = path.read_text(encoding="utf-8")
+            brace_depth = _css_brace_depth(text)
+            if brace_depth != 0:
+                failures.append(
+                    f"frontend/styles/{path.name}: unbalanced '{{' '}}' (depth={brace_depth})"
+                )
+            for i, line in enumerate(text.splitlines(), 1):
                 if THEME_STYLE_EL.search(line):
                     failures.append(f"frontend/styles/{path.name}:{i}: remove `.el-*` selector")
                 if THEME_EL_TOKEN.search(line):

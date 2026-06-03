@@ -44,78 +44,14 @@ html.dark .card-title {
  letter-spacing: -0.02em;
 }
 
-/* 顶栏：Liquid Glass bar（token 见 dq-mac.css） */
-html.dark .app-header {
- background: var(--dq-glass-bar-bg);
- -webkit-backdrop-filter: var(--dq-glass-blur-light);
- backdrop-filter: var(--dq-glass-blur-light);
- border-bottom: 0.5px solid var(--dq-glass-border);
-}
-
-/* 主内容：极弱顶光，保持接近纯黑 */
-html.dark .app-main {
- background-color: var(--dq-bg-page);
- background-image: var(--dq-bg-page-glow);
-}
-
-/* 创作页表面卡：扁平分组底（渐变由 theme-apple-native 压平） */
+/* 创作页表面卡：扁平分组底 */
 html.dark .studio-surface-card.dq-surface-card {
  border: 1px solid var(--dq-separator);
  background: var(--dq-glass-grouped-bg-solid);
  box-shadow: none;
 }
 
-html.dark .dq-btn--primary {
- background: var(--dq-accent);
- border-color: transparent;
- color: var(--dq-color-white);
- font-weight: 600;
-}
 
-html.dark .dq-btn--primary:hover:not(:disabled) {
- background: var(--dq-accent-hover);
-}
-
-html.dark .dq-btn--default {
- background: var(--dq-fill-on-glass);
- border-color: transparent;
- color: var(--dq-label-primary);
-}
-
-html.dark .dq-btn--default:hover:not(:disabled) {
- background: var(--dq-fill-on-glass-pressed);
-}
-
-html.dark .dq-btn--text {
- color: var(--dq-accent);
-}
-
-html.dark .dq-segmented {
- background: var(--dq-fill-on-glass-subtle);
- border-radius: var(--dq-radius-control);
-}
-
-html.dark .dq-btn {
- font-weight: 500;
-}
-
-html.dark .header-actions .dq-btn {
- border: none;
- border-radius: var(--dq-radius-control);
-}
-
-html.dark .studio-primary-cta.dq-btn--primary {
- height: 48px;
- font-size: 15px;
- font-weight: 600;
- letter-spacing: -0.02em;
- border-radius: 12px;
- box-shadow: 0 4px 14px var(--dq-accent-surface-border);
-}
-
-html.dark .studio-primary-cta.dq-btn--primary:hover {
- box-shadow: 0 6px 18px var(--dq-accent-surface-border);
-}
 
 /* 品牌区：更克制 */
 html.dark .brand-title {
@@ -162,84 +98,13 @@ html.dark .studio-surface-card.dq-surface-card:has(> .dq-surface-card__header) >
  padding-top: 0;
 }
 
-html.dark .create-page .studio-surface-card.dq-surface-card:has(> .dq-surface-card__header) > .dq-surface-card__body {
- padding: 12px 20px;
-}
 
-html.dark .create-page .studio-surface-card .dq-surface-card__header .card-title {
- margin-bottom: 10px;
-}
 
 /* 折叠面板：去粗框，像 iOS 设置分组 */
-html.dark .create-page .studio-collapse-plain.dq-collapse {
- border: none;
- background: transparent;
-}
 
-html.dark .create-page .studio-collapse-plain > .dq-collapse-item {
- border: none;
- margin-bottom: 0;
-}
 
-html.dark .create-page .studio-collapse-plain .dq-collapse-item__header {
- font-weight: 600;
- letter-spacing: -0.02em;
- background: transparent;
- border-bottom: none;
-}
 
-html.dark .create-page .studio-collapse-plain .dq-collapse-item__wrap {
- border: none;
- background: transparent;
-}
 
-/* Alert：半透明信息条，非实心蓝块 */
-html.dark .dq-alert {
- border-radius: 12px;
- border-width: 1px;
-}
-
-html.dark .dq-alert--info.is-light {
- background: var(--dq-surface-inset-hover);
- border-color: var(--dq-fill-on-glass);
- color: var(--dq-label-secondary);
-}
-
-html.dark .create-page .creation-panel > .studio-runtime-alert.dq-alert {
- padding: 12px 16px;
-}
-
-html.dark .dq-alert--warning.is-light {
- background: var(--dq-warning-surface);
- border-color: var(--dq-warning-surface-border);
-}
-
-html.dark .dq-alert--success.is-light {
- background: var(--dq-success-surface);
- border-color: var(--dq-success-border);
-}
-
-/* Tag：胶囊 + 半透明底 */
-html.dark .dq-tag {
- border-radius: var(--dq-radius-pill);
- border: none;
- font-weight: 500;
-}
-
-html.dark .dq-tag.dq-tag--info.dq-tag--plain {
- background: var(--dq-fill-on-glass);
- color: var(--dq-label-tertiary);
-}
-
-html.dark .dq-tag.dq-tag--success {
- background: var(--dq-success-surface-strong);
- color: #5de070;
-}
-
-html.dark .dq-tag.dq-tag--warning {
- background: var(--dq-warning-surface-strong);
- color: #ffb340;
-}
 
 /* 表格：发丝线 + 无重网格 */
 
@@ -247,39 +112,8 @@ html.dark .dq-task-queue-drawer .dq-drawer-body {
  padding: 16px 18px;
 }
 
-html.dark .gallery-card {
- background: var(--dq-bg-elevated);
- border: 1px solid var(--dq-fill-on-glass);
- border-radius: 12px;
-}
 
-html.dark .gallery-page .gallery-media-wrapper {
- background: var(--dq-bg-base);
-}
 
-html.dark .gallery-card:hover {
- transform: none;
- border-color: var(--dq-fill-on-glass-pressed);
- box-shadow: 0 8px 24px var(--dq-mask-light);
-}
-
-html.dark .gallery-card.is-selected {
- border-color: var(--dq-accent-glow-strong);
- box-shadow: 0 0 0 2px var(--dq-accent-glow);
-}
-
-html.dark .gallery-card:hover .gallery-image-wrapper img {
- transform: none;
-}
-
-html.dark .gallery-group-header {
- background: var(--dq-overlay-heavy);
- backdrop-filter: blur(12px);
- -webkit-backdrop-filter: blur(12px);
- border-bottom-color: var(--dq-fill-on-glass);
- font-weight: 600;
- letter-spacing: -0.02em;
-}
 
 html.dark .image-preview:hover {
  transform: none;
@@ -304,32 +138,6 @@ html.dark .ref-image-thumb {
  border: 1px solid var(--dq-fill-on-glass);
 }
 
-/* 进度条 */
-html.dark .dq-progress-bar__outer {
- background-color: var(--dq-fill-on-glass);
-}
-
-html.dark .dq-progress-bar__inner {
- border-radius: 100px;
-}
-
-/* 下拉 / 弹出层 — glass tokens from dq-mac.css */
-html.dark .dq-select__content,
-html.dark .dq-dropdown__content {
- border: 0.5px solid var(--dq-glass-border-strong);
- border-radius: var(--dq-radius-menu);
- box-shadow: var(--dq-shadow-glass);
-}
-
-html.dark .gallery-lightbox .lightbox-content {
- overflow: visible;
-}
-
-html.dark .gallery-lightbox-audio-stage {
- background: var(--dq-surface-elevated, var(--dq-bg-elevated));
- border-color: var(--dq-fill-on-glass);
- box-shadow: var(--dq-shadow-glass);
-}
 
 /* —— 设置页：去 border-card 后台风，改为轻量顶栏 Tab —— */
 html.dark .settings-page {
@@ -369,11 +177,6 @@ html.dark ::selection {
  color: var(--dq-color-white);
 }
 
-html.dark :focus-visible {
- outline: 2px solid var(--dq-accent-glow-strong);
- outline-offset: 2px;
-}
-
 html.dark .main-container {
  min-height: 100vh;
  background: var(--dq-bg-page);
@@ -403,32 +206,8 @@ html.dark .card:hover {
 }
 
 /* 创作页：预览区滚动条更轻 */
-html.dark .preview-panel {
- scrollbar-width: thin;
- scrollbar-color: var(--dq-scrollbar-thumb) transparent;
-}
 
-html.dark .gallery-page__scroll {
- padding: 16px 20px 24px;
-}
 
-html.dark .gallery-card-overlay-gradient {
- background: linear-gradient(180deg, transparent 55%, var(--dq-overlay-gradient-end) 100%);
- padding-bottom: 12px;
-}
-
-html.dark .gallery-card-more-btn.dq-btn {
- background: var(--dq-overlay-card);
- border-color: var(--dq-glass-border-strong);
-}
-
-html.dark .gallery-card-more-btn.dq-btn:hover {
- background: var(--dq-overlay-deep);
-}
-
-html.dark .gallery-list-prompt {
- color: var(--dq-label-secondary);
-}
 
 /* 模型页：压掉 theme.css 里过重渐变，统一灰阶表面 */
 html.dark .models-page {
@@ -526,25 +305,7 @@ html.dark .studio-audio-preview-empty {
  min-height: 10rem;
 }
 
-html.dark .preview-panel .dq-audio-recent-card.gallery-card:hover,
-html.dark .preview-panel .dq-audio-recent-card.is-active {
- background: var(--dq-surface-inset-hover);
- border: none;
- transform: none;
- box-shadow: none;
-}
 
-html.dark .preview-panel .studio-audio-recent-row {
- border: none;
- background: transparent;
- border-radius: 0;
-}
-
-html.dark .studio-lora-row {
- background: var(--dq-surface-inset);
- border: 1px solid var(--dq-fill-on-glass-subtle);
- border-radius: 10px;
-}
 
 /* 资产选择器 */
 html.dark .asset-picker__thumb {
@@ -565,22 +326,6 @@ html.dark .info-item {
  background: var(--dq-surface-inset);
  border: 1px solid var(--dq-fill-on-glass);
  border-radius: 12px;
-}
-
-/* 弱化 dark 标签 effect=dark 的刺眼实心底 */
-html.dark .dq-tag--dark.dq-tag--success {
- background: var(--dq-success-highlight);
- border: none;
-}
-
-html.dark .dq-tag--dark.dq-tag--warning {
- background: var(--dq-warning-highlight);
- border: none;
-}
-
-html.dark .dq-tag--dark.dq-tag--info {
- background: var(--dq-fill-on-glass);
- border: none;
 }
 
 /* =============================================================================
@@ -657,46 +402,12 @@ html.dark .dq-top-nav-queue-btn {
 }
 
 /* 创作页：顶部分段 + 工作说明 */
-html.dark .create-page .dq-work-segmented.dq-segmented {
- padding: 3px;
- background: var(--dq-fill-on-glass-subtle);
- border-radius: 12px;
-}
 
-html.dark .create-page .studio-work-desc {
- margin: -8px 0 18px;
- padding: 0 4px;
- font-size: 13px;
- line-height: 1.45;
- color: var(--dq-label-tertiary);
-}
 
-html.dark .create-page .studio-collapse-plain.dq-collapse {
- border-radius: 14px;
- border: 1px solid var(--dq-fill-on-glass);
- background: var(--dq-surface-inset);
- overflow: hidden;
-}
 
-html.dark .create-page .studio-collapse-plain > .dq-collapse-item + .dq-collapse-item {
- border-top: 1px solid var(--dq-fill-on-glass-subtle);
-}
 
-html.dark .create-page .studio-collapse-plain .dq-collapse-item__header {
- padding: 14px 16px;
- min-height: 48px;
-}
 
-html.dark .create-page .studio-collapse-plain .dq-collapse-item__content {
- padding: 4px 16px 16px;
-}
 
-html.dark .studio-preview-sq {
- border-radius: 14px;
- overflow: hidden;
- background: var(--dq-overlay-medium);
- border: 1px solid var(--dq-fill-on-glass);
-}
 
 html.dark .image-preview {
  border-radius: 14px;
@@ -791,13 +502,7 @@ html.dark .asset-picker__thumb:hover {
 
 html.dark .asset-picker__thumb:focus-visible {
  outline: none;
- box-shadow: 0 0 0 3px var(--dq-accent-glow);
- border-color: var(--dq-accent-glow-strong);
-}
-
-html.dark .asset-picker__library-cell:focus-visible {
- outline: 2px solid var(--dq-accent-glow-strong);
- outline-offset: 2px;
+ box-shadow: none;
 }
 
 /* 任务队列抽屉：列表单元格 */
@@ -820,12 +525,6 @@ html.dark .dq-task-queue-kind {
 }
 
 /* 图库 / 模型页：全宽铺满 */
-html.dark .gallery-page,
-html.dark .models-page {
- width: 100%;
- max-width: none;
- margin: 0;
-}
 
 html.dark .gallery-batch-bar__select-all.dq-btn.is-text {
  color: var(--dq-accent);
@@ -887,45 +586,9 @@ html.dark .download-queue {
 }
 
 /* 图库工具栏：与模型页工具条一致 */
-html.dark .gallery-page__toolbar-inner {
- gap: 12px;
-}
 
-html.dark .gallery-page__toolbar-tail .dq-btn {
- border-radius: 10px;
-}
 
-html.dark .gallery-ios-row__thumb {
- background: var(--dq-overlay-medium);
- border: 1px solid var(--dq-fill-on-glass);
-}
 
-html.dark .gallery-ios-row__title {
- font-weight: 600;
- letter-spacing: -0.02em;
-}
-
-html.dark .gallery-detail-panel__header {
- padding: 14px 16px;
-}
-
-html.dark .gallery-detail-panel__title {
- font-weight: 600;
- letter-spacing: -0.02em;
-}
-
-html.dark .gallery-detail-actions .dq-btn {
- border-radius: 10px;
- font-weight: 500;
-}
-
-/* 模型侧栏菜单 */
-
-html.dark .models-page .models-page__sidebar-intro {
- font-size: 13px;
- line-height: 1.45;
- margin-bottom: 12px;
-}
 
 html.dark .models-page__sidebar-card .card-title {
  font-size: 17px;
@@ -933,16 +596,6 @@ html.dark .models-page__sidebar-card .card-title {
  letter-spacing: -0.03em;
 }
 
-html.dark .preview-panel .studio-surface-card.dq-surface-card {
- background: var(--dq-bg-base);
- border-color: var(--dq-separator);
- box-shadow: none;
-}
-
-html.dark .preview-panel .studio-surface-card.dq-surface-card:hover {
- border-color: var(--dq-separator-strong);
- box-shadow: none;
-}
 
 /* 设置页卡片头：主按钮更克制 */
 html.dark .settings-tab-panel .card-title--split .dq-btn--primary {
@@ -959,12 +612,6 @@ html.dark .info-item:hover {
  background: var(--dq-fill-on-glass-subtle);
 }
 
-/* 全局 drawer / message 触控目标 */
-html.dark .dq-btn.is-circle {
- min-width: 32px;
- min-height: 32px;
-}
-
 html.dark .settings-preset-tags {
  scrollbar-color: var(--dq-scrollbar-thumb) transparent;
 }
@@ -979,30 +626,8 @@ html.dark .settings-preset-tag:hover {
  background: var(--dq-fill-on-glass);
 }
 
-/* 创作页日志区 */
-html.dark .studio-log-container--sm,
 html.dark .log-container {
  border-radius: var(--dq-radius-group);
  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
  font-size: 12px;
-}
-
-/* 创作页主 CTA 区 */
-html.dark .create-page .save-button-wrapper,
-html.dark .create-page .studio-task-wrap {
- margin-top: 16px;
-}
-
-html.dark .create-page .studio-task-wrap + .studio-primary-cta {
- width: 100%;
-}
-
-/* 图库空状态 */
-html.dark .gallery-page__empty {
- padding: 48px 20px;
-}
-
-html.dark .gallery-page__empty .dq-btn {
- margin-top: 12px;
- border-radius: 10px;
 }

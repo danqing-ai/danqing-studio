@@ -1,27 +1,58 @@
+// Allow dead code for future feature variants and API message types
+#![allow(dead_code)]
+
 use crate::create_page::{self, CreatePage, ModelOption};
 use crate::gallery;
 use crate::task_queue::{TaskQueue, TaskQueueMessage};
+use crate::video_page::{self, VideoPage};
 
-// Stub modules for pages not yet fully implemented
-mod audio_page { use dq_tokens::{color, spacing, typography}; use iced::widget::{column, container, text}; use iced::{Alignment, Element, Length}; #[derive(Debug, Clone)] pub enum Message { NoOp } #[derive(Debug, Clone, Default)] pub struct AudioCreatePage; impl AudioCreatePage { pub fn new() -> Self { Self } pub fn update(&mut self, _msg: Message, _client: &Option<dq_api::ApiClient>) -> iced::Task<Message> { iced::Task::none() } pub fn view(&self, _client: &Option<dq_api::ApiClient>) -> Element<Message> { container(column![text("音频创作").size(typography::HEADING).color(color::TEXT_PRIMARY), text("即将推出").size(typography::BODY).color(color::TEXT_SECONDARY)].spacing(spacing::MD).align_x(Alignment::Center)).width(Length::Fill).height(Length::Fill).center_x(Length::Fill).center_y(Length::Fill).into() } } }
-
-mod models_page { use dq_tokens::{color, spacing, typography}; use iced::widget::{column, container, text}; use iced::{Alignment, Element, Length}; #[derive(Debug, Clone)] pub enum Message { NoOp } #[derive(Debug, Clone, Default)] pub struct ModelsPage; impl ModelsPage { pub fn new() -> Self { Self } pub fn update(&mut self, _msg: Message, _client: &Option<dq_api::ApiClient>) -> iced::Task<Message> { iced::Task::none() } pub fn view(&self, _client: &Option<dq_api::ApiClient>) -> Element<Message> { container(column![text("模型库").size(typography::HEADING).color(color::TEXT_PRIMARY), text("即将推出").size(typography::BODY).color(color::TEXT_SECONDARY)].spacing(spacing::MD).align_x(Alignment::Center)).width(Length::Fill).height(Length::Fill).center_x(Length::Fill).center_y(Length::Fill).into() } } }
-
-mod settings_page { use dq_tokens::{color, spacing, typography}; use iced::widget::{column, container, text}; use iced::{Alignment, Element, Length}; #[derive(Debug, Clone)] pub enum Message { NoOp } #[derive(Debug, Clone, Default)] pub struct SettingsPage; impl SettingsPage { pub fn new() -> Self { Self } pub fn update(&mut self, _msg: Message, _client: &Option<dq_api::ApiClient>) -> iced::Task<Message> { iced::Task::none() } pub fn view(&self, _client: &Option<dq_api::ApiClient>) -> Element<Message> { container(column![text("设置").size(typography::HEADING).color(color::TEXT_PRIMARY), text("即将推出").size(typography::BODY).color(color::TEXT_SECONDARY)].spacing(spacing::MD).align_x(Alignment::Center)).width(Length::Fill).height(Length::Fill).center_x(Length::Fill).center_y(Length::Fill).into() } } }
-
-use audio_page::AudioCreatePage;
-use models_page::ModelsPage;
-use settings_page::SettingsPage;
+use crate::audio_page::{self, AudioCreatePage};
+use crate::models_page::{self, ModelsPage};
+use crate::settings_page::{self, SettingsPage};
 use dq_api::ApiClient;
 use dq_components::StudioIcon;
-use dq_tokens::{color, spacing, typography};
+use dq_tokens::{spacing, typography};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThemeId {
+    LinearDark,
+    LinearLight,
+    ChinaRedDark,
+}
+
+impl ThemeId {
+    pub fn label(self) -> &'static str {
+        match self {
+            ThemeId::LinearDark => "Linear Dark",
+            ThemeId::LinearLight => "Linear Light",
+            ThemeId::ChinaRedDark => "中国红 · China Red",
+        }
+    }
+
+    pub fn to_iced_theme(self) -> iced::Theme {
+        match self {
+            ThemeId::LinearDark => dq_theme::linear_theme(),
+            ThemeId::LinearLight => dq_theme::linear_light_theme(),
+            ThemeId::ChinaRedDark => dq_theme::china_red_dark_theme(),
+        }
+    }
+
+    pub const ALL: &'static [ThemeId] = &[
+        ThemeId::LinearDark,
+        ThemeId::LinearLight,
+        ThemeId::ChinaRedDark,
+    ];
+}
 
 #[derive(Debug, Clone)]
 pub enum Message {
     Nav(NavId),
+    NavAndRefresh(NavId),
+    ThemeChanged(ThemeId),
     TaskQueue(TaskQueueMessage),
     GenerateShortcut,
     Create(create_page::Message),
+    Video(video_page::Message),
     Audio(audio_page::Message),
     Gallery(gallery::Message),
     Models(models_page::Message),
@@ -36,6 +67,7 @@ pub enum Message {
     ApiHealthResult(Result<serde_json::Value, String>),
     ApiModelsLoaded(Result<serde_json::Value, String>),
     ApiGenerationSubmitted(Result<serde_json::Value, String>),
+    ApiAudioSubmitted(Result<serde_json::Value, String>),
     ApiSubmitWithEndpoint { endpoint: String, request: serde_json::Value },
     ApiTaskPoll(String),
     ApiTaskResult(Result<serde_json::Value, String>),
@@ -48,6 +80,7 @@ pub enum Message {
     ApiTaskListPoll,
     ApiTaskListResult(Result<Vec<serde_json::Value>, String>),
     ImageSaved(Result<String, String>),
+    KeyEvent(iced::keyboard::Key),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -87,6 +120,7 @@ impl NavId {
 pub struct App {
     pub nav: NavId,
     pub create: CreatePage,
+    pub video: VideoPage,
     pub audio: AudioCreatePage,
     pub gallery: gallery::GalleryPage,
     pub models: ModelsPage,
@@ -94,6 +128,8 @@ pub struct App {
     pub task_queue: TaskQueue,
     pub api_client: Option<ApiClient>,
     pub api_connected: bool,
+    pub current_task_id: Option<String>,
+    pub current_theme: ThemeId,
 }
 
 impl App {
@@ -109,9 +145,10 @@ impl App {
             }
         };
 
-        let mut app = Self {
+        let app = Self {
             nav: NavId::ImageCreate,
             create: CreatePage::default(),
+            video: VideoPage::default(),
             audio: AudioCreatePage::default(),
             gallery: gallery::GalleryPage::new(),
             models: ModelsPage::new(),
@@ -119,6 +156,8 @@ impl App {
             task_queue: TaskQueue::new(),
             api_client,
             api_connected: false,
+            current_task_id: None,
+            current_theme: ThemeId::LinearDark,
         };
 
         // Attempt health check on startup
@@ -142,8 +181,28 @@ impl App {
                     NavId::Gallery => {
                         return self.gallery.update(gallery::Message::LoadAssets, &self.api_client).map(Message::Gallery);
                     }
+                    NavId::Models => {
+                        return self.models.update(models_page::Message::LoadModels, &self.api_client).map(Message::Models);
+                    }
                     _ => {}
                 }
+                iced::Task::none()
+            }
+            Message::NavAndRefresh(id) => {
+                self.nav = id;
+                match id {
+                    NavId::Gallery => {
+                        return self.gallery.update(gallery::Message::LoadAssets, &self.api_client).map(Message::Gallery);
+                    }
+                    NavId::Models => {
+                        return self.models.update(models_page::Message::LoadModels, &self.api_client).map(Message::Models);
+                    }
+                    _ => {}
+                }
+                iced::Task::none()
+            }
+            Message::ThemeChanged(theme) => {
+                self.current_theme = theme;
                 iced::Task::none()
             }
             Message::TaskQueue(msg) => {
@@ -157,15 +216,130 @@ impl App {
                 }
             }
             Message::Gallery(msg) => {
+                if let gallery::Message::GoToCreate = msg {
+                    return iced::Task::perform(async {}, |_| Message::Nav(NavId::ImageCreate));
+                }
                 self.gallery.update(msg, &self.api_client).map(Message::Gallery)
             }
             Message::Audio(msg) => {
+                // Intercept Generate to call backend API
+                if let audio_page::Message::Generate = msg {
+                    if let Some(client) = self.api_client.clone() {
+                        let (endpoint, request) = self.audio.build_request();
+                        self.audio.push_log(format!("提交请求到 {}…", endpoint));
+                        return iced::Task::perform(
+                            async move {
+                                match client.post::<serde_json::Value, _>(endpoint, &request).await {
+                                    Ok(v) => Message::ApiAudioSubmitted(Ok(v)),
+                                    Err(e) => Message::ApiAudioSubmitted(Err(e.to_string())),
+                                }
+                            },
+                            |msg| msg,
+                        );
+                    }
+                }
                 self.audio.update(msg, &self.api_client).map(Message::Audio)
+            }
+            Message::Video(msg) => {
+                if let video_page::Message::Generate = msg {
+                    if let Some(client) = self.api_client.clone() {
+                        let needs_start_image = matches!(self.video.mode, video_page::VideoMode::ImageToVideo)
+                            && matches!(self.video.start_image, video_page::SourceVideoState::Uploaded(_));
+                        let needs_tail_image = matches!(self.video.mode, video_page::VideoMode::ImageToVideo)
+                            && matches!(self.video.tail_image, video_page::SourceVideoState::Uploaded(_));
+                        let needs_source_video = matches!(self.video.mode, video_page::VideoMode::Upscale)
+                            && matches!(self.video.source_video, video_page::SourceVideoState::Uploaded(_));
+
+                        if needs_start_image || needs_tail_image || needs_source_video {
+                            let client_clone = client.clone();
+                            let start_path = match &self.video.start_image {
+                                video_page::SourceVideoState::Uploaded(p) if needs_start_image => Some(p.clone()),
+                                _ => None,
+                            };
+                            let tail_path = match &self.video.tail_image {
+                                video_page::SourceVideoState::Uploaded(p) if needs_tail_image => Some(p.clone()),
+                                _ => None,
+                            };
+                            let source_path = match &self.video.source_video {
+                                video_page::SourceVideoState::Uploaded(p) if needs_source_video => Some(p.clone()),
+                                _ => None,
+                            };
+                            let upload_task = iced::Task::perform(
+                                async move {
+                                    let mut start_id = None;
+                                    let mut tail_id = None;
+                                    let mut source_id = None;
+
+                                    if let Some(ref path) = start_path {
+                                        match client_clone.upload_asset(std::path::Path::new(path), "image/png").await {
+                                            Ok(asset) => {
+                                                start_id = asset.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                                            }
+                                            Err(e) => return Err(format!("上传起始图片失败: {}", e)),
+                                        }
+                                    }
+
+                                    if let Some(ref path) = tail_path {
+                                        match client_clone.upload_asset(std::path::Path::new(path), "image/png").await {
+                                            Ok(asset) => {
+                                                tail_id = asset.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                                            }
+                                            Err(e) => return Err(format!("上传末尾图片失败: {}", e)),
+                                        }
+                                    }
+
+                                    if let Some(ref path) = source_path {
+                                        let mime = "video/mp4";
+                                        match client_clone.upload_asset(std::path::Path::new(path), mime).await {
+                                            Ok(asset) => {
+                                                source_id = asset.get("id").and_then(|v| v.as_str()).map(|s| s.to_string());
+                                            }
+                                            Err(e) => return Err(format!("上传源视频失败: {}", e)),
+                                        }
+                                    }
+
+                                    Ok((start_id, tail_id, source_id))
+                                },
+                                |result| match result {
+                                    Ok((start_id, tail_id, source_id)) => {
+                                        Message::ApiAssetsReady {
+                                            source_asset_id: source_id,
+                                            mask_asset_id: start_id,
+                                            control_asset_id: tail_id,
+                                        }
+                                    }
+                                    Err(e) => Message::ApiGenerationSubmitted(Err(e)),
+                                },
+                            );
+                            let task = self.video.update(msg).map(Message::Video);
+                            return iced::Task::batch([task, upload_task]);
+                        } else {
+                            let (endpoint, request) = self.video.build_request(None, None, None);
+                            let endpoint = endpoint.to_string();
+                            let task = self.video.update(msg).map(Message::Video);
+                            let api_task = iced::Task::perform(
+                                async move {
+                                    match client.post::<serde_json::Value, _>(&endpoint, &request).await {
+                                        Ok(v) => Message::ApiGenerationSubmitted(Ok(v)),
+                                        Err(e) => Message::ApiGenerationSubmitted(Err(e.to_string())),
+                                    }
+                                },
+                                |msg| msg,
+                            );
+                            return iced::Task::batch([task, api_task]);
+                        }
+                    }
+                }
+                self.video.update(msg).map(Message::Video)
             }
             Message::Models(msg) => {
                 self.models.update(msg, &self.api_client).map(Message::Models)
             }
             Message::Settings(msg) => {
+                // Intercept theme changes to apply globally
+                if let settings_page::Message::ThemeSelected(theme) = msg {
+                    return self.update(Message::ThemeChanged(theme));
+                }
                 self.settings.update(msg, &self.api_client).map(Message::Settings)
             }
             Message::Create(msg) => {
@@ -262,17 +436,37 @@ impl App {
             }
             Message::ApiAssetsReady { source_asset_id, mask_asset_id, control_asset_id } => {
                 if let Some(client) = self.api_client.clone() {
-                    let (endpoint, request) = self.create.build_request(source_asset_id, mask_asset_id, control_asset_id);
-                    let endpoint = endpoint.to_string();
-                    return iced::Task::perform(
-                        async move {
-                            match client.post::<serde_json::Value, _>(&endpoint, &request).await {
-                                Ok(v) => Message::ApiGenerationSubmitted(Ok(v)),
-                                Err(e) => Message::ApiGenerationSubmitted(Err(e.to_string())),
-                            }
-                        },
-                        |msg| msg,
-                    );
+                    if self.nav == NavId::VideoCreate {
+                        // source_asset_id = source_video (for upscale) or start_image (for animate)
+                        // mask_asset_id = start_image, control_asset_id = tail_image
+                        let (endpoint, request) = self.video.build_request(
+                            source_asset_id.clone(),
+                            mask_asset_id.clone(),
+                            control_asset_id.clone(),
+                        );
+                        let endpoint = endpoint.to_string();
+                        return iced::Task::perform(
+                            async move {
+                                match client.post::<serde_json::Value, _>(&endpoint, &request).await {
+                                    Ok(v) => Message::ApiGenerationSubmitted(Ok(v)),
+                                    Err(e) => Message::ApiGenerationSubmitted(Err(e.to_string())),
+                                }
+                            },
+                            |msg| msg,
+                        );
+                    } else {
+                        let (endpoint, request) = self.create.build_request(source_asset_id, mask_asset_id, control_asset_id);
+                        let endpoint = endpoint.to_string();
+                        return iced::Task::perform(
+                            async move {
+                                match client.post::<serde_json::Value, _>(&endpoint, &request).await {
+                                    Ok(v) => Message::ApiGenerationSubmitted(Ok(v)),
+                                    Err(e) => Message::ApiGenerationSubmitted(Err(e.to_string())),
+                                }
+                            },
+                            |msg| msg,
+                        );
+                    }
                 }
                 iced::Task::none()
             }
@@ -355,12 +549,16 @@ impl App {
                                 async move {
                                     // Load registry for full model config + models status for installation state
                                     let registry_future = client.get::<serde_json::Value>("/api/registry");
-                                    let models_future = client.get::<serde_json::Value>("/api/models?media=image");
-                                    match tokio::try_join!(registry_future, models_future) {
-                                        Ok((registry, models)) => {
+                                    let image_models_future = client.get::<serde_json::Value>("/api/models?media=image");
+                                    let audio_models_future = client.get::<serde_json::Value>("/api/models?media=audio");
+                                    let video_models_future = client.get::<serde_json::Value>("/api/models?media=video");
+                                    match tokio::try_join!(registry_future, image_models_future, audio_models_future, video_models_future) {
+                                        Ok((registry, image_models, audio_models, video_models)) => {
                                             let mut data = serde_json::Map::new();
                                             data.insert("registry".into(), registry);
-                                            data.insert("models".into(), models);
+                                            data.insert("models".into(), image_models);
+                                            data.insert("audio_models".into(), audio_models);
+                                            data.insert("video_models".into(), video_models);
                                             Message::ApiModelsLoaded(Ok(serde_json::Value::Object(data)))
                                         }
                                         Err(e) => Message::ApiModelsLoaded(Err(e.to_string())),
@@ -400,7 +598,7 @@ impl App {
                         // Parse registry for names, categories, parameters
                         let registry = data.get("registry").and_then(|v| v.as_object());
                         let models_reg = registry.and_then(|r| r.get("models")).and_then(|v| v.as_object());
-                        let index = registry.and_then(|r| r.get("_index")).and_then(|v| v.as_object());
+                        let _index = registry.and_then(|r| r.get("_index")).and_then(|v| v.as_object());
 
                         if let Some(models_reg) = models_reg {
                             for (id, config) in models_reg {
@@ -517,6 +715,58 @@ impl App {
                             self.create.steps_input = format!("{:.0}", self.create.steps);
                             self.create.cfg_input = format!("{:.1}", self.create.cfg);
                         }
+
+                        // Load audio models for audio page
+                        if let Some(audio_models_resp) = data.get("audio_models").and_then(|v| v.get("models")).and_then(|v| v.as_object()) {
+                            let mut audio_count = 0;
+                            self.audio.available_models.clear();
+                            for (id, info) in audio_models_resp {
+                                let name = info.get("name")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or(id)
+                                    .to_string();
+                                let family = info.get("family")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("")
+                                    .to_string();
+                                let label = if family.is_empty() {
+                                    name.clone()
+                                } else {
+                                    format!("{} · {}", name, family)
+                                };
+                                self.audio.available_models.push(
+                                    crate::audio_page::AudioModelOption::Dynamic {
+                                        id: id.clone(),
+                                        label,
+                                        name,
+                                    }
+                                );
+                                audio_count += 1;
+                            }
+                            self.audio.push_log(format!("已加载 {} 个音频模型", audio_count));
+                            if !self.audio.available_models.is_empty() {
+                                self.audio.model = self.audio.available_models[0].clone();
+                            }
+                        }
+
+                        // Load video models
+                        if let Some(video_models_resp) = data.get("video_models").and_then(|v| v.get("models")).and_then(|v| v.as_object()) {
+                            let mut video_count = 0;
+                            self.video.available_models.clear();
+                            for (id, info) in video_models_resp {
+                                let name = info.get("name").and_then(|v| v.as_str()).unwrap_or(id).to_string();
+                                let family = info.get("family").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                                let actions: Vec<String> = info.get("actions").and_then(|v| v.as_array()).map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()).unwrap_or_default();
+                                let installed = info.get("installed").and_then(|v| v.as_bool()).unwrap_or(false);
+                                let label = if family.is_empty() { name.clone() } else { format!("{} · {}", name, family) };
+                                self.video.available_models.push(crate::video_page::VideoModelOption::Dynamic { id: id.clone(), label, name, actions, installed });
+                                video_count += 1;
+                            }
+                            self.video.push_log(format!("已加载 {} 个视频模型", video_count));
+                            if !self.video.available_models.is_empty() {
+                                self.video.model = self.video.available_models[0].clone();
+                            }
+                        }
                     }
                     Err(e) => {
                         self.create.push_log(format!("加载模型列表失败: {}", e));
@@ -550,6 +800,7 @@ impl App {
                             .or_else(|| response.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()));
 
                         if let Some(tid) = task_id {
+                            self.current_task_id = Some(tid.clone());
                             self.create.push_log(format!("任务已提交: {}", tid));
                             // Start SSE stream
                             let client = self.api_client.clone().unwrap();
@@ -604,6 +855,12 @@ impl App {
                     }
                 }
                 iced::Task::none()
+            }
+            Message::ApiAudioSubmitted(result) => {
+                self.audio.update(
+                    crate::audio_page::Message::ApiAudioSubmitted(result),
+                    &self.api_client,
+                ).map(Message::Audio)
             }
             Message::ApiTaskPoll(task_id) => {
                 if let Some(client) = self.api_client.clone() {
@@ -798,13 +1055,27 @@ impl App {
                 }
                 iced::Task::none()
             }
+            Message::KeyEvent(key) => {
+                use iced::keyboard::key::Named;
+                if self.nav == NavId::Gallery && self.gallery.show_lightbox {
+                    if let iced::keyboard::Key::Named(named) = key {
+                        return match named {
+                            Named::ArrowLeft => self.gallery.update(gallery::Message::LightboxPrev, &self.api_client).map(Message::Gallery),
+                            Named::ArrowRight => self.gallery.update(gallery::Message::LightboxNext, &self.api_client).map(Message::Gallery),
+                            Named::Escape => self.gallery.update(gallery::Message::CloseLightbox, &self.api_client).map(Message::Gallery),
+                            _ => iced::Task::none(),
+                        };
+                    }
+                }
+                iced::Task::none()
+            }
         }
     }
 
     pub fn subscription(&self) -> iced::Subscription<Message> {
         use iced::keyboard::{self, key::Named};
         use iced::time;
-        use iced::window;
+        
 
         let keyboard_sub = keyboard::listen().filter_map(|event| {
             if let keyboard::Event::KeyPressed {
@@ -834,14 +1105,22 @@ impl App {
             None
         });
 
-        iced::Subscription::batch(vec![keyboard_sub, memory_poll, task_poll, file_drop])
+        let global_events = iced::event::listen().filter_map(|event| {
+            // Forward keyboard events for dynamic dispatch in update()
+            if let iced::Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) = &event {
+                return Some(Message::KeyEvent(key.clone()));
+            }
+            None
+        });
+
+        iced::Subscription::batch(vec![keyboard_sub, memory_poll, task_poll, file_drop, global_events])
     }
 
     pub fn view(&self) -> iced::Element<'_, Message> {
-        use dq_layout::{dq_sidebar, dq_studio_nav};
+        use dq_layout::dq_sidebar;
         use dq_layout::{NavItem, SidebarSection};
         use dq_theme::{page_container, subtle_scrollbar, vertical_divider};
-        use iced::widget::{column, container, row, scrollable, text};
+        use iced::widget::{column, container, row, scrollable};
         use iced::{Alignment, Element, Length};
         use iced::widget::scrollable::{Direction, Scrollbar};
 
@@ -967,6 +1246,9 @@ impl App {
             NavId::AudioCreate => {
                 self.audio.view(&self.api_client).map(Message::Audio)
             }
+            NavId::VideoCreate => {
+                self.video.view().map(Message::Video)
+            }
             NavId::Gallery => {
                 self.gallery.view(&self.api_client).map(Message::Gallery)
             }
@@ -974,21 +1256,7 @@ impl App {
                 self.models.view(&self.api_client).map(Message::Models)
             }
             NavId::Settings => {
-                self.settings.view(&self.api_client).map(Message::Settings)
-            }
-            _ => {
-                // Other pages still have a title bar
-                let page_title = text(self.nav.label())
-                    .size(typography::HEADING)
-                    .color(color::TEXT_PRIMARY);
-                let top_bar = dq_studio_nav(page_title.into());
-                column![
-                    top_bar,
-                    container(placeholder_page(self.nav)).width(Length::Fill).height(Length::Fill),
-                ]
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into()
+                self.settings.view(&self.api_client, self.current_theme).map(Message::Settings)
             }
         };
 
@@ -1005,7 +1273,27 @@ impl App {
             main_content
         };
 
-        container(
+        // Connection banner when API is unavailable
+        let banner: Option<Element<Message>> = if self.api_client.is_some() && !self.api_connected {
+            Some(container(
+                row![
+                    iced::widget::text("⚠").size(typography::BODY),
+                    iced::widget::text("后端服务未连接 — 请确保后端 API 正在运行 (http://127.0.0.1:7800)")
+                        .size(typography::CAPTION).color(dq_tokens::color::TEXT_PRIMARY),
+                    iced::widget::Space::new().width(Length::Fill),
+                    dq_components::dq_button("重新连接", dq_components::ButtonVariant::Secondary, dq_components::ButtonSize::Sm, dq_components::ButtonWidth::Hug, Some(Message::ApiHealthCheck)),
+                ].spacing(spacing::SM).align_y(Alignment::Center).width(Length::Fill)
+            )
+            .padding([spacing::SM, spacing::MD]).width(Length::Fill)
+            .style(|_theme: &iced::Theme| container::Style {
+                background: Some(iced::Background::Color(dq_tokens::color::WARNING)),
+                ..Default::default()
+            })
+            .into())
+        } else { None };
+
+        let main = column![
+            if let Some(b) = banner { b } else { iced::widget::Space::new().height(0).into() },
             row![
                 sidebar,
                 container(iced::widget::Space::new())
@@ -1016,25 +1304,14 @@ impl App {
             ]
             .width(Length::Fill)
             .height(Length::Fill),
-        )
+        ]
         .width(Length::Fill)
-        .height(Length::Fill)
-        .style(page_container)
-        .into()
-    }
-}
+        .height(Length::Fill);
 
-fn placeholder_page(nav: NavId) -> iced::Element<'static, Message> {
-    use iced::widget::{container, text};
-    let label = match nav {
-        NavId::VideoCreate => "视频创作 — 即将推出",
-        NavId::AudioCreate => "音频创作 — 即将推出",
-        NavId::Gallery => "作品库 — 即将推出",
-        NavId::Models => "模型管理 — 即将推出",
-        NavId::Settings => "设置 — 即将推出",
-        NavId::ImageCreate => unreachable!(),
-    };
-    container(text(label).color(color::TEXT_SECONDARY))
-        .padding(32)
-        .into()
+        container(main)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(page_container)
+            .into()
+    }
 }

@@ -66,6 +66,12 @@
           <DqIcon :size="14"><refresh /></DqIcon>
         </DqButton>
       </div>
+      <div class="toolbar-divider" />
+      <div v-if="showSubmitButton" class="toolbar-group">
+        <DqButton type="primary" size="sm" :disabled="!hasMaskContent" @click="$emit('submit')">
+          {{ $t('studio.generate') }}
+        </DqButton>
+      </div>
     </div>
   </div>
 </template>
@@ -79,16 +85,19 @@ const props = withDefaults(
     src?: string;
     mode?: string;
     recentGallery?: unknown[];
+    showSubmitButton?: boolean;
   }>(),
   {
     src: '',
     mode: 'inpainting',
     recentGallery: () => [],
+    showSubmitButton: true,
   },
 );
 
 defineEmits<{
   'pick-edit-source': [];
+  'submit': [];
 }>();
 
 const editorRoot = ref<HTMLElement | null>(null);
@@ -201,8 +210,9 @@ function fitCanvas() {
   if (!img || !mainCanvas.value) return;
   const container = mainCanvas.value.parentElement;
   if (!container) return;
-  const maxW = Math.max(0, container.clientWidth - 4);
-  if (maxW < 8) {
+  const maxW = Math.max(0, container.clientWidth - 16);
+  const maxH = Math.max(0, container.clientHeight - 16);
+  if (maxW < 8 || maxH < 8) {
     if (fitAttempts < 24) {
       fitAttempts += 1;
       requestAnimationFrame(() => fitCanvas());
@@ -213,7 +223,6 @@ function fitCanvas() {
   const srcW = 'naturalWidth' in img ? img.naturalWidth : img.width;
   const srcH = 'naturalHeight' in img ? img.naturalHeight : img.height;
   if (!srcW || !srcH) return;
-  const maxH = Math.max(120, Math.min(maxW, window.innerHeight * 0.6));
   let w: number;
   let h: number;
   if (srcW / srcH > maxW / maxH) {
@@ -611,6 +620,83 @@ defineExpose({ getMaskBlob, clearMask });
 </script>
 
 <style scoped>
+.image-editor {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.editor-canvas-wrapper {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+  padding: 8px;
+}
+
+.editor-canvas {
+  max-width: 100%;
+  max-height: 100%;
+  display: block;
+}
+
+.editor-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--dq-label-tertiary);
+}
+
+.editor-empty__lead {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.editor-empty__subhint {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--dq-border-subtle);
+  flex-wrap: wrap;
+  flex-shrink: 0;
+}
+
+.toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.toolbar-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--dq-border-subtle);
+}
+
+.toolbar-label {
+  font-size: 12px;
+  color: var(--dq-label-secondary);
+  white-space: nowrap;
+}
+
+.toolbar-val {
+  font-size: 12px;
+  color: var(--dq-label-secondary);
+  min-width: 32px;
+  text-align: right;
+}
+
 .editor-brush-slider {
   width: 120px;
   flex: 0 0 auto;

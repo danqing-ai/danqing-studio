@@ -8,8 +8,8 @@ defineProps<{
 
 <template>
   <DqPrefPane class="studio-create-pref-pane">
-    <DqPrefRow :label="$t('create.upscaleScale')" stacked>
-      <DqSelect v-model="params.upscale_scale" class="studio-w-full">
+    <DqPrefRow :label="$t('create.upscaleScale')">
+      <DqSelect v-model="params.upscale_scale" size="small" style="width: 120px">
         <DqOption label="2×" :value="2" />
         <DqOption label="4×" :value="4" />
       </DqSelect>
@@ -37,34 +37,34 @@ defineProps<{
     <DqPrefRow
       v-if="media === 'image'"
       :label="$t('create.upscaleTile')"
-      stacked
     >
       <DqInputNumber
         v-model="params.upscale_tile"
         :min="256"
         :max="4096"
         :step="128"
-        class="studio-w-full"
+        size="small"
+        style="width: 120px"
       />
     </DqPrefRow>
 
     <DqPrefRow
       v-if="media === 'video'"
       :label="$t('video.maxFramesLabel')"
-      stacked
     >
       <DqInputNumber
         v-model="params.upscale_max_frames"
         :min="1"
         :max="4000"
         :step="1"
-        class="studio-w-full"
+        size="small"
+        style="width: 120px"
       />
     </DqPrefRow>
 
     <DqPrefRow v-if="media === 'video'" :label="$t('studio.seed')">
       <div class="studio-seed-row settings-seed-row">
-        <DqInput v-model="params.seed" :placeholder="$t('studio.seedPlaceholder')" />
+        <DqInput v-model="params.seed" :placeholder="$t('studio.seedPlaceholder')" size="small" style="width: 120px" />
         <DqIconButton
           type="text"
           size="sm"

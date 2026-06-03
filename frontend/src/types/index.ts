@@ -88,13 +88,4 @@ export interface SettingsData {
   [key: string]: unknown;
 }
 
-export type PageKey = 'image_create' | 'video_create' | 'audio_create' | 'gallery' | 'models' | 'settings';
-
-export const VALID_PAGES: PageKey[] = [
-  'image_create',
-  'video_create',
-  'audio_create',
-  'gallery',
-  'models',
-  'settings',
-];
+export type PageKey = 'image_create' | 'video_create' | 'audio_create' | 'models' | 'prompts' | 'settings';

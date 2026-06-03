@@ -1,536 +1,120 @@
-<!-- @ts-nocheck -->
 <template>
-  <div class="create-page">
-    <DqRow :gutter="24">
-      <!-- Left panel: creation area -->
-      <DqCol :xs="24" :md="16" :lg="17" :xl="18">
-        <div class="creation-panel">
-          <!-- Plan §3.1: text-to-video / image-to-video sub-tabs -->
-          <DqSegmented
-            class="dq-work-segmented dq-work-segmented--sm"
-            :model-value="videoWorkMode"
-            :options="videoWorkSegmentOptions"
-            block
-            @update:model-value="setVideoWorkMode"
-          />
+  <StudioLayout class="studio-create-page" @scroll="onCanvasScroll">
+    <template #filters>
+      <StudioGalleryFilters
+        :filter-time="filterTime"
+        :filter-models="filterModels"
+        :time-options="timeOptions"
+        :model-options="allModelOptions"
+        :selection-mode="selectionMode"
+        @update:filter-time="filterTime = $event"
+        @update:filter-models="filterModels = $event"
+        @refresh="refreshGallery"
+        @toggle-selection-mode="toggleSelectionMode"
+      />
+    </template>
 
-          <!-- Model selector: single-level dropdown -->
-          <DqSurfaceCard class="studio-surface-card studio-card-mb studio-model-card">
-            <template #header>
-              <div class="card-title">
-                <DqIcon><cpu /></DqIcon>
-                {{ $t('create.modelSelectTitle') }}
-              </div>
-            </template>
-            <div class="studio-model-toolbar">
-              <DqSelect
-                v-model="selectedModelVersion"
-                filterable
-                @change="onModelVersionChange"
-                :placeholder="$t('studio.selectModel')"
-              >
-                <template v-if="selectedModelPickerItem" #value>
-                  <div class="studio-picker-option studio-picker-option--value">
-                    <span class="studio-picker-option__name">{{ selectedModelPickerItem.name }}</span>
-                    <ModelVersionPickerExtras
-                      :recommended="selectedModelPickerItem.recommended"
-                      :commercial-use-allowed="selectedModelPickerItem.commercialUseAllowed"
-                      :status="String(selectedModelPickerItem.status || '')"
-                      :size="String(selectedModelPickerItem.size || '')"
-                    />
-                  </div>
-                </template>
-                <DqOption
-                  v-for="item in videoModelPickerVersions"
-                  :key="item.modelKey + '|' + item.versionKey"
-                  :label="String(item.name)"
-                  :value="item.modelKey + '|' + item.versionKey"
-                  :disabled="!item.ready"
-                >
-                  <ModelVersionPickerOption
-                    :description="String(item.description || '')"
-                    :recommended="item.recommended"
-                    :commercial-use-allowed="item.commercialUseAllowed"
-                    :status="String(item.status || '')"
-                    :size="String(item.size || '')"
-                  />
-                </DqOption>
-              </DqSelect>
-              <ModelPickerFilters
-                v-model:commercial-only="modelFilterCommercialOnly"
-                :show-installed-filter="false"
-              />
-            </div>
-            <CreateModelDescription :model-config="currentModelConfig" />
-            <DqAlert
-              v-if="selectedModelNotReady"
-              :title="$tt('studio.modelNotReady', { name: currentModelDisplayName })"
-              type="warning"
-              :closable="false"
-              class="studio-alert-mt"
-            >
-              <template #default>
-                <span>{{ $t('studio.notDownloadedMsg') }}</span>
-                <DqButton type="primary" size="sm" class="studio-alert-inline-btn" @click="goToDownload">
-                  {{ $t('studio.goDownload') }}
-                </DqButton>
-              </template>
-            </DqAlert>
-          </DqSurfaceCard>
+    <template #canvas>
+      <StudioCanvas
+        :items="galleryItems"
+        :active-tasks="activeVideoTasks"
+        :loading="galleryLoading"
+        :has-more="galleryHasMore"
+        media="video"
+        :has-active-filters="hasActiveFilters"
+        :selection-mode="selectionMode"
+        :selected-paths="selectedPaths"
+        :all-selected="allLoadedSelected"
+        @select="onGallerySelect"
+        @card-action="onCardAction"
+        @reset-filters="resetGalleryFilters"
+        @load-more="loadGallery(false)"
+        @toggle-select="toggleSelect"
+        @select-all="selectAllLoaded"
+        @batch-delete="batchDeleteSelected"
+        @clear-selection="clearSelection"
+      />
+    </template>
 
-          <!-- Work title -->
-          <DqSurfaceCard class="studio-surface-card studio-card-mb">
-            <template #header>
-              <div class="card-title">
-                <DqIcon><document /></DqIcon>
-                {{ $t('studio.workTitle') }}
-              </div>
-            </template>
-            <DqInput
-              v-model="params.title"
-              clearable
-              :placeholder="$t('studio.workTitlePlaceholder')"
-            />
-          </DqSurfaceCard>
+    <template #composer>
+      <VideoComposer
+        v-model="params.prompt"
+        v-model:title="params.title"
+        v-model:work-mode="videoWorkMode"
+        v-model:model="selectedModelVersion"
+        v-model:size="selectedSize"
+        v-model:duration="selectedDuration"
+        v-model:batch-count="batchCount"
+        :generating="generating"
+        :can-generate="!submitDisabled"
+        :generate-label="primaryCtaLabel"
+        :model-options="videoModelSelectOptions"
+        :size-options="sizeOptions"
+        :duration-options="durationOptions"
+        :styles="filteredPresets"
+        :params="params"
+        :has-custom-params="hasCustomParams"
+        :show-negative-prompt="!!currentModelConfig?.parameters?.negative_prompt_support"
+        :show-lora="!!currentModelConfig?.parameters?.lora_support"
+        :show-batch-count="true"
+        :reference-media="referenceMedia"
+        :tail-reference-media="tailReferenceMedia"
+        :current-model-config="currentModelConfig"
+        :compatible-loras="compatibleLoras"
+        :model-not-ready="selectedModelNotReady"
+        :model-not-ready-name="currentModelDisplayName"
+        :work-mode-options="videoWorkSegmentOptions"
+        @generate="startGeneration"
+        @pick-reference="showAssetPicker = true"
+        @remove-reference="removeStartImage"
+        @pick-tail-reference="showTailAssetPicker = true"
+        @remove-tail-reference="removeTailImage"
+        @model-change="onModelVersionChange"
+        @reset-defaults="resetToDefaults"
+        @go-download="goToDownload"
+      />
+    </template>
+  </StudioLayout>
 
-          <!-- Animate: start image (required) -->
-          <DqSurfaceCard v-if="videoWorkMode === 'animate'" class="studio-surface-card studio-card-mb">
-            <template #header>
-              <div class="card-title card-title--split">
-                <span>
-                  <DqIcon><PictureFilled /></DqIcon>
-                  {{ $t('action.video.startImage') }}
-                </span>
-              </div>
-            </template>
+  <!-- Start image asset picker -->
+  <DqDialog v-model:open="showAssetPicker" :title="assetPickerTitle" width="70%">
+    <AssetPicker
+      accept-kind="image"
+      :recent-gallery="recentStartImages"
+      @pick="onStartAssetPick"
+    />
+  </DqDialog>
 
-            <div v-if="startImageSrc" class="ref-image-thumb" @click="showStartImagePreview">
-              <img :src="startImageSrc" alt="start" />
-              <div class="ref-image-actions">
-                <DqIconButton
-                  type="text"
-                  size="sm"
-                  class="dq-icon-btn--circle"
-                  :label="$t('studio.zoomIn')"
-                  @click.stop="showStartImagePreview"
-                >
-                  <DqIcon><ZoomIn /></DqIcon>
-                </DqIconButton>
-                <DqIconButton
-                  type="danger"
-                  size="sm"
-                  class="dq-icon-btn--circle"
-                  :label="$t('studio.delete')"
-                  @click.stop="removeStartImage"
-                >
-                  <DqIcon><Delete /></DqIcon>
-                </DqIconButton>
-              </div>
-            </div>
-            <div v-else class="ref-image-placeholder">
-              <asset-picker
-                accept-kind="image"
-                :recent-gallery="recentStartImages"
-                @pick="onStartAssetPick"
-              />
-            </div>
-          </DqSurfaceCard>
+  <!-- Tail image asset picker -->
+  <DqDialog v-model:open="showTailAssetPicker" :title="$t('video.tailFrameTitle')" width="70%">
+    <AssetPicker
+      accept-kind="image"
+      :recent-gallery="recentStartImages"
+      @pick="onTailAssetPick"
+    />
+  </DqDialog>
 
-          <DqSurfaceCard v-if="videoWorkMode === 'animate'" class="studio-surface-card studio-card-mb">
-            <template #header>
-              <div class="card-title card-title--split">
-                <span>
-                  <DqIcon><PictureFilled /></DqIcon>
-                  {{ $t('video.tailFrameTitle') }}
-                </span>
-              </div>
-            </template>
-            <div class="studio-placeholder-hint">{{ $t('video.tailFrameHint') }}</div>
-            <p class="studio-field-footnote">{{ $t('studio.optional') }}</p>
-            <div v-if="tailImageSrc" class="ref-image-thumb" @click="showTailImagePreview">
-              <img :src="tailImageSrc" alt="tail" />
-              <div class="ref-image-actions">
-                <DqIconButton
-                  type="text"
-                  size="sm"
-                  class="dq-icon-btn--circle"
-                  :label="$t('studio.zoomIn')"
-                  @click.stop="showTailImagePreview"
-                >
-                  <DqIcon><ZoomIn /></DqIcon>
-                </DqIconButton>
-                <DqIconButton
-                  type="danger"
-                  size="sm"
-                  class="dq-icon-btn--circle"
-                  :label="$t('studio.delete')"
-                  @click.stop="removeTailImage"
-                >
-                  <DqIcon><Delete /></DqIcon>
-                </DqIconButton>
-              </div>
-            </div>
-            <div v-else class="ref-image-placeholder">
-              <asset-picker
-                accept-kind="image"
-                :recent-gallery="recentStartImages"
-                @pick="onTailAssetPick"
-              />
-            </div>
-          </DqSurfaceCard>
+  <!-- Start image preview dialog -->
+  <DqDialog v-model:open="startImageViewerVisible" :title="$t('action.video.startImage')" width="70%" center>
+    <div v-if="startImageSrc" class="studio-dialog-center">
+      <img class="studio-dialog-img-tall" :src="startImageSrc" />
+    </div>
+  </DqDialog>
 
-          <DqSurfaceCard v-if="videoWorkMode === 'upscale'" class="studio-surface-card studio-card-mb">
-            <template #header>
-              <div class="card-title">
-                <DqIcon><video-camera /></DqIcon>
-                {{ $t('video.videoSourceTitle') }}
-              </div>
-            </template>
-            <div v-if="sourceVideoSrc" class="ref-image-thumb ref-image-thumb--169">
-              <video :src="sourceVideoSrc" controls></video>
-              <div class="ref-image-actions">
-                <DqIconButton
-                  type="danger"
-                  size="sm"
-                  class="dq-icon-btn--circle"
-                  :label="$t('studio.delete')"
-                  @click.stop="removeSourceVideo"
-                >
-                  <DqIcon><Delete /></DqIcon>
-                </DqIconButton>
-              </div>
-            </div>
-            <div v-else class="ref-image-placeholder">
-              <asset-picker
-                accept-kind="video"
-                :recent-gallery="recentVideos"
-                @pick="onSourceVideoPick"
-              />
-            </div>
-          </DqSurfaceCard>
+  <!-- Tail image preview dialog -->
+  <DqDialog v-model:open="tailImageViewerVisible" :title="$t('video.tailFrameTitle')" width="70%" center>
+    <div v-if="tailImageSrc" class="studio-dialog-center">
+      <img class="studio-dialog-img-tall" :src="tailImageSrc" />
+    </div>
+  </DqDialog>
 
-          <DqSurfaceCard v-if="videoWorkMode === 'upscale'" class="studio-surface-card studio-card-mb">
-            <template #header>
-              <div class="card-title">
-                <DqIcon><zoom-in /></DqIcon>
-                {{ $t('action.video.upscale') }}
-              </div>
-            </template>
-            <CreateUpscaleParams :params="params" media="video" />
-          </DqSurfaceCard>
-
-          <!-- Prompt input -->
-          <DqSurfaceCard v-if="videoWorkMode !== 'upscale'"
-            class="studio-surface-card studio-card-mb"
-          >
-            <template #header>
-              <div class="card-title">
-                <DqIcon><edit-pen /></DqIcon>
-                {{ $t('studio.prompt') }}
-              </div>
-            </template>
-
-            <DqRow :gutter="8" class="studio-presets-row">
-              <DqCol :span="18" class="studio-presets-row__select">
-                <DqSelect
-                  v-model="selectedPreset"
-                  :placeholder="$t('create.preset')"
-                  class="studio-presets-row__control"
-                  clearable
-                >
-                  <DqOption
-                    v-for="(preset, name) in filteredPresets"
-                    :key="name"
-                    :label="presetSelectLabel(name, preset)"
-                    :value="name"
-                  />
-                </DqSelect>
-              </DqCol>
-              <DqCol :span="6" class="studio-presets-row__action">
-                <DqButton class="studio-presets-row__control studio-presets-row__load-btn" @click="loadPreset">
-                  <span class="studio-inline-btn">
-                    <DqIcon :size="14"><folder-opened /></DqIcon>
-                    {{ $t('create.loadPreset') }}
-                  </span>
-                </DqButton>
-              </DqCol>
-            </DqRow>
-
-            <DqInput
-              v-model="params.prompt"
-              type="textarea"
-              :rows="5"
-              :placeholder="$t('video.promptPlaceholder')"
-              resize="none"
-              @keydown.meta.enter.prevent="startGeneration"
-              @keydown.ctrl.enter.prevent="startGeneration"
-            />
-
-            <!-- Negative prompt -->
-            <DqCollapse v-if="currentModelConfig?.parameters?.negative_prompt_support" class="studio-collapse-plain">
-              <DqCollapseItem :title="$t('studio.negativePrompt')" name="negative">
-                <DqInput
-                  v-model="params.negative_prompt"
-                  type="textarea"
-                  :rows="2"
-                  :placeholder="$t('video.negativePlaceholder')"
-                />
-              </DqCollapseItem>
-            </DqCollapse>
-          </DqSurfaceCard>
-
-          <!-- Advanced params -->
-          <DqSurfaceCard v-if="videoWorkMode !== 'upscale'"
-            class="studio-surface-card studio-card-mb"
-          >
-            <template #header>
-              <div class="card-title">
-                <DqIcon><setting /></DqIcon>
-                {{ $t('studio.advancedParams') }}
-                <DqTag v-if="hasCustomParams" size="small" type="warning">{{ $t('studio.hasCustom') }}</DqTag>
-              </div>
-            </template>
-
-            <VideoCreateAdvancedParams
-              :params="params"
-              :current-model-config="currentModelConfig"
-              @reset-to-defaults="resetToDefaults"
-            />
-          </DqSurfaceCard>
-
-          <!-- LoRA selector -->
-          <DqSurfaceCard v-if="videoWorkMode !== 'upscale' && currentModelConfig?.parameters?.lora_support"
-            class="studio-surface-card studio-card-mb"
-          >
-            <div class="studio-lora-section-title">
-              <DqIcon><collection-tag /></DqIcon>
-              <span>{{ $t('studio.loraLabel') }}</span>
-            </div>
-
-            <!-- Selected LoRA list -->
-            <div v-if="selectedLoras.length > 0" class="studio-lora-stack">
-              <div
-                v-for="(lora, index) in selectedLoras"
-                :key="lora.id"
-                class="studio-lora-row"
-              >
-                <span class="studio-lora-name">
-                  {{ compatibleLoras.find(c => c.id === lora.id)?.name || lora.id }}
-                </span>
-                <DqSlider
-                  v-model="lora.weight"
-                  :min="0"
-                  :max="2"
-                  :step="0.1"
-                  class="studio-lora-slider"
-                />
-                <span class="studio-lora-weight-num">{{ lora.weight.toFixed(1) }}</span>
-                <DqIconButton type="text" size="sm" :label="$t('studio.moveUp')" :disabled="index === 0" @click="moveLoraUp(index)">
-                  <DqIcon><arrow-up /></DqIcon>
-                </DqIconButton>
-                <DqIconButton
-                  type="text"
-                  size="sm"
-                  :label="$t('studio.moveDown')"
-                  :disabled="index === selectedLoras.length - 1"
-                  @click="moveLoraDown(index)"
-                >
-                  <DqIcon><arrow-down /></DqIcon>
-                </DqIconButton>
-                <DqIconButton type="danger" size="sm" :label="$t('common.delete')" @click="removeLora(index)">
-                  <DqIcon><delete /></DqIcon>
-                </DqIconButton>
-              </div>
-            </div>
-
-            <!-- Add LoRA -->
-            <DqSelect
-              :model-value="undefined"
-              class="studio-w-full"
-              :placeholder="$t('studio.pickLoraToAdd')"
-              @update:model-value="onAddLoraPick"
-            >
-              <DqOption
-                v-for="lora in compatibleLoras.filter(c => !selectedLoras.find(s => s.id === c.id))"
-                :key="lora.id"
-                :label="lora.name || lora.id"
-                :value="lora.id"
-              />
-            </DqSelect>
-          </DqSurfaceCard>
-
-          <DqAlert
-            v-if="videoWorkMode !== 'upscale'"
-            type="info"
-            :closable="false"
-            show-icon
-            class="studio-alert-mb studio-runtime-alert"
-          >
-            <template #title>{{ $t('video.runtimeCardTitle') }}</template>
-            <div class="studio-alert-body">
-              <p>{{ $tt('video.runtimeClipSecs', { sec: outputClipSecRounded }) }}</p>
-              <p>{{ $t('video.runtimeGenWarning') }}</p>
-              <p v-if="currentVersionDiskSize">{{ $tt('video.runtimeModelSize', { size: currentVersionDiskSize }) }}</p>
-            </div>
-          </DqAlert>
-          <DqAlert
-            v-else
-            type="warning"
-            :closable="false"
-            show-icon
-            class="studio-alert-mb studio-runtime-alert"
-          >
-            <template #title>{{ $t('video.runtimeCardTitle') }}</template>
-            <div class="studio-alert-body">
-              <p>{{ $t('video.runtimeUpscaleNote') }}</p>
-              <p v-if="currentVersionDiskSize">{{ $tt('video.runtimeModelSize', { size: currentVersionDiskSize }) }}</p>
-            </div>
-          </DqAlert>
-
-          <!-- Generate button -->
-          <DqSurfaceCard class="studio-surface-card studio-card-mb">
-            <DqButton
-              type="primary"
-              class="studio-primary-cta studio-primary-cta--simple dq-btn--cta"
-              :disabled="submitDisabled || !systemInfo?.env_ready"
-              @click="startGeneration"
-            >
-              <DqIcon size="20"><video-camera /></DqIcon>
-              <span class="studio-cta-gap">
-                {{ primaryCtaLabel }}
-              </span>
-            </DqButton>
-            <div class="studio-micro-hint">
-              {{ $sendShortcutHint() }}
-            </div>
-
-            <!-- Progress display -->
-            <div v-if="currentTask" class="studio-task-wrap">
-              <DqProgress
-                :percentage="Math.round(currentTask.progress * 100)"
-                :status="currentTask.status === 'failed' ? 'exception' : ''"
-              />
-              <div class="studio-task-status">
-                <template v-if="currentTask.status === 'running'">
-                  <template v-if="currentTask.progressMessage === 'post'">
-                    {{ $tt('studio.queuePostProcessHint') }} &nbsp;
-                  </template>
-                  <template v-else-if="currentTask.total > 0">
-                    Step {{ currentTask.step }}/{{ currentTask.total }} &nbsp;
-                  </template>
-                </template>
-                <DqTag :type="getStatusType(currentTask.status)" size="small">
-                  {{ getStatusText(currentTask.status) }}
-                </DqTag>
-              </div>
-            </div>
-          </DqSurfaceCard>
-
-          <!-- Logs -->
-          <DqSurfaceCard class="studio-surface-card">
-            <template #header>
-              <div class="card-title card-title--split">
-                <span>
-                  <DqIcon><document /></DqIcon>
-                  {{ $t('studio.logs') }}
-                </span>
-                <DqIconButton type="text" size="sm" :label="$t('common.delete')" @click="clearLogs">
-                  <DqIcon><delete /></DqIcon>
-                </DqIconButton>
-              </div>
-            </template>
-
-            <div class="log-container studio-log-container--sm" ref="logContainer">
-              <div v-if="logs.length === 0" class="studio-log-empty">
-                {{ $t('studio.logsEmpty') }}
-              </div>
-              <div v-for="(log, index) in logs" :key="index" class="log-line">
-                <span class="log-timestamp">{{ log.time }}</span>
-                <span :class="'log-' + log.level">{{ log.message }}</span>
-              </div>
-            </div>
-          </DqSurfaceCard>
-        </div>
-      </DqCol>
-
-      <!-- Right panel -->
-      <DqCol :xs="24" :md="8" :lg="7" :xl="6">
-        <div class="preview-panel preview-panel--flat">
-          <StudioPreviewPane :title="$t('studio.currentPreview')" icon="video-camera" split-head>
-            <template #actions>
-              <DqTag v-if="previewVideoPlaying" size="small" type="primary">{{ $t('studio.previewNow') }}</DqTag>
-            </template>
-            <CreateVideoPlayer
-              v-if="previewVideo"
-              :key="previewVideoKey"
-              ref="previewVideoPlayerRef"
-              :src="previewVideo"
-              :title="previewCaption"
-              :subtitle="previewVideoSubtitle"
-              @download="downloadPreviewVideo"
-              @play="previewVideoPlaying = true"
-              @pause="previewVideoPlaying = false"
-              @duration="previewVideoDurationSec = $event"
-            />
-            <DqEmpty v-else class="studio-preview-pane__empty" :description="$t('studio.noPreview')" />
-            <p v-if="previewVideo && previewCaption" class="studio-preview-pane__caption" :title="previewCaption">
-              {{ previewCaption }}
-            </p>
-          </StudioPreviewPane>
-
-          <StudioPreviewPane :title="$t('studio.recent')" icon="clock" split-head recent>
-            <template #actions>
-              <DqIconButton type="text" size="sm" :label="$t('gallery.refresh')" @click="loadRecentVideos">
-                <DqIcon><refresh /></DqIcon>
-              </DqIconButton>
-            </template>
-            <DqEmpty v-if="recentVideos.length === 0" :description="$t('gallery.empty')" />
-            <div v-else class="studio-recent-grid">
-              <div
-                v-for="video in recentVideos"
-                :key="video.path"
-                class="studio-recent-grid__item gallery-card"
-                @click="showVideoPreview(video)"
-              >
-                <div class="gallery-image-wrapper studio-recent-video-wrap">
-                  <video :src="getVideoUrl(video)" preload="metadata" muted></video>
-                </div>
-                <p v-if="assetDisplayLabel(video)" class="studio-recent-grid__caption" :title="assetDisplayLabel(video)">
-                  {{ truncateDisplayLabel(assetDisplayLabel(video), 40) }}
-                </p>
-              </div>
-            </div>
-          </StudioPreviewPane>
-        </div>
-      </DqCol>
-    </DqRow>
-
-    <!-- Start image preview dialog -->
-    <DqDialog v-model:open="startImageViewerVisible" :title="$t('action.video.startImage')" width="70%" center>
-      <div v-if="startImageSrc" class="studio-dialog-center">
-        <img class="studio-dialog-img-tall" :src="startImageSrc" />
-      </div>
-    </DqDialog>
-
-    <DqDialog v-model:open="tailImageViewerVisible" :title="$t('video.tailFrameTitle')" width="70%" center>
-      <div v-if="tailImageSrc" class="studio-dialog-center">
-        <img class="studio-dialog-img-tall" :src="tailImageSrc" />
-      </div>
-    </DqDialog>
-
-    <!-- Video preview dialog -->
-    <DqDialog
-      v-model:open="videoPreviewVisible"
-      :title="selectedVideo ? assetDisplayLabel(selectedVideo) : ''"
-      width="80%"
-      center
-      destroy-on-close
-    >
-      <div v-if="selectedVideo" class="studio-dialog-center">
-        <video class="studio-dialog-video" :src="getVideoUrl(selectedVideo)" controls></video>
-      </div>
-    </DqDialog>
-  </div>
+  <!-- Video preview dialog -->
+  <GalleryPreviewDialog
+    v-model:visible="videoPreviewVisible"
+    v-model:index="selectedVideoIndex"
+    :items="galleryItems"
+    media="video"
+  />
 </template>
 
 <script setup lang="ts">
@@ -542,31 +126,32 @@ import { api, taskIdFromSubmitResponse } from '@/utils/api';
 import { $tt, $mn, $md, $mvn, $pn } from '@/utils/i18n';
 import { useRegistryStore } from '@/stores/registry';
 import { useTasksStore } from '@/stores/tasks';
-import { DQ_STORAGE } from '@/utils/storage';
-import type { SystemInfo, GalleryItem } from '@/types';
+import type { SystemInfo, GalleryItem, Task } from '@/types';
 import { warnIfRiskyMemory } from '@/composables/memoryHint';
 import { pickDefaultVersionKey, resolveDefaultModelRegistryKey } from '@/utils/defaultModelSettings';
 import { formatGenLogMessage, isDuplicateDenoiseStepLog } from '@/utils/genTaskLog';
-import ModelLicenseBadges from '@/components/model/ModelLicenseBadges.vue';
-import ModelPickerFilters from '@/components/model/ModelPickerFilters.vue';
-import ModelVersionPickerExtras from '@/components/model/ModelVersionPickerExtras.vue';
-import CreateModelDescription from '@/components/model/CreateModelDescription.vue';
-import ModelVersionPickerOption from '@/components/model/ModelVersionPickerOption.vue';
 import { useModelRegistryFilters, reconcileVersionPickerSelection } from '@/composables/useModelRegistryFilters';
 import { applyModelVersionFilters } from '@/utils/modelPickerFilters';
 import AssetPicker from '@/components/asset/AssetPicker.vue';
-import VideoCreateAdvancedParams from '@/components/create/VideoCreateAdvancedParams.vue';
-import CreateUpscaleParams from '@/components/create/CreateUpscaleParams.vue';
-import StudioPreviewPane from '@/components/create/StudioPreviewPane.vue';
-import CreateVideoPlayer from '@/components/create/CreateVideoPlayer.vue';
-import { assetDisplayLabel, previewDisplayCaption, truncateDisplayLabel } from '@/utils/assetDisplay';
+import GalleryPreviewDialog from '@/components/gallery/GalleryPreviewDialog.vue';
+import { previewDisplayCaption, truncateDisplayLabel } from '@/utils/assetDisplay';
+
+// Studio components
+import StudioLayout from '@/components/studio/StudioLayout.vue';
+import StudioCanvas from '@/components/studio/StudioCanvas.vue';
+import StudioGalleryFilters from '@/components/studio/StudioGalleryFilters.vue';
+import VideoComposer from '@/components/studio/VideoComposer.vue';
+import { useStudioGallery } from '@/composables/useStudioGallery';
 
 const router = useRouter();
 const registryStore = useRegistryStore();
 const tasksStore = useTasksStore();
 const systemInfo = inject<Ref<SystemInfo>>('systemInfo');
 
-// Inline legacy helpers
+/* ------------------------------------------------------------------ */
+/*  Helpers                                                            */
+/* ------------------------------------------------------------------ */
+
 function hasAction(actions: Record<string, unknown>, key: string) {
   if (!actions || typeof actions !== 'object') return false;
   return Object.prototype.hasOwnProperty.call(actions, key) && actions[key] != null;
@@ -615,7 +200,10 @@ function parseModelVersionValue(value: string) {
   return { modelKey: parts[0], versionKey: parts[1] };
 }
 
-// Params
+/* ------------------------------------------------------------------ */
+/*  Params                                                             */
+/* ------------------------------------------------------------------ */
+
 const params = reactive({
   title: '',
   prompt: '',
@@ -634,20 +222,20 @@ const params = reactive({
   upscale_scale: 4,
   upscale_denoise: 0.3,
   upscale_max_frames: 300,
+  lora: '',
+  lora_scale: 1.0,
 });
 
 const selectedModelVersion = ref('');
+const selectedSize = ref('720x480');
+const selectedDuration = ref(49);
+const batchCount = ref(1);
 
 // State
 const currentTask = ref<any>(null);
 const generating = ref(false);
-const logs = ref<{ time: string; message: string; level: string }[]>([]);
-const genLogLastStep = ref(0);
-const genLogLastPhase = ref<'denoise' | 'post' | null>(null);
 const previewVideo = ref('');
 const previewVideoKey = ref(0);
-const previewVideoPlayerRef = ref<{ load?: () => void; togglePlay?: () => void } | null>(null);
-const previewVideoPlaying = ref(false);
 const previewVideoDurationSec = ref(0);
 
 const previewCaption = computed(() =>
@@ -671,17 +259,147 @@ const previewVideoSubtitle = computed(() => {
   return parts.join(' · ');
 });
 
-function downloadPreviewVideo() {
-  if (!previewVideo.value) return;
-  const a = document.createElement('a');
-  a.href = previewVideo.value;
-  a.download = 'video.mp4';
-  a.click();
+/* ------------------------------------------------------------------ */
+/*  Gallery / Studio Canvas                                            */
+/* ------------------------------------------------------------------ */
+
+const {
+  galleryItems,
+  galleryLoading,
+  galleryHasMore,
+  filterTime,
+  filterModels,
+  selectionMode,
+  selectedPaths,
+  allLoadedSelected,
+  timeOptions,
+  allModelOptions,
+  hasActiveFilters,
+  loadGallery,
+  refreshGallery,
+  onCanvasScroll,
+  resetGalleryFilters,
+  toggleSelect,
+  toggleSelectionMode,
+  selectAllLoaded,
+  deleteItem,
+  batchDeleteSelected,
+  clearSelection,
+} = useStudioGallery('video');
+
+const activeVideoTasks = computed(() => {
+  const running = tasksStore.queueState.running.filter((t: Task) =>
+    String(t.kind || '').startsWith('video.')
+  );
+  const queued = tasksStore.queueState.queued.filter((t: Task) =>
+    String(t.kind || '').startsWith('video.')
+  );
+  return [...running, ...queued];
+});
+
+function onCardAction({ action, item }: { action: string; item: GalleryItem }) {
+  if (action === 'delete') {
+    deleteItem(item);
+  } else if (action === 'download') {
+    const a = document.createElement('a');
+    a.href = getVideoUrl(item);
+    a.download = item.name || 'video.mp4';
+    a.click();
+  }
 }
-const recentVideos = ref<GalleryItem[]>([]);
+
+/* ------------------------------------------------------------------ */
+/*  Reference Media                                                    */
+/* ------------------------------------------------------------------ */
+
+const startImageSrc = ref('');
+const startImagePath = ref('');
+const startImageViewerVisible = ref(false);
+const tailImageSrc = ref('');
+const tailImagePath = ref('');
+const tailImageViewerVisible = ref(false);
+const sourceVideoSrc = ref('');
+const sourceVideoPath = ref('');
+
+const showAssetPicker = ref(false);
+const showTailAssetPicker = ref(false);
+
+function removeStartImage() {
+  startImageSrc.value = '';
+  startImagePath.value = '';
+}
+
+function removeTailImage() {
+  tailImageSrc.value = '';
+  tailImagePath.value = '';
+}
+
+function onModelVersionChange(val: string) {
+  const parsed = parseModelVersionValue(val);
+  if (!parsed) return;
+  params.model = parsed.modelKey;
+  params.version = parsed.versionKey;
+  loadModelDefaults();
+  loadCompatibleLoras();
+}
+
+function goToDownload() {
+  router.push({ name: 'models' });
+}
+
+function onStartAssetPick(payload: { path: string; previewUrl: string }) {
+  startImageSrc.value = payload.previewUrl || '';
+  startImagePath.value = payload.path;
+  showAssetPicker.value = false;
+}
+
+function onTailAssetPick(payload: { path: string; previewUrl: string }) {
+  tailImageSrc.value = payload.previewUrl || '';
+  tailImagePath.value = payload.path;
+  showTailAssetPicker.value = false;
+}
+
+const assetPickerTitle = computed(() => {
+  if (videoWorkMode.value === 'animate') return $tt('action.video.startImage');
+  if (videoWorkMode.value === 'upscale') return $tt('video.videoSourceTitle');
+  return $tt('create.refImage');
+});
+
+const referenceMedia = computed(() => {
+  if (videoWorkMode.value === 'animate' && startImageSrc.value) {
+    return {
+      type: 'image' as const,
+      previewUrl: startImageSrc.value,
+      label: $tt('action.video.startImage'),
+    };
+  }
+  if (videoWorkMode.value === 'upscale' && sourceVideoSrc.value) {
+    return {
+      type: 'video' as const,
+      previewUrl: sourceVideoSrc.value,
+      label: $tt('video.videoSourceTitle'),
+    };
+  }
+  return null;
+});
+
+const tailReferenceMedia = computed(() => {
+  if (videoWorkMode.value === 'animate' && tailImageSrc.value) {
+    return {
+      type: 'image' as const,
+      previewUrl: tailImageSrc.value,
+      label: $tt('video.tailFrameTitle'),
+    };
+  }
+  return undefined;
+});
+
 const recentStartImages = ref<GalleryItem[]>([]);
 
-/** Plan §3.1: Create (text-to-video) and Animate (image-to-video) */
+/* ------------------------------------------------------------------ */
+/*  Work Mode                                                          */
+/* ------------------------------------------------------------------ */
+
 const videoWorkMode = ref('create');
 const videoWorkSegmentOptions = computed(() => {
   const acts = currentModelConfig.value?.actions || {};
@@ -704,46 +422,23 @@ const videoWorkSegmentOptions = computed(() => {
   }
   return opts;
 });
-const setVideoWorkMode = (mode: string) => {
-  if (mode === 'animate') {
-    videoWorkMode.value = 'animate';
-  } else if (mode === 'upscale') {
-    videoWorkMode.value = 'upscale';
-  } else {
-    videoWorkMode.value = 'create';
-  }
-};
 
-// Start image
-const startImageSrc = ref('');
-const startImagePath = ref('');
-const startImageViewerVisible = ref(false);
-const tailImageSrc = ref('');
-const tailImagePath = ref('');
-const tailImageViewerVisible = ref(false);
-
-const sourceVideoSrc = ref('');
-const sourceVideoPath = ref('');
-
-const onSourceVideoPick = (payload: { path?: string; previewUrl?: string }) => {
-  sourceVideoPath.value = payload.path || '';
-  sourceVideoSrc.value = payload.previewUrl || '';
-};
-
-const removeSourceVideo = () => {
-  sourceVideoSrc.value = '';
-  sourceVideoPath.value = '';
-};
-
-// Video preview
-const videoPreviewVisible = ref(false);
-const selectedVideo = ref<GalleryItem | null>(null);
+/* ------------------------------------------------------------------ */
+/*  Model Registry                                                     */
+/* ------------------------------------------------------------------ */
 
 const modelRegistry = ref<Record<string, any>>({});
 const modelsDetailedStatus = ref<Record<string, any>>({});
 
-const selectedLoras = ref<{ id: string; weight: number }[]>([]);
 const compatibleLoras = ref<{ id: string; name?: string; parameters?: any }[]>([]);
+
+function buildVideoAdapters() {
+  const adapters: { id: string; weight: number }[] = [];
+  if (params.lora) {
+    adapters.push({ id: String(params.lora), weight: Number(params.lora_scale) || 1.0 });
+  }
+  return adapters;
+}
 
 const loadCompatibleLoras = async () => {
   if (!params.model) {
@@ -759,41 +454,6 @@ const loadCompatibleLoras = async () => {
   }
 };
 
-const onAddLoraPick = (loraId: string | number | undefined) => {
-  if (loraId == null || loraId === '') return;
-  addLora(String(loraId));
-};
-
-const addLora = (loraId: string) => {
-  if (!loraId) return;
-  if (selectedLoras.value.find((l) => l.id === loraId)) return;
-  const lora = compatibleLoras.value.find((l) => l.id === loraId);
-  const defaultWeight =
-    lora && lora.parameters && lora.parameters.lora_scale
-      ? lora.parameters.lora_scale.default
-      : 1.0;
-  selectedLoras.value.push({ id: loraId, weight: defaultWeight });
-};
-
-const removeLora = (index: number) => {
-  selectedLoras.value.splice(index, 1);
-};
-
-const moveLoraUp = (index: number) => {
-  if (index <= 0) return;
-  const tmp = selectedLoras.value[index];
-  selectedLoras.value[index] = selectedLoras.value[index - 1];
-  selectedLoras.value[index - 1] = tmp;
-};
-
-const moveLoraDown = (index: number) => {
-  if (index >= selectedLoras.value.length - 1) return;
-  const tmp = selectedLoras.value[index];
-  selectedLoras.value[index] = selectedLoras.value[index + 1];
-  selectedLoras.value[index + 1] = tmp;
-};
-
-// All model versions
 const allVersions = computed(() => {
   const result: any[] = [];
   for (const [modelKey, config] of Object.entries(modelRegistry.value)) {
@@ -873,6 +533,15 @@ const videoModelPickerVersions = computed(() => {
   return rows;
 });
 
+const videoModelSelectOptions = computed(() => {
+  return videoModelPickerVersions.value.map((v) => ({
+    label: String(v.name || ''),
+    value: `${v.modelKey}|${v.versionKey}`,
+    disabled: !v.ready,
+    commercialUseAllowed: v.commercialUseAllowed as boolean,
+  }));
+});
+
 const currentModelConfig = computed(() => modelRegistry.value[params.model] || null);
 
 const currentModelDisplayName = computed(() => {
@@ -883,7 +552,6 @@ const currentModelDisplayName = computed(() => {
   return params.model || '';
 });
 
-// Whether current selected version is ready
 const selectedModelNotReady = computed(() => {
   if (!params.model || !params.version) return false;
   const detailed = modelsDetailedStatus.value[params.model];
@@ -909,14 +577,12 @@ const primaryCtaLabel = computed(() => {
   return $tt('action.video.create');
 });
 
-/** Plan §3.2: Output clip duration (seconds, one decimal) estimated by num_frames / fps */
 const outputClipSecRounded = computed(() => {
   const fps = Math.max(1, Number(params.fps) || 1);
   const nf = Math.max(1, Number(params.num_frames) || 1);
   return Math.round((nf / fps) * 10) / 10;
 });
 
-/** Current version's size field from registry (e.g., 19GB), for VRAM/disk hints */
 const currentVersionDiskSize = computed(() => {
   const cfg = currentModelConfig.value;
   if (!cfg || !params.version) return '';
@@ -924,7 +590,58 @@ const currentVersionDiskSize = computed(() => {
   return v && v.size ? String(v.size) : '';
 });
 
-// Load model registry and status
+/* ------------------------------------------------------------------ */
+/*  Size & Duration Options (registry-driven)                          */
+/* ------------------------------------------------------------------ */
+
+function alignNumFrames(frames: number, schema?: { min?: number; max?: number; step?: number }) {
+  let n = Math.round(frames);
+  const min = schema?.min ?? 1;
+  const max = schema?.max ?? 200;
+  const step = schema?.step ?? 1;
+  if (step > 1) {
+    n = Math.round((n - 1) / step) * step + 1;
+  }
+  return Math.min(max, Math.max(min, n));
+}
+
+const sizeOptions = computed(() => {
+  const p = currentModelConfig.value?.parameters;
+  if (!p?.width?.options || !p?.height?.options) {
+    return [
+      { label: '480p', value: '832x480' },
+      { label: '720p', value: '1280x720' },
+      { label: '1080p', value: '1920x1080' },
+    ];
+  }
+  const pairs = new Map<string, string>();
+  const addPair = (w: number, h: number) => {
+    const value = `${w}x${h}`;
+    pairs.set(value, `${w}×${h}`);
+  };
+  addPair(p.width.default, p.height.default);
+  for (const w of p.width.options) {
+    for (const h of p.height.options) {
+      addPair(w, h);
+    }
+  }
+  return [...pairs.entries()].map(([value, label]) => ({ label, value }));
+});
+
+const durationOptions = computed(() => {
+  const p = currentModelConfig.value?.parameters?.num_frames;
+  const fps = Math.max(1, Number(params.fps) || currentModelConfig.value?.parameters?.fps?.default || 16);
+  const secs = [1, 2, 3, 4, 5, 8, 10];
+  return secs.map((sec) => {
+    const frames = alignNumFrames(sec * fps, p);
+    return { label: `${sec}s`, value: frames };
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/*  Model Loading                                                      */
+/* ------------------------------------------------------------------ */
+
 const loadModelRegistry = async () => {
   try {
     const regPromise = registryStore.load(true);
@@ -968,12 +685,17 @@ const loadModelRegistry = async () => {
     }
 
     loadModelDefaults();
+    loadCompatibleLoras();
   } catch (e) {
     console.error('Failed to load model registry:', e);
   }
 };
 
-// Load model default config
+function syncComposerPickersFromParams() {
+  selectedSize.value = `${params.width}x${params.height}`;
+  selectedDuration.value = params.num_frames;
+}
+
 const loadModelDefaults = () => {
   const config = currentModelConfig.value;
   if (!config || !config.parameters) return;
@@ -988,6 +710,7 @@ const loadModelDefaults = () => {
     }
     if (p.fps) params.fps = p.fps.default;
     params.seed = '';
+    params.lora = '';
     return;
   }
   if (p.steps) params.steps = p.steps.default;
@@ -997,16 +720,17 @@ const loadModelDefaults = () => {
   if (p.height) params.height = p.height.default;
   if (p.num_frames) params.num_frames = p.num_frames.default;
   if (p.fps) params.fps = p.fps.default;
+  if (p.lora_scale?.default != null) params.lora_scale = p.lora_scale.default;
   params.seed = '';
+  params.lora = '';
+  syncComposerPickersFromParams();
 };
 
-// Reset to default config
 const resetToDefaults = () => {
   loadModelDefaults();
   toast.success($tt('studio.restoredDefaults'));
 };
 
-// Check if custom params exist
 const hasCustomParams = computed(() => {
   const config = currentModelConfig.value;
   if (!config || !config.parameters) return false;
@@ -1025,8 +749,14 @@ const hasCustomParams = computed(() => {
   if (p.num_frames && params.num_frames !== p.num_frames.default) return true;
   if (p.fps && params.fps !== p.fps.default) return true;
   if (params.seed) return true;
+  if (params.lora) return true;
+  if (p.lora_scale && params.lora_scale !== p.lora_scale.default) return true;
   return false;
 });
+
+/* ------------------------------------------------------------------ */
+/*  Presets                                                            */
+/* ------------------------------------------------------------------ */
 
 const presets = ref<Record<string, any>>({});
 const selectedPreset = ref('');
@@ -1127,39 +857,10 @@ const loadPreset = () => {
   }
 };
 
-// Add log
-const addLog = (message: string, level = 'info') => {
-  const now = new Date();
-  const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
-  logs.value.push({ time, message, level });
+/* ------------------------------------------------------------------ */
+/*  Generation                                                         */
+/* ------------------------------------------------------------------ */
 
-  if (logs.value.length > 500) {
-    logs.value = logs.value.slice(-500);
-  }
-
-  nextTick(() => {
-    const container = document.querySelector('.log-container');
-    if (container) {
-      container.scrollTop = container.scrollHeight;
-    }
-  });
-};
-
-function ingestServerLog(logData: { message?: string; level?: string }) {
-  const raw = logData.message || '';
-  const lvl = logData.level || 'info';
-  if (isDuplicateDenoiseStepLog(logs.value, raw)) {
-    return;
-  }
-  addLog(formatGenLogMessage(raw), lvl);
-}
-
-// Clear logs
-const clearLogs = () => {
-  logs.value = [];
-};
-
-// Start generation
 const startGeneration = async () => {
   if (videoWorkMode.value !== 'upscale' && !String(params.prompt || '').trim()) {
     toast.warning($tt('studio.enterPrompt'));
@@ -1212,8 +913,6 @@ const startGeneration = async () => {
     status: 'submitting',
   };
 
-  addLog($tt('studio.startingGen'), 'info');
-
   try {
     const modelStr = params.version ? `${params.model}:${params.version}` : params.model;
     let submitRes: any;
@@ -1261,8 +960,9 @@ const startGeneration = async () => {
       if (tail_asset_id) {
         animateBody.tail_asset_id = tail_asset_id;
       }
-      if (selectedLoras.value.length > 0) {
-        animateBody.adapters = selectedLoras.value.map((l) => ({ id: l.id, weight: l.weight }));
+      const adapters = buildVideoAdapters();
+      if (adapters.length > 0) {
+        animateBody.adapters = adapters;
       }
       submitRes = await api.gen.createVideoEdit(animateBody);
     } else if (videoWorkMode.value === 'upscale') {
@@ -1313,8 +1013,9 @@ const startGeneration = async () => {
         seed: params.seed ? parseInt(params.seed, 10) : null,
         priority: 'normal',
       };
-      if (selectedLoras.value.length > 0) {
-        body.adapters = selectedLoras.value.map((l) => ({ id: l.id, weight: l.weight }));
+      const adapters = buildVideoAdapters();
+      if (adapters.length > 0) {
+        body.adapters = adapters;
       }
       submitRes = await api.gen.createVideoGeneration(body);
     }
@@ -1322,8 +1023,6 @@ const startGeneration = async () => {
     if (!tid) {
       throw new Error('missing task id in submit response');
     }
-    genLogLastStep.value = 0;
-    genLogLastPhase.value = null;
     currentTask.value = {
       id: tid,
       progress: 0,
@@ -1335,7 +1034,10 @@ const startGeneration = async () => {
     };
     tasksStore.closeTaskLogStream(tid);
     api.gen.streamMediaTask(tid, {
-      onLog: (logData: any) => ingestServerLog(logData),
+      onLog: (logData: any) => {
+        // Logs are ingested but not displayed in UI (unified mode)
+        console.log(formatGenLogMessage(logData.message || ''));
+      },
       onStatus: (statusData: any) => {
         if (currentTask.value) {
           currentTask.value.progress = statusData.progress ?? 0;
@@ -1345,35 +1047,24 @@ const startGeneration = async () => {
       onDone: async (doneData: any) => {
         generating.value = false;
         if (doneData.status === 'completed') {
-          addLog($tt('studio.genComplete'), 'success');
           const updated = await api.gen.getMediaTask(tid) as any;
           currentTask.value = updated;
           const pid = updated.result && updated.result.primary_asset_id;
           if (pid) {
             previewVideo.value = api.gallery.getImageUrl(`asset:${pid}`);
             previewVideoKey.value += 1;
-            previewVideoPlaying.value = false;
             previewVideoDurationSec.value = 0;
-            nextTick(() => previewVideoPlayerRef.value?.load?.());
-            addLog($tt('studio.outputFile', { name: pid }), 'info');
-          } else {
-            addLog(
-              $tt('studio.noOutputAsset', {
-                msg:
-                  (updated.error || updated.error_message || '').trim() ||
-                  $tt('studio.noOutputAssetHint'),
-              }),
-              'warning'
-            );
+            loadGallery(true);
           }
-          loadRecentVideos();
         } else if (doneData.status === 'failed') {
           const updated = await api.gen.getMediaTask(tid) as any;
           currentTask.value = updated;
-          addLog($tt('studio.genFailed', { msg: updated.error || updated.error_message || '' }), 'error');
+          toast.error($tt('studio.genFailed', { msg: updated.error || updated.error_message || '' }));
         }
       },
-      onError: () => addLog($tt('studio.connectionLost'), 'warning'),
+      onError: () => {
+        toast.warning($tt('studio.connectionLost'));
+      },
       onProgress: (progressData: any) => {
         if (!currentTask.value) return;
         if (typeof progressData.progress === 'number') {
@@ -1392,43 +1083,18 @@ const startGeneration = async () => {
         if (progressData.message != null) {
           currentTask.value.progressMessage = progressData.message;
         }
-        if (progressData.message === 'post') {
-          if (genLogLastPhase.value !== 'post') {
-            genLogLastPhase.value = 'post';
-            addLog($tt('studio.queuePostProcessHint'), 'info');
-          }
-        } else if (progressData.message === 'denoise') {
-          genLogLastPhase.value = 'denoise';
-        }
-        if (nextTotal > 0 && nextStep > 0) {
-          genLogLastStep.value = nextStep;
-        }
       },
     });
   } catch (e: any) {
     generating.value = false;
     currentTask.value = null;
     toast.error($tt('studio.error', { msg: e.message || String(e) }));
-    addLog($tt('studio.error', { msg: e.message }), 'error');
   }
 };
 
-// Load recent videos
-const loadRecentVideos = async () => {
-  try {
-    const videos = await api.gallery.listImages(4, 0);
-    // Filter video files
-    recentVideos.value = videos.filter((v) => {
-      if (v.metadata && v.metadata.asset_kind === 'video') {
-        return true;
-      }
-      const ext = v.name?.split('.').pop()?.toLowerCase();
-      return ['mp4', 'mov', 'avi', 'mkv'].includes(ext || '');
-    });
-  } catch (e) {
-    console.error('Failed to load recent videos:', e);
-  }
-};
+/* ------------------------------------------------------------------ */
+/*  Recent / Reference Media                                           */
+/* ------------------------------------------------------------------ */
 
 const loadRecentStartImages = async () => {
   try {
@@ -1447,124 +1113,19 @@ const loadRecentStartImages = async () => {
   }
 };
 
-// Get video URL
 const getVideoUrl = (video: GalleryItem) => {
   return api.gallery.getImageUrl(video.path);
 };
 
-// Show video preview
-const showVideoPreview = (video: GalleryItem) => {
-  selectedVideo.value = video;
+// Video preview
+const videoPreviewVisible = ref(false);
+const selectedVideoIndex = ref(0);
+
+function onGallerySelect(item: GalleryItem) {
+  const idx = galleryItems.value.findIndex((it) => it.path === item.path);
+  selectedVideoIndex.value = idx >= 0 ? idx : 0;
   videoPreviewVisible.value = true;
-};
-
-// Start image related
-const onStartAssetPick = async (payload: { path?: string; previewUrl?: string }) => {
-  startImagePath.value = payload.path || '';
-  startImageSrc.value = payload.previewUrl || '';
-  addLog($tt('studio.startImageAdded', { name: (payload.path || '').replace(/^asset:/, '') }), 'info');
-  await loadRecentStartImages();
-};
-
-const removeStartImage = () => {
-  startImageSrc.value = '';
-  startImagePath.value = '';
-};
-
-const showStartImagePreview = () => {
-  startImageViewerVisible.value = true;
-};
-
-const onTailAssetPick = async (payload: { path?: string; previewUrl?: string }) => {
-  tailImagePath.value = payload.path || '';
-  tailImageSrc.value = payload.previewUrl || '';
-  addLog($tt('studio.startImageAdded', { name: (payload.path || '').replace(/^asset:/, '') }), 'info');
-  await loadRecentStartImages();
-};
-
-const removeTailImage = () => {
-  tailImageSrc.value = '';
-  tailImagePath.value = '';
-};
-
-const showTailImagePreview = () => {
-  tailImageViewerVisible.value = true;
-};
-
-// Navigate to download page
-const goToDownload = () => router.push({ name: 'models' });
-
-const getStatusType = (status: string) =>
-  tagType(status);
-const getStatusText = (status: string) =>
-  statusText(status);
-
-const onModelVersionChange = (value: string) => {
-  const parsed = parseModelVersionValue(value);
-  if (!parsed) return;
-  params.model = parsed.modelKey;
-  params.version = parsed.versionKey;
-  selectedLoras.value = []; // Clear selected LoRAs when switching models
-  loadModelDefaults();
-  loadCompatibleLoras();
-  addLog(
-    $tt('studio.switchModel', {
-      name: currentModelConfig.value?.name || params.model,
-      version: params.version,
-    }),
-    'info'
-  );
-};
-
-const videoAutoSaveDraft = ref(false);
-let _vidPromptSaveT: ReturnType<typeof setTimeout> | null = null;
-watch(
-  () => params.prompt,
-  (v) => {
-    if (!videoAutoSaveDraft.value) return;
-    if (!DQ_STORAGE.VIDEO_CREATE_PROMPT_DRAFT) return;
-    if (_vidPromptSaveT) clearTimeout(_vidPromptSaveT);
-    _vidPromptSaveT = setTimeout(() => {
-      try {
-        localStorage.setItem(DQ_STORAGE.VIDEO_CREATE_PROMPT_DRAFT, String(v || ''));
-      } catch (_) {
-        /* ignore */
-      }
-    }, 500);
-  }
-);
-
-const applyVideoAppSettingsDefaults = async () => {
-  try {
-    const st = await api.settings.getSettings();
-    videoAutoSaveDraft.value = !!(st as any).auto_save_prompts;
-    if ((st as any).auto_save_prompts && DQ_STORAGE.VIDEO_CREATE_PROMPT_DRAFT) {
-      const draft = localStorage.getItem(DQ_STORAGE.VIDEO_CREATE_PROMPT_DRAFT);
-      if (draft) params.prompt = draft;
-    }
-    const dm = String((st as { default_model_video?: string; default_model?: string }).default_model_video || (st as { default_model?: string }).default_model || '').trim();
-    const mk = resolveDefaultModelRegistryKey(dm, modelRegistry.value, 'video');
-    if (!mk || !modelRegistry.value[mk]) return;
-    const detailed = modelsDetailedStatus.value[mk] || {};
-    const vers = detailed.versions || {};
-    const defaultVK = pickDefaultVersionKey(mk, modelRegistry.value, vers);
-    if (!defaultVK) return;
-    params.model = mk;
-    params.version = defaultVK;
-    selectedModelVersion.value = mk + '|' + defaultVK;
-    loadModelDefaults();
-  } catch (_) {
-    /* ignore */
-  }
-};
-
-onMounted(async () => {
-  await loadModelRegistry();
-  await applyVideoAppSettingsDefaults();
-  loadPresets();
-  loadRecentVideos();
-  loadRecentStartImages();
-});
+}
 
 watch(videoWorkMode, () => {
   const cfg = currentModelConfig.value;
@@ -1605,5 +1166,42 @@ watch(modelFilterCommercialOnly, () => {
   ) {
     loadModelDefaults();
   }
+});
+
+// Watch size and duration changes to update params
+watch(selectedSize, (val) => {
+  const [w, h] = val.split('x').map(Number);
+  if (w && h) {
+    params.width = w;
+    params.height = h;
+  }
+});
+
+watch(selectedDuration, (val) => {
+  params.num_frames = val;
+});
+
+watch(selectedModelVersion, (val) => {
+  onModelVersionChange(val);
+});
+
+watch(sizeOptions, (opts) => {
+  if (!opts.length) return;
+  if (!opts.some((o) => o.value === selectedSize.value)) {
+    selectedSize.value = opts[0].value;
+    const [w, h] = opts[0].value.split('x').map(Number);
+    if (w && h) {
+      params.width = w;
+      params.height = h;
+    }
+  }
+});
+
+onMounted(async () => {
+  await loadModelRegistry();
+  loadPresets();
+  loadRecentStartImages();
+  loadGallery(true);
+  tasksStore.ensureQueuePoller();
 });
 </script>

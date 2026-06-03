@@ -7,7 +7,7 @@ defineProps<{
 
 <template>
   <DqPrefPane class="studio-create-pref-pane studio-extend-pref">
-    <DqPrefRow :label="$t('create.extendDirections')" stacked>
+    <DqPrefRow :label="$t('create.extendDirections')">
       <DqCheckboxGroup v-model="params.extend_directions">
         <DqCheckbox label="top">{{ $t('create.extendTop') }}</DqCheckbox>
         <DqCheckbox label="bottom">{{ $t('create.extendBottom') }}</DqCheckbox>
@@ -15,13 +15,14 @@ defineProps<{
         <DqCheckbox label="right">{{ $t('create.extendRight') }}</DqCheckbox>
       </DqCheckboxGroup>
     </DqPrefRow>
-    <DqPrefRow :label="$t('create.extendPixels')" stacked>
+    <DqPrefRow :label="$t('create.extendPixels')">
       <DqInputNumber
         v-model="params.extend_pixels"
         :min="64"
         :max="2048"
         :step="64"
-        class="studio-w-full"
+        size="small"
+        style="width: 120px"
       />
     </DqPrefRow>
   </DqPrefPane>

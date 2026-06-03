@@ -99,6 +99,22 @@ class DanQingImageEngine(IImageEngine):
         if result is None:
             return EngineResult(primary_asset_id="", metadata={"status": "cancelled"})
 
+        if isinstance(result, list):
+            asset_ids: list[str] = []
+            output_paths: list[str] = []
+            for output_path, metadata in result:
+                aid = ctx.asset_store.create_from_file(
+                    Path(output_path), kind="image", mime_type="image/png",
+                    source_task_id=ctx.task_id, metadata=metadata, source_action="create",
+                )
+                asset_ids.append(aid)
+                output_paths.append(output_path)
+            return EngineResult(
+                primary_asset_id=asset_ids[0] if asset_ids else "",
+                asset_ids=asset_ids,
+                output_paths=output_paths,
+            )
+
         output_path, metadata = result
         aid = ctx.asset_store.create_from_file(
             Path(output_path), kind="image", mime_type="image/png",

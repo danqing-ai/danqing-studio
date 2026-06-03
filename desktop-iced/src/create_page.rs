@@ -1,8 +1,9 @@
+#![allow(dead_code)]
 use dq_components::{
     chevron_icon, dq_control_button, dq_header_button, dq_mode_tabs,
     dq_pick_list, dq_prompt_editor, dq_prompt_preset_row,
-    dq_primary_action, dq_section, dq_slider_with_input, dq_text_input, dq_text_input_multiline,
-    icon_button, image_placeholder_icon, log_panel, default_logs, LogLine, ModeTabOption, SectionIcon,
+    dq_primary_action, dq_slider_with_input, dq_text_input, dq_text_input_multiline, image_placeholder_icon, log_panel, default_logs, LogLine, ModeTabOption,
+    section_card, surface_card,
     phosphor_icon_button, PhosphorIcon,
     canvas_editor::{canvas_editor, tool_selector, brush_size_selector, zoom_controls,
         CanvasEditorState, CanvasEditorMessage, CanvasTool},
@@ -63,6 +64,8 @@ pub enum Message {
     WidthSelected(WidthOption),
     HeightSelected(HeightOption),
     LoraSelected(LoraOption),
+    LoraWeightChanged(f32),
+    LoraWeightInputChanged(String),
     BatchSizeSelected(BatchSizeOption),
     BatchCountSelected(BatchCountOption),
     ReferenceStrengthSelected(ReferenceStrengthOption),
@@ -76,6 +79,7 @@ pub enum Message {
     LoadPreset,
     ClearLogs,
     Generate,
+    CancelGeneration,
     GenerateStep,
     GenerateProgress { progress: u8, step: u32, total: u32, phase: GeneratePhase },
     GenerateComplete { result_urls: Vec<String> },
@@ -101,6 +105,9 @@ pub enum Message {
     ControlNetStrengthChanged(f32),
     // Enhance
     StartEnhance,
+    // Preview dialog
+    PreviewImage,
+    ClosePreview,
     // Memory poll
     MemoryPoll,
     // Before/After slider
@@ -281,9 +288,10 @@ impl ModelOption {
 
     pub fn actions(&self) -> Vec<String> {
         match self {
-            ModelOption::Flux2Klein => vec!["create".into()],
-            ModelOption::Flux1Dev => vec!["create".into(), "rewrite".into(), "retouch".into(), "extend".into(), "upscale".into()],
-            ModelOption::ZImageTurbo => vec!["create".into(), "rewrite".into(), "retouch".into(), "extend".into()],
+            // API-level action names (matching backend api_action_frozenset)
+            ModelOption::Flux2Klein => vec!["generate".into()],
+            ModelOption::Flux1Dev => vec!["generate".into(), "edit".into(), "upscale".into()],
+            ModelOption::ZImageTurbo => vec!["generate".into(), "edit".into()],
             ModelOption::Dynamic { actions, .. } => actions.clone(),
         }
     }
@@ -355,14 +363,16 @@ impl ModelOption {
         }
     }
 
-    /// Returns the action required for the current image mode
+    /// Returns the API-level action required for the current image mode.
+    /// Matches backend api_action_frozenset mapping:
+    ///   create -> generate, rewrite/retouch/extend -> edit, upscale -> upscale
     pub fn mode_required_action(mode: ImageMode) -> &'static str {
         match mode {
-            ImageMode::TextToImage => "create",
-            ImageMode::ReferenceImage => "rewrite",
-            ImageMode::EditByDescription => "rewrite",
-            ImageMode::Inpainting => "retouch",
-            ImageMode::Outpainting => "extend",
+            ImageMode::TextToImage => "generate",
+            ImageMode::ReferenceImage => "edit",
+            ImageMode::EditByDescription => "edit",
+            ImageMode::Inpainting => "edit",
+            ImageMode::Outpainting => "edit",
             ImageMode::Upscale => "upscale",
         }
     }
@@ -866,6 +876,11 @@ pub struct CreatePage {
     pub mask_draw_mode: bool,
     // 画布编辑器
     pub canvas_editor_state: CanvasEditorState,
+    // Preview dialog
+    pub preview_open: bool,
+    // LoRA weight
+    pub lora_weight: f32,
+    pub lora_weight_input: String,
     // ControlNet
     pub controlnet: ControlNetOption,
     pub controlnet_strength: f32,
@@ -907,8 +922,8 @@ impl CreatePage {
     fn build_adapters(&self) -> Vec<serde_json::Value> {
         match self.lora {
             LoraOption::None => vec![],
-            LoraOption::Portrait => vec![serde_json::json!({"id": "portrait", "weight": 0.8 })],
-            LoraOption::Anime => vec![serde_json::json!({"id": "anime", "weight": 0.8 })],
+            LoraOption::Portrait => vec![serde_json::json!({"id": "portrait", "weight": self.lora_weight })],
+            LoraOption::Anime => vec![serde_json::json!({"id": "anime", "weight": self.lora_weight })],
         }
     }
 
@@ -1199,6 +1214,19 @@ impl CreatePage {
                 self.params_dirty = true;
                 iced::Task::none()
             }
+            Message::LoraWeightChanged(v) => {
+                self.lora_weight = v.clamp(0.0, 2.0);
+                self.lora_weight_input = format!("{:.2}", self.lora_weight);
+                self.params_dirty = true;
+                iced::Task::none()
+            }
+            Message::LoraWeightInputChanged(s) => {
+                let v: Option<f32> = s.parse().ok();
+                self.lora_weight_input = s;
+                if let Some(v) = v { self.lora_weight = v.clamp(0.0, 2.0); }
+                self.params_dirty = true;
+                iced::Task::none()
+            }
             Message::BatchSizeSelected(b) => {
                 self.batch_size = b;
                 self.params_dirty = true;
@@ -1296,6 +1324,11 @@ impl CreatePage {
                     async { tokio::time::sleep(Duration::from_millis(100)).await },
                     |_| Message::GenerateStep,
                 )
+            }
+            Message::CancelGeneration => {
+                self.generate_state = GenerateState::Idle;
+                self.push_log("已取消生成".into());
+                iced::Task::none()
             }
             Message::GenerateStep => {
                 // This is now a placeholder — actual API call happens in App
@@ -1504,6 +1537,14 @@ impl CreatePage {
                 self.push_log("已切换至 flux1-dev 进行精修".into());
                 iced::Task::none()
             }
+            Message::ClosePreview => {
+                self.preview_open = false;
+                iced::Task::none()
+            }
+            Message::PreviewImage => {
+                self.preview_open = true;
+                iced::Task::none()
+            }
             // Memory poll
             Message::MemoryPoll => {
                 use sysinfo::{System, RefreshKind};
@@ -1631,6 +1672,7 @@ impl CreatePage {
 
     /// Full workspace: mode tabs + two-column layout (params | right panel).
     /// Returns (tabs, left_panel) — right panel is assembled by app.rs.
+    /// left_panel includes the preview dialog overlay when open.
     pub fn workspace_view(&self) -> (Element<'_, Message>, Element<'_, Message>) {
         let tabs = self.mode_tabs();
 
@@ -1643,7 +1685,49 @@ impl CreatePage {
             ImageMode::Upscale => self.upscale_params(),
         };
 
+        // Wrap left_panel with preview dialog overlay if open
+        let left_panel = if self.preview_open {
+            let dialog = self.preview_dialog();
+            container(column![left_panel, dialog].spacing(0).width(Length::Fill).height(Length::Fill))
+                .width(Length::Fill).height(Length::Fill).into()
+        } else {
+            left_panel
+        };
+
         (tabs, left_panel)
+    }
+
+    fn preview_dialog(&self) -> Element<'_, Message> {
+        let path = self.generated_image_path.as_ref()
+            .or_else(|| match &self.source_image { SourceImageState::Uploaded(p) => Some(p), _ => None });
+
+        let content: Element<Message> = if let Some(path_str) = path {
+            let p = std::path::Path::new(path_str);
+            let img_el: Element<Message> = container(iced::widget::image(iced::widget::image::Handle::from_path(p)))
+                .width(Length::Fill).height(Length::Fill).align_x(Alignment::Center).align_y(Alignment::Center).into();
+            column![
+                row![
+                    text("预览").size(typography::TITLE).color(color::TEXT_PRIMARY),
+                    Space::new().width(Length::Fill),
+                    iced::widget::button(dq_components::phosphor_icon(PhosphorIcon::X, 14.0, color::TEXT_SECONDARY))
+                        .on_press(Message::ClosePreview)
+                        .style(|_theme: &iced::Theme, _status| iced::widget::button::Style { background: None, ..Default::default() }),
+                ]
+                .spacing(spacing::SM).align_y(Alignment::Center).width(Length::Fill),
+                img_el,
+            ]
+            .spacing(spacing::MD).width(Length::Fill).height(Length::Fill).into()
+        } else {
+            text("暂无预览").size(typography::BODY).color(color::TEXT_SECONDARY).into()
+        };
+
+        container(content)
+            .width(Length::Fill).height(Length::Fill).padding(spacing::LG)
+            .style(|_theme: &iced::Theme| container::Style {
+                background: Some(iced::Background::Color(color::BG_OVERLAY)),
+                ..Default::default()
+            })
+            .into()
     }
 
     fn mode_tabs(&self) -> Element<'_, Message> {
@@ -1925,55 +2009,46 @@ impl CreatePage {
         params.into()
     }
 
+    fn model_not_ready_alert(&self) -> Option<Element<'_, Message>> {
+        if !self.model.installed() {
+            Some(dq_components::alert(
+                "该模型尚未下载，请先在模型库中安装",
+                dq_components::AlertType::Warning,
+                None,
+            ))
+        } else {
+            None
+        }
+    }
+
     fn model_section(&self) -> Element<'_, Message> {
-        // Determine which models to display
-        // Priority: 1) filtered_models (backend + filters applied)
-        //          2) available_models filtered by action only (if commercial filter emptied the list)
-        //          3) STATIC_ALL (fallback when no backend)
         let required_action = ModelOption::mode_required_action(self.mode);
         let display_models: &[ModelOption] = if !self.filtered_models.is_empty() {
             &self.filtered_models
         } else if !self.available_models.is_empty() {
-            // If filtered is empty but we have backend models, show all that support the action
-            // This prevents empty list when filters are too strict
             &self.available_models
         } else {
             ModelOption::STATIC_ALL
         };
 
-        // Find currently selected model in the display list
         let selected = if display_models.iter().any(|m| m == &self.model) {
             Some(&self.model)
         } else {
-            // If current model not in list, pick first that supports current action
             display_models.iter().find(|m| m.supports_action(required_action))
                 .or_else(|| display_models.first())
         };
 
         let body = row![
-            container(dq_pick_list(
-                display_models,
-                selected,
-                Message::ModelSelected,
-                "选择模型与版本",
-            ))
-            .width(Length::Fill),
-            container(
-                checkbox(self.commercial_only)
-                    .label("仅可商用")
-                    .text_size(typography::LABEL)
-                    .spacing(6.0)
-                    .on_toggle(Message::CommercialToggled),
-            )
-            .height(Length::Fixed(spacing::CONTROL_HEIGHT))
-            .align_y(Alignment::Center),
-        ]
-        .spacing(spacing::SM)
-        .align_y(Alignment::Center)
-        .width(Length::Fill)
-        .into();
+            container(dq_pick_list(display_models, selected, Message::ModelSelected, "选择模型与版本")).width(Length::Fill),
+            container(checkbox(self.commercial_only).label("仅可商用").text_size(typography::LABEL).spacing(6.0).on_toggle(Message::CommercialToggled))
+                .height(Length::Fixed(spacing::CONTROL_HEIGHT)).align_y(Alignment::Center),
+        ].spacing(spacing::SM).align_y(Alignment::Center).width(Length::Fill).into();
 
-        dq_section(SectionIcon::Cube, "模型", None, Some(body))
+        let mut col = column![section_card("模型", body)].spacing(spacing::SM).width(Length::Fill);
+        if !self.model.installed() {
+            col = col.push(dq_components::alert("该模型尚未下载，请先在模型库中安装", dq_components::AlertType::Warning, None));
+        }
+        col.into()
     }
 
     fn title_section(&self) -> Element<'_, Message> {
@@ -1984,7 +2059,7 @@ impl CreatePage {
             Message::TitleChanged,
         );
 
-        dq_section(SectionIcon::Document, "标题", None, Some(body))
+        section_card("标题", body)
     }
 
     fn prompt_section(&self) -> Element<'_, Message> {
@@ -2037,7 +2112,7 @@ impl CreatePage {
             );
         }
 
-        dq_section(SectionIcon::Pencil, "提示词", negative_trailing, Some(body.into()))
+        surface_card(Some(text("提示词").size(typography::TITLE).color(color::TEXT_PRIMARY).into()), negative_trailing, Some(body.into()))
     }
 
     fn advanced_section(&self) -> Element<'_, Message> {
@@ -2204,6 +2279,20 @@ impl CreatePage {
                 .spacing(spacing::SM)
                 .align_y(Alignment::Center)
                 .width(Length::Fill),
+                if !matches!(self.lora, LoraOption::None) {
+                    let r: Element<Message> = row![
+                        container(text("权重").size(typography::LABEL))
+                            .width(Length::Fixed(80.0))
+                            .align_y(Alignment::Center),
+                        dq_components::dq_slider_with_input(
+                            0.0..=2.0, 0.05, self.lora_weight, &self.lora_weight_input,
+                            |v| Message::LoraWeightChanged(v),
+                            |s| Message::LoraWeightInputChanged(s),
+                        ),
+                    ]
+                    .spacing(spacing::SM).align_y(Alignment::Center).width(Length::Fill).into();
+                    r
+                } else { Space::new().height(0).into() },
                 container(dq_header_button("恢复默认配置", Some(Message::RestoreDefaults)))
                     .width(Length::Fill)
                     .align_x(Alignment::Start),
@@ -2217,7 +2306,7 @@ impl CreatePage {
             None
         };
 
-        dq_section(SectionIcon::Gear, "高级参数", trailing, body)
+        surface_card(Some(text("高级参数").size(typography::TITLE).color(color::TEXT_PRIMARY).into()), trailing, body)
     }
 
     pub fn generate_and_log_section(&self) -> Element<'_, Message> {
@@ -2226,18 +2315,23 @@ impl CreatePage {
         let mut section = column![].spacing(spacing::SM).width(Length::Fill);
 
         // Primary CTA
-        let label = match self.generate_state {
-            GenerateState::Submitting => "提交中…",
-            GenerateState::Generating { .. } => "生成中…",
-            GenerateState::Done => "再次生成",
-            GenerateState::Idle => "生成",
+        let (label, show_cancel) = match self.generate_state {
+            GenerateState::Submitting => ("提交中…", false),
+            GenerateState::Generating { .. } => ("生成中…", true),
+            GenerateState::Done => ("再次生成", false),
+            GenerateState::Idle => ("生成", false),
         };
         let on_press = if matches!(self.generate_state, GenerateState::Generating { .. } | GenerateState::Submitting) {
             None
         } else {
             Some(Message::Generate)
         };
-        section = section.push(dq_primary_action(label, on_press));
+        section = section.push(row![
+            dq_primary_action(label, on_press),
+            if show_cancel {
+                dq_components::dq_button("取消", dq_components::ButtonVariant::Ghost, dq_components::ButtonSize::Md, dq_components::ButtonWidth::Hug, Some(Message::CancelGeneration))
+            } else { Space::new().width(0).into() },
+        ].spacing(spacing::SM).width(Length::Fill));
 
         // Progress / status
         if let Some(err) = &self.validation_error {
@@ -2433,7 +2527,7 @@ impl CreatePage {
         .width(Length::Fill)
         .into();
 
-        dq_section(SectionIcon::Sliders, "ControlNet", None, Some(body))
+        section_card("ControlNet", body)
     }
 
     fn control_image_preview(&self) -> Element<'_, Message> {
@@ -2611,6 +2705,9 @@ impl Default for CreatePage {
             mask_editor_open: false,
             mask_draw_mode: false,
             canvas_editor_state: CanvasEditorState::new(),
+            preview_open: false,
+            lora_weight: 0.8,
+            lora_weight_input: "0.8".into(),
             // ControlNet
             controlnet: ControlNetOption::None,
             controlnet_strength: 0.8,

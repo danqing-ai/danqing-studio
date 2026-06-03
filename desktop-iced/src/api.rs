@@ -1,5 +1,10 @@
 //! API interface definitions for Danqing Studio — aligned with backend contracts.
 //! See backend/core/contracts.py for the source of truth.
+//!
+//! These types are kept as reference documentation matching the backend contracts.
+//! Runtime API calls use dynamic serde_json::Value instead.
+
+#![allow(dead_code)]
 
 use serde::{Deserialize, Serialize};
 

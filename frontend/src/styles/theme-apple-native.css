@@ -27,27 +27,8 @@ html.dark .main-container {
 }
 
 html.dark .app-main {
- background-color: var(--dq-bg-page) !important;
- background-image: none !important;
- padding: 12px 16px 20px;
- width: 100%;
- max-width: none;
+ padding: 16px 20px 20px;
  box-sizing: border-box;
-}
-
-@media (min-width: 1440px) {
- html.dark .app-main {
- padding-left: 24px;
- padding-right: 24px;
- }
-}
-
-html.dark .app-header {
- padding-top: env(safe-area-inset-top, 0px);
- background: var(--dq-glass-bar-bg-strong) !important;
- border-bottom: 0.5px solid var(--dq-separator);
- -webkit-backdrop-filter: var(--dq-glass-blur);
- backdrop-filter: var(--dq-glass-blur);
 }
 
 html.dark .dq-top-nav-queue-btn.dq-btn {
@@ -65,8 +46,6 @@ html.dark .dq-top-nav-brand-icon {
 }
 
 /* —— 业务页铺满 —— */
-html.dark .create-page,
-html.dark .gallery-page,
 html.dark .settings-page,
 html.dark .models-page {
  width: 100%;
@@ -75,17 +54,8 @@ html.dark .models-page {
  background-image: none !important;
 }
 
-/* —— 分组卡片（Settings / 创作） —— */
-html.dark .studio-surface-card.dq-surface-card,
-html.dark .settings-overview-card.dq-surface-card,
-html.dark .settings-side-card.dq-surface-card,
-html.dark .preview-panel .studio-surface-card.dq-surface-card {
- background: var(--dq-bg-base) !important;
- border: 0.5px solid var(--dq-separator) !important;
- border-radius: var(--dq-radius-group) !important;
- box-shadow: none !important;
-}
 
+/* —— 分组卡片（Settings / 创作） —— */
 html.dark .studio-surface-card.dq-surface-card:hover,
 html.dark .settings-overview-card.dq-surface-card:hover,
 html.dark .settings-side-card.dq-surface-card:hover {
@@ -110,29 +80,9 @@ html.dark .settings-tab-panel.studio-surface-card > .dq-surface-card__header {
  border-bottom: none;
 }
 
-html.dark .dq-input-number__btn {
- background: var(--dq-fill-control-hover) !important;
- color: var(--dq-label-secondary) !important;
-}
-
-html.dark .dq-input-number__btn:not(:disabled):hover {
- background: var(--dq-fill-control-strong) !important;
- color: var(--dq-color-white) !important;
-}
-
 html.dark .param-display-value {
  color: var(--dq-label-secondary) !important;
  font-weight: 500;
-}
-
-html.dark .dq-segmented,
-html.dark .dq-work-segmented.dq-segmented {
- padding: 2px;
- border-radius: 10px;
-}
-
-html.dark .dq-work-segmented.dq-segmented .dq-segmented__item:not(.is-active) {
- color: var(--dq-label-secondary);
 }
 
 html.dark .dq-work-segmented.dq-segmented .dq-segmented__item.is-active {
@@ -140,78 +90,7 @@ html.dark .dq-work-segmented.dq-segmented .dq-segmented__item.is-active {
  font-weight: 600;
 }
 
-/* —— 按钮层级 —— */
-html.dark .dq-btn {
- border-radius: 10px;
- font-weight: 500;
- transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
-}
 
-html.dark .studio-primary-cta.dq-btn--primary,
-html.dark .studio-primary-cta--simple.dq-btn--primary {
- box-shadow: none !important;
- border-radius: 12px;
-}
-
-html.dark .recent-actions .action-btn .dq-icon {
- color: var(--dq-label-secondary);
-}
-
-/* —— 标签 / 提示 —— */
-html.dark .dq-tag {
- border: none;
- font-weight: 500;
-}
-
-html.dark .dq-tag.dq-tag--info.dq-tag--plain,
-html.dark .dq-tag.dq-tag--info {
- background: var(--dq-tag-neutral-bg);
- color: var(--dq-label-secondary);
-}
-
-html.dark .dq-tag.dq-tag--success {
- background: var(--dq-success-surface-strong);
- color: #5de070;
-}
-
-html.dark .dq-tag.dq-tag--warning {
- background: var(--dq-warning-surface);
- color: #ffb340;
-}
-
-html.dark .dq-tag.dq-tag--danger {
- background: var(--dq-danger-surface);
- color: #ff6b63;
-}
-
-html.dark .dq-tag.dq-tag--primary {
- background: var(--dq-tag-neutral-bg);
- color: var(--dq-label-secondary);
-}
-
-html.dark .dq-alert {
- border-radius: var(--dq-radius-group);
-}
-
-html.dark .dq-alert--info.is-light {
- background: var(--dq-fill-muted-surface-hover) !important;
- border: 0.5px solid var(--dq-separator) !important;
-}
-
-html.dark .dq-alert--success.is-light {
- background: var(--dq-success-surface) !important;
- border: 0.5px solid var(--dq-success-surface-border) !important;
-}
-
-html.dark .dq-alert--warning.is-light {
- background: var(--dq-warning-surface) !important;
- border: 0.5px solid var(--dq-warning-surface-border) !important;
-}
-
-html.dark .dq-alert--error.is-light {
- background: var(--dq-danger-surface) !important;
- border: 0.5px solid var(--dq-danger-surface-border) !important;
-}
 
 /* —— 设置页：分组列表 —— */
 html.dark .settings-overview__avatar {
@@ -291,65 +170,25 @@ html.dark .settings-preset-tag {
  cursor: pointer;
 }
 
-html.dark .gallery-audio-tile,
-html.dark .gallery-audio-thumb-sm,
-html.dark .dq-audio-recent-cover {
- background: var(--dq-fill-muted-surface-hover);
- border: 0.5px solid var(--dq-separator);
- color: var(--dq-label-tertiary);
-}
-
 /* —— 模型页 —— */
 html.dark .models-page {
- height: calc(100vh - 76px);
+  height: 100%;
 }
 
 /* —— 折叠 / 空状态 / 进度 —— */
-html.dark .create-page .studio-collapse-plain .dq-collapse-item__header {
- font-size: 15px;
- font-weight: 600;
-}
 
-html.dark .dq-progress-bar__outer {
- background-color: var(--dq-fill-control-hover);
-}
-
-html.dark .dq-progress-bar__inner {
- background-color: var(--dq-accent);
-}
-
-/* —— 交互：禁止卡片上浮、轻按反馈 —— */
-html.dark .dq-surface-card:hover,
-html.dark .gallery-card:hover,
-html.dark .model-card:hover {
+/* —— 交互：禁止卡片上浮 —— */
+html.dark .dq-surface-card:hover {
  transform: none !important;
 }
 
-/* 按压态：Apple 式微缩反馈 */
-html.dark .dq-btn:active {
- transform: scale(0.97);
- transition: transform 0.1s ease;
-}
-
-html.dark .gallery-card:active,
-html.dark .model-card:active {
- filter: brightness(0.92);
-}
-
-html.dark .dq-segmented .dq-segmented__item:active {
- transform: scale(0.96);
-}
-
-/* 全局焦点环 */
+html.dark :focus,
 html.dark :focus-visible {
- outline: 2px solid var(--dq-accent-glow-strong);
- outline-offset: 2px;
- border-radius: 4px;
+ outline: none;
 }
 
 /* 主内容平滑滚动 */
 html.dark .app-main,
-html.dark .gallery-page,
 html.dark .models-page,
 html.dark .settings-page {
  scroll-behavior: smooth;
@@ -483,17 +322,8 @@ html.dark .settings-page--macos .settings-model-tab--macos .settings-mac-row--sl
 }
 
 html.dark .settings-pref-pane-form .param-input-number.dq-input-number--controls-right .dq-input-number__btn,
-html.dark .settings-model-params-form .param-input-number.dq-input-number--controls-right .dq-input-number__btn,
-html.dark .create-page .studio-create-pref-pane .param-input-number.dq-input-number--controls-right .dq-input-number__btn {
- width: 24px !important;
- min-width: 24px !important;
-}
 
 html.dark .settings-pref-pane-form .settings-pref-slider-row,
-html.dark .settings-model-params-form .param-control-row,
-html.dark .create-page .studio-create-pref-pane .settings-pref-slider-row {
- align-items: center;
-}
 
 html.dark .settings-page--macos .settings-model-tab--macos .settings-param-label-row {
  white-space: nowrap;

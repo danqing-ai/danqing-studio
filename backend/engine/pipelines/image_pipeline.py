@@ -941,11 +941,11 @@ class ImagePipeline:
         Cancellation: check ``ctx_exec.cancel_token`` at each step; return ``None`` if cancelled.
         Output: written to ``ctx_exec.work_dir`` (same as the work dir assigned by scheduler).
 
-        Returns: ``(output_path, metadata_dict)`` or ``None`` (cancelled)
+        Returns: ``list[(output_path, metadata_dict)]`` or ``None`` (cancelled)
         """
         model_key, version_key = parse_model_version(request.model)
         w, h = parse_size(request.size)
-        seed = request.seed if request.seed is not None else random.randint(0, 2 ** 32 - 1)
+        base_seed = request.seed if request.seed is not None else random.randint(0, 2 ** 32 - 1)
         entry = self._registry.require(model_key)
         acts = getattr(entry, "actions", frozenset())
         if "generate" not in acts:
@@ -1034,7 +1034,7 @@ class ImagePipeline:
                 f"family={family}",
                 f"version={version_key or 'default'}",
                 f"size={w}x{h}",
-                f"seed={seed}",
+                f"base_seed={base_seed}",
                 f"steps={steps}",
                 f"guidance={guidance}",
                 f"scheduler={scheduler_default}",
@@ -1059,12 +1059,14 @@ class ImagePipeline:
                 parts.append(f"cfg_renorm=True cfg_renorm_min={semantics.cfg_renorm_min}")
             on_log("info", " ".join(parts))
 
-        # Create deterministic latent using seed
+        # Shared latent config (compute once)
         _lnd = runtime_contract.denoise_latent_noise_dtype(self.ctx)
         _noise_sample_dtype = runtime_contract.noise_sample_dtype(self.ctx, _lnd)
         _packed_denoise = getattr(config, "latent_noise_packed", False)
         _flux_pack = _flux_unpack = None
         _lh = _lw = 0
+        seq_len = 0
+        packed_shape = None
         if _packed_denoise:
             from backend.engine.families.flux1.transformer_mlx import (
                 _pack_flux1_latents,
@@ -1076,133 +1078,167 @@ class ImagePipeline:
             seq_len = (h // 16) * (w // 16)
             _lh, _lw = h // vae_scale, w // vae_scale
             packed_shape = (1, seq_len, 64)
-            if seed is not None:
-                latents = self.ctx.seeded_randn(packed_shape, seed, dtype=_noise_sample_dtype)
-            else:
-                latents = self.ctx.randn(packed_shape, dtype=_noise_sample_dtype)
-            if _noise_sample_dtype != _lnd:
-                latents = latents.astype(_lnd)
-        elif getattr(config, "encoder_step_kwargs", None) == "qwen_image":
-            lh, lw = h // vae_scale, w // vae_scale
-            q_seq = lh * lw
-            if seed is not None:
-                packed_noise = self.ctx.seeded_randn(
-                    (1, q_seq, 64), seed, dtype=_noise_sample_dtype
-                )
-            else:
-                packed_noise = self.ctx.randn((1, q_seq, 64), dtype=_noise_sample_dtype)
-            if _noise_sample_dtype != _lnd:
-                packed_noise = packed_noise.astype(_lnd)
-            packed_noise = self.ctx.reshape(packed_noise, (1, lh, lw, 64))
-            latents = self.ctx.permute(packed_noise, (0, 3, 1, 2))
-        else:
-            latent_shape = (1, config.in_channels, h // vae_scale, w // vae_scale)
-            latents = runtime_contract.sample_txt2img_noise(
-                self.ctx,
-                latent_shape=latent_shape,
-                seed=seed,
-                sample_dtype=_noise_sample_dtype,
-                target_dtype=_lnd,
-            )
 
-        # ── Hook ③: before denoise (ControlNet signal injection / latent modification) ──
-        if _packed_denoise:
-            latents_nchw = _flux_unpack(self.ctx, latents, _lh, _lw)
-            latents_nchw, extra_cond = model.before_denoise(
-                latents_nchw,
-                timesteps,
-                sigmas,
+        n = max(getattr(request, 'n', 1), 1)
+
+        def _scale_progress(cb, batch_idx, total):
+            if cb is None or total <= 1:
+                return cb
+            def wrapped(p, s, t, msg=None, phase=None):
+                overall_p = (batch_idx + float(p)) / total
+                prefix = f"[{batch_idx+1}/{total}]"
+                msg_out = f"{prefix} {msg}" if msg else prefix
+                cb(overall_p, s, t, msg_out, phase)
+            return wrapped
+
+        def _generate_one(batch_seed: int, batch_on_progress: Callable | None, batch_idx: int = 0) -> tuple[str, dict] | None:
+            # Create deterministic latent using seed
+            if _packed_denoise:
+                if batch_seed is not None:
+                    latents = self.ctx.seeded_randn(packed_shape, batch_seed, dtype=_noise_sample_dtype)
+                else:
+                    latents = self.ctx.randn(packed_shape, dtype=_noise_sample_dtype)
+                if _noise_sample_dtype != _lnd:
+                    latents = latents.astype(_lnd)
+            elif getattr(config, "encoder_step_kwargs", None) == "qwen_image":
+                lh, lw = h // vae_scale, w // vae_scale
+                q_seq = lh * lw
+                if batch_seed is not None:
+                    packed_noise = self.ctx.seeded_randn(
+                        (1, q_seq, 64), batch_seed, dtype=_noise_sample_dtype
+                    )
+                else:
+                    packed_noise = self.ctx.randn((1, q_seq, 64), dtype=_noise_sample_dtype)
+                if _noise_sample_dtype != _lnd:
+                    packed_noise = packed_noise.astype(_lnd)
+                packed_noise = self.ctx.reshape(packed_noise, (1, lh, lw, 64))
+                latents = self.ctx.permute(packed_noise, (0, 3, 1, 2))
+            else:
+                latent_shape = (1, config.in_channels, h // vae_scale, w // vae_scale)
+                latents = runtime_contract.sample_txt2img_noise(
+                    self.ctx,
+                    latent_shape=latent_shape,
+                    seed=batch_seed,
+                    sample_dtype=_noise_sample_dtype,
+                    target_dtype=_lnd,
+                )
+
+            # ── Hook ③: before denoise (ControlNet signal injection / latent modification) ──
+            _local_extra_cond = dict(extra_cond)
+            if _packed_denoise:
+                latents_nchw = _flux_unpack(self.ctx, latents, _lh, _lw)
+                latents_nchw, _local_extra_cond = model.before_denoise(
+                    latents_nchw,
+                    timesteps,
+                    sigmas,
+                    txt_embeds=txt_embeds,
+                    neg_embeds=neg_embeds,
+                    **_local_extra_cond,
+                )
+                latents = _flux_pack(self.ctx, latents_nchw)
+            else:
+                latents, _local_extra_cond = model.before_denoise(
+                    latents,
+                    timesteps,
+                    sigmas,
+                    txt_embeds=txt_embeds,
+                    neg_embeds=neg_embeds,
+                    **_local_extra_cond,
+                )
+
+            batch_preview_state: dict[str, Any] = {"on_log": on_log}
+            if preview_mode == "stream":
+                self._warm_step_preview_decoders(
+                    entry, version_key or None, batch_preview_state, config=config, on_log=on_log
+                )
+                try:
+                    batch_preview_state["vae_session"] = self._build_vae_preview_session(
+                        entry, version_key or None, on_log=on_log
+                    )
+                except Exception as exc:
+                    batch_preview_state["vae_session"] = False
+                    if on_log:
+                        on_log("warning", f"preview VAE warmup skipped: {exc}")
+            pipeline_graph_step("denoise", on_log)
+            latents = self._denoise_steps(
+                model=model,
+                scheduler=scheduler,
+                timesteps=timesteps,
+                latents=latents,
+                config=config,
+                runtime_contract=runtime_contract,
+                guidance=guidance,
                 txt_embeds=txt_embeds,
                 neg_embeds=neg_embeds,
-                **extra_cond,
+                pooled_embeds=pooled_embeds,
+                neg_pooled_embeds=neg_pooled_embeds,
+                txt_attn_mask=txt_attn_mask,
+                neg_attn_mask=neg_attn_mask,
+                encoder_type=encoder_type,
+                width=w,
+                height=h,
+                sched_ts=sched_ts,
+                sigmas=sigmas,
+                timestep_embed_schedule=timestep_embed_schedule,
+                extra_cond=_local_extra_cond,
+                semantics=semantics,
+                ctx_exec=ctx_exec,
+                on_progress=batch_on_progress,
+                on_log=on_log,
+                preview_mode=preview_mode,
+                preview_interval=preview_interval,
+                preview_max_edge=preview_max_edge,
+                preview_state=batch_preview_state,
+                entry=entry,
+                version_key=version_key or None,
+                packed_denoise=_packed_denoise,
+                flux_pack=_flux_pack,
+                flux_unpack=_flux_unpack,
+                latent_h=_lh,
+                latent_w=_lw,
             )
-            latents = _flux_pack(self.ctx, latents_nchw)
-        else:
-            latents, extra_cond = model.before_denoise(
-                latents,
-                timesteps,
-                sigmas,
-                txt_embeds=txt_embeds,
-                neg_embeds=neg_embeds,
-                **extra_cond,
+            if latents is None:
+                return None
+
+            if ctx_exec.cancel_token.is_cancelled():
+                return None
+
+            if _packed_denoise:
+                latents = _flux_unpack(self.ctx, latents, _lh, _lw)
+
+            _name_infix = f"_b{batch_idx + 1}" if n > 1 else ""
+            return self._finalize_image_from_latents(
+                latents=latents,
+                timesteps=timesteps,
+                entry=entry,
+                version_key=version_key,
+                model_key=model_key,
+                seed=batch_seed,
+                request=request,
+                ctx_exec=ctx_exec,
+                steps=steps,
+                guidance=guidance,
+                w=w,
+                h=h,
+                on_progress=batch_on_progress,
+                on_log=on_log,
+                name_infix=_name_infix,
             )
 
-        preview_state["on_log"] = on_log
-        if preview_mode == "stream":
-            self._warm_step_preview_decoders(
-                entry, version_key or None, preview_state, config=config, on_log=on_log
-            )
-            try:
-                preview_state["vae_session"] = self._build_vae_preview_session(
-                    entry, version_key or None, on_log=on_log
-                )
-            except Exception as exc:
-                preview_state["vae_session"] = False
-                if on_log:
-                    on_log("warning", f"preview VAE warmup skipped: {exc}")
-        pipeline_graph_step("denoise", on_log)
-        latents = self._denoise_steps(
-            model=model,
-            scheduler=scheduler,
-            timesteps=timesteps,
-            latents=latents,
-            config=config,
-            runtime_contract=runtime_contract,
-            guidance=guidance,
-            txt_embeds=txt_embeds,
-            neg_embeds=neg_embeds,
-            pooled_embeds=pooled_embeds,
-            neg_pooled_embeds=neg_pooled_embeds,
-            txt_attn_mask=txt_attn_mask,
-            neg_attn_mask=neg_attn_mask,
-            encoder_type=encoder_type,
-            width=w,
-            height=h,
-            sched_ts=sched_ts,
-            sigmas=sigmas,
-            timestep_embed_schedule=timestep_embed_schedule,
-            extra_cond=extra_cond,
-            semantics=semantics,
-            ctx_exec=ctx_exec,
-            on_progress=on_progress,
-            on_log=on_log,
-            preview_mode=preview_mode,
-            preview_interval=preview_interval,
-            preview_max_edge=preview_max_edge,
-            preview_state=preview_state,
-            entry=entry,
-            version_key=version_key or None,
-            packed_denoise=_packed_denoise,
-            flux_pack=_flux_pack,
-            flux_unpack=_flux_unpack,
-            latent_h=_lh,
-            latent_w=_lw,
-        )
-        if latents is None:
-            return None
+        results: list[tuple[str, dict]] = []
+        for i in range(n):
+            if ctx_exec.cancel_token.is_cancelled():
+                return results if results else None
+            batch_seed = base_seed + i
+            batch_on_progress = _scale_progress(on_progress, i, n) if n > 1 else on_progress
+            if on_log:
+                on_log("info", f"batch {i+1}/{n} seed={batch_seed}")
+            result = _generate_one(batch_seed, batch_on_progress, i)
+            if result is None:
+                return results if results else None
+            results.append(result)
 
-        if ctx_exec.cancel_token.is_cancelled():
-            return None
-
-        if _packed_denoise:
-            latents = _flux_unpack(self.ctx, latents, _lh, _lw)
-
-        return self._finalize_image_from_latents(
-            latents=latents,
-            timesteps=timesteps,
-            entry=entry,
-            version_key=version_key,
-            model_key=model_key,
-            seed=seed,
-            request=request,
-            ctx_exec=ctx_exec,
-            steps=steps,
-            guidance=guidance,
-            w=w,
-            h=h,
-            on_progress=on_progress,
-            on_log=on_log,
-        )
+        return results
 
     def run_edit(
         self,

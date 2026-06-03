@@ -1,446 +1,103 @@
-<!-- @ts-nocheck -->
 <template>
-  <div class="create-page">
-    <DqRow :gutter="24">
-      <!-- Left panel: creation area -->
-      <DqCol :xs="24" :md="16" :lg="17" :xl="18">
-        <div class="creation-panel">
+  <StudioLayout class="studio-create-page" @scroll="onCanvasScroll">
+    <template #filters>
+      <StudioGalleryFilters
+        :filter-time="filterTime"
+        :filter-models="filterModels"
+        :time-options="timeOptions"
+        :model-options="allModelOptions"
+        :selection-mode="selectionMode"
+        @update:filter-time="filterTime = $event"
+        @update:filter-models="filterModels = $event"
+        @refresh="refreshGallery"
+        @toggle-selection-mode="toggleSelectionMode"
+      />
+    </template>
+    <template #canvas>
+      <StudioCanvas
+        :items="galleryItems"
+        :active-tasks="activeAudioTasks"
+        :loading="galleryLoading"
+        :has-more="galleryHasMore"
+        media="audio"
+        :has-active-filters="hasActiveFilters"
+        :selection-mode="selectionMode"
+        :selected-paths="selectedPaths"
+        :all-selected="allLoadedSelected"
+        @select="onGallerySelect"
+        @card-action="onCardAction"
+        @reset-filters="resetGalleryFilters"
+        @load-more="loadGallery(false)"
+        @toggle-select="toggleSelect"
+        @select-all="selectAllLoaded"
+        @batch-delete="batchDeleteSelected"
+        @clear-selection="clearSelection"
+      />
+    </template>
+    <template #composer>
+      <AudioComposer
+        v-model="params.prompt"
+        v-model:title="params.title"
+        v-model:work-mode="audioWorkTab"
+        v-model:model="selectedModelVersion"
+        v-model:duration="params.duration"
+        v-model:batch-count="params.n"
+        :generating="generating"
+        :can-generate="audioWorkTab === 'create' ? !submitDisabled : !coverSubmitDisabled"
+        :generate-label="generateLabel"
+        :model-options="audioModelSelectOptions"
+        :duration-options="durationOptions"
+        :styles="filteredPresets"
+        :params="audioComposerParams"
+        @update:params="applyAudioComposerParams"
+        :has-custom-params="hasCustomParams"
+        :show-negative-prompt="supportsNegativePrompt"
+        :show-lyrics="true"
+        :show-codec-controls="heartMuLaCodecStepsDef !== null"
+        :show-cover-fidelity="audioWorkTab === 'cover'"
+        :reference-media="coverReferenceMedia"
+        :current-model-config="advancedParamModelConfig"
+        @generate="onAudioComposerGenerate"
+        @pick-reference="onPickCoverSource"
+        @remove-reference="clearCoverSource"
+        @model-change="onModelChange"
+        @reset-defaults="restoreDefaults"
+      />
+    </template>
+  </StudioLayout>
 
-          <!-- Tab bar -->
-          <DqSegmented
-            class="dq-work-segmented dq-work-segmented--sm"
-            v-model="audioWorkTab"
-            :options="audioWorkSegmentOptions"
-            block
-          />
-
-          <!-- Model selector -->
-          <DqSurfaceCard class="studio-surface-card studio-card-mb studio-model-card">
-            <template #header>
-              <div class="card-title">
-                <DqIcon><cpu /></DqIcon>
-                {{ $t('create.modelSelectTitle') }}
-              </div>
-            </template>
-            <div class="studio-model-toolbar">
-              <DqSelect
-                v-model="selectedModelVersion"
-                filterable
-                @change="onModelChange"
-                :placeholder="$t('studio.selectModel')"
-              >
-                <template v-if="selectedModelPickerItem" #value>
-                  <div class="studio-picker-option studio-picker-option--value">
-                    <span class="studio-picker-option__name">{{ selectedModelPickerItem.name }}</span>
-                    <ModelVersionPickerExtras
-                      :recommended="selectedModelPickerItem.recommended"
-                      :commercial-use-allowed="selectedModelPickerItem.commercialUseAllowed"
-                      :status="String(selectedModelPickerItem.status || '')"
-                      :size="String(selectedModelPickerItem.size || '')"
-                    />
-                  </div>
-                </template>
-                <DqOption
-                  v-for="item in filteredModelPickerVersions"
-                  :key="item.modelKey + '|' + item.versionKey"
-                  :label="String(item.name)"
-                  :value="item.modelKey + '|' + item.versionKey"
-                  :disabled="!item.ready"
-                >
-                  <ModelVersionPickerOption
-                    :description="String(item.description || '')"
-                    :recommended="item.recommended"
-                    :commercial-use-allowed="item.commercialUseAllowed"
-                    :status="String(item.status || '')"
-                    :size="String(item.size || '')"
-                  />
-                </DqOption>
-              </DqSelect>
-              <ModelPickerFilters
-                v-model:commercial-only="modelFilterCommercialOnly"
-                :show-installed-filter="false"
-              />
-            </div>
-            <CreateModelDescription :model-config="currentModelConfig" />
-            <DqAlert
-              v-if="selectedModelNotReady"
-              :title="$t('studio.modelNotReady', { name: currentModelDisplayName })"
-              type="warning"
-              :closable="false"
-              class="studio-alert-mt"
-            >
-              <template #default>
-                <span>{{ $t('studio.notDownloadedMsg') }}</span>
-                <DqButton type="primary" size="sm" class="studio-alert-inline-btn" @click="goToDownload">
-                  {{ $t('studio.goDownload') }}
-                </DqButton>
-              </template>
-            </DqAlert>
-          </DqSurfaceCard>
-          <template v-if="audioWorkTab === 'create'">
-
-            <!-- Work title -->
-            <DqSurfaceCard class="studio-surface-card studio-card-mb">
-              <template #header>
-                <div class="card-title">
-                  <DqIcon><document /></DqIcon>
-                  {{ $t('studio.workTitle') }}
-                </div>
-              </template>
-              <DqInput
-                v-model="params.title"
-                clearable
-                :placeholder="$t('studio.workTitlePlaceholder')"
-              />
-            </DqSurfaceCard>
-
-            <!-- Prompt input -->
-            <DqSurfaceCard class="studio-surface-card studio-card-mb">
-              <template #header>
-                <div class="card-title">
-                  <DqIcon><edit-pen /></DqIcon>
-                  {{ $t('studio.prompt') }}
-                </div>
-              </template>
-              <DqInput
-                v-model="params.prompt"
-                type="textarea"
-                :rows="4"
-                :placeholder="promptPlaceholder"
-                resize="none"
-                @keydown.meta.enter.prevent="startGeneration"
-                @keydown.ctrl.enter.prevent="startGeneration"
-              />
-              <DqCollapse v-if="supportsNegativePrompt" class="studio-collapse-plain">
-                <DqCollapseItem :title="$t('audio.negativePrompt')" name="negative">
-                  <DqInput
-                    v-model="params.negative_prompt"
-                    type="textarea"
-                    :rows="2"
-                    :placeholder="$t('studio.optional')"
-                  />
-                </DqCollapseItem>
-              </DqCollapse>
-            </DqSurfaceCard>
-
-            <!-- Lyrics -->
-            <DqSurfaceCard class="studio-surface-card studio-card-mb studio-audio-lyrics-card">
-              <template #header>
-                <div class="card-title card-title--split">
-                  <span>
-                    <DqIcon><document /></DqIcon>
-                    {{ $t('audio.lyrics') }}
-                  </span>
-                  <DqTag size="small" type="info">{{ $t('studio.optional') }}</DqTag>
-                </div>
-              </template>
-              <DqInput
-                v-model="params.lyrics"
-                type="textarea"
-                class="studio-audio-lyrics-input"
-                :rows="10"
-                :placeholder="params.instrumental ? $t('audio.lyricsPlaceholderInstrumental') : $t('audio.lyricsPlaceholder')"
-                resize="vertical"
-                :disabled="params.instrumental"
-              />
-              <p class="studio-field-footnote">{{ $t('audio.lyricsHint') }}</p>
-              <div class="studio-audio-meta-row">
-                <div class="studio-audio-meta-item studio-audio-meta-item--switch">
-                  <span class="studio-audio-meta-label">{{ $t('audio.instrumental') }}</span>
-                  <DqSwitch v-model="params.instrumental" size="small" />
-                </div>
-                <div
-                  v-if="supportsVocalType"
-                  class="studio-audio-meta-item studio-audio-meta-item--vocal"
-                >
-                  <span class="studio-audio-meta-label">{{ $t('audio.vocalType') }}</span>
-                  <DqSelect
-                    v-model="params.vocal_type"
-                    size="small"
-                    class="studio-audio-vocal-type-select"
-                    clearable
-                    :disabled="params.instrumental"
-                    :placeholder="$t('audio.vocalTypeAuto')"
-                  >
-                    <DqOption
-                      v-for="vt in vocalTypes"
-                      :key="vt.value"
-                      :label="vt.label"
-                      :value="vt.value"
-                    />
-                  </DqSelect>
-                </div>
-                <div class="studio-audio-meta-item studio-audio-meta-item--vocal">
-                  <span class="studio-audio-meta-label">{{ $t('audio.vocalLanguage') }}</span>
-                  <DqSelect
-                    v-model="params.vocal_language"
-                    size="small"
-                    class="studio-audio-vocal-lang-select"
-                    clearable
-                    :disabled="params.instrumental"
-                    :placeholder="$t('audio.vocalLanguageAuto')"
-                  >
-                    <DqOption v-for="l in vocalLanguages" :key="l.value" :label="l.label" :value="l.value" />
-                  </DqSelect>
-                </div>
-              </div>
-              <p v-if="supportsVocalType && !params.instrumental" class="studio-field-footnote">
-                {{ $t('audio.vocalTypeHint') }}
-              </p>
-            </DqSurfaceCard>
-
-            <!-- Music params -->
-            <DqSurfaceCard class="studio-surface-card studio-card-mb">
-              <template #header>
-                <div class="card-title">
-                  <DqIcon><setting /></DqIcon>
-                  {{ $t('audio.musicParams') }}
-                </div>
-              </template>
-              <AudioCreateMusicParams
-                :params="params"
-                :musical-keys="musicalKeys"
-                :time-signatures="timeSignatures"
-                :duration-min="currentModelConfig?.parameters?.duration?.min ?? 10"
-                :duration-max="currentModelConfig?.parameters?.duration?.max ?? 600"
-                :show-bpm="supportsBpm"
-                :show-key-scale="supportsKeyScale"
-                :show-time-signature="supportsTimeSignature"
-                :codec-steps-def="heartMuLaCodecStepsDef"
-                :codec-guidance-def="heartMuLaCodecGuidanceDef"
-              />
-            </DqSurfaceCard>
-
-            <!-- Advanced params -->
-            <DqSurfaceCard class="studio-surface-card studio-card-mb">
-              <template #header>
-                <div class="card-title">
-                  <DqIcon><setting /></DqIcon>
-                  {{ $t('studio.advancedParams') }}
-                  <DqTag v-if="hasCustomParams" size="small" type="warning">{{ $t('studio.hasCustom') }}</DqTag>
-                </div>
-              </template>
-              <AudioCreateAdvancedParams
-                :params="params"
-                :current-model-config="advancedParamModelConfig"
-                :audio-formats="audioFormats"
-                :hide-codec-params="currentModelConfig?.family === 'heartmula'"
-                @restore-defaults="restoreDefaults"
-                @randomize-seed="randomizeSeed"
-              />
-            </DqSurfaceCard>
-          </template>
-
-          <!-- Cover -->
-          <template v-if="audioWorkTab === 'cover'">
-            <AudioCreateCoverPanel
-              :params="coverParams"
-              :source-preview-src="coverSourceSrc"
-              :source-file-name="coverSourceName"
-              @pick-file="onCoverFilePicked"
-              @clear-source="clearCoverSource"
-            />
-          </template>
-
-          <!-- Generate button -->
-          <DqSurfaceCard class="studio-surface-card studio-card-mb">
-            <DqButton
-              v-if="audioWorkTab === 'create'"
-              type="primary"
-              class="studio-primary-cta studio-primary-cta--simple dq-btn--cta"
-              :disabled="submitDisabled"
-              @click="startGeneration"
-            >
-              <DqIcon size="20"><headset /></DqIcon>
-              <span class="studio-cta-gap">
-                {{ generating ? $t('audio.generating') : $t('audio.generate') }}
-              </span>
-            </DqButton>
-            <DqButton
-              v-else-if="audioWorkTab === 'cover'"
-              type="primary"
-              class="studio-primary-cta studio-primary-cta--simple dq-btn--cta"
-              :disabled="coverSubmitDisabled"
-              @click="startCoverGeneration"
-            >
-              <DqIcon size="20"><headset /></DqIcon>
-              <span class="studio-cta-gap">
-                {{ generating ? $t('audio.generating') : $t('audio.coverGenerate') }}
-              </span>
-            </DqButton>
-            <div class="studio-micro-hint">
-              {{ $sendShortcutHint() }}
-            </div>
-
-            <!-- Progress display -->
-            <div v-if="currentTask.id" class="studio-task-wrap">
-              <DqProgress
-                :percentage="Math.round(currentTask.progress * 100)"
-                :status="currentTask.status === 'failed' ? 'exception' : ''"
-              />
-              <div class="studio-task-status">
-                <template v-if="currentTask.total > 0 && currentTask.status === 'running'">
-                  Step {{ currentTask.step }}/{{ currentTask.total }} &nbsp;
-                </template>
-                <DqTag :type="TSU.tagType(currentTask.status)" size="small">
-                  {{ TSU.statusText(currentTask.status) }}
-                </DqTag>
-              </div>
-            </div>
-          </DqSurfaceCard>
-
-          <!-- Logs -->
-          <DqSurfaceCard class="studio-surface-card">
-            <template #header>
-              <div class="card-title card-title--split">
-                <span>
-                  <DqIcon><document /></DqIcon>
-                  {{ $t('studio.logs') }}
-                </span>
-                <DqIconButton type="text" size="sm" :label="$t('common.delete')" @click="clearLogs">
-                  <DqIcon><delete /></DqIcon>
-                </DqIconButton>
-              </div>
-            </template>
-            <div class="log-container studio-log-container--sm" ref="logContainer">
-              <div v-if="logs.length === 0" class="studio-log-empty">
-                {{ $t('studio.logsEmpty') }}
-              </div>
-              <div v-for="(log, index) in logs" :key="index" class="log-line">
-                <span class="log-timestamp">{{ log.time }}</span>
-                <span :class="'log-' + log.level">{{ log.message }}</span>
-              </div>
-            </div>
-          </DqSurfaceCard>
-
-        </div>
-      </DqCol>
-
-      <!-- Right panel: preview + recent -->
-      <DqCol :xs="24" :md="8" :lg="7" :xl="6">
-        <div class="preview-panel preview-panel--flat">
-
-          <StudioPreviewPane :title="$t('studio.currentPreview')" icon="headset">
-            <AudioMusicPlayer
-              v-if="previewAudioSrc"
-              :key="previewAudioKey"
-              ref="previewPlayerRef"
-              layout="featured"
-              :src="previewAudioSrc"
-              :title="previewPrompt"
-              :subtitle="previewPlayerSubtitle"
-              :hue="previewArtHue"
-              @download="downloadPreviewAudio"
-              @play="previewIsPlaying = true"
-              @pause="previewIsPlaying = false"
-              @duration="previewDurationSec = $event"
-            >
-              <div v-if="previewLyrics" class="studio-audio-effective-lyrics">
-                <div class="studio-audio-effective-lyrics__head">
-                  <span class="studio-audio-effective-lyrics__label">{{ $t('audio.effectiveLyrics') }}</span>
-                  <DqButton
-                    v-if="previewLyricsDownload"
-                    type="text"
-                    size="sm"
-                    @click="downloadLyricsText"
-                  >
-                    {{ $t('audio.downloadLyrics') }}
-                  </DqButton>
-                </div>
-                <pre class="studio-audio-effective-lyrics__body">{{ previewLyrics }}</pre>
-                <p class="studio-field-footnote studio-audio-effective-lyrics__hint">
-                  {{ $t('audio.effectiveLyricsHint') }}
-                </p>
-              </div>
-            </AudioMusicPlayer>
-            <DqEmpty v-else class="studio-preview-pane__empty" :description="$t('studio.noPreview')" />
-          </StudioPreviewPane>
-
-          <StudioPreviewPane :title="$t('audio.recentTitle')" icon="clock" split-head recent>
-            <template #actions>
-              <DqIconButton type="text" size="sm" :label="$t('gallery.refresh')" @click="loadRecentAudio">
-                <DqIcon><refresh /></DqIcon>
-              </DqIconButton>
-            </template>
-            <DqEmpty v-if="recentAudio.length === 0" :description="$t('gallery.empty')" />
-            <ul v-else class="studio-audio-recent-list">
-              <li
-                v-for="ra in recentAudio"
-                :key="ra.id"
-                class="studio-audio-recent-item"
-                :class="{ 'is-active': isRecentActive(ra) }"
-              >
-                <button
-                  type="button"
-                  class="studio-audio-recent-item__main"
-                  @click="selectRecent(ra)"
-                >
-                  <span
-                    class="studio-audio-recent-item__art"
-                    :style="{ '--dq-music-hue': String(artHueForPrompt(ra.prompt)) }"
-                  >
-                    <DqIcon :size="18"><Headset /></DqIcon>
-                  </span>
-                  <span class="studio-audio-recent-item__text">
-                    <span class="studio-audio-recent-title">{{ recentAudioLabel(ra) }}</span>
-                    <span class="studio-audio-recent-meta">
-                      <template v-if="isRecentActive(ra) && previewIsPlaying">{{ $t('audio.nowPlaying') }}</template>
-                      <template v-else-if="ra.duration">{{ formatTime(ra.duration) }}</template>
-                    </span>
-                  </span>
-                </button>
-                <div class="studio-audio-recent-item__actions">
-                  <button
-                    type="button"
-                    class="dq-music-player__btn-play dq-music-player__btn-play--sm"
-                    :aria-label="isRecentActive(ra) && previewIsPlaying ? $t('audio.pause') : $t('audio.play')"
-                    @click="toggleRecentPlay(ra)"
-                  >
-                    <DqIcon :size="16">
-                      <pause v-if="isRecentActive(ra) && previewIsPlaying" />
-                      <play v-else />
-                    </DqIcon>
-                  </button>
-                  <DqIconButton type="text" size="sm" :label="$t('gallery.download')" @click="downloadAudioUrl(ra.url)">
-                    <DqIcon><Download /></DqIcon>
-                  </DqIconButton>
-                </div>
-              </li>
-            </ul>
-          </StudioPreviewPane>
-
-        </div>
-      </DqCol>
-    </DqRow>
-  </div>
+  <!-- Audio preview dialog -->
+  <GalleryPreviewDialog
+    v-model:visible="audioPreviewVisible"
+    v-model:index="selectedAudioIndex"
+    :items="galleryItems"
+    media="audio"
+  />
 </template>
 
 <script setup lang="ts">
-// @ts-nocheck
+// @ts-nocheck — legacy create view; narrow types in a follow-up pass
 import { ref, reactive, computed, watch, onMounted, nextTick, inject, unref, type Ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { toast } from '@/utils/feedback';
 import { api, taskIdFromSubmitResponse } from '@/utils/api';
 import { formatGenLogMessage, isDuplicateDenoiseStepLog } from '@/utils/genTaskLog';
-import { $tt, $mn, $md, $mvn } from '@/utils/i18n';
+import { $tt, $mn, $md, $mvn, $pn } from '@/utils/i18n';
 import { useTasksStore } from '@/stores/tasks';
 import { useRegistryStore } from '@/stores/registry';
-import { pickDefaultVersionKey, resolveDefaultModelRegistryKey } from '@/utils/defaultModelSettings';
-import ModelPickerFilters from '@/components/model/ModelPickerFilters.vue';
-import ModelVersionPickerExtras from '@/components/model/ModelVersionPickerExtras.vue';
-import CreateModelDescription from '@/components/model/CreateModelDescription.vue';
-import ModelVersionPickerOption from '@/components/model/ModelVersionPickerOption.vue';
+import { DQ_STORAGE, getItem, setItem, type StorageKey } from '@/utils/storage';
+
 import { useModelRegistryFilters } from '@/composables/useModelRegistryFilters';
 import { applyModelVersionFilters } from '@/utils/modelPickerFilters';
 import { warnIfRiskyMemory } from '@/composables/memoryHint';
-import type { SystemInfo } from '@/types';
-import AudioCreateMusicParams from '@/components/audio/AudioCreateMusicParams.vue';
-import AudioCreateAdvancedParams from '@/components/audio/AudioCreateAdvancedParams.vue';
-import AudioCreateCoverPanel from '@/components/audio/AudioCreateCoverPanel.vue';
-import AudioMusicPlayer from '@/components/audio/AudioMusicPlayer.vue';
-import StudioPreviewPane from '@/components/create/StudioPreviewPane.vue';
+import type { SystemInfo, Task } from '@/types';
 import { assetDisplayLabel, previewDisplayCaption } from '@/utils/assetDisplay';
-import { Download } from '@danqing/dq-shell';
+import StudioLayout from '@/components/studio/StudioLayout.vue';
+import StudioCanvas from '@/components/studio/StudioCanvas.vue';
+import StudioGalleryFilters from '@/components/studio/StudioGalleryFilters.vue';
+import AudioComposer from '@/components/studio/AudioComposer.vue';
+import GalleryPreviewDialog from '@/components/gallery/GalleryPreviewDialog.vue';
+import { useStudioGallery } from '@/composables/useStudioGallery';
 
 const tasksStore = useTasksStore();
 const registryStore = useRegistryStore();
@@ -785,6 +442,73 @@ const coverSubmitDisabled = computed(() => {
   return false;
 });
 
+// ---- Composer adapters ----
+
+const audioComposerParams = computed(() => ({
+  steps: params.steps,
+  guidance: params.guidance,
+  seed: params.seed ?? null,
+  temperature: params.temperature,
+  top_k: params.top_k,
+  codec_steps: params.codec_steps,
+  codec_guidance: params.codec_guidance,
+  negative_prompt: params.negative_prompt,
+  lyrics: params.lyrics,
+  instrumental: params.instrumental,
+  bpm: params.bpm,
+  key_scale: params.key_scale,
+  time_signature: params.time_signature,
+  vocal_language: params.vocal_language,
+  vocal_type: params.vocal_type,
+  source_fidelity: coverParams.source_fidelity,
+}));
+
+function applyAudioComposerParams(val: Record<string, unknown>) {
+  params.steps = val.steps as number;
+  params.guidance = val.guidance as number;
+  params.seed = val.seed as number | null;
+  params.temperature = val.temperature as number;
+  params.top_k = val.top_k as number;
+  params.codec_steps = val.codec_steps as number;
+  params.codec_guidance = val.codec_guidance as number;
+  params.negative_prompt = val.negative_prompt as string;
+  params.lyrics = val.lyrics as string;
+  params.instrumental = val.instrumental as boolean;
+  params.bpm = val.bpm as number | null;
+  params.key_scale = val.key_scale as string;
+  params.time_signature = val.time_signature as string;
+  params.vocal_language = val.vocal_language as string;
+  params.vocal_type = val.vocal_type as string;
+  coverParams.source_fidelity = (val.source_fidelity as number) ?? 1.0;
+}
+
+const audioModelSelectOptions = computed(() =>
+  filteredModelPickerVersions.value.map((v) => ({
+    label: String(v.name || ''),
+    value: `${v.modelKey}|${v.versionKey}`,
+    disabled: !v.ready,
+    commercialUseAllowed: v.commercialUseAllowed === true,
+  }))
+);
+
+const coverReferenceMedia = computed(() => {
+  if (audioWorkTab.value !== 'cover') return null;
+  if (!coverSourceSrc.value) return null;
+  return {
+    type: 'audio',
+    previewUrl: coverSourceSrc.value,
+    label: coverSourceName.value || $tt('audio.coverSource'),
+  };
+});
+
+function onAudioComposerGenerate() {
+  if (audioWorkTab.value === 'create') {
+    startGeneration();
+  } else {
+    startCoverGeneration();
+  }
+}
+
 // ---- Methods ----
 async function loadModelRegistry() {
   modelsLoading.value = true;
@@ -796,6 +520,21 @@ async function loadModelRegistry() {
     modelRegistry.value = registryData?.models || {};
     if (detailedStatusData && typeof detailedStatusData === 'object') {
       modelsDetailedStatus.value = detailedStatusData as Record<string, unknown>;
+    }
+    // 恢复当前模式的模型
+    const saved = getItem(getAudioModeStorageKey(audioWorkTab.value));
+    if (saved) {
+      const parsed = parseModelVersion(saved);
+      const mk = parsed.modelKey || parsed.model || '';
+      const vk = parsed.version || '';
+      const key = vk ? `${mk}|${vk}` : mk;
+      const stillValid = filteredModelPickerVersions.value.some(
+        (r) => `${r.modelKey}|${r.versionKey}` === key && r.ready
+      );
+      if (stillValid) {
+        selectedModelVersion.value = key;
+        onModelChange(key);
+      }
     }
   } catch (e) {
     console.error('Failed to load audio model registry:', e);
@@ -843,6 +582,14 @@ function applyDefaults(modelConfig: any) {
   params.vocal_type = '';
 }
 
+function getAudioModeStorageKey(mode: string): StorageKey {
+  const map: Record<string, StorageKey> = {
+    create: DQ_STORAGE.AUDIO_MODEL_CREATE,
+    cover: DQ_STORAGE.AUDIO_MODEL_COVER,
+  };
+  return map[mode] || DQ_STORAGE.AUDIO_MODEL_CREATE;
+}
+
 function onModelChange(val: string) {
   const parsed = parseModelVersion(val);
   const mk = parsed.modelKey || parsed.model || '';
@@ -851,6 +598,8 @@ function onModelChange(val: string) {
   const mc = modelRegistry.value[mk];
   applyDefaults(mc);
   loadPromptDraft();
+  // 保存到当前模式
+  setItem(getAudioModeStorageKey(audioWorkTab.value), val);
 }
 
 function randomizeSeed() {
@@ -890,6 +639,19 @@ function formatTime(seconds: number) {
 
 function clearLogs() {
   logs.length = 0;
+}
+
+function onPickCoverSource() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = 'audio/*';
+  input.onchange = (e: Event) => {
+    const target = e.target as HTMLInputElement;
+    if (target.files && target.files[0]) {
+      onCoverFilePicked(target.files[0]);
+    }
+  };
+  input.click();
 }
 
 function onCoverFilePicked(file: File) {
@@ -1055,11 +817,11 @@ async function startCoverGeneration() {
       model: params.model,
       operation: 'cover',
       source_asset_id,
-      prompt: String(coverParams.prompt || '').trim(),
+      prompt: String(params.prompt || '').trim(),
       source_fidelity: coverParams.source_fidelity ?? 1.0,
       seed: coverParams.seed ?? params.seed ?? null,
       n: 1,
-      audio_format: coverParams.audio_format || params.audio_format || 'wav',
+      audio_format: params.audio_format || 'wav',
     };
 
     const resp = await api.audios.createEdit(body);
@@ -1211,52 +973,40 @@ function downloadLyricsText() {
   URL.revokeObjectURL(url);
 }
 
-function loadRecentAudio() {
-  api.gen.listAssets('audio', 20, 0).then((data: any) => {
+async function loadRecentAudio() {
+  try {
+    const data = await api.gen.listAssets('audio', 20, 0);
     const items = (data && data.items) || [];
     recentAudio.length = 0;
-    items.forEach((item: any) => {
-      const aid = item.id || '';
+    items.forEach((item) => {
+      const aid = String(item.id || '');
       if (!aid) return;
-      const url = api.gallery?.getImageUrl ? api.gallery.getImageUrl('asset:' + aid) : ('/api/assets/' + aid + '/file');
-      const meta = item.metadata || {};
+      const url = api.gallery.getImageUrl(`asset:${aid}`);
+      const meta = (item.metadata as Record<string, unknown>) || {};
       recentAudio.push({
         id: aid,
         url,
         title: String(meta.title || ''),
         prompt: String(meta.prompt || ''),
         lyrics: String(meta.lyrics_effective || '').trim(),
-        name: item.name || '',
-        duration: item.duration_seconds != null ? Number(item.duration_seconds) : (meta.duration_seconds != null ? Number(meta.duration_seconds) : 0),
+        name: String(item.name || ''),
+        duration:
+          item.duration_seconds != null
+            ? Number(item.duration_seconds)
+            : meta.duration_seconds != null
+              ? Number(meta.duration_seconds)
+              : 0,
       });
     });
-  }).catch(() => {});
-}
-
-async function applyAudioAppSettingsDefaults() {
-  try {
-    const st = await api.settings.getSettings() as {
-      default_model_audio?: string;
-      default_model?: string;
-    };
-    const dm = String(st.default_model_audio || st.default_model || '').trim();
-    const mk = resolveDefaultModelRegistryKey(dm, modelRegistry.value, 'audio');
-    if (!mk || !modelRegistry.value[mk]) return;
-    const detailed = (modelsDetailedStatus.value[mk] || {}) as { versions?: Record<string, { ready?: boolean }> };
-    const vers = detailed.versions || {};
-    const defaultVK = pickDefaultVersionKey(mk, modelRegistry.value, vers);
-    if (!defaultVK) return;
-    selectedModelVersion.value = mk + '|' + defaultVK;
-    onModelChange(selectedModelVersion.value);
-  } catch (_) {
-    /* ignore */
+  } catch (e) {
+    console.error('loadRecentAudio', e);
+    toast.error($tt('studio.error', { msg: $tt('gallery.loadFailed') }));
   }
 }
 
 // ---- Lifecycle ----
 onMounted(async () => {
   await loadModelRegistry();
-  await applyAudioAppSettingsDefaults();
   if (!params.model) {
     const versions = filteredModelPickerVersions.value;
     if (versions.length > 0) {
@@ -1272,6 +1022,8 @@ onMounted(async () => {
     loadPromptDraft();
   }
   loadRecentAudio();
+  loadGallery();
+  loadPresets();
 });
 
 let _draftTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1281,8 +1033,42 @@ watch(() => params.prompt, () => {
 });
 
 // Refresh model picker when tab changes
-watch(audioWorkTab, () => {
+watch(audioWorkTab, (newMode, oldMode) => {
+  // 保存旧模式模型
+  if (oldMode && selectedModelVersion.value) {
+    setItem(getAudioModeStorageKey(oldMode), selectedModelVersion.value);
+  }
+  // 恢复新模式模型
+  const saved = getItem(getAudioModeStorageKey(newMode));
+  if (saved) {
+    const parsed = parseModelVersion(saved);
+    const mk = parsed.modelKey || parsed.model || '';
+    const vk = parsed.version || '';
+    const key = vk ? `${mk}|${vk}` : mk;
+    const stillValid = filteredModelPickerVersions.value.some(
+      (r) => `${r.modelKey}|${r.versionKey}` === key && r.ready
+    );
+    if (stillValid) {
+      selectedModelVersion.value = key;
+      onModelChange(key);
+      return;
+    }
+  }
+  // fallback: 检查当前模型是否仍可用
   if (selectedModelVersion.value) {
+    const currentKey = selectedModelVersion.value;
+    const stillValid = filteredModelPickerVersions.value.some(
+      (r) => `${r.modelKey}|${r.versionKey}` === currentKey && r.ready
+    );
+    if (stillValid) {
+      onModelChange(currentKey);
+      return;
+    }
+  }
+  // fallback: 选择第一个可用模型
+  const pick = filteredModelPickerVersions.value.find((r) => r.ready) || filteredModelPickerVersions.value[0];
+  if (pick) {
+    selectedModelVersion.value = `${pick.modelKey}|${pick.versionKey}`;
     onModelChange(selectedModelVersion.value);
   }
 });
@@ -1300,4 +1086,117 @@ watch(modelFilterCommercialOnly, () => {
   selectedModelVersion.value = `${pick.modelKey}|${pick.versionKey}`;
   onModelChange(selectedModelVersion.value);
 });
+
+// ---- Gallery / Studio Canvas ----
+const {
+  galleryItems,
+  galleryLoading,
+  galleryHasMore,
+  filterTime,
+  filterModels,
+  selectionMode,
+  selectedPaths,
+  allLoadedSelected,
+  timeOptions,
+  allModelOptions,
+  hasActiveFilters,
+  loadGallery,
+  refreshGallery,
+  onCanvasScroll,
+  resetGalleryFilters,
+  toggleSelect,
+  toggleSelectionMode,
+  selectAllLoaded,
+  deleteItem,
+  batchDeleteSelected,
+  clearSelection,
+} = useStudioGallery('audio');
+
+const activeAudioTasks = computed(() => {
+  const running = tasksStore.queueState.running.filter((t: Task) =>
+    String(t.kind || '').startsWith('audio.')
+  );
+  const queued = tasksStore.queueState.queued.filter((t: Task) =>
+    String(t.kind || '').startsWith('audio.')
+  );
+  return [...running, ...queued];
+});
+
+// ---- Gallery preview dialog ----
+const audioPreviewVisible = ref(false);
+const selectedAudioIndex = ref(0);
+
+function onGallerySelect(item: any) {
+  const idx = galleryItems.value.findIndex((it) => it.path === item.path);
+  selectedAudioIndex.value = idx >= 0 ? idx : 0;
+  audioPreviewVisible.value = true;
+}
+
+function onCardAction({ action, item }: { action: string; item: any }) {
+  if (action === 'delete') {
+    deleteItem(item);
+  }
+}
+
+const presets = ref<Record<string, any>>({});
+
+const filteredPresets = computed(() => {
+  const want = audioWorkTab.value === 'cover' ? new Set(['cover']) : new Set(['create']);
+  function planPresetShapeOk(preset: any) {
+    return (
+      Array.isArray(preset.applies_to) &&
+      preset.applies_to.length > 0 &&
+      preset.media_scope === 'audio'
+    );
+  }
+  function matches(preset: any) {
+    if (!planPresetShapeOk(preset)) return false;
+    return preset.applies_to.some((k: string) => want.has(k));
+  }
+  const entries = Object.entries(presets.value)
+    .filter(([, preset]) => matches(preset))
+    .sort((a, b) => a[0].localeCompare(b[0], 'zh'));
+  const result: Record<string, any> = {};
+  for (const [name, preset] of entries) {
+    result[name] = preset;
+  }
+  return result;
+});
+
+const durationOptions = computed(() => {
+  const cfg = currentModelConfig.value;
+  const dmin = cfg?.parameters?.duration?.min ?? 10;
+  const dmax = cfg?.parameters?.duration?.max ?? 600;
+  const ddef = cfg?.parameters?.duration?.default ?? 30;
+  const opts: { label: string; value: number }[] = [];
+  [10, 15, 30, 45, 60, 90, 120, 180, 300].forEach((sec) => {
+    if (sec >= dmin && sec <= dmax) {
+      opts.push({ label: `${sec}s`, value: sec });
+    }
+  });
+  if (!opts.find((o) => o.value === ddef)) {
+    opts.push({ label: `${ddef}s`, value: ddef });
+  }
+  opts.sort((a, b) => a.value - b.value);
+  return opts;
+});
+
+const generateLabel = computed(() => {
+  if (audioWorkTab.value === 'cover') return $tt('audio.coverGenerate');
+  return $tt('audio.generate');
+});
+
+async function loadPresets() {
+  try {
+    const data = await api.settings.getPresets();
+    presets.value = (data as any) || {};
+  } catch (e) {
+    console.error('Failed to load presets:', e);
+    presets.value = {};
+  }
+}
 </script>
+
+<style scoped>
+/* AudioCreateView styles moved to AudioComposer.vue */
+</style>

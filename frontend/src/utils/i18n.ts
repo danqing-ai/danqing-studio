@@ -84,10 +84,17 @@ export function $mvn(
 }
 
 /** Preset name */
-export function $pn(presetData: { name_en?: string } | null, chineseName?: string): string {
+export function $pn(
+  presetData: { name?: string | { zh?: string; en?: string }; name_en?: string } | null,
+  chineseName?: string,
+): string {
   const locale = getLocale();
+  const n = presetData?.name;
+  if (n && typeof n === 'object') {
+    return locale === 'en' ? (n.en || n.zh || chineseName || '') : (n.zh || n.en || chineseName || '');
+  }
   if (locale === 'en' && presetData?.name_en) return presetData.name_en;
-  return chineseName || presetData?.name_en || '';
+  return chineseName || (typeof n === 'string' ? n : '') || presetData?.name_en || '';
 }
 
 /** 创作页主按钮下方快捷键提示（macOS 与 Windows 分文案）。 */
@@ -100,8 +107,20 @@ export function sendShortcutHintText(): string {
   return isApple ? $tt('studio.sendShortcutHintMac') : $tt('studio.sendShortcutHintWin');
 }
 
-/** 全站固定深色（Apple 极简暗色，见 theme-apple-dark.css）。 */
-export function applyTheme(): void {
-  document.documentElement.classList.remove('dq-theme-light');
-  document.documentElement.classList.add('dark');
+export type ThemeId = 'apple-dark' | 'linear-dark' | 'china-red-dark';
+
+const THEME_CLASSES: Record<ThemeId, string> = {
+  'apple-dark': 'dark',
+  'linear-dark': 'dark dq-linear-dark',
+  'china-red-dark': 'dark dq-china-red-dark',
+};
+
+/** Apply theme class to <html>. Defaults to apple-dark. */
+export function applyTheme(themeId?: ThemeId): void {
+  const id: ThemeId = themeId && THEME_CLASSES[themeId] ? themeId : 'apple-dark';
+  const html = document.documentElement;
+  html.classList.remove('dq-theme-light', 'dark', 'dq-linear-dark', 'dq-china-red-dark');
+  for (const cls of THEME_CLASSES[id].split(' ')) {
+    html.classList.add(cls);
+  }
 }

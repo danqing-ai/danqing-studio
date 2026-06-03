@@ -29,6 +29,18 @@ Hosts mount via `installDanQingFeedback` in `plugins/dq-ui.ts`.
 | Icons | Lucide via `registerDqIcons` + `DqIcon` |
 | Layout CSS | `studio-*` / `settings-*` classes in `theme*.css` |
 
+### Theme CSS (same pattern as mac)
+
+Import token palettes in `frontend/src/main.ts`; switch with `applyTheme()` on `<html>` (`frontend/src/utils/i18n.ts`).
+
+| Theme | Token file (`@danqing/dq-tokens`) | `<html>` classes |
+|-------|-----------------------------------|------------------|
+| Apple Dark (default) | `dq-mac.css` + `dq-glass.css` | `dark` |
+| Linear Dark | `dq-linear-dark.css` | `dark dq-linear-dark` |
+| China Red Dark | `dq-china-red-dark.css` | `dark dq-china-red-dark` |
+
+Studio-only chrome (sidebars, Studio 创作页浮动条, gallery) stays in `frontend/src/styles/theme-apple-*.css` — not in tokens.
+
 `make check-consistency` runs `check_frontend_governance.py` (EP boundary, theme legacy, dq-ui compat).
 
 ## Local dev

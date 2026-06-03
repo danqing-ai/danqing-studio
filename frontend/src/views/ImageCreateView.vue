@@ -1,483 +1,236 @@
-<!-- @ts-nocheck -->
 <template>
-  <div class="create-page">
-    <DqRow :gutter="24">
-      <!-- Left panel: creation area -->
-      <DqCol :xs="24" :md="16" :lg="17" :xl="18">
-        <div class="creation-panel">
+  <StudioLayout class="studio-create-page" @scroll="onCanvasScroll">
+    <template #filters>
+      <StudioGalleryFilters
+        :filter-time="filterTime"
+        :filter-models="filterModels"
+        :time-options="timeOptions"
+        :model-options="allModelOptions"
+        :selection-mode="selectionMode"
+        @update:filter-time="filterTime = $event"
+        @update:filter-models="filterModels = $event"
+        @refresh="refreshGallery"
+        @toggle-selection-mode="toggleSelectionMode"
+      />
+    </template>
 
-          <!-- Plan §2.1: top-level tabs (create / rewrite by reference / rewrite by instruction / retouch / extend / upscale) -->
-          <DqSegmented
-            class="dq-work-segmented"
-            :model-value="imageWorkTab"
-            :options="imageWorkSegmentOptions"
-            block
-            @update:model-value="setImageWorkMode"
-          />
-          <div v-if="editingSubModeDesc" class="studio-work-desc">
-            {{ editingSubModeDesc }}
-          </div>
+    <template #canvas>
+      <StudioCanvas
+        :items="galleryItems"
+        :active-tasks="activeImageTasks"
+        :loading="galleryLoading"
+        :has-more="galleryHasMore"
+        media="image"
+        :has-active-filters="hasActiveFilters"
+        :selection-mode="selectionMode"
+        :selected-paths="selectedPaths"
+        :all-selected="allLoadedSelected"
+        @select="onGallerySelect"
+        @card-action="onCardAction"
+        @reset-filters="resetGalleryFilters"
+        @load-more="loadGallery(false)"
+        @toggle-select="toggleSelect"
+        @select-all="selectAllLoaded"
+        @batch-delete="batchDeleteSelected"
+        @clear-selection="clearSelection"
+      />
+    </template>
 
-          <!-- Model selector: single-level dropdown, recommended items first -->
-          <DqSurfaceCard class="studio-surface-card studio-card-mb studio-model-card">
-            <template #header>
-              <div class="card-title">
-                <DqIcon><cpu /></DqIcon>
-                {{ $t('create.modelSelectTitle') }}
-              </div>
-            </template>
-            <div class="studio-model-toolbar">
-              <DqSelect
-                v-model="selectedModelVersion"
-                filterable
-                @change="onModelVersionChange"
-                :placeholder="$t('studio.selectModel')"
+    <template #composer>
+      <ImageComposer
+        v-model="params.prompt"
+        v-model:title="params.title"
+        v-model:model="selectedModelVersion"
+        v-model:size="selectedSize"
+        v-model:batch-count="batchCount"
+        :generating="generating"
+        :can-generate="canGenerate"
+        :model-options="modelSelectOptions"
+        :size-options="sizeOptions"
+        :styles="filteredPresets"
+        :params="params"
+        :has-custom-params="hasCustomParams"
+        :show-negative-prompt="!!currentModelConfig?.parameters?.negative_prompt_support"
+        :reference-image="referenceImage"
+        :mode="imageMode"
+        :mode-options="imageModeOptions"
+        :current-model-config="currentModelConfig"
+        :compatible-loras="compatibleLoras"
+        :compatible-control-nets="compatibleControlNets"
+        @update:mode="onModeChange"
+        @generate="startGeneration"
+        @pick-reference="showAssetPicker = true"
+        @remove-reference="removeReferenceImage"
+        @model-change="onModelVersionChange"
+        @reset-defaults="resetToDefaults"
+      />
+    </template>
+  </StudioLayout>
+
+  <!-- Asset picker for reference image -->
+  <DqDialog v-model:open="showAssetPicker" :title="$t('assetPicker.dialogTitle')" width="70%">
+    <AssetPicker
+      accept-kind="image"
+      :recent-gallery="recentImages"
+      @pick="onReferencePick"
+    />
+  </DqDialog>
+
+  <!-- Preview dialog -->
+  <GalleryPreviewDialog
+    v-model:visible="previewVisible"
+    v-model:index="selectedImageIndex"
+    :items="galleryItems"
+    media="image"
+  />
+
+  <!-- Unified Editor Drawer: retouch / extend / upscale -->
+  <DqDrawer
+    v-model:open="showEditorDrawer"
+    :title="editorDrawerTitle"
+    direction="rtl"
+    size="520px"
+    class="studio-image-editor-drawer"
+  >
+    <div v-if="editDrawerItem" class="studio-editor-drawer">
+      <div v-if="editorMode === 'retouch'" class="studio-retouch-panel">
+        <DqPrefPane class="studio-create-pref-pane">
+          <DqPrefRow :label="$t('studio.model')">
+            <DqSelect v-model="retouchModelVersion" size="small" style="width: 100%" :placeholder="$t('studio.selectModel')">
+              <DqOption
+                v-for="item in retouchModelOptions"
+                :key="item.value"
+                :label="item.label"
+                :value="item.value"
+                :disabled="item.disabled"
               >
-                <template v-if="selectedModelPickerItem" #value>
-                  <div class="studio-picker-option studio-picker-option--value">
-                    <span class="studio-picker-option__name">{{ selectedModelPickerItem.name }}</span>
-                    <ModelVersionPickerExtras
-                      :recommended="selectedModelPickerItem.recommended"
-                      :commercial-use-allowed="selectedModelPickerItem.commercialUseAllowed"
-                      :status="String(selectedModelPickerItem.status || '')"
-                      :size="String(selectedModelPickerItem.size || '')"
-                    />
-                  </div>
-                </template>
-                <DqOption
-                  v-for="item in filteredModelPickerVersions"
-                  :key="item.modelKey + '|' + item.versionKey"
-                  :label="String(item.name)"
-                  :value="item.modelKey + '|' + item.versionKey"
-                  :disabled="!item.ready"
+                <DqTag
+                  v-if="item.commercialUseAllowed"
+                  size="mini"
+                  type="success"
+                  class="studio-drawer-model-badge"
                 >
-                  <ModelVersionPickerOption
-                    :description="String(item.description || '')"
-                    :recommended="item.recommended"
-                    :commercial-use-allowed="item.commercialUseAllowed"
-                    :status="String(item.status || '')"
-                    :size="String(item.size || '')"
-                  />
-                </DqOption>
-              </DqSelect>
-              <DqButton
-                class="studio-model-settings-btn"
-                @click="goToSettings"
-                :title="$t('studio.modelSettings')"
-              >
-                <DqIcon :size="14"><setting /></DqIcon>
-              </DqButton>
-              <ModelPickerFilters
-                v-model:commercial-only="modelFilterCommercialOnly"
-                :show-installed-filter="false"
-              />
-            </div>
-            <CreateModelDescription :model-config="currentModelConfig" />
-            <DqAlert
-              v-if="selectedModelNotReady"
-              :title="$t('studio.modelNotReady', { name: currentModelDisplayName })"
-              type="warning"
-              :closable="false"
-              class="studio-alert-mt"
-            >
-              <template #default>
-                <span>{{ $t('studio.notDownloadedMsg') }}</span>
-                <DqButton type="primary" size="sm" class="studio-alert-inline-btn" @click="goToDownload">
-                  {{ $t('studio.goDownload') }}
-                </DqButton>
-              </template>
-            </DqAlert>
-          </DqSurfaceCard>
+                  {{ $t('download.commercialUseBadge') }}
+                </DqTag>
+              </DqOption>
+            </DqSelect>
+          </DqPrefRow>
+        </DqPrefPane>
 
-          <!-- Work title -->
-          <DqSurfaceCard class="studio-surface-card studio-card-mb">
-            <template #header>
-              <div class="card-title">
-                <DqIcon><document /></DqIcon>
-                {{ $t('studio.workTitle') }}
-              </div>
-            </template>
-            <DqInput
-              v-model="params.title"
-              clearable
-              :placeholder="$t('studio.workTitlePlaceholder')"
-            />
-          </DqSurfaceCard>
-
-          <!-- Prompt (not needed for upscale) -->
-          <DqSurfaceCard v-if="editMode !== 'image_upscale'"
-            class="studio-surface-card studio-card-mb"
-          >
-            <template #header>
-              <div class="card-title">
-                <DqIcon><edit-pen /></DqIcon>
-                {{ $t('studio.prompt') }}
-              </div>
-            </template>
-
-            <!-- Preset quick pick -->
-            <DqRow :gutter="8" class="studio-presets-row">
-              <DqCol :span="18" class="studio-presets-row__select">
-                <DqSelect
-                  v-model="selectedPreset"
-                  :placeholder="$t('create.preset')"
-                  class="studio-presets-row__control"
-                  clearable
-                >
-                  <DqOption
-                    v-for="(preset, name) in filteredPresets"
-                    :key="name"
-                    :label="presetSelectLabel(name, preset)"
-                    :value="name"
-                  />
-                </DqSelect>
-              </DqCol>
-              <DqCol :span="6" class="studio-presets-row__action">
-                <DqButton class="studio-presets-row__control studio-presets-row__load-btn" @click="loadPreset">
-                  <span class="studio-inline-btn">
-                    <DqIcon :size="14"><folder-opened /></DqIcon>
-                    {{ $t('create.loadPreset') }}
-                  </span>
-                </DqButton>
-              </DqCol>
-            </DqRow>
-
-            <DqInput
-              v-model="params.prompt"
-              type="textarea"
-              :rows="5"
-              :placeholder="$t('create.promptPlaceholder')"
-              resize="none"
-              @keydown.meta.enter.prevent="startGeneration"
-              @keydown.ctrl.enter.prevent="startGeneration"
-            />
-
-            <!-- Negative prompt (only shown for models that support it) -->
-            <DqCollapse v-if="currentModelConfig?.parameters?.negative_prompt_support" class="studio-collapse-plain">
-              <DqCollapseItem :title="$t('studio.negativePrompt')" name="negative">
-                <DqInput
-                  v-model="params.negative_prompt"
-                  type="textarea"
-                  :rows="2"
-                  :placeholder="$t('create.negativePlaceholder')"
-                />
-              </DqCollapseItem>
-            </DqCollapse>
-            <div v-if="editMode === 'image_editing' && editingSubMode === 'outpainting'" class="studio-extend-panel">
-              <div class="studio-extend-panel-title">{{ $t('create.extendPanelTitle') }}</div>
-              <CreateExtendParams :params="params" />
-            </div>
-          </DqSurfaceCard>
-
-          <!-- Upscale params (plan §6.3 /image/upscales) -->
-          <DqSurfaceCard v-if="editMode === 'image_upscale'" class="studio-surface-card studio-card-mb">
-            <template #header>
-              <div class="card-title">
-                <DqIcon><zoom-in /></DqIcon>
-                {{ $t('action.image.upscale') }}
-              </div>
-            </template>
-            <CreateUpscaleParams :params="params" media="image" />
-          </DqSurfaceCard>
-
-          <!-- Advanced params (collapsible) -->
-          <DqSurfaceCard v-if="editMode !== 'image_upscale'"
-            class="studio-surface-card studio-card-mb"
-          >
-            <template #header>
-              <div class="card-title">
-                <DqIcon><setting /></DqIcon>
-                {{ $t('studio.advancedParams') }}
-                <DqTag v-if="hasCustomParams" size="small" type="warning">{{ $t('studio.hasCustom') }}</DqTag>
-              </div>
-            </template>
-
-            <ImageCreateAdvancedParams
-              :params="params"
-              :current-model-config="currentModelConfig"
-              :edit-mode="editMode"
-              :compatible-loras="compatibleLoras"
-              :compatible-control-nets="compatibleControlNets"
-              :control-image-src="controlImageSrc"
-              :recent-images="recentImages"
-              @reset-to-defaults="resetToDefaults"
-              @control-asset-pick="onControlAssetPick"
-              @remove-control-image="removeControlImage"
-            />
-          </DqSurfaceCard>
-
-          <!-- Main action (plan §2.3: primary button + queue hint) -->
-          <DqSurfaceCard class="studio-surface-card studio-card-mb">
-            <DqButton
-              type="primary"
-              class="studio-primary-cta dq-btn--cta"
-              :disabled="submitDisabled"
-              @click="startGeneration"
-            >
-              <DqIcon size="20"><magic-stick /></DqIcon>
-              <span class="studio-cta-gap">{{ primaryCtaLabel }}</span>
-            </DqButton>
-            <div class="studio-micro-hint">
-              {{ $sendShortcutHint() }}
-            </div>
-
-            <!-- Progress display -->
-            <div v-if="currentTask" class="studio-task-wrap">
-              <div v-if="currentTask.status === 'submitting'" class="studio-task-submitting">
-                <DqIcon class="studio-spin-icon" size="16"><loading /></DqIcon>
-                {{ $tt('studio.submitting') }}
-              </div>
-              <template v-else>
-                <DqProgress
-                  :percentage="Math.round(currentTask.progress * 100)"
-                  :status="currentTask.status === 'failed' ? 'exception' : ''"
-                />
-                <div class="studio-task-status">
-                  <template v-if="currentTask.total > 0 && currentTask.status === 'running'">
-                    Step {{ currentTask.step }}/{{ currentTask.total }} &nbsp;
-                  </template>
-                  <span v-if="progressPhaseLabelText" class="studio-task-phase">{{ progressPhaseLabelText }}</span>
-                  <DqTag :type="getStatusType(currentTask.status)" size="small">
-                    {{ getStatusText(currentTask.status) }}
-                  </DqTag>
-                </div>
-                <p v-if="taskQueueHint" class="studio-task-queue-hint">{{ taskQueueHint }}</p>
-              </template>
-            </div>
-          </DqSurfaceCard>
-
-          <!-- Logs -->
-          <DqSurfaceCard class="studio-surface-card">
-            <template #header>
-              <div class="card-title card-title--split">
-                <span>
-                  <DqIcon><document /></DqIcon>
-                  {{ $t('studio.logs') }}
-                </span>
-                <DqIconButton type="text" size="sm" :label="$t('common.delete')" @click="clearLogs">
-                  <DqIcon><delete /></DqIcon>
-                </DqIconButton>
-              </div>
-            </template>
-
-            <div class="log-container studio-log-container--sm" ref="logContainer">
-              <div v-if="logs.length === 0" class="studio-log-empty">
-                {{ $t('studio.logsEmpty') }}
-              </div>
-              <div v-for="(log, index) in logs" :key="index" class="log-line">
-                <span class="log-timestamp">{{ log.time }}</span>
-                <span :class="'log-' + log.level">{{ log.message }}</span>
-              </div>
-            </div>
-          </DqSurfaceCard>
-        </div>
-      </DqCol>
-
-      <!-- Right panel -->
-      <DqCol :xs="24" :md="8" :lg="7" :xl="6">
-        <div class="preview-panel preview-panel--flat">
-
-          <StudioPreviewPane
-            v-if="editMode === 'image_editing'"
-            class="studio-preview-pane--source"
-            :title="$t('create.imageInput')"
-            icon="picture-filled"
-            split-head
-          >
-            <template #actions>
-              <asset-picker
-                accept-kind="image"
-                :recent-gallery="recentImages"
-                @pick="onEditAssetPick"
-              />
-            </template>
-            <image-editor
-              ref="imageEditorRef"
-              :src="editImageSrc"
-              :recent-gallery="recentImages"
-              mode="inpainting"
-              @pick-edit-source="onEditAssetPick"
-            />
-          </StudioPreviewPane>
-
-          <StudioPreviewPane
-            v-else-if="editMode === 'image_upscale'"
-            class="studio-preview-pane--source"
-            :title="$t('create.imageInput')"
-            icon="picture-filled"
-            split-head
-          >
-            <template #actions>
-              <asset-picker
-                accept-kind="image"
-                :recent-gallery="recentImages"
-                @pick="onEditAssetPick"
-              />
-            </template>
-            <div v-if="editImageSrc" class="image-preview studio-preview-sq">
-              <img class="studio-preview-media" :src="editImageSrc" alt="upscale source" />
-            </div>
-            <DqEmpty v-else :description="$t('studio.uploadEditImage')" />
-          </StudioPreviewPane>
-
-          <DqAlert
-            v-if="showTurboHint"
-            type="info"
-            :closable="true"
-            class="studio-turbo-hint studio-card-mb"
-            :title="$t('studio.turboModelHint')"
+        <div class="studio-retouch-editor-wrap">
+          <ImageEditor
+            ref="imageEditorRef"
+            :src="getImageUrl(editDrawerItem)"
+            mode="inpainting"
+            :show-submit-button="false"
           />
-          <div v-if="memoryBarVisible" class="studio-memory-bar studio-card-mb">
-            <div class="studio-memory-bar__head">
-              <span class="studio-memory-bar__title">
-                <DqIcon :size="14"><cpu /></DqIcon>
-                {{ memoryBarLabel }}
-              </span>
-              <span class="studio-memory-bar__pct">{{ memoryBarPercent }}%</span>
-            </div>
-            <DqProgress :percentage="memoryBarPercent" :show-text="false" class="studio-memory-bar__track" />
-            <p v-if="memoryBarMlxHint" class="studio-memory-bar__mlx">{{ memoryBarMlxHint }}</p>
-          </div>
-
-          <StudioPreviewPane
-            :title="$t('studio.currentPreview')"
-            icon="picture-filled"
-            class="studio-preview-pane--current"
-          >
-            <LivingCanvas
-              :key="previewImageKey"
-              :src="previewImage"
-              :hue="previewImageHue"
-              :alt="previewCaption"
-              :empty-text="$t('studio.noPreview')"
-              :step-hint="livingCanvasStepHint"
-              @download="downloadPreviewImage"
-              @expand="openCurrentPreviewDialog"
-            />
-            <div v-if="previewImage && previewCaption" class="studio-preview-pane__caption-block">
-              <p class="studio-preview-pane__caption" :title="previewCaption">{{ previewCaption }}</p>
-              <p v-if="previewCaptionSub" class="studio-preview-pane__caption-sub" :title="previewCaptionSub">
-                {{ previewCaptionSub }}
-              </p>
-            </div>
-            <DqButton
-              v-if="enhanceOfferVisible"
-              type="secondary"
-              block
-              class="studio-enhance-offer-btn"
-              @click="startEnhanceGeneration"
-            >
-              <span class="studio-inline-btn">
-                <DqIcon :size="15"><magic-stick /></DqIcon>
-                {{ enhanceOfferLabel }}
-              </span>
-            </DqButton>
-          </StudioPreviewPane>
-
-          <StudioPreviewPane :title="$t('studio.recent')" icon="clock" split-head recent>
-            <template #actions>
-              <DqIconButton type="text" size="sm" :label="$t('gallery.refresh')" @click="loadRecentImages">
-                <DqIcon><refresh /></DqIcon>
-              </DqIconButton>
-            </template>
-            <DqEmpty v-if="recentImages.length === 0" :description="$t('gallery.empty')" />
-            <div v-else class="studio-recent-grid">
-              <div
-                v-for="image in recentImages"
-                :key="image.path"
-                class="studio-recent-grid__item gallery-card"
-              >
-                <div class="gallery-image-wrapper studio-preview-sq" @click="showPreview(image)">
-                  <img
-                    v-if="!recentGalleryThumbFailed[String(image.path)]"
-                    :src="getImageUrl(image)"
-                    :alt="recentImageLabel(image)"
-                    loading="lazy"
-                    @error="markRecentGalleryThumbFailed(image)"
-                  />
-                  <div v-else class="gallery-thumb-fallback studio-recent-thumb-fallback">
-                    <DqIcon :size="44"><Picture /></DqIcon>
-                  </div>
-                </div>
-                <p v-if="recentImageLabel(image)" class="studio-recent-grid__caption" :title="recentImageLabel(image)">
-                  {{ truncateDisplayLabel(recentImageLabel(image), 40) }}
-                </p>
-                <div class="recent-actions">
-                  <DqButton class="action-btn rewrite-btn" size="sm" @click.stop="quickFromGallery(image, 'rewrite')">
-                    <DqIcon :size="12"><brush /></DqIcon>
-                    <span>{{ $t('studio.quickRewrite') }}</span>
-                  </DqButton>
-                  <DqButton class="action-btn upscale-btn" size="sm" @click.stop="quickFromGallery(image, 'upscale')">
-                    <DqIcon :size="12"><zoom-in /></DqIcon>
-                    <span>{{ $t('studio.quickUpscale') }}</span>
-                  </DqButton>
-                </div>
-              </div>
-            </div>
-          </StudioPreviewPane>
         </div>
-      </DqCol>
-    </DqRow>
-
-    <!-- Image preview dialog -->
-    <DqDialog v-model:open="previewVisible" :title="selectedImage ? recentImageLabel(selectedImage) : ''" width="70%" center>
-      <div v-if="selectedImage" class="studio-dialog-center">
-        <img class="studio-dialog-img" :src="getImageUrl(selectedImage)" />
+        <DqButton type="primary" block class="studio-drawer-submit" @click="onEditorSubmit">
+          {{ $t('action.image.retouch') }}
+        </DqButton>
       </div>
-    </DqDialog>
-    <DqDialog v-model:open="currentPreviewDialogOpen" :title="$t('studio.currentPreview')" width="78%" center>
-      <div v-if="previewImage" class="studio-dialog-center">
-        <img class="studio-dialog-img-tall" :src="previewImage" :alt="previewCaption" />
+      <div v-else-if="editorMode === 'extend'" class="studio-extend-panel">
+        <DqPrefPane class="studio-create-pref-pane">
+          <DqPrefRow :label="$t('studio.model')">
+            <DqSelect v-model="extendModelVersion" size="small" style="width: 100%" :placeholder="$t('studio.selectModel')">
+              <DqOption
+                v-for="item in extendModelOptions"
+                :key="item.value"
+                :label="item.label"
+                :value="item.value"
+                :disabled="item.disabled"
+              >
+                <DqTag
+                  v-if="item.commercialUseAllowed"
+                  size="mini"
+                  type="success"
+                  class="studio-drawer-model-badge"
+                >
+                  {{ $t('download.commercialUseBadge') }}
+                </DqTag>
+              </DqOption>
+            </DqSelect>
+          </DqPrefRow>
+        </DqPrefPane>
+        <CreateExtendParams :params="extendParams" />
+        <DqButton type="primary" block class="studio-drawer-submit" @click="onExtendSubmit">
+          {{ $t('action.image.extend') }}
+        </DqButton>
       </div>
-    </DqDialog>
-  </div>
+      <div v-else-if="editorMode === 'upscale'" class="studio-upscale-panel">
+        <DqPrefPane class="studio-create-pref-pane">
+          <DqPrefRow :label="$t('studio.model')">
+            <DqSelect v-model="upscaleModelVersion" size="small" style="width: 100%" :placeholder="$t('studio.selectModel')">
+              <DqOption
+                v-for="item in upscaleModelOptions"
+                :key="item.value"
+                :label="item.label"
+                :value="item.value"
+                :disabled="item.disabled"
+              >
+                <DqTag
+                  v-if="item.commercialUseAllowed"
+                  size="mini"
+                  type="success"
+                  class="studio-drawer-model-badge"
+                >
+                  {{ $t('download.commercialUseBadge') }}
+                </DqTag>
+              </DqOption>
+            </DqSelect>
+          </DqPrefRow>
+        </DqPrefPane>
+        <CreateUpscaleParams :params="upscaleParams" media="image" />
+        <DqButton type="primary" block class="studio-drawer-submit" @click="onUpscaleSubmit">
+          {{ $t('action.image.upscale') }}
+        </DqButton>
+      </div>
+    </div>
+  </DqDrawer>
 </template>
 
 <script setup lang="ts">
-// @ts-nocheck
+// @ts-nocheck — legacy create view; narrow types in a follow-up pass
 import { ref, reactive, computed, watch, onMounted, onUnmounted, inject, nextTick, unref } from 'vue';
 import type { Ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { toast } from '@/utils/feedback';
 import { api, taskIdFromSubmitResponse } from '@/utils/api';
 import { $tt, $mn, $md, $mvn, $pn } from '@/utils/i18n';
-import { DQ_STORAGE } from '@/utils/storage';
+import { DQ_STORAGE, getItem, setItem } from '@/utils/storage';
 import { useTasksStore } from '@/stores/tasks';
 import { useRegistryStore } from '@/stores/registry';
-import type { SystemInfo } from '@/types';
+import type { SystemInfo, GalleryItem, Task } from '@/types';
 import { applyDefaults, hasDeviation } from '@/utils/registryParamSchema';
-import { pickDefaultVersionKey, resolveDefaultModelRegistryKey } from '@/utils/defaultModelSettings';
+
 import { warnIfRiskyMemory } from '@/composables/memoryHint';
 import { formatGenLogMessage, isDuplicateDenoiseStepLog } from '@/utils/genTaskLog';
-import ModelLicenseBadges from '@/components/model/ModelLicenseBadges.vue';
-import ModelPickerFilters from '@/components/model/ModelPickerFilters.vue';
-import ModelVersionPickerExtras from '@/components/model/ModelVersionPickerExtras.vue';
-import CreateModelDescription from '@/components/model/CreateModelDescription.vue';
-import ModelVersionPickerOption from '@/components/model/ModelVersionPickerOption.vue';
-import { useModelRegistryFilters, reconcileVersionPickerSelection } from '@/composables/useModelRegistryFilters';
+import { reconcileVersionPickerSelection } from '@/composables/useModelRegistryFilters';
 import { applyModelVersionFilters } from '@/utils/modelPickerFilters';
+import { previewDisplayCaption, truncateDisplayLabel } from '@/utils/assetDisplay';
+// Studio components
+import StudioLayout from '@/components/studio/StudioLayout.vue';
+import StudioCanvas from '@/components/studio/StudioCanvas.vue';
+import StudioGalleryFilters from '@/components/studio/StudioGalleryFilters.vue';
+import ImageComposer from '@/components/studio/ImageComposer.vue';
 import AssetPicker from '@/components/asset/AssetPicker.vue';
 import ImageEditor from '@/components/image/ImageEditor.vue';
-import ImageCreateAdvancedParams from '@/components/create/ImageCreateAdvancedParams.vue';
-import CreateUpscaleParams from '@/components/create/CreateUpscaleParams.vue';
 import CreateExtendParams from '@/components/create/CreateExtendParams.vue';
-import StudioPreviewPane from '@/components/create/StudioPreviewPane.vue';
-import LivingCanvas from '@/components/create/LivingCanvas.vue';
-import { assetDisplayLabel, previewDisplayCaption, truncateDisplayLabel } from '@/utils/assetDisplay';
-import { Picture } from '@danqing/dq-shell';
+import CreateUpscaleParams from '@/components/create/CreateUpscaleParams.vue';
+import GalleryPreviewDialog from '@/components/gallery/GalleryPreviewDialog.vue';
+import { useStudioGallery } from '@/composables/useStudioGallery';
 
 /* ------------------------------------------------------------------ */
 /*  Injected / External                                                */
 /* ------------------------------------------------------------------ */
 
 const systemInfo = inject<Ref<SystemInfo>>('systemInfo');
-
 const tasksStore = useTasksStore();
 const registryStore = useRegistryStore();
 const router = useRouter();
 
 /* ------------------------------------------------------------------ */
-/*  RegistryActions helpers (inlined from legacy registry_actions.js)  */
+/*  RegistryActions helpers                                            */
 /* ------------------------------------------------------------------ */
 
 function hasAction(actions: Record<string, unknown>, key: string): boolean {
@@ -490,78 +243,18 @@ function imageSupportsCreate(actions: Record<string, unknown>): boolean {
 function imageSupportsUpscale(actions: Record<string, unknown>): boolean {
   return hasAction(actions, 'upscale');
 }
-function imageEditingMatches(actions: Record<string, unknown>, subMode: string): boolean {
-  if (subMode === 'inpainting') {
-    return hasAction(actions, 'retouch') || hasAction(actions, 'rewrite');
-  }
-  if (subMode === 'outpainting') {
-    return hasAction(actions, 'extend') || hasAction(actions, 'retouch');
-  }
-  return hasAction(actions, 'rewrite');
+function imageSupportsExtend(actions: Record<string, unknown>): boolean {
+  return hasAction(actions, 'extend');
 }
-function modelUsesVlInstructEdit(config: Record<string, unknown> | null | undefined): boolean {
-  const params = config?.parameters as Record<string, unknown> | undefined;
-  return params?.edit_use_vl_vision === true;
-}
-function imageInstructEditModel(modelKey: string, actions: Record<string, unknown>): boolean {
-  if (modelKey === 'flux1-kontext') {
-    return imageSupportsCreate(actions) && hasAction(actions, 'rewrite');
-  }
-  const cfg = modelRegistry.value[modelKey];
-  return hasAction(actions, 'rewrite') && modelUsesVlInstructEdit(cfg);
-}
-function imageReferenceRewriteModel(modelKey: string, actions: Record<string, unknown>): boolean {
-  if (!imageEditingMatches(actions, 'text_editing')) return false;
-  const cfg = modelRegistry.value[modelKey];
-  return !modelUsesVlInstructEdit(cfg);
+function imageSupportsRetouch(actions: Record<string, unknown>): boolean {
+  return hasAction(actions, 'retouch');
 }
 function imageModelRow(config: Record<string, unknown>): boolean {
   return config && config.media === 'image' && config.category !== 'loras';
 }
 
 /* ------------------------------------------------------------------ */
-/*  DQTaskStatusUi helpers (inlined from legacy task_status_ui.js)     */
-/* ------------------------------------------------------------------ */
-
-function getStatusType(status: string): string {
-  const map: Record<string, string> = {
-    pending: 'info',
-    queued: 'info',
-    submitting: 'info',
-    running: 'warning',
-    completed: 'success',
-    failed: 'danger',
-    cancelled: 'info',
-  };
-  return map[status] || 'info';
-}
-function getStatusText(status: string): string {
-  const map: Record<string, string> = {
-    pending: 'studio.pending',
-    queued: 'studio.queued',
-    submitting: 'studio.submitting',
-    running: 'studio.running',
-    completed: 'studio.completed',
-    failed: 'studio.failed',
-    cancelled: 'studio.cancelled',
-  };
-  const key = map[status] || `studio.${status}`;
-  return $tt(key);
-}
-
-/* ------------------------------------------------------------------ */
-/*  DQModelVersionValue helper (inlined from legacy model_version_value.js) */
-/* ------------------------------------------------------------------ */
-
-function parseModelVersionValue(value: string): { modelKey: string; versionKey: string } | null {
-  if (!value || typeof value !== 'string') return null;
-  const parts = value.split('|');
-  if (parts.length !== 2 || !parts[0] || !parts[1]) return null;
-  return { modelKey: parts[0], versionKey: parts[1] };
-}
-
-/* ------------------------------------------------------------------ */
-/*  Params (including advanced params)                                 */
+/*  Params                                                             */
 /* ------------------------------------------------------------------ */
 
 const params = reactive<Record<string, unknown>>({
@@ -589,271 +282,145 @@ const params = reactive<Record<string, unknown>>({
   extend_pixels: 256,
 });
 
-// Selected model+version combo (format: "modelKey|versionKey")
 const selectedModelVersion = ref('');
-
-// State
+const selectedSize = ref(getItem(DQ_STORAGE.IMAGE_LAST_SIZE) || '1024x1024');
+const batchCount = ref(1);
 const generating = ref(false);
-const currentTask = ref<Record<string, unknown> | null>(null);
-const logs = ref<Array<{ time: string; message: string; level: string }>>([]);
-const logContainer = ref<HTMLElement | null>(null);
-/** Last denoise step mirrored into the log card from SSE progress (avoids empty panel until DB catches up) */
-const genLogLastStep = ref(0);
-/** 'denoise' | 'post' — log post-phase line once when SSE reports message post */
-const genLogLastPhase = ref('');
-const previewImage = ref('');
-/** Bust browser cache when the same asset URL is reused during step previews. */
-const previewImageKey = ref(0);
-const currentPreviewDialogOpen = ref(false);
-/** Keep SSE alive for the active generation (do not rely on GC). */
-let activeGenStream: EventSource | null = null;
-let previewPollTimer: ReturnType<typeof setInterval> | null = null;
-let previewBlobUrl: string | null = null;
 
-function closeGenStream() {
-  if (activeGenStream) {
-    activeGenStream.close();
-    activeGenStream = null;
+/* ------------------------------------------------------------------ */
+/*  Reference Image (new: replaces old edit mode tabs)                 */
+/* ------------------------------------------------------------------ */
+
+const referenceImage = ref<{ previewUrl: string; path: string; assetId?: string } | null>(null);
+const showAssetPicker = ref(false);
+
+function onReferencePick({ path, previewUrl }: { path: string; previewUrl: string }) {
+  referenceImage.value = { path, previewUrl };
+  showAssetPicker.value = false;
+  imageMode.value = 'img2img';
+}
+
+function removeReferenceImage() {
+  referenceImage.value = null;
+}
+
+/* ------------------------------------------------------------------ */
+/*  LoRAs / ControlNets                                                */
+/* ------------------------------------------------------------------ */
+
+const compatibleLoras = ref<Record<string, unknown>[]>([]);
+const compatibleControlNets = ref<Record<string, unknown>[]>([]);
+
+async function loadCompatibleAdapters(modelKey: string) {
+  if (!modelKey) {
+    compatibleLoras.value = [];
+    compatibleControlNets.value = [];
+    return;
   }
-}
-
-function stopPreviewPoll() {
-  if (previewPollTimer != null) {
-    clearInterval(previewPollTimer);
-    previewPollTimer = null;
-  }
-}
-
-function revokePreviewBlobUrl() {
-  if (previewBlobUrl) {
-    URL.revokeObjectURL(previewBlobUrl);
-    previewBlobUrl = null;
-  }
-}
-
-function applyPreviewUrl(url: unknown) {
-  if (!url) return;
-  revokePreviewBlobUrl();
-  const raw = String(url);
-  const base = raw.startsWith('http') ? raw : raw.startsWith('/') ? raw : `/${raw}`;
-  previewImage.value = `${base}${base.includes('?') ? '&' : '?'}t=${Date.now()}`;
-  previewImageKey.value += 1;
-}
-
-/** Step preview: poll GET /api/tasks/{id}/preview (backend writes work_dir/preview_latest.png). */
-async function pollTaskPreviewOnce(taskId: string) {
-  if (!taskId) return;
-  const url = `${api.tasks.previewUrl(taskId)}?t=${Date.now()}`;
   try {
-    const res = await fetch(url, { method: 'GET', cache: 'no-store' });
-    if (!res.ok) return;
-    const blob = await res.blob();
-    if (!blob.size) return;
-    revokePreviewBlobUrl();
-    previewBlobUrl = URL.createObjectURL(blob);
-    previewImage.value = previewBlobUrl;
-    previewImageKey.value += 1;
-  } catch {
-    /* 404 until first step preview is written */
+    const [loras, controlNets] = await Promise.all([
+      api.settings.getCompatibleLoras(modelKey),
+      api.settings.getCompatibleControlNets(modelKey),
+    ]);
+    compatibleLoras.value = (loras as Record<string, unknown>[]) || [];
+    compatibleControlNets.value = (controlNets as Record<string, unknown>[]) || [];
+  } catch (e) {
+    console.error('Failed to load compatible adapters:', e);
+    compatibleLoras.value = [];
+    compatibleControlNets.value = [];
+    toast.error($tt('studio.error', { msg: $tt('studio.adapterLoadFailed') }));
   }
 }
 
-function startPreviewPoll(taskId: string) {
-  stopPreviewPoll();
-  const tick = () => {
-    if (!generating.value || String(currentTask.value?.id || '') !== taskId) {
-      stopPreviewPoll();
-      return;
-    }
-    pollTaskPreviewOnce(taskId);
+/* ------------------------------------------------------------------ */
+/*  Gallery / Studio Canvas                                            */
+/* ------------------------------------------------------------------ */
+
+const {
+  galleryItems,
+  galleryLoading,
+  galleryHasMore,
+  filterTime,
+  filterModels,
+  selectionMode,
+  selectedPaths,
+  allLoadedSelected,
+  timeOptions,
+  allModelOptions,
+  hasActiveFilters,
+  loadGallery,
+  refreshGallery,
+  onCanvasScroll,
+  resetGalleryFilters,
+  toggleSelect,
+  toggleSelectionMode,
+  selectAllLoaded,
+  deleteItem,
+  batchDeleteSelected,
+  clearSelection,
+} = useStudioGallery('image');
+
+watch(() => params.model, (modelKey) => {
+  if (modelKey) loadCompatibleAdapters(String(modelKey));
+});
+
+/* ------------------------------------------------------------------ */
+/*  Active Tasks (generating placeholders)                             */
+/* ------------------------------------------------------------------ */
+
+const activeImageTasks = computed(() => {
+  const running = tasksStore.queueState.running.filter((t: Task) =>
+    String(t.kind || '').startsWith('image.')
+  );
+  const queued = tasksStore.queueState.queued.filter((t: Task) =>
+    String(t.kind || '').startsWith('image.')
+  );
+  return [...running, ...queued];
+});
+
+/* ------------------------------------------------------------------ */
+/*  Task status helpers                                                */
+/* ------------------------------------------------------------------ */
+
+function getStatusType(status: string): string {
+  const map: Record<string, string> = {
+    pending: 'info',
+    queued: 'info',
+    submitting: 'info',
+    running: 'warning',
+    completed: 'success',
+    failed: 'danger',
+    cancelled: 'info',
   };
-  tick();
-  previewPollTimer = setInterval(tick, 1500);
+  return map[status] || 'info';
 }
 
-function applyPreviewAsset(assetId: unknown) {
-  if (!assetId) return;
-  revokePreviewBlobUrl();
-  const id = String(assetId);
-  previewImage.value = `${api.gallery.getImageUrl(`asset:${id}`)}?t=${Date.now()}`;
-  previewImageKey.value += 1;
+function getStatusText(status: string): string {
+  const map: Record<string, string> = {
+    pending: 'studio.pending',
+    queued: 'studio.queued',
+    submitting: 'studio.submitting',
+    running: 'studio.running',
+    completed: 'studio.completed',
+    failed: 'studio.failed',
+    cancelled: 'studio.cancelled',
+  };
+  const key = map[status] || `studio.${status}`;
+  return $tt(key);
 }
 
-const previewCaption = computed(() =>
-  previewDisplayCaption(String(params.title || ''), String(params.prompt || '')),
-);
+/* ------------------------------------------------------------------ */
+/*  Model registry                                                     */
+/* ------------------------------------------------------------------ */
 
-const previewCaptionSub = computed(() => {
-  const title = String(params.title || '').trim();
-  const prompt = String(params.prompt || '').trim();
-  if (title && prompt) return prompt;
-  return '';
-});
-
-const previewImageHue = computed(() => {
-  let h = 0;
-  const s = previewCaption.value || 'image';
-  for (let i = 0; i < s.length; i += 1) {
-    h = (h * 31 + s.charCodeAt(i)) % 360;
-  }
-  return h;
-});
-
-function openCurrentPreviewDialog() {
-  if (!previewImage.value) return;
-  currentPreviewDialogOpen.value = true;
-}
-
-function downloadPreviewImage() {
-  if (!previewImage.value) return;
-  const a = document.createElement('a');
-  a.href = previewImage.value;
-  a.download = 'image.png';
-  a.click();
-}
-const recentImages = ref<Array<Record<string, unknown>>>([]);
-/** 最近生成缩略图加载失败时避免浏览器默认裂图，改为统一占位 */
-const recentGalleryThumbFailed = ref<Record<string, boolean>>({});
-
-function isDefinitelyNonRasterRecent(v: Record<string, unknown>): boolean {
-  const meta = v.metadata as Record<string, unknown> | undefined;
-  if (meta?.asset_kind === 'video' || meta?.asset_kind === 'audio') return true;
-  const ext = String(v.name || '').split('.').pop()?.toLowerCase() || '';
-  return ['mp4', 'mov', 'avi', 'mkv', 'webm', 'wav', 'mp3', 'flac', 'm4a', 'aac', 'opus', 'ogg'].includes(ext);
-}
-
-const markRecentGalleryThumbFailed = (image: Record<string, unknown>) => {
-  const p = String(image.path || '');
-  if (!p) return;
-  recentGalleryThumbFailed.value = { ...recentGalleryThumbFailed.value, [p]: true };
-};
-const compatibleLoras = ref<Array<Record<string, unknown>>>([]);
-const compatibleControlNets = ref<Array<Record<string, unknown>>>([]);
-const controlImageSrc = ref('');
-const controlImagePath = ref('');
-
-// Mode: top-level tab and engine sub-mode (rewrite split into reference / instruct)
-const editMode = ref('image_generation'); // image_generation | image_editing | image_upscale
-const imageWorkTab = ref('create'); // create | rewrite_reference | rewrite_instruct | retouch | extend | upscale
-const imageWorkSegmentOptions = computed(() => [
-  { label: $tt('action.image.create'), value: 'create' },
-  { label: $tt('create.rewriteDriveReference'), value: 'rewrite_reference' },
-  { label: $tt('create.rewriteDriveInstruct'), value: 'rewrite_instruct' },
-  { label: $tt('action.image.retouch'), value: 'retouch' },
-  { label: $tt('action.image.extend'), value: 'extend' },
-  { label: $tt('action.image.upscale'), value: 'upscale' },
-]);
-const editingSubMode = ref('inpainting'); // inpainting | text_editing | outpainting
-/** Aligned with API rewrite_mode; driven by imageWorkTab */
-const rewriteDriveMode = ref('reference');
-
-const setImageWorkMode = (mode: string) => {
-  if (mode === 'create') {
-    editMode.value = 'image_generation';
-    imageWorkTab.value = 'create';
-  } else if (mode === 'upscale') {
-    editMode.value = 'image_upscale';
-    imageWorkTab.value = 'upscale';
-  } else if (mode === 'rewrite' || mode === 'rewrite_reference') {
-    editMode.value = 'image_editing';
-    imageWorkTab.value = 'rewrite_reference';
-    editingSubMode.value = 'text_editing';
-    rewriteDriveMode.value = 'reference';
-  } else if (mode === 'rewrite_instruct') {
-    editMode.value = 'image_editing';
-    imageWorkTab.value = 'rewrite_instruct';
-    editingSubMode.value = 'text_editing';
-    rewriteDriveMode.value = 'instruct';
-  } else if (mode === 'retouch') {
-    editMode.value = 'image_editing';
-    imageWorkTab.value = 'retouch';
-    editingSubMode.value = 'inpainting';
-  } else if (mode === 'extend') {
-    editMode.value = 'image_editing';
-    imageWorkTab.value = 'extend';
-    editingSubMode.value = 'outpainting';
-  }
-};
-
-// Local redraw: image editor
-const editImageSrc = ref('');
-const editImagePath = ref('');
-const imageEditorRef = ref<Record<string, unknown> | null>(null);
-
-// Presets
-const presets = ref<Record<string, Record<string, unknown>>>({});
-const selectedPreset = ref('');
-
-const presetActionFilter = computed(() => {
-  if (editMode.value === 'image_upscale') {
-    return new Set(['upscale']);
-  }
-  if (editMode.value === 'image_generation') {
-    return new Set(['create']);
-  }
-  if (editingSubMode.value === 'inpainting') {
-    return new Set(['retouch', 'rewrite']);
-  }
-  if (editingSubMode.value === 'outpainting') {
-    return new Set(['extend', 'retouch']);
-  }
-  return new Set(['rewrite']);
-});
-
-const filteredPresets = computed(() => {
-  const want = presetActionFilter.value;
-
-  function planPresetShapeOk(preset: Record<string, unknown>) {
-    return (
-      Array.isArray(preset.applies_to) &&
-      (preset.applies_to as unknown[]).length > 0 &&
-      (preset.media_scope === 'image' || preset.media_scope === 'video')
-    );
-  }
-
-  function matchesMediaScope(preset: Record<string, unknown>) {
-    return preset.media_scope === 'image';
-  }
-
-  function matches(preset: Record<string, unknown>) {
-    if (!planPresetShapeOk(preset)) return false;
-    if (!matchesMediaScope(preset)) return false;
-    return (preset.applies_to as string[]).some((k: string) => want.has(k));
-  }
-
-  const entries = Object.entries(presets.value)
-    .filter(([, preset]) => matches(preset))
-    .sort((a, b) => {
-      const aCreate = (a[1].applies_to as string[]).includes('create');
-      const bCreate = (b[1].applies_to as string[]).includes('create');
-      if (aCreate !== bCreate) {
-        return aCreate ? -1 : 1;
-      }
-      return a[0].localeCompare(b[0], 'zh');
-    });
-  const result: Record<string, Record<string, unknown>> = {};
-  for (const [name, preset] of entries) {
-    result[name] = preset;
-  }
-  return result;
-});
-
-// Model registry
 const modelRegistry = ref<Record<string, Record<string, unknown>>>({});
-
-// Model readiness status
-const modelsStatus = ref<Record<string, unknown>>({});
 const modelsDetailedStatus = ref<Record<string, { versions?: Record<string, { ready?: boolean; status?: string }> }>>({});
 
-// All model versions (flattened list)
 const allVersions = computed(() => {
   const result: Array<Record<string, unknown>> = [];
   for (const [modelKey, config] of Object.entries(modelRegistry.value)) {
-    if (!imageModelRow(config)) {
-      continue;
-    }
+    if (!imageModelRow(config)) continue;
     const actions = { ...(config.actions as Record<string, unknown> || {}) };
-    const engine = config.engine || '';
     const versions = config.versions || { default: { name: 'Default', size: '', default: true } };
     const detailed = modelsDetailedStatus.value[modelKey] || {};
     const versionStatuses = detailed.versions || {};
@@ -873,61 +440,26 @@ const allVersions = computed(() => {
         recommended: config.recommended && (versionConfig as Record<string, unknown>).default,
         commercialUseAllowed: config.commercial_use_allowed === true,
         actions,
-        engine,
       });
     }
   }
   return result;
 });
 
-// Recommended versions
-const recommendedVersions = computed(() => {
-  return allVersions.value.filter((v) => v.recommended);
-});
-
-// Filter models by mode
 const filteredAllVersions = computed(() => {
-  if (editMode.value === 'image_editing') {
-    return allVersions.value.filter((v) => {
-      const acts = v.actions as Record<string, unknown> || {};
-      if (imageWorkTab.value === 'rewrite_instruct') {
-        return imageInstructEditModel(String(v.modelKey), acts);
-      }
-      if (imageWorkTab.value === 'rewrite_reference' && editingSubMode.value === 'text_editing') {
-        return imageReferenceRewriteModel(String(v.modelKey), acts);
-      }
-      return imageEditingMatches(acts, editingSubMode.value);
-    });
-  }
-  if (editMode.value === 'image_upscale') {
-    return allVersions.value.filter((v) => {
-      const acts = v.actions as Record<string, unknown> || {};
-      return imageSupportsUpscale(acts);
-    });
-  }
   return allVersions.value.filter((v) => {
     const acts = v.actions as Record<string, unknown> || {};
+    if (imageMode.value === 'img2img') {
+      return hasAction(acts, 'rewrite') || hasAction(acts, 'retouch');
+    }
     return imageSupportsCreate(acts);
   });
 });
 
-const filteredRecommendedVersions = computed(() => {
-  return filteredAllVersions.value.filter((v) => v.recommended);
-});
-
-const selectedModelPickerItem = computed(() => {
-  const key = selectedModelVersion.value;
-  if (!key) return null;
-  return allVersions.value.find((item) => `${item.modelKey}|${item.versionKey}` === key) ?? null;
-});
-
-/** Model dropdown: single-layer list, shows only ready models, recommended versions first */
-const { commercialOnly: modelFilterCommercialOnly } = useModelRegistryFilters();
-
 const filteredModelPickerVersions = computed(() => {
   const rows = applyModelVersionFilters(filteredAllVersions.value, {
     installedOnly: true,
-    commercialOnly: modelFilterCommercialOnly.value,
+    commercialOnly: false, // show all; badge indicates commercial status
   });
   rows.sort((a, b) => {
     const ar = a.recommended ? 1 : 0;
@@ -944,9 +476,16 @@ const filteredModelPickerVersions = computed(() => {
   return rows;
 });
 
-// Current model config
-const currentModelConfig = computed(() => modelRegistry.value[params.model as string] || null);
+const modelSelectOptions = computed(() => {
+  return filteredModelPickerVersions.value.map((v) => ({
+    label: String(v.name || ''),
+    value: `${v.modelKey}|${v.versionKey}`,
+    disabled: !v.ready,
+    commercialUseAllowed: v.commercialUseAllowed as boolean,
+  }));
+});
 
+const currentModelConfig = computed(() => modelRegistry.value[params.model as string] || null);
 const currentModelDisplayName = computed(() => {
   const c = currentModelConfig.value;
   if (c) {
@@ -955,7 +494,6 @@ const currentModelDisplayName = computed(() => {
   return params.model || '';
 });
 
-// Whether current selected version is ready
 const selectedModelNotReady = computed(() => {
   if (!params.model || !params.version) return false;
   const detailed = modelsDetailedStatus.value[params.model as string];
@@ -964,228 +502,412 @@ const selectedModelNotReady = computed(() => {
   return !versionStatus || !versionStatus.ready;
 });
 
-// Edit sub-type description
-const editingSubModeDesc = computed(() => {
-  if (editMode.value === 'image_upscale') {
-    return $tt('action.image.upscaleDesc');
-  }
-  if (editMode.value === 'image_generation') {
-    return $tt('action.image.createDesc');
-  }
-  if (editMode.value === 'image_editing' && editingSubMode.value === 'text_editing') {
-    return rewriteDriveMode.value === 'instruct'
-      ? $tt('create.rewriteDriveInstructDesc')
-      : $tt('create.rewriteDriveReferenceDesc');
-  }
-  const descMap: Record<string, string> = {
-    inpainting: $tt('action.image.retouchDesc'),
-    outpainting: $tt('action.image.extendDesc'),
+const canGenerate = computed(() => {
+  if (selectedModelNotReady.value) return false;
+  if (!String(params.prompt || '').trim()) return false;
+  if (imageMode.value === 'img2img' && !referenceImage.value) return false;
+  return true;
+});
+
+function parseModelVersionValue(value: string): { modelKey: string; versionKey: string } | null {
+  if (!value || typeof value !== 'string') return null;
+  const parts = value.split('|');
+  if (parts.length !== 2 || !parts[0] || !parts[1]) return null;
+  return { modelKey: parts[0], versionKey: parts[1] };
+}
+
+function getImageModeStorageKey(mode: string): StorageKey {
+  const map: Record<string, StorageKey> = {
+    text2img: DQ_STORAGE.IMAGE_MODEL_TEXT2IMG,
+    img2img: DQ_STORAGE.IMAGE_MODEL_IMG2IMG,
+    retouch: DQ_STORAGE.IMAGE_MODEL_RETOUCH,
+    extend: DQ_STORAGE.IMAGE_MODEL_EXTEND,
+    upscale: DQ_STORAGE.IMAGE_MODEL_UPSCALE,
   };
-  return descMap[editingSubMode.value] || '';
-});
-
-const submitDisabled = computed(() => {
-  if (generating.value) return true;
-  if (selectedModelNotReady.value) return true;
-  if (editMode.value === 'image_upscale') {
-    return !editImageSrc.value;
-  }
-  return !String(params.prompt || '').trim();
-});
-
-const showTurboHint = computed(() => {
-  if (editMode.value !== 'image_generation') return false;
-  const m = String(params.model || '');
-  return m === 'z-image' || m === 'flux1-dev';
-});
-
-const memoryLive = reactive({
-  usedGb: 0,
-  totalGb: 0,
-  mlxActiveGb: 0,
-});
-
-let memoryPollTimer: ReturnType<typeof setInterval> | null = null;
-
-async function refreshMemoryLive() {
-  try {
-    const metrics = (await api.system.metrics()) as {
-      memory?: { total_gb?: number; used_gb?: number };
-    };
-    const mem = metrics?.memory;
-    if (mem && Number(mem.total_gb) > 0) {
-      memoryLive.totalGb = Number(mem.total_gb);
-      memoryLive.usedGb = Number(mem.used_gb ?? 0);
-    }
-    const cache = (await api.system.getCacheStatus()) as {
-      mlx?: { active_gb?: number };
-    };
-    const active = cache?.mlx?.active_gb;
-    if (active != null && Number(active) >= 0) {
-      memoryLive.mlxActiveGb = Number(active);
-    }
-  } catch {
-    /* ignore transient monitor errors */
-  }
+  return map[mode] || DQ_STORAGE.IMAGE_MODEL_TEXT2IMG;
 }
 
-function stopMemoryPoll() {
-  if (memoryPollTimer != null) {
-    clearInterval(memoryPollTimer);
-    memoryPollTimer = null;
-  }
-}
-
-function startMemoryPoll(fast = false) {
-  stopMemoryPoll();
-  void refreshMemoryLive();
-  memoryPollTimer = setInterval(() => {
-    void refreshMemoryLive();
-  }, fast ? 3000 : 12000);
-}
-
-const memoryBarVisible = computed(() => {
-  const si = unref(systemInfo);
-  return si && Number(si.memory_gb) > 0;
-});
-
-const memoryBarUsedGb = computed(() => {
-  const si = unref(systemInfo) as SystemInfo | undefined;
-  if (memoryLive.usedGb > 0) return memoryLive.usedGb;
-  const fromInfo = Number(si?.memory_used_gb);
-  if (Number.isFinite(fromInfo) && fromInfo > 0) return fromInfo;
-  const total = Number(si?.memory_gb) || 0;
-  const avail = Number(si?.memory_available_gb);
-  if (total > 0 && Number.isFinite(avail) && avail >= 0 && avail < total) {
-    return total - avail;
-  }
-  return 0;
-});
-
-const memoryBarTotalGb = computed(() => {
-  if (memoryLive.totalGb > 0) return memoryLive.totalGb;
-  const si = unref(systemInfo) as SystemInfo | undefined;
-  return Number(si?.memory_gb) || 0;
-});
-
-const memoryBarLabel = computed(() => {
-  const total = memoryBarTotalGb.value;
-  const used = memoryBarUsedGb.value;
-  if (!total) return '';
-  return $tt('studio.memoryBarLabel', {
-    used: used > 0 ? used.toFixed(1) : '—',
-    total: total.toFixed(1),
-  });
-});
-
-const memoryBarPercent = computed(() => {
-  const total = memoryBarTotalGb.value;
-  const used = memoryBarUsedGb.value;
-  if (!total || !used) return 0;
-  return Math.min(100, Math.round((used / total) * 100));
-});
-
-const memoryBarMlxHint = computed(() => {
-  const si = unref(systemInfo) as SystemInfo | undefined;
-  const limit = Number(si?.mlx_memory_limit) || 0;
-  const active = memoryLive.mlxActiveGb > 0
-    ? memoryLive.mlxActiveGb
-    : Number(si?.mlx_active_gb) || 0;
-  if (!limit || active <= 0) return '';
-  return $tt('studio.memoryBarMlxHint', {
-    used: active.toFixed(1),
-    limit: limit.toFixed(0),
-  });
-});
-
-const livingCanvasStepHint = computed(() => {
-  const t = currentTask.value;
-  if (!t || t.status !== 'running') return '';
-  const step = Number(t.step) || 0;
-  const total = Number(t.total) || 0;
-  if (step > 0 && total > 0 && previewImage.value) {
-    return $tt('studio.livingCanvasStep', { step, total });
-  }
-  return '';
-});
-
-const taskQueueHint = computed(() => {
-  const t = currentTask.value;
-  if (!t || t.status !== 'queued') return '';
-  const pos = Number(t.queue_position);
-  const sec = Number(t.estimated_wait_seconds);
-  if (pos > 0 && sec > 0) {
-    return $tt('studio.taskQueuedHint', { pos, sec: Math.round(sec) });
-  }
-  if (pos > 0) {
-    return $tt('studio.taskQueuedHintNoEta', { pos });
-  }
-  return '';
-});
-
-const progressPhaseLabelText = computed(() => {
-  const t = currentTask.value;
-  if (!t || (t.status !== 'running' && t.status !== 'queued')) return '';
-  return progressPhaseLabel(
-    (t.progress_phase as string) || '',
-    (t.progress_message as string) || ''
+function isModelAvailable(modelKey: string, versionKey: string): boolean {
+  return filteredModelPickerVersions.value.some(
+    (v) => v.modelKey === modelKey && v.versionKey === versionKey && v.ready
   );
-});
-
-function progressPhaseLabel(phase: string, message: string): string {
-  const key = phase || (message === 'denoise' ? 'denoising' : message === 'post' ? 'decoding' : message);
-  if (!key || key === 'denoise' || key === 'post') {
-    if (key === 'denoise') return $tt('studio.phase.denoising');
-    if (key === 'post') return $tt('studio.phase.decoding');
-    return '';
-  }
-  const i18nKey = `studio.phase.${key}`;
-  const out = $tt(i18nKey);
-  return out !== i18nKey ? out : '';
 }
 
-function taskErrorMessage(row: Record<string, unknown>): string {
-  return String(row.error ?? row.error_message ?? '');
+function restoreModelForMode(mode: string) {
+  const saved = getItem(getImageModeStorageKey(mode));
+  if (saved) {
+    const parsed = parseModelVersionValue(saved);
+    if (parsed && isModelAvailable(parsed.modelKey, parsed.versionKey)) {
+      selectedModelVersion.value = saved;
+      params.model = parsed.modelKey;
+      params.version = parsed.versionKey;
+      loadModelDefaults();
+      loadCompatibleAdapters(parsed.modelKey);
+      return;
+    }
+  }
+  // fallback: 尝试当前模型是否支持该 mode
+  const currentKey = params.model && params.version ? `${params.model}|${params.version}` : '';
+  const currentParsed = parseModelVersionValue(currentKey);
+  if (currentParsed && isModelAvailable(currentParsed.modelKey, currentParsed.versionKey)) {
+    return;
+  }
+  // fallback: 选第一个可用模型
+  if (filteredModelPickerVersions.value.length > 0) {
+    const first = filteredModelPickerVersions.value[0];
+    selectedModelVersion.value = `${first.modelKey}|${first.versionKey}`;
+    params.model = first.modelKey;
+    params.version = first.versionKey;
+    loadModelDefaults();
+    loadCompatibleAdapters(first.modelKey);
+  }
 }
 
-const enhanceOfferVisible = computed(() => {
-  if (editMode.value !== 'image_generation' || generating.value) return false;
-  if (!previewImage.value || !currentTask.value) return false;
-  if (currentTask.value.status !== 'completed') return false;
-  const m = String(params.model || '');
-  return m === 'z-image-turbo' || m === 'flux1-schnell';
+const showEditorDrawer = ref(false);
+const editorMode = ref<'retouch' | 'extend' | 'upscale'>('retouch');
+const editDrawerItem = ref<GalleryItem | null>(null);
+const editorDrawerTitle = computed(() => {
+  const map: Record<string, string> = {
+    retouch: $tt('action.image.retouch'),
+    extend: $tt('action.image.extend'),
+    upscale: $tt('action.image.upscale'),
+  };
+  return map[editorMode.value] || '';
 });
 
-const enhanceOfferLabel = computed(() => {
-  const m = String(params.model || '');
-  const target = m === 'flux1-schnell' ? 'flux1-dev' : 'z-image';
-  const cfg = modelRegistry.value[target] as { name?: string | { zh?: string; en?: string } } | undefined;
-  const name = cfg ? $mn(cfg, target) : target;
-  return $tt('studio.enhanceWithModel', { name });
+function onModelVersionChange(value: string) {
+  const parsed = parseModelVersionValue(value);
+  if (!parsed) return;
+  params.model = parsed.modelKey;
+  params.version = parsed.versionKey;
+  const activeMode = showEditorDrawer.value ? editorMode.value : imageMode.value;
+  setItem(getImageModeStorageKey(activeMode), value);
+  loadModelDefaults();
+  loadCompatibleAdapters(parsed.modelKey);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Size options                                                       */
+/* ------------------------------------------------------------------ */
+
+const sizeOptions = computed(() => [
+  { label: '1:1', value: '512x512', pixelLabel: '512×512' },
+  { label: '1:1 HD', value: '1024x1024', pixelLabel: '1024×1024' },
+  { label: '2:3', value: '1024x1536', pixelLabel: '1024×1536' },
+  { label: '3:2', value: '1536x1024', pixelLabel: '1536×1024' },
+  { label: '16:9 (1080p)', value: '1920x1080', pixelLabel: '1920×1080' },
+  { label: '9:16 (1080p)', value: '1080x1920', pixelLabel: '1080×1920' },
+  { label: '16:9 (720p)', value: '1344x768', pixelLabel: '1344×768' },
+  { label: '9:16 (720p)', value: '768x1344', pixelLabel: '768×1344' },
+]);
+
+const imageMode = ref('text2img');
+
+const imageModeOptions = computed(() => [
+  { label: $tt('action.image.text2img'), value: 'text2img' },
+  { label: $tt('action.image.img2img'), value: 'img2img' },
+]);
+
+function onModeChange(mode: string) {
+  imageMode.value = mode;
+  if (mode === 'text2img') {
+    removeReferenceImage();
+  }
+}
+
+watch(imageMode, (newMode, oldMode) => {
+  // 保存旧模式模型
+  if (oldMode && selectedModelVersion.value) {
+    setItem(getImageModeStorageKey(oldMode), selectedModelVersion.value);
+  }
+  // 恢复新模式模型
+  const saved = getItem(getImageModeStorageKey(newMode));
+  if (saved) {
+    const parsed = parseModelVersionValue(saved);
+    if (parsed && isModelAvailable(parsed.modelKey, parsed.versionKey)) {
+      selectedModelVersion.value = saved;
+      params.model = parsed.modelKey;
+      params.version = parsed.versionKey;
+      loadModelDefaults();
+      loadCompatibleAdapters(parsed.modelKey);
+      return;
+    }
+  }
+  // fallback
+  if (
+    reconcileVersionPickerSelection(filteredModelPickerVersions.value, params, selectedModelVersion)
+  ) {
+    loadModelDefaults();
+    loadCompatibleAdapters(String(params.model || ''));
+  }
 });
 
-const primaryCtaLabel = computed(() => {
-  if (editMode.value === 'image_generation') {
-    return $tt('studio.generate');
+watch(selectedSize, (val) => {
+  const [w, h] = val.split('x').map(Number);
+  if (w && h) {
+    params.width = w;
+    params.height = h;
   }
-  if (editMode.value === 'image_upscale') {
-    return $tt('action.image.upscale');
-  }
-  if (editingSubMode.value === 'text_editing') {
-    return rewriteDriveMode.value === 'instruct'
-      ? $tt('create.rewriteDriveInstruct')
-      : $tt('create.rewriteDriveReference');
-  }
-  if (editingSubMode.value === 'inpainting') {
-    return $tt('action.image.retouch');
-  }
-  if (editingSubMode.value === 'outpainting') {
-    return $tt('action.image.extend');
-  }
-  return $tt('studio.generate');
+  setItem(DQ_STORAGE.IMAGE_LAST_SIZE, val);
 });
 
-// Load model registry and status
+// Drawer 关闭时保存 editor 模型并恢复 composer 模型
+watch(showEditorDrawer, (isOpen, wasOpen) => {
+  if (wasOpen && !isOpen) {
+    // drawer 关闭
+    if (selectedModelVersion.value) {
+      setItem(getImageModeStorageKey(editorMode.value), selectedModelVersion.value);
+    }
+    // 恢复 composer 模型
+    restoreModelForMode(imageMode.value);
+  }
+});
+
+const hasCustomParams = computed(() => {
+  const config = currentModelConfig.value;
+  if (!config || !config.parameters) return false;
+  return hasDeviation(config.parameters as Record<string, unknown>, params);
+});
+
+/* ------------------------------------------------------------------ */
+/*  Presets / Styles                                                   */
+/* ------------------------------------------------------------------ */
+
+const presets = ref<Record<string, Record<string, unknown>>>({});
+
+const presetActionFilter = computed(() => new Set(['create']));
+
+const filteredPresets = computed(() => {
+  const want = presetActionFilter.value;
+
+  function planPresetShapeOk(preset: Record<string, unknown>) {
+    return (
+      Array.isArray(preset.applies_to) &&
+      (preset.applies_to as unknown[]).length > 0 &&
+      preset.media_scope === 'image'
+    );
+  }
+
+  function matches(preset: Record<string, unknown>) {
+    if (!planPresetShapeOk(preset)) return false;
+    return (preset.applies_to as string[]).some((k: string) => want.has(k));
+  }
+
+  const entries = Object.entries(presets.value)
+    .filter(([, preset]) => matches(preset))
+    .sort((a, b) => {
+      const aCreate = (a[1].applies_to as string[]).includes('create');
+      const bCreate = (b[1].applies_to as string[]).includes('create');
+      if (aCreate !== bCreate) {
+        return aCreate ? -1 : 1;
+      }
+      return a[0].localeCompare(b[0], 'zh');
+    });
+
+  const result: Record<string, Record<string, unknown>> = {};
+  for (const [name, preset] of entries) {
+    result[name] = preset;
+  }
+  return result;
+});
+
+const loadPresets = async () => {
+  try {
+    const data = await api.settings.getPresets();
+    presets.value = (data as Record<string, Record<string, unknown>>) || {};
+  } catch (e) {
+    console.error('Failed to load presets:', e);
+    presets.value = {};
+  }
+};
+
+/* ------------------------------------------------------------------ */
+/*  Generation logic (simplified: text-to-image + image-to-image)      */
+/* ------------------------------------------------------------------ */
+
+let activeGenStream: EventSource | null = null;
+const currentTask = ref<Record<string, unknown> | null>(null);
+
+function closeGenStream() {
+  if (activeGenStream) {
+    activeGenStream.close();
+    activeGenStream = null;
+  }
+}
+
+function attachStreamFromSubmit(submitRes: unknown) {
+  const tid = taskIdFromSubmitResponse(submitRes);
+  if (!tid) {
+    generating.value = false;
+    return;
+  }
+  currentTask.value = {
+    id: tid,
+    progress: 0,
+    step: 0,
+    total: 0,
+    status: 'queued',
+    params: { model: params.model, title: String(params.title || '').trim(), prompt: params.prompt },
+  };
+
+  activeGenStream = api.gen.streamMediaTask(tid, {
+    onLog: (logData: any) => {
+      // Logs are displayed via global task queue, not per-card
+    },
+    onStatus: (statusData: any) => {
+      if (currentTask.value) {
+        currentTask.value = { ...currentTask.value, ...statusData };
+      }
+    },
+    onProgress: (progressData: any) => {
+      if (currentTask.value) {
+        currentTask.value = {
+          ...currentTask.value,
+          progress: progressData.progress ?? currentTask.value.progress,
+          step: progressData.step ?? currentTask.value.step,
+          total: progressData.total ?? currentTask.value.total,
+        };
+      }
+    },
+    onDone: async (doneData: any) => {
+      generating.value = false;
+      if (doneData.status === 'completed') {
+        toast.success($tt('studio.genComplete'));
+        setTimeout(() => loadGallery(true), 1000);
+      } else if (doneData.status === 'failed') {
+        const updated = await api.gen.getMediaTask(tid) as any;
+        toast.error($tt('studio.genFailed', { msg: updated.error || updated.error_message || '' }));
+      }
+      currentTask.value = null;
+      closeGenStream();
+    },
+    onError: () => {
+      generating.value = false;
+      currentTask.value = null;
+      closeGenStream();
+    },
+  });
+}
+
+const startGeneration = async () => {
+  if (generating.value) return;
+  if (!String(params.prompt || '').trim()) {
+    toast.warning($tt('studio.enterPrompt'));
+    return;
+  }
+
+  const detailed = modelsDetailedStatus.value[params.model as string];
+  const versionStatus = detailed?.versions?.[params.version as string];
+  if (!versionStatus?.ready) {
+    toast.warning($tt('studio.modelNotReadyDesc', { name: currentModelDisplayName.value, version: params.version as string }));
+    return;
+  }
+
+  const verCfg =
+    (currentModelConfig.value &&
+      currentModelConfig.value.versions &&
+      (currentModelConfig.value.versions as Record<string, Record<string, unknown>>)[params.version as string]) ||
+    null;
+  const sizeHuman = verCfg && verCfg.size ? String(verCfg.size) : '';
+  const minMemRaw = currentModelConfig.value?.parameters?.min_unified_memory_gb;
+  const minUnifiedMemoryGb = minMemRaw != null && Number(minMemRaw) > 0 ? Number(minMemRaw) : null;
+  warnIfRiskyMemory({
+    systemInfo: unref(systemInfo),
+    versionSizeHuman: sizeHuman,
+    minUnifiedMemoryGb,
+    $tt,
+  });
+
+  generating.value = true;
+
+  try {
+    const modelStr = params.version ? `${params.model}:${params.version}` : params.model;
+    const seedNum = params.seed ? parseInt(String(params.seed), 10) : null;
+    const adapters: Array<{ id: string; weight: number }> = [];
+    if (params.lora) adapters.push({ id: String(params.lora), weight: Number(params.lora_scale) || 0.8 });
+    const meta: Record<string, unknown> = {};
+    if (params.scheduler) meta.scheduler = params.scheduler;
+
+    let control_asset_id: string | null = null;
+    if (params.controlnet) {
+      // controlnet image is not yet managed in this simplified composer; skip if not set
+      control_asset_id = null;
+    }
+
+    let submitRes: unknown;
+    const hasRef = referenceImage.value != null;
+
+    if (hasRef) {
+      // Image-to-image via edits endpoint
+      let source_asset_id: string;
+      const rp = referenceImage.value!.path;
+      if (typeof rp === 'string' && rp.startsWith('asset:')) {
+        source_asset_id = rp.slice('asset:'.length);
+      } else {
+        const blob = await api.gen.urlToBlob(referenceImage.value!.previewUrl);
+        const up = await api.gen.uploadAsset(
+          new File([blob], 'ref.png', { type: blob.type || 'image/png' })
+        );
+        source_asset_id = (up as any).id;
+      }
+
+      const editBody: Record<string, unknown> = {
+        model: modelStr,
+        operation: 'rewrite',
+        source_asset_id,
+        title: String(params.title || '').trim(),
+        prompt: params.prompt,
+        negative_prompt: params.negative_prompt || '',
+        size: `${params.width}x${params.height}`,
+        n: 1,
+        steps: params.steps,
+        guidance: params.guidance,
+        seed: seedNum,
+        adapters,
+        strength: params.strength,
+        metadata: { ...meta },
+        priority: 'normal',
+      };
+      if (control_asset_id) {
+        editBody.structural_guide = { asset_id: control_asset_id, strength: Number(params.controlnet_strength) || 0.8 };
+      }
+      submitRes = await api.gen.createImageEdit(editBody);
+    } else {
+      // Text-to-image
+      const genBody: Record<string, unknown> = {
+        model: modelStr,
+        title: String(params.title || '').trim(),
+        prompt: params.prompt,
+        negative_prompt: params.negative_prompt || '',
+        size: `${params.width}x${params.height}`,
+        n: batchCount.value,
+        steps: params.steps,
+        guidance: params.guidance,
+        seed: seedNum,
+        adapters,
+        metadata: { ...meta },
+        priority: 'normal',
+      };
+      if (control_asset_id) {
+        genBody.structural_guide = { asset_id: control_asset_id, strength: Number(params.controlnet_strength) || 0.8 };
+      }
+      submitRes = await api.gen.createImageGeneration(genBody);
+    }
+
+    attachStreamFromSubmit(submitRes);
+    tasksStore.pollQueueOnce();
+  } catch (e) {
+    generating.value = false;
+    closeGenStream();
+    currentTask.value = null;
+    toast.error($tt('studio.error', { msg: (e as Error).message || String(e) }));
+  }
+};
+
+/* ------------------------------------------------------------------ */
+/*  Load model registry                                                */
+/* ------------------------------------------------------------------ */
+
 const loadModelRegistry = async () => {
   try {
     const RS = registryStore;
@@ -1199,11 +921,28 @@ const loadModelRegistry = async () => {
     ]);
 
     modelRegistry.value = (registryData as Record<string, unknown>).models || {};
-    modelsStatus.value = statusData || {};
-    modelsDetailedStatus.value = detailedStatusData || {};
+    modelsDetailedStatus.value = (detailedStatusData as any) || {};
 
-    // Set default model+version (prefer ready recommended version's default)
     if (!selectedModelVersion.value) {
+      // 尝试从本地存储恢复上次选择的模型
+      const lastModel = getItem(DQ_STORAGE.IMAGE_LAST_MODEL);
+      if (lastModel) {
+        const parsed = parseModelVersionValue(lastModel);
+        if (parsed) {
+          const detailed = (detailedStatusData as Record<string, Record<string, unknown>>)[parsed.modelKey] || {};
+          const versions = detailed.versions || {};
+          if (versions[parsed.versionKey]?.ready) {
+            params.model = parsed.modelKey;
+            params.version = parsed.versionKey;
+            selectedModelVersion.value = lastModel;
+            loadModelDefaults();
+            restoreSavedSize();
+            loadCompatibleAdapters(parsed.modelKey);
+            return;
+          }
+        }
+      }
+
       let found = false;
       for (const [modelKey, config] of Object.entries(modelRegistry.value)) {
         if (config.recommended) {
@@ -1250,740 +989,465 @@ const loadModelRegistry = async () => {
     }
 
     loadModelDefaults();
+    restoreSavedSize();
   } catch (e) {
     console.error('Failed to load model registry:', e);
   }
 };
 
-// Load model default config (registry schema driven)
 const loadModelDefaults = () => {
   const config = currentModelConfig.value;
   if (!config || !config.parameters) return;
+  const prevWidth = params.width;
+  const prevHeight = params.height;
   applyDefaults(config.parameters as Record<string, unknown>, params);
-  controlImageSrc.value = '';
-  controlImagePath.value = '';
-  loadCompatibleLoras();
-  loadCompatibleControlNets();
+  params.width = prevWidth;
+  params.height = prevHeight;
 };
 
-// Load LoRAs compatible with current model
-const loadCompatibleLoras = async () => {
-  if (!params.model) return;
-  try {
-    const loras = await api.settings.getCompatibleLoras(params.model as string);
-    compatibleLoras.value = (loras as Array<Record<string, unknown>>) || [];
-  } catch (e) {
-    console.error('Failed to load compatible loras:', e);
-    compatibleLoras.value = [];
-  }
-};
-
-// Load ControlNets compatible with current model
-const loadCompatibleControlNets = async () => {
-  if (!params.model) return;
-  try {
-    const nets = await api.settings.getCompatibleControlNets(params.model as string);
-    compatibleControlNets.value = (nets as Array<Record<string, unknown>>) || [];
-    // If current selected ControlNet is not in the returned list (incompatible or deleted), clear it
-    if (params.controlnet && !(nets as Array<Record<string, unknown>>).some((n: Record<string, unknown>) => n.key === params.controlnet)) {
-      params.controlnet = '';
-      controlImageSrc.value = '';
-      controlImagePath.value = '';
+function restoreSavedSize() {
+  const savedSize = getItem(DQ_STORAGE.IMAGE_LAST_SIZE);
+  if (savedSize && sizeOptions.value.some((o) => o.value === savedSize)) {
+    selectedSize.value = savedSize;
+    const [w, h] = savedSize.split('x').map(Number);
+    if (w && h) {
+      params.width = w;
+      params.height = h;
     }
-  } catch (e) {
-    console.error('Failed to load compatible controlnets:', e);
-    compatibleControlNets.value = [];
   }
-};
+}
 
-// Reset to default config (reload from registry)
 const resetToDefaults = () => {
   loadModelDefaults();
   toast.success($tt('studio.restoredDefaults'));
 };
 
-const hasCustomParams = computed(() => {
-  const config = currentModelConfig.value;
-  if (!config || !config.parameters) return false;
-  return hasDeviation(config.parameters as Record<string, unknown>, params);
-});
+/* ------------------------------------------------------------------ */
+/*  Gallery interactions                                               */
+/* ------------------------------------------------------------------ */
 
-const presetSelectLabel = (name: string, preset: Record<string, unknown>) => {
-  const a = preset.applies_to as string[];
-  const hasC = a.includes('create');
-  const hasEdit = a.some((x: string) => ['rewrite', 'retouch', 'extend'].includes(x));
-  let tag = '';
-  if (hasC && !hasEdit) tag = $tt('create.presetTagT2I');
-  else if (hasEdit && !hasC) tag = $tt('create.presetTagI2I');
-  const display = $pn(preset as { name_en?: string }, name);
-  return tag ? `${tag} ${display}` : display;
-};
+const previewVisible = ref(false);
+const selectedImageIndex = ref(0);
 
-// Load presets
-const loadPresets = async () => {
-  try {
-    const data = await api.settings.getPresets();
-    presets.value = (data as Record<string, Record<string, unknown>>) || {};
-  } catch (e) {
-    console.error('Failed to load presets:', e);
-    presets.value = {};
-  }
-};
-
-// Load preset into params (append to new line)
-const loadPreset = () => {
-  if (!selectedPreset.value || !presets.value[selectedPreset.value]) return;
-
-  const preset = presets.value[selectedPreset.value];
-
-  if (preset.positive) {
-    params.prompt = params.prompt
-      ? params.prompt + '\nStyle boost: ' + preset.positive
-      : String(preset.positive);
-  }
-  if (preset.negative) {
-    params.negative_prompt = params.negative_prompt
-      ? params.negative_prompt + '\n' + preset.negative
-      : String(preset.negative);
-  }
-
-  // Edit-only presets (without create): prompt to switch tab and select source image if on T2I tab
-  const app = preset.applies_to as string[];
-  const needsEditSource =
-    !app.includes('create') &&
-    app.some((x: string) => ['rewrite', 'retouch', 'extend'].includes(x));
-  if (needsEditSource && editMode.value === 'image_generation') {
-    toast.warning($tt('create.presetNeedsEditTab'));
-  }
-};
-
-// Add log
-const addLog = (message: string, level = 'info') => {
-  const now = new Date();
-  const time = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
-  logs.value.push({ time, message, level });
-
-  if (logs.value.length > 500) {
-    logs.value = logs.value.slice(-500);
-  }
-
-  nextTick(() => {
-    const container = logContainer.value;
-    if (container) {
-      container.scrollTop = container.scrollHeight;
-    }
-  });
-};
-
-function ingestServerLog(logData: Record<string, unknown>) {
-  const raw = (logData.message || '') as string;
-  const lvl = (logData.level || 'info') as string;
-  if (isDuplicateDenoiseStepLog(logs.value, raw)) {
-    return;
-  }
-  addLog(formatGenLogMessage(raw), lvl);
+function getImageUrl(item: GalleryItem) {
+  return api.gallery.getImageUrl(item.path);
 }
 
-// Clear logs
-const clearLogs = () => {
-  logs.value = [];
-};
+function onGallerySelect(item: GalleryItem) {
+  const idx = galleryItems.value.findIndex((it) => it.path === item.path);
+  selectedImageIndex.value = idx >= 0 ? idx : 0;
+  previewVisible.value = true;
+}
 
-// Truncate text
-const truncate = (text: string, length: number) => {
-  if (!text) return '';
-  return text.length > length ? text.substring(0, length) + '...' : text;
-};
+/* ------------------------------------------------------------------ */
+/*  Card actions: retouch / extend / upscale / download / delete       */
+/* ------------------------------------------------------------------ */
 
-// Start generation
-const startGeneration = async () => {
-  if (editMode.value === 'image_upscale') {
-    if (!editImageSrc.value) {
-      toast.warning($tt('studio.uploadEditImage'));
-      return;
-    }
-  } else if (!params.prompt) {
-    toast.warning($tt('studio.enterPrompt'));
-    return;
-  }
+const upscaleParams = reactive({
+  upscale_scale: 2,
+  upscale_denoise: 0.3,
+  upscale_tile: 1024,
+});
+const upscaleModelVersion = ref('');
+const upscaleModelOptions = computed(() => {
+  return allVersions.value
+    .filter((v) => {
+      const acts = (v.actions as Record<string, unknown>) || {};
+      return imageSupportsUpscale(acts);
+    })
+    .map((v) => ({
+      label: String(v.name || ''),
+      value: `${v.modelKey}|${v.versionKey}`,
+      disabled: !v.ready,
+      commercialUseAllowed: v.commercialUseAllowed as boolean,
+    }));
+});
+const extendModelVersion = ref('');
+const extendModelOptions = computed(() => {
+  return allVersions.value
+    .filter((v) => {
+      const acts = (v.actions as Record<string, unknown>) || {};
+      return imageSupportsExtend(acts);
+    })
+    .map((v) => ({
+      label: String(v.name || '') + (!v.ready ? ` (${$tt('common.notReady')})` : ''),
+      value: `${v.modelKey}|${v.versionKey}`,
+      disabled: !v.ready,
+      commercialUseAllowed: v.commercialUseAllowed as boolean,
+    }));
+});
+const extendParams = reactive({
+  extend_directions: ['right'],
+  extend_pixels: 256,
+});
+const retouchModelVersion = ref('');
+const retouchModelOptions = computed(() => {
+  return allVersions.value
+    .filter((v) => {
+      const acts = (v.actions as Record<string, unknown>) || {};
+      return imageSupportsRetouch(acts);
+    })
+    .map((v) => ({
+      label: String(v.name || '') + (!v.ready ? ` (${$tt('common.notReady')})` : ''),
+      value: `${v.modelKey}|${v.versionKey}`,
+      disabled: !v.ready,
+      commercialUseAllowed: v.commercialUseAllowed as boolean,
+    }));
+});
+const imageEditorRef = ref<any>(null);
 
-  // ControlNet requires an uploaded control image
-  if (editMode.value !== 'image_upscale' && params.controlnet && !controlImageSrc.value) {
-    toast.warning($tt('studio.needControlImage'));
-    return;
-  }
-
-  const detailed = modelsDetailedStatus.value[params.model as string];
-  const versionStatus = detailed?.versions?.[params.version as string];
-  if (!versionStatus?.ready) {
-    toast.warning(
-      $tt('studio.modelNotReadyDesc', { name: currentModelDisplayName.value, version: params.version as string }),
-    );
-    return;
-  }
-
-  const verCfg = (currentModelConfig.value && currentModelConfig.value.versions && (currentModelConfig.value.versions as Record<string, Record<string, unknown>>)[params.version as string]) || null;
-  const sizeHuman = verCfg && verCfg.size ? String(verCfg.size) : '';
-  const minMemRaw = currentModelConfig.value?.parameters?.min_unified_memory_gb;
-  const minUnifiedMemoryGb =
-    minMemRaw != null && Number(minMemRaw) > 0 ? Number(minMemRaw) : null;
-  warnIfRiskyMemory({
-    systemInfo: unref(systemInfo),
-    versionSizeHuman: sizeHuman,
-    minUnifiedMemoryGb,
-    $tt,
-  });
-
-  // Immediately show "submitting" progress to give visual feedback
-  generating.value = true;
-  revokePreviewBlobUrl();
-  previewImage.value = '';
-  previewImageKey.value += 1;
-  currentTask.value = {
-    id: '',
-    progress: 0,
-    step: 0,
-    total: 0,
-    status: 'submitting',
-  };
-
-  const modelStr = params.version ? `${params.model}:${params.version}` : params.model;
-  const adapters = params.lora ? [{ id: params.lora, weight: params.lora_scale || 0.8 }] : [];
-  const _seedParsed =
-    params.seed != null && params.seed !== '' ? parseInt(String(params.seed), 10) : null;
-  const seedNum = Number.isFinite(_seedParsed) ? _seedParsed : null;
-  const meta: Record<string, unknown> = {};
-  if (params.scheduler) {
-    meta.scheduler = params.scheduler;
-  }
-
-  const attachStreamFromSubmit = (submitRes: unknown) => {
-    const tid = taskIdFromSubmitResponse(submitRes);
-    if (!tid) {
-      addLog($tt('studio.error', { msg: 'missing task id in submit response' }), 'error');
-      generating.value = false;
-      return;
-    }
-    const taskBlock =
-      submitRes != null && typeof submitRes === 'object'
-        ? (submitRes as Record<string, unknown>).task
-        : null;
-    attachStream(tid, taskBlock as Record<string, unknown> | null);
-  };
-
-  const refreshTaskSnapshot = async (tid: string) => {
-    try {
-      const updated = (await api.gen.getMediaTask(tid)) as Record<string, unknown>;
-      if (currentTask.value && String(currentTask.value.id) === tid) {
-        currentTask.value = { ...currentTask.value, ...updated };
+function onCardAction({ action, item }: { action: string; item: GalleryItem }) {
+  switch (action) {
+    case 'retouch':
+    case 'extend':
+    case 'upscale':
+      // 保存当前 composer 模型到对应 imageMode key
+      if (selectedModelVersion.value) {
+        setItem(getImageModeStorageKey(imageMode.value), selectedModelVersion.value);
       }
-    } catch {
-      /* ignore */
-    }
-  };
-
-  const attachStream = (tid: string, submitTask: Record<string, unknown> | null = null) => {
-    closeGenStream();
-    stopPreviewPoll();
-    tasksStore.registerPageOwnedStream(tid);
-    genLogLastStep.value = 0;
-    genLogLastPhase.value = '';
-    currentTask.value = {
-      id: tid,
-      progress: 0,
-      step: 0,
-      total: 0,
-      status: 'queued',
-      queue_position: submitTask?.queue_position,
-      estimated_wait_seconds: submitTask?.estimated_wait_seconds,
-      params: {
-        model: modelStr,
-        title: String(params.title || '').trim(),
-        prompt: editMode.value === 'image_upscale' ? '' : params.prompt,
-      },
-    };
-    startPreviewPoll(tid);
-    void refreshTaskSnapshot(tid);
-    activeGenStream = api.gen.streamMediaTask(tid, {
-      onLog: (logData: unknown) => ingestServerLog(logData as Record<string, unknown>),
-      onStatus: (statusData: unknown) => {
-        if (currentTask.value) {
-          currentTask.value.progress = (statusData as Record<string, unknown>).progress ?? 0;
-          currentTask.value.status = (statusData as Record<string, unknown>).status;
-        }
-      },
-      onDone: async (doneData: unknown) => {
-        generating.value = false;
-        stopPreviewPoll();
-        closeGenStream();
-        tasksStore.unregisterPageOwnedStream(tid);
-        const data = doneData as Record<string, unknown>;
-        if (data.status === 'completed') {
-          addLog($tt('studio.genComplete'), 'success');
-          const updated = (await api.gen.getMediaTask(tid)) as Record<string, unknown>;
-          currentTask.value = updated;
-          const pid =
-            updated.result &&
-            (updated.result as Record<string, unknown>).primary_asset_id;
-          if (pid) {
-            applyPreviewAsset(pid);
-            addLog($tt('studio.outputFile', { name: String(pid) }), 'info');
-          }
-          loadRecentImages();
-        } else if (data.status === 'failed') {
-          const updated = (await api.gen.getMediaTask(tid)) as Record<string, unknown>;
-          currentTask.value = updated;
-          addLog($tt('studio.genFailed', { msg: taskErrorMessage(updated) }), 'error');
+      editDrawerItem.value = item;
+      editorMode.value = action as 'retouch' | 'extend' | 'upscale';
+      // 恢复该 action 上次使用的模型
+      restoreModelForMode(action);
+      // 同步 drawer 内模型选择器
+      if (action === 'upscale') {
+        const currentKey = params.model && params.version ? `${params.model}|${params.version}` : '';
+        const currentSupportsUpscale = allVersions.value.some((v) => {
+          const acts = (v.actions as Record<string, unknown>) || {};
+          return `${v.modelKey}|${v.versionKey}` === currentKey && imageSupportsUpscale(acts);
+        });
+        if (currentSupportsUpscale) {
+          upscaleModelVersion.value = currentKey;
         } else {
-          currentTask.value = { ...(currentTask.value || {}), status: data.status };
+          const first = upscaleModelOptions.value.find((o) => !o.disabled);
+          upscaleModelVersion.value = first ? first.value : '';
         }
-      },
-      onError: () => {
-        stopPreviewPoll();
-        closeGenStream();
-        tasksStore.unregisterPageOwnedStream(tid);
-        addLog($tt('studio.connectionLost'), 'warning');
-      },
-      onProgress: (progressData: unknown) => {
-        const data = progressData as Record<string, unknown>;
-        if (!currentTask.value) return;
-        if (currentTask.value.status === 'queued' && data.progress != null) {
-          currentTask.value.status = 'running';
+      } else if (action === 'extend') {
+        const currentKey = params.model && params.version ? `${params.model}|${params.version}` : '';
+        const currentSupportsExtend = allVersions.value.some((v) => {
+          const acts = (v.actions as Record<string, unknown>) || {};
+          return `${v.modelKey}|${v.versionKey}` === currentKey && imageSupportsExtend(acts);
+        });
+        if (currentSupportsExtend) {
+          extendModelVersion.value = currentKey;
+        } else {
+          const first = extendModelOptions.value.find((o) => !o.disabled);
+          extendModelVersion.value = first ? first.value : '';
         }
-        if (typeof data.progress === 'number') {
-          currentTask.value.progress = data.progress;
+      } else if (action === 'retouch') {
+        const currentKey = params.model && params.version ? `${params.model}|${params.version}` : '';
+        const currentSupportsRetouch = allVersions.value.some((v) => {
+          const acts = (v.actions as Record<string, unknown>) || {};
+          return `${v.modelKey}|${v.versionKey}` === currentKey && imageSupportsRetouch(acts);
+        });
+        if (currentSupportsRetouch) {
+          retouchModelVersion.value = currentKey;
+        } else {
+          const first = retouchModelOptions.value.find((o) => !o.disabled);
+          retouchModelVersion.value = first ? first.value : '';
         }
-        const nextStep =
-          data.step != null ? data.step : currentTask.value.step;
-        const nextTotal =
-          data.total != null ? data.total : currentTask.value.total;
-        currentTask.value.step = nextStep;
-        currentTask.value.total = nextTotal;
-        if (data.phase === 'denoising') {
-          pollTaskPreviewOnce(String(currentTask.value.id || ''));
-        }
-        if (data.phase) {
-          currentTask.value.progress_phase = data.phase;
-        }
-        if (data.message) {
-          currentTask.value.progress_message = data.message;
-        }
-        if (data.message === 'post') {
-          if (genLogLastPhase.value !== 'post') {
-            genLogLastPhase.value = 'post';
-            addLog($tt('studio.queuePostProcessHint'), 'info');
-          }
-        } else if (data.message === 'denoise') {
-          genLogLastPhase.value = 'denoise';
-        } else if (data.phase && genLogLastPhase.value !== String(data.phase)) {
-          genLogLastPhase.value = String(data.phase);
-          const label = progressPhaseLabel(String(data.phase), '');
-          if (label) addLog(label, 'info');
-        }
-        if (nextTotal > 0 && nextStep > 0) {
-          genLogLastStep.value = nextStep as number;
-        }
-      },
-    });
-  };
+      }
+      showEditorDrawer.value = true;
+      break;
+    case 'download':
+      downloadItem(item);
+      break;
+    case 'delete':
+      deleteItem(item);
+      break;
+  }
+}
 
-  addLog($tt('studio.startingGen'), 'info');
+function downloadItem(item: GalleryItem) {
+  const url = getImageUrl(item);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = item.name;
+  a.click();
+  toast.success($tt('gallery.startDownload'));
+}
+
+async function onEditorSubmit() {
+  if (!editDrawerItem.value || !imageEditorRef.value) return;
   try {
-    if (editMode.value === 'image_upscale') {
-      const ep = editImagePath.value;
-      let source_asset_id: string;
-      if (typeof ep === 'string' && ep.startsWith('asset:')) {
-        source_asset_id = ep.slice('asset:'.length);
-      } else {
-        const srcBlob = await api.gen.urlToBlob(editImageSrc.value);
-        source_asset_id = (
-          await api.gen.uploadAsset(
-            new File([srcBlob], 'upscale-src.png', { type: srcBlob.type || 'image/png' })
-          )
-        ).id as string;
-      }
-      const sc = Number(params.upscale_scale) === 4 ? 4 : 2;
-      const submitRes = await api.gen.createImageUpscale({
-        model: modelStr,
-        source_asset_id,
-        scale: sc,
-        denoise: Number(params.upscale_denoise) || 0.3,
-        tile_size: Number(params.upscale_tile) || 1024,
-        priority: 'normal',
-        metadata: {},
-      });
-      attachStreamFromSubmit(submitRes);
+    const maskBlob = await imageEditorRef.value.getMaskBlob();
+    if (!maskBlob) {
+      toast.warning($tt('studio.drawMask'));
       return;
     }
 
-    if (editMode.value === 'image_editing') {
-      if (!editImageSrc.value) {
-        toast.warning($tt('studio.uploadEditImage'));
-        return;
-      }
-      const maskBlob = imageEditorRef.value ? await (imageEditorRef.value as { getMaskBlob: () => Promise<Blob> }).getMaskBlob() : null;
-      if (!maskBlob && editingSubMode.value !== 'text_editing' && editingSubMode.value !== 'outpainting') {
-        toast.warning($tt('studio.drawMask'));
-        return;
-      }
-      const ep = editImagePath.value;
-      let source_asset_id: string;
-      if (typeof ep === 'string' && ep.startsWith('asset:')) {
-        source_asset_id = ep.slice('asset:'.length);
-      } else {
-        const srcBlob = await api.gen.urlToBlob(editImageSrc.value);
-        source_asset_id = (
-          await api.gen.uploadAsset(
-            new File([srcBlob], 'source.png', { type: srcBlob.type || 'image/png' })
-          )
-        ).id as string;
-      }
-      let mask_asset_id = null;
-      if (maskBlob) {
-        mask_asset_id = (
-          await api.gen.uploadAsset(new File([maskBlob], 'mask.png', { type: 'image/png' }))
-        ).id;
-      }
-
-      let operation = 'rewrite';
-      if (editingSubMode.value === 'inpainting') {
-        operation = 'retouch';
-      } else if (editingSubMode.value === 'outpainting') {
-        operation = 'extend';
-      } else if (editingSubMode.value === 'text_editing') {
-        operation = 'rewrite';
-      }
-
-      let extendSpec = undefined;
-      if (operation === 'extend') {
-        const dirs = Array.isArray(params.extend_directions)
-          ? (params.extend_directions as string[]).filter((d: string) => ['top', 'bottom', 'left', 'right'].includes(d))
-          : [];
-        if (!dirs.length) {
-          toast.warning($tt('create.extendNeedDirection'));
-          return;
-        }
-        const px = Math.min(2048, Math.max(64, Number(params.extend_pixels) || 256));
-        extendSpec = { directions: dirs, pixels: px };
-      }
-
-      const editBody: Record<string, unknown> = {
-        model: modelStr,
-        operation,
-        source_asset_id,
-        mask_asset_id,
-        title: String(params.title || '').trim(),
-        prompt: params.prompt,
-        negative_prompt: params.negative_prompt || '',
-        source_fidelity: Math.min(0.95, Math.max(0.05, 1 - (params.strength ?? 0.4))),
-        extend: extendSpec,
-        n: 1,
-        steps: params.steps,
-        seed: seedNum,
-        adapters,
-        metadata: { ...meta },
-        priority: 'normal',
-      };
-      if (operation === 'rewrite') {
-        // Qwen Image Edit uses the dedicated VL edit path; backend rejects rewrite_mode=instruct.
-        if (!modelUsesVlInstructEdit(currentModelConfig.value)) {
-          editBody.rewrite_mode = rewriteDriveMode.value;
-        }
-      }
-      const submitRes = await api.gen.createImageEdit(editBody);
-      attachStreamFromSubmit(submitRes);
-      return;
-    }
-
-    let control_asset_id = null;
-    if (params.controlnet && controlImageSrc.value) {
-      const cp = controlImagePath.value;
-      if (typeof cp === 'string' && cp.startsWith('asset:')) {
-        control_asset_id = cp.slice('asset:'.length);
-      } else {
-        const cblob = await api.gen.urlToBlob(controlImageSrc.value);
-        control_asset_id = (
-          await api.gen.uploadAsset(
-            new File([cblob], 'control.png', { type: cblob.type || 'image/png' })
-          )
-        ).id as string;
-      }
-    }
-
-    let submitRes: unknown;
-    if (params.controlnet && control_asset_id) {
-      submitRes = await api.gen.createImageGeneration({
-        model: modelStr,
-        title: String(params.title || '').trim(),
-        prompt: params.prompt,
-        negative_prompt: params.negative_prompt || '',
-        size: `${params.width}x${params.height}`,
-        n: 1,
-        steps: params.steps,
-        guidance: params.guidance,
-        seed: seedNum,
-        adapters,
-        structural_guide: {
-          asset_id: control_asset_id,
-          type: 'canny',
-          weight: params.controlnet_strength ?? 1,
-        },
-        metadata: { ...meta, controlnet: params.controlnet },
-        priority: 'normal',
-      });
+    const path = editDrawerItem.value.path;
+    let source_asset_id: string;
+    if (path.startsWith('asset:')) {
+      source_asset_id = path.slice('asset:'.length);
     } else {
-      submitRes = await api.gen.createImageGeneration({
-        model: modelStr,
-        title: String(params.title || '').trim(),
-        prompt: params.prompt,
-        negative_prompt: params.negative_prompt || '',
-        size: `${params.width}x${params.height}`,
-        n: 1,
-        steps: params.steps,
-        guidance: params.guidance,
-        seed: seedNum,
-        adapters,
-        metadata: { ...meta },
-        priority: 'normal',
-      });
+      const blob = await api.gen.urlToBlob(getImageUrl(editDrawerItem.value));
+      const up = await api.gen.uploadAsset(
+        new File([blob], 'source.png', { type: blob.type || 'image/png' })
+      );
+      source_asset_id = (up as any).id;
     }
+
+    const mask_asset_id = (
+      await api.gen.uploadAsset(new File([maskBlob], 'mask.png', { type: 'image/png' }))
+    ).id as string;
+
+    if (!retouchModelVersion.value) {
+      toast.warning($tt('studio.selectModel'));
+      return;
+    }
+    const [modelKey, versionKey] = retouchModelVersion.value.split('|');
+    const modelStr = versionKey ? `${modelKey}:${versionKey}` : modelKey;
+    const seedNum = params.seed ? parseInt(String(params.seed), 10) : null;
+    const adapters: Array<{ id: string; weight: number }> = [];
+    if (params.lora) adapters.push({ id: String(params.lora), weight: Number(params.lora_scale) || 0.8 });
+
+    const submitRes = await api.gen.createImageEdit({
+      model: modelStr,
+      operation: 'retouch',
+      source_asset_id,
+      mask_asset_id,
+      title: String(params.title || '').trim(),
+      prompt: params.prompt,
+      negative_prompt: params.negative_prompt || '',
+      source_fidelity: Math.min(0.95, Math.max(0.05, 1 - (Number(params.strength) || 0.4))),
+      n: 1,
+      steps: params.steps,
+      seed: seedNum,
+      adapters,
+      metadata: {},
+      priority: 'normal',
+    });
     attachStreamFromSubmit(submitRes);
+    showEditorDrawer.value = false;
     tasksStore.pollQueueOnce();
   } catch (e) {
-    generating.value = false;
-    stopPreviewPoll();
-    closeGenStream();
-    currentTask.value = null;
-    addLog($tt('studio.error', { msg: (e as Error).message || String(e) }), 'error');
+    toast.error($tt('studio.error', { msg: (e as Error).message || String(e) }));
   }
-};
-
-function startEnhanceGeneration() {
-  const m = String(params.model || '');
-  const target = m === 'flux1-schnell' ? 'flux1-dev' : 'z-image';
-  params.model = target;
-  const cfg = modelRegistry.value[target] as { versions?: Record<string, Record<string, unknown>> } | undefined;
-  const versions = cfg?.versions || {};
-  const vKey =
-    Object.keys(versions).find((k) => versions[k]?.default) || Object.keys(versions)[0] || '';
-  if (vKey) {
-    params.version = vKey;
-    selectedModelVersion.value = `${target}|${vKey}`;
-    onModelVersionChange(selectedModelVersion.value);
-  }
-  void startGeneration();
 }
 
-// Load recent images
+async function onExtendSubmit() {
+  if (!editDrawerItem.value) return;
+  try {
+    const dirs = Array.isArray(extendParams.extend_directions)
+      ? extendParams.extend_directions.filter((d: string) => ['top', 'bottom', 'left', 'right'].includes(d))
+      : [];
+    if (!dirs.length) {
+      toast.warning($tt('create.extendNeedDirection'));
+      return;
+    }
+    const px = Math.min(2048, Math.max(64, Number(extendParams.extend_pixels) || 256));
+
+    const path = editDrawerItem.value.path;
+    let source_asset_id: string;
+    if (path.startsWith('asset:')) {
+      source_asset_id = path.slice('asset:'.length);
+    } else {
+      const blob = await api.gen.urlToBlob(getImageUrl(editDrawerItem.value));
+      const up = await api.gen.uploadAsset(
+        new File([blob], 'source.png', { type: blob.type || 'image/png' })
+      );
+      source_asset_id = (up as any).id;
+    }
+
+    if (!extendModelVersion.value) {
+      toast.warning($tt('studio.selectModel'));
+      return;
+    }
+    const [modelKey, versionKey] = extendModelVersion.value.split('|');
+    const modelStr = versionKey ? `${modelKey}:${versionKey}` : modelKey;
+    const seedNum = params.seed ? parseInt(String(params.seed), 10) : null;
+    const adapters: Array<{ id: string; weight: number }> = [];
+    if (params.lora) adapters.push({ id: String(params.lora), weight: Number(params.lora_scale) || 0.8 });
+
+    const submitRes = await api.gen.createImageEdit({
+      model: modelStr,
+      operation: 'extend',
+      source_asset_id,
+      title: String(params.title || '').trim(),
+      prompt: params.prompt,
+      negative_prompt: params.negative_prompt || '',
+      extend: { directions: dirs, pixels: px },
+      n: 1,
+      steps: params.steps,
+      seed: seedNum,
+      adapters,
+      metadata: {},
+      priority: 'normal',
+    });
+    attachStreamFromSubmit(submitRes);
+    showEditorDrawer.value = false;
+    tasksStore.pollQueueOnce();
+  } catch (e) {
+    toast.error($tt('studio.error', { msg: (e as Error).message || String(e) }));
+  }
+}
+
+async function onUpscaleSubmit() {
+  if (!editDrawerItem.value) return;
+  if (!upscaleModelVersion.value) {
+    toast.warning($tt('studio.selectModel'));
+    return;
+  }
+  try {
+    const path = editDrawerItem.value.path;
+    let source_asset_id: string;
+    if (path.startsWith('asset:')) {
+      source_asset_id = path.slice('asset:'.length);
+    } else {
+      const blob = await api.gen.urlToBlob(getImageUrl(editDrawerItem.value));
+      const up = await api.gen.uploadAsset(
+        new File([blob], 'upscale.png', { type: blob.type || 'image/png' })
+      );
+      source_asset_id = (up as any).id;
+    }
+
+    const [modelKey, versionKey] = upscaleModelVersion.value.split('|');
+    const modelStr = versionKey ? `${modelKey}:${versionKey}` : modelKey;
+    const submitRes = await api.gen.createImageUpscale({
+      model: modelStr,
+      source_asset_id,
+      scale: upscaleParams.upscale_scale,
+      denoise: upscaleParams.upscale_denoise,
+      metadata: {},
+      priority: 'normal',
+    });
+    attachStreamFromSubmit(submitRes);
+    showEditorDrawer.value = false;
+    tasksStore.pollQueueOnce();
+  } catch (e) {
+    toast.error($tt('studio.error', { msg: (e as Error).message || String(e) }));
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Recent images (for asset picker)                                   */
+/* ------------------------------------------------------------------ */
+
+const recentImages = ref<Array<Record<string, unknown>>>([]);
+const recentGalleryThumbFailed = ref<Record<string, boolean>>({});
+
 const loadRecentImages = async () => {
   try {
     const images = await api.gallery.listImages(24, 0);
     recentGalleryThumbFailed.value = {};
     recentImages.value = (images as Array<Record<string, unknown>>)
-      .filter((v: Record<string, unknown>) => !isDefinitelyNonRasterRecent(v))
+      .filter((v: Record<string, unknown>) => {
+        const meta = v.metadata as Record<string, unknown> | undefined;
+        if (meta?.asset_kind === 'video' || meta?.asset_kind === 'audio') return false;
+        const ext = String(v.name || '').split('.').pop()?.toLowerCase() || '';
+        return !['mp4', 'mov', 'avi', 'mkv', 'webm', 'wav', 'mp3', 'flac', 'm4a', 'aac', 'opus', 'ogg'].includes(ext);
+      })
       .slice(0, 4);
   } catch (e) {
     console.error('Failed to load recent images:', e);
   }
 };
 
-// Get image URL
-const getImageUrl = (image: Record<string, unknown>) => {
-  return api.gallery.getImageUrl(String(image.path || ''));
-};
+/* ------------------------------------------------------------------ */
+/*  App settings defaults                                              */
+/* ------------------------------------------------------------------ */
 
-const recentImageLabel = (image: Record<string, unknown>) =>
-  assetDisplayLabel(image as import('@/types').GalleryItem, '');
-
-// Image preview
-const previewVisible = ref(false);
-const selectedImage = ref<Record<string, unknown> | null>(null);
-
-const showPreview = (image: Record<string, unknown>) => {
-  selectedImage.value = image;
-  previewVisible.value = true;
-};
-
-const quickFromGallery = async (image: Record<string, unknown>, mode: string) => {
-  editImagePath.value = String(image.path || '');
-  editImageSrc.value = getImageUrl(image);
-  if (mode === 'upscale') {
-    setImageWorkMode('upscale');
-  } else {
-    setImageWorkMode('rewrite_reference');
-  }
-  await loadRecentImages();
-};
-
-// Local redraw: edit file change
-const onEditAssetPick = ({ path, previewUrl }: { path: string; previewUrl: string }) => {
-  editImagePath.value = path;
-  editImageSrc.value = previewUrl;
-  addLog($tt('create.imageLoaded', { name: path }), 'info');
-  void loadRecentImages();
-};
-
-const onControlAssetPick = ({ path, previewUrl }: { path: string; previewUrl: string }) => {
-  controlImageSrc.value = previewUrl;
-  controlImagePath.value = path;
-};
-const removeControlImage = () => {
-  controlImageSrc.value = '';
-  controlImagePath.value = '';
-};
-
-// Navigate to settings / models (Vue Router)
-const goToSettings = () => {
-  router.push({ name: 'settings' });
-};
-const goToDownload = () => {
-  router.push({ name: 'models' });
-};
-
-const onModelVersionChange = (value: string) => {
-  const parsed = parseModelVersionValue(value);
-  if (!parsed) return;
-  params.model = parsed.modelKey;
-  params.version = parsed.versionKey;
-  addLog($tt('studio.switchModel', { name: currentModelDisplayName.value, version: params.version as string }), 'info');
-  loadModelDefaults();
-};
-
-const imageAutoSaveDraft = ref(false);
-let _imgPromptSaveT: ReturnType<typeof setTimeout> | null = null;
-watch(
-  () => params.prompt,
-  (v) => {
-    if (!imageAutoSaveDraft.value) return;
-    if (!DQ_STORAGE.IMAGE_CREATE_PROMPT_DRAFT) return;
-    if (_imgPromptSaveT) clearTimeout(_imgPromptSaveT);
-    _imgPromptSaveT = setTimeout(() => {
-      try {
-        localStorage.setItem(DQ_STORAGE.IMAGE_CREATE_PROMPT_DRAFT, String(v || ''));
-      } catch (_) {}
-    }, 500);
-  },
-);
-
-const applyAppSettingsDefaults = async () => {
-  try {
-    const st = await api.settings.getSettings();
-    imageAutoSaveDraft.value = !!st.auto_save_prompts;
-    if (st.auto_save_prompts && DQ_STORAGE.IMAGE_CREATE_PROMPT_DRAFT) {
-      const draft = localStorage.getItem(DQ_STORAGE.IMAGE_CREATE_PROMPT_DRAFT);
-      if (draft) params.prompt = draft;
-    }
-    const dm = String(st.default_model_image || st.default_model || '').trim();
-    const mk = resolveDefaultModelRegistryKey(dm, modelRegistry.value, 'image');
-    if (!mk || !modelRegistry.value[mk]) return;
-    const detailed = modelsDetailedStatus.value[mk] || {};
-    const vers = detailed.versions || {};
-    const defaultVK = pickDefaultVersionKey(mk, modelRegistry.value, vers);
-    if (!defaultVK) return;
-    params.model = mk;
-    params.version = defaultVK;
-    selectedModelVersion.value = mk + '|' + defaultVK;
-    loadModelDefaults();
-  } catch (_) {}
-};
+/* ------------------------------------------------------------------ */
+/*  Lifecycle                                                          */
+/* ------------------------------------------------------------------ */
 
 onMounted(async () => {
   await loadModelRegistry();
-  await applyAppSettingsDefaults();
   loadPresets();
   loadRecentImages();
-  startMemoryPoll(false);
-  const fromGal = localStorage.getItem(DQ_STORAGE.IMG2IMG_REF);
-  if (fromGal) {
-    setImageWorkMode('rewrite_reference');
-    editImagePath.value = fromGal;
-    editImageSrc.value = api.gallery.getImageUrl(fromGal);
-    localStorage.removeItem(DQ_STORAGE.IMG2IMG_REF);
-    toast.success($tt('create.img2imgFromGallery'));
-  }
+  loadGallery(true);
+  tasksStore.ensureQueuePoller();
 });
 
 onUnmounted(() => {
-  stopPreviewPoll();
-  stopMemoryPoll();
   closeGenStream();
-  revokePreviewBlobUrl();
+  tasksStore.releaseQueuePoller();
 });
 
-watch(generating, (running) => {
-  startMemoryPoll(running);
-});
-
-// Watch edit mode switch: auto-select a supported model for image editing
-watch(editMode, (newMode) => {
-  if (newMode === 'image_editing') {
-    params.strength = 0.99;
-    const config = currentModelConfig.value;
-    const acts = (config && config.actions) ? config.actions as Record<string, unknown> : {};
-    const hasCap = imageEditingMatches(acts, editingSubMode.value);
-    if (!hasCap) {
-      const firstMatch = filteredRecommendedVersions.value[0] || filteredAllVersions.value[0];
-      if (firstMatch) {
-        params.model = firstMatch.modelKey;
-        params.version = firstMatch.versionKey;
-        selectedModelVersion.value = String(firstMatch.modelKey) + '|' + String(firstMatch.versionKey);
-        loadModelDefaults();
-      }
-    }
-  } else if (newMode === 'image_upscale') {
-    const config = currentModelConfig.value;
-    const acts = (config && config.actions) ? config.actions as Record<string, unknown> : {};
-    const hasCap = imageSupportsUpscale(acts);
-    if (!hasCap) {
-      const firstMatch = filteredRecommendedVersions.value[0] || filteredAllVersions.value[0];
-      if (firstMatch) {
-        params.model = firstMatch.modelKey;
-        params.version = firstMatch.versionKey;
-        selectedModelVersion.value = String(firstMatch.modelKey) + '|' + String(firstMatch.versionKey);
-        loadModelDefaults();
-      }
-    }
-  }
-});
-
-// Watch sub-type switch: re-filter models
-watch(editingSubMode, () => {
-  if (editMode.value !== 'image_editing') return;
-  const config = currentModelConfig.value;
-  const acts = (config && config.actions) ? config.actions as Record<string, unknown> : {};
-  const hasCap = imageEditingMatches(acts, editingSubMode.value);
-  if (!hasCap) {
-    const firstMatch = filteredRecommendedVersions.value[0] || filteredAllVersions.value[0];
-    if (firstMatch) {
-      params.model = firstMatch.modelKey;
-      params.version = firstMatch.versionKey;
-      selectedModelVersion.value = String(firstMatch.modelKey) + '|' + String(firstMatch.versionKey);
-      loadModelDefaults();
-    }
-  }
-});
-
-watch(imageWorkTab, (t) => {
-  if (t !== 'rewrite_reference' && t !== 'rewrite_instruct') return;
-  const okInList = filteredAllVersions.value.some(
-    (v) => v.modelKey === params.model && v.versionKey === params.version,
-  );
-  if (!okInList) {
-    const firstMatch = filteredRecommendedVersions.value[0] || filteredAllVersions.value[0];
-    if (firstMatch) {
-      params.model = firstMatch.modelKey;
-      params.version = firstMatch.versionKey;
-      selectedModelVersion.value = String(firstMatch.modelKey) + '|' + String(firstMatch.versionKey);
-      loadModelDefaults();
-    }
-  }
-});
-
-watch(modelFilterCommercialOnly, () => {
-  if (
-    reconcileVersionPickerSelection(filteredModelPickerVersions.value, params, selectedModelVersion)
-  ) {
-    loadModelDefaults();
-  }
-});
 </script>
+
+<style scoped>
+.studio-dialog-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+.studio-dialog-img {
+  max-width: 100%;
+  max-height: 70vh;
+  border-radius: 8px;
+  object-fit: contain;
+}
+
+.studio-editor-drawer {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.studio-extend-panel,
+.studio-upscale-panel,
+.studio-retouch-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
+.studio-retouch-editor-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.studio-drawer-submit {
+  margin-top: auto;
+}
+</style>
+
+<style>
+.studio-image-editor-drawer .dq-drawer-body {
+  display: flex;
+  flex-direction: column;
+  padding: 16px 18px 20px;
+  overflow: hidden;
+}
+
+.studio-image-editor-drawer .studio-create-pref-pane.dq-pref-pane {
+  border: 0.5px solid var(--dq-glass-border);
+  border-radius: var(--dq-radius-group);
+  background: var(--dq-glass-grouped-bg);
+  -webkit-backdrop-filter: var(--dq-glass-blur-light);
+  backdrop-filter: var(--dq-glass-blur-light);
+}
+
+.studio-image-editor-drawer .studio-create-pref-pane .dq-pref-row:first-child {
+  padding-top: 10px;
+}
+</style>
+
+<style>
+.studio-drawer-model-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-drawer-model-badge {
+  flex-shrink: 0;
+  margin-left: 6px;
+}
+</style>

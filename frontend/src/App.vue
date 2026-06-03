@@ -1,6 +1,6 @@
 <template>
-  <div class="main-container dq-app-shell">
-    <header class="app-header dq-app-header">
+  <div class="main-container dq-app-shell dq-app-shell--sidebar">
+    <aside class="app-sidebar dq-app-sidebar dq-glass--sidebar">
       <div
         class="dq-tauri-titlebar-inset"
         data-tauri-drag-region
@@ -12,7 +12,7 @@
         @navigate="handleNavSelect"
         @open-queue="openTaskQueue"
       />
-    </header>
+    </aside>
 
     <main class="app-main dq-app-main">
       <router-view />
@@ -170,7 +170,7 @@ import TopNav from '@/components/shell/TopNav.vue';
 import WorkspaceSetupDialog from '@/components/workspace/WorkspaceSetupDialog.vue';
 import { useTasksStore } from '@/stores/tasks';
 import { api } from '@/utils/api';
-import { $tt, applyTheme } from '@/utils/i18n';
+import { $tt, applyTheme, type ThemeId } from '@/utils/i18n';
 import { getItem, DQ_STORAGE } from '@/utils/storage';
 import type { PageKey, SystemInfo, Task } from '@/types';
 import { appEvents } from '@/utils/appEvents';
@@ -208,6 +208,8 @@ const globalTaskQueue = computed(() => {
 const globalQueueCount = computed(
   () => globalTaskQueue.value.running.length + globalTaskQueue.value.queued.length
 );
+
+
 
 watch(
   () => route.name as PageKey,
@@ -319,7 +321,10 @@ onMounted(async () => {
   await loadWorkspaceGate();
   await loadSystemInfo();
 
-  applyTheme();
+  const savedTheme = getItem(DQ_STORAGE.THEME);
+  if (savedTheme && ['linear-dark', 'china-red-dark'].includes(savedTheme)) {
+    applyTheme(savedTheme as ThemeId);
+  }
 
   sysInfoInterval = setInterval(loadSystemInfo, 30000);
 
@@ -347,16 +352,23 @@ provide('systemInfo', systemInfo);
 .main-container {
   height: 100vh;
 }
-.app-header {
-  padding: 0 20px;
+.app-sidebar {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
+  width: var(--dq-shell-sidebar-width, 60px);
+  flex-shrink: 0;
+  padding-top: env(safe-area-inset-top, 0px);
 }
 .app-main {
+  flex: 1;
   padding: 16px 20px 20px;
   overflow-y: auto;
-  width: 100%;
-  max-width: none;
+  min-width: 0;
   box-sizing: border-box;
+}
+.dq-tauri-titlebar-inset {
+  height: env(titlebar-area-height, 0px);
+  flex-shrink: 0;
 }
 </style>

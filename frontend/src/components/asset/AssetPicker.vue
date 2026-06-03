@@ -317,10 +317,6 @@ function selectLibraryRow(row: { id: string; previewUrl: string }) {
   background: var(--bg-secondary, var(--dq-bg-base));
 }
 
-.asset-picker__library-cell:focus-visible {
-  outline: 2px solid var(--dq-accent);
-  outline-offset: 2px;
-}
 
 .asset-picker__library-img {
   width: 100%;
