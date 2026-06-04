@@ -9,19 +9,39 @@
     </div>
 
     <!-- Active tasks (generating placeholders) -->
-    <div v-if="activeTasks.length > 0" class="studio-canvas__section">
-      <div class="studio-canvas__section-header">
-        <span class="studio-canvas__section-dot studio-canvas__section-dot--active" />
-        {{ $tt('studio.running') }}
+    <div v-if="activeTasks.length > 0" class="studio-canvas__section studio-canvas__section--active">
+      <div class="studio-canvas__active-layout">
+        <div class="studio-canvas__active-heading">
+          <div class="studio-canvas__active-heading-main">
+            <span class="studio-canvas__section-dot studio-canvas__section-dot--active" />
+            {{ $tt('studio.running') }}
+            <span v-if="activeProgressHint" class="studio-canvas__active-hint">
+              {{ activeProgressHint }}
+            </span>
+          </div>
+          <DqButton
+            v-if="primaryRunningTaskId"
+            type="text"
+            size="sm"
+            class="studio-canvas__logs-btn"
+            @click="showTaskLogs = true"
+          >
+            {{ $t('studio.viewLogs') }}
+          </DqButton>
+        </div>
+        <div class="studio-canvas__active-cards">
+          <ActiveTaskCard
+            v-for="task in activeTasks"
+            :key="task.id"
+            :task="task"
+            :media="media"
+          />
+        </div>
       </div>
-      <div class="studio-canvas__grid">
-        <ActiveTaskCard
-          v-for="task in activeTasks"
-          :key="task.id"
-          :task="task"
-          :media="media"
-        />
-      </div>
+      <GenTaskLogDialog
+        v-model:open="showTaskLogs"
+        :task-id="primaryRunningTaskId"
+      />
     </div>
 
     <!-- Completed items grouped by time -->
@@ -103,13 +123,19 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Close, Delete, Loading } from '@danqing/dq-shell';
 import { $tt } from '@/utils/i18n';
+import { useTasksStore } from '@/stores/tasks';
+import {
+  buildLogDisplayItems,
+  latestProgressItem,
+} from '@/utils/genTaskLog';
 import type { GalleryItem, Task } from '@/types';
 import StudioCard from './StudioCard.vue';
 import ActiveTaskCard from './ActiveTaskCard.vue';
+import GenTaskLogDialog from './GenTaskLogDialog.vue';
 
 const props = defineProps<{
   items: GalleryItem[];
@@ -135,8 +161,25 @@ const emit = defineEmits<{
 }>();
 
 const { t: $t } = useI18n();
+const tasksStore = useTasksStore();
+const showTaskLogs = ref(false);
 
 const selectedCount = computed(() => props.selectedPaths?.size ?? 0);
+
+const primaryRunningTaskId = computed(() => {
+  const running = props.activeTasks.find((task) => task.status === 'running');
+  if (running?.id) return running.id;
+  const first = props.activeTasks[0];
+  return first?.id || null;
+});
+
+const activeProgressHint = computed(() => {
+  const id = primaryRunningTaskId.value;
+  if (!id) return '';
+  const logs = tasksStore.taskLogs[id] || [];
+  const latest = latestProgressItem(buildLogDisplayItems(logs, false));
+  return latest?.title || '';
+});
 
 const emptyMessage = computed(() => {
   if (props.hasActiveFilters) {
@@ -253,6 +296,57 @@ function handleCardClick(item: GalleryItem, event: MouseEvent) {
 @keyframes studio-pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
+}
+
+.studio-canvas__active-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+
+.studio-canvas__active-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 24px;
+  padding-left: 2px;
+}
+
+.studio-canvas__active-heading-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--dq-label-tertiary);
+}
+
+.studio-canvas__active-hint {
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--dq-label-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-canvas__logs-btn {
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
+.studio-canvas__active-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  max-width: 200px;
 }
 
 .studio-canvas__grid {

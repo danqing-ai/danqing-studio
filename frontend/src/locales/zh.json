@@ -79,6 +79,25 @@
     "resetDefaults": "恢复默认",
     "hasCustom": "已修改",
     "logsEmpty": "暂无日志",
+    "logsEmptyHint": "提交生成后，关键步骤与进度会显示在这里",
+    "logsDetailOn": "技术详情",
+    "logsDetailOff": "简洁",
+    "logInferTitle": "推理配置",
+    "logGraph": {
+      "validate_bundle": "校验模型包",
+      "encode_prompt": "编码提示词",
+      "load_transformer": "加载 Transformer",
+      "denoise": "去噪生成",
+      "decode_vae": "VAE 解码",
+      "save_asset": "保存成片"
+    },
+    "logChip": {
+      "model": "模型",
+      "size": "尺寸",
+      "steps": "步数",
+      "guidance": "引导",
+      "seed": "种子"
+    },
     "recent": "最近生成",
     "taskQueue": "任务队列",
     "selectModel": "选择模型和版本",
@@ -112,6 +131,7 @@
     "running": "生成中",
     "queued": "队列中",
     "logs": "日志",
+    "viewLogs": "查看日志",
     "prompt": "提示词",
     "negativePrompt": "负面提示词",
     "steps": "步数",

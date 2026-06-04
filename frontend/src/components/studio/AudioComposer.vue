@@ -354,11 +354,6 @@
               </div>
       </div>
     </StudioComposerAdvancedDrawer>
-
-    <!-- Shortcut hint -->
-    <div class="audio-composer__hint">
-      {{ shortcutHint }}
-    </div>
   </div>
 </template>
 
@@ -472,13 +467,6 @@ const promptPlaceholder = computed(() => {
     return $tt('audio.promptPlaceholderHeartMuLa');
   }
   return $tt('audio.promptPlaceholder');
-});
-
-const shortcutHint = computed(() => {
-  const isMac = navigator.platform.toLowerCase().includes('mac');
-  return isMac
-    ? '⌘ + Enter ' + $tt('create.sendShortcutHintMac')
-    : 'Ctrl + Enter ' + $tt('create.sendShortcutHintWin');
 });
 
 // Seed sync
@@ -911,21 +899,4 @@ function onPromptKeydown(e: KeyboardEvent) {
   color: var(--dq-label-secondary);
 }
 
-/* Hint */
-.audio-composer__hint {
-  text-align: right;
-  margin-top: 2px;
-  font-size: 10px;
-  color: var(--dq-label-tertiary);
-  opacity: 0;
-  transition: opacity 0.2s;
-  height: 0;
-  overflow: hidden;
-}
-
-.audio-composer:focus-within .audio-composer__hint,
-.audio-composer:hover .audio-composer__hint {
-  opacity: 1;
-  height: auto;
-}
 </style>

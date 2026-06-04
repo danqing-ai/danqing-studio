@@ -2,25 +2,29 @@
 <template>
   <div
     class="dq-music-player dq-media-player dq-media-player--video"
-    :class="{ 'is-playing': isPlaying, 'is-loading': isLoading }"
-    :style="{ '--dq-music-hue': String(hue) }"
+    :class="{
+      'is-playing': isPlaying,
+      'is-loading': isLoading,
+      'dq-media-player--gallery': layout === 'gallery',
+      'dq-media-player--create': layout === 'create',
+    }"
+    :style="playerStyle"
   >
-    <video
-      ref="videoEl"
-      class="dq-media-player__video"
-      :src="src"
-      preload="metadata"
-      playsinline
-      @loadedmetadata="onLoadedMetadata"
-      @timeupdate="onTimeUpdate"
-      @ended="onEnded"
-      @play="onPlay"
-      @pause="onPause"
-      @waiting="isLoading = true"
-      @canplay="isLoading = false"
-    />
-
     <div class="dq-media-player__screen">
+      <video
+        ref="videoEl"
+        class="dq-media-player__video"
+        :src="src"
+        preload="metadata"
+        playsinline
+        @loadedmetadata="onLoadedMetadata"
+        @timeupdate="onTimeUpdate"
+        @ended="onEnded"
+        @play="onPlay"
+        @pause="onPause"
+        @waiting="isLoading = true"
+        @canplay="isLoading = false"
+      />
       <div class="dq-media-player__screen-vignette" />
       <button
         type="button"
@@ -30,71 +34,82 @@
         @click="togglePlay"
       >
         <DqIcon :size="36">
-          <pause v-if="isPlaying" />
-          <play v-else />
+          <Pause v-if="isPlaying" />
+          <Play v-else />
         </DqIcon>
       </button>
     </div>
 
-    <div class="dq-media-player__meta dq-media-player__meta--below">
+    <div v-if="layout === 'create'" class="dq-media-player__meta dq-media-player__meta--below">
       <p class="dq-music-player__eyebrow">{{ $t('studio.previewNow') }}</p>
       <h3 class="dq-music-player__title" :title="title">{{ displayTitle }}</h3>
       <p v-if="subtitle" class="dq-music-player__subtitle">{{ subtitle }}</p>
     </div>
 
     <div
-      class="dq-music-player__progress"
-      role="slider"
-      :aria-valuenow="Math.round(progressPct)"
-      aria-valuemin="0"
-      aria-valuemax="100"
-      :aria-label="$t('audio.seek')"
-      @click="onSeek"
+      class="dq-music-player__scrub"
+      :class="{ 'dq-music-player__scrub--featured': layout === 'gallery' }"
     >
-      <div class="dq-music-player__progress-track">
-        <div class="dq-music-player__progress-buffer" :style="{ width: bufferPct + '%' }" />
-        <div class="dq-music-player__progress-fill" :style="{ width: progressPct + '%' }" />
+      <div
+        class="dq-music-player__progress"
+        role="slider"
+        :aria-valuenow="Math.round(progressPct)"
+        aria-valuemin="0"
+        aria-valuemax="100"
+        :aria-label="$t('audio.seek')"
+        @click="onSeek"
+      >
+        <div class="dq-music-player__progress-track">
+          <div class="dq-music-player__progress-buffer" :style="{ width: bufferPct + '%' }" />
+          <div class="dq-music-player__progress-fill" :style="{ width: progressPct + '%' }" />
+        </div>
+      </div>
+      <div class="dq-music-player__times">
+        <span>{{ formatClock(currentTime) }}</span>
+        <span>{{ formatClock(duration) }}</span>
       </div>
     </div>
 
     <div class="dq-music-player__transport">
-      <span class="dq-music-player__time">{{ formatClock(currentTime) }}</span>
-      <div class="dq-music-player__controls">
-        <button
-          type="button"
-          class="dq-music-player__btn-play"
-          :disabled="!src"
-          :aria-label="isPlaying ? $t('audio.pause') : $t('audio.play')"
-          @click="togglePlay"
-        >
-          <DqIcon :size="26">
-            <pause v-if="isPlaying" />
-            <play v-else />
-          </DqIcon>
-        </button>
-        <DqIconButton
-          v-if="showDownload && src"
-          type="text"
-          size="sm"
-          class="dq-music-player__btn-dl"
-          :label="$t('gallery.download')"
-          @click="emit('download')"
-        >
-          <DqIcon><download /></DqIcon>
-        </DqIconButton>
-      </div>
-      <span class="dq-music-player__time">{{ formatClock(duration) }}</span>
+      <button
+        type="button"
+        class="dq-music-player__btn-play"
+        :class="{ 'dq-music-player__btn-play--featured': layout === 'gallery' }"
+        :disabled="!src"
+        :aria-label="isPlaying ? $t('audio.pause') : $t('audio.play')"
+        @click="togglePlay"
+      >
+        <DqIcon :size="layout === 'gallery' ? 22 : 26" class="dq-music-player__btn-icon">
+          <Pause v-if="isPlaying" />
+          <Play v-else />
+        </DqIcon>
+      </button>
+      <DqIconButton
+        v-if="showDownload && src"
+        type="text"
+        size="sm"
+        class="dq-music-player__btn-dl"
+        :class="{ 'dq-music-player__btn-dl--featured': layout === 'gallery' }"
+        :label="$t('gallery.download')"
+        @click="emit('download')"
+      >
+        <DqIcon><Download /></DqIcon>
+      </DqIconButton>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
+import { Download, Pause, Play } from '@danqing/dq-shell';
 
 const props = defineProps({
   src: { type: String, default: '' },
   title: { type: String, default: '' },
   subtitle: { type: String, default: '' },
+  layout: { type: String, default: 'create' },
+  aspectWidth: { type: Number, default: 0 },
+  aspectHeight: { type: Number, default: 0 },
   showDownload: { type: Boolean, default: true },
   hue: { type: Number, default: 268 },
 });
@@ -107,8 +122,21 @@ const isLoading = ref(false);
 const currentTime = ref(0);
 const duration = ref(0);
 const bufferEnd = ref(0);
+const intrinsicAspect = ref<{ w: number; h: number } | null>(null);
 
 const displayTitle = computed(() => (props.title || '').trim() || 'Untitled');
+
+const playerStyle = computed(() => {
+  const styles: Record<string, string> = {
+    '--dq-music-hue': String(props.hue),
+  };
+  const w = props.aspectWidth || intrinsicAspect.value?.w || 0;
+  const h = props.aspectHeight || intrinsicAspect.value?.h || 0;
+  if (w > 0 && h > 0) {
+    styles['--dq-video-aspect-ratio'] = `${w} / ${h}`;
+  }
+  return styles;
+});
 
 const progressPct = computed(() => {
   if (!duration.value) return 0;
@@ -131,6 +159,9 @@ function onLoadedMetadata() {
   if (!el) return;
   duration.value = Number.isFinite(el.duration) ? el.duration : 0;
   isLoading.value = false;
+  if (el.videoWidth > 0 && el.videoHeight > 0) {
+    intrinsicAspect.value = { w: el.videoWidth, h: el.videoHeight };
+  }
   if (duration.value > 0) emit('duration', duration.value);
 }
 
@@ -182,6 +213,7 @@ function load() {
   currentTime.value = 0;
   duration.value = 0;
   isPlaying.value = false;
+  intrinsicAspect.value = null;
   try {
     el.load();
   } catch {

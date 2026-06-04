@@ -1231,6 +1231,31 @@ class HunyuanWeightTests(unittest.TestCase):
         self.assertTrue(hasattr(WanModelMLX, "after_load_weights"))
         self.assertTrue(hasattr(WanModelMLX, "invalidate_text_cache"))
 
+    def test_wan_t2v_skips_expand_timesteps(self) -> None:
+        """T2V must not set wan_expand_timesteps (scalar adaLN); I2V requires it."""
+        import mlx.core as mx
+
+        from backend.engine.config.model_configs import WanConfig
+        from backend.engine.families.wan.transformer import WanTransformer
+        from backend.engine.runtime.mlx import MLXContext
+
+        ctx = MLXContext()
+        model = WanTransformer(WanConfig(), ctx, num_frames=17)
+        latents = mx.zeros((1, 48, 5, 44, 30), dtype=mx.float32)
+        timesteps = mx.array([999.0], dtype=mx.float32)
+
+        _, t2v_cond = model.before_denoise(latents, timesteps, None)
+        self.assertNotIn("wan_expand_timesteps", t2v_cond)
+
+        i2v_cond_in = {
+            "wan_i2v": True,
+            "wan_cond_latent": mx.zeros((48, 5, 44, 30), dtype=mx.float32),
+            "wan_i2v_mask": mx.ones((48, 5, 44, 30), dtype=mx.float32),
+        }
+        _, i2v_cond = model.before_denoise(latents, timesteps, None, **i2v_cond_in)
+        self.assertTrue(i2v_cond.get("wan_expand_timesteps"))
+        self.assertIsNotNone(i2v_cond.get("wan_i2v_mask"))
+
     def test_wan_umt5_weights_load(self) -> None:
         from pathlib import Path
 
@@ -1273,6 +1298,7 @@ class HunyuanWeightTests(unittest.TestCase):
 
     def test_wan_flow_unipc_order2_predictor(self) -> None:
         import mlx.core as mx
+        import numpy as np
 
         from backend.engine.common.schedulers import WanFlowUniPCScheduler
         from backend.engine.runtime.mlx import MLXContext
@@ -1280,6 +1306,8 @@ class HunyuanWeightTests(unittest.TestCase):
         ctx = MLXContext()
         sched = WanFlowUniPCScheduler(1000, ctx=ctx, solver_order=2)
         sched.set_timesteps(4, shift=5.0)
+        ts = np.array(sched.timesteps.tolist(), dtype=np.float32)
+        self.assertTrue(np.all(np.abs(ts - np.round(ts)) < 1e-5))
         sample = mx.ones((1, 2, 2, 2))
         m0 = mx.full(sample.shape, 0.5)
         m1 = mx.full(sample.shape, 0.25)
@@ -2001,6 +2029,25 @@ class BundleManifestTests(unittest.TestCase):
             self.assertIn("transformer", components)
             self.assertIn("vae", components)
             self.assertIn("text_encoder", components)
+
+    def test_scan_components_wan_flat_bundle_layout(self) -> None:
+        from backend.core.bundle_manifest import assert_bundle_ready_for_family, scan_components
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "diffusion_pytorch_model-00001-of-00003.safetensors").write_bytes(b"x")
+            (root / "models_t5_umt5-xxl-enc-bf16.pth").write_bytes(b"y")
+            (root / "Wan2.2_VAE.pth").write_bytes(b"z")
+            tok_dir = root / "google" / "umt5-xxl"
+            tok_dir.mkdir(parents=True)
+            (tok_dir / "tokenizer.json").write_text("{}", encoding="utf-8")
+
+            components = scan_components(root)
+            self.assertIn("transformer", components)
+            self.assertIn("text_encoder", components)
+            self.assertIn("vae", components)
+            self.assertIn("tokenizer", components)
+            assert_bundle_ready_for_family(root, family="wan", model_id="wan-2.2-ti2v-5b")
 
     def test_t5_encoder_bundle_paths_flux_layout(self) -> None:
         from backend.engine.common.bundle_layout import t5_encoder_bundle_paths

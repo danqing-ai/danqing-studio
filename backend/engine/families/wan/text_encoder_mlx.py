@@ -11,11 +11,6 @@ from typing import Any
 import mlx.core as mx
 import mlx.nn as nn
 
-from backend.engine.common.attention import (
-    apply_binary_mask_bias,
-    build_padding_attention_bias,
-    scaled_dot_product_attention_bhsd_mx,
-)
 from backend.engine.common.embeddings import pad_ragged_2d_sequences
 from backend.engine.common.text_encoders.qwen3_mlx import MlxRMSNorm
 
@@ -23,6 +18,12 @@ logger = logging.getLogger(__name__)
 
 
 def _basic_clean(text: str) -> str:
+    try:
+        import ftfy
+
+        text = ftfy.fix_text(text)
+    except ImportError:
+        pass
     text = html.unescape(html.unescape(text))
     return text.strip()
 
@@ -33,7 +34,7 @@ def _whitespace_clean(text: str) -> str:
 
 
 class _T5Attention(nn.Module):
-    def __init__(self, dim: int, dim_attn: int, num_heads: int, dropout: float = 0.1):
+    def __init__(self, dim: int, dim_attn: int, num_heads: int):
         super().__init__()
         assert dim_attn % num_heads == 0
         self.num_heads = num_heads
@@ -42,7 +43,6 @@ class _T5Attention(nn.Module):
         self.k = nn.Linear(dim, dim_attn, bias=False)
         self.v = nn.Linear(dim, dim_attn, bias=False)
         self.o = nn.Linear(dim_attn, dim, bias=False)
-        self.dropout = nn.Dropout(dropout)
 
     def __call__(
         self,
@@ -51,6 +51,7 @@ class _T5Attention(nn.Module):
         mask: mx.array | None = None,
         pos_bias: mx.array | None = None,
     ) -> mx.array:
+        """UMT5 attention — no ``1/sqrt(d)`` scaling (matches official Wan / mlx-video)."""
         context = x if context is None else context
         b, lq, lk = x.shape[0], x.shape[1], context.shape[1]
         n, c = self.num_heads, self.head_dim
@@ -60,54 +61,30 @@ class _T5Attention(nn.Module):
         q = mx.transpose(q, (0, 2, 1, 3))
         k = mx.transpose(k, (0, 2, 1, 3))
         v = mx.transpose(v, (0, 2, 1, 3))
-        scale = float(c) ** -0.5
-        attn_mask = None
-        if pos_bias is not None or mask is not None:
-            attn_mask = mx.zeros((b, n, lq, lk), dtype=mx.float32)
-            if pos_bias is not None:
-                attn_mask = attn_mask + pos_bias.astype(mx.float32)
-            if mask is not None:
-                if mask.ndim == 2:
-                    attn_mask = attn_mask + build_padding_attention_bias(
-                        mx,
-                        mask,
-                        lk,
-                        mx.float32,
-                        valid_value=1,
-                        neg_value=float(mx.finfo(mx.float32).min),
-                    )
-                else:
-                    attn_mask = apply_binary_mask_bias(
-                        mx,
-                        attn_mask,
-                        mask,
-                        valid_value=1,
-                        neg_value=float(mx.finfo(mx.float32).min),
-                    )
-        out = scaled_dot_product_attention_bhsd_mx(
-            mx,
-            q,
-            k,
-            v,
-            scale=scale,
-            mask=attn_mask,
-        )
-        out = mx.transpose(out, (0, 2, 1, 3)).reshape(b, lq, n * c)
-        return self.dropout(self.o(out))
+        # T5 uses unscaled QK^T; softmax in float32 (mlx-video / official Wan).
+        attn = q.astype(mx.float32) @ k.astype(mx.float32).transpose(0, 1, 3, 2)
+        if pos_bias is not None:
+            attn = attn + pos_bias.astype(mx.float32)
+        if mask is not None:
+            if mask.ndim == 2:
+                mask = mask[:, None, None, :]
+            elif mask.ndim == 3:
+                mask = mask[:, None, :, :]
+            attn = attn + mx.where(mask == 0, -3.389e38, 0.0).astype(mx.float32)
+        attn = mx.softmax(attn, axis=-1).astype(q.dtype)
+        out = (attn @ v).transpose(0, 2, 1, 3).reshape(b, lq, n * c)
+        return self.o(out)
 
 
 class _T5FeedForward(nn.Module):
-    def __init__(self, dim: int, dim_ffn: int, dropout: float = 0.1):
+    def __init__(self, dim: int, dim_ffn: int):
         super().__init__()
         self.gate = [nn.Linear(dim, dim_ffn, bias=False)]
         self.fc1 = nn.Linear(dim, dim_ffn, bias=False)
         self.fc2 = nn.Linear(dim_ffn, dim, bias=False)
-        self.dropout = nn.Dropout(dropout)
 
     def __call__(self, x: mx.array) -> mx.array:
-        x = nn.gelu(self.gate[0](x)) * self.fc1(x)
-        x = self.dropout(x)
-        return self.dropout(self.fc2(x))
+        return self.fc2(nn.gelu(self.gate[0](x)) * self.fc1(x))
 
 
 class _T5RelativeEmbedding(nn.Module):
@@ -154,14 +131,13 @@ class _T5SelfAttentionBlock(nn.Module):
         num_heads: int,
         num_buckets: int,
         shared_pos: bool,
-        dropout: float = 0.1,
     ):
         super().__init__()
         self.shared_pos = shared_pos
         self.norm1 = MlxRMSNorm(dim)
-        self.attn = _T5Attention(dim, dim_attn, num_heads, dropout)
+        self.attn = _T5Attention(dim, dim_attn, num_heads)
         self.norm2 = MlxRMSNorm(dim)
-        self.ffn = _T5FeedForward(dim, dim_ffn, dropout)
+        self.ffn = _T5FeedForward(dim, dim_ffn)
         self.pos_embedding = None if shared_pos else _T5RelativeEmbedding(
             num_buckets, num_heads, bidirectional=True,
         )
@@ -187,7 +163,6 @@ class _UMT5Encoder(nn.Module):
         num_layers = 24
         num_buckets = 32
         self.token_embedding = nn.Embedding(256384, dim)
-        self.dropout = nn.Dropout(0.1)
         self.blocks = [
             _T5SelfAttentionBlock(
                 dim, dim_attn, dim_ffn, num_heads, num_buckets, shared_pos=False,
@@ -197,10 +172,10 @@ class _UMT5Encoder(nn.Module):
         self.norm = MlxRMSNorm(dim)
 
     def __call__(self, ids: mx.array, mask: mx.array | None = None) -> mx.array:
-        x = self.dropout(self.token_embedding(ids))
+        x = self.token_embedding(ids)
         for block in self.blocks:
             x = block(x, mask=mask)
-        return self.dropout(self.norm(x))
+        return self.norm(x)
 
 
 def _load_umt5_state_dict(
@@ -260,7 +235,7 @@ def _apply_umt5_weights(model: _UMT5Encoder, weights: dict[str, mx.array]) -> No
             raise RuntimeError(
                 f"Wan UMT5 shape mismatch for {key}: param {param.shape} vs ckpt {src.shape}"
             )
-        param[:] = src
+        param[:] = src.astype(mx.float32)
 
 
 class WanUMT5EncoderMLX:

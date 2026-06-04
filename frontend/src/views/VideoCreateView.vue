@@ -129,7 +129,6 @@ import { useTasksStore } from '@/stores/tasks';
 import type { SystemInfo, GalleryItem, Task } from '@/types';
 import { warnIfRiskyMemory } from '@/composables/memoryHint';
 import { pickDefaultVersionKey, resolveDefaultModelRegistryKey } from '@/utils/defaultModelSettings';
-import { formatGenLogMessage, isDuplicateDenoiseStepLog } from '@/utils/genTaskLog';
 import { useModelRegistryFilters, reconcileVersionPickerSelection } from '@/composables/useModelRegistryFilters';
 import { applyModelVersionFilters } from '@/utils/modelPickerFilters';
 import AssetPicker from '@/components/asset/AssetPicker.vue';
@@ -294,7 +293,10 @@ const activeVideoTasks = computed(() => {
   const queued = tasksStore.queueState.queued.filter((t: Task) =>
     String(t.kind || '').startsWith('video.')
   );
-  return [...running, ...queued];
+  return [...running, ...queued].map((t: Task) => {
+    const live = tasksStore.liveTaskProgress[t.id];
+    return live ? { ...t, ...live } : t;
+  });
 });
 
 function onCardAction({ action, item }: { action: string; item: GalleryItem }) {
@@ -1023,6 +1025,9 @@ const startGeneration = async () => {
     if (!tid) {
       throw new Error('missing task id in submit response');
     }
+    tasksStore.clearTaskLogs(tid);
+    tasksStore.appendTaskLog(tid, $tt('studio.startingGen'), 'info');
+    tasksStore.registerPageOwnedStream(tid);
     currentTask.value = {
       id: tid,
       progress: 0,
@@ -1032,11 +1037,9 @@ const startGeneration = async () => {
       progressMessage: null,
       params: { model: modelStr, title: String(params.title || '').trim(), prompt: params.prompt },
     };
-    tasksStore.closeTaskLogStream(tid);
     api.gen.streamMediaTask(tid, {
       onLog: (logData: any) => {
-        // Logs are ingested but not displayed in UI (unified mode)
-        console.log(formatGenLogMessage(logData.message || ''));
+        tasksStore.ingestTaskLog(tid, logData);
       },
       onStatus: (statusData: any) => {
         if (currentTask.value) {
@@ -1046,7 +1049,9 @@ const startGeneration = async () => {
       },
       onDone: async (doneData: any) => {
         generating.value = false;
+        tasksStore.unregisterPageOwnedStream(tid);
         if (doneData.status === 'completed') {
+          tasksStore.appendTaskLog(tid, $tt('studio.genComplete'), 'success');
           const updated = await api.gen.getMediaTask(tid) as any;
           currentTask.value = updated;
           const pid = updated.result && updated.result.primary_asset_id;
@@ -1059,13 +1064,28 @@ const startGeneration = async () => {
         } else if (doneData.status === 'failed') {
           const updated = await api.gen.getMediaTask(tid) as any;
           currentTask.value = updated;
+          tasksStore.appendTaskLog(
+            tid,
+            $tt('studio.genFailed', { msg: updated.error || updated.error_message || '' }),
+            'error'
+          );
           toast.error($tt('studio.genFailed', { msg: updated.error || updated.error_message || '' }));
         }
       },
       onError: () => {
+        tasksStore.unregisterPageOwnedStream(tid);
+        tasksStore.appendTaskLog(tid, $tt('studio.connectionLost'), 'warning');
         toast.warning($tt('studio.connectionLost'));
       },
       onProgress: (progressData: any) => {
+        tasksStore.ingestTaskProgressLog(tid, progressData);
+        tasksStore.patchLiveTaskProgress(tid, {
+          progress: progressData.progress,
+          step: progressData.step,
+          total: progressData.total,
+          eta_seconds: progressData.eta_seconds,
+          progressMessage: progressData.message ?? progressData.phase,
+        });
         if (!currentTask.value) return;
         if (typeof progressData.progress === 'number') {
           currentTask.value.progress = progressData.progress;

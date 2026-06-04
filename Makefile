@@ -13,7 +13,6 @@
 	pack-windows-server-archive pack-windows-server \
 	pack-windows-desktop-shell pack-windows-desktop pack-windows-desktop-release \
 	desktop-prereqs desktop-sidecar desktop-tauri desktop-bundle \
-	desktop-iced \
 	linux-cuda-venv linux-cuda-sidecar release-linux-cuda-tar release-linux-cuda \
 	windows-cuda-venv windows-cuda-sidecar windows-cuda-desktop-sidecar \
 	windows-desktop-tauri windows-desktop-bundle release-windows-desktop \
@@ -148,9 +147,6 @@ dev start:
 stop:
 	@chmod +x scripts/*.sh
 	@./scripts/stop.sh
-
-desktop-iced:
-	cargo run -p danqing-studio-iced
 
 test: verify-engine-stack
 
@@ -341,7 +337,7 @@ help:
 	@echo ""
 	@echo "Frontend:  frontend-install | frontend-dev | frontend-build | frontend-typecheck"
 	@echo "Dev:       dev | start | stop"
-	@echo "Desktop:   desktop-iced"
+	@echo "Desktop:   (deprecated — use Tauri desktop via pack-macos-desktop)"
 	@echo "Test:      test | test-integration"
 	@echo "Quality:   lint | check-*"
 	@echo "Clean:     clean"

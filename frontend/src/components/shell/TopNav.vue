@@ -83,7 +83,7 @@ import { useI18n } from 'vue-i18n';
 import {
   Box,
   Brush,
-  ListOrdered,
+  Menu,
   MagicStick,
   Microphone,
   Picture,
@@ -107,7 +107,7 @@ const primaryItems = computed(() => [
   { id: 'image_create', icon: Picture, label: t('nav.image_create') },
   { id: 'video_create', icon: VideoCamera, label: t('nav.video_create') },
   { id: 'audio_create', icon: Microphone, label: t('nav.audio_create') },
-  { id: 'task_queue', icon: ListOrdered, label: t('nav.task_queue'), isQueue: true },
+  { id: 'task_queue', icon: Menu, label: t('nav.task_queue'), isQueue: true },
 ]);
 
 const secondaryItems = computed(() => [

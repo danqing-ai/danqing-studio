@@ -404,7 +404,7 @@ class WanConfig:
     temporal_attn_every: int = 2
     # Dual model (14B high/low noise); TI2V 5B is single-model
     dual_model: bool = False
-    expand_timesteps: bool = True  # Wan2.2 TI2V feeds per-token timesteps (mask2); T2V uses all-ones mask
+    expand_timesteps: bool = True  # I2V only: per-token timesteps via wan_expand_timesteps in before_denoise
     # Pipeline / VAE
     vae_scale: int = 16
     temporal_vae_scale: int = 4
@@ -414,7 +414,7 @@ class WanConfig:
     supports_lora: bool = True
     default_scheduler: str = "wan_flow_unipc"
     num_train_timesteps: int = 1000
-    use_mlx_compile: bool = True  # ``mx.compile`` DiT forward after weight load (MLX only)
+    use_mlx_compile: bool = False  # compile partial forward + text KV cache caused denoise drift vs mlx-video
     vae_spatial_tiling: bool = False  # 默认整幅 decode；分块拼接在 TI2V 5B 分辨率下会出 seam
     uses_wan_t5_bundle: bool = True
     uses_wan_shift: bool = True

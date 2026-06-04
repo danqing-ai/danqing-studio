@@ -11,13 +11,18 @@
       'gallery-preview-dialog',
       media === 'image' ? 'gallery-preview-dialog--image' : '',
       media === 'audio' ? 'gallery-preview-dialog--audio' : '',
+      media === 'video' ? 'gallery-preview-dialog--video' : '',
     ]"
   >
     <div
       v-if="currentItem"
       ref="containerRef"
       class="gallery-preview-container"
-      :class="{ 'gallery-preview-container--image': media === 'image' }"
+      :class="{
+        'gallery-preview-container--image': media === 'image',
+        'gallery-preview-container--video': media === 'video',
+        'gallery-preview-container--audio': media === 'audio',
+      }"
       tabindex="0"
     >
       <DqIconButton
@@ -39,7 +44,13 @@
         <DqIcon><ArrowLeft /></DqIcon>
       </div>
 
-      <div class="gallery-preview-media" :class="{ 'gallery-preview-media--audio': media === 'audio' }">
+      <div
+        class="gallery-preview-media"
+        :class="{
+          'gallery-preview-media--audio': media === 'audio',
+          'gallery-preview-media--video': media === 'video',
+        }"
+      >
         <img
           v-if="media === 'image'"
           class="gallery-preview-img"
@@ -48,9 +59,11 @@
         />
         <CreateVideoPlayer
           v-else-if="media === 'video'"
+          :key="currentItem.path"
+          layout="gallery"
           :src="getVideoUrl(currentItem)"
-          :title="currentItem?.name || ''"
-          :subtitle="videoSubtitle"
+          :aspect-width="currentItem.width || 0"
+          :aspect-height="currentItem.height || 0"
           :show-download="true"
           @download="downloadCurrent"
         />
@@ -184,19 +197,16 @@ const canGoPrev = computed(() => currentIndex.value > 0);
 const canGoNext = computed(() => currentIndex.value < props.items.length - 1);
 
 const dialogWidth = computed(() => {
-  if (props.media === 'video') return '80%';
+  if (props.media === 'video') {
+    const item = currentItem.value;
+    const w = item?.width || 0;
+    const h = item?.height || 0;
+    if (w > 0 && h > w) return 'min(440px, 92vw)';
+    if (w > 0 && h > 0 && w >= h) return 'min(860px, 92vw)';
+    return 'min(640px, 92vw)';
+  }
   if (props.media === 'audio') return '640px';
   return 'min(94vw, 1120px)';
-});
-
-const videoSubtitle = computed(() => {
-  const item = currentItem.value;
-  if (!item) return '';
-  const parts: string[] = [];
-  if (item.model) parts.push(item.model);
-  const dur = item.duration_seconds ?? (item.metadata?.duration_seconds as number | undefined);
-  if (dur) parts.push(formatClock(Number(dur)));
-  return parts.join(' · ');
 });
 
 const audioDurationLabel = computed(() => {
@@ -313,6 +323,55 @@ onBeforeUnmount(() => {
   min-height: min(78vh, 720px);
 }
 
+.gallery-preview-container--video {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) 40px;
+  column-gap: 8px;
+  align-items: start;
+  padding: 0 4px 8px;
+  min-height: 0;
+}
+
+.gallery-preview-container--video .gallery-preview-nav {
+  position: static;
+  top: auto;
+  transform: none;
+  align-self: center;
+  justify-self: center;
+}
+
+.gallery-preview-container--video .gallery-preview-nav--left,
+.gallery-preview-container--video .gallery-preview-nav--right {
+  left: auto;
+  right: auto;
+}
+
+.gallery-preview-container--video .gallery-preview-media {
+  grid-column: 2;
+  grid-row: 1;
+  padding: 8px 0 12px;
+}
+
+.gallery-preview-container--video .gallery-preview-detail {
+  position: static;
+  grid-column: 2;
+  grid-row: 2;
+  left: auto;
+  right: auto;
+  bottom: auto;
+  margin: 0;
+  max-height: none;
+  box-shadow: none;
+}
+
+.gallery-preview-container--video .gallery-preview-counter {
+  grid-column: 1 / -1;
+  position: static;
+  justify-self: center;
+  margin-top: 8px;
+  transform: none;
+}
+
 .gallery-preview-close {
   position: absolute;
   top: 4px;
@@ -352,9 +411,41 @@ onBeforeUnmount(() => {
 }
 
 .gallery-preview-media--audio {
-  padding: 16px 32px 32px;
-  min-width: 360px;
+  padding: 16px 0 32px;
+  min-width: 0;
   width: 100%;
+}
+
+.gallery-preview-media--video {
+  padding: 8px 0 12px;
+  min-width: 0;
+  width: 100%;
+}
+
+.gallery-preview-container--audio {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) 40px;
+  column-gap: 8px;
+  align-items: start;
+  padding: 0 4px;
+}
+
+.gallery-preview-container--audio .gallery-preview-nav {
+  position: static;
+  top: auto;
+  transform: none;
+  align-self: center;
+  justify-self: center;
+}
+
+.gallery-preview-container--audio .gallery-preview-nav--left,
+.gallery-preview-container--audio .gallery-preview-nav--right {
+  left: auto;
+  right: auto;
+}
+
+.gallery-preview-container--audio .gallery-preview-media {
+  grid-column: 2;
 }
 
 .gallery-preview-nav {
@@ -528,6 +619,10 @@ onBeforeUnmount(() => {
 }
 
 .gallery-preview-dialog--audio .dq-dialog-body {
+  padding: 0 4px 12px;
+}
+
+.gallery-preview-dialog--video .dq-dialog-body {
   padding: 0 4px 12px;
 }
 </style>

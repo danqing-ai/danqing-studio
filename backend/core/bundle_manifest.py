@@ -114,13 +114,30 @@ def scan_components(bundle_root: Path) -> dict[str, list[str]]:
             components["tokenizer"].append(_rel_path(bundle_root, path))
             continue
 
+        suffix_lower = path.suffix.lower()
+        weight_suffixes = (".safetensors", ".bin", ".json", ".pth")
+
+        # Wan / ModelScope flat bundles: models_t5*.pth + Wan2.2_VAE.pth at bundle root.
+        if suffix_lower == ".pth":
+            if name_lower.startswith("models_t5") or "text_encoder" in rel_lower:
+                components["text_encoder"].append(_rel_path(bundle_root, path))
+                continue
+            if (
+                name_lower.endswith("_vae.pth")
+                or (name_lower.startswith("wan") and "_vae" in name_lower)
+                or "/vae/" in f"/{rel_lower}/"
+                or rel_lower.startswith("vae/")
+            ):
+                components["vae"].append(_rel_path(bundle_root, path))
+                continue
+
         if "text_encoder" in rel_lower or name_lower.startswith("text_encoder"):
-            if path.suffix.lower() in (".safetensors", ".bin", ".json"):
+            if suffix_lower in weight_suffixes:
                 components["text_encoder"].append(_rel_path(bundle_root, path))
             continue
 
         if "/vae/" in f"/{rel_lower}/" or rel_lower.startswith("vae/") or name_lower.startswith("vae."):
-            if path.suffix.lower() in (".safetensors", ".bin", ".json"):
+            if suffix_lower in weight_suffixes:
                 components["vae"].append(_rel_path(bundle_root, path))
             continue
 

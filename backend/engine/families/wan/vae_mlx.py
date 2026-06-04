@@ -193,6 +193,7 @@ class Resample(nn.Module):
         x: mx.array,
         feat_cache: list[Any] | None = None,
         feat_idx: list[int] | None = None,
+        first_chunk: bool = False,
     ) -> mx.array:
         feat_idx = feat_idx if feat_idx is not None else [0]
         b, c, t, h, w = x.shape
@@ -220,6 +221,23 @@ class Resample(nn.Module):
                     x = mx.reshape(x, (b, 2, c, t, h, w))
                     x = mx.stack((x[:, 0], x[:, 1]), axis=3)
                     x = mx.reshape(x, (b, c, t * 2, h, w))
+            elif first_chunk and t > 1:
+                first_frame = x[:, :, :1, :, :]
+                rest = x[:, :, 1:, :, :]
+                tc_out = self.time_conv(rest)
+                tc_out = mx.reshape(tc_out, (b, 2, c, t - 1, h, w))
+                stream0 = tc_out[:, 0]
+                stream1 = tc_out[:, 1]
+                interleaved = mx.stack((stream0, stream1), axis=3)
+                interleaved = mx.reshape(interleaved, (b, c, (t - 1) * 2, h, w))
+                x = mx.concatenate([first_frame, interleaved], axis=2)
+            else:
+                tc_out = self.time_conv(x)
+                tc_out = mx.reshape(tc_out, (b, 2, c, t, h, w))
+                stream0 = tc_out[:, 0]
+                stream1 = tc_out[:, 1]
+                x = mx.stack((stream0, stream1), axis=3)
+                x = mx.reshape(x, (b, c, t * 2, h, w))
         t = int(x.shape[2])
         x_bt = mx.reshape(x, (b * t, c, h, w))
         mode_tag = self.resample[0]
@@ -485,7 +503,9 @@ class UpResidualBlock(nn.Module):
     ) -> mx.array:
         x_main = x
         for module in self.blocks:
-            if isinstance(module, (ResidualBlock, Resample)):
+            if isinstance(module, Resample):
+                x_main = module(x_main, feat_cache, feat_idx, first_chunk)
+            elif isinstance(module, ResidualBlock):
                 x_main = module(x_main, feat_cache, feat_idx)
             else:
                 x_main = module(x_main)
@@ -641,8 +661,10 @@ class Decoder3d(nn.Module):
                 x = layer(x)
 
         for layer in self.upsamples:
-            if feat_cache is not None:
+            if isinstance(layer, UpResidualBlock):
                 x = layer(x, feat_cache, feat_idx, first_chunk)
+            elif isinstance(layer, ResidualBlock):
+                x = layer(x, feat_cache, feat_idx) if feat_cache is not None else layer(x)
             else:
                 x = layer(x)
 
@@ -748,32 +770,18 @@ class WanVAE(nn.Module):
         scale: tuple[mx.array, mx.array],
         on_stage: Callable[[float], None] | None = None,
     ) -> mx.array:
+        """Decode full latent volume at once (matches mlx-video / official Wan2.2 VAE)."""
         self.clear_cache()
         mean, inv_std = scale
         z = z / inv_std + mean
-        iter_ = int(z.shape[2])
+        if on_stage is not None:
+            on_stage(0.05)
         x = self.conv2(z)
-        out_parts: list[mx.array] = []
-        for i in range(iter_):
-            self._conv_idx = [0]
-            if on_stage is not None:
-                on_stage(min(1.0, (i + 1) / max(iter_, 1)))
-            if i == 0:
-                part = self.decoder(
-                    x[:, :, i : i + 1, :, :],
-                    self._feat_map,
-                    self._conv_idx,
-                    first_chunk=True,
-                )
-            else:
-                part = self.decoder(
-                    x[:, :, i : i + 1, :, :],
-                    self._feat_map,
-                    self._conv_idx,
-                )
-            out_parts.append(part)
-        out = out_parts[0] if len(out_parts) == 1 else mx.concatenate(out_parts, axis=2)
+        # Full-sequence decode: no feat_cache; mlx-video uses first_chunk=True throughout.
+        out = self.decoder(x, None, [0], first_chunk=True)
         out = unpatchify(out, 2)
+        if on_stage is not None:
+            on_stage(1.0)
         self.clear_cache()
         return out
 
@@ -1165,7 +1173,13 @@ def _load_vae_state_dict(
             import torch
 
             sd = torch.load(str(pth), map_location="cpu", weights_only=True)
-            return {k: array_fn(v.detach().cpu().numpy()) for k, v in sd.items()}
+            out: dict[str, mx.array] = {}
+            for k, v in sd.items():
+                arr = v.detach().cpu()
+                if arr.dtype == torch.bfloat16:
+                    arr = arr.float()
+                out[k] = array_fn(arr.numpy()).astype(mx.float32)
+            return out
 
     vae_dir = bundle_root / "vae"
     if vae_dir.is_dir():
@@ -1174,6 +1188,7 @@ def _load_vae_state_dict(
             merged.update(load_weights_dict(load_fn, str(sf)))
         if merged:
             logger.info("Loading Wan VAE weights from %s (%d tensors)", vae_dir, len(merged))
+            merged = {k: v.astype(mx.float32) for k, v in merged.items()}
             return _normalize_vae_state_dict(merged)
 
     raise RuntimeError(

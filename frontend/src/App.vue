@@ -84,6 +84,14 @@
           >
             {{ $tt('studio.queuePostProcessHint') }}
           </div>
+          <DqButton
+            type="text"
+            size="sm"
+            class="dq-task-queue-logs-btn"
+            @click="openQueueTaskLogs(task.id)"
+          >
+            {{ $tt('studio.viewLogs') }}
+          </DqButton>
         </div>
       </div>
 
@@ -155,6 +163,11 @@
     </div>
   </DqDrawer>
 
+  <GenTaskLogDialog
+    v-model:open="showQueueTaskLogs"
+    :task-id="queueLogTaskId"
+  />
+
   <WorkspaceSetupDialog
     v-model:visible="showWorkspaceSetup"
     :effective-root="workspaceEffectiveRoot"
@@ -168,6 +181,7 @@ import { useRouter, useRoute } from 'vue-router';
 import { toast } from '@/utils/feedback';
 import TopNav from '@/components/shell/TopNav.vue';
 import WorkspaceSetupDialog from '@/components/workspace/WorkspaceSetupDialog.vue';
+import GenTaskLogDialog from '@/components/studio/GenTaskLogDialog.vue';
 import { useTasksStore } from '@/stores/tasks';
 import { api } from '@/utils/api';
 import { $tt, applyTheme, type ThemeId } from '@/utils/i18n';
@@ -181,6 +195,13 @@ const tasksStore = useTasksStore();
 
 const activePage = ref<PageKey>('image_create');
 const showGlobalQueueDrawer = ref(false);
+const showQueueTaskLogs = ref(false);
+const queueLogTaskId = ref<string | null>(null);
+
+function openQueueTaskLogs(taskId: string) {
+  queueLogTaskId.value = taskId;
+  showQueueTaskLogs.value = true;
+}
 const showWorkspaceSetup = ref(false);
 const workspaceEffectiveRoot = ref('');
 const currentLang = ref('zh');
@@ -370,5 +391,10 @@ provide('systemInfo', systemInfo);
 .dq-tauri-titlebar-inset {
   height: env(titlebar-area-height, 0px);
   flex-shrink: 0;
+}
+
+.dq-task-queue-logs-btn {
+  margin-top: 8px;
+  align-self: flex-start;
 }
 </style>

@@ -81,7 +81,6 @@ import { ref, reactive, computed, watch, onMounted, nextTick, inject, unref, typ
 import { useRouter } from 'vue-router';
 import { toast } from '@/utils/feedback';
 import { api, taskIdFromSubmitResponse } from '@/utils/api';
-import { formatGenLogMessage, isDuplicateDenoiseStepLog } from '@/utils/genTaskLog';
 import { $tt, $mn, $md, $mvn, $pn } from '@/utils/i18n';
 import { useTasksStore } from '@/stores/tasks';
 import { useRegistryStore } from '@/stores/registry';
@@ -149,7 +148,6 @@ const audioWorkSegmentOptions = computed(() => [
 // ---- State ----
 const generating = ref(false);
 const modelsLoading = ref(false);
-const logContainer = ref<HTMLElement | null>(null);
 const previewPlayerRef = ref(null);
 const previewIsPlaying = ref(false);
 const previewDurationSec = ref(0);
@@ -193,7 +191,6 @@ const coverSourceFile = ref<File | null>(null);
 const coverSourceName = ref('');
 
 const currentTask = reactive({ id: '', progress: 0, step: null as number | null, total: null as number | null, status: '' });
-const logs = reactive<Array<{ level: string; message: string; time: string }>>([]);
 const previewAudioSrc = ref('');
 const previewPrompt = ref('');
 const previewLyrics = ref('');
@@ -637,10 +634,6 @@ function formatTime(seconds: number) {
   return m + ':' + String(sec).padStart(2, '0');
 }
 
-function clearLogs() {
-  logs.length = 0;
-}
-
 function onPickCoverSource() {
   const input = document.createElement('input');
   input.type = 'file';
@@ -677,6 +670,10 @@ function attachTaskStream(tid: string) {
     generating.value = false;
     return;
   }
+
+  tasksStore.registerPageOwnedStream(tid);
+  tasksStore.clearTaskLogs(tid);
+  tasksStore.appendTaskLog(tid, $tt('studio.startingGen'), 'info');
 
   const assetFileUrl = (aid: string) =>
     api.gallery?.getImageUrl
@@ -716,29 +713,7 @@ function attachTaskStream(tid: string) {
 
   api.gen.streamMediaTask(tid, {
     onLog: (logData: unknown) => {
-      const row = logData as Record<string, unknown>;
-      const raw = (row.message as string) || '';
-      const lvl = (row.level as string) || 'info';
-      if (isDuplicateDenoiseStepLog(logs, raw)) {
-        return;
-      }
-      const now = new Date();
-      const time =
-        String(now.getHours()).padStart(2, '0') +
-        ':' +
-        String(now.getMinutes()).padStart(2, '0') +
-        ':' +
-        String(now.getSeconds()).padStart(2, '0');
-      logs.push({
-        level: lvl,
-        message: formatGenLogMessage(raw),
-        time,
-      });
-      nextTick(() => {
-        if (logContainer.value) {
-          logContainer.value.scrollTop = logContainer.value.scrollHeight;
-        }
-      });
+      tasksStore.ingestTaskLog(tid, logData);
     },
     onStatus: (statusData: unknown) => {
       const row = statusData as Record<string, unknown>;
@@ -747,6 +722,14 @@ function attachTaskStream(tid: string) {
     },
     onProgress: (progressData: unknown) => {
       const row = progressData as Record<string, unknown>;
+      tasksStore.ingestTaskProgressLog(tid, row);
+      tasksStore.patchLiveTaskProgress(tid, {
+        progress: row.progress as number | undefined,
+        step: row.step as number | undefined,
+        total: row.total as number | undefined,
+        eta_seconds: row.eta_seconds as number | undefined,
+        progressMessage: (row.message ?? row.phase) as string | undefined,
+      });
       if (row.progress != null) currentTask.progress = row.progress as number;
       if (row.step != null) currentTask.step = row.step as number;
       if (row.total != null) currentTask.total = row.total as number;
@@ -763,18 +746,23 @@ function attachTaskStream(tid: string) {
     },
     onDone: (doneData: unknown) => {
       const row = doneData as Record<string, unknown>;
+      tasksStore.unregisterPageOwnedStream(tid);
       if (row.status === 'completed') {
+        tasksStore.appendTaskLog(tid, $tt('studio.genComplete'), 'success');
         const res = row.result as Record<string, unknown> | undefined;
         const meta = res?.metadata as Record<string, unknown> | undefined;
         applyResultMeta(meta);
         const pid = res?.primary_asset_id;
         if (pid) setPreviewFromAsset(String(pid), meta);
       } else if (row.status === 'failed') {
+        tasksStore.appendTaskLog(tid, $tt('studio.genFailed', { msg: String(row.error || '') }), 'error');
         toast.error($tt('studio.genFailed', { msg: String(row.error || '') }));
       }
       generating.value = false;
     },
     onError: () => {
+      tasksStore.unregisterPageOwnedStream(tid);
+      tasksStore.appendTaskLog(tid, $tt('studio.connectionLost'), 'warning');
       toast.error($tt('studio.connectionLost'));
       generating.value = false;
     },
@@ -800,7 +788,6 @@ async function startCoverGeneration() {
   currentTask.step = null;
   currentTask.total = null;
   currentTask.status = '';
-  logs.length = 0;
   previewLyrics.value = '';
   previewLyricsDownload.value = '';
 
@@ -869,7 +856,6 @@ async function startGeneration() {
   currentTask.step = null;
   currentTask.total = null;
   currentTask.status = '';
-  logs.length = 0;
   previewLyrics.value = '';
   previewLyricsDownload.value = '';
 
@@ -1119,7 +1105,10 @@ const activeAudioTasks = computed(() => {
   const queued = tasksStore.queueState.queued.filter((t: Task) =>
     String(t.kind || '').startsWith('audio.')
   );
-  return [...running, ...queued];
+  return [...running, ...queued].map((t: Task) => {
+    const live = tasksStore.liveTaskProgress[t.id];
+    return live ? { ...t, ...live } : t;
+  });
 });
 
 // ---- Gallery preview dialog ----

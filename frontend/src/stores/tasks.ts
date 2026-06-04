@@ -2,6 +2,13 @@ import { reactive } from 'vue';
 import { defineStore } from 'pinia';
 import { api } from '@/utils/api';
 import type { QueueState } from '@/types';
+import {
+  formatGenLogMessage,
+  formatLogTimestamp,
+  isDuplicateDenoiseStepLog,
+  progressPhaseLabel,
+} from '@/utils/genTaskLog';
+import { $tt } from '@/utils/i18n';
 
 export interface LiveTaskProgress {
   progress?: number;
@@ -11,6 +18,17 @@ export interface LiveTaskProgress {
   progressMessage?: string;
 }
 
+export interface TaskLogEntry {
+  time: string;
+  message: string;
+  level: string;
+}
+
+interface TaskLogPhaseState {
+  lastPhase: string;
+  lastStep: number;
+}
+
 export const useTasksStore = defineStore('tasks', () => {
   const queueState = reactive<QueueState>({
     running: [],
@@ -18,6 +36,8 @@ export const useTasksStore = defineStore('tasks', () => {
   });
 
   const liveTaskProgress = reactive<Record<string, LiveTaskProgress>>({});
+  const taskLogs = reactive<Record<string, TaskLogEntry[]>>({});
+  const taskLogPhaseState = new Map<string, TaskLogPhaseState>();
 
   let pollTimer: ReturnType<typeof setInterval> | null = null;
   let pollRefCount = 0;
@@ -40,6 +60,65 @@ export const useTasksStore = defineStore('tasks', () => {
     if (taskId && liveTaskProgress[taskId] != null) {
       delete liveTaskProgress[taskId];
     }
+  }
+
+  function appendTaskLog(taskId: string, message: string, level = 'info') {
+    if (!taskId || !String(message || '').trim()) return;
+    if (!taskLogs[taskId]) {
+      taskLogs[taskId] = [];
+    }
+    const logs = taskLogs[taskId];
+    if (isDuplicateDenoiseStepLog(logs, message)) {
+      return;
+    }
+    logs.push({
+      time: formatLogTimestamp(),
+      message,
+      level,
+    });
+    if (logs.length > 500) {
+      taskLogs[taskId] = logs.slice(-500);
+    }
+  }
+
+  function ingestTaskLog(taskId: string, logData: unknown) {
+    const row = logData as Record<string, unknown>;
+    const raw = String(row.message || '');
+    const lvl = String(row.level || 'info');
+    appendTaskLog(taskId, formatGenLogMessage(raw), lvl);
+  }
+
+  function ingestTaskProgressLog(taskId: string, data: Record<string, unknown>) {
+    const state = taskLogPhaseState.get(taskId) || { lastPhase: '', lastStep: 0 };
+
+    if (data.message === 'post') {
+      if (state.lastPhase !== 'post') {
+        state.lastPhase = 'post';
+        appendTaskLog(taskId, $tt('studio.queuePostProcessHint'), 'info');
+      }
+    } else if (data.message === 'denoise') {
+      state.lastPhase = 'denoise';
+    } else if (data.phase && state.lastPhase !== String(data.phase)) {
+      state.lastPhase = String(data.phase);
+      const label = progressPhaseLabel(String(data.phase), '');
+      if (label) {
+        appendTaskLog(taskId, label, 'info');
+      }
+    }
+
+    const nextStep = data.step != null ? Number(data.step) : state.lastStep;
+    const nextTotal = data.total != null ? Number(data.total) : 0;
+    if (nextTotal > 0 && nextStep > 0) {
+      state.lastStep = nextStep;
+    }
+    taskLogPhaseState.set(taskId, state);
+  }
+
+  function clearTaskLogs(taskId: string) {
+    if (taskId && taskLogs[taskId] != null) {
+      delete taskLogs[taskId];
+    }
+    taskLogPhaseState.delete(taskId);
   }
 
   const logStreams = new Map<string, EventSource>();
@@ -91,11 +170,13 @@ export const useTasksStore = defineStore('tasks', () => {
 
     eventSource.addEventListener('log', (event) => {
       const data = JSON.parse(event.data);
+      ingestTaskLog(taskId, data);
       callbacks.onLog?.(data);
     });
 
     eventSource.addEventListener('progress', (event) => {
       const data = JSON.parse(event.data);
+      ingestTaskProgressLog(taskId, data as Record<string, unknown>);
       const patch: LiveTaskProgress = {};
       if (typeof data.progress === 'number') patch.progress = data.progress;
       if (data.step != null) patch.step = data.step;
@@ -182,8 +263,13 @@ export const useTasksStore = defineStore('tasks', () => {
   return {
     queueState,
     liveTaskProgress,
+    taskLogs,
     patchLiveTaskProgress,
     clearLiveTaskProgress,
+    appendTaskLog,
+    ingestTaskLog,
+    ingestTaskProgressLog,
+    clearTaskLogs,
     openTaskLogStream,
     closeTaskLogStream,
     registerPageOwnedStream,

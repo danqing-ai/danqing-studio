@@ -204,7 +204,6 @@ import type { SystemInfo, GalleryItem, Task } from '@/types';
 import { applyDefaults, hasDeviation } from '@/utils/registryParamSchema';
 
 import { warnIfRiskyMemory } from '@/composables/memoryHint';
-import { formatGenLogMessage, isDuplicateDenoiseStepLog } from '@/utils/genTaskLog';
 import { reconcileVersionPickerSelection } from '@/composables/useModelRegistryFilters';
 import { applyModelVersionFilters } from '@/utils/modelPickerFilters';
 import { previewDisplayCaption, truncateDisplayLabel } from '@/utils/assetDisplay';
@@ -375,7 +374,10 @@ const activeImageTasks = computed(() => {
   const queued = tasksStore.queueState.queued.filter((t: Task) =>
     String(t.kind || '').startsWith('image.')
   );
-  return [...running, ...queued];
+  return [...running, ...queued].map((t: Task) => {
+    const live = tasksStore.liveTaskProgress[t.id];
+    return live ? { ...t, ...live } : t;
+  });
 });
 
 /* ------------------------------------------------------------------ */
@@ -741,6 +743,9 @@ function attachStreamFromSubmit(submitRes: unknown) {
     generating.value = false;
     return;
   }
+  tasksStore.clearTaskLogs(tid);
+  tasksStore.appendTaskLog(tid, $tt('studio.startingGen'), 'info');
+  tasksStore.registerPageOwnedStream(tid);
   currentTask.value = {
     id: tid,
     progress: 0,
@@ -752,7 +757,7 @@ function attachStreamFromSubmit(submitRes: unknown) {
 
   activeGenStream = api.gen.streamMediaTask(tid, {
     onLog: (logData: any) => {
-      // Logs are displayed via global task queue, not per-card
+      tasksStore.ingestTaskLog(tid, logData);
     },
     onStatus: (statusData: any) => {
       if (currentTask.value) {
@@ -760,6 +765,14 @@ function attachStreamFromSubmit(submitRes: unknown) {
       }
     },
     onProgress: (progressData: any) => {
+      tasksStore.ingestTaskProgressLog(tid, progressData);
+      tasksStore.patchLiveTaskProgress(tid, {
+        progress: progressData.progress,
+        step: progressData.step,
+        total: progressData.total,
+        eta_seconds: progressData.eta_seconds,
+        progressMessage: progressData.message ?? progressData.phase,
+      });
       if (currentTask.value) {
         currentTask.value = {
           ...currentTask.value,
@@ -771,11 +784,18 @@ function attachStreamFromSubmit(submitRes: unknown) {
     },
     onDone: async (doneData: any) => {
       generating.value = false;
+      tasksStore.unregisterPageOwnedStream(tid);
       if (doneData.status === 'completed') {
+        tasksStore.appendTaskLog(tid, $tt('studio.genComplete'), 'success');
         toast.success($tt('studio.genComplete'));
         setTimeout(() => loadGallery(true), 1000);
       } else if (doneData.status === 'failed') {
         const updated = await api.gen.getMediaTask(tid) as any;
+        tasksStore.appendTaskLog(
+          tid,
+          $tt('studio.genFailed', { msg: updated.error || updated.error_message || '' }),
+          'error'
+        );
         toast.error($tt('studio.genFailed', { msg: updated.error || updated.error_message || '' }));
       }
       currentTask.value = null;
@@ -783,6 +803,8 @@ function attachStreamFromSubmit(submitRes: unknown) {
     },
     onError: () => {
       generating.value = false;
+      tasksStore.unregisterPageOwnedStream(tid);
+      tasksStore.appendTaskLog(tid, $tt('studio.connectionLost'), 'warning');
       currentTask.value = null;
       closeGenStream();
     },

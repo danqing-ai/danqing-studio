@@ -360,9 +360,6 @@ class WanModelMLX(TransformerBase):
             patches.append(flat)
             grid_sizes_list.append(grid)
             seq_lens_list.append(int(flat.shape[0]))
-        grid_sizes = ctx.stack([
-            ctx.array([g[0], g[1], g[2]], dtype=ctx.int64()) for g in grid_sizes_list
-        ])
         if seq_len is None:
             seq_len = max(seq_lens_list)
         x = pad_ragged_2d_sequences(ctx, patches, target_len=int(seq_len))
@@ -401,6 +398,7 @@ class WanModelMLX(TransformerBase):
                 raise RuntimeError(
                     f"Wan scalar timestep expected [B] or scalar, got shape {getattr(t_in, 'shape', ())}"
                 )
+            t_b = mx.round(t_b).astype(ctx.float32())
             emb = sinusoidal_embedding_1d(ctx, cfg.freq_dim, t_b).astype(ctx.float32())
             e = self.time_embedding[1](nn.silu(self.time_embedding[0](emb)))
             e0 = self.time_projection(nn.silu(e))
@@ -449,7 +447,7 @@ class WanModelMLX(TransformerBase):
         outs = []
         for bi in range(int(x.shape[0])):
             u = x[bi]
-            f, h, w = [int(v) for v in grid_sizes[bi].tolist()]
+            f, h, w = grid_sizes_list[bi]
             tok = u[: f * h * w].reshape(f, h, w, pt, ph, pw, c)
             tok = ctx.einsum("fhwpqrc->cfphqwr", tok)
             outs.append(tok.reshape(c, f * pt, h * ph, w * pw))

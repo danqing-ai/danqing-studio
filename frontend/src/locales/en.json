@@ -79,6 +79,25 @@
     "resetDefaults": "Restore Defaults",
     "hasCustom": "Modified",
     "logsEmpty": "No logs",
+    "logsEmptyHint": "Key steps and progress appear here after you start a job",
+    "logsDetailOn": "Technical",
+    "logsDetailOff": "Simple",
+    "logInferTitle": "Run configuration",
+    "logGraph": {
+      "validate_bundle": "Validate bundle",
+      "encode_prompt": "Encode prompt",
+      "load_transformer": "Load transformer",
+      "denoise": "Denoise",
+      "decode_vae": "VAE decode",
+      "save_asset": "Save output"
+    },
+    "logChip": {
+      "model": "Model",
+      "size": "Size",
+      "steps": "Steps",
+      "guidance": "Guidance",
+      "seed": "Seed"
+    },
     "recent": "Recent",
     "taskQueue": "Task Queue",
     "selectModel": "Select model and version",
@@ -112,6 +131,7 @@
     "running": "Generating",
     "queued": "Queued",
     "logs": "Logs",
+    "viewLogs": "View logs",
     "prompt": "Prompt",
     "negativePrompt": "Negative Prompt",
     "steps": "Steps",

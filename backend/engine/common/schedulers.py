@@ -679,7 +679,10 @@ class WanFlowUniPCScheduler(Scheduler):
         shift = float(kwargs.get("shift", self._default_shift))
         sched_sigmas = np.linspace(self._sigma_max, self._sigma_min, num_inference_steps + 1)[:-1]
         sched_sigmas = shift * sched_sigmas / (1.0 + (shift - 1.0) * sched_sigmas)
-        timesteps = sched_sigmas * self._num_train_timesteps
+        # Match mlx-video / official Wan: integer training timesteps (not float sigma*1000).
+        timesteps = (
+            sched_sigmas * self._num_train_timesteps
+        ).astype(np.int64).astype(np.float32)
         sigmas_full = np.concatenate([sched_sigmas, [0.0]]).astype(np.float32)
 
         self._sigmas = sigmas_full
