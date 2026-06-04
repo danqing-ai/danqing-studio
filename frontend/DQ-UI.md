@@ -38,6 +38,7 @@ Import token palettes in `frontend/src/main.ts`; switch with `applyTheme()` on `
 | Apple Dark (default) | `dq-mac.css` + `dq-glass.css` | `dark` |
 | Linear Dark | `dq-linear-dark.css` | `dark dq-linear-dark` |
 | China Red Dark | `dq-china-red-dark.css` | `dark dq-china-red-dark` |
+| Zinc Dark (shadcn-style) | `dq-shadcn-dark.css` | `dark dq-shadcn-dark` |
 
 Studio-only chrome (sidebars, Studio 创作页浮动条, gallery) stays in `frontend/src/styles/theme-apple-*.css` — not in tokens.
 

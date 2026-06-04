@@ -12,6 +12,7 @@ import '@danqing/dq-tokens/dq-mac.css';
 import '@danqing/dq-tokens/dq-glass.css';
 import '@danqing/dq-tokens/dq-linear-dark.css';
 import '@danqing/dq-tokens/dq-china-red-dark.css';
+import '@danqing/dq-tokens/dq-shadcn-dark.css';
 import '@danqing/dq-ui/style.css';
 import '@danqing/dq-shell/style.css';
 import './styles/theme.css';

@@ -184,7 +184,7 @@ import WorkspaceSetupDialog from '@/components/workspace/WorkspaceSetupDialog.vu
 import GenTaskLogDialog from '@/components/studio/GenTaskLogDialog.vue';
 import { useTasksStore } from '@/stores/tasks';
 import { api } from '@/utils/api';
-import { $tt, applyTheme, type ThemeId } from '@/utils/i18n';
+import { $tt, applyTheme, PRODUCTIVITY_THEME_IDS, type ThemeId } from '@/utils/i18n';
 import { getItem, DQ_STORAGE } from '@/utils/storage';
 import type { PageKey, SystemInfo, Task } from '@/types';
 import { appEvents } from '@/utils/appEvents';
@@ -343,7 +343,7 @@ onMounted(async () => {
   await loadSystemInfo();
 
   const savedTheme = getItem(DQ_STORAGE.THEME);
-  if (savedTheme && ['linear-dark', 'china-red-dark'].includes(savedTheme)) {
+  if (savedTheme && PRODUCTIVITY_THEME_IDS.includes(savedTheme as ThemeId)) {
     applyTheme(savedTheme as ThemeId);
   }
 

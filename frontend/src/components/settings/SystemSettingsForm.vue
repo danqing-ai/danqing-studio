@@ -14,6 +14,7 @@ const themeOptions: { label: string; value: ThemeId }[] = [
   { label: 'settings.themeAppleDark', value: 'apple-dark' },
   { label: 'settings.themeLinearDark', value: 'linear-dark' },
   { label: 'settings.themeChinaRedDark', value: 'china-red-dark' },
+  { label: 'settings.themeShadcnDark', value: 'shadcn-dark' },
 ];
 
 const emit = defineEmits<{

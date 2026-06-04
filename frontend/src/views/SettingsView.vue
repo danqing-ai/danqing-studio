@@ -65,7 +65,7 @@ import { ref, reactive, watch, onMounted, onUnmounted, inject, type Ref } from '
 import { useI18n } from 'vue-i18n';
 import { toast, confirm } from '@/utils/feedback';
 import { api } from '@/utils/api';
-import { $tt, applyTheme, type ThemeId } from '@/utils/i18n';
+import { $tt, applyTheme, PRODUCTIVITY_THEME_IDS, VALID_THEME_IDS, type ThemeId } from '@/utils/i18n';
 import { DQ_STORAGE, getItem, setItem } from '@/utils/storage';
 import { useRegistryStore } from '@/stores/registry';
 import type { SystemInfo } from '@/types';
@@ -213,13 +213,13 @@ const loadSettings = async () => {
       setItem(DQ_STORAGE.LANG, data.language);
       document.documentElement.lang = data.language;
     }
-    if (data.theme && ['apple-dark', 'linear-dark', 'china-red-dark'].includes(data.theme as string)) {
+    if (data.theme && VALID_THEME_IDS.includes(data.theme as ThemeId)) {
       settings.theme = data.theme;
       applyTheme(data.theme as ThemeId);
       setItem(DQ_STORAGE.THEME, data.theme);
     } else {
       const savedTheme = getItem(DQ_STORAGE.THEME);
-      if (savedTheme && ['linear-dark', 'china-red-dark'].includes(savedTheme)) {
+      if (savedTheme && PRODUCTIVITY_THEME_IDS.includes(savedTheme as ThemeId)) {
         settings.theme = savedTheme;
         applyTheme(savedTheme as ThemeId);
       }

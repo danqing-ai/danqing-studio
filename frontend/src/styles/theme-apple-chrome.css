@@ -58,9 +58,11 @@ html.dark .download-queue {
   box-shadow: var(--dq-shadow-glass);
 }
 
-/* —— Linear 主题：Studio 浮动创作条实色（与 linear 无 blur 策略一致）—— */
+/* —— Linear / Zinc 主题：Studio 浮动创作条实色（与 token 无 blur 策略一致）—— */
 html.dq-linear-dark .studio-composer-shell.dq-glass--panel,
-.dq-linear-dark .studio-composer-shell.dq-glass--panel {
+.dq-linear-dark .studio-composer-shell.dq-glass--panel,
+html.dq-shadcn-dark .studio-composer-shell.dq-glass--panel,
+.dq-shadcn-dark .studio-composer-shell.dq-glass--panel {
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
@@ -178,7 +180,9 @@ html.dark .log-container {
 
 @media (prefers-reduced-transparency: reduce) {
   html.dq-linear-dark .studio-composer-shell.dq-glass--panel,
-  .dq-linear-dark .studio-composer-shell.dq-glass--panel {
+  .dq-linear-dark .studio-composer-shell.dq-glass--panel,
+  html.dq-shadcn-dark .studio-composer-shell.dq-glass--panel,
+  .dq-shadcn-dark .studio-composer-shell.dq-glass--panel {
     background: var(--dq-glass-floating-bar-bg);
   }
 

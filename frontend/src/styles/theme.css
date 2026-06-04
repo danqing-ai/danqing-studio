@@ -4466,10 +4466,12 @@ html.dark .dq-app-main:has(.studio-layout) {
 }
 
 html.dq-linear-dark .studio-composer-shell.dq-glass--panel,
-.dq-linear-dark .studio-composer-shell.dq-glass--panel {
- backdrop-filter: none;
- -webkit-backdrop-filter: none;
- background: var(--dq-glass-floating-bar-bg);
+.dq-linear-dark .studio-composer-shell.dq-glass--panel,
+html.dq-shadcn-dark .studio-composer-shell.dq-glass--panel,
+.dq-shadcn-dark .studio-composer-shell.dq-glass--panel {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  background: var(--dq-glass-floating-bar-bg);
 }
 
 @media (prefers-reduced-transparency: reduce) {
