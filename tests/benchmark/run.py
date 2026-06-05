@@ -727,6 +727,8 @@ class ExternalReferenceRunner(BenchmarkRunner):
         ]
         if case.negative_prompt:
             cmd.extend(["--negative-prompt", case.negative_prompt])
+        if case.shift is not None:
+            cmd.extend(["--shift", str(float(case.shift))])
         tout = int(timeout_sec) if timeout_sec is not None else DEFAULT_DANQING_CLI_TIMEOUT_SEC
         try:
             env = os.environ.copy()
@@ -804,14 +806,21 @@ class ExternalReferenceRunner(BenchmarkRunner):
         return self._run_ref_template_cmd(case, output_path, default_cmd=default_cmd)
 
     def _run_ref_template_cmd(self, case: ExternalRefCase, output_path: Path, *, default_cmd: str) -> bool:
+        model_dir = ""
+        if case.local_bundle_rel:
+            model_dir = str((resolve_benchmark_data_root() / case.local_bundle_rel).resolve())
+        shift_s = str(float(case.shift)) if case.shift is not None else ""
         fmt = {
             "cmd": default_cmd,
+            "python": sys.executable,
             "model": case.model,
             "ref_model": case.ref_model or case.model,
+            "model_dir": model_dir,
             "prompt": case.prompt,
             "seed": str(case.seed),
             "steps": str(int(case.steps)),
             "guidance": str(float(case.guidance)),
+            "shift": shift_s,
             "negative_prompt": case.negative_prompt,
             "width": str(int(case.width)),
             "height": str(int(case.height)),

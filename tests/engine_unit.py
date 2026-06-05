@@ -353,7 +353,7 @@ class DiTBackendDispatchTests(unittest.TestCase):
     def test_ltx_dispatch_mlx(self) -> None:
         from backend.engine.config.model_configs import LTXConfig
         from backend.engine.families.ltx.transformer import LTXTransformer
-        from backend.engine.families.ltx.transformer_mlx import LTXTransformer as LTXMLX
+        from backend.engine.families.ltx.transformer_mlx import LTX23Transformer as LTXMLX
         from backend.engine.runtime.mlx import MLXContext
 
         model = LTXTransformer(LTXConfig(), MLXContext())
@@ -1226,7 +1226,7 @@ class HunyuanWeightTests(unittest.TestCase):
         from backend.engine.families.wan.transformer_mlx import WanModelMLX
 
         cfg = WanConfig()
-        self.assertTrue(cfg.use_mlx_compile)
+        self.assertFalse(cfg.use_mlx_compile)
         self.assertFalse(cfg.vae_spatial_tiling)
         self.assertTrue(hasattr(WanModelMLX, "after_load_weights"))
         self.assertTrue(hasattr(WanModelMLX, "invalidate_text_cache"))

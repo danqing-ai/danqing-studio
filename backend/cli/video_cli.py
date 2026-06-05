@@ -26,6 +26,7 @@ def generate(
     fps: int | None = None,
     steps: int | None = None,
     guidance: float | None = None,
+    shift: float | None = None,
     seed: int | None = None,
     output: str = "",
     project_root: Path | None = None,
@@ -52,6 +53,8 @@ def generate(
         payload["num_frames"] = num_frames
     if fps is not None:
         payload["fps"] = fps
+    if shift is not None:
+        payload["shift"] = shift
     request = VideoGenerationRequest(**payload)
 
     if not ctx.video_engine.supports(model, "generate"):

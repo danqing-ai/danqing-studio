@@ -663,7 +663,7 @@ ALL_SANITY_CASES: list[SanityCase] = [
         model="wan-2.2-ti2v-5b",
         media="video",
         prompt="a cat walking on green grass, soft daylight",
-        video_size="480x720",
+        video_size="480x704",
         video_num_frames=17,
         video_fps=16,
         steps=4,
@@ -681,7 +681,7 @@ ALL_SANITY_CASES: list[SanityCase] = [
         model="wan-2.2-ti2v-5b",
         media="video",
         prompt="a beautiful sunset over mountains, cinematic lighting",
-        video_size="480x720",
+        video_size="480x704",
         video_num_frames=81,
         video_fps=16,
         steps=8,
@@ -693,7 +693,7 @@ ALL_SANITY_CASES: list[SanityCase] = [
         semantic_gate_enabled=ENABLE_SEMANTIC_CORE,
         semantic_min_score=54.0,
         semantic_backend="clip",
-        description="Wan 2.2 TI2V 5B timing baseline (8 steps, 81 frames @ 480x720)",
+        description="Wan 2.2 TI2V 5B timing baseline (8 steps, 81 frames @ 480x704)",
     ),
 ]
 
@@ -1107,6 +1107,7 @@ class ExternalRefCase:
     video_size: str = "480x720"
     video_num_frames: int = 17
     video_fps: int = 16
+    shift: float | None = None
     description: str = ""
     timeout_sec: int = 1200
     # reference adapter
@@ -1117,7 +1118,7 @@ class ExternalRefCase:
     # Optional LoRA path relative to workspace root (for diffusers refs).
     ref_lora_rel: str = ""
     # Optional command template for mlx-video/custom; placeholders:
-    # {model} {ref_model} {prompt} {seed} {steps} {guidance}
+    # {cmd} {python} {model} {ref_model} {model_dir} {prompt} {seed} {steps} {guidance} {shift}
     # {negative_prompt} {width} {height} {video_size} {num_frames} {fps}
     # {source_image} {output}
     ref_cmd_template: str = ""
@@ -1188,6 +1189,10 @@ def list_skipped_external_ref_cases_by_backend(backend: str) -> list[tuple[str, 
 # Open-source reference parity cases:
 # 1) video: compare against mlx-video
 # 2) image diffusers: only when ``make bench-mflux`` has no matching case (see ``ALL_CASES``).
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+from backend.engine.families.wan.conditioning import WAN_SAMPLE_NEG_PROMPT
+
 ALL_EXTERNAL_REF_CASES: list[ExternalRefCase] = [
     ExternalRefCase(
         id="wan-2.2-ti2v-5b-mlx-video",
@@ -1197,20 +1202,23 @@ ALL_EXTERNAL_REF_CASES: list[ExternalRefCase] = [
         seed=42,
         steps=4,
         guidance=5.0,
-        video_size="480x720",
+        shift=5.0,
+        negative_prompt=WAN_SAMPLE_NEG_PROMPT,
+        video_size="480x704",
         video_num_frames=17,
         video_fps=16,
         timeout_sec=2400,
         ref_backend="mlx_video",
         ref_model="wan-2.2-ti2v-5b",
-        # Prefer explicit env override; fallback to widely-used mlx-video CLI style.
         ref_cmd_template=(
-            "{cmd} --model {ref_model} --prompt \"{prompt}\" --seed {seed} "
-            "--steps {steps} --guidance {guidance} --size {video_size} "
-            "--num-frames {num_frames} --fps {fps} --output {output}"
+            "{python} -m tests.benchmark.wan_mlx_video_ref --bundle-dir {model_dir} "
+            '--prompt "{prompt}" --negative-prompt "{negative_prompt}" '
+            "--size {video_size} --num-frames {num_frames} --fps {fps} "
+            "--steps {steps} --guidance {guidance} --shift {shift} --seed {seed} "
+            "--scheduler unipc --output {output}"
         ),
         local_bundle_rel="models/Video/wan-2.2-ti2v-5b-original",
-        description="Wan 5B parity vs mlx-video reference",
+        description="Wan 5B same-seed PSNR vs mlx-video (480×704, UniPC, shift=5)",
     ),
     ExternalRefCase(
         id="ltx-2.3-distilled-mlx-video",
@@ -1220,7 +1228,7 @@ ALL_EXTERNAL_REF_CASES: list[ExternalRefCase] = [
         seed=42,
         steps=8,
         guidance=3.5,
-        video_size="480x720",
+        video_size="480x704",
         video_num_frames=17,
         video_fps=16,
         timeout_sec=2400,
@@ -1231,7 +1239,7 @@ ALL_EXTERNAL_REF_CASES: list[ExternalRefCase] = [
             "--steps {steps} --guidance {guidance} --size {video_size} "
             "--num-frames {num_frames} --fps {fps} --output {output}"
         ),
-        local_bundle_rel="models/Video/ltx-2.3-distilled-original",
+        local_bundle_rel="models/Video/ltx-2.3-distilled-mlx-q4",
         description="LTX 2.3 distilled parity vs mlx-video reference",
     ),
     ExternalRefCase(

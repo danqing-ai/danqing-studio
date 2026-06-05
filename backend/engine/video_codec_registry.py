@@ -90,6 +90,30 @@ def _encode_hunyuan(
     return encode_hunyuan_rgb_to_latents(ctx, image_tensor, bundle_root)
 
 
+def _decode_ltx(
+    *,
+    ctx: Any,
+    latents: Any,
+    entry: Any,
+    version_key: str | None,
+    local_bundle_root: Callable[[Any, str | None], Any],
+    registry_scalar_default: Callable[[Any, str, Any], Any],
+    on_post_progress: Callable[[float], None] | None,
+    on_post_log: Callable[[str], None] | None,
+) -> list:
+    del registry_scalar_default
+    from backend.engine.families.ltx.vae import decode_ltx_latents_to_pil_frames
+
+    bundle_root = local_bundle_root(entry, version_key)
+    return decode_ltx_latents_to_pil_frames(
+        ctx,
+        latents,
+        bundle_root,
+        on_stage=on_post_progress,
+        on_log=on_post_log,
+    )
+
+
 def _decode_wan(
     *,
     ctx: Any,
@@ -146,6 +170,7 @@ def _encode_wan(
 _VIDEO_DECODE: dict[str, Callable[..., Any]] = {
     "cogvideox": _decode_cogvideox,
     "hunyuan": _decode_hunyuan,
+    "ltx": _decode_ltx,
     "wan": _decode_wan,
 }
 

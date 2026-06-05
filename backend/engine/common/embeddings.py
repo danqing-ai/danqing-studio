@@ -258,7 +258,12 @@ class LTXTimestepEmbeddingMLP:
 
     def __call__(self, timesteps: Any) -> Any:
         ctx = self.ctx
-        embedding = sinusoidal_timestep_proj(ctx, timesteps, self.frequency_embedding_size)
+        embedding = sinusoidal_timestep_proj(
+            ctx,
+            timesteps,
+            self.frequency_embedding_size,
+            flip_sin_to_cos=True,
+        )
         embedding = self.mlp_in(embedding)
         embedding = ctx.silu(embedding)
         return self.mlp_out(embedding)

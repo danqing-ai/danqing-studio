@@ -142,9 +142,15 @@ def scan_components(bundle_root: Path) -> dict[str, list[str]]:
             continue
 
         if path.suffix.lower() == ".safetensors":
-            if "text_encoder" in rel_lower:
+            if "text_encoder" in rel_lower or name_lower.startswith("connector"):
                 components["text_encoder"].append(_rel_path(bundle_root, path))
-            elif "vae" in rel_lower:
+            elif (
+                "vae" in rel_lower
+                or name_lower.startswith("vae_")
+                or "latent_upsampler" in name_lower
+                or name_lower.startswith("vocoder")
+                or name_lower.startswith("audio_vae")
+            ):
                 components["vae"].append(_rel_path(bundle_root, path))
             elif (
                 "transformer" in rel_lower

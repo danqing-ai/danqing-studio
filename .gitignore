@@ -30,6 +30,7 @@ node_modules/
 # Logs
 *.log
 /tests/benchmark/outputs/
+/tests/benchmark/.cache/
 /tests/benchmark/venv/
 /tests/__pycache__/
 /tests/benchmark/__pycache__/

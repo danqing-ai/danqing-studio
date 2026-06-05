@@ -333,46 +333,49 @@ class HeartMulaConfig:
 
 @dataclass
 class LTXConfig:
-    """LTX Video series (LTX-2 / LTX-2.3)
-    
-    Architecture: single-stream spatiotemporal DiT + T5 text encoder.
-    Matches diffusers LTXVideoTransformer3DModel (hidden=2048, heads=32, layers=28).
-    Pipeline: distilled (fixed sigma) / dev (dynamic CFG) / dev_two_stage.
+    """LTX 2.3 video (Lightricks LTX-2.3, dgrauet MLX bundles).
+
+    Shape C family generator: 48-layer A/V DiT + Gemma 3 + two-stage upscale.
+    Registry ``step_distill`` selects distilled vs dev pipelines.
     """
-    dim: int = 2048                  # hidden dimension (32 heads × 64 head_dim)
-    depth: int = 28                  # Transformer layer count
+    video_pipeline_shape: str = "family_generator"
+    encoder_type: str = "gemma"
+    dim: int = 2048
+    depth: int = 48
     num_heads: int = 32
-    head_dim: int = 64               # dim // num_heads
+    head_dim: int = 64
     mlp_ratio: float = 4.0
     qk_norm: bool = True
-    # Input dimensions
-    dim_in: int = 128                # VAE latent channels (3D)
+    dim_in: int = 128
     dim_out: int = 128
-    text_dim: int = 4096             # T5
+    text_dim: int = 0
     max_seq_len: int = 512
+    max_text_seq_length: int = 128
+    t5_attention_mask: bool = False
     time_dim: int = 256
-    # Spatiotemporal parameters
     patch_size: int = 1
     temporal_patch_size: int = 1
-    # Pipeline
-    supports_guidance: bool = True   # dev mode; distilled=False
+    supports_guidance: bool = True
+    step_distill: bool = False
     supports_img2img: bool = True
-    # Latent grid vs pixels — matches diffusers ``LTXPipeline`` defaults
-    # (``vae.spatial_compression_ratio`` / ``vae.temporal_compression_ratio``).
     vae_scale: int = 32
     temporal_vae_scale: int = 8
     default_scheduler: str = "flow_match_euler"
-    uses_mlx_forge_weight_restore: bool = True
-    validate_ltx_block_depth: bool = True
+    uses_mlx_forge_weight_restore: bool = False
+    validate_ltx_block_depth: bool = False
     geometry_check: str = "generic"
     post_denoise_clear_cache: bool = False
-    uses_ltx_flat_vae_decoder: bool = True
-    video_vae_backend: str = "generic"
-    video_i2v_style: str = "concat"
+    uses_ltx_flat_vae_decoder: bool = False
+    video_vae_backend: str = ""
+    video_i2v_style: str = "ltx23"
     bundle_config_merger: str = ""
     release_t5_after_encode: bool = False
     cfg_negative_prompt_style: str = "default"
     scheduler_bundle_extras: str = ""
+    gemma_model_id: str = "mlx-community/gemma-3-12b-it-4bit"
+    ltx_low_memory: bool = True
+    low_ram_streaming: bool = False
+    ltx_stage2_steps: int = 3
 
 
 @dataclass

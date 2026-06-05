@@ -43,7 +43,7 @@
         v-model:work-mode="videoWorkMode"
         v-model:model="selectedModelVersion"
         v-model:size="selectedSize"
-        v-model:duration="selectedDuration"
+        v-model:duration="selectedDurationSec"
         v-model:batch-count="batchCount"
         :generating="generating"
         :can-generate="!submitDisabled"
@@ -227,7 +227,7 @@ const params = reactive({
 
 const selectedModelVersion = ref('');
 const selectedSize = ref('720x480');
-const selectedDuration = ref(49);
+const selectedDurationSec = ref(5);
 const batchCount = ref(1);
 
 // State
@@ -253,7 +253,7 @@ const previewVideoSubtitle = computed(() => {
   if (previewVideoDurationSec.value > 0) {
     parts.push(formatPreviewClock(previewVideoDurationSec.value));
   } else if (params.num_frames > 0 && params.fps > 0) {
-    parts.push(formatPreviewClock(params.num_frames / params.fps));
+    parts.push(formatPreviewClock((params.num_frames - 1) / params.fps));
   }
   return parts.join(' · ');
 });
@@ -582,7 +582,7 @@ const primaryCtaLabel = computed(() => {
 const outputClipSecRounded = computed(() => {
   const fps = Math.max(1, Number(params.fps) || 1);
   const nf = Math.max(1, Number(params.num_frames) || 1);
-  return Math.round((nf / fps) * 10) / 10;
+  return Math.round(((nf - 1) / fps) * 10) / 10;
 });
 
 const currentVersionDiskSize = computed(() => {
@@ -605,6 +605,44 @@ function alignNumFrames(frames: number, schema?: { min?: number; max?: number; s
     n = Math.round((n - 1) / step) * step + 1;
   }
   return Math.min(max, Math.max(min, n));
+}
+
+function durationSecFromFrames(frames: number, fps: number): number {
+  const rate = Math.max(1, Number(fps) || 1);
+  const nf = Math.max(1, Number(frames) || 1);
+  return Math.max(0, (nf - 1) / rate);
+}
+
+function snapDurationSecToOptions(
+  sec: number,
+  options: Array<{ value: number }>,
+): number {
+  if (!options.length) return Math.max(1, Math.round(sec));
+  let best = options[0].value;
+  let bestDiff = Math.abs(sec - best);
+  for (const opt of options) {
+    const diff = Math.abs(sec - opt.value);
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      best = opt.value;
+    }
+  }
+  return best;
+}
+
+function framesFromDurationSec(
+  sec: number,
+  schema?: { min?: number; max?: number; step?: number },
+  fps?: number,
+) {
+  const rate = Math.max(1, Number(fps) || 1);
+  const durationSec = Math.max(0, Number(sec) || 0);
+  return alignNumFrames(durationSec * rate + 1, schema);
+}
+
+function syncNumFramesFromDuration() {
+  const schema = currentModelConfig.value?.parameters?.num_frames;
+  params.num_frames = framesFromDurationSec(selectedDurationSec.value, schema, params.fps);
 }
 
 const sizeOptions = computed(() => {
@@ -631,13 +669,8 @@ const sizeOptions = computed(() => {
 });
 
 const durationOptions = computed(() => {
-  const p = currentModelConfig.value?.parameters?.num_frames;
-  const fps = Math.max(1, Number(params.fps) || currentModelConfig.value?.parameters?.fps?.default || 16);
   const secs = [1, 2, 3, 4, 5, 8, 10];
-  return secs.map((sec) => {
-    const frames = alignNumFrames(sec * fps, p);
-    return { label: `${sec}s`, value: frames };
-  });
+  return secs.map((sec) => ({ label: `${sec}s`, value: sec }));
 });
 
 /* ------------------------------------------------------------------ */
@@ -695,7 +728,11 @@ const loadModelRegistry = async () => {
 
 function syncComposerPickersFromParams() {
   selectedSize.value = `${params.width}x${params.height}`;
-  selectedDuration.value = params.num_frames;
+  selectedDurationSec.value = snapDurationSecToOptions(
+    durationSecFromFrames(params.num_frames, params.fps),
+    durationOptions.value,
+  );
+  syncNumFramesFromDuration();
 }
 
 const loadModelDefaults = () => {
@@ -748,7 +785,13 @@ const hasCustomParams = computed(() => {
   if (p.shift && params.shift !== p.shift.default) return true;
   if (p.width && params.width !== p.width.default) return true;
   if (p.height && params.height !== p.height.default) return true;
-  if (p.num_frames && params.num_frames !== p.num_frames.default) return true;
+  if (p.num_frames && p.fps) {
+    const defaultSec = snapDurationSecToOptions(
+      durationSecFromFrames(p.num_frames.default, p.fps.default),
+      durationOptions.value,
+    );
+    if (selectedDurationSec.value !== defaultSec) return true;
+  }
   if (p.fps && params.fps !== p.fps.default) return true;
   if (params.seed) return true;
   if (params.lora) return true;
@@ -1197,8 +1240,21 @@ watch(selectedSize, (val) => {
   }
 });
 
-watch(selectedDuration, (val) => {
-  params.num_frames = val;
+watch(selectedDurationSec, () => {
+  syncNumFramesFromDuration();
+});
+
+watch(
+  () => params.fps,
+  () => {
+    syncNumFramesFromDuration();
+  },
+);
+
+watch(durationOptions, (opts) => {
+  if (!opts.length) return;
+  selectedDurationSec.value = snapDurationSecToOptions(selectedDurationSec.value, opts);
+  syncNumFramesFromDuration();
 });
 
 watch(selectedModelVersion, (val) => {

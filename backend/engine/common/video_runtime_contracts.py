@@ -279,6 +279,16 @@ def _apply_wan_i2v(ctx: Any, latents: Any, vae_latent: Any, extra_cond: dict[str
     extra_cond["wan_i2v"] = True
 
 
+def _apply_ltx_i2v(ctx: Any, latents: Any, vae_latent: Any, extra_cond: dict[str, Any]) -> Any:
+    """LTX I2V: pass encoded latent to transformer hooks via extra_cond.
+
+    Unlike concat/hunyuan/wan, LTX uses ``LTXLatentState`` + ``denoise_mask``
+    managed by ``LTXTransformer.before_denoise`` / ``reblend_i2v_latents``.
+    """
+    extra_cond["ltx_i2v_cond_latent"] = vae_latent
+    return latents
+
+
 def video_apply_i2v_conditioning(
     config: Any,
     ctx: Any,
@@ -293,6 +303,8 @@ def video_apply_i2v_conditioning(
     if style == "wan":
         _apply_wan_i2v(ctx, latents, vae_latent, extra_cond)
         return latents
+    if style == "ltx":
+        return _apply_ltx_i2v(ctx, latents, vae_latent, extra_cond)
     if style == "concat":
         return ctx.concat([vae_latent[:, :, :1, :, :], latents[:, :, 1:, :, :]], axis=2)
     raise RuntimeError(f"Unknown video_i2v_style: {style!r}")
@@ -305,6 +317,12 @@ def video_i2v_encode_failure_message(config: Any) -> str:
             "Wan image-to-video (animate) failed to VAE-encode the source image. "
             "Ensure the model bundle includes Wan2.2_VAE.pth (or vae/*.safetensors) "
             "and text_encoder assets under the bundle root."
+        )
+    if style == "ltx":
+        return (
+            "LTX image-to-video (animate) failed to VAE-encode the source image. "
+            "Ensure the model bundle includes LTX Video VAE encoder weights "
+            "(vae/ or vae_decoder.safetensors) under the bundle root."
         )
     return (
         "Image-to-video (animate) requires encoding the first RGB frame into "

@@ -1,0 +1,51 @@
+"""LTX 2.3 MLX video generation — in-repo two-stage T2V/I2V orchestration.
+
+Pipeline and :class:`VideoPipeline` import from this module for the LTX 2.3
+backend (``video_pipeline_shape=family_generator``), not from external
+``ltx-pipelines-mlx``.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, Protocol
+
+from backend.engine.config.model_configs import LTXConfig
+from backend.engine.families.ltx.generation_mlx import LTX23MlxGenerator
+
+
+class LTX23GeneratorProto(Protocol):
+    def load(self) -> None: ...
+
+    def generate_and_save(
+        self,
+        *,
+        prompt: str,
+        output_path: str,
+        width: int,
+        height: int,
+        num_frames: int,
+        fps: float,
+        seed: int,
+        steps: int,
+        guidance: float,
+        step_distill: bool,
+        image_path: str | None,
+        on_log: Any | None,
+    ) -> str: ...
+
+
+def create_ltx23_generator(
+    ctx: Any,
+    bundle_root: Path,
+    *,
+    config: LTXConfig | None = None,
+) -> LTX23GeneratorProto:
+    backend = getattr(ctx, "backend", "mlx")
+    if backend != "mlx":
+        raise RuntimeError(
+            f"LTX 2.3 requires MLX runtime (got {backend!r}). "
+            "Select an MLX backend model version on Apple Silicon."
+        )
+    if not bundle_root.is_dir():
+        raise RuntimeError(f"LTX 2.3 bundle directory not found: {bundle_root}")
+    return LTX23MlxGenerator(ctx, bundle_root, config=config)

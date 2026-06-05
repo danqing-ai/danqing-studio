@@ -3579,47 +3579,40 @@
         "negative_prompt_support": false,
         "vae_scale": 32,
         "supports_guidance": false,
+        "step_distill": true,
         "default_scheduler": "flow_match_euler"
       },
       "recommended": false,
-      "source": "modelscope",
+      "source": "huggingface",
       "backends": [
         "mlx"
       ],
       "versions": {
-        "original": {
-          "name": "原始权重",
-          "size": "19GB",
+        "mlx-q4": {
+          "name": "MLX int4（推荐，约 16GB 内存）",
+          "size": "60GB",
           "default": true,
-          "repo_id": "Lightricks/LTX-Video",
-          "local_path": "models/Video/ltx-2.3-distilled-original",
+          "source": "huggingface",
+          "repo_id": "dgrauet/ltx-2.3-mlx-q4",
+          "local_path": "models/Video/ltx-2.3-distilled-mlx-q4",
           "source_type": "full"
         },
         "mlx": {
-          "name": "MLX int8 (HF, q8)",
-          "size": "21GB",
+          "name": "MLX int8（约 32GB 内存）",
+          "size": "88GB",
           "default": false,
           "source": "huggingface",
           "repo_id": "dgrauet/ltx-2.3-mlx-q8",
-          "local_path": "models/Video/ltx-2.3-distilled-mlx",
+          "local_path": "models/Video/ltx-2.3-distilled-mlx-q8",
           "source_type": "full"
         },
         "mlx-bf16": {
-          "name": "MLX bf16 (HF)",
-          "size": "42GB",
+          "name": "MLX bf16（约 64GB 内存）",
+          "size": "140GB",
           "default": false,
           "source": "huggingface",
           "repo_id": "dgrauet/ltx-2.3-mlx",
           "local_path": "models/Video/ltx-2.3-distilled-mlx-bf16",
-          "source_type": "full"
-        },
-        "mlx-q4": {
-          "name": "MLX int4 (HF, q4)",
-          "size": "12GB",
-          "default": false,
-          "source": "huggingface",
-          "repo_id": "dgrauet/ltx-2.3-mlx-q4",
-          "local_path": "models/Video/ltx-2.3-distilled-mlx-q4",
           "source_type": "full"
         }
       },
@@ -3628,8 +3621,8 @@
         "en": "LTX 2.3 [Distilled]"
       },
       "description": {
-        "zh": "LTX 2.3 蒸馏版视频生成模型，4步快速生成；开放权重许可对年营收≥1000万美元主体需另行商业授权",
-        "en": "LTX 2.3 distilled; open-weights license requires a separate commercial agreement for entities with ≥$10M annual revenue"
+        "zh": "Lightricks LTX-2.3 蒸馏版（dgrauet/ltx-2.3-mlx* MLX 转换，含音视频 DiT）；4 步快速生成。不含旧版 LTX-Video 0.9.x 权重。",
+        "en": "Lightricks LTX-2.3 distilled (dgrauet/ltx-2.3-mlx* MLX conversion, A/V DiT); 4-step fast generation. Does not use legacy LTX-Video 0.9.x weights."
       },
       "media": "video",
       "actions": {
@@ -3697,44 +3690,36 @@
         "default_scheduler": "flow_match_euler"
       },
       "recommended": false,
-      "source": "modelscope",
+      "source": "huggingface",
       "backends": [
         "mlx"
       ],
       "versions": {
-        "original": {
-          "name": "原始权重",
-          "size": "19GB",
+        "mlx-q4": {
+          "name": "MLX int4（推荐，约 16GB 内存）",
+          "size": "60GB",
           "default": true,
-          "repo_id": "Lightricks/LTX-Video",
-          "local_path": "models/Video/ltx-2.3-dev-original",
+          "source": "huggingface",
+          "repo_id": "dgrauet/ltx-2.3-mlx-q4",
+          "local_path": "models/Video/ltx-2.3-dev-mlx-q4",
           "source_type": "full"
         },
         "mlx": {
-          "name": "MLX int8 (HF, q8)",
-          "size": "21GB",
+          "name": "MLX int8（约 32GB 内存）",
+          "size": "88GB",
           "default": false,
           "source": "huggingface",
           "repo_id": "dgrauet/ltx-2.3-mlx-q8",
-          "local_path": "models/Video/ltx-2.3-dev-mlx",
+          "local_path": "models/Video/ltx-2.3-dev-mlx-q8",
           "source_type": "full"
         },
         "mlx-bf16": {
-          "name": "MLX bf16 (HF)",
-          "size": "42GB",
+          "name": "MLX bf16（约 64GB 内存）",
+          "size": "140GB",
           "default": false,
           "source": "huggingface",
           "repo_id": "dgrauet/ltx-2.3-mlx",
           "local_path": "models/Video/ltx-2.3-dev-mlx-bf16",
-          "source_type": "full"
-        },
-        "mlx-q4": {
-          "name": "MLX int4 (HF, q4)",
-          "size": "12GB",
-          "default": false,
-          "source": "huggingface",
-          "repo_id": "dgrauet/ltx-2.3-mlx-q4",
-          "local_path": "models/Video/ltx-2.3-dev-mlx-q4",
           "source_type": "full"
         }
       },
@@ -3743,8 +3728,8 @@
         "en": "LTX 2.3 [Dev]"
       },
       "description": {
-        "zh": "LTX 2.3 Dev版视频生成模型，支持CFG，更高质量",
-        "en": "LTX 2.3 Dev video generation model, supports CFG, higher quality"
+        "zh": "Lightricks LTX-2.3 开发版（dgrauet/ltx-2.3-mlx* MLX 转换，含音视频 DiT）；支持 CFG，质量更高。不含旧版 LTX-Video 0.9.x 权重。",
+        "en": "Lightricks LTX-2.3 dev (dgrauet/ltx-2.3-mlx* MLX conversion, A/V DiT); supports CFG, higher quality. Does not use legacy LTX-Video 0.9.x weights."
       },
       "media": "video",
       "actions": {
@@ -4282,14 +4267,15 @@
           "note": "720P 可选：横屏 1280×704、竖屏 704×1280（与官方一致）；低分辨率会自动对齐 patch/VAE"
         },
         "height": {
-          "default": 720,
+          "default": 704,
           "options": [
             480,
             704,
             720,
             1280
           ],
-          "type": "enum"
+          "type": "enum",
+          "note": "720 会在推理前自动对齐为 704（VAE×patch 步长 32）；官方 720P 横屏请选 1280×704"
         },
         "num_frames": {
           "default": 81,
@@ -4328,8 +4314,8 @@
         "en": "Wan 2.2 TI2V 5B"
       },
       "description": {
-        "zh": "Wan 2.2 文本+图像引导视频 5B；默认 480×720 / 81 帧 / 16fps；720P 可选 1280×704 或 704×1280（50 步 / CFG 5）",
-        "en": "Wan 2.2 TI2V 5B; default 480×720, 81 frames, 16fps; optional 720P 1280×704 or 704×1280 (50 steps, CFG 5)"
+        "zh": "Wan 2.2 文本+图像引导视频 5B；默认 480×704 / 81 帧 / 16fps；720P 横屏 1280×704、竖屏 704×1280（40 步 / CFG 5 / shift 5）",
+        "en": "Wan 2.2 TI2V 5B; default 480×704, 81 frames, 16fps; 720P landscape 1280×704 or portrait 704×1280 (40 steps, CFG 5, shift 5)"
       },
       "media": "video",
       "actions": {

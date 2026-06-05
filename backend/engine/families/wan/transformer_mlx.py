@@ -351,6 +351,13 @@ class WanModelMLX(TransformerBase):
         for i in range(b):
             sample = latents[i]
             c, f, h, w = (int(sample.shape[j]) for j in range(4))
+            if f % pt != 0 or h % ph != 0 or w % pw != 0:
+                raise RuntimeError(
+                    f"Wan latent shape [C,T,H,W]=[{c},{f},{h},{w}] is not divisible by "
+                    f"patch_size={self._patch_size} (need T%{pt}==0, H%{ph}==0, W%{pw}==0). "
+                    f"Snap pixel size to multiples of vae_scale×patch "
+                    f"(e.g. 480×704 not 480×720 for vae_scale=16)."
+                )
             f_out, h_out, w_out = f // pt, h // ph, w // pw
             patch = sample.reshape(c, f_out, pt, h_out, ph, w_out, pw)
             patch = patch.transpose(1, 3, 5, 0, 2, 4, 6)

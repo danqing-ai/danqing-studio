@@ -291,13 +291,12 @@
             </div>
             <div v-if="paramSchema.num_frames" class="video-composer__field">
               <label>{{ $tt('create.numFrames') }}</label>
-              <DqSlider
-                v-model="localParams.num_frames"
-                :min="paramSchema.num_frames.min ?? 1"
-                :max="paramSchema.num_frames.max ?? 200"
-                :step="paramSchema.num_frames.step ?? 1"
-              />
-              <span class="video-composer__field-val">{{ localParams.num_frames }}</span>
+              <span class="video-composer__field-val video-composer__field-val--auto">
+                {{ localParams.num_frames }}
+              </span>
+              <span class="video-composer__frames-formula">
+                {{ $tt('video.numFramesFormula', { sec: duration, fps: localParams.fps }) }}
+              </span>
             </div>
           </div>
           <p v-if="paramSchema.num_frames?.note" class="video-composer__param-note">
@@ -828,6 +827,18 @@ function onKeydown(e: KeyboardEvent) {
   min-width: 32px;
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+.video-composer__field-val--auto {
+  min-width: 40px;
+  font-weight: 600;
+  color: var(--dq-label-primary);
+}
+
+.video-composer__frames-formula {
+  font-size: 11px;
+  color: var(--dq-label-tertiary);
+  white-space: nowrap;
 }
 
 .video-composer__field--stack {

@@ -50,15 +50,24 @@ from backend.engine.common.video_runtime_contracts import (
 from backend.engine.video_codec_registry import get_video_decode_handler, get_video_encode_handler
 from backend.engine._transformer_registry import (
     encode_video_prompt as _encode_video_prompt_fn,
+    get_video_generation_factory as _get_video_generation_factory,
     get_video_transformer_class as _get_video_transformer_class,
     get_video_weight_remap as _get_video_weight_remap,
 )
 from backend.engine.config.model_configs import get_config_class
+from backend.engine.families.ltx.pipeline_math import (
+    ltx_calculate_shift,
+    ltx_rope_interpolation_scale,
+    ltx_scheduler_shift_kwargs,
+    ltx_stretch_shift_to_terminal,
+    ltx_video_sequence_length,
+)
 from backend.engine.families.ltx.weights import restore_diffusers_names_from_mlx_forge_ltx
 from backend.engine.common.bundle_layout import t5_encoder_bundle_paths
 from backend.engine.pipelines.pipeline_progress import (
     emit_complete,
     emit_denoise_progress,
+    emit_phase,
     emit_post_progress,
     pipeline_graph_step,
     timestep_embed_schedule_from_scheduler,
@@ -217,7 +226,15 @@ class VideoPipeline:
         return video_snap_pixel_dims_if_needed(config, w, h, on_log=on_log)
 
     def _apply_video_registry_config_overrides(self, entry: Any, config: Any) -> None:
-        for param_key in ("vae_scale", "default_scheduler", "text_encoder_device", "vae_temporal_chunk_size"):
+        for param_key in (
+            "vae_scale",
+            "default_scheduler",
+            "text_encoder_device",
+            "vae_temporal_chunk_size",
+            "gemma_model_id",
+            "low_ram_streaming",
+            "ltx_stage2_steps",
+        ):
             val = _registry_scalar_default_fn(entry, param_key, None)
             if val is not None:
                 setattr(config, param_key, val)
@@ -273,6 +290,15 @@ class VideoPipeline:
             getattr(config, "step_distill", False)
             or _registry_scalar_default_fn(entry, "step_distill", False)
         )
+        if (
+            family == "ltx"
+            and "distilled" in str(getattr(entry, "id", model_key)).lower()
+            and not step_distill
+        ):
+            raise RuntimeError(
+                f"Model {entry.id!r} requires registry parameters.step_distill=true for LTX "
+                "distilled sigma scheduling; run `make sync-models-registry` to refresh workspace config."
+            )
         guidance = float(request.guidance) if request.guidance is not None else float(guidance_default)
         if step_distill or not getattr(config, "supports_guidance", True):
             guidance = 0.0
@@ -351,6 +377,9 @@ class VideoPipeline:
         step_distill: bool,
         scheduler_default: str,
         bundle_root: Path | None,
+        w: int,
+        h: int,
+        num_frames: int,
         on_log: Callable | None,
     ) -> tuple[Any, Any, Any, list[float] | None, float | None]:
         scheduler = self._create_video_scheduler(
@@ -360,16 +389,45 @@ class VideoPipeline:
         )
         wan_shift: float | None = None
         if step_distill and scheduler_default == "flow_match_euler":
-            sigmas_arr = np.linspace(1.0, 0.0, steps + 1, dtype=np.float32)[:-1]
-            timesteps = scheduler.set_timesteps(steps, use_empirical_mu=False)
-            scheduler._sigmas = self.ctx.concat([
-                self.ctx.array(sigmas_arr, dtype=self.ctx.float32()),
-                self.ctx.zeros((1,), dtype=self.ctx.float32()),
-            ], axis=0)
-            scheduler._timesteps = self.ctx.array(
-                sigmas_arr * float(scheduler.num_train_timesteps),
-                dtype=self.ctx.float32(),
+            vae_scale = int(getattr(config, "vae_scale", 32))
+            latent_frames = self._latent_frame_count(config, num_frames)
+            video_seq_len = ltx_video_sequence_length(
+                latent_frames=latent_frames,
+                pixel_w=w,
+                pixel_h=h,
+                vae_scale=vae_scale,
             )
+            shift_cfg = ltx_scheduler_shift_kwargs(bundle_root)
+            sigmas_arr = np.linspace(1.0, 1.0 / steps, steps, dtype=np.float32)
+            mu = ltx_calculate_shift(
+                video_seq_len,
+                base_image_seq_len=int(shift_cfg["base_image_seq_len"]),
+                max_image_seq_len=int(shift_cfg["max_image_seq_len"]),
+                base_shift=float(shift_cfg["base_shift"]),
+                max_shift=float(shift_cfg["max_shift"]),
+            )
+            sigmas_t = self.ctx.array(sigmas_arr, dtype=self.ctx.float32())
+            sigmas_shifted = scheduler._time_shift_exponential_array(mu, 1.0, sigmas_t)
+            shift_terminal = shift_cfg.get("shift_terminal")
+            if shift_terminal is not None:
+                self.ctx.eval(sigmas_shifted)
+                sigmas_shifted_np = np.array(sigmas_shifted, dtype=np.float32)
+                sigmas_shifted = self.ctx.array(
+                    ltx_stretch_shift_to_terminal(sigmas_shifted_np, float(shift_terminal)),
+                    dtype=self.ctx.float32(),
+                )
+            scheduler._sigmas = self.ctx.concat(
+                [sigmas_shifted, self.ctx.zeros((1,), dtype=self.ctx.float32())],
+                axis=0,
+            )
+            scheduler._timesteps = sigmas_shifted * float(scheduler.num_train_timesteps)
+            scheduler._step_index = 0
+            timesteps = list(range(steps))
+            if on_log is not None:
+                on_log(
+                    "info",
+                    f"LTX distilled timesteps: video_seq_len={video_seq_len}, mu={mu:.4f}, steps={steps}",
+                )
         else:
             sched_kwargs: dict[str, Any] = {}
             shift_default = _registry_scalar_default_fn(entry, "shift", None)
@@ -467,6 +525,147 @@ class VideoPipeline:
         }
         metadata.update(work_title_metadata(request.title))
         return out_path, metadata
+
+    @staticmethod
+    def _uses_family_video_generator(config: Any) -> bool:
+        return str(getattr(config, "video_pipeline_shape", "dit_standard") or "dit_standard") == "family_generator"
+
+    def _run_family_video_generator(
+        self,
+        request: VideoGenerationRequest | VideoEditRequest,
+        ctx_exec: ExecutionContext,
+        *,
+        is_edit: bool,
+        on_progress: Callable | None = None,
+        on_log: Callable | None = None,
+    ) -> tuple[str, dict[str, Any]] | None:
+        """Shape C video generation — family-owned stack (T2V / I2V)."""
+        model_key, version_key = parse_model_version(request.model)
+        w, h = parse_size(request.size)
+        entry = self._registry.require(model_key)
+        config_cls = get_config_class(entry.family)
+        config = config_cls()
+        family = getattr(entry, "family", "ltx")
+        num_frames = self._resolve_num_frames(request, entry)
+        fps = self._resolve_fps(request, entry)
+        seed = request.seed if request.seed is not None else random.randint(0, 2 ** 32 - 1)
+
+        self._apply_video_registry_config_overrides(entry, config)
+        if not self._uses_family_video_generator(config):
+            raise RuntimeError(
+                f"Internal error: _run_family_video_generator called for "
+                f"video_pipeline_shape={getattr(config, 'video_pipeline_shape', '')!r} "
+                f"(family={family!r})"
+            )
+
+        if ctx_exec.cancel_token.is_cancelled():
+            return None
+
+        bundle_root, w, h, steps, guidance, step_distill, _scheduler_default = (
+            self._prepare_video_bundle_and_schedule(
+                entry=entry,
+                config=config,
+                family=family,
+                model_key=model_key,
+                version_key=version_key,
+                w=w,
+                h=h,
+                num_frames=num_frames,
+                request=request,
+                on_log=on_log,
+            )
+        )
+
+        if bundle_root is None or not bundle_root.is_dir():
+            raise RuntimeError(f"LTX 2.3 bundle not found for {request.model!r}")
+
+        image_path: str | None = None
+        if is_edit:
+            if not request.source_asset_id:
+                raise RuntimeError("LTX 2.3 image-to-video requires source_asset_id")
+            src = self._asset_store.get_file_path(request.source_asset_id)
+            if src is None or not src.exists():
+                raise RuntimeError(f"Source image asset not found: {request.source_asset_id!r}")
+            image_path = str(src)
+
+        if on_log:
+            on_log(
+                "info",
+                " ".join(
+                    [
+                        f"infer model={model_key}",
+                        f"family={family}",
+                        f"version={version_key or 'default'}",
+                        f"size={w}x{h}",
+                        f"frames={num_frames}",
+                        f"fps={fps}",
+                        f"seed={seed}",
+                        f"steps={steps}",
+                        f"guidance={guidance}",
+                        f"step_distill={step_distill}",
+                        f"mode={'video_edit' if is_edit else 'video_generate'}",
+                        "video_pipeline_shape=family_generator",
+                    ]
+                ),
+            )
+
+        factory = _get_video_generation_factory(family)
+        generator = factory(self.ctx, bundle_root, config=config)
+        generator.load()
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        work = Path(ctx_exec.work_dir)
+        work.mkdir(parents=True, exist_ok=True)
+        out_path = str(work / f"{model_key}_{seed}_{timestamp}.mp4")
+
+        pipeline_graph_step("denoise", on_log)
+        emit_phase(on_progress, phase="generate", progress=0.05, n_steps=max(1, steps))
+
+        if ctx_exec.cancel_token.is_cancelled():
+            return None
+
+        prompt = (request.prompt or "").strip()
+        if not prompt:
+            raise RuntimeError("LTX 2.3 generation requires a non-empty prompt")
+
+        result_path = generator.generate_and_save(
+            prompt=prompt,
+            output_path=out_path,
+            width=w,
+            height=h,
+            num_frames=num_frames,
+            fps=float(fps),
+            seed=seed,
+            steps=steps,
+            guidance=guidance,
+            step_distill=step_distill,
+            image_path=image_path,
+            on_log=on_log,
+        )
+
+        if ctx_exec.cancel_token.is_cancelled():
+            return None
+
+        pipeline_graph_step("save_asset", on_log)
+        emit_complete(on_progress, max(1, steps))
+
+        metadata = {
+            "model": request.model,
+            "seed": seed,
+            "prompt": request.prompt,
+            "negative_prompt": getattr(request, "negative_prompt", None) or "",
+            "steps": steps,
+            "guidance": guidance,
+            "num_frames": num_frames,
+            "fps": fps,
+            "width": w,
+            "height": h,
+            "mime_type": "video/mp4",
+            "video_pipeline_shape": "family_generator",
+            "step_distill": step_distill,
+        }
+        metadata.update(work_title_metadata(getattr(request, "title", None)))
+        return result_path, metadata
 
     def _prepare_t5_context(self, config: Any) -> None:
         self._video_config = config
@@ -673,6 +872,11 @@ class VideoPipeline:
         # ── Registry-driven parameter injection ──
         self._apply_video_registry_config_overrides(entry, config)
 
+        if self._uses_family_video_generator(config):
+            return self._run_family_video_generator(
+                request, ctx_exec, is_edit=False, on_progress=on_progress, on_log=on_log,
+            )
+
         if ctx_exec.cancel_token.is_cancelled():
             return None
 
@@ -718,6 +922,9 @@ class VideoPipeline:
                 step_distill=step_distill,
                 scheduler_default=scheduler_default,
                 bundle_root=bundle_root,
+                w=w,
+                h=h,
+                num_frames=num_frames,
                 on_log=on_log,
             )
         )
@@ -759,6 +966,14 @@ class VideoPipeline:
 
         # ── Hook ③: before denoise ──
         latents, extra_cond = model.before_denoise(latents, timesteps, sigmas, **extra_cond)
+        if str(getattr(config, "video_vae_backend", "")) == "ltx":
+            temporal = int(getattr(config, "temporal_vae_scale", 8) or 8)
+            vae_sf = int(getattr(config, "vae_scale", 32) or 32)
+            extra_cond["ltx_rope_interpolation_scale"] = ltx_rope_interpolation_scale(
+                temporal_vae_scale=temporal,
+                vae_scale=vae_sf,
+                fps=float(fps),
+            )
         rope_kw = video_rotary_model_kwargs(config, self.ctx, h, w, latents)
 
         pipeline_graph_step("denoise", on_log)
@@ -833,6 +1048,11 @@ class VideoPipeline:
         # Registry-driven parameter injection
         self._apply_video_registry_config_overrides(entry, config)
 
+        if self._uses_family_video_generator(config):
+            return self._run_family_video_generator(
+                request, ctx_exec, is_edit=True, on_progress=on_progress, on_log=on_log,
+            )
+
         if ctx_exec.cancel_token.is_cancelled():
             return None
 
@@ -878,6 +1098,9 @@ class VideoPipeline:
                 step_distill=step_distill,
                 scheduler_default=scheduler_default,
                 bundle_root=bundle_root,
+                w=w,
+                h=h,
+                num_frames=num_frames,
                 on_log=on_log,
             )
         )
@@ -938,6 +1161,14 @@ class VideoPipeline:
                     raise RuntimeError(video_i2v_encode_failure_message(config))
 
         latents, extra_cond = model.before_denoise(latents, timesteps, sigmas, **extra_cond)
+        if str(getattr(config, "video_vae_backend", "")) == "ltx":
+            temporal = int(getattr(config, "temporal_vae_scale", 8) or 8)
+            vae_sf = int(getattr(config, "vae_scale", 32) or 32)
+            extra_cond["ltx_rope_interpolation_scale"] = ltx_rope_interpolation_scale(
+                temporal_vae_scale=temporal,
+                vae_scale=vae_sf,
+                fps=float(fps),
+            )
         rope_kw = video_rotary_model_kwargs(config, self.ctx, h, w, latents)
 
         pipeline_graph_step("denoise", on_log)
@@ -992,18 +1223,23 @@ class VideoPipeline:
         config: Any,
         family: str,
         bundle_root: Path | None,
-    ) -> tuple[Any, Any | None, Any | None, Any | None, Any | None, Any | None]:
+    ) -> tuple[Any, Any | None, Any | None, Any | None]:
+        """Encode one prompt. Returns ``(txt_embeds, txt_mask, txt_embeds_2, txt_mask_2)``."""
         encoder_type = video_encoder_type(config)
         if encoder_type == "t5":
-            return self._encode_t5(text), None, None, None, None, None
+            if bool(getattr(config, "t5_attention_mask", False)):
+                embeds, mask = self._encode_t5_texts_with_mask([text])
+                return embeds[0:1], mask[0:1], None, None
+            return self._encode_t5(text), None, None, None
         if bundle_root is None:
             raise RuntimeError(
                 f"Video model family {family!r} with encoder_type={encoder_type!r} "
                 "requires a local bundle with text encoder assets."
             )
-        return _encode_video_prompt_fn(
+        raw = _encode_video_prompt_fn(
             self.ctx, text, encoder_type=encoder_type, bundle_root=bundle_root, config=config,
         )
+        return raw[0], raw[1], raw[2], raw[3]
 
     def _encode_video_text_with_cfg(
         self,
@@ -1042,6 +1278,12 @@ class VideoPipeline:
 
         if use_cfg and encoder_type == "t5":
             neg_txt = video_cfg_negative_prompt(config, negative_prompt)
+            if bool(getattr(config, "t5_attention_mask", False)):
+                embeds, masks = self._encode_t5_texts_with_mask([prompt, neg_txt])
+                return (
+                    embeds[0:1], masks[0:1], None, None,
+                    embeds[1:2], masks[1:2], None, None,
+                )
             embeds = self._encode_t5_texts([prompt, neg_txt])
             return embeds[0:1], None, None, None, embeds[1:2], None, None, None
 
@@ -1148,6 +1390,25 @@ class VideoPipeline:
     def _encode_t5(self, text: str) -> Any:
         """T5 文本编码（视频模型目前统一使用 T5）；权重来自当前请求的 bundle，不走 Hub。"""
         return self._encode_t5_texts([text])
+
+    def _encode_t5_texts_with_mask(self, texts: list[str]) -> tuple[Any, Any]:
+        """Batch T5 encode returning ``(hidden_states, attention_mask)`` per batch row."""
+        contract = getattr(self, "_video_config", None)
+        t5_root = getattr(self, "_t5_bundle_root", None)
+        if t5_root is None:
+            raise RuntimeError("T5 encoding requires _t5_bundle_root")
+        if contract is not None and bool(getattr(contract, "uses_wan_t5_bundle", False)):
+            raise RuntimeError(
+                "Wan UMT5 bundle does not support encode_with_mask; disable t5_attention_mask."
+            )
+        bundle_root = t5_root if isinstance(t5_root, Path) else Path(t5_root)
+        max_seq_len = int(getattr(self, "_t5_max_seq_len", 512))
+        t5_dir, t5_tok_dir = t5_encoder_bundle_paths(bundle_root)
+        if self._t5 is None:
+            self._t5 = T5Encoder(
+                self.ctx, t5_dir, max_seq_len=max_seq_len, tokenizer_path=t5_tok_dir,
+            )
+        return self._t5.encode_with_mask(texts)
 
     def _model_cache_key(self, entry, version_key: str | None, num_frames: int) -> str:
         return f"video:{entry.id}:{version_key or 'default'}:{num_frames}"

@@ -181,6 +181,11 @@ _VIDEO_WEIGHT_REMAP = {
     "hunyuan":   ("backend.engine.families.hunyuan.weights",   "remap_hunyuan_weights"),
 }
 
+# family → (module, factory_fn) for VideoPipeline Shape C (in-repo family generator)
+_VIDEO_GENERATION_FACTORY = {
+    "ltx": ("backend.engine.families.ltx.generation", "create_ltx23_generator"),
+}
+
 _VIDEO_TEXT_ENCODER = {
     "t5":              ("backend.engine.common.text_encoders", "T5Encoder"),
     "hunyuan_video_dual": ("backend.engine.families.hunyuan.text_encoder", "HunyuanVideoTextEncoder"),
@@ -240,6 +245,17 @@ def get_video_weight_remap(family: str):
     entry = _VIDEO_WEIGHT_REMAP.get(family)
     if entry is None:
         return None
+    return getattr(importlib.import_module(entry[0]), entry[1])
+
+
+def get_video_generation_factory(family: str):
+    import importlib
+    entry = _VIDEO_GENERATION_FACTORY.get(family)
+    if entry is None:
+        supported = ", ".join(sorted(_VIDEO_GENERATION_FACTORY.keys()))
+        raise RuntimeError(
+            f"VideoPipeline: no generation factory for family {family!r}; supported: {supported}"
+        )
     return getattr(importlib.import_module(entry[0]), entry[1])
 
 

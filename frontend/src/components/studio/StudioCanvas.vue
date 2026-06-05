@@ -20,11 +20,11 @@
             </span>
           </div>
           <DqButton
-            v-if="primaryRunningTaskId"
+            v-if="logTaskId"
             type="text"
             size="sm"
             class="studio-canvas__logs-btn"
-            @click="showTaskLogs = true"
+            @click="openTaskLogs"
           >
             {{ $t('studio.viewLogs') }}
           </DqButton>
@@ -38,11 +38,22 @@
           />
         </div>
       </div>
-      <GenTaskLogDialog
-        v-model:open="showTaskLogs"
-        :task-id="primaryRunningTaskId"
-      />
     </div>
+
+    <!-- Recent task logs (after completion / failure) -->
+    <div
+      v-if="activeTasks.length === 0 && logTaskId && hasPersistedLogs"
+      class="studio-canvas__section studio-canvas__section--log-recall"
+    >
+      <DqButton type="text" size="sm" class="studio-canvas__logs-btn" @click="openTaskLogs">
+        {{ $t('studio.viewLogs') }}
+      </DqButton>
+    </div>
+
+    <GenTaskLogDialog
+      v-model:open="showTaskLogs"
+      :task-id="logTaskId"
+    />
 
     <!-- Completed items grouped by time -->
     <div
@@ -123,7 +134,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Close, Delete, Loading } from '@danqing/dq-shell';
 import { $tt } from '@/utils/i18n';
@@ -163,6 +174,8 @@ const emit = defineEmits<{
 const { t: $t } = useI18n();
 const tasksStore = useTasksStore();
 const showTaskLogs = ref(false);
+/** Persists after task leaves queue so logs stay viewable on failure. */
+const logTaskId = ref<string | null>(null);
 
 const selectedCount = computed(() => props.selectedPaths?.size ?? 0);
 
@@ -172,6 +185,46 @@ const primaryRunningTaskId = computed(() => {
   const first = props.activeTasks[0];
   return first?.id || null;
 });
+
+const hasPersistedLogs = computed(() => {
+  const id = logTaskId.value;
+  if (!id) return false;
+  return (tasksStore.taskLogs[id]?.length ?? 0) > 0;
+});
+
+watch(primaryRunningTaskId, (id) => {
+  if (id) {
+    logTaskId.value = id;
+  }
+});
+
+watch(
+  () => {
+    const id = logTaskId.value;
+    if (!id) return '';
+    const logs = tasksStore.taskLogs[id] || [];
+    const last = logs[logs.length - 1];
+    if (!last) return '';
+    return `${logs.length}:${last.level}:${last.message}`;
+  },
+  (signature, prevSignature) => {
+    if (!signature || signature === prevSignature) return;
+    const id = logTaskId.value;
+    if (!id) return;
+    const logs = tasksStore.taskLogs[id] || [];
+    const last = logs[logs.length - 1];
+    if (last?.level === 'error') {
+      showTaskLogs.value = true;
+    }
+  },
+);
+
+function openTaskLogs() {
+  const id = primaryRunningTaskId.value || logTaskId.value;
+  if (!id) return;
+  logTaskId.value = id;
+  showTaskLogs.value = true;
+}
 
 const activeProgressHint = computed(() => {
   const id = primaryRunningTaskId.value;
@@ -340,6 +393,12 @@ function handleCardClick(item: GalleryItem, event: MouseEvent) {
 .studio-canvas__logs-btn {
   flex-shrink: 0;
   font-size: 12px;
+}
+
+.studio-canvas__section--log-recall {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
 }
 
 .studio-canvas__active-cards {

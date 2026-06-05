@@ -622,8 +622,23 @@ class CogVideoXDPMScheduler(Scheduler):
         return prev_sample, pred_original_sample
 
 
+def _wan_flow_sigmas(
+    num_steps: int,
+    shift: float,
+    num_train_timesteps: int,
+) -> np.ndarray:
+    """Shifted sigma schedule — aligned with mlx-video / official Wan2.2 UniPC."""
+    alphas = np.linspace(1.0, 1.0 / num_train_timesteps, num_train_timesteps)[::-1]
+    sigmas_unshifted = 1.0 - alphas
+    sigma_max = float(sigmas_unshifted[0])
+    sigma_min = float(sigmas_unshifted[-1])
+    sigmas = np.linspace(sigma_max, sigma_min, num_steps + 1)[:-1]
+    sigmas = shift * sigmas / (1.0 + (shift - 1.0) * sigmas)
+    return np.append(sigmas, 0.0).astype(np.float32)
+
+
 class WanFlowUniPCScheduler(Scheduler):
-    """Wan 2.x flow-matching UniPC (ported from ``wan/utils/fm_solvers_unipc.py``)."""
+    """Wan 2.x flow-matching UniPC — aligned with mlx-video ``FlowUniPCScheduler``."""
 
     order = 1
 
@@ -636,6 +651,9 @@ class WanFlowUniPCScheduler(Scheduler):
         solver_order: int = 2,
         solver_type: str = "bh2",
         predict_x0: bool = True,
+        lower_order_final: bool = True,
+        disable_corrector: list[int] | None = None,
+        use_corrector: bool = True,
     ):
         self._num_train_timesteps = num_train_timesteps
         self.ctx = ctx
@@ -643,21 +661,18 @@ class WanFlowUniPCScheduler(Scheduler):
         self._solver_order = int(solver_order)
         self._solver_type = solver_type
         self._predict_x0 = bool(predict_x0)
+        self._lower_order_final = bool(lower_order_final)
+        self._use_corrector = bool(use_corrector)
+        self._disable_corrector = set(disable_corrector or [])
         self._timesteps: Any = None
         self._sigmas: np.ndarray | None = None
+        self._sigmas_float: list[float] = []
         self._step_index: int = 0
+        self._num_steps: int = 0
         self._model_outputs: list[Any | None] = []
-        self._timestep_list: list[Any | None] = []
         self._lower_order_nums: int = 0
         self._last_sample: Any | None = None
         self._this_order: int = 1
-        # Match official FlowUniPCMultistepScheduler: training-curve endpoints at shift=1.
-        alphas = np.linspace(1, 1 / self._num_train_timesteps, self._num_train_timesteps)[::-1].copy()
-        train_sigmas = 1.0 - alphas
-        init_shift = 1.0
-        train_sigmas = init_shift * train_sigmas / (1.0 + (init_shift - 1.0) * train_sigmas)
-        self._sigma_max = float(train_sigmas[0])
-        self._sigma_min = float(train_sigmas[-1])
 
     @property
     def num_train_timesteps(self) -> int:
@@ -671,135 +686,196 @@ class WanFlowUniPCScheduler(Scheduler):
     def sigmas(self) -> Any:
         return self._sigmas
 
+    @staticmethod
+    def _flow_lambda(sigma: float) -> float:
+        if sigma >= 1.0:
+            return -math.inf
+        if sigma <= 0.0:
+            return math.inf
+        return math.log((1.0 - sigma) / sigma)
+
     def set_timesteps(self, num_inference_steps: int, **kwargs) -> Any:
         ctx = self.ctx
         if ctx is None:
             raise RuntimeError("WanFlowUniPCScheduler requires RuntimeContext (pass ctx= from pipeline)")
 
         shift = float(kwargs.get("shift", self._default_shift))
-        sched_sigmas = np.linspace(self._sigma_max, self._sigma_min, num_inference_steps + 1)[:-1]
-        sched_sigmas = shift * sched_sigmas / (1.0 + (shift - 1.0) * sched_sigmas)
-        # Match mlx-video / official Wan: integer training timesteps (not float sigma*1000).
+        sigmas = _wan_flow_sigmas(num_inference_steps, shift, self._num_train_timesteps)
         timesteps = (
-            sched_sigmas * self._num_train_timesteps
+            sigmas[:-1] * self._num_train_timesteps
         ).astype(np.int64).astype(np.float32)
-        sigmas_full = np.concatenate([sched_sigmas, [0.0]]).astype(np.float32)
 
-        self._sigmas = sigmas_full
-        self._timesteps = ctx.array(timesteps.astype(np.float32))
+        self._sigmas = sigmas
+        self._sigmas_float = sigmas.tolist()
+        self._timesteps = ctx.array(timesteps)
         self._step_index = 0
+        self._num_steps = int(num_inference_steps)
         self._model_outputs = [None] * self._solver_order
-        self._timestep_list = [None] * self._solver_order
         self._lower_order_nums = 0
         self._last_sample = None
+        self._this_order = 1
         return self._timesteps
 
-    def _sigma_to_alpha_sigma_t(self, sigma: float) -> tuple[float, float]:
-        return 1.0 - sigma, sigma
-
     def convert_model_output(self, model_output: Any, sample: Any) -> Any:
-        ctx = self.ctx
-        sigma = float(self._sigmas[self._step_index])
-        if self._predict_x0:
-            return sample - sigma * model_output
-        return model_output
+        if not self._predict_x0:
+            return model_output
+        sigma = self._sigmas_float[self._step_index]
+        return sample - sigma * model_output
+
+    def _uni_p_bh2(self, x0: Any, sample: Any, order: int) -> Any:
+        i = self._step_index
+        s = self._sigmas_float
+        sigma_s0 = s[i]
+        sigma_t = s[i + 1]
+        if sigma_t == 0.0:
+            return x0
+
+        lambda_s0 = self._flow_lambda(sigma_s0)
+        lambda_t = self._flow_lambda(sigma_t)
+        h = lambda_t - lambda_s0
+        hh = -h
+        h_phi_1 = math.expm1(hh)
+        b_h = h_phi_1 if self._solver_type == "bh2" else hh
+        alpha_t = 1.0 - sigma_t
+
+        m0 = self._model_outputs[-1]
+        x_t = (sigma_t / sigma_s0) * sample - (alpha_t * h_phi_1) * m0
+
+        if order >= 2 and m0 is not None:
+            d1s: list[Any] = []
+            for k in range(1, order):
+                si_idx = i - k
+                if si_idx < 0 or self._model_outputs[-(k + 1)] is None:
+                    break
+                mk = self._model_outputs[-(k + 1)]
+                lambda_sk = self._flow_lambda(s[si_idx])
+                rk = (lambda_sk - lambda_s0) / h
+                if math.isinf(rk):
+                    break
+                d1s.append((mk - m0) / rk)
+
+            if d1s:
+                effective_order = len(d1s) + 1
+                if effective_order <= 2:
+                    rhos_p = [0.5]
+                else:
+                    rks_arr = np.array(
+                        [(self._flow_lambda(s[i - k]) - lambda_s0) / h for k in range(1, order)],
+                        dtype=np.float64,
+                    )
+                    h_phi_k = h_phi_1 / hh - 1.0
+                    factorial_i = 1
+                    r_rows: list[np.ndarray] = []
+                    b_vals: list[float] = []
+                    for j in range(1, effective_order):
+                        r_rows.append(rks_arr[: len(d1s)] ** (j - 1))
+                        b_vals.append(float(h_phi_k * factorial_i / b_h))
+                        factorial_i *= j + 1
+                        h_phi_k = h_phi_k / hh - 1.0 / factorial_i
+                    rhos_p = np.linalg.solve(np.stack(r_rows), np.array(b_vals)).tolist()
+                pred_res = sum(r * d for r, d in zip(rhos_p, d1s))
+                x_t = x_t - (alpha_t * b_h) * pred_res
+        return x_t
+
+    def _uni_c_bh2(
+        self,
+        model_x0: Any,
+        last_sample: Any,
+        this_sample: Any,
+        order: int,
+    ) -> Any:
+        i = self._step_index
+        s = self._sigmas_float
+        sigma_s0 = s[i - 1]
+        sigma_t = s[i]
+        if sigma_t == 0.0:
+            return this_sample
+
+        lambda_s0 = self._flow_lambda(sigma_s0)
+        lambda_t = self._flow_lambda(sigma_t)
+        h = lambda_t - lambda_s0
+        hh = -h
+        h_phi_1 = math.expm1(hh)
+        b_h = h_phi_1 if self._solver_type == "bh2" else hh
+        alpha_t = 1.0 - sigma_t
+
+        m0 = self._model_outputs[-1]
+        x_t_ = (sigma_t / sigma_s0) * last_sample - (alpha_t * h_phi_1) * m0
+        d1_t = model_x0 - m0
+
+        rks: list[float] = []
+        d1s: list[Any] = []
+        for k in range(1, order):
+            si_idx = i - (k + 1)
+            if si_idx < 0 or self._model_outputs[-(k + 1)] is None:
+                break
+            mk = self._model_outputs[-(k + 1)]
+            lambda_sk = self._flow_lambda(s[si_idx])
+            rk = (lambda_sk - lambda_s0) / h
+            if math.isinf(rk):
+                break
+            rks.append(rk)
+            d1s.append((mk - m0) / rk)
+        rks.append(1.0)
+        effective_order = len(rks)
+
+        if effective_order == 1:
+            rhos_c = [0.5]
+        else:
+            rks_arr = np.array(rks, dtype=np.float64)
+            h_phi_k = h_phi_1 / hh - 1.0
+            factorial_i = 1
+            r_rows = []
+            b_vals = []
+            for j in range(1, effective_order + 1):
+                r_rows.append(rks_arr ** (j - 1))
+                b_vals.append(float(h_phi_k * factorial_i / b_h))
+                factorial_i *= j + 1
+                h_phi_k = h_phi_k / hh - 1.0 / factorial_i
+            rhos_c = np.linalg.solve(np.stack(r_rows), np.array(b_vals)).tolist()
+
+        corr_res = self.ctx.zeros_like(d1_t)
+        for k_idx, d1 in enumerate(d1s):
+            corr_res = corr_res + rhos_c[k_idx] * d1
+        return x_t_ - (alpha_t * b_h) * (corr_res + rhos_c[-1] * d1_t)
 
     def step(self, noise_pred: Any, timestep: Any, latents: Any, **kwargs) -> Any:
-        ctx = self.ctx
         if self._sigmas is None:
             raise RuntimeError("WanFlowUniPCScheduler.set_timesteps must be called before step")
 
-        converted = self.convert_model_output(noise_pred, latents)
+        i = self._step_index
+        x0 = self.convert_model_output(noise_pred, latents)
 
-        if (
-            self._step_index > 0
+        use_corrector = (
+            self._use_corrector
+            and i > 0
+            and (i - 1) not in self._disable_corrector
             and self._last_sample is not None
-            and self._model_outputs[-1] is not None
-        ):
-            latents = self._corrector_step(converted, latents)
+        )
+        if use_corrector:
+            latents = self._uni_c_bh2(x0, self._last_sample, latents, self._this_order)
 
-        for i in range(self._solver_order - 1):
-            self._model_outputs[i] = self._model_outputs[i + 1]
-            self._timestep_list[i] = self._timestep_list[i + 1]
-        self._model_outputs[-1] = converted
-        self._timestep_list[-1] = timestep
+        for k in range(self._solver_order - 1):
+            self._model_outputs[k] = self._model_outputs[k + 1]
+        self._model_outputs[-1] = x0
 
-        remaining = len(self._timesteps) - self._step_index if self._timesteps is not None else 1
-        self._this_order = min(self._solver_order, max(1, int(remaining)))
-        self._this_order = min(self._this_order, self._lower_order_nums + 1)
+        if self._lower_order_final:
+            this_order = min(self._solver_order, self._num_steps - i)
+        else:
+            this_order = self._solver_order
+        self._this_order = min(this_order, self._lower_order_nums + 1)
 
         self._last_sample = latents
-        prev = self._predictor_step(latents, order=self._this_order)
+        x_next = self._uni_p_bh2(x0, latents, self._this_order)
+
         if self._lower_order_nums < self._solver_order:
             self._lower_order_nums += 1
         self._step_index += 1
-        return prev
-
-    @staticmethod
-    def _flow_log_lambda(alpha: float, sigma: float) -> float:
-        return float(
-            np.log(max(alpha, 1e-6)) - np.log(max(sigma, 1e-6))
-        )
+        return x_next
 
     def _predictor_step(self, sample: Any, *, order: int) -> Any:
-        """UniP-B(h) predictor (``wan/utils/fm_solvers_unipc.py`` ``multistep_uni_p_bh_update``)."""
-        ctx = self.ctx
-        sigma_t = float(self._sigmas[self._step_index + 1])
-        sigma_s0 = float(self._sigmas[self._step_index])
-        m0 = self._model_outputs[-1]
-        if m0 is None:
-            raise RuntimeError("WanFlowUniPCScheduler: model output history missing for predictor")
-        if sigma_t <= 1e-6:
-            return m0
-        alpha_t, sigma_t_v = self._sigma_to_alpha_sigma_t(sigma_t)
-        alpha_s0, sigma_s0_v = self._sigma_to_alpha_sigma_t(sigma_s0)
-        sigma_t_l = max(sigma_t_v, 1e-6)
-        sigma_s0_l = max(sigma_s0_v, 1e-6)
-        lambda_t = self._flow_log_lambda(alpha_t, sigma_t_l)
-        lambda_s0 = self._flow_log_lambda(alpha_s0, sigma_s0_l)
-        h = lambda_t - lambda_s0
-        hh = -h
-        h_phi_1 = np.expm1(hh)
-        b_h = np.expm1(hh) if self._solver_type == "bh2" else hh
-        x_t_ = (sigma_t / sigma_s0_l) * sample - alpha_t * h_phi_1 * m0
-
-        pred_res = None
-        use_order = max(1, int(order))
-        if use_order >= 2 and self._step_index >= 1:
-            mi = self._model_outputs[-2]
-            if mi is not None:
-                si = self._step_index - 1
-                alpha_si, sigma_si_v = self._sigma_to_alpha_sigma_t(float(self._sigmas[si]))
-                lambda_si = self._flow_log_lambda(alpha_si, max(sigma_si_v, 1e-6))
-                rk = (lambda_si - lambda_s0) / h if abs(h) > 1e-12 else 1.0
-                d1 = (mi - m0) / rk
-                # Official UniPC order-2 uses ``rhos_p = [0.5]`` (single history slope).
-                pred_res = 0.5 * d1
-        if pred_res is None:
-            return x_t_
-        return x_t_ - alpha_t * b_h * pred_res
-
-    def _corrector_step(self, model_t: Any, sample: Any) -> Any:
-        ctx = self.ctx
-        sigma_t = float(self._sigmas[self._step_index])
-        sigma_s0 = float(self._sigmas[self._step_index - 1])
-        m0 = self._model_outputs[-1]
-        if sigma_t <= 1e-6:
-            return m0
-        alpha_t, _ = self._sigma_to_alpha_sigma_t(sigma_t)
-        alpha_s0, sigma_s0_v = self._sigma_to_alpha_sigma_t(sigma_s0)
-        sigma_t_l = max(sigma_t, 1e-6)
-        sigma_s0_l = max(sigma_s0_v, 1e-6)
-        h = (
-            np.log(max(alpha_t, 1e-6)) - np.log(sigma_t_l)
-            - (np.log(max(alpha_s0, 1e-6)) - np.log(sigma_s0_l))
-        )
-        hh = -h
-        h_phi_1 = np.expm1(hh)
-        b_h = np.expm1(hh) if self._solver_type == "bh2" else hh
-        x_t_ = (sigma_t / sigma_s0_l) * self._last_sample - alpha_t * h_phi_1 * m0
-        d1_t = model_t - m0
-        return x_t_ - alpha_t * b_h * 0.5 * d1_t
+        """Backward-compatible alias used by unit tests."""
+        return self._uni_p_bh2(self._model_outputs[-1], sample, order)
 
 
 class SeedVR2EulerScheduler(Scheduler):
