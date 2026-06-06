@@ -21,7 +21,6 @@ from .cases import (
     SanityCase,
     ace_step_bundle_installed,
     cuda_runtime_available,
-    heartmula_bundle_installed,
     mlx_runtime_available,
     get_external_ref_case,
     get_case,
@@ -52,10 +51,7 @@ from .metrics import (
     compare_videos,
     hash_image,
 )
-from .heartmula_codec_parity import (
-    resolve_codec_parity_manifest,
-    run_codec_parity_check,
-)
+
 
 # 与参考图对比：PSNR 档位 + SSIM 下限（纯噪声 / 完全跑崩时相对参考图 SSIM 极低）
 MIN_PSNR_PASS = 30.0
@@ -1019,36 +1015,6 @@ class SanitySuiteRunner(BenchmarkRunner):
             )
         return res
 
-    def _apply_codec_parity_gate(self, case: SanityCase, res: SanityResult) -> SanityResult:
-        manifest_rel = (case.codec_parity_manifest or "").strip()
-        if not manifest_rel:
-            return res
-        manifest_path = resolve_codec_parity_manifest(
-            manifest_rel,
-            project_root=PROJECT_ROOT,
-        )
-        parity = run_codec_parity_check(
-            manifest_path,
-            output_dir=self.output_dir,
-            case_id=case.id,
-            min_si_sdr_db=float(case.codec_parity_min_si_sdr_db),
-            min_correlation=float(case.codec_parity_min_correlation),
-            warn_si_sdr_db=float(case.codec_parity_warn_si_sdr_db),
-        )
-        if parity.skipped:
-            print(f"    [codec-parity SKIP] {parity.reason}")
-            return res
-        tag = "PASS" if parity.ok else "FAIL"
-        if parity.reason.startswith("codec_parity_warn"):
-            tag = "WARN"
-        print(
-            f"    [codec-parity {tag}] {parity.reason} "
-            f"(si_sdr={parity.mean_luma:.2f}dB corr={parity.std_luma:.4f})"
-        )
-        if not parity.ok:
-            return parity
-        return res
-
     @staticmethod
     def _audio_model_base(case: SanityCase) -> str:
         return case.model.split(":", 1)[0].strip()
@@ -1116,8 +1082,6 @@ class SanitySuiteRunner(BenchmarkRunner):
         self, case: SanityCase, output_path: Path, *, timeout_sec: int | None = None
     ) -> bool:
         cli = PROJECT_ROOT / "bin" / "danqing-audio-generate"
-        base = self._audio_model_base(case)
-        is_heartmula = base.startswith("heartmula")
         cmd = [
             sys.executable,
             str(cli),
@@ -1141,20 +1105,8 @@ class SanitySuiteRunner(BenchmarkRunner):
         if case.instrumental:
             cmd.append("--instrumental")
         cmd.extend(["--lyrics", case.lyrics or ""])
-        if not is_heartmula and case.steps is not None:
+        if case.steps is not None:
             cmd.extend(["--steps", str(int(case.steps))])
-        if case.temperature is not None:
-            cmd.extend(["--temperature", str(float(case.temperature))])
-        if case.top_k is not None:
-            cmd.extend(["--top-k", str(int(case.top_k))])
-        if case.codec_steps is not None:
-            cmd.extend(["--codec-steps", str(int(case.codec_steps))])
-        if case.codec_guidance is not None:
-            cmd.extend(["--codec-guidance", str(float(case.codec_guidance))])
-        if case.long_form_temperature is not None:
-            cmd.extend(["--long-form-temperature", str(float(case.long_form_temperature))])
-        if case.long_form_topk is not None:
-            cmd.extend(["--long-form-topk", str(int(case.long_form_topk))])
         return self._run_danqing_audio_cmd(cmd, case, timeout_sec=timeout_sec, label="danqing-audio")
 
     def _run_danqing_audio_edit(
@@ -1202,8 +1154,6 @@ class SanitySuiteRunner(BenchmarkRunner):
         timeout_sec: int | None,
         label: str,
     ) -> bool:
-        base = self._audio_model_base(case)
-        is_heartmula = base.startswith("heartmula")
         try:
             t0 = time.time()
             env = os.environ.copy()
@@ -1212,12 +1162,11 @@ class SanitySuiteRunner(BenchmarkRunner):
             env["PYTHONUNBUFFERED"] = "1"
             if case.id.endswith("-cuda-sanity"):
                 env["DANQING_FORCE_AUDIO_BACKEND"] = "cuda"
-            if not is_heartmula:
-                if not case.ace_step_use_lm:
-                    env["ACESTEP_USE_LM"] = "0"
-                else:
-                    env.setdefault("ACESTEP_USE_LM", "1")
-                    env.setdefault("ACESTEP_LM_CODES", "1")
+            if not case.ace_step_use_lm:
+                env["ACESTEP_USE_LM"] = "0"
+            else:
+                env.setdefault("ACESTEP_USE_LM", "1")
+                env.setdefault("ACESTEP_LM_CODES", "1")
             tout = int(timeout_sec) if timeout_sec is not None else DEFAULT_DANQING_CLI_TIMEOUT_SEC
             proc = subprocess.run(
                 cmd,
@@ -1333,39 +1282,7 @@ class SanitySuiteRunner(BenchmarkRunner):
                 print(f"  SKIP: {res.reason}")
                 return res
             base = self._audio_model_base(case)
-            if base.startswith("heartmula"):
-                if not mlx_runtime_available():
-                    print("    [SKIP] MLX 不可用，跳过 HeartMuLa 健全性")
-                    res = SanityResult(
-                        ok=True,
-                        reason="skip_no_mlx",
-                        mean_luma=0.0,
-                        std_luma=0.0,
-                        entropy_bits=0.0,
-                        laplacian_var=0.0,
-                        skipped=True,
-                    )
-                    self.sanity_results.append((case, res))
-                    print(f"  SKIP: {res.reason}")
-                    return res
-                if not heartmula_bundle_installed():
-                    print(
-                        "    [SKIP] HeartMuLa bundle 未安装"
-                        "（见 models/Audio/heartmula-oss-3b-happy-new-year）"
-                    )
-                    res = SanityResult(
-                        ok=True,
-                        reason="skip_missing_heartmula_bundle",
-                        mean_luma=0.0,
-                        std_luma=0.0,
-                        entropy_bits=0.0,
-                        laplacian_var=0.0,
-                        skipped=True,
-                    )
-                    self.sanity_results.append((case, res))
-                    print(f"  SKIP: {res.reason}")
-                    return res
-            elif base.startswith("ace-step"):
+            if base.startswith("ace-step"):
                 if not ace_step_bundle_installed():
                     print("    [SKIP] ACE-Step bundle 未安装（见 models/Audio/acestep-v15-xl-sft）")
                     res = SanityResult(
@@ -1409,8 +1326,6 @@ class SanitySuiteRunner(BenchmarkRunner):
                     entropy_bits=0.0,
                     laplacian_var=0.0,
                 )
-                if base.startswith("heartmula"):
-                    res = self._apply_codec_parity_gate(case, res)
                 self.sanity_results.append((case, res))
                 print(f"  FAIL: {res.reason} ({elapsed:.1f}s)")
                 return res
@@ -1419,7 +1334,6 @@ class SanitySuiteRunner(BenchmarkRunner):
                 thresholds=case.audio_quality_thresholds or None,
             )
             res = self._apply_semantic_gate(case, res, out_path, media="audio")
-            res = self._apply_codec_parity_gate(case, res)
             self.sanity_results.append((case, res))
             status = "PASS" if res.ok else "FAIL"
             detail = res.reason if not res.ok else (
@@ -1498,23 +1412,11 @@ class SanitySuiteRunner(BenchmarkRunner):
                     f"baseline={case.is_timing_baseline}"
                 )
             elif media == "audio":
-                base = self._audio_model_base(case)
-                if base.startswith("heartmula"):
-                    print(
-                        f"  model={case.model} seed={case.seed} duration={case.duration}s "
-                        f"guidance={case.guidance} temperature={case.temperature} top_k={case.top_k}"
-                    )
-                    if case.codec_parity_manifest:
-                        print(
-                            f"  codec_parity: manifest={case.codec_parity_manifest} "
-                            f"min_si_sdr={case.codec_parity_min_si_sdr_db}dB"
-                        )
-                else:
-                    op = case.audio_operation or "create"
-                    print(
-                        f"  model={case.model} op={op} seed={case.seed} steps={case.steps} "
-                        f"duration={case.duration}s guidance={case.guidance} lm={case.ace_step_use_lm}"
-                    )
+                op = case.audio_operation or "create"
+                print(
+                    f"  model={case.model} op={op} seed={case.seed} steps={case.steps} "
+                    f"duration={case.duration}s guidance={case.guidance} lm={case.ace_step_use_lm}"
+                )
             else:
                 print(
                     f"  model={case.model} seed={case.seed} steps={case.steps} "

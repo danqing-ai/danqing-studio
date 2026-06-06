@@ -405,7 +405,7 @@ class WanModelMLX(TransformerBase):
                 raise RuntimeError(
                     f"Wan scalar timestep expected [B] or scalar, got shape {getattr(t_in, 'shape', ())}"
                 )
-            t_b = mx.round(t_b).astype(ctx.float32())
+            t_b = t_b.astype(ctx.float32())
             emb = sinusoidal_embedding_1d(ctx, cfg.freq_dim, t_b).astype(ctx.float32())
             e = self.time_embedding[1](nn.silu(self.time_embedding[0](emb)))
             e0 = self.time_projection(nn.silu(e))

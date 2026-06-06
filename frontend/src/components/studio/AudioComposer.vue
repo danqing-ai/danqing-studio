@@ -254,30 +254,6 @@
                 </div>
               </div>
 
-              <!-- Codec controls (HeartMuLa) -->
-              <div v-if="showCodecControls" class="audio-composer__advanced-row">
-                <div class="audio-composer__field">
-                  <label>{{ $tt('audio.codecSteps') }}</label>
-                  <DqSlider
-                    v-model="localParams.codec_steps"
-                    :min="codecStepsDef?.min ?? 4"
-                    :max="codecStepsDef?.max ?? 24"
-                    :step="1"
-                  />
-                  <span class="audio-composer__field-val">{{ localParams.codec_steps }}</span>
-                </div>
-                <div class="audio-composer__field">
-                  <label>{{ $tt('audio.codecGuidance') }}</label>
-                  <DqSlider
-                    v-model="localParams.codec_guidance"
-                    :min="codecGuidanceDef?.min ?? 1.0"
-                    :max="codecGuidanceDef?.max ?? 2.0"
-                    :step="codecGuidanceDef?.step ?? 0.05"
-                  />
-                  <span class="audio-composer__field-val">{{ localParams.codec_guidance }}</span>
-                </div>
-              </div>
-
               <!-- Cover source fidelity -->
               <div v-if="workMode === 'cover' && showCoverFidelity" class="audio-composer__advanced-row">
                 <div class="audio-composer__field">
@@ -463,9 +439,6 @@ const promptPlaceholder = computed(() => {
   if (props.workMode === 'cover') {
     return $tt('audio.coverPromptPlaceholder');
   }
-  if (props.currentModelConfig?.family === 'heartmula') {
-    return $tt('audio.promptPlaceholderHeartMuLa');
-  }
   return $tt('audio.promptPlaceholder');
 });
 
@@ -561,18 +534,6 @@ const supportsKeyScale = computed(() => props.currentModelConfig?.parameters?.su
 const supportsTimeSignature = computed(() => props.currentModelConfig?.parameters?.supports_time_signature === true);
 const supportsVocalType = computed(() => props.currentModelConfig?.parameters?.supports_vocal_type === true);
 const supportsVocalLanguage = computed(() => props.currentModelConfig?.parameters?.supports_vocal_language === true);
-
-const codecStepsDef = computed(() => {
-  const p = props.currentModelConfig?.parameters?.codec_steps;
-  if (!p) return null;
-  return { min: p.min ?? 4, max: p.max ?? 24, default: p.default ?? 10 };
-});
-
-const codecGuidanceDef = computed(() => {
-  const p = props.currentModelConfig?.parameters?.codec_guidance;
-  if (!p) return null;
-  return { min: p.min ?? 1.0, max: p.max ?? 2.0, step: p.step ?? 0.05, default: p.default ?? 1.25 };
-});
 
 const musicalKeys = [
   'C Major', 'C# Major', 'D Major', 'D# Major', 'E Major', 'F Major', 'F# Major',

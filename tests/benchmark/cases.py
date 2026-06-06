@@ -132,8 +132,6 @@ MFLUX_FP16_MODEL_ROOT: dict[str, str] = {
 
 # 可选 bundle：未安装时 sanity 音频用例 SKIP（不删用例，便于回归）
 ACE_STEP_AUDIO_BUNDLE = "models/Audio/acestep-v15-xl-sft"
-HEARTMULA_AUDIO_BUNDLE = "models/Audio/heartmula-oss-3b-happy-new-year"
-HEARTMULA_CODEC_PARITY_MANIFEST = "tests/benchmark/fixtures/heartmula/codec_parity_manifest.json"
 ACE_STEP_COVER_SOURCE = "tests/benchmark/fixtures/ace_step/cover_source.wav"
 WAN_VIDEO_BUNDLE = "models/Video/wan-2.2-ti2v-5b-original"
 
@@ -172,14 +170,6 @@ def ace_step_bundle_installed() -> bool:
     vae = root / "vae" / "diffusion_pytorch_model.safetensors"
     enc = root / "Qwen3-Embedding-0.6B" / "config.json"
     return dit.is_file() and vae.is_file() and enc.is_file()
-
-
-def heartmula_bundle_installed() -> bool:
-    """HeartMuLa Gen + LM + Codec layout under workspace models/ (see ``bundle.py``)."""
-    from backend.engine.families.heartmula.bundle import bundle_is_ready
-
-    root = resolve_benchmark_data_root() / HEARTMULA_AUDIO_BUNDLE
-    return bundle_is_ready(root)
 
 
 def mlx_runtime_available() -> bool:
@@ -359,18 +349,7 @@ class SanityCase:
     source_audio: str = ""
     source_fidelity: float = 1.0
     instrumental: bool = False
-    # HeartMuLa (optional; appended to ``danqing-audio-generate`` when set)
-    temperature: Optional[float] = None
-    top_k: Optional[int] = None
-    codec_steps: Optional[int] = None
-    codec_guidance: Optional[float] = None
-    long_form_temperature: Optional[float] = None
-    long_form_topk: Optional[int] = None
-    # HeartMuLa codec parity (fixed codes vs heartlib-mlx reference WAV)
-    codec_parity_manifest: str = ""
-    codec_parity_min_si_sdr_db: float = 18.0
-    codec_parity_min_correlation: float = 0.90
-    codec_parity_warn_si_sdr_db: float = 12.0
+    # Quality gate overrides (per-case/per-model); keys are consumed by metrics.py
     # Quality gate overrides (per-case/per-model); keys are consumed by metrics.py
     image_quality_thresholds: dict[str, float] = field(default_factory=dict)
     audio_quality_thresholds: dict[str, float] = field(default_factory=dict)
@@ -435,12 +414,6 @@ AUDIO_THRESHOLDS_ACE_STEP: dict[str, float] = {
     "min_score": 65.0,
     "noise_flatness_high": 0.74,
 }
-AUDIO_THRESHOLDS_HEARTMULA: dict[str, float] = {
-    "min_score": 66.0,
-    "noise_flatness_high": 0.73,
-    "low_dyn_std": 0.0022,
-}
-
 VIDEO_THRESHOLDS_DEFAULT: dict[str, float] = {
     "min_score": 65.0,
 }
@@ -632,31 +605,6 @@ ALL_SANITY_CASES: list[SanityCase] = [
         timeout_sec=420,
         audio_quality_thresholds=AUDIO_THRESHOLDS_ACE_STEP.copy(),
         description="ACE-Step MLX cover edit from fixture WAV",
-    ),
-    SanityCase(
-        id="heartmula-oss-3b-happy-new-year-sanity",
-        model="heartmula-oss-3b-happy-new-year",
-        media="audio",
-        prompt="pop, female vocal, acoustic, melodic",
-        lyrics="[verse]\nHello world\n[chorus]\nSing along",
-        duration=10,
-        guidance=1.5,
-        temperature=1.0,
-        top_k=50,
-        codec_steps=20,
-        codec_guidance=1.25,
-        seed=42,
-        audio_format="wav",
-        timeout_sec=900,
-        audio_quality_thresholds=AUDIO_THRESHOLDS_HEARTMULA.copy(),
-        semantic_gate_enabled=ENABLE_SEMANTIC_AUDIO,
-        semantic_min_score=55.0,
-        semantic_backend="clap",
-        codec_parity_manifest=HEARTMULA_CODEC_PARITY_MANIFEST,
-        description=(
-            "HeartMuLa MLX 10s audio sanity + HeartCodec parity "
-            "(fixed codes vs heartlib-mlx reference when fixtures present)"
-        ),
     ),
     SanityCase(
         id="wan-2.2-ti2v-5b-sanity",

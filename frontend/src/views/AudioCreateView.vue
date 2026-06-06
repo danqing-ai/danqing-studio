@@ -53,7 +53,7 @@
         :has-custom-params="hasCustomParams"
         :show-negative-prompt="supportsNegativePrompt"
         :show-lyrics="true"
-        :show-codec-controls="heartMuLaCodecStepsDef !== null"
+        :show-codec-controls="false"
         :show-cover-fidelity="audioWorkTab === 'cover'"
         :reference-media="coverReferenceMedia"
         :current-model-config="advancedParamModelConfig"
@@ -170,10 +170,6 @@ const params = reactive({
   time_signature: '',
   steps: 8,
   guidance: 3.0,
-  temperature: 1.0,
-  top_k: 50,
-  codec_steps: 10,
-  codec_guidance: 1.25,
   seed: null as number | null,
   n: 1,
   audio_format: 'wav',
@@ -256,15 +252,9 @@ const hasCustomParams = computed(() => {
   const p = currentModelConfig.value?.parameters || {};
   const stepsDef = p.steps?.default ?? 8;
   const guidanceDef = p.guidance?.default ?? 3.0;
-  const temperatureDef = p.temperature?.default ?? 1.0;
-  const topKDef = p.top_k?.default ?? 50;
-  const codecStepsDef = p.codec_steps?.default ?? 10;
-  const codecGuidanceDef = p.codec_guidance?.default ?? 1.25;
   const durationDef = p.duration?.default ?? 30;
   const formatDef = (p.audio_formats && p.audio_formats[0]) || audioFormats.value[0] || 'wav';
   return params.steps !== stepsDef || params.guidance !== guidanceDef
-    || params.temperature !== temperatureDef || params.top_k !== topKDef
-    || params.codec_steps !== codecStepsDef || params.codec_guidance !== codecGuidanceDef
     || params.seed !== null || params.n !== 1 || params.duration !== durationDef
     || params.audio_format !== formatDef;
 });
@@ -284,52 +274,9 @@ const audioFormats = computed(() => {
   return ['mp3', 'flac', 'wav', 'opus', 'aac'];
 });
 
-const promptPlaceholder = computed(() => {
-  if (currentModelConfig.value?.family === 'heartmula') {
-    return $tt('audio.promptPlaceholderHeartMuLa');
-  }
-  return $tt('audio.promptPlaceholder');
-});
+const promptPlaceholder = computed(() => $tt('audio.promptPlaceholder'));
 
-/** HeartMuLa codec controls — always shown in music params (registry may be stale). */
-const heartMuLaCodecStepsDef = computed(() => {
-  if (currentModelConfig.value?.family !== 'heartmula') return null;
-  const p = currentModelConfig.value?.parameters?.codec_steps;
-  return {
-    default: p?.default ?? 10,
-    min: p?.min ?? 4,
-    max: p?.max ?? 24,
-  };
-});
-
-const heartMuLaCodecGuidanceDef = computed(() => {
-  if (currentModelConfig.value?.family !== 'heartmula') return null;
-  const p = currentModelConfig.value?.parameters?.codec_guidance;
-  return {
-    default: p?.default ?? 1.25,
-    min: p?.min ?? 1.0,
-    max: p?.max ?? 2.0,
-    step: p?.step ?? 0.05,
-  };
-});
-
-/** Merge HeartMuLa fallbacks so advanced sliders work on older workspace registries. */
-const advancedParamModelConfig = computed(() => {
-  const cfg = currentModelConfig.value;
-  if (!cfg || cfg.family !== 'heartmula') return cfg;
-  const p = cfg.parameters || {};
-  return {
-    ...cfg,
-    parameters: {
-      ...p,
-      temperature: p.temperature ?? { default: 1.0, min: 0.5, max: 1.5, step: 0.1 },
-      top_k: p.top_k ?? { default: 50, min: 10, max: 100 },
-      guidance: p.guidance ?? { default: 1.5, min: 1.0, max: 3.0, step: 0.1 },
-      codec_steps: p.codec_steps ?? heartMuLaCodecStepsDef.value,
-      codec_guidance: p.codec_guidance ?? heartMuLaCodecGuidanceDef.value,
-    },
-  };
-});
+const advancedParamModelConfig = computed(() => currentModelConfig.value);
 const vocalLanguages = [
   { label: 'English', value: 'en' }, { label: '中文', value: 'zh' }, { label: '日本語', value: 'ja' },
   { label: '한국어', value: 'ko' }, { label: 'Français', value: 'fr' }, { label: 'Deutsch', value: 'de' },
@@ -445,10 +392,6 @@ const audioComposerParams = computed(() => ({
   steps: params.steps,
   guidance: params.guidance,
   seed: params.seed ?? null,
-  temperature: params.temperature,
-  top_k: params.top_k,
-  codec_steps: params.codec_steps,
-  codec_guidance: params.codec_guidance,
   negative_prompt: params.negative_prompt,
   lyrics: params.lyrics,
   instrumental: params.instrumental,
@@ -464,10 +407,6 @@ function applyAudioComposerParams(val: Record<string, unknown>) {
   params.steps = val.steps as number;
   params.guidance = val.guidance as number;
   params.seed = val.seed as number | null;
-  params.temperature = val.temperature as number;
-  params.top_k = val.top_k as number;
-  params.codec_steps = val.codec_steps as number;
-  params.codec_guidance = val.codec_guidance as number;
   params.negative_prompt = val.negative_prompt as string;
   params.lyrics = val.lyrics as string;
   params.instrumental = val.instrumental as boolean;
@@ -545,17 +484,6 @@ function applyDefaults(modelConfig: any) {
   const p = modelConfig.parameters;
   if (p.steps && p.steps.default != null) params.steps = p.steps.default;
   if (p.guidance && p.guidance.default != null) params.guidance = p.guidance.default;
-  if (p.temperature && p.temperature.default != null) params.temperature = p.temperature.default;
-  if (p.top_k && p.top_k.default != null) params.top_k = p.top_k.default;
-  if (modelConfig.family === 'heartmula') {
-    params.codec_steps = p.codec_steps?.default ?? 10;
-    params.codec_guidance = p.codec_guidance?.default ?? 1.25;
-  } else {
-    if (p.codec_steps && p.codec_steps.default != null) params.codec_steps = p.codec_steps.default;
-    if (p.codec_guidance && p.codec_guidance.default != null) {
-      params.codec_guidance = p.codec_guidance.default;
-    }
-  }
   if (p.duration) {
     if (p.duration.default != null) params.duration = p.duration.default;
     const dmin = p.duration.min ?? 10;
@@ -876,10 +804,6 @@ async function startGeneration() {
       time_signature: params.time_signature || '',
       steps: params.steps ?? null,
       guidance: params.guidance ?? null,
-      temperature: params.temperature ?? null,
-      top_k: params.top_k ?? null,
-      codec_steps: params.codec_steps ?? null,
-      codec_guidance: params.codec_guidance ?? null,
       seed: params.seed ?? null,
       n: params.n ?? 1,
       audio_format: params.audio_format || 'wav',

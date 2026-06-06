@@ -598,21 +598,5 @@
       "en": "Reveal Detail"
     },
     "media_scope": "video"
-  },
-  "HeartMuLa 快速": {
-    "positive": "pop, melodic, high quality",
-    "negative": "",
-    "applies_to": [
-      "create"
-    ],
-    "name": {
-      "zh": "HeartMuLa 快速",
-      "en": "HeartMuLa Fast"
-    },
-    "media_scope": "audio",
-    "model_id": "heartmula-oss-3b-happy-new-year",
-    "duration": 45,
-    "guidance": 1.0,
-    "codec_steps": 8
   }
 }

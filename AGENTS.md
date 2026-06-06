@@ -183,8 +183,7 @@ bin/danqing-generate --model <id> --prompt "test"    # image
 bin/danqing-audio-generate --model ace-step-xl-sft --prompt "test" --duration 10 --output /tmp/t.wav
 make bench-mflux          # when mflux reference exists
 make bench-sanity         # no reference CLI
-make bench-audio-sanity   # ACE-Step + HeartMuLa MLX 10s RMS gate
-make bench-audio-sanity-heartmula   # HeartMuLa only
+make bench-audio-sanity   # ACE-Step MLX 10s RMS gate
 make verify-engine-stack
 ```
 

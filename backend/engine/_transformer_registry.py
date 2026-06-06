@@ -269,12 +269,6 @@ _AUDIO_WEIGHT_REMAP = {
 # family → (module, run_method_name) for MusicPipeline Shape C
 _AUDIO_GENERATION_FACTORY = {
     "ace_step": ("backend.engine.families.ace_step.generation", "create_ace_step_generator"),
-    "heartmula": ("backend.engine.families.heartmula.generation", "create_heartmula_generator"),
-}
-
-# family → (module, bundle_is_ready_fn_name) optional readiness hook
-_AUDIO_BUNDLE_READY = {
-    "heartmula": ("backend.engine.families.heartmula.bundle", "bundle_is_ready"),
 }
 
 
@@ -307,10 +301,4 @@ def get_audio_generation_factory(family: str):
 
 def check_audio_bundle_ready(family: str, bundle_path: Any) -> bool | None:
     """Return ``True``/``False`` when a family hook exists; ``None`` if no extra check."""
-    import importlib
-
-    entry = _AUDIO_BUNDLE_READY.get(family)
-    if entry is None:
-        return None
-    fn = getattr(importlib.import_module(entry[0]), entry[1])
-    return bool(fn(bundle_path))
+    return None

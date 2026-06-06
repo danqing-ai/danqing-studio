@@ -203,7 +203,6 @@
   "audio": {
     "title": "音频创作",
     "promptPlaceholder": "描述你想生成的音乐，例如：欢快的电子舞曲，重低音配合合成器主旋律...",
-    "promptPlaceholderHeartMuLa": "风格标签（逗号分隔），例如：pop, female vocal, acoustic, 120 BPM",
     "negativePrompt": "负面描述",
     "lyrics": "歌词",
     "lyricsPlaceholder": "[Verse 1]\n写下你的歌词...\n[Chorus]\n副歌部分...",
@@ -234,7 +233,7 @@
     "guidance": "引导强度",
     "guidanceDesc": "更高值使结果更贴近描述",
     "temperature": "采样温度",
-    "temperatureDesc": "越高越随机；越低越稳定（HeartMuLa 语言模型）",
+    "temperatureDesc": "越高越随机；越低越稳定",
     "topK": "Top-K",
     "codecSteps": "Codec 步数",
     "codecStepsDesc": "神经 Codec 解码 ODE 步数，越多音质越好但更慢",

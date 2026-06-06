@@ -669,7 +669,16 @@ const sizeOptions = computed(() => {
 });
 
 const durationOptions = computed(() => {
-  const secs = [1, 2, 3, 4, 5, 8, 10];
+  const p = currentModelConfig.value?.parameters;
+  const nf = p?.num_frames;
+  const fps = p?.fps?.default ?? params.fps ?? 16;
+  let secs = [1, 2, 3, 4, 5, 8, 10];
+  if (nf?.default && fps > 0) {
+    const regSec = Math.max(1, Math.round((Number(nf.default) - 1) / fps));
+    if (!secs.includes(regSec)) {
+      secs = [...secs, regSec].sort((a, b) => a - b);
+    }
+  }
   return secs.map((sec) => ({ label: `${sec}s`, value: sec }));
 });
 

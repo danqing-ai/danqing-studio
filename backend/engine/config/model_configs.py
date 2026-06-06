@@ -262,43 +262,6 @@ class AceStepConfig:
             )
 
 
-@dataclass
-class HeartMulaConfig:
-    """HeartMuLa-oss-3B-happy-new-year — autoregressive LM + HeartCodec (12.5 Hz).
-
-    Registry model id: ``heartmula-oss-3b-happy-new-year``. Bundle layout matches
-    HeartMuLa/heartlib (HeartMuLaGen root + HeartMuLa-oss-3B/ + HeartCodec-oss/).
-    """
-    sample_rate: int = 48_000
-    frame_rate: float = 12.5
-    default_duration_seconds: float = 30.0
-    # Product cap (registry ``duration.max``); long MLX runs need large KV cache.
-    max_duration_seconds: float = 300.0
-    default_cfg_scale: float = 1.5
-    cfg_scale_min: float = 1.0
-    cfg_scale_max: float = 3.0
-    default_temperature: float = 1.0
-    temperature_min: float = 0.5
-    temperature_max: float = 1.5
-    default_topk: int = 50
-    topk_min: int = 10
-    topk_max: int = 100
-    codec_ode_steps: int = 20
-    codec_ode_steps_min: int = 4
-    codec_ode_steps_max: int = 32
-    codec_guidance_scale: float = 1.25
-    codec_guidance_min: float = 1.0
-    codec_guidance_max: float = 2.0
-    long_form_temperature: float = 1.04
-    long_form_temperature_min: float = 0.9
-    long_form_temperature_max: float = 1.5
-    long_form_topk: int = 60
-    long_form_topk_min: int = 20
-    long_form_topk_max: int = 150
-    supports_guidance: bool = True
-    supports_img2img: bool = False
-
-
 # =========================================================================
 # Video models
 # =========================================================================
@@ -606,7 +569,6 @@ FAMILY_CONFIG_MAP: dict[str, type] = {
     "seedvr2": SeedVR2Config,
     # Audio
     "ace_step": AceStepConfig,
-    "heartmula": HeartMulaConfig,
     # Video
     "ltx": LTXConfig,
     "wan": WanConfig,

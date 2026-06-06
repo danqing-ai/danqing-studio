@@ -16,10 +16,8 @@
 | `make bench-sanity-case ID=ace-step-xl-sft-inspiration-lm` | 同上 | 短描述 + 空歌词 + planner/codes（llm_dit） |
 | `make bench-sanity-case ID=ace-step-xl-sft-cover-sanity` | 同上 | cover 编辑（`danqing-audio-edit` + fixture WAV） |
 | `make bench-audio-sanity-ace-step` | 快捷目标 | ACE-Step 四条 sanity 串联 |
-| `make bench-sanity-case ID=heartmula-oss-3b-happy-new-year-sanity` | 同上 | HeartMuLa MLX 10s 健全性 + Codec parity（固定 codes vs heartlib，需 fixtures） |
-| `make bench-audio-sanity` | 快捷目标 | ACE-Step（含 inspiration + cover）+ HeartMuLa 各跑一条 10s 健全性 |
+| `make bench-audio-sanity` | 快捷目标 | ACE-Step（含 inspiration + cover）各跑一条 10s 健全性 |
 | `make bench-audio-sanity-lm` | 快捷目标 | ACE-Step 含 5Hz LM 扩写 |
-| `make bench-audio-sanity-heartmula` | 快捷目标 | HeartMuLa 健全性（含 Codec parity，fixtures 缺失时 parity SKIP） |
 | `make bench-wan-sanity` | `sanity --case wan-2.2-ti2v-5b-sanity` | Wan 5B 快速视频健全性（4 步、17 帧） |
 | `make bench-wan-baseline` | `sanity --case wan-2.2-ti2v-5b-baseline` | Wan 5B 耗时基线（8 步、81 帧，打印 `[BASELINE] total_sec`） |
 | `make bench-sanity-case ID=ace-step-xl-sft-cuda-sanity` | 同上 | CUDA 路径（无 GPU 时 SKIP） |
