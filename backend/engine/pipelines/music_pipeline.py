@@ -33,6 +33,7 @@ from backend.engine.common.pipeline_registry import (
 )
 from backend.engine.config.model_configs import (
     AceStepConfig,
+    DiffRhythmConfig,
     get_config_class,
 )
 from backend.engine._transformer_registry import get_audio_generation_factory
@@ -122,6 +123,7 @@ class MusicPipeline:
         cfg_cls = get_config_class(family)
         config = cfg_cls()
         runners = {
+            "diffrhythm": self._run_diffrhythm,
             "ace_step": self._run_ace_step,
         }
         runner = runners.get(family)
@@ -618,3 +620,220 @@ class MusicPipeline:
             )
             ids.append(aid)
         return ids
+
+    def _run_diffrhythm(
+        self,
+        request: AudioGenerationRequest,
+        exec_ctx: ExecutionContext,
+        model_id: str,
+        version_key: str | None,
+        entry: Any,
+        bundle_root: Path,
+        config: DiffRhythmConfig,
+        t0: float,
+    ) -> EngineResult:
+        from backend.engine.families.diffrhythm.generation import (
+            prepare_music_request as prepare_diffrhythm_request,
+        )
+        from backend.engine.families.diffrhythm.quality_score import (
+            quality_log_message as diffrhythm_quality_log_message,
+        )
+
+        prepared = prepare_diffrhythm_request(
+            request, config, bundle_root, backend=getattr(self.ctx, "backend", "mlx")
+        )
+        for level, message in prepared.log_events:
+            exec_ctx.on_log(LogEvent(level=level, message=message))
+
+        exec_ctx.on_log(
+            LogEvent(
+                level="info",
+                message=f"Loading DiffRhythm 2 model: {model_id} from {bundle_root}",
+            )
+        )
+        generator = self._get_generator(entry, version_key, "diffrhythm", bundle_root)
+
+        steps = prepared.steps
+        lyrics = prepared.lyrics
+        vocal_lang = prepared.vocal_language
+        shift = prepared.shift
+        guidance = prepared.guidance
+        duration = float(prepared.duration)
+        seed = (
+            request.seed
+            if request.seed is not None and request.seed >= 0
+            else random.randint(0, 2**31 - 1)
+        )
+        n = max(request.n, 1)
+
+        exec_ctx.on_log(
+            LogEvent(
+                level="info",
+                message=(
+                    f"Generating {n} audio(s): duration={duration}s, steps={steps}, "
+                    f"guidance={guidance}, seed={seed}, "
+                    f"instrumental={request.instrumental}, vocal_language={vocal_lang}"
+                ),
+            )
+        )
+        if request.negative_prompt:
+            exec_ctx.on_log(
+                LogEvent(
+                    level="warning",
+                    message="negative_prompt is not used by DiffRhythm 2 yet (ignored)",
+                )
+            )
+
+        output_paths: List[str] = []
+        output_durations: List[float] = []
+        for i in range(n):
+            self._raise_if_cancelled(exec_ctx)
+            batch_seed = seed + i
+            exec_ctx.on_progress(
+                ProgressEvent(
+                    progress=(i + 0.1) / n,
+                    step=i + 1,
+                    total=n,
+                    message=f"Generating audio {i + 1}/{n}",
+                )
+            )
+
+            exec_ctx.on_log(
+                LogEvent(
+                    level="info",
+                    message=f"Running DiffRhythm 2 block flow matching ({i + 1}/{n}, seed={batch_seed})...",
+                )
+            )
+            t_gen = time.monotonic()
+            try:
+                waveform = generator.generate_waveform(
+                    prompt=prepared.effective_prompt or request.prompt or "",
+                    lyrics=lyrics,
+                    vocal_language=vocal_lang,
+                    duration=duration,
+                    steps=steps,
+                    guidance=guidance,
+                    seed=batch_seed,
+                    bpm=request.bpm,
+                    key_scale=request.key_scale or "",
+                    time_signature=request.time_signature or "",
+                    shift=shift,
+                )
+            except Exception as exc:
+                logger.exception(
+                    "DiffRhythm 2 generation failed (item %d/%d, seed=%s)",
+                    i + 1,
+                    n,
+                    batch_seed,
+                )
+                exec_ctx.on_log(
+                    LogEvent(
+                        level="error",
+                        message=f"DiffRhythm 2 generation failed ({i + 1}/{n}): {exc}",
+                    )
+                )
+                raise
+            self._raise_if_cancelled(exec_ctx)
+
+            gen_s = time.monotonic() - t_gen
+            latent_frames = getattr(generator, "last_latent_frames", 0)
+            hum_ratio = getattr(generator, "last_hum_ratio", 0.0)
+            mains_acf = getattr(generator, "last_mains_acf", 0.0)
+            decode_mode = getattr(generator, "last_decode_mode", "")
+            latent_cos = getattr(generator, "last_latent_cos", 0.0)
+            latent_diff = getattr(generator, "last_latent_diff_mean", 0.0)
+            quality = getattr(generator, "last_quality", None)
+            q_msg = diffrhythm_quality_log_message(quality) if quality is not None else None
+            if q_msg:
+                exec_ctx.on_log(LogEvent(level="info", message=q_msg))
+
+            exec_ctx.on_log(
+                LogEvent(
+                    level="info",
+                    message=(
+                        f"DiffRhythm 2 inference done ({i + 1}/{n}): {gen_s:.1f}s, "
+                        f"latent_frames={latent_frames}, decode={decode_mode}, "
+                        f"latent_cos={latent_cos:.4f}, latent_diff={latent_diff:.4f}, "
+                        f"mains_acf={mains_acf:.3f}"
+                    ),
+                )
+            )
+            if mains_acf > 0.4 or hum_ratio > 0.25:
+                exec_ctx.on_log(
+                    LogEvent(
+                        level="warning",
+                        message=(
+                            f"Audio {i + 1}/{n} may contain mains hum "
+                            f"(mains_acf={mains_acf:.3f}); try another seed or a descriptive prompt"
+                        ),
+                    )
+                )
+
+            exec_ctx.on_progress(
+                ProgressEvent(
+                    progress=(i + 0.9) / n,
+                    step=i + 1,
+                    total=n,
+                    message=f"Saving audio {i + 1}/{n}",
+                )
+            )
+
+            out_path = self._save_audio(
+                waveform,
+                model_id,
+                batch_seed,
+                family="diffrhythm",
+                sample_rate=config.sample_rate,
+            )
+            n_samples = int(waveform.shape[0]) if hasattr(waveform, "shape") else 0
+            dur_written = n_samples / config.sample_rate if n_samples else 0.0
+            output_paths.append(str(out_path))
+            output_durations.append(dur_written)
+
+            exec_ctx.on_log(
+                LogEvent(
+                    level="success",
+                    message=(
+                        f"Saved audio {i + 1}/{n}: {out_path.name} "
+                        f"({dur_written:.1f}s, {out_path.stat().st_size // 1024}KB)"
+                    ),
+                )
+            )
+
+        self._raise_if_cancelled(exec_ctx)
+        exec_ctx.on_progress(
+            ProgressEvent(progress=1.0, step=n, total=n, message="Complete")
+        )
+        exec_ctx.on_log(
+            LogEvent(
+                level="success",
+                message=f"DiffRhythm 2 complete: {len(output_paths)} file(s) in {time.monotonic() - t0:.1f}s",
+            )
+        )
+        elapsed = time.monotonic() - t0
+        asset_ids = self._persist_assets(
+            output_paths,
+            request,
+            model_id,
+            elapsed,
+            exec_ctx.task_id,
+            output_durations,
+        )
+
+        result_meta: dict[str, Any] = {
+            "model": model_id,
+            "seed": seed,
+            "steps": steps,
+            "guidance": guidance,
+            "duration_seconds": duration,
+        }
+        quality = getattr(generator, "last_quality", None)
+        if quality is not None:
+            result_meta.update(quality.as_metadata())
+
+        return EngineResult(
+            primary_asset_id=asset_ids[0] if asset_ids else "",
+            asset_ids=asset_ids,
+            output_paths=output_paths,
+            metadata=result_meta,
+        )

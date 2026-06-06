@@ -60,6 +60,10 @@ FAMILY_BUNDLE_CONTRACTS: dict[str, FamilyBundleContract] = {
         required=frozenset({"transformer", "vae"}),
         optional=frozenset({"tokenizer"}),
     ),
+    "diffrhythm": FamilyBundleContract(
+        required=frozenset({"transformer"}),
+        optional=frozenset({"vae"}),
+    ),
 }
 
 

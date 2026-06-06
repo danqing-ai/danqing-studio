@@ -209,6 +209,40 @@ class SeedVR2Config:
 
 
 @dataclass
+class DiffRhythmConfig:
+    """DiffRhythm 2 — block flow matching + Music VAE + BigVGAN decoder.
+
+    Defaults match ``ASLP-lab/DiffRhythm2`` ``config.json``; bundle config is
+    authoritative at load time.
+    """
+    # DiT (Llama-NAR backbone inside CFM)
+    dim: int = 2048
+    depth: int = 16
+    heads: int = 16
+    ff_mult: int = 4
+    text_dim: int = 512
+    mel_dim: int = 64
+    text_num_embeds: int = 1000
+    block_size: int = 10
+    use_flex_attn: bool = False
+    repa_depth: int = 6
+    repa_dims: tuple[int, ...] = (1024, 768)
+
+    # Audio / latent (5 Hz Music VAE latents → 48 kHz BigVGAN decode)
+    latent_frame_rate: float = 5.0
+    style_encode_sample_rate: int = 24_000
+    sample_rate: int = 48_000
+    fake_stereo: bool = True
+
+    # Pipeline
+    supports_guidance: bool = True
+    default_infer_steps: int = 16
+    default_guidance: float = 2.0  # cfg_strength in upstream inference
+    max_duration_seconds: int = 210
+    mulan_repo_id: str = "OpenMuQ/MuQ-MuLan-large"
+
+
+@dataclass
 class AceStepConfig:
     """ACE-Step series — music generation via DiT + VAE.
 
@@ -568,6 +602,7 @@ FAMILY_CONFIG_MAP: dict[str, type] = {
     "z_image": ZImageConfig,
     "seedvr2": SeedVR2Config,
     # Audio
+    "diffrhythm": DiffRhythmConfig,
     "ace_step": AceStepConfig,
     # Video
     "ltx": LTXConfig,

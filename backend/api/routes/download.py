@@ -436,6 +436,28 @@ async def convert_model(request: ConvertModelRequest, http_request: Request):
     to_ver = versions.get(request.to_version)
     if not to_ver:
         raise HTTPException(status_code=404, detail=t("error.target_version_not_found", locale, version=request.to_version))
+    if to_ver.get("source_type") != "derived":
+        raise HTTPException(
+            status_code=400,
+            detail=t("error.target_version_not_derived", locale, version=request.to_version),
+        )
+    declared_parent = to_ver.get("from_version")
+    if not declared_parent:
+        raise HTTPException(
+            status_code=400,
+            detail=t("error.derived_version_missing_parent", locale, version=request.to_version),
+        )
+    if declared_parent != request.from_version:
+        raise HTTPException(
+            status_code=400,
+            detail=t(
+                "error.derived_version_parent_mismatch",
+                locale,
+                version=request.to_version,
+                expected=declared_parent,
+                got=request.from_version,
+            ),
+        )
 
     progress_queue: asyncio.Queue = asyncio.Queue()
 

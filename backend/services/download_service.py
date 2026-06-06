@@ -1071,6 +1071,23 @@ class DownloadService(IDownloadService):
             loc = get_locale()
             raise ValueError(tt("error.target_version_not_found", loc, version=to_version))
 
+        loc = get_locale()
+        if to_ver_config.get("source_type") != "derived":
+            raise ValueError(tt("error.target_version_not_derived", loc, version=to_version))
+        declared_parent = to_ver_config.get("from_version")
+        if not declared_parent:
+            raise ValueError(tt("error.derived_version_missing_parent", loc, version=to_version))
+        if declared_parent != from_version:
+            raise ValueError(
+                tt(
+                    "error.derived_version_parent_mismatch",
+                    loc,
+                    version=to_version,
+                    expected=declared_parent,
+                    got=from_version,
+                )
+            )
+
         from_path = self._resolve_version_path(from_ver_config)
         if not from_path.exists():
             loc = get_locale()
@@ -1110,6 +1127,19 @@ class DownloadService(IDownloadService):
 
             await update_progress("loading", 0.1)
 
+            family = str(config.get("family") or "")
+            from backend.core.derived_quant_layout import (
+                copy_non_quantized_bundle,
+                resolve_derived_quant_layout,
+            )
+
+            plan = resolve_derived_quant_layout(
+                family=family,
+                from_root=from_path,
+                to_root=to_path,
+                to_ver_config=to_ver_config,
+            )
+
             def _do_conversion():
                 """Execute quantization in a thread (blocking MLX computation)."""
                 import mlx.core as mx
@@ -1117,14 +1147,8 @@ class DownloadService(IDownloadService):
 
                 # 1. Load source weights
                 weights = {}
-                transformer_dir = from_path / "transformer"
-                if transformer_dir.exists():
-                    for sf in sorted(transformer_dir.glob("*.safetensors")):
-                        weights.update(dict(mx.load(str(sf))))
-                else:
-                    # Fallback: search directly in root directory
-                    for sf in sorted(from_path.glob("*.safetensors")):
-                        weights.update(dict(mx.load(str(sf))))
+                for sf in plan.load_paths:
+                    weights.update(dict(mx.load(str(sf))))
 
                 if not weights:
                     raise RuntimeError(f"No safetensors weights found in {from_path}")
@@ -1175,53 +1199,51 @@ class DownloadService(IDownloadService):
                         continue
                     quantized[key] = tensor
 
-                # 3. Shard saving (max 2GB/shard)
+                # 3. Save quantized weights
                 max_shard_bytes = 2 << 30
-                shards = []
-                current_shard = {}
-                current_size = 0
+                plan.output_dir.mkdir(parents=True, exist_ok=True)
 
-                for key, value in quantized.items():
-                    if current_size + value.nbytes > max_shard_bytes and current_shard:
-                        shards.append(current_shard)
-                        current_shard = {}
-                        current_size = 0
-                    current_shard[key] = value
-                    current_size += value.nbytes
-                if current_shard:
-                    shards.append(current_shard)
-
-                # Ensure output directory exists
-                to_path.mkdir(parents=True, exist_ok=True)
-                transformer_out = to_path / "transformer"
-                transformer_out.mkdir(parents=True, exist_ok=True)
-
-                weight_map = {}
-                for i, shard in enumerate(shards):
-                    shard_name = f"model_{i:05d}.safetensors"
+                if plan.single_output_file is not None:
                     mx.save_safetensors(
-                        str(transformer_out / shard_name),
-                        shard,
+                        str(plan.single_output_file),
+                        quantized,
                         metadata={"quantization_level": str(quantize_bits)},
                     )
-                    for k in shard.keys():
-                        weight_map[k] = shard_name
+                else:
+                    shards = []
+                    current_shard = {}
+                    current_size = 0
 
-                # Write model.safetensors.index.json (HF format compatible)
-                index_data = {
-                    "metadata": {"quantization_level": str(quantize_bits)},
-                    "weight_map": weight_map,
-                }
-                with open(transformer_out / "model.safetensors.index.json", "w") as f:
-                    json.dump(index_data, f, indent=2)
+                    for key, value in quantized.items():
+                        if current_size + value.nbytes > max_shard_bytes and current_shard:
+                            shards.append(current_shard)
+                            current_shard = {}
+                            current_size = 0
+                        current_shard[key] = value
+                        current_size += value.nbytes
+                    if current_shard:
+                        shards.append(current_shard)
 
-                # 4. Copy unquantized components (VAE / text_encoder / tokenizer etc.)
-                for subdir in ("vae", "text_encoder", "tokenizer", "text_encoder_2", "tokenizer_2"):
-                    src = from_path / subdir
-                    if src.exists():
-                        dst = to_path / subdir
-                        if not dst.exists():
-                            shutil.copytree(src, dst)
+                    weight_map = {}
+                    for i, shard in enumerate(shards):
+                        shard_name = f"{plan.output_shard_prefix}_{i:05d}.safetensors"
+                        mx.save_safetensors(
+                            str(plan.output_dir / shard_name),
+                            shard,
+                            metadata={"quantization_level": str(quantize_bits)},
+                        )
+                        for k in shard.keys():
+                            weight_map[k] = shard_name
+
+                    index_data = {
+                        "metadata": {"quantization_level": str(quantize_bits)},
+                        "weight_map": weight_map,
+                    }
+                    with open(plan.output_dir / "model.safetensors.index.json", "w") as f:
+                        json.dump(index_data, f, indent=2)
+
+                # 4. Copy unquantized companion files
+                copy_non_quantized_bundle(from_path, to_path, plan)
 
                 return done, total
 

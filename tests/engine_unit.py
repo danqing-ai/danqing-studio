@@ -1818,5 +1818,33 @@ class BundleManifestTests(unittest.TestCase):
             self.assertIn("text_encoder", status["missing"])
 
 
+class DerivedQuantLayoutTests(unittest.TestCase):
+    def test_family_layout_defaults(self) -> None:
+        from backend.core.derived_quant_layout import _FAMILY_DEFAULT_LAYOUT
+
+        self.assertEqual(_FAMILY_DEFAULT_LAYOUT["wan"], "wan_dit_shards")
+        self.assertEqual(_FAMILY_DEFAULT_LAYOUT["diffrhythm"], "dit_single_file")
+        self.assertEqual(_FAMILY_DEFAULT_LAYOUT["ace_step"], "dit_single_file")
+
+    def test_registry_derived_versions_declare_parent_and_bits(self) -> None:
+        import json
+
+        reg = json.loads(
+            (Path(__file__).resolve().parents[1] / "default_config" / "models_registry.json").read_text(
+                encoding="utf-8",
+            )
+        )
+        for model_id, model in reg["models"].items():
+            for ver_key, ver in (model.get("versions") or {}).items():
+                if ver.get("source_type") != "derived":
+                    continue
+                self.assertTrue(
+                    ver.get("from_version"),
+                    f"{model_id}/{ver_key} missing from_version",
+                )
+                bits = (ver.get("quantization") or {}).get("bits")
+                self.assertIn(bits, (4, 8), f"{model_id}/{ver_key} missing quantization.bits")
+
+
 if __name__ == "__main__":
     unittest.main()

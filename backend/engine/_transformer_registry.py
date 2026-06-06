@@ -259,15 +259,18 @@ def get_video_generation_factory(family: str):
 # =========================================================================
 
 _AUDIO_TRANSFORMER = {
+    "diffrhythm": ("backend.engine.families.diffrhythm.transformer", "DiffRhythmTransformer"),
     "ace_step": ("backend.engine.families.ace_step.transformer", "AceStepTransformer"),
 }
 
 _AUDIO_WEIGHT_REMAP = {
+    "diffrhythm": ("backend.engine.families.diffrhythm.weights", "remap_diffrhythm_weights"),
     "ace_step": ("backend.engine.families.ace_step.weights", "remap_ace_step_weights"),
 }
 
 # family → (module, run_method_name) for MusicPipeline Shape C
 _AUDIO_GENERATION_FACTORY = {
+    "diffrhythm": ("backend.engine.families.diffrhythm.generation", "create_diffrhythm_generator"),
     "ace_step": ("backend.engine.families.ace_step.generation", "create_ace_step_generator"),
 }
 

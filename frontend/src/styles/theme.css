@@ -1312,45 +1312,205 @@ body {
  color: var(--dq-color-white);
 }
 
-/* 模型版本：iOS 分组列表（替代 data table） */
+/* 模型版本列表 */
 .model-version-list {
  list-style: none;
  margin: 12px 0 0;
  padding: 0;
- border-radius: 12px;
- overflow: hidden;
+ border-radius: 10px;
  border: 1px solid var(--dq-border-subtle);
  background: var(--dq-fill-control);
-}
-
-.model-version-row {
- display: flex;
- flex-wrap: wrap;
- align-items: flex-start;
- justify-content: space-between;
- gap: 12px;
- padding: 12px 14px;
- border-bottom: 1px solid var(--dq-border-subtle);
-}
-
-.model-version-row:last-child {
- border-bottom: none;
-}
-
-.model-version-row__info {
- flex: 1 1 200px;
- min-width: 0;
+ overflow: visible;
 }
 
 .model-version-row__actions {
- flex: 0 0 auto;
+ grid-area: actions;
  display: flex;
- justify-content: flex-end;
+ justify-content: flex-start;
+ flex-wrap: wrap;
+ flex-shrink: 0;
+ overflow: visible;
+ gap: 6px;
+}
+
+.model-version-row--parent .model-version-row__actions,
+.model-version-row--parent .model-version-row__tags.has-chevron {
+ padding-left: 20px;
+}
+
+.model-version-list__source {
+ padding: 8px 12px 0;
+}
+
+.model-version-entry {
+ border-bottom: 1px solid var(--dq-border-subtle);
+}
+
+.model-version-entry:last-child {
+ border-bottom: none;
+}
+
+.model-version-entry.is-ready > .model-version-row {
+ background: color-mix(in srgb, var(--dq-success) 4%, transparent);
+}
+
+.model-version-entry.is-expanded {
+ background: color-mix(in srgb, var(--dq-label-primary) 2%, transparent);
+}
+
+.model-version-row {
+ display: grid;
+ grid-template-columns: minmax(0, 1fr);
+ grid-template-areas:
+  'info'
+  'actions';
+ gap: 8px;
+ padding: 10px 12px;
+}
+
+.model-version-row + .model-version-row {
+ border-top: 1px solid var(--dq-border-subtle);
+}
+
+.model-version-row__info {
+ grid-area: info;
+ display: flex;
+ flex-direction: column;
+ gap: 6px;
  min-width: 0;
 }
 
+.model-version-row__info.is-clickable {
+ cursor: pointer;
+}
+
+.model-version-row__head {
+ display: flex;
+ align-items: center;
+ gap: 6px;
+ min-width: 0;
+}
+
+.model-version-row__tags {
+ display: flex;
+ flex-wrap: wrap;
+ align-items: center;
+ gap: 4px 6px;
+}
+
+.model-version-row__tags.has-chevron {
+ padding-left: 20px;
+}
+
+.model-version-row__chevron {
+ flex: 0 0 auto;
+ width: 14px;
+ height: 14px;
+ font-size: 12px;
+ line-height: 1;
+ color: var(--dq-label-tertiary);
+ transition: transform 0.15s ease;
+}
+
+.model-version-row__chevron.is-expanded {
+ transform: rotate(90deg);
+}
+
 .model-version-row.is-ready {
+ background: transparent;
+}
+
+.model-version-local-panel {
+ padding: 10px 12px 12px 20px;
+ border-top: 1px solid var(--dq-border-subtle);
+ background: color-mix(in srgb, var(--dq-label-primary) 2.5%, transparent);
+}
+
+.model-version-local-panel__hint {
+ margin: 0 0 8px;
+ font-size: 11px;
+ line-height: 1.4;
+ color: var(--dq-label-tertiary);
+}
+
+.model-version-local-panel__list {
+ display: flex;
+ flex-direction: column;
+ border: 1px solid var(--dq-border-subtle);
+ border-radius: 8px;
+ overflow: hidden;
+ background: var(--dq-fill-base);
+}
+
+.model-local-variant {
+ display: grid;
+ grid-template-columns: minmax(0, 1fr) auto;
+ align-items: center;
+ gap: 8px;
+ padding: 8px 10px;
+ border: none;
+ border-radius: 0;
+ background: transparent;
+}
+
+.model-local-variant + .model-local-variant {
+ border-top: 1px solid var(--dq-border-subtle);
+}
+
+.model-local-variant.is-ready {
  background: color-mix(in srgb, var(--dq-success) 4%, transparent);
+}
+
+.model-local-variant__info {
+ display: flex;
+ align-items: baseline;
+ flex-wrap: wrap;
+ gap: 6px;
+ min-width: 0;
+}
+
+.model-local-variant__name {
+ font-size: 12px;
+ font-weight: 600;
+ color: var(--dq-label-primary);
+}
+
+.model-local-variant__size {
+ font-size: 11px;
+ color: var(--dq-label-tertiary);
+}
+
+.model-local-variant__action {
+ display: flex;
+ align-items: center;
+ justify-content: flex-end;
+ gap: 6px;
+ flex-shrink: 0;
+}
+
+.model-local-variant__waiting {
+ font-size: 11px;
+ color: var(--dq-label-tertiary);
+}
+
+.model-local-variant__btn.dq-btn {
+ height: 26px;
+ padding: 0 8px;
+ font-size: 11px;
+}
+
+.model-local-variant__btn.model-ver-btn--delete.dq-btn {
+ min-width: 26px;
+ padding: 0;
+}
+
+.model-version-row__quant-hint {
+ font-size: 10px;
+}
+
+.model-ver-btn--manage {
+ min-width: 28px;
+ padding: 0 6px;
 }
 
 /* 已安装模型列表 */
@@ -1474,16 +1634,20 @@ body {
  overflow-y: auto;
 }
 
-.model-version-cell-row {
- display: flex;
- align-items: center;
- gap: 6px;
- flex-wrap: wrap;
-}
-
 .model-version-name {
  font-size: 13px;
+ font-weight: 500;
  color: var(--dq-label-primary);
+ line-height: 1.35;
+ white-space: nowrap;
+ overflow: hidden;
+ text-overflow: ellipsis;
+ min-width: 0;
+ flex: 1;
+}
+
+.model-version-row__tags .dq-tag {
+ font-size: 10px;
 }
 
 .model-version-derived {
@@ -3691,7 +3855,7 @@ body {
 
 .model-card-header {
  position: relative;
- height: 100px;
+ height: 72px;
  background: var(--dq-fill-secondary);
  display: flex;
  align-items: center;
@@ -3724,19 +3888,29 @@ body {
  color: var(--dq-success);
 }
 
-.model-card-header .model-card-badges {
+.model-status-dot {
  position: absolute;
- top: 10px;
- left: 10px;
+ top: 12px;
+ right: 12px;
  z-index: 1;
- max-width: calc(100% - 88px);
+ width: 10px;
+ height: 10px;
+ border-radius: 999px;
+ border: 2px solid var(--dq-fill-base);
+ box-shadow: 0 0 0 1px var(--dq-border-subtle);
+ background: var(--dq-warning);
 }
 
-.model-status {
- position: absolute;
- top: 10px;
- right: 10px;
- z-index: 1;
+.model-status-dot.is-ready {
+ background: var(--dq-success);
+}
+
+.model-status-dot.is-incomplete {
+ background: var(--dq-danger);
+}
+
+.model-status-dot.is-missing {
+ background: var(--dq-warning);
 }
 
 /* 模型卡片内容 */
@@ -3759,7 +3933,7 @@ body {
 .model-card-desc {
  font-size: 12px;
  color: var(--text-muted);
- margin-bottom: 12px;
+ margin-bottom: 0;
  line-height: 1.5;
  white-space: nowrap;
  overflow: hidden;
@@ -3767,10 +3941,34 @@ body {
  cursor: default;
 }
 
+.model-card-attrs {
+ display: flex;
+ flex-direction: row;
+ flex-wrap: wrap;
+ align-items: center;
+ gap: 6px;
+ margin-top: 10px;
+ margin-bottom: 8px;
+ min-height: 20px;
+}
+
+.model-card-attrs .model-license-badges {
+ gap: 6px;
+}
+
+.model-card-attrs .model-license-badges .dq-tag,
+.model-card-attrs > .dq-tag {
+ font-size: 11px;
+ padding: 0 7px;
+ height: 20px;
+ line-height: 18px;
+}
+
 .model-card-meta {
  display: flex;
  gap: 6px;
- margin-bottom: 12px;
+ margin-top: 8px;
+ margin-bottom: 0;
  flex-wrap: wrap;
  align-items: center;
 }
@@ -4005,7 +4203,7 @@ body {
 }
 
 .models-page .model-card-header {
- height: 108px;
+ height: 76px;
  border-bottom: none;
 }
 
@@ -4062,6 +4260,24 @@ body {
  max-height: none;
  -webkit-line-clamp: unset;
  -webkit-box-orient: unset;
+}
+
+.models-page .model-card-attrs {
+ margin-top: 8px;
+ margin-bottom: 10px;
+}
+
+.models-page .model-card-meta {
+ display: flex;
+ flex-wrap: wrap;
+ align-items: center;
+ gap: 6px;
+ margin-top: 0;
+ margin-bottom: 4px;
+}
+
+.models-page .model-version-list {
+ margin-top: 10px;
 }
 
 .models-page .model-card-meta .dq-tag {

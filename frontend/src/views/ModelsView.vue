@@ -150,9 +150,9 @@
             :key="model.id"
             :xs="24"
             :sm="12"
-            :md="8"
-            :lg="6"
-            :xl="4"
+            :md="12"
+            :lg="8"
+            :xl="8"
             class="models-page__col-mb"
           >
             <DqSurfaceCard
@@ -164,33 +164,16 @@
                 <div class="model-icon">
                   {{ getModelInitials(model) }}
                 </div>
-                <ModelLicenseBadges
-                  class="model-card-badges"
-                  :recommended="model.recommended"
-                  :commercial-use-allowed="model.commercial_use_allowed"
-                  stacked
+                <div
+                  class="model-status-dot"
+                  :class="{
+                    'is-ready': modelsDetailedStatus[model.id]?.status === 'ready',
+                    'is-incomplete': modelsDetailedStatus[model.id]?.status === 'incomplete',
+                    'is-missing': !modelsDetailedStatus[model.id]?.status
+                      || modelsDetailedStatus[model.id]?.status === 'missing',
+                  }"
+                  :title="modelStatusTitle(model.id)"
                 />
-                <div class="model-status">
-                  <DqTag
-                    v-if="modelsDetailedStatus[model.id]?.status === 'ready'"
-                   
-                    type="success"
-                  >
-                    {{ $t('download.readyTag') }}
-                  </DqTag>
-                  <DqTag
-                    v-else-if="
-                      modelsDetailedStatus[model.id]?.status === 'incomplete'
-                    "
-                   
-                    type="danger"
-                  >
-                    {{ $t('download.incompleteTag') }}
-                  </DqTag>
-                  <DqTag v-else type="warning">
-                    {{ $t('download.notDownloadedTag') }}
-                  </DqTag>
-                </div>
               </div>
 
               <!-- Card content -->
@@ -209,43 +192,32 @@
                   </div>
                 </DqTooltip>
 
-                <!-- Meta info -->
-                <div class="model-card-meta">
+                <div class="model-card-attrs">
+                  <ModelLicenseBadges
+                    :recommended="model.recommended"
+                    :commercial-use-allowed="model.commercial_use_allowed"
+                    effect="plain"
+                    size="small"
+                  />
+                  <ModelVersionSourceBadge
+                    v-if="modelCardSource(model)"
+                    :source="modelCardSource(model)"
+                  />
+                </div>
+
+                <div
+                  v-if="model.size || model.base_model"
+                  class="model-card-meta"
+                >
                   <DqTag
                     v-if="model.size"
-                   
                     type="info"
                     effect="plain"
                   >
                     {{ model.size }}
                   </DqTag>
                   <DqTag
-                    v-if="model.source === 'huggingface'"
-                   
-                    type="primary"
-                    effect="plain"
-                  >
-                    HF
-                  </DqTag>
-                  <DqTag
-                    v-else-if="model.source === 'modelscope'"
-                   
-                    type="info"
-                    effect="plain"
-                  >
-                    ModelScope
-                  </DqTag>
-                  <DqTag
-                    v-else-if="model.source === 'civitai'"
-                   
-                    type="warning"
-                    effect="plain"
-                  >
-                    CivitAI
-                  </DqTag>
-                  <DqTag
                     v-if="model.base_model"
-                   
                     type="success"
                     effect="plain"
                   >
@@ -253,166 +225,19 @@
                   </DqTag>
                 </div>
 
-                <ul
+                <ModelCardVersions
                   v-if="model.versions"
-                  class="model-version-list"
-                  role="list"
-                >
-                  <li
-                    v-for="row in modelVersionTableRows(model)"
-                    :key="row.verKey"
-                    class="model-version-row"
-                    :class="{
-                      'is-ready': row.vstatus === 'ready',
-                      'is-pending': row.vstatus !== 'ready',
-                    }"
-                    role="listitem"
-                  >
-                    <div class="model-version-row__info">
-                      <div class="model-version-cell-row">
-                        <span class="model-version-name">{{ row.ver.name }}</span>
-                        <DqTag v-if="row.ver.size" type="info" effect="plain">{{ row.ver.size }}</DqTag>
-                        <DqTag
-                          v-if="row.ver.source_type === 'derived'"
-                         
-                          type="warning"
-                          effect="plain"
-                        >
-                          {{ $t('download.derivedTag') }}
-                        </DqTag>
-                        <DqTag
-                          v-else-if="row.ver.source_type === 'prequantized'"
-                         
-                          type="info"
-                          effect="plain"
-                        >
-                          {{ $t('download.prequantized') }}
-                        </DqTag>
-                        <DqTag
-                          v-if="row.vstatus === 'ready'"
-                         
-                          type="success"
-                          effect="plain"
-                        >
-                          {{ $t('studio.ready') }}
-                        </DqTag>
-                        <DqTag
-                          v-for="comp in versionBundleComponents(row.model.id, row.verKey)"
-                          :key="`${row.verKey}-${comp.name}`"
-                          :type="comp.ok ? 'success' : 'warning'"
-                          effect="plain"
-                        >
-                          {{ $t(`download.component.${comp.name}`) }}
-                        </DqTag>
-                      </div>
-                      <div
-                        v-if="row.ver.source_type === 'derived'"
-                        class="model-version-derived"
-                      >
-                        {{
-                          $t('download.basedOn', {
-                            name:
-                              row.model.versions[row.ver.from_version]?.name ||
-                              row.ver.from_version,
-                          })
-                        }}
-                      </div>
-                    </div>
-                    <div class="model-version-row__actions">
-                      <DqStack wrap :gap="6" justify="end">
-                        <template v-if="row.vstatus === 'ready'">
-                          <DqButton size="sm"
-                            class="model-ver-btn model-ver-btn--force"
-                            @click="downloadVersion(row.model, row.verKey)"
-                          >
-                            <DqIcon class="model-ver-btn__icon"><download /></DqIcon>
-                            <span class="model-ver-btn__label">{{ $t('download.forceDownload') }}</span>
-                          </DqButton>
-                          <DqButton size="sm"
-                            class="model-ver-btn model-ver-btn--delete"
-                            @click="deleteVersion(row.model, row.verKey)"
-                          >
-                            <DqIcon class="model-ver-btn__icon"><delete /></DqIcon>
-                            <span class="model-ver-btn__label">{{ $t('common.delete') }}</span>
-                          </DqButton>
-                        </template>
-                        <template v-else-if="row.vstatus === 'parent_missing'">
-                          <DqTooltip
-                            v-if="!canDownload(row.model)"
-                            :content="getDependencyHint(row.model)"
-                            placement="top"
-                          >
-                            <span>
-                              <DqButton size="sm" class="model-ver-btn model-ver-btn--download" disabled>
-                                <DqIcon class="model-ver-btn__icon"><download /></DqIcon>
-                                <span class="model-ver-btn__label">{{ $t('download.downloadVersion') }}</span>
-                              </DqButton>
-                            </span>
-                          </DqTooltip>
-                          <DqButton size="sm"
-                            v-else
-                            class="model-ver-btn model-ver-btn--download"
-                            :loading="downloadingModels[row.model.id + '-' + row.verKey]"
-                            @click="
-                              downloadVersion(row.model, row.ver.from_version, {
-                                uiLoadingKey: row.model.id + '-' + row.verKey,
-                              })
-                            "
-                          >
-                            <DqIcon class="model-ver-btn__icon"><download /></DqIcon>
-                            <span class="model-ver-btn__label">{{ $t('download.downloadVersion') }}</span>
-                          </DqButton>
-                        </template>
-                        <template v-else-if="row.vstatus === 'quantize'">
-                          <DqTooltip
-                            v-if="!canDownload(row.model)"
-                            :content="getDependencyHint(row.model)"
-                            placement="top"
-                          >
-                            <span>
-                              <DqButton size="sm" class="model-ver-btn model-ver-btn--quantize" disabled>
-                                <DqIcon class="model-ver-btn__icon"><cpu /></DqIcon>
-                                <span class="model-ver-btn__label">{{ $t('download.quantizeVersion') }}</span>
-                              </DqButton>
-                            </span>
-                          </DqTooltip>
-                          <DqButton size="sm"
-                            v-else
-                            class="model-ver-btn model-ver-btn--quantize"
-                            :loading="downloadingModels[row.model.id + '-' + row.verKey]"
-                            @click="quantizeVersion(row.model, row.verKey)"
-                          >
-                            <DqIcon class="model-ver-btn__icon"><cpu /></DqIcon>
-                            <span class="model-ver-btn__label">{{ $t('download.quantizeVersion') }}</span>
-                          </DqButton>
-                        </template>
-                        <template v-else>
-                          <DqTooltip
-                            v-if="!canDownload(row.model)"
-                            :content="getDependencyHint(row.model)"
-                            placement="top"
-                          >
-                            <span>
-                              <DqButton size="sm" class="model-ver-btn model-ver-btn--download" disabled>
-                                <DqIcon class="model-ver-btn__icon"><download /></DqIcon>
-                                <span class="model-ver-btn__label">{{ $t('download.downloadVersion') }}</span>
-                              </DqButton>
-                            </span>
-                          </DqTooltip>
-                          <DqButton size="sm"
-                            v-else
-                            class="model-ver-btn model-ver-btn--download"
-                            :loading="downloadingModels[row.model.id + '-' + row.verKey]"
-                            @click="downloadVersion(row.model, row.verKey)"
-                          >
-                            <DqIcon class="model-ver-btn__icon"><download /></DqIcon>
-                            <span class="model-ver-btn__label">{{ $t('download.downloadVersion') }}</span>
-                          </DqButton>
-                        </template>
-                      </DqStack>
-                    </div>
-                  </li>
-                </ul>
+                  :model="model"
+                  :uniform-source="uniformDownloadSource(model)"
+                  :loading-keys="downloadingModels"
+                  :can-download="canDownload(model)"
+                  :dependency-hint="getDependencyHint(model)"
+                  :get-version-status="getVersionStatus"
+                  :bundle-components-for="(verKey) => versionBundleComponents(model.id, verKey)"
+                  @download="downloadVersion(model, $event)"
+                  @delete="deleteVersion(model, $event)"
+                  @quantize="quantizeVersion(model, $event)"
+                />
 
               </div>
             </DqSurfaceCard>
@@ -673,6 +498,9 @@ import ModelLicenseBadges from '@/components/model/ModelLicenseBadges.vue';
 import ModelPickerFilters from '@/components/model/ModelPickerFilters.vue';
 import ModelsImportDialog from '@/components/models/ModelsImportDialog.vue';
 import ModelsCategoryNav from '@/components/models/ModelsCategoryNav.vue';
+import ModelCardVersions from '@/components/models/ModelCardVersions.vue';
+import ModelVersionSourceBadge from '@/components/models/ModelVersionSourceBadge.vue';
+import { uniformDownloadSource } from '@/utils/modelVersionLayout';
 import { useModelRegistryFilters } from '@/composables/useModelRegistryFilters';
 import { modelPassesRegistryFilters } from '@/utils/modelPickerFilters';
 
@@ -681,6 +509,7 @@ import { modelPassesRegistryFilters } from '@/utils/modelPickerFilters';
 interface ModelVersion {
   name: string;
   size?: string;
+  source?: string;
   source_type?: string;
   from_version?: string;
 }
@@ -984,6 +813,18 @@ function getDependencyHint(model: ModelRow): string {
   return $tt('download.dependencyMissing', { models: names });
 }
 
+function modelStatusTitle(modelId: string): string {
+  const status = modelsDetailedStatus.value[modelId]?.status;
+  if (status === 'ready') return $tt('download.readyTag');
+  if (status === 'incomplete') return $tt('download.incompleteTag');
+  return $tt('download.notDownloadedTag');
+}
+
+function modelCardSource(model: ModelRow): string {
+  if (model.versions) return uniformDownloadSource(model);
+  return model.source || '';
+}
+
 function getVersionStatus(modelId: string, versionKey: string): string {
   const detail = modelsDetailedStatus.value[modelId];
   if (!detail || !detail.versions) return 'missing';
@@ -1005,16 +846,6 @@ function getVersionStatus(modelId: string, versionKey: string): string {
   }
 
   return 'missing';
-}
-
-function modelVersionTableRows(model: ModelRow) {
-  if (!model.versions) return [];
-  return Object.entries(model.versions).map(([verKey, ver]) => ({
-    verKey,
-    ver: ver as ModelVersion,
-    model,
-    vstatus: getVersionStatus(model.id, verKey),
-  }));
 }
 
 const BUNDLE_COMPONENT_ORDER = ['transformer', 'text_encoder', 'vae', 'tokenizer'] as const;

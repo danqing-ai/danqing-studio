@@ -557,14 +557,28 @@
           }
         },
         "mlx-4bit": {
-          "name": "MLX预量化4bit",
-          "size": "4GB",
+          "name": "魔搭 · MLX Community 预量化 4bit",
+          "size": "4.6GB",
           "default": false,
-          "repo_id": "black-forest-labs/FLUX.2-klein-4B",
-          "local_path": "models/Image/flux2-klein-4b-mlx-4bit",
+          "source": "modelscope",
+          "repo_id": "mlx-community/flux2-klein-4b-4bit",
+          "local_path": "models/Image/flux2-klein-4b-mlx-community-4bit",
           "source_type": "prequantized",
           "quantization": {
             "bits": 4,
+            "scheme": "mlx_affine"
+          }
+        },
+        "mlx-8bit": {
+          "name": "魔搭 · MLX Community 预量化 8bit",
+          "size": "8.6GB",
+          "default": false,
+          "source": "modelscope",
+          "repo_id": "mlx-community/flux2-klein-4b-8bit",
+          "local_path": "models/Image/flux2-klein-4b-mlx-community-8bit",
+          "source_type": "prequantized",
+          "quantization": {
+            "bits": 8,
             "scheme": "mlx_affine"
           }
         }
@@ -689,6 +703,32 @@
           "from_version": "fp16",
           "quantization": {
             "bits": 4,
+            "scheme": "mlx_affine"
+          }
+        },
+        "mlx-4bit": {
+          "name": "魔搭 · MLX Community 预量化 4bit",
+          "size": "9.5GB",
+          "default": false,
+          "source": "modelscope",
+          "repo_id": "mlx-community/flux2-klein-9b-4bit",
+          "local_path": "models/Image/flux2-klein-9b-mlx-community-4bit",
+          "source_type": "prequantized",
+          "quantization": {
+            "bits": 4,
+            "scheme": "mlx_affine"
+          }
+        },
+        "mlx-8bit": {
+          "name": "魔搭 · MLX Community 预量化 8bit",
+          "size": "17.9GB",
+          "default": false,
+          "source": "modelscope",
+          "repo_id": "mlx-community/flux2-klein-9b-8bit",
+          "local_path": "models/Image/flux2-klein-9b-mlx-community-8bit",
+          "source_type": "prequantized",
+          "quantization": {
+            "bits": 8,
             "scheme": "mlx_affine"
           }
         }
@@ -1149,12 +1189,13 @@
             "scheme": "mlx_affine"
           }
         },
-        "danqing-4bit": {
-          "name": "MLX预量化4bit",
+        "community-4bit": {
+          "name": "魔搭 · 社区预量化 4bit (mflux，无 mlx-community 官方包)",
           "size": "5.5GB",
           "default": false,
+          "source": "modelscope",
           "repo_id": "filipstrand/Z-Image-Turbo-mflux-4bit",
-          "local_path": "models/Image/z-image-turbo-danqing-4bit",
+          "local_path": "models/Image/z-image-turbo-community-4bit",
           "source_type": "prequantized",
           "quantization": {
             "bits": 4,
@@ -1699,6 +1740,32 @@
             "bits": 4,
             "scheme": "mlx_affine"
           }
+        },
+        "mlx-4bit": {
+          "name": "魔搭 · MLX Community 预量化 4bit",
+          "size": "26GB",
+          "default": false,
+          "source": "modelscope",
+          "repo_id": "mlx-community/Qwen-Image-2512-4bit",
+          "local_path": "models/Image/qwen-image-mlx-community-4bit",
+          "source_type": "prequantized",
+          "quantization": {
+            "bits": 4,
+            "scheme": "mlx_affine"
+          }
+        },
+        "mlx-8bit": {
+          "name": "魔搭 · MLX Community 预量化 8bit",
+          "size": "36GB",
+          "default": false,
+          "source": "modelscope",
+          "repo_id": "mlx-community/Qwen-Image-2512-8bit",
+          "local_path": "models/Image/qwen-image-mlx-community-8bit",
+          "source_type": "prequantized",
+          "quantization": {
+            "bits": 8,
+            "scheme": "mlx_affine"
+          }
         }
       },
       "name": {
@@ -1789,6 +1856,19 @@
           "from_version": "fp16",
           "quantization": {
             "bits": 4,
+            "scheme": "mlx_affine"
+          }
+        },
+        "mlx-8bit": {
+          "name": "魔搭 · MLX Community 预量化 8bit",
+          "size": "35GB",
+          "default": false,
+          "source": "modelscope",
+          "repo_id": "mlx-community/qwen-image-edit-8bit",
+          "local_path": "models/Image/qwen-image-edit-mlx-community-8bit",
+          "source_type": "prequantized",
+          "quantization": {
+            "bits": 8,
             "scheme": "mlx_affine"
           }
         }
@@ -3504,7 +3584,7 @@
         "default_scheduler": "flow_match_euler"
       },
       "recommended": false,
-      "source": "huggingface",
+      "source": "modelscope",
       "backends": [
         "mlx"
       ],
@@ -3513,7 +3593,7 @@
           "name": "MLX int4（推荐，约 16GB 内存）",
           "size": "60GB",
           "default": true,
-          "source": "huggingface",
+          "source": "modelscope",
           "repo_id": "dgrauet/ltx-2.3-mlx-q4",
           "local_path": "models/Video/ltx-2.3-distilled-mlx-q4",
           "source_type": "full"
@@ -3522,7 +3602,7 @@
           "name": "MLX int8（约 32GB 内存）",
           "size": "88GB",
           "default": false,
-          "source": "huggingface",
+          "source": "modelscope",
           "repo_id": "dgrauet/ltx-2.3-mlx-q8",
           "local_path": "models/Video/ltx-2.3-distilled-mlx-q8",
           "source_type": "full"
@@ -3531,7 +3611,7 @@
           "name": "MLX bf16（约 64GB 内存）",
           "size": "140GB",
           "default": false,
-          "source": "huggingface",
+          "source": "modelscope",
           "repo_id": "dgrauet/ltx-2.3-mlx",
           "local_path": "models/Video/ltx-2.3-distilled-mlx-bf16",
           "source_type": "full"
@@ -3611,7 +3691,7 @@
         "default_scheduler": "flow_match_euler"
       },
       "recommended": false,
-      "source": "huggingface",
+      "source": "modelscope",
       "backends": [
         "mlx"
       ],
@@ -3620,7 +3700,7 @@
           "name": "MLX int4（推荐，约 16GB 内存）",
           "size": "60GB",
           "default": true,
-          "source": "huggingface",
+          "source": "modelscope",
           "repo_id": "dgrauet/ltx-2.3-mlx-q4",
           "local_path": "models/Video/ltx-2.3-dev-mlx-q4",
           "source_type": "full"
@@ -3629,7 +3709,7 @@
           "name": "MLX int8（约 32GB 内存）",
           "size": "88GB",
           "default": false,
-          "source": "huggingface",
+          "source": "modelscope",
           "repo_id": "dgrauet/ltx-2.3-mlx-q8",
           "local_path": "models/Video/ltx-2.3-dev-mlx-q8",
           "source_type": "full"
@@ -3638,7 +3718,7 @@
           "name": "MLX bf16（约 64GB 内存）",
           "size": "140GB",
           "default": false,
-          "source": "huggingface",
+          "source": "modelscope",
           "repo_id": "dgrauet/ltx-2.3-mlx",
           "local_path": "models/Video/ltx-2.3-dev-mlx-bf16",
           "source_type": "full"
@@ -4044,6 +4124,32 @@
           "repo_id": "Wan-AI/Wan2.2-T2V-14B",
           "local_path": "models/Video/wan-2.2-t2v-14b-original",
           "source_type": "full"
+        },
+        "int8": {
+          "name": "INT8 量化版",
+          "size": "14GB",
+          "default": false,
+          "repo_id": "Wan-AI/Wan2.2-T2V-14B",
+          "local_path": "models/Video/wan-2.2-t2v-14b-int8",
+          "source_type": "derived",
+          "from_version": "original",
+          "quantization": {
+            "bits": 8,
+            "scheme": "mlx_affine"
+          }
+        },
+        "int4": {
+          "name": "INT4 量化版",
+          "size": "7GB",
+          "default": false,
+          "repo_id": "Wan-AI/Wan2.2-T2V-14B",
+          "local_path": "models/Video/wan-2.2-t2v-14b-int4",
+          "source_type": "derived",
+          "from_version": "original",
+          "quantization": {
+            "bits": 4,
+            "scheme": "mlx_affine"
+          }
         }
       },
       "name": {
@@ -4133,6 +4239,32 @@
           "repo_id": "Wan-AI/Wan2.2-I2V-14B",
           "local_path": "models/Video/wan-2.2-i2v-14b-original",
           "source_type": "full"
+        },
+        "int8": {
+          "name": "INT8 量化版",
+          "size": "14GB",
+          "default": false,
+          "repo_id": "Wan-AI/Wan2.2-I2V-14B",
+          "local_path": "models/Video/wan-2.2-i2v-14b-int8",
+          "source_type": "derived",
+          "from_version": "original",
+          "quantization": {
+            "bits": 8,
+            "scheme": "mlx_affine"
+          }
+        },
+        "int4": {
+          "name": "INT4 量化版",
+          "size": "7GB",
+          "default": false,
+          "repo_id": "Wan-AI/Wan2.2-I2V-14B",
+          "local_path": "models/Video/wan-2.2-i2v-14b-int4",
+          "source_type": "derived",
+          "from_version": "original",
+          "quantization": {
+            "bits": 4,
+            "scheme": "mlx_affine"
+          }
         }
       },
       "name": {
@@ -4228,6 +4360,32 @@
           "repo_id": "Wan-AI/Wan2.2-TI2V-5B",
           "local_path": "models/Video/wan-2.2-ti2v-5b-original",
           "source_type": "full"
+        },
+        "int8": {
+          "name": "INT8 量化版",
+          "size": "5GB",
+          "default": false,
+          "repo_id": "Wan-AI/Wan2.2-TI2V-5B",
+          "local_path": "models/Video/wan-2.2-ti2v-5b-int8",
+          "source_type": "derived",
+          "from_version": "original",
+          "quantization": {
+            "bits": 8,
+            "scheme": "mlx_affine"
+          }
+        },
+        "int4": {
+          "name": "INT4 量化版",
+          "size": "3GB",
+          "default": false,
+          "repo_id": "Wan-AI/Wan2.2-TI2V-5B",
+          "local_path": "models/Video/wan-2.2-ti2v-5b-int4",
+          "source_type": "derived",
+          "from_version": "original",
+          "quantization": {
+            "bits": 4,
+            "scheme": "mlx_affine"
+          }
         }
       },
       "name": {
@@ -4325,6 +4483,45 @@
           "repo_id": "ACE-Step/Audio/Ace-Step1.5",
           "local_path": "models/Audio/acestep-v15-xl-sft",
           "source_type": "full"
+        },
+        "int8": {
+          "name": "INT8 量化版",
+          "size": "10GB",
+          "default": false,
+          "repo_id": "ACE-Step/Audio/Ace-Step1.5",
+          "local_path": "models/Audio/acestep-v15-xl-sft-int8",
+          "source_type": "derived",
+          "from_version": "xl-sft",
+          "quantization": {
+            "bits": 8,
+            "scheme": "mlx_affine"
+          }
+        },
+        "int4": {
+          "name": "INT4 量化版",
+          "size": "5GB",
+          "default": false,
+          "repo_id": "ACE-Step/Audio/Ace-Step1.5",
+          "local_path": "models/Audio/acestep-v15-xl-sft-int4",
+          "source_type": "derived",
+          "from_version": "xl-sft",
+          "quantization": {
+            "bits": 4,
+            "scheme": "mlx_affine"
+          }
+        },
+        "mlx-4bit": {
+          "name": "魔搭 · MLX Community 预量化 4bit",
+          "size": "5.3GB",
+          "default": false,
+          "source": "modelscope",
+          "repo_id": "mlx-community/ACE-Step1.5-MLX-4bit",
+          "local_path": "models/Audio/acestep-v15-mlx-community-4bit",
+          "source_type": "prequantized",
+          "quantization": {
+            "bits": 4,
+            "scheme": "mlx_affine"
+          }
         }
       },
       "name": {
@@ -4334,6 +4531,101 @@
       "description": {
         "zh": "ACE-Step-1.5 XL SFT — 4B DiT 解码器，高质量音乐生成；MIT 许可，可商用",
         "en": "ACE-Step-1.5 XL SFT — 4B DiT decoder, high-quality music; MIT license, commercial use allowed"
+      },
+      "commercial_use_allowed": true
+    },
+    "diffrhythm-v2": {
+      "category": "music_models",
+      "engine": "danqing-audio",
+      "media": "audio",
+      "family": "diffrhythm",
+      "backends": [
+        "mlx",
+        "cuda"
+      ],
+      "actions": {
+        "create": {}
+      },
+      "parameters": {
+        "duration": {
+          "type": "int",
+          "default": 30,
+          "min": 5,
+          "max": 210
+        },
+        "steps": {
+          "type": "int",
+          "default": 16,
+          "min": 1,
+          "max": 100
+        },
+        "guidance": {
+          "type": "float",
+          "default": 2.0,
+          "min": 1.0,
+          "max": 20.0
+        },
+        "supports_lyrics": true,
+        "supports_instrumental": false,
+        "supports_vocal_language": true,
+        "supports_vocal_type": false,
+        "supports_bpm": false,
+        "supports_key_scale": false,
+        "supports_time_signature": false,
+        "audio_formats": [
+          "wav",
+          "flac",
+          "mp3"
+        ]
+      },
+      "recommended": false,
+      "source": "modelscope",
+      "versions": {
+        "fp16": {
+          "name": "FP16",
+          "size": "4GB",
+          "default": true,
+          "source": "modelscope",
+          "repo_id": "ASLP-lab/DiffRhythm2",
+          "local_path": "models/Audio/diffrhythm-v2",
+          "source_type": "full"
+        },
+        "int8": {
+          "name": "INT8 量化版",
+          "size": "2GB",
+          "default": false,
+          "source": "modelscope",
+          "repo_id": "ASLP-lab/DiffRhythm2",
+          "local_path": "models/Audio/diffrhythm-v2-int8",
+          "source_type": "derived",
+          "from_version": "fp16",
+          "quantization": {
+            "bits": 8,
+            "scheme": "mlx_affine"
+          }
+        },
+        "int4": {
+          "name": "INT4 量化版",
+          "size": "1GB",
+          "default": false,
+          "source": "modelscope",
+          "repo_id": "ASLP-lab/DiffRhythm2",
+          "local_path": "models/Audio/diffrhythm-v2-int4",
+          "source_type": "derived",
+          "from_version": "fp16",
+          "quantization": {
+            "bits": 4,
+            "scheme": "mlx_affine"
+          }
+        }
+      },
+      "name": {
+        "zh": "DiffRhythm 2 谛韵",
+        "en": "DiffRhythm 2"
+      },
+      "description": {
+        "zh": "DiffRhythm 2 — Block Flow Matching 半自回归歌曲生成；MuQ 风格条件 + BigVGAN 解码；48 kHz 输出，最长 210 秒",
+        "en": "DiffRhythm 2 — semi-autoregressive block flow matching song generation; MuQ style conditioning + BigVGAN decode; 48 kHz output, up to 210s"
       },
       "commercial_use_allowed": true
     }
