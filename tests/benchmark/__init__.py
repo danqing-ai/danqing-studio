@@ -1,4 +1,4 @@
-"""Benchmark: ``mflux`` + ``sanity`` + ``mlx-video`` + ``diffusers`` suites."""
+"""Benchmark: ``mflux`` + ``sanity`` + ``diffusers`` suites."""
 from .cases import (
     ALL_CASES,
     ALL_EXTERNAL_REF_CASES,
@@ -11,7 +11,7 @@ from .cases import (
     list_sanity_cases,
 )
 from .metrics import CompareResult, SanityResult, compare_images, compare_videos, hash_image
-from .run import BenchmarkRunner, run_diffusers, run_mflux, run_mlx_video, run_sanity
+from .run import BenchmarkRunner, run_diffusers, run_mflux, run_sanity
 
 __all__ = [
     "BenchmarkCase",
@@ -30,7 +30,6 @@ __all__ = [
     "hash_image",
     "BenchmarkRunner",
     "run_mflux",
-    "run_mlx_video",
     "run_diffusers",
     "run_sanity",
 ]

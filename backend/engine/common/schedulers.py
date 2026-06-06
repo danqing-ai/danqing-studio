@@ -412,7 +412,7 @@ def _wan_flow_sigmas(
     shift: float,
     num_train_timesteps: int,
 ) -> np.ndarray:
-    """Shifted sigma schedule — aligned with mlx-video / official Wan2.2 UniPC."""
+    """Shifted sigma schedule — aligned with official Wan2.2 UniPC."""
     alphas = np.linspace(1.0, 1.0 / num_train_timesteps, num_train_timesteps)[::-1]
     sigmas_unshifted = 1.0 - alphas
     sigma_max = float(sigmas_unshifted[0])
@@ -423,7 +423,7 @@ def _wan_flow_sigmas(
 
 
 class WanFlowUniPCScheduler(Scheduler):
-    """Wan 2.x flow-matching UniPC — aligned with mlx-video ``FlowUniPCScheduler``."""
+    """Wan 2.x flow-matching UniPC — aligned with official ``FlowUniPCScheduler``."""
 
     order = 1
 

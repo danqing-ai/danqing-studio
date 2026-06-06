@@ -6,8 +6,6 @@
 |------|-----|------|
 | `make bench-mflux` | `mflux --all` | 全模型 mflux PSNR/SSIM 对照 |
 | `make bench-mflux-case ID=…` | `mflux --case ID` | 单个 mflux 用例 |
-| `make bench-mlx-video` | `mlx-video --all` | 视频模型对比 mlx-video 参考实现 |
-| `make bench-mlx-video-case ID=…` | `mlx-video --case ID` | 单个 mlx-video 对比用例 |
 | `make bench-diffusers` | `diffusers --all` | 图像 diffusers 对照（仅无 mflux 对位时注册；当前可能 0 条） |
 | `make bench-diffusers-case ID=…` | `diffusers --case ID` | 单个 diffusers 对比用例 |
 | `make bench-sanity` | `sanity --all` | 全模型成片健全性（反噪声/反平场 + 质量评分） |
@@ -22,16 +20,15 @@
 | `make bench-wan-baseline` | `sanity --case wan-2.2-ti2v-5b-baseline` | Wan 5B 耗时基线（8 步、81 帧，打印 `[BASELINE] total_sec`） |
 | `make bench-sanity-case ID=ace-step-xl-sft-cuda-sanity` | 同上 | CUDA 路径（无 GPU 时 SKIP） |
 
-列出用例：`python -m tests.benchmark mflux --list` / `mlx-video --list` / `diffusers --list` / `sanity --list`
+列出用例：`python -m tests.benchmark mflux --list` / `diffusers --list` / `sanity --list`
 
 首次跑 mflux 对照：`make bench-setup`（独立 venv）。rewrite/upscale 需 `make bench-src`。
 
 用例定义：`cases.py`。输出：`tests/benchmark/outputs/`。
 
 参考对比说明（对齐 mflux 模式）：
-- 视频参考默认走 `mlx-video`，命令可用 `DANQING_BENCH_MLX_VIDEO_CMD` 覆盖（默认 `mlx-video-generate`）
 - 图像 PSNR 主对照：`make bench-mflux`（`ALL_CASES`）。`diffusers` 子命令仅收录 **没有** 对应 mflux 用例的模型；已有 mflux 的（如 z-image-turbo）不在此套件重复。
-- `--list-runnable` 会按本地 bundle 过滤可跑用例：`python -m tests.benchmark mlx-video --list-runnable`
+- `--list-runnable` 会按本地 bundle 过滤可跑用例：`python -m tests.benchmark diffusers --list-runnable`
 
 质量门禁可在 `SanityCase` 里按模型覆写：`image_quality_thresholds` / `audio_quality_thresholds` /
 `video_quality_thresholds`。推荐先复用 `cases.py` 顶部模板（如 `IMAGE_THRESHOLDS_REWRITE`、`AUDIO_THRESHOLDS_ACE_STEP`、

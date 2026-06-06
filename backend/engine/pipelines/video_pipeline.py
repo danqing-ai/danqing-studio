@@ -688,7 +688,7 @@ class VideoPipeline:
         )
 
     def _initial_video_latents(self, config: Any, latent_shape: tuple, seed: int | None) -> Any:
-        """Sample initial video noise; Wan uses ``mx.random.seed`` to match mlx-video."""
+        """Sample initial video noise; Wan uses ``mx.random.seed`` for reproducible latents."""
         if seed is not None:
             if bool(getattr(config, "uses_wan_shift", False)) and getattr(self.ctx, "backend", "") == "mlx":
                 import mlx.core as mx

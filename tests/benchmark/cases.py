@@ -1037,7 +1037,7 @@ def list_cases() -> list[str]:
 
 @dataclass
 class ExternalRefCase:
-    """Parity case against open-source references (mlx-video / diffusers / custom CLI)."""
+    """Parity case against open-source references (mflux / diffusers / custom CLI)."""
 
     id: str
     model: str
@@ -1059,13 +1059,13 @@ class ExternalRefCase:
     description: str = ""
     timeout_sec: int = 1200
     # reference adapter
-    ref_backend: str = "mlx_video"  # mlx_video | mflux | diffusers | custom
+    ref_backend: str = "mflux"  # mflux | diffusers | custom
     ref_model: str = ""
     # mflux CLI override when ref_backend == mflux
     ref_mflux_cli: str = ""
     # Optional LoRA path relative to workspace root (for diffusers refs).
     ref_lora_rel: str = ""
-    # Optional command template for mlx-video/custom; placeholders:
+    # Optional command template for custom ref CLI; placeholders:
     # {cmd} {python} {model} {ref_model} {model_dir} {prompt} {seed} {steps} {guidance} {shift}
     # {negative_prompt} {width} {height} {video_size} {num_frames} {fps}
     # {source_image} {output}
@@ -1134,62 +1134,8 @@ def list_skipped_external_ref_cases_by_backend(backend: str) -> list[tuple[str, 
     return skipped
 
 
-# Open-source reference parity cases:
-# 1) video: compare against mlx-video
-# 2) image diffusers: only when ``make bench-mflux`` has no matching case (see ``ALL_CASES``).
-if str(_REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(_REPO_ROOT))
-from backend.engine.families.wan.conditioning import WAN_SAMPLE_NEG_PROMPT
-
+# Open-source reference parity cases (image mflux / diffusers when no mflux case exists).
 ALL_EXTERNAL_REF_CASES: list[ExternalRefCase] = [
-    ExternalRefCase(
-        id="wan-2.2-ti2v-5b-mlx-video",
-        model="wan-2.2-ti2v-5b",
-        media="video",
-        prompt="a cat walking on green grass, soft daylight",
-        seed=42,
-        steps=4,
-        guidance=5.0,
-        shift=5.0,
-        negative_prompt=WAN_SAMPLE_NEG_PROMPT,
-        video_size="480x704",
-        video_num_frames=17,
-        video_fps=16,
-        timeout_sec=2400,
-        ref_backend="mlx_video",
-        ref_model="wan-2.2-ti2v-5b",
-        ref_cmd_template=(
-            "{python} -m tests.benchmark.wan_mlx_video_ref --bundle-dir {model_dir} "
-            '--prompt "{prompt}" --negative-prompt "{negative_prompt}" '
-            "--size {video_size} --num-frames {num_frames} --fps {fps} "
-            "--steps {steps} --guidance {guidance} --shift {shift} --seed {seed} "
-            "--scheduler unipc --output {output}"
-        ),
-        local_bundle_rel="models/Video/wan-2.2-ti2v-5b-original",
-        description="Wan 5B same-seed PSNR vs mlx-video (480×704, UniPC, shift=5)",
-    ),
-    ExternalRefCase(
-        id="ltx-2.3-distilled-mlx-video",
-        model="ltx-2.3-distilled",
-        media="video",
-        prompt="a cinematic scene of ocean waves at golden hour",
-        seed=42,
-        steps=8,
-        guidance=3.5,
-        video_size="480x704",
-        video_num_frames=17,
-        video_fps=16,
-        timeout_sec=2400,
-        ref_backend="mlx_video",
-        ref_model="ltx-2.3-distilled",
-        ref_cmd_template=(
-            "{cmd} --model {ref_model} --prompt \"{prompt}\" --seed {seed} "
-            "--steps {steps} --guidance {guidance} --size {video_size} "
-            "--num-frames {num_frames} --fps {fps} --output {output}"
-        ),
-        local_bundle_rel="models/Video/ltx-2.3-distilled-mlx-q4",
-        description="LTX 2.3 distilled parity vs mlx-video reference",
-    ),
     ExternalRefCase(
         id="qwen-image-mflux-rewrite",
         model="qwen-image",

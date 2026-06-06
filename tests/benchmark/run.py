@@ -582,7 +582,7 @@ class BenchmarkRunner:
 
 
 class ExternalReferenceRunner(BenchmarkRunner):
-    """Open-source reference parity (mlx-video / diffusers / custom command)."""
+    """Open-source reference parity (mflux / diffusers / custom command)."""
 
     def __init__(self, output_dir: str | Path = "tests/benchmark/outputs"):
         super().__init__(output_dir=output_dir)
@@ -755,8 +755,6 @@ class ExternalReferenceRunner(BenchmarkRunner):
 
     def _run_external_reference(self, case: ExternalRefCase, output_path: Path) -> bool:
         backend = (case.ref_backend or "").strip().lower()
-        if backend == "mlx_video":
-            return self._run_ref_mlx_video(case, output_path)
         if backend == "mflux":
             return self._run_ref_mflux(case, output_path)
         if backend == "diffusers":
@@ -793,13 +791,6 @@ class ExternalReferenceRunner(BenchmarkRunner):
             print("    [ref] custom backend 需要 ref_cmd_template")
             return False
         return self._run_ref_template_cmd(case, output_path, default_cmd="")
-
-    def _run_ref_mlx_video(self, case: ExternalRefCase, output_path: Path) -> bool:
-        default_cmd = os.getenv("DANQING_BENCH_MLX_VIDEO_CMD", "mlx-video-generate")
-        if not case.ref_cmd_template:
-            print("    [ref] mlx_video backend 缺少 ref_cmd_template")
-            return False
-        return self._run_ref_template_cmd(case, output_path, default_cmd=default_cmd)
 
     def _run_ref_template_cmd(self, case: ExternalRefCase, output_path: Path, *, default_cmd: str) -> bool:
         model_dir = ""
@@ -1492,7 +1483,7 @@ def run_mflux(case_id: str = "", output_dir: str = "tests/benchmark/outputs") ->
 
 
 def run_reference(case_id: str = "", output_dir: str = "tests/benchmark/outputs", *, backend_filter: str = "") -> int:
-    """Reference parity suite (mlx-video or diffusers, selected by backend_filter)."""
+    """Reference parity suite (mflux or diffusers, selected by backend_filter)."""
     runner = ExternalReferenceRunner(output_dir=output_dir)
     if not case_id:
         runner.run_all(run_ours=True, backend_filter=backend_filter)
@@ -1518,11 +1509,6 @@ def run_reference(case_id: str = "", output_dir: str = "tests/benchmark/outputs"
     if BenchmarkRunner.grade_product(result) == "PRODUCT_FAIL":
         return 1
     return 0
-
-
-def run_mlx_video(case_id: str = "", output_dir: str = "tests/benchmark/outputs") -> int:
-    """mlx-video reference parity suite."""
-    return run_reference(case_id=case_id, output_dir=output_dir, backend_filter="mlx_video")
 
 
 def run_diffusers(case_id: str = "", output_dir: str = "tests/benchmark/outputs") -> int:

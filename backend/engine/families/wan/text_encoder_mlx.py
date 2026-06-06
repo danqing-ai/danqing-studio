@@ -51,7 +51,7 @@ class _T5Attention(nn.Module):
         mask: mx.array | None = None,
         pos_bias: mx.array | None = None,
     ) -> mx.array:
-        """UMT5 attention — no ``1/sqrt(d)`` scaling (matches official Wan / mlx-video)."""
+        """UMT5 attention — no ``1/sqrt(d)`` scaling (matches official Wan)."""
         context = x if context is None else context
         b, lq, lk = x.shape[0], x.shape[1], context.shape[1]
         n, c = self.num_heads, self.head_dim
@@ -61,7 +61,7 @@ class _T5Attention(nn.Module):
         q = mx.transpose(q, (0, 2, 1, 3))
         k = mx.transpose(k, (0, 2, 1, 3))
         v = mx.transpose(v, (0, 2, 1, 3))
-        # T5 uses unscaled QK^T; softmax in float32 (mlx-video / official Wan).
+        # T5 uses unscaled QK^T; softmax in float32 (official Wan).
         attn = q.astype(mx.float32) @ k.astype(mx.float32).transpose(0, 1, 3, 2)
         if pos_bias is not None:
             attn = attn + pos_bias.astype(mx.float32)

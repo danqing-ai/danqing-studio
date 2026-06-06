@@ -9,10 +9,10 @@ def _is_diffusers_wan(weights: dict) -> bool:
 
 
 def _patch_embedding_weight_to_linear(key: str, tensor) -> tuple[str, object]:
-    """Conv3d patch kernel → ``Linear`` weight for mlx-video-compatible patchify.
+    """Conv3d patch kernel → ``Linear`` weight for Wan patchify.
 
     Checkpoints store ``patch_embedding`` as 3D conv. We run a ``Linear`` whose columns
-    match input flatten order ``[C, pt, ph, pw]`` per token (see ``WanModelMLX`` patchify / mlx-video).
+    match input flatten order ``[C, pt, ph, pw]`` per token (see ``WanModelMLX`` patchify).
     """
     if not (key.endswith(".weight") and "patch_embedding" in key and getattr(tensor, "ndim", 0) == 5):
         return key, tensor

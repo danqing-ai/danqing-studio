@@ -770,14 +770,14 @@ class WanVAE(nn.Module):
         scale: tuple[mx.array, mx.array],
         on_stage: Callable[[float], None] | None = None,
     ) -> mx.array:
-        """Decode full latent volume at once (matches mlx-video / official Wan2.2 VAE)."""
+        """Decode full latent volume at once (matches official Wan2.2 VAE)."""
         self.clear_cache()
         mean, inv_std = scale
         z = z / inv_std + mean
         if on_stage is not None:
             on_stage(0.05)
         x = self.conv2(z)
-        # Full-sequence decode: no feat_cache; mlx-video uses first_chunk=True throughout.
+        # Full-sequence decode: no feat_cache; first_chunk=True throughout.
         out = self.decoder(x, None, [0], first_chunk=True)
         out = unpatchify(out, 2)
         if on_stage is not None:
