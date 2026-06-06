@@ -172,7 +172,7 @@ class FlowMatchEulerScheduler(Scheduler):
 class FlowMatchEulerFluxDynamicScheduler(FlowMatchEulerScheduler):
     """Flow Match Euler + Flux ``calculate_shift`` μ + diffusers-style dynamic σ schedule.
 
-    Intended for LongCat-Image (registry ``scheduler``: ``flow_match_euler_flux_dynamic``); **does not alter**
+    Registry ``scheduler``: ``flow_match_euler_flux_dynamic``; **does not alter**
     :class:`FlowMatchEulerScheduler` behavior used by Z-Image / FIBO / etc.
 
     μ: optional ``mu`` in kwargs; otherwise computed from ``image_seq_len`` and
@@ -712,7 +712,7 @@ _scheduler_registry: dict[str, type[Scheduler]] = {
     "seedvr2_euler": SeedVR2EulerScheduler,
     "euler": LinearScheduler,            # alias
     "flow_match_euler_discrete": FlowMatchEulerScheduler,  # alias
-    "flow_match_euler_dynamic": FlowMatchEulerFluxDynamicScheduler,  # alias (LongCat)
+    "flow_match_euler_dynamic": FlowMatchEulerFluxDynamicScheduler,
 }
 
 

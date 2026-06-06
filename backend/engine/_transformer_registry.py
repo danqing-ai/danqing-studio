@@ -12,7 +12,6 @@ _TRANSFORMER = {
     "fibo":     ("backend.engine.families.fibo.transformer",      "FIBOTransformer"),
     "flux1":    ("backend.engine.families.flux1.transformer",     "Flux1Transformer"),
     "qwen_image": ("backend.engine.families.qwen.transformer",    "QwenImageTransformer"),
-    "longcat":  ("backend.engine.families.longcat.transformer",   "LongCatTransformer"),
 }
 
 _WEIGHT_REMAP = {
@@ -20,7 +19,6 @@ _WEIGHT_REMAP = {
     "flux2":    ("backend.engine.families.flux2.weights",     "remap_flux2_weights"),
     "flux1":    ("backend.engine.families.flux1.weights",    "remap_flux1_weights"),
     "qwen_image": ("backend.engine.families.qwen.weights",    "remap_qwen_transformer_weights"),
-    "longcat":  ("backend.engine.families.longcat.weights",   "remap_longcat_weights"),
 }
 
 # encoder_type → (模块路径, 类名)
@@ -30,7 +28,6 @@ _TEXT_ENCODER = {
     "z_image":  ("backend.engine.families.z_image.text_encoder",   "ZImageTextEncoder"),
     "qwen_image": ("backend.engine.families.qwen.text_encoder", "QwenImageTextEncoder"),
     "fibo":     ("backend.engine.families.fibo.text_encoder", "FiboTextEncoder"),
-    "qwen25vl": ("backend.engine.families.longcat.text_encoder", "LongCatTextEncoder"),
 }
 
 _IMAGE_LORA_MERGE = {

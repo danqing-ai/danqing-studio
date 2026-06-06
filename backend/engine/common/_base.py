@@ -160,7 +160,7 @@ class TransformerBase:
         """After standard CFG combine (``eps_u + g * (eps_c - eps_u)``).
 
         Default identity. Override when the reference pipeline applies a further
-        normalization in packed-token or model-specific space (e.g. LongCat).
+        normalization in packed-token or model-specific space.
         Called only when registry ``enable_cfg_renorm`` is true and CFG is active.
         """
         return noise_pred
