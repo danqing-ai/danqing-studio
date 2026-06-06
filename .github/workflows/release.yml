@@ -1,3 +1,4 @@
+# Temporarily macOS desktop only — Linux CUDA server and Windows desktop jobs are disabled below.
 name: Build Release Artifacts
 
 on:
@@ -7,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Release version label (e.g. 0.2.0). Used for desktop semver and Linux tar name.
+        description: Release version label (e.g. 0.2.0). Used for desktop semver.
         required: false
         type: string
 
@@ -110,6 +111,7 @@ jobs:
           if-no-files-found: error
 
   build-linux-cuda:
+    if: false # temporarily disabled
     name: Linux CUDA server (tar.gz)
     runs-on: ubuntu-latest
     steps:
@@ -187,6 +189,7 @@ jobs:
           if-no-files-found: error
 
   build-windows-desktop:
+    if: false # temporarily disabled
     name: Windows desktop (CUDA)
     runs-on: windows-latest
     steps:
@@ -301,7 +304,7 @@ jobs:
   publish-release:
     name: Publish GitHub Release
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [build-desktop, build-linux-cuda, build-windows-desktop]
+    needs: [build-desktop]
     runs-on: ubuntu-latest
     steps:
       - name: Download macOS artifact
@@ -310,23 +313,9 @@ jobs:
           name: danqing-desktop-macos
           path: release-assets/macos
 
-      - name: Download Linux CUDA artifact
-        uses: actions/download-artifact@v6
-        with:
-          name: danqing-linux-cuda
-          path: release-assets/linux
-
-      - name: Download Windows desktop artifact
-        uses: actions/download-artifact@v6
-        with:
-          name: danqing-desktop-windows
-          path: release-assets/windows
-
       - name: Attach assets to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             release-assets/macos/**/*.dmg
-            release-assets/linux/**/*.tar.gz
-            release-assets/windows/**/*.exe
           fail_on_unmatched_files: true
