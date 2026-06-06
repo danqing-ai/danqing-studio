@@ -100,7 +100,7 @@
 | weight parity | `check_engine_governance --rule parity` | 家族 remap vs `_param_map` 报告（**已落地**） |
 | common/text_encoders | T5 / CLIP / Qwen3 MLX 部分存在；视频 T5 已接入 | 完整 Go-style 三文件组 + 族内 encoder 收敛（**部分**） |
 | Qwen DiT | `transformer.py` 双端 dispatch；MLX 内层 `_T` singleton | 全路径 injected `ctx`（**部分**） |
-| CogVideoX VAE | `families/cogvideox/vae*.py` | ctx 化与 parity（**未动**） |
+
 | seedvr2 | `stem.py` + `stem_mlx.py` + `dit`/`vae`/`preprocess`/`weights`（**4 逻辑单位**） | 结构重组 **已落地**；`*_mlx` 热路径保留 `mx.*`（治理允许） |
 | CI 门禁 | `make check-engine-imports` 等 → `scripts/check_engine_governance.py` | `measure_reuse` / family budget 报告（**部分未落地**） |
 | registry `family` vs 目录 | 例：`qwen_image`（registry）↔ `families/qwen/`（代码） | 保持显式映射，禁止靠目录名猜测 |
@@ -134,7 +134,7 @@ DanQing-Studio/
 │   │   │   ├── flux1/, flux2/, z_image/, fibo/     # 图像 DiT
 │   │   │   ├── qwen/            # registry family=qwen_image；MLX 仍 nn.Module 热路径
 │   │   │   ├── seedvr2/         # Shape B upscale job；7 逻辑单位
-│   │   │   ├── ltx/, wan/, cogvideox/, hunyuan/    # 视频
+│   │   │   ├── ltx/, wan/, hunyuan/               # 视频
 │   │   │   └── ace_step/                           # Shape C 音频
 │   │   ├── pipelines/           # image / video / upscale / music
 │   │   ├── _transformer_registry.py
@@ -184,7 +184,7 @@ class QwenAttention(nn.Module):
 
 ### 2.3 common/ 边界（已改善项 + 剩余债务）
 
-**已改善**：CogVideoX 3D VAE 已在 `families/cogvideox/vae*.py`，不再堆在 `common/vae/cogvideox_decoder*`。
+
 
 **剩余债务**：
 
@@ -361,13 +361,6 @@ backend/engine/
 │   ├── wan/
 │   │   ├── transformer.py              # WanTransformer (ctx-only)
 │   │   └── weights.py                  # remap_wan_weights
-│   ├── cogvideox/
-│   │   ├── transformer.py              # 对外入口 (re-export)
-│   │   ├── transformer_mlx.py          # 完整 MLX 实现
-│   │   ├── weights.py                  # remap_cogvideox_weights
-│   │   ├── vae.py                      # VAE decode entry (latents PIL)
-│   │   ├── vae_mlx.py                  # Full MLX NHWC decoder
-│   │   └── vae_cuda.py                 # Full CUDA NCHW decoder
 │   └── seedvr2/
 │       ├── pipeline.py                 # Main pipeline (ctx-ified)
 │       ├── dit.py                      # DiT model (ctx-ified)
@@ -462,28 +455,20 @@ def load_weights(model_path: str, ctx) -> dict:
 # xxx_mlx.py = 平台完整实现
 # xxx_cuda.py = 平台完整实现
 
-# families/cogvideox/vae.py
-class CogVideoXDecoder:
-    def decode(self, latents_bcthw) -> Any:
+# 示例（以 ltx 为例）
+# families/ltx/vae.py
+class LTXVADecoder:
+    def decode(self, latents) -> Any:
         raise NotImplementedError
 
-def create_cogvideox_decoder(ctx, bundle_root, vae_cfg) -> CogVideoXDecoder:
+def create_ltx_vae_decoder(ctx, bundle_root, vae_cfg) -> LTXVADecoder:
     if ctx.backend == "mlx":
-        from .vae_mlx import CogVideoXDecoderMLX
-        return CogVideoXDecoderMLX(ctx, bundle_root, vae_cfg)
+        from .vae_mlx import LTXVADecoderMLX
+        return LTXVADecoderMLX(ctx, bundle_root, vae_cfg)
     elif ctx.backend == "cuda":
-        from .vae_cuda import CogVideoXDecoderCuda
-        return CogVideoXDecoderCuda(ctx, bundle_root, vae_cfg)
-    raise RuntimeError(f"CogVideoX decoder not available for backend: {ctx.backend}")
-
-# families/cogvideox/vae_mlx.py (~700行)
-class CogVideoXDecoderMLX(CogVideoXDecoder):
-    def __init__(self, ctx, bundle_root, vae_cfg):
-        import mlx.core as mx
-        import mlx.nn as nn
-        # Full NHWC implementation
-    def decode(self, latents):
-        # NHWC decode logic
+        from .vae_cuda import LTXVADecoderCuda
+        return LTXVADecoderCuda(ctx, bundle_root, vae_cfg)
+    raise RuntimeError(f"LTX VAE decoder not available for backend: {ctx.backend}")
 ```
 
 ### 4.3 common/ 边界定义
@@ -494,9 +479,8 @@ class CogVideoXDecoderMLX(CogVideoXDecoder):
 3. 可用 ctx 完整表达
 
 **应迁出 common/ 的**：
-1. CogVideoX 3D VAE -> `families/cogvideox/vae_*.py`
-2. Qwen-Image decoder -> `families/qwen/vae_*.py` 或 `common/vae/qwen_image_decoder_*.py`
-3. 族特定的 text encoder -> 如果仅一个族使用，应放在族内
+1. Qwen-Image decoder -> `families/qwen/vae_*.py` 或 `common/vae/qwen_image_decoder_*.py`
+2. 族特定的 text encoder -> 如果仅一个族使用，应放在族内
 
 ---
 
@@ -801,12 +785,12 @@ class WeightRemapper:
 | 0 | 质量门禁先行（parity、manifest、registry profiles） | §12 Phase 0 |
 | 1 | 注册表瘦身 + 下载可观测 | §12 Phase 1 |
 | 2 | common 复用层收敛 | §12 Phase 2 |
-| 3 | 消除 ctx 孤岛（flux / cogvideox / qwen / seedvr2） | §12 Phase 3 |
+| 3 | 消除 ctx 孤岛（flux / qwen / seedvr2） | §12 Phase 3 |
 | 4 | Pipeline 可观测性（GenerationGraph、LoRA contract） | §12 Phase 4 |
 | 5 | 新模型接入 DX（scaffold、family contract） | §12 Phase 5 |
 | 6 | 治理扩展（family budget、复用率报告） | §12 Phase 6 |
 
-**注意**：CogVideoX VAE **已在** `families/cogvideox/vae*.py`；Phase 3 对 cogvideox 的任务是 **ctx 化 + parity**，不是再次迁移 VAE。
+
 
 ---
 
@@ -1036,7 +1020,7 @@ L3 生成：bench-sanity / bench-mflux / family-specific parity case
 - [x] `common/bundle_layout.py`：T5 路径 + `assert_media_bundle_ready`
 - [ ] `common/text_encoders/`：≥2 族共用 T5 / CLIP / Qwen3（部分已有，未全收敛）
 - [x] manifest + family contract 合并在 `bundle_manifest.py`（无 `bundle_weights/` 平行树）
-- [ ] CogVideoX：VAE 已在 `families/cogvideox/`；ctx 化与 parity 待做
+
 - [x] `scaffold_image_family.py` 已接 governance / registry 提示
 
 **门禁**
@@ -1052,7 +1036,7 @@ make check-engine-family-primitives
 | 顺序 | Family | 动作 | 验收 |
 |------|--------|------|------|
 | 1 | flux1 / flux2 / fibo | 热路径 `ctx.*`（Flux2 RoPE 保留 `_apply_rope_bhsd`） | `flux1-dev-create` / `flux2-klein-9b-create` PASS |
-| 2 | cogvideox | ctx 化；VAE parity | video sanity |
+
 | 3 | qwen | MLX `_T` singleton；CUDA parity | bench / smoke |
 | 4 | seedvr2 | Go-style stem；Shape B 不变 | `seedvr2-7b-upscale-sanity` PASS |
 
