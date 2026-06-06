@@ -9,9 +9,7 @@ from typing import Any, Callable
 logger = logging.getLogger(__name__)
 
 # hook ``type`` -> ``module.path:function_name``
-_HOOK_RUNNERS: dict[str, str] = {
-    "heartmula_mlx_weights": "backend.engine.families.heartmula.install_hook:run_heartmula_mlx_weights",
-}
+_HOOK_RUNNERS: dict[str, str] = {}
 
 
 def install_hooks_from_version(ver_config: dict[str, Any] | None) -> list[dict[str, Any]]:

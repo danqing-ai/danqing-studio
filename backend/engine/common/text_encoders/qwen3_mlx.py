@@ -78,7 +78,7 @@ class MlxLTXTimestepEmbeddingMLP(MlxTimestepEmbeddingMLP):
 
 
 class MlxTimestepEmbeddingMLPWide(nn.Module):
-    """Timestep MLP with configurable expansion (HeartMuLa: dim → dim×4 → dim)."""
+    """Timestep MLP with configurable expansion (dim → dim×expansion → dim)."""
 
     def __init__(self, in_channels: int, out_channels: int, *, expansion: int = 4):
         super().__init__()

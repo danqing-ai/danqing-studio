@@ -18,9 +18,9 @@ Pick **one** shape before writing code:
 |-------|------|-------|---------------|
 | **A — DiT + ImagePipeline** | Standard txt2img / edit with `TransformerBase.forward(latents, t, txt_embeds=…)` | `ImagePipeline.run()` | **flux2** (`docs/canonical_image_family_flux2.md`) |
 | **B — Job Pipeline** | Upscale / MM-DiT with non-standard denoise API | `ImageUpscalePipeline` → `families/<family>/stem.py` + `stem_mlx.py` | seedvr2 |
-| **C — Generation Facade** | End-to-end audio or whole-stack generator | `MusicPipeline` → `families/<family>/generation.py` | ace_step, heartmula |
+| **C — Generation Facade** | End-to-end audio or whole-stack generator | `MusicPipeline` → `families/<family>/generation.py` | ace_step |
 
-**Do not** mirror upstream directory trees (e.g. `families/<family>/mlx/`). HeartMuLa's `mlx/` subtree is allowlisted temporarily only.
+**Do not** mirror upstream directory trees (e.g. `families/<family>/mlx/`).
 
 ```
 Need standard image denoise loop?

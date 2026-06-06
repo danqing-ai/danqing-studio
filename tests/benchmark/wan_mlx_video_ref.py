@@ -73,6 +73,22 @@ def main() -> int:
     cache = Path(__file__).resolve().parent / ".cache" / "wan22_mlx_ref" / bundle.name
     model_dir = _ensure_converted(bundle, cache)
 
+    # mlx-video generate hardcodes HF hub ``google/umt5-xxl``; use bundle-local tokenizer offline.
+    tok_local = model_dir / "google" / "umt5-xxl"
+    if not tok_local.is_dir():
+        tok_local = bundle / "google" / "umt5-xxl"
+    if tok_local.is_dir():
+        import transformers
+
+        _orig_from_pretrained = transformers.AutoTokenizer.from_pretrained
+
+        def _tokenizer_from_local(name: str, *a, **k):
+            if str(name).strip() in ("google/umt5-xxl", "umt5-xxl"):
+                return _orig_from_pretrained(str(tok_local), *a, **k)
+            return _orig_from_pretrained(name, *a, **k)
+
+        transformers.AutoTokenizer.from_pretrained = _tokenizer_from_local  # type: ignore[method-assign]
+
     try:
         from mlx_video.models.wan_2.generate import generate_video
     except ImportError as e:

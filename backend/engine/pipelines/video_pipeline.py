@@ -687,6 +687,17 @@ class VideoPipeline:
             on_log=on_log,
         )
 
+    def _initial_video_latents(self, config: Any, latent_shape: tuple, seed: int | None) -> Any:
+        """Sample initial video noise; Wan uses ``mx.random.seed`` to match mlx-video."""
+        if seed is not None:
+            if bool(getattr(config, "uses_wan_shift", False)) and getattr(self.ctx, "backend", "") == "mlx":
+                import mlx.core as mx
+
+                mx.random.seed(int(seed))
+                return self.ctx.randn(latent_shape, dtype=self.ctx.float32())
+            return self.ctx.seeded_randn(latent_shape, seed, dtype=self.ctx.float32())
+        return self.ctx.randn(latent_shape, dtype=self.ctx.float32())
+
     def _denoise_video(
         self,
         *,
@@ -959,10 +970,7 @@ class VideoPipeline:
         # 4. Initial noise [B, C, T_latent, H_lat, W_lat]
         latent_c = int(getattr(config, "vae_z_dim", None) or config.dim_in)
         latent_shape = (1, latent_c, latent_frames, h // vae_scale, w // vae_scale)
-        if seed is not None:
-            latents = self.ctx.seeded_randn(latent_shape, seed, dtype=self.ctx.float32())
-        else:
-            latents = self.ctx.randn(latent_shape, dtype=self.ctx.float32())
+        latents = self._initial_video_latents(config, latent_shape, seed)
 
         # ── Hook ③: before denoise ──
         latents, extra_cond = model.before_denoise(latents, timesteps, sigmas, **extra_cond)
@@ -1135,10 +1143,7 @@ class VideoPipeline:
         # 4. Initial noise
         latent_c = int(getattr(config, "vae_z_dim", None) or config.dim_in)
         latent_shape = (1, latent_c, latent_frames, h // vae_scale, w // vae_scale)
-        if seed is not None:
-            latents = self.ctx.seeded_randn(latent_shape, seed, dtype=self.ctx.float32())
-        else:
-            latents = self.ctx.randn(latent_shape, dtype=self.ctx.float32())
+        latents = self._initial_video_latents(config, latent_shape, seed)
 
         # Load source image condition if available
         if request.source_asset_id:

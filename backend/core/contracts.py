@@ -188,12 +188,6 @@ class AudioGenerationRequest(BaseModel):
     time_signature: str = ""  # "2","3","4","6", empty=auto-detect
     steps: Optional[int] = None
     guidance: Optional[float] = None
-    temperature: Optional[float] = None  # HeartMuLa LM sampling
-    top_k: Optional[int] = None  # HeartMuLa LM top-k
-    codec_steps: Optional[int] = None  # HeartMuLa codec ODE steps
-    codec_guidance: Optional[float] = None  # HeartMuLa codec CFG
-    long_form_temperature: Optional[float] = None  # HeartMuLa long-form (>120s) LM temperature
-    long_form_topk: Optional[int] = None  # HeartMuLa long-form (>120s) LM top-k
     seed: Optional[int] = None
     n: int = Field(2, ge=1, le=8)
     simple_mode: bool = False  # advanced: force 5Hz LM inspiration (create_sample)

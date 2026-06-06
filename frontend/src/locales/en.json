@@ -203,7 +203,6 @@
   "audio": {
     "title": "Audio Create",
     "promptPlaceholder": "Describe the music you want, e.g. upbeat electronic dance with heavy bass...",
-    "promptPlaceholderHeartMuLa": "Style tags (comma-separated), e.g. pop, female vocal, acoustic, 120 BPM",
     "negativePrompt": "Negative prompt",
     "lyrics": "Lyrics",
     "lyricsPlaceholder": "[Verse 1]\nWrite your lyrics here...\n[Chorus]\nYour chorus...",
@@ -234,7 +233,7 @@
     "guidance": "Guidance",
     "guidanceDesc": "Higher values follow the prompt more closely",
     "temperature": "Temperature",
-    "temperatureDesc": "Higher = more random; lower = more stable (HeartMuLa LM)",
+    "temperatureDesc": "Higher = more random; lower = more stable",
     "topK": "Top-K",
     "codecSteps": "Codec steps",
     "codecStepsDesc": "Neural codec ODE steps; more steps can improve quality but run slower",

@@ -1,7 +1,7 @@
 """
 MusicPipeline — audio request → family generator → WAV → asset save.
 
-Dispatches by registry ``family`` (ACE-Step, HeartMuLa, …) on MLX or CUDA.
+Dispatches by registry ``family`` (ACE-Step) on MLX or CUDA.
 """
 from __future__ import annotations
 
@@ -33,7 +33,6 @@ from backend.engine.common.pipeline_registry import (
 )
 from backend.engine.config.model_configs import (
     AceStepConfig,
-    HeartMulaConfig,
     get_config_class,
 )
 from backend.engine._transformer_registry import get_audio_generation_factory
@@ -47,11 +46,6 @@ from backend.engine.families.ace_step.generation import (
     write_lrc_sidecar,
 )
 from backend.engine.families.ace_step.quality_score import quality_log_message
-from backend.engine.families.heartmula.generation import (
-    FRAME_RATE as HEARTMULA_FRAME_RATE,
-    SAMPLE_RATE as HEARTMULA_SAMPLE_RATE,
-    prepare_heartmula_request,
-)
 from backend.engine.runtime._base import RuntimeContext
 
 logger = logging.getLogger(__name__)
@@ -129,7 +123,6 @@ class MusicPipeline:
         config = cfg_cls()
         runners = {
             "ace_step": self._run_ace_step,
-            "heartmula": self._run_heartmula,
         }
         runner = runners.get(family)
         if runner is None:
@@ -291,256 +284,6 @@ class MusicPipeline:
             )
             ids.append(aid)
         return ids
-
-    def _run_heartmula(
-        self,
-        request: AudioGenerationRequest,
-        exec_ctx: ExecutionContext,
-        model_id: str,
-        version_key: str | None,
-        entry: Any,
-        bundle_root: Path,
-        config: HeartMulaConfig,
-        t0: float,
-    ) -> EngineResult:
-        prepared = prepare_heartmula_request(request, config)
-        for level, message in prepared.log_events:
-            exec_ctx.on_log(LogEvent(level=level, message=message))
-
-        exec_ctx.on_log(
-            LogEvent(
-                level="info",
-                message=f"Loading HeartMuLa: {model_id} from {bundle_root}",
-            )
-        )
-        generator = self._get_generator(entry, version_key, "heartmula", bundle_root)
-        seed = (
-            request.seed
-            if request.seed is not None and request.seed >= 0
-            else random.randint(0, 2**31 - 1)
-        )
-        n = max(request.n, 1)
-        exec_ctx.on_log(
-            LogEvent(
-                level="info",
-                message=(
-                    f"Generating {n} track(s): duration={prepared.duration}s, "
-                    f"cfg={prepared.cfg_scale}, temperature={prepared.temperature}, "
-                    f"topk={prepared.topk}, seed={seed}"
-                ),
-            )
-        )
-        if request.negative_prompt:
-            exec_ctx.on_log(
-                LogEvent(
-                    level="warning",
-                    message="negative_prompt is not used by HeartMuLa (ignored)",
-                )
-            )
-
-        output_paths: List[str] = []
-        output_durations: List[float] = []
-        for i in range(n):
-            self._raise_if_cancelled(exec_ctx)
-            batch_seed = seed + i
-            exec_ctx.on_progress(
-                ProgressEvent(
-                    progress=(i + 0.1) / n,
-                    step=i + 1,
-                    total=n,
-                    message=f"Generating music {i + 1}/{n}",
-                )
-            )
-            t_gen = time.monotonic()
-            max_lm_frames = max(1, int(prepared.duration * HEARTMULA_FRAME_RATE))
-
-            def _lm_progress(done: int, total: int) -> None:
-                self._raise_if_cancelled(exec_ctx)
-                frac = done / total if total else 0.0
-                exec_ctx.on_progress(
-                    ProgressEvent(
-                        progress=(i + 0.12 + 0.76 * frac) / n,
-                        step=i + 1,
-                        total=n,
-                        message=(
-                            f"HeartMuLa LM {done}/{total} 帧 "
-                            f"(~{done / HEARTMULA_FRAME_RATE:.0f}s / "
-                            f"{prepared.duration:.0f}s)"
-                        ),
-                    )
-                )
-                if done <= 1 or done % 10 == 0 or done >= total:
-                    exec_ctx.on_log(
-                        LogEvent(
-                            level="info",
-                            message=(
-                                f"HeartMuLa LM 进度 {done}/{total} 帧 "
-                                f"(~{done / HEARTMULA_FRAME_RATE:.1f}s 音频)"
-                            ),
-                        )
-                    )
-
-            exec_ctx.on_log(
-                LogEvent(
-                    level="info",
-                    message=(
-                        f"HeartMuLa 开始逐帧生成（最多 {max_lm_frames} 帧，"
-                        f"约 {prepared.duration:.0f}s；遇 Audio EOS 会提前结束）"
-                    ),
-                )
-            )
-            try:
-                waveform = generator.generate_waveform(
-                    tags=prepared.tags,
-                    lyrics=prepared.lyrics,
-                    duration=prepared.duration,
-                    temperature=prepared.temperature,
-                    topk=prepared.topk,
-                    cfg_scale=prepared.cfg_scale,
-                    codec_steps=prepared.codec_steps,
-                    codec_guidance=prepared.codec_guidance,
-                    long_form_temperature=prepared.long_form_temperature,
-                    long_form_topk=prepared.long_form_topk,
-                    seed=batch_seed,
-                    progress_callback=_lm_progress,
-                )
-            except Exception as exc:
-                logger.exception(
-                    "HeartMuLa generation failed (%d/%d, seed=%s)",
-                    i + 1,
-                    n,
-                    batch_seed,
-                )
-                exec_ctx.on_log(
-                    LogEvent(
-                        level="error",
-                        message=f"HeartMuLa failed ({i + 1}/{n}): {exc}",
-                    )
-                )
-                raise
-            self._raise_if_cancelled(exec_ctx)
-
-            gen_s = time.monotonic() - t_gen
-            frames = getattr(generator, "last_frame_count", 0)
-            eos_early = getattr(generator, "last_eos_early", False)
-            hf_noise = getattr(generator, "last_hf_noise_ratio", 0.0)
-            codec_mode = getattr(generator, "last_codec_decode_mode", "single")
-            exec_ctx.on_log(
-                LogEvent(
-                    level="info",
-                    message=(
-                        f"HeartMuLa done ({i + 1}/{n}): {gen_s:.1f}s, "
-                        f"frames={frames}, eos_early={eos_early}, hf_noise={hf_noise:.3f}, "
-                        f"codec={codec_mode}"
-                    ),
-                )
-            )
-            code_diag_lines = list(getattr(generator, "last_code_diagnostics", []) or [])
-            for line in code_diag_lines:
-                exec_ctx.on_log(LogEvent(level="info", message=line))
-            chunk_diags = list(getattr(generator, "last_codec_chunk_diagnostics", []) or [])
-            for row in chunk_diags:
-                cidx = int(row.get("chunk_idx", 0))
-                ctot = int(row.get("chunk_total", 0))
-                peak = float(row.get("peak", 0.0))
-                rms = float(row.get("rms", 0.0))
-                dc = float(row.get("dc", 0.0))
-                hf = float(row.get("hf_noise", 0.0))
-                clip = float(row.get("clip_ratio", 0.0))
-                seam = float(row.get("seam", 0.0))
-                stabilized = bool(int(row.get("stabilized", 0.0)))
-                exec_ctx.on_log(
-                    LogEvent(
-                        level="info",
-                        message=(
-                            f"HeartCodec chunk {cidx}/{ctot}: peak={peak:.3f}, rms={rms:.4f}, "
-                            f"dc={dc:.4f}, hf={hf:.3f}, clip={clip:.3f}, seam={seam:.3f}, "
-                            f"stabilized={stabilized}"
-                        ),
-                    )
-                )
-                if hf > 0.55 or seam > 0.5:
-                    exec_ctx.on_log(
-                        LogEvent(
-                            level="warning",
-                            message=(
-                                f"HeartCodec chunk anomaly {cidx}/{ctot}: hf={hf:.3f}, seam={seam:.3f}"
-                            ),
-                        )
-                    )
-            if hf_noise > 0.55:
-                exec_ctx.on_log(
-                    LogEvent(
-                        level="warning",
-                        message=(
-                            f"音频 {i + 1}/{n} 高频噪声偏高 (hf_noise={hf_noise:.3f})；"
-                            "若持续有沙沙声/电流声，请尝试提高 Codec ODE 步数（≥10）或更换 seed；"
-                            "若曾用旧版安装 HeartCodec，请在下载中心重新安装以获取 fp32 Codec 权重"
-                        ),
-                    )
-                )
-            if eos_early:
-                exec_ctx.on_log(
-                    LogEvent(
-                        level="info",
-                        message="模型提前结束（Audio EOS）；实际时长可能短于请求时长",
-                    )
-                )
-
-            exec_ctx.on_progress(
-                ProgressEvent(
-                    progress=(i + 0.9) / n,
-                    step=i + 1,
-                    total=n,
-                    message=f"Saving audio {i + 1}/{n}",
-                )
-            )
-            out_path = self._save_audio(
-                waveform,
-                model_id,
-                batch_seed,
-                family="heartmula",
-                sample_rate=HEARTMULA_SAMPLE_RATE,
-            )
-            n_samples = int(waveform.shape[0]) if hasattr(waveform, "shape") else 0
-            dur_written = n_samples / HEARTMULA_SAMPLE_RATE if n_samples else 0.0
-            exec_ctx.on_log(
-                LogEvent(
-                    level="success",
-                    message=(
-                        f"Saved {i + 1}/{n}: {out_path.name} "
-                        f"({dur_written:.1f}s, {out_path.stat().st_size // 1024}KB)"
-                    ),
-                )
-            )
-            output_paths.append(str(out_path))
-            output_durations.append(dur_written)
-
-        self._raise_if_cancelled(exec_ctx)
-        exec_ctx.on_progress(
-            ProgressEvent(progress=1.0, step=n, total=n, message="Complete")
-        )
-        elapsed = time.monotonic() - t0
-        asset_ids = self._persist_assets(
-            output_paths,
-            request,
-            model_id,
-            elapsed,
-            exec_ctx.task_id,
-            output_durations,
-        )
-        return EngineResult(
-            primary_asset_id=asset_ids[0] if asset_ids else "",
-            asset_ids=asset_ids,
-            output_paths=output_paths,
-            metadata={
-                "model": model_id,
-                "seed": seed,
-                "duration_seconds": prepared.duration,
-                "cfg_scale": prepared.cfg_scale,
-                "temperature": prepared.temperature,
-            },
-        )
 
     def _run_ace_step(
         self,

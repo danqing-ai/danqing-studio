@@ -111,7 +111,7 @@
 
 ## 1. 当前架构全景
 
-> 下图反映**当前仓库**主要结构（非目标态）。音频（ace_step / heartmula）、视频（hunyuan 等）族未在树中逐文件展开。
+> 下图反映**当前仓库**主要结构（非目标态）。音频（ace_step）、视频（hunyuan 等）族未在树中逐文件展开。
 
 ```
 DanQing-Studio/
@@ -135,7 +135,7 @@ DanQing-Studio/
 │   │   │   ├── qwen/            # registry family=qwen_image；MLX 仍 nn.Module 热路径
 │   │   │   ├── seedvr2/         # Shape B upscale job；7 逻辑单位
 │   │   │   ├── ltx/, wan/, cogvideox/, hunyuan/    # 视频
-│   │   │   └── ace_step/, heartmula/               # Shape C 音频
+│   │   │   └── ace_step/                           # Shape C 音频
 │   │   ├── pipelines/           # image / video / upscale / music
 │   │   ├── _transformer_registry.py
 │   │   ├── vae_codec_registry.py

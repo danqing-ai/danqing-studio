@@ -55,7 +55,6 @@ _REMOVE_DIST_INFO_PREFIXES = (
 # Drop under _internal when present (PyInstaller collected but unused on CUDA path).
 _REMOVE_INTERNAL_GLOBS = (
     "backend/engine/runtime/mlx",
-    "backend/engine/families/heartmula/mlx",
     "backend/engine/families/seedvr2",
     "backend/engine/families/ace_step",
     "backend/engine/pipelines/music_pipeline",

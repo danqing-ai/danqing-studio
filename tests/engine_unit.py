@@ -940,8 +940,8 @@ class BundleReposTests(unittest.TestCase):
                     "default": {
                         "bundle_repos": [
                             {
-                                "repo_id": "HeartMuLa/HeartMuLaGen",
-                                "local_path": "models/Audio/heartmula-oss-3b-happy-new-year",
+                                "repo_id": "AceStep/AceStepTokenizer",
+                                "local_path": "models/Audio/ace-step-xl-sft",
                             },
                         ],
                     },
@@ -950,206 +950,12 @@ class BundleReposTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            bundle = root / "models/Audio/heartmula-oss-3b-happy-new-year"
+            bundle = root / "models/Audio/ace-step-xl-sft"
             bundle.mkdir(parents=True)
             resolved = local_bundle_root(root, _Entry(), "default")
             self.assertEqual(resolved, bundle.resolve())
             missing = local_bundle_root(root, _Entry(), "missing")
             self.assertIsNone(missing)
-
-
-class HeartMulaGenerationTests(unittest.TestCase):
-    def test_prepare_heartmula_request_tags_and_cfg(self) -> None:
-        from backend.core.contracts import AudioGenerationRequest
-        from backend.engine.config.model_configs import HeartMulaConfig
-        from backend.engine.families.heartmula.generation import (
-            create_heartmula_generator,
-            prepare_heartmula_request,
-            prompt_to_tags,
-        )
-
-        req = AudioGenerationRequest(
-            model="heartmula-oss-3b-happy-new-year",
-            prompt="pop, female vocal, acoustic",
-            lyrics="[verse]\nHello world",
-            duration=45,
-            guidance=2.0,
-            temperature=1.2,
-            top_k=80,
-            codec_steps=12,
-            codec_guidance=1.4,
-            long_form_temperature=1.1,
-            long_form_topk=70,
-        )
-        prepared = prepare_heartmula_request(req, HeartMulaConfig())
-        self.assertIn("pop", prepared.tags)
-        self.assertEqual(prepared.cfg_scale, 2.0)
-        self.assertEqual(prepared.duration, 45.0)
-        self.assertEqual(prepared.temperature, 1.2)
-        self.assertEqual(prepared.topk, 80)
-        self.assertEqual(prepared.codec_steps, 12)
-        self.assertEqual(prepared.codec_guidance, 1.4)
-        self.assertEqual(prepared.long_form_temperature, 1.1)
-        self.assertEqual(prepared.long_form_topk, 70)
-        self.assertEqual(prepared.lyrics, "[verse]\nHello world")
-        self.assertTrue(callable(create_heartmula_generator))
-        self.assertEqual(prompt_to_tags("  jazz  "), "jazz")
-
-    def test_family_config_registered(self) -> None:
-        from backend.engine.config.model_configs import HeartMulaConfig, get_config_class
-
-        self.assertIs(get_config_class("heartmula"), HeartMulaConfig)
-
-    def test_audio_engine_supports_model_with_version_suffix(self) -> None:
-        import json
-        import tempfile
-        from pathlib import Path
-        from unittest.mock import MagicMock
-
-        from backend.core.model_registry import ModelRegistry
-        from backend.engine.danqing_audio_engine import DanQingAudioEngine
-
-        payload = {
-            "schema_version": 2,
-            "models": {
-                "heartmula-oss-3b-happy-new-year": {
-                    "media": "audio",
-                    "engine": "danqing-audio",
-                    "family": "heartmula",
-                    "actions": {"create": {}},
-                }
-            },
-        }
-        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as f:
-            json.dump(payload, f)
-            reg_path = Path(f.name)
-        reg = ModelRegistry.load(reg_path)
-        reg_path.unlink(missing_ok=True)
-        engine = DanQingAudioEngine(
-            path_resolver=MagicMock(),
-            registry=reg,
-            runtimes={"mlx": MagicMock()},
-        )
-        self.assertTrue(engine.supports("heartmula-oss-3b-happy-new-year:default", "create_music"))
-
-    def test_registry_bundle_repos(self) -> None:
-        import json
-        from pathlib import Path
-
-        from backend.core.bundle_repos import bundle_repos_from_version
-
-        reg = json.loads(
-            (Path(__file__).resolve().parents[1] / "default_config" / "models_registry.json").read_text(
-                encoding="utf-8",
-            )
-        )
-        ver = reg["models"]["heartmula-oss-3b-happy-new-year"]["versions"]["default"]
-        repos = bundle_repos_from_version(ver)
-        self.assertEqual(len(repos), 3)
-        self.assertEqual(repos[0]["repo_id"], "HeartMuLa/HeartMuLaGen")
-        self.assertNotIn("companion_repo_id", ver)
-        self.assertNotIn("extra_companions", ver)
-        hm = reg["models"]["heartmula-oss-3b-happy-new-year"]
-        self.assertFalse(hm["parameters"]["negative_prompt_support"])
-        for key in ("temperature", "top_k", "codec_steps", "codec_guidance", "long_form_temperature", "long_form_topk"):
-            self.assertIn(key, hm["parameters"])
-        hooks = ver.get("install_hooks")
-        self.assertEqual(len(hooks), 1)
-        self.assertEqual(hooks[0]["type"], "heartmula_mlx_weights")
-
-    def test_mlx_stack_imports(self) -> None:
-        from backend.engine.families.heartmula.generation_mlx import HeartMulaMlxGenerator
-        from backend.engine.families.heartmula.mula_mlx import HeartMuLa
-        from backend.engine.families.heartmula.weights_mlx import (
-            convert_heartmula_weights,
-            load_pytorch_weights,
-        )
-
-        self.assertTrue(callable(load_pytorch_weights))
-        self.assertTrue(callable(convert_heartmula_weights))
-        self.assertIsNotNone(HeartMuLa)
-        self.assertIsNotNone(HeartMulaMlxGenerator)
-
-    def test_codec_normalize_codes_layout(self) -> None:
-        import mlx.core as mx
-
-        from backend.engine.families.heartmula.codec_mlx import HeartCodec, HeartCodecConfig
-
-        codec = HeartCodec(HeartCodecConfig())
-        heartlib = mx.zeros((1, 8, 125), dtype=mx.int32)
-        normalized = codec._normalize_codes_layout(heartlib)
-        self.assertEqual(tuple(normalized.shape), (1, 125, 8))
-        already = mx.zeros((1, 125, 8), dtype=mx.int32)
-        self.assertEqual(tuple(codec._normalize_codes_layout(already).shape), (1, 125, 8))
-
-    def test_codec_chunk_code_frames_and_routing(self) -> None:
-        from backend.engine.families.heartmula.codec_mlx import (
-            HeartCodec,
-            HeartCodecConfig,
-            chunk_code_frames,
-            single_pass_frame_limit,
-        )
-
-        cfg = HeartCodecConfig()
-        codec = HeartCodec(cfg)
-        chunk_frames = chunk_code_frames(cfg.frame_rate)
-        single_frames = single_pass_frame_limit(cfg.frame_rate)
-        self.assertGreater(chunk_frames, int(25 * cfg.frame_rate))
-        self.assertLess(chunk_frames, int(35 * cfg.frame_rate))
-        self.assertGreaterEqual(single_frames, int(120 * cfg.frame_rate))
-        # 300s → thousands of code frames → must exceed single-pass threshold
-        self.assertGreater(int(300 * cfg.frame_rate), single_frames)
-
-
-class HeartMulaCodecParityTests(unittest.TestCase):
-    def test_compare_audio_waveforms_identical(self) -> None:
-        import numpy as np
-
-        from tests.benchmark.metrics import compare_audio_waveforms, si_sdr_db
-
-        sr = 48000
-        t = np.linspace(0, 1.0, sr, endpoint=False, dtype=np.float64)
-        sig = 0.3 * np.sin(2 * np.pi * 440.0 * t)
-        res = compare_audio_waveforms(sig, sig, sample_rate=sr)
-        self.assertTrue(res.product_ok)
-        self.assertIsNotNone(res.si_sdr_db)
-        assert res.si_sdr_db is not None
-        self.assertGreater(res.si_sdr_db, 80.0)
-        self.assertAlmostEqual(si_sdr_db(sig, sig), res.si_sdr_db, places=3)
-        assert res.correlation is not None
-        self.assertGreater(res.correlation, 0.999)
-
-    def test_codec_parity_skips_without_fixtures(self) -> None:
-        from tests.benchmark.heartmula_codec_parity import run_codec_parity_check
-
-        res = run_codec_parity_check(
-            Path("tests/benchmark/fixtures/heartmula/does_not_exist.json"),
-            output_dir=Path("tests/benchmark/outputs/_codec_parity_unit"),
-            case_id="test-missing-fixtures",
-        )
-        self.assertTrue(res.skipped)
-        self.assertIn("codec_parity_skip", res.reason)
-
-    def test_load_codes_layout(self) -> None:
-        import tempfile
-
-        import numpy as np
-
-        from tests.benchmark.heartmula_codec_parity import load_codes_npy
-
-        codes = np.random.randint(0, 8192, size=(125, 8), dtype=np.int32)
-        with tempfile.NamedTemporaryFile(suffix=".npy", delete=False) as tmp:
-            path = Path(tmp.name)
-            np.save(path, codes)
-        try:
-            loaded = load_codes_npy(path)
-            self.assertEqual(loaded.shape, (125, 8))
-            batched = codes[None, ...]
-            np.save(path, batched)
-            loaded_b = load_codes_npy(path)
-            self.assertEqual(loaded_b.shape, (125, 8))
-        finally:
-            path.unlink(missing_ok=True)
 
 
 class HunyuanWeightTests(unittest.TestCase):
@@ -1612,21 +1418,6 @@ class HunyuanWeightTests(unittest.TestCase):
             tok = HFTokenizerJson.from_directory(root)
             self.assertEqual(tok.encode(">pop"), [29, 8539])
 
-    def test_heartmula_hf_tokenizer_encode(self) -> None:
-        from pathlib import Path
-
-        from backend.engine.common.hf_tokenizer_json import HFTokenizerJson
-        from backend.engine.families.heartmula.bundle import bundle_is_ready
-
-        bundle = Path("models/Audio/heartmula-oss-3b-happy-new-year")
-        if not bundle_is_ready(bundle):
-            self.skipTest("HeartMuLa bundle not installed")
-
-        tok = HFTokenizerJson.from_directory(bundle)
-        sample = "<tag>pop, happy</tag>"
-        ids = tok.encode(sample)
-        self.assertEqual(ids, [17224, 29, 8539, 11, 6380, 524, 4681, 29])
-
     def test_byt5_tokenize_batch(self) -> None:
         import tempfile
         from pathlib import Path
@@ -1725,13 +1516,13 @@ class InstallHooksTests(unittest.TestCase):
 
         ver = {
             "install_hooks": [
-                {"type": "heartmula_mlx_weights", "dtype": "bfloat16"},
+                {"type": "ace_step_post_download", "dtype": "bfloat16"},
                 "other_hook",
             ]
         }
         hooks = install_hooks_from_version(ver)
         self.assertEqual(len(hooks), 2)
-        self.assertEqual(hooks[0]["type"], "heartmula_mlx_weights")
+        self.assertEqual(hooks[0]["type"], "ace_step_post_download")
         self.assertEqual(hooks[0]["dtype"], "bfloat16")
         self.assertEqual(hooks[1]["type"], "other_hook")
 
@@ -1740,13 +1531,6 @@ class InstallHooksTests(unittest.TestCase):
 
         self.assertEqual(install_hooks_from_version(None), [])
         self.assertEqual(install_hooks_from_version({}), [])
-
-    def test_heartmula_hook_runner_resolves(self) -> None:
-        from backend.core.install_hooks import _resolve_runner
-
-        fn = _resolve_runner("heartmula_mlx_weights")
-        self.assertTrue(callable(fn))
-        self.assertEqual(fn.__name__, "run_heartmula_mlx_weights")
 
     def test_unknown_hook_type_fails_loud(self) -> None:
         from backend.core.install_hooks import run_install_hooks
@@ -1761,41 +1545,6 @@ class InstallHooksTests(unittest.TestCase):
                     bundle_root=root,
                 )
             self.assertIn("nonexistent", str(ctx.exception))
-
-    def test_prune_pytorch_weights_keeps_mlx_and_config(self) -> None:
-        from backend.engine.families.heartmula.install_hook import prune_pytorch_weights
-
-        with tempfile.TemporaryDirectory() as tmp:
-            comp = Path(tmp) / "HeartMuLa-oss-3B"
-            comp.mkdir()
-            (comp / "config.json").write_text("{}", encoding="utf-8")
-            (comp / "model.safetensors").write_bytes(b"pt")
-            (comp / "mlx").mkdir()
-            (comp / "mlx" / "model.safetensors").write_bytes(b"mlx")
-            removed = prune_pytorch_weights(comp)
-            self.assertEqual(removed, ["model.safetensors"])
-            self.assertFalse((comp / "model.safetensors").exists())
-            self.assertTrue((comp / "mlx" / "model.safetensors").is_file())
-            self.assertTrue((comp / "config.json").is_file())
-
-    def test_mlx_weights_ready_requires_both_components(self) -> None:
-        from backend.engine.families.heartmula.bundle import mlx_weights_ready
-
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            (root / "tokenizer.json").write_text("{}", encoding="utf-8")
-            (root / "gen_config.json").write_text("{}", encoding="utf-8")
-            mula = root / "HeartMuLa-oss-3B"
-            codec = root / "HeartCodec-oss"
-            mula.mkdir()
-            codec.mkdir()
-            self.assertFalse(mlx_weights_ready(root))
-            (mula / "mlx").mkdir(parents=True)
-            (mula / "mlx" / "model.safetensors").write_bytes(b"x")
-            self.assertFalse(mlx_weights_ready(root))
-            (codec / "mlx").mkdir(parents=True)
-            (codec / "mlx" / "model.safetensors").write_bytes(b"y")
-            self.assertTrue(mlx_weights_ready(root))
 
 
 class PipelineProgressBridgeTests(unittest.TestCase):

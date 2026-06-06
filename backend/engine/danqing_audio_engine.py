@@ -86,12 +86,6 @@ class DanQingAudioEngine(IAudioEngine):
             sub_path = _resolve_models_subpath(self._paths, sub_lp)
             if not _dir_ready(sub_path):
                 return False
-        if entry.family == "heartmula":
-            from backend.engine._transformer_registry import check_audio_bundle_ready
-
-            ready = check_audio_bundle_ready(entry.family, bundle_path)
-            if ready is not None:
-                return ready
         return True
 
     def get_supported_models(self) -> List[str]:

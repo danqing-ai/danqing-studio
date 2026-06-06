@@ -1,7 +1,7 @@
 .PHONY: help clean lint dev start stop test test-integration \
 	frontend-install frontend-dev frontend-build frontend-typecheck \
 	bench-setup bench-src bench-mflux bench-mflux-case bench-mlx-video bench-mlx-video-case bench-diffusers bench-diffusers-case bench-sanity bench-sanity-case \
-	bench-audio-sanity bench-audio-sanity-lm bench-audio-sanity-heartmula \
+	bench-audio-sanity bench-audio-sanity-lm \
 	bench-wan-sanity bench-wan-baseline \
 	check-consistency check-models-registry-contracts check-ep-boundary check-theme-legacy check-ui-compat check-engine-rules check-engine-imports check-engine-family-layout check-engine-family-primitives check-engine-attention-paths check-engine-sdpa-paths check-engine-rope-paths check-engine-modulation-paths check-frontend-governance check-weight-parity check-engine-governance verify-engine-stack \
 	sync-models-registry \
@@ -98,7 +98,6 @@ bench-audio-sanity:
 	$(PYTHON) -m tests.benchmark sanity --case ace-step-xl-sft-sanity
 	$(PYTHON) -m tests.benchmark sanity --case ace-step-xl-sft-inspiration-lm
 	$(PYTHON) -m tests.benchmark sanity --case ace-step-xl-sft-cover-sanity
-	$(PYTHON) -m tests.benchmark sanity --case heartmula-oss-3b-happy-new-year-sanity
 
 bench-audio-sanity-ace-step:
 	$(PYTHON) -m tests.benchmark sanity --case ace-step-xl-sft-sanity
@@ -108,9 +107,6 @@ bench-audio-sanity-ace-step:
 
 bench-audio-sanity-lm:
 	$(PYTHON) -m tests.benchmark sanity --case ace-step-xl-sft-sanity-lm
-
-bench-audio-sanity-heartmula:
-	$(PYTHON) -m tests.benchmark sanity --case heartmula-oss-3b-happy-new-year-sanity
 
 bench-wan-sanity:
 	$(PYTHON) -m tests.benchmark sanity --case wan-2.2-ti2v-5b-sanity
@@ -333,7 +329,7 @@ help:
 	@echo "Benchmark:"
 	@echo "  bench-setup / bench-src / bench-mflux / bench-mflux-case / bench-mlx-video / bench-mlx-video-case"
 	@echo "  bench-diffusers / bench-diffusers-case"
-	@echo "  bench-sanity / bench-sanity-case / bench-audio-sanity / bench-audio-sanity-heartmula"
+	@echo "  bench-sanity / bench-sanity-case / bench-audio-sanity"
 	@echo ""
 	@echo "Frontend:  frontend-install | frontend-dev | frontend-build | frontend-typecheck"
 	@echo "Dev:       dev | start | stop"
