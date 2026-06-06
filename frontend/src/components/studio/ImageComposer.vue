@@ -109,8 +109,9 @@
           </DqOption>
         </DqSelect>
 
-        <!-- Size selector -->
+        <!-- Size selector (txt2img only; img2img 输出尺寸跟随源图) -->
         <DqSelect
+          v-if="!isImg2imgMode"
           v-model="localSize"
           size="small"
           class="image-composer__select image-composer__select--size"
@@ -172,16 +173,26 @@
       @reset-defaults="$emit('reset-defaults')"
     >
       <div class="image-composer__advanced-inner">
-              <div class="image-composer__advanced-row">
-                <div class="image-composer__field">
+              <div v-if="paramSchema.steps || showGuidanceSlider" class="image-composer__advanced-row">
+                <div v-if="paramSchema.steps" class="image-composer__field">
                   <label>{{ $t('create.stepsLabel') }}</label>
-                  <DqSlider v-model="localParams.steps" :min="1" :max="50" :step="1" />
+                  <DqSlider
+                    v-model="localParams.steps"
+                    :min="paramSchema.steps.min ?? 1"
+                    :max="paramSchema.steps.max ?? 50"
+                    :step="paramSchema.steps.step ?? 1"
+                  />
                   <span class="image-composer__field-val">{{ localParams.steps }}</span>
                 </div>
 
-                <div class="image-composer__field">
+                <div v-if="showGuidanceSlider" class="image-composer__field">
                   <label>{{ $t('create.guidanceLabel') }}</label>
-                  <DqSlider v-model="localParams.guidance" :min="1" :max="20" :step="0.5" />
+                  <DqSlider
+                    v-model="localParams.guidance"
+                    :min="paramSchema.guidance?.min ?? 0"
+                    :max="paramSchema.guidance?.max ?? 20"
+                    :step="paramSchema.guidance?.step ?? 0.5"
+                  />
                   <span class="image-composer__field-val">{{ localParams.guidance }}</span>
                 </div>
               </div>
@@ -207,9 +218,14 @@
                   </div>
                 </div>
 
-                <div class="image-composer__field">
+                <div v-if="showStrengthSlider" class="image-composer__field">
                   <label>{{ $t('create.strengthLabel') }}</label>
-                  <DqSlider v-model="localParams.strength" :min="0.1" :max="1.0" :step="0.05" />
+                  <DqSlider
+                    v-model="localParams.strength"
+                    :min="paramSchema.strength?.min ?? 0"
+                    :max="paramSchema.strength?.max ?? 1"
+                    :step="paramSchema.strength?.step ?? 0.05"
+                  />
                   <span class="image-composer__field-val">{{ localParams.strength }}</span>
                 </div>
               </div>
@@ -309,6 +325,7 @@ import {
   Tools,
 } from '@danqing/dq-shell';
 import { $tt } from '@/utils/i18n';
+import { img2imgUsesStrength, normalizeParamsDef } from '@/utils/registryParamSchema';
 
 const props = defineProps<{
   modelValue: string;
@@ -366,6 +383,25 @@ const { t: $t } = useI18n();
 
 const advancedOpen = ref(false);
 const selectedStyle = ref('');
+
+const paramSchema = computed(() => normalizeParamsDef(props.currentModelConfig?.parameters));
+
+const isImg2imgMode = computed(
+  () => localMode.value === 'img2img' || props.referenceImage != null,
+);
+
+const showStrengthSlider = computed(
+  () => isImg2imgMode.value && img2imgUsesStrength(props.currentModelConfig?.parameters),
+);
+
+const showGuidanceSlider = computed(() => {
+  const g = paramSchema.value.guidance;
+  if (!g) return false;
+  if (g.fixed === true) return false;
+  const min = typeof g.min === 'number' ? g.min : 0;
+  const max = typeof g.max === 'number' ? g.max : 20;
+  return min !== max;
+});
 
 const localTitle = computed({
   get: () => props.title || '',

@@ -201,7 +201,7 @@ import { DQ_STORAGE, getItem, setItem } from '@/utils/storage';
 import { useTasksStore } from '@/stores/tasks';
 import { useRegistryStore } from '@/stores/registry';
 import type { SystemInfo, GalleryItem, Task } from '@/types';
-import { applyDefaults, hasDeviation } from '@/utils/registryParamSchema';
+import { applyDefaults, hasDeviation, strengthDefaultFromRegistry, strengthToSourceFidelity } from '@/utils/registryParamSchema';
 
 import { warnIfRiskyMemory } from '@/composables/memoryHint';
 import { reconcileVersionPickerSelection } from '@/composables/useModelRegistryFilters';
@@ -880,19 +880,18 @@ const startGeneration = async () => {
         title: String(params.title || '').trim(),
         prompt: params.prompt,
         negative_prompt: params.negative_prompt || '',
-        size: `${params.width}x${params.height}`,
         n: 1,
         steps: params.steps,
         guidance: params.guidance,
         seed: seedNum,
         adapters,
-        strength: params.strength,
+        source_fidelity: strengthToSourceFidelity(
+          params.strength,
+          strengthDefaultFromRegistry(currentModelConfig.value?.parameters as Record<string, unknown> | undefined),
+        ),
         metadata: { ...meta },
         priority: 'normal',
       };
-      if (control_asset_id) {
-        editBody.structural_guide = { asset_id: control_asset_id, strength: Number(params.controlnet_strength) || 0.8 };
-      }
       submitRes = await api.gen.createImageEdit(editBody);
     } else {
       // Text-to-image
@@ -1232,7 +1231,10 @@ async function onEditorSubmit() {
       title: String(params.title || '').trim(),
       prompt: params.prompt,
       negative_prompt: params.negative_prompt || '',
-      source_fidelity: Math.min(0.95, Math.max(0.05, 1 - (Number(params.strength) || 0.4))),
+      source_fidelity: strengthToSourceFidelity(
+        params.strength,
+        strengthDefaultFromRegistry(currentModelConfig.value?.parameters as Record<string, unknown> | undefined),
+      ),
       n: 1,
       steps: params.steps,
       seed: seedNum,

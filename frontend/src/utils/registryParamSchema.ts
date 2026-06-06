@@ -115,6 +115,28 @@ export function applyDefaults(parameters: Record<string, unknown> | undefined | 
   }
 }
 
+export function strengthDefaultFromRegistry(
+  parameters: Record<string, unknown> | undefined | null,
+): number {
+  const spec = normalizeParamsDef(parameters || {}).strength;
+  if (spec && typeof spec.default === 'number') return spec.default;
+  return 0.4;
+}
+
+/** 图生图是否使用 ``source_fidelity``（标准 img2img 混合）；VL/concat 编辑模型忽略强度。 */
+export function img2imgUsesStrength(parameters: Record<string, unknown> | undefined | null): boolean {
+  const raw = parameters || {};
+  if (raw.edit_use_vl_vision || raw.edit_conditioning_concat) return false;
+  return 'strength' in normalizeParamsDef(raw);
+}
+
+/** UI 去噪强度 (strength) → edits API ``source_fidelity``（高 strength = 更多改动 = 低 fidelity）。 */
+export function strengthToSourceFidelity(strength: unknown, fallback = 0.4): number {
+  const s = Number(strength);
+  const v = Number.isFinite(s) ? s : fallback;
+  return Math.min(0.95, Math.max(0.05, 1 - v));
+}
+
 export function hasDeviation(
   parameters: Record<string, unknown> | undefined | null,
   target: Record<string, unknown>,
