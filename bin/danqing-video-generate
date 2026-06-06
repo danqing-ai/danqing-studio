@@ -5,7 +5,7 @@ danqing-video-generate — 文生视频 CLI。
 对应 REST API: POST /api/videos/generations → IVideoEngine.generate()
 
 用法:
-    danqing-video-generate --model cogvideox-5b --prompt "a sunset" --output out.mp4
+    danqing-video-generate --model wan-2.2-t2v-5b --prompt "a sunset" --output out.mp4
 """
 from __future__ import annotations
 

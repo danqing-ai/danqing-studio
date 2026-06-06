@@ -52,10 +52,6 @@ FAMILY_BUNDLE_CONTRACTS: dict[str, FamilyBundleContract] = {
         required=frozenset({"transformer", "text_encoder", "vae"}),
         optional=frozenset({"tokenizer"}),
     ),
-    "cogvideox": FamilyBundleContract(
-        required=frozenset({"transformer", "text_encoder", "vae"}),
-        optional=frozenset({"tokenizer"}),
-    ),
     "hunyuan": FamilyBundleContract(
         required=frozenset({"transformer", "text_encoder", "vae"}),
         optional=frozenset({"tokenizer"}),

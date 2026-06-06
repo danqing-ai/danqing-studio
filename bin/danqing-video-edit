@@ -5,7 +5,7 @@ danqing-video-edit — 视频编辑 CLI。
 对应 REST API: POST /api/videos/edits → IVideoEngine.edit()
 
 用法:
-    danqing-video-edit --model cogvideox-5b --source-asset-id ast_xxx \
+    danqing-video-edit --model wan-2.2-ti2v-5b --source-asset-id ast_xxx \
                        --prompt "add rain" --output out.mp4
 """
 from __future__ import annotations

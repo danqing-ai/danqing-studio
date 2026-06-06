@@ -687,6 +687,17 @@ class VideoPipeline:
             on_log=on_log,
         )
 
+    def _initial_video_latents(self, config: Any, latent_shape: tuple, seed: int | None) -> Any:
+        """Sample initial video noise; Wan uses ``mx.random.seed`` to match mlx-video."""
+        if seed is not None:
+            if bool(getattr(config, "uses_wan_shift", False)) and getattr(self.ctx, "backend", "") == "mlx":
+                import mlx.core as mx
+
+                mx.random.seed(int(seed))
+                return self.ctx.randn(latent_shape, dtype=self.ctx.float32())
+            return self.ctx.seeded_randn(latent_shape, seed, dtype=self.ctx.float32())
+        return self.ctx.randn(latent_shape, dtype=self.ctx.float32())
+
     def _denoise_video(
         self,
         *,
@@ -708,17 +719,10 @@ class VideoPipeline:
         on_progress: Callable | None,
         on_log: Callable | None,
     ) -> Any | None:
-        from backend.engine.common.schedulers import CogVideoXDPMScheduler
-
         init_sigma = float(getattr(scheduler, "init_noise_sigma", 1.0))
         if init_sigma != 1.0:
             latents = latents * init_sigma
 
-        timesteps_list: list[int] = []
-        if isinstance(scheduler, CogVideoXDPMScheduler):
-            timesteps_list = list(getattr(scheduler, "_timesteps_list", []) or [])
-
-        old_pred_original_sample = None
         n_steps = len(timesteps)
 
         for i, t in enumerate(timesteps):
@@ -815,17 +819,7 @@ class VideoPipeline:
             if getattr(self.ctx, "backend", None) == "mlx":
                 self.ctx.eval(noise_pred)
 
-            if isinstance(scheduler, CogVideoXDPMScheduler):
-                t_back = timesteps_list[i - 1] if i > 0 and timesteps_list else None
-                latents, old_pred_original_sample = scheduler.step(
-                    noise_pred,
-                    t,
-                    latents,
-                    old_pred_original_sample=old_pred_original_sample,
-                    timestep_back=t_back,
-                )
-            else:
-                latents = scheduler.step(noise_pred, t, latents)
+            latents = scheduler.step(noise_pred, t, latents)
 
             if hasattr(model, "reblend_i2v_latents"):
                 latents = model.reblend_i2v_latents(latents)
@@ -959,10 +953,7 @@ class VideoPipeline:
         # 4. Initial noise [B, C, T_latent, H_lat, W_lat]
         latent_c = int(getattr(config, "vae_z_dim", None) or config.dim_in)
         latent_shape = (1, latent_c, latent_frames, h // vae_scale, w // vae_scale)
-        if seed is not None:
-            latents = self.ctx.seeded_randn(latent_shape, seed, dtype=self.ctx.float32())
-        else:
-            latents = self.ctx.randn(latent_shape, dtype=self.ctx.float32())
+        latents = self._initial_video_latents(config, latent_shape, seed)
 
         # ── Hook ③: before denoise ──
         latents, extra_cond = model.before_denoise(latents, timesteps, sigmas, **extra_cond)
@@ -1135,10 +1126,7 @@ class VideoPipeline:
         # 4. Initial noise
         latent_c = int(getattr(config, "vae_z_dim", None) or config.dim_in)
         latent_shape = (1, latent_c, latent_frames, h // vae_scale, w // vae_scale)
-        if seed is not None:
-            latents = self.ctx.seeded_randn(latent_shape, seed, dtype=self.ctx.float32())
-        else:
-            latents = self.ctx.randn(latent_shape, dtype=self.ctx.float32())
+        latents = self._initial_video_latents(config, latent_shape, seed)
 
         # Load source image condition if available
         if request.source_asset_id:
@@ -1337,7 +1325,7 @@ class VideoPipeline:
     # ------------------------------------------------------------------
 
     def _latent_frame_count(self, config: Any, requested_pixel_frames: int) -> int:
-        """Pixel timeline frames → latent timeline frames (CogVideoX-style temporal VAE compression).
+        """Pixel timeline frames → latent timeline frames (temporal VAE compression).
 
         Models without ``temporal_vae_scale`` use the requested count as-is (Wan/LTX latents).
         """

@@ -70,7 +70,6 @@ _SHARED_HIDDEN_IMPORTS: tuple[str, ...] = (
     "backend.engine.families.wan",
     "backend.engine.families.wan.vae",
     "backend.engine.families.wan.conditioning",
-    "backend.engine.families.cogvideox",
     "backend.engine.common.safetensors_affine_quant",
     "backend.services.services",
     "backend.services.download_service",

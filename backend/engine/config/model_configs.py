@@ -517,67 +517,6 @@ def merge_wan_bundle_config(config: WanConfig, bundle_root: Path | None) -> None
 
 
 @dataclass
-class CogVideoXConfig:
-    """CogVideoX-5b / diffusers `CogVideoXTransformer3DModel` defaults (ZhipuAI CogVideoX-5b compatible).
-
-    `sample_*` follow diffusers naming (latent grid defaults before spatial VAE upscale math in pipeline).
-    """
-
-    inner_dim: int = 1920                # num_attention_heads * attention_head_dim (30 * 64)
-    num_attention_heads: int = 30
-    attention_head_dim: int = 64
-    in_channels: int = 16
-    out_channels: int = 16
-    flip_sin_to_cos: bool = True
-    freq_shift: float = 0.0
-    time_embed_dim: int = 512
-    text_dim: int = 4096                 # T5-XXL — alias text_embed_dim conceptually
-    num_layers: int = 30
-    dropout: float = 0.0
-    attention_bias: bool = True
-    attention_out_bias: bool = True
-    norm_eps: float = 1e-5
-    ff_bias: bool = True
-    ff_inner_dim: int | None = None      # default 4 * inner_dim in FF if None
-
-    sample_width: int = 90               # latent space width (training default)
-    sample_height: int = 60              # latent space height
-    sample_frames: int = 49              # pixel-frame default driving positional slot math (diffusers quirk)
-    patch_size: int = 2
-    patch_size_t: int | None = None
-    temporal_compression_ratio: int = 4
-    max_text_seq_length: int = 226
-    spatial_interpolation_scale: float = 1.875
-    temporal_interpolation_scale: float = 1.0
-    patch_bias: bool = True
-
-    use_rotary_positional_embeddings: bool = False
-
-    dim_in: int = 16                     # latent channels (Pipeline noise shape)
-    supports_guidance: bool = True
-    supports_img2img: bool = False
-    default_scheduler: str = "cogvideox_dpm"
-
-    temporal_vae_scale: int = 4          # pixel_frames → latent_frames for VideoPipeline noise shape
-    vae_scale: int = 8                   # spatial latent scaling vs pixels (registry may override)
-    latent_noise_dtype: str = "bfloat16" # MLX denoise activations (scheduler keeps FP32 updates)
-    use_mlx_compile: bool = True         # ``mx.compile`` DiT forward after weight load (MLX only)
-    post_denoise_clear_cache: bool = True
-    geometry_check: str = "cogvideox"
-    uses_prediction_type: bool = True
-    video_vae_backend: str = "cogvideox"
-    video_i2v_style: str = "concat"
-    bundle_config_merger: str = "cogvideox"
-    release_t5_after_encode: bool = True
-    cfg_negative_prompt_style: str = "default"
-    scheduler_bundle_extras: str = "cogvideox_dpm"
-
-    def __post_init__(self) -> None:
-        if self.ff_inner_dim is None:
-            object.__setattr__(self, "ff_inner_dim", int(self.inner_dim * 4))
-
-
-@dataclass
 class HunyuanVideoConfig:
     """HunyuanVideo-1.5 — diffusers ``HunyuanVideo15Transformer3DModel`` / 480p T2V defaults."""
 
@@ -680,113 +619,6 @@ def merge_hunyuan_transformer_config_from_bundle(config: HunyuanVideoConfig, bun
     object.__setattr__(config, "text_dim", int(getattr(config, "text_embed_dim", 3584)))
 
 
-def merge_cogvideox_transformer_config_from_bundle(config: CogVideoXConfig, bundle_root: Path | None) -> None:
-    """Override ``CogVideoXConfig`` from ``<bundle>/transformer/config.json`` (diffusers layout).
-
-    Public HF / zai-org CogVideoX-5b checkpoints use 48 heads × 64 = 3072 ``inner_dim`` and 42 layers;
-    defaults in this repo match the older 30-layer Zhipu snapshot unless merged here.
-    """
-    if bundle_root is None:
-        return
-    cfg_path = bundle_root / "transformer" / "config.json"
-    if not cfg_path.is_file():
-        raise RuntimeError(
-            f"CogVideoX: missing transformer config {cfg_path}. "
-            "Install the full diffusers bundle (transformer/config.json + weight shards)."
-        )
-    try:
-        data: dict[str, Any] = json.loads(cfg_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as e:
-        raise RuntimeError(f"CogVideoX: cannot read transformer config {cfg_path}: {e}") from e
-
-    _BOOL_KEYS = (
-        "flip_sin_to_cos",
-        "attention_bias",
-        "use_rotary_positional_embeddings",
-    )
-    _INT_KEYS = (
-        "num_attention_heads",
-        "attention_head_dim",
-        "in_channels",
-        "out_channels",
-        "num_layers",
-        "max_text_seq_length",
-        "patch_size",
-        "sample_frames",
-        "sample_height",
-        "sample_width",
-        "temporal_compression_ratio",
-    )
-    _FLOAT_KEYS = (
-        "dropout",
-        "norm_eps",
-        "spatial_interpolation_scale",
-        "temporal_interpolation_scale",
-        "freq_shift",
-    )
-    for k in _BOOL_KEYS:
-        if k in data:
-            setattr(config, k, bool(data[k]))
-    for k in _INT_KEYS:
-        if k in data:
-            setattr(config, k, int(data[k]))
-    for k in _FLOAT_KEYS:
-        if k in data:
-            setattr(config, k, float(data[k]))
-    if "text_embed_dim" in data:
-        setattr(config, "text_dim", int(data["text_embed_dim"]))
-    if "time_embed_dim" in data:
-        setattr(config, "time_embed_dim", int(data["time_embed_dim"]))
-    if "patch_bias" in data:
-        setattr(config, "patch_bias", bool(data["patch_bias"]))
-    if "patch_size_t" in data:
-        pt = data["patch_size_t"]
-        object.__setattr__(config, "patch_size_t", int(pt) if pt is not None else None)
-
-    na = int(getattr(config, "num_attention_heads", 30))
-    hd = int(getattr(config, "attention_head_dim", 64))
-    inner = na * hd
-    object.__setattr__(config, "inner_dim", inner)
-    object.__setattr__(config, "ff_inner_dim", int(inner * 4))
-    object.__setattr__(config, "dim_in", int(getattr(config, "in_channels", 16)))
-
-
-def cogvideox_scheduler_kwargs_from_bundle(bundle_root: Path) -> dict[str, Any]:
-    """Build ``CogVideoXDPMScheduler`` ctor kwargs from ``<bundle>/scheduler/scheduler_config.json``.
-
-    Official CogVideoX-5b bundles ship DDIM config (``v_prediction``, ``trailing``, ``snr_shift_scale=1``,
-    ``rescale_betas_zero_snr=true``). Diffusers swaps to ``CogVideoXDPMScheduler.from_config(...)`` — we must
-    pass the same fields or denoised latents are wrong (patch-grid VAE output).
-    """
-    cfg_path = bundle_root / "scheduler" / "scheduler_config.json"
-    if not cfg_path.is_file():
-        raise RuntimeError(
-            f"CogVideoX: missing scheduler config {cfg_path}. "
-            "Install the full diffusers bundle (scheduler/scheduler_config.json)."
-        )
-    try:
-        data: dict[str, Any] = json.loads(cfg_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as e:
-        raise RuntimeError(f"CogVideoX: cannot read scheduler config {cfg_path}: {e}") from e
-
-    kwargs: dict[str, Any] = {}
-    for key in ("num_train_timesteps", "steps_offset"):
-        if key in data:
-            kwargs[key] = int(data[key])
-    for key in ("beta_start", "beta_end", "snr_shift_scale"):
-        if key in data:
-            kwargs[key] = float(data[key])
-    for key in ("beta_schedule", "prediction_type", "timestep_spacing"):
-        if key in data:
-            kwargs[key] = str(data[key])
-    for key in ("set_alpha_to_one", "rescale_betas_zero_snr"):
-        if key in data:
-            kwargs[key] = bool(data[key])
-    if "prediction_type" not in kwargs:
-        raise RuntimeError(f"CogVideoX: scheduler config {cfg_path} missing prediction_type")
-    return kwargs
-
-
 # =========================================================================
 # Config registry: family → config class
 # =========================================================================
@@ -806,7 +638,6 @@ FAMILY_CONFIG_MAP: dict[str, type] = {
     # Video
     "ltx": LTXConfig,
     "wan": WanConfig,
-    "cogvideox": CogVideoXConfig,
     "hunyuan": HunyuanVideoConfig,
 }
 

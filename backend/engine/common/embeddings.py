@@ -214,7 +214,7 @@ def sinusoidal_timestep_proj(
     scale: float = 1.0,
     max_period: float = 10000.0,
 ) -> Any:
-    """diffusers-style sinusoidal timestep projection (CogVideoX / Flux1 / Hunyuan)."""
+    """diffusers-style sinusoidal timestep projection (Flux1 / Hunyuan)."""
     timesteps = ctx.reshape(timesteps.astype(ctx.float32()), (-1,))
     half_dim = embedding_dim // 2
     denom = max(half_dim - downscale_freq_shift, 1e-8)
@@ -311,7 +311,7 @@ class RoPE2D:
 class RoPE3D:
     """3D 旋转位置编码 (视频模型)。
 
-    用于: LTX / Wan / CogVideoX。沿 T, H, W 三轴编码。
+    用于: LTX / Wan。沿 T, H, W 三轴编码。
     """
 
     def __init__(self, dim: int, ctx: Any, base: float = 10000.0,
@@ -535,7 +535,7 @@ class PatchEmbed2D:
 class PatchEmbed3D:
     """3D Patch Embedding (视频模型)。
 
-    用于: LTX / Wan / CogVideoX VAE latent → 展平为时空 token 序列。
+    用于: LTX / Wan VAE latent → 展平为时空 token 序列。
     """
 
     def __init__(self, in_channels: int, dim: int,

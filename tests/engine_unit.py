@@ -155,7 +155,7 @@ class RuntimeContractTests(unittest.TestCase):
 class VideoRuntimeContractTests(unittest.TestCase):
     def test_video_contract_config_flags(self) -> None:
         from backend.engine.common.video_runtime_contracts import video_encoder_type
-        from backend.engine.config.model_configs import CogVideoXConfig, WanConfig
+        from backend.engine.config.model_configs import WanConfig
         from backend.engine.video_codec_registry import get_video_decode_handler
 
         wan = WanConfig()
@@ -163,12 +163,7 @@ class VideoRuntimeContractTests(unittest.TestCase):
         self.assertTrue(bool(getattr(wan, "uses_wan_shift", False)))
         self.assertTrue(bool(getattr(wan, "release_t5_after_encode", False)))
         self.assertIsNotNone(get_video_decode_handler("wan"))
-
-        cog = CogVideoXConfig()
-        self.assertEqual(str(getattr(cog, "video_vae_backend", "")), "cogvideox")
-        self.assertTrue(bool(getattr(cog, "uses_prediction_type", False)))
-        self.assertTrue(bool(getattr(cog, "release_t5_after_encode", False)))
-        self.assertEqual(video_encoder_type(cog), "t5")
+        self.assertEqual(video_encoder_type(wan), "t5")
 
 
 class MlxAffineQuantInferenceTests(unittest.TestCase):
@@ -1196,30 +1191,12 @@ class HunyuanWeightTests(unittest.TestCase):
         self.assertEqual(merged["txt_attn_mask"].shape[0], 2)
         self.assertEqual(merged["sigmas"].shape, (1,))
 
-    def test_cogvideox_wan_predict_noise_cfg(self) -> None:
-        from backend.engine.families.cogvideox.transformer_mlx import CogVideoXTransformer3D
+    def test_wan_predict_noise_cfg(self) -> None:
         from backend.engine.families.wan.transformer import WanTransformer
         from backend.engine.families.wan.transformer_mlx import WanModelMLX
 
-        self.assertTrue(hasattr(CogVideoXTransformer3D, "predict_noise_cfg"))
         self.assertTrue(hasattr(WanModelMLX, "predict_noise_cfg"))
         self.assertTrue(hasattr(WanTransformer, "predict_noise_cfg"))
-
-    def test_cogvideox_param_map_flattens_mlx_modules(self) -> None:
-        from backend.engine.config.model_configs import CogVideoXConfig
-        from backend.engine.families.cogvideox.transformer_mlx import CogVideoXTransformer3D
-        from backend.engine.runtime.mlx import MLXContext
-
-        model = CogVideoXTransformer3D(CogVideoXConfig(), MLXContext(), num_frames=13)
-        model._build_param_map()
-        self.assertGreater(len(model._param_map), 600)
-        self.assertIn("time_embedding.linear_1.weight", model._param_map)
-        self.assertIn("transformer_blocks.0.attn1.to_out.0.weight", model._param_map)
-        for key, param in model._param_map.items():
-            self.assertFalse(
-                isinstance(param, dict),
-                msg=f"param_map leaf {key!r} must be a tensor, not a nested dict",
-            )
 
     def test_wan_mlx_perf_hooks(self) -> None:
         from backend.engine.config.model_configs import WanConfig

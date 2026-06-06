@@ -4,36 +4,6 @@ from __future__ import annotations
 from typing import Any, Callable
 
 
-def _decode_cogvideox(
-    *,
-    ctx: Any,
-    latents: Any,
-    entry: Any,
-    version_key: str | None,
-    local_bundle_root: Callable[[Any, str | None], Any],
-    registry_scalar_default: Callable[[Any, str, Any], Any],
-    on_post_progress: Callable[[float], None] | None,
-    on_post_log: Callable[[str], None] | None,
-) -> list:
-    from backend.engine.families.cogvideox.vae import decode_cogvideox_latents_to_pil_frames
-
-    bundle_root = local_bundle_root(entry, version_key)
-    raw = registry_scalar_default(entry, "vae_frame_batch_size", 2)
-    try:
-        frame_batch = int(raw if raw is not None else 2)
-    except (TypeError, ValueError):
-        frame_batch = 2
-    frame_batch = max(1, min(frame_batch, 8))
-    return decode_cogvideox_latents_to_pil_frames(
-        ctx,
-        latents,
-        bundle_root,
-        on_stage=on_post_progress,
-        on_log=on_post_log,
-        frame_batch_size=frame_batch,
-    )
-
-
 def _decode_hunyuan(
     *,
     ctx: Any,
@@ -168,7 +138,6 @@ def _encode_wan(
 
 
 _VIDEO_DECODE: dict[str, Callable[..., Any]] = {
-    "cogvideox": _decode_cogvideox,
     "hunyuan": _decode_hunyuan,
     "ltx": _decode_ltx,
     "wan": _decode_wan,

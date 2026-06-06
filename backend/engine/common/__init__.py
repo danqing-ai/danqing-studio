@@ -2,12 +2,11 @@
 通用组件 — 所有模型和管线共享。
 """
 from .schedulers import (
-    Scheduler, 
+    Scheduler,
     FlowMatchEulerScheduler,
-    LinearScheduler, 
+    LinearScheduler,
     UniPCScheduler,
     DPMPlusPlusScheduler,
-    CogVideoXDPMScheduler,
     SeedVR2EulerScheduler,
     get_scheduler,
 )
@@ -80,7 +79,7 @@ from .runtime_contracts import FamilyRuntimeContract, SchedulerSemanticsResolver
 __all__ = [
     # Schedulers
     "Scheduler", "FlowMatchEulerScheduler", "LinearScheduler",
-    "UniPCScheduler", "DPMPlusPlusScheduler", "CogVideoXDPMScheduler", "SeedVR2EulerScheduler",
+    "UniPCScheduler", "DPMPlusPlusScheduler", "SeedVR2EulerScheduler",
     "get_scheduler",
     # Norm
     "RMSNorm", "LayerNorm", "GroupNorm", "AdaLayerNorm",

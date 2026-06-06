@@ -24,16 +24,6 @@ def video_t5_max_seq_len(config: Any) -> int:
     return 512
 
 
-def _merge_cogvideox_bundle(config: Any, bundle_root: Path | None) -> None:
-    from backend.engine.config.model_configs import (
-        CogVideoXConfig,
-        merge_cogvideox_transformer_config_from_bundle,
-    )
-
-    if isinstance(config, CogVideoXConfig):
-        merge_cogvideox_transformer_config_from_bundle(config, bundle_root)
-
-
 def _merge_hunyuan_bundle(config: Any, bundle_root: Path | None) -> None:
     from backend.engine.config.model_configs import (
         HunyuanVideoConfig,
@@ -52,7 +42,6 @@ def _merge_wan_bundle(config: Any, bundle_root: Path | None) -> None:
 
 
 _BUNDLE_CONFIG_MERGE: dict[str, Callable[[Any, Path | None], None]] = {
-    "cogvideox": _merge_cogvideox_bundle,
     "hunyuan": _merge_hunyuan_bundle,
     "wan": _merge_wan_bundle,
 }
@@ -76,12 +65,6 @@ def video_scheduler_ctor_kwargs(
     extras = str(getattr(config, "scheduler_bundle_extras", "") or "")
     if not extras or scheduler_name != extras:
         return {}
-    if extras == "cogvideox_dpm":
-        if bundle_root is None:
-            raise RuntimeError("CogVideoX requires a local model bundle for scheduler config.")
-        from backend.engine.config.model_configs import cogvideox_scheduler_kwargs_from_bundle
-
-        return cogvideox_scheduler_kwargs_from_bundle(bundle_root)
     if extras == "wan_flow_unipc":
         ctor_kwargs: dict[str, Any] = {"num_train_timesteps": 1000}
         if bundle_root is not None:
@@ -160,16 +143,7 @@ def video_rotary_model_kwargs(
     pixel_w: int,
     latents: Any,
 ) -> dict[str, Any]:
-    if not bool(getattr(config, "use_rotary_positional_embeddings", False)):
-        return {}
-    from backend.engine.families.cogvideox.rotary_mlx import prepare_cogvideox_image_rotary_emb
-
-    lt = int(latents.shape[2])
-    vae_sf = int(getattr(config, "vae_scale", 8))
-    cos_sin = prepare_cogvideox_image_rotary_emb(
-        ctx, config, int(pixel_h), int(pixel_w), lt, vae_sf,
-    )
-    return {"image_rotary_emb": cos_sin}
+    return {}
 
 
 def video_infer_log_extras(config: Any, scheduler: Any, extra_cond: dict[str, Any]) -> list[str]:
@@ -191,11 +165,6 @@ def video_validate_generate_geometry(config: Any, w: int, h: int, num_frames: in
     mode = str(getattr(config, "geometry_check", "generic") or "generic")
     tvs = int(getattr(config, "temporal_vae_scale", 0) or 0)
 
-    if mode == "cogvideox" and tvs > 0 and (num_frames - 1) % tvs != 0:
-        raise RuntimeError(
-            f"CogVideoX requires (num_frames - 1) % {tvs} == 0; got {num_frames} "
-            f"(valid examples: 49, 45, 41 for temporal VAE scale {tvs})"
-        )
     if mode == "wan" and tvs > 0:
         if (num_frames - 1) % tvs != 0:
             raise RuntimeError(

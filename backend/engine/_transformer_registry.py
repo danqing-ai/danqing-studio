@@ -170,14 +170,12 @@ def encode_prompt_with_image_text_encoder(
 _VIDEO_TRANSFORMER = {
     "wan":       ("backend.engine.families.wan.transformer",       "WanTransformer"),
     "ltx":       ("backend.engine.families.ltx.transformer",       "LTXTransformer"),
-    "cogvideox": ("backend.engine.families.cogvideox.transformer", "CogVideoXTransformer"),
     "hunyuan":   ("backend.engine.families.hunyuan.transformer",   "HunyuanVideoTransformer"),
 }
 
 _VIDEO_WEIGHT_REMAP = {
     "wan":       ("backend.engine.families.wan.weights",       "remap_wan_weights"),
     "ltx":       ("backend.engine.families.ltx.weights",       "remap_ltx_weights"),
-    "cogvideox": ("backend.engine.families.cogvideox.weights", "remap_cogvideox_weights"),
     "hunyuan":   ("backend.engine.families.hunyuan.weights",   "remap_hunyuan_weights"),
 }
 

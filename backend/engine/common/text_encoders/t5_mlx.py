@@ -7,7 +7,7 @@ from typing import Any
 class T5Encoder:
     """T5-XXL 文本编码器。
 
-    用于: Flux1 / Flux2 / LTX / Wan / CogVideoX 全系列。
+    用于: Flux1 / Flux2 / LTX / Wan 全系列。
     文本 → [B, seq_len, text_dim] 嵌入。
     """
 
