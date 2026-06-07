@@ -456,7 +456,7 @@ class Flux1Transformer(TransformerBase):
     def sanitize(self, weights: dict[str, Any]) -> dict[str, Any]:
         """Normalize checkpoint keys for ``Flux1Transformer``.
 
-        Supports diffusers sharded bundles and legacy BFL/mflux-style keys.
+        Supports diffusers sharded bundles and legacy BFL-style keys.
         """
         remapped: dict[str, Any] = {}
         for key, tensor in weights.items():
