@@ -1,5 +1,11 @@
 <template>
-  <StudioLayout class="studio-create-page" @scroll="onCanvasScroll">
+  <StudioLayout
+    class="studio-create-page"
+    :freeform="viewMode === 'canvas'"
+    :collapsible="viewMode === 'canvas'"
+    v-model:composer-collapsed="composerCollapsed"
+    @scroll="onCanvasScroll"
+  >
     <template #filters>
       <StudioGalleryFilters
         :filter-time="filterTime"
@@ -7,14 +13,18 @@
         :time-options="timeOptions"
         :model-options="allModelOptions"
         :selection-mode="selectionMode"
+        :view-mode="viewMode"
+        :supports-canvas="true"
         @update:filter-time="filterTime = $event"
         @update:filter-models="filterModels = $event"
         @refresh="refreshGallery"
         @toggle-selection-mode="toggleSelectionMode"
+        @update:view-mode="onViewModeChange"
       />
     </template>
     <template #canvas>
       <StudioCanvas
+        v-if="viewMode === 'grid'"
         :items="galleryItems"
         :active-tasks="activeAudioTasks"
         :loading="galleryLoading"
@@ -33,6 +43,21 @@
         @batch-delete="batchDeleteSelected"
         @clear-selection="clearSelection"
       />
+      <InfiniteCanvas
+        v-else
+        ref="infiniteCanvasRef"
+        :items="galleryItems"
+        media="audio"
+        @card-action="onCardAction"
+        @download="downloadAudioItem"
+        @toggle-grid-view="() => onViewModeChange('grid')"
+        @node-selected="onCanvasNodeSelected"
+        @session-ready="onCanvasSessionReady"
+        @open-preview="onCanvasOpenPreview"
+        @composer-restore="onCanvasComposerRestore"
+        @overlay-cleared="onCanvasOverlayCleared"
+        @use-as-cover-source="onCanvasUseAsCoverSource"
+      />
     </template>
     <template #composer>
       <AudioComposer
@@ -48,7 +73,7 @@
         :model-options="audioModelSelectOptions"
         :duration-options="durationOptions"
         :styles="filteredPresets"
-        :params="audioComposerParams"
+        :params="params"
         @update:params="applyAudioComposerParams"
         :has-custom-params="hasCustomParams"
         :show-negative-prompt="supportsNegativePrompt"
@@ -62,6 +87,19 @@
         @remove-reference="clearCoverSource"
         @model-change="onModelChange"
         @reset-defaults="restoreDefaults"
+        :lyrics-loading="isGeneratingLyrics"
+        :brief-enhancing="isEnhancing"
+        @generate-lyrics="onGenerateLyrics"
+        @enhance-brief="onEnhanceMusicBrief"
+        :prompt-apply-preview="promptApplyPreview"
+        :lyrics-apply-preview="lyricsApplyPreview"
+        @prompt-apply-replace="onBriefApplyReplace"
+        @prompt-apply-append="onBriefApplyAppend"
+        @prompt-apply-dismiss="briefApply.clear()"
+        @lyrics-apply-replace="onLyricsApplyReplace"
+        @lyrics-apply-append="onLyricsApplyAppend"
+        @lyrics-apply-dismiss="lyricsApply.clear()"
+        :collapsed="viewMode === 'canvas' && composerCollapsed"
       />
     </template>
   </StudioLayout>
@@ -72,6 +110,13 @@
     v-model:index="selectedAudioIndex"
     :items="galleryItems"
     media="audio"
+  />
+
+  <StudioLineagePanel
+    v-model:modelValue="showLineageDrawer"
+    :asset-id="lineageTargetAssetId"
+    :on-canvas-ids="canvasAssetIdsOnCanvas"
+    @focus-asset="onLineageFocusAsset"
   />
 </template>
 
@@ -84,19 +129,32 @@ import { api, taskIdFromSubmitResponse } from '@/utils/api';
 import { $tt, $mn, $md, $mvn, $pn } from '@/utils/i18n';
 import { useTasksStore } from '@/stores/tasks';
 import { useRegistryStore } from '@/stores/registry';
+import { useComposerLlm } from '@/composables/useComposerLlm';
 import { DQ_STORAGE, getItem, setItem, type StorageKey } from '@/utils/storage';
+import { applyPromptDraft, consumePromptDraft } from '@/utils/promptApply';
+import { usePromptApplyOffer } from '@/composables/usePromptApplyOffer';
 
 import { useModelRegistryFilters } from '@/composables/useModelRegistryFilters';
 import { applyModelVersionFilters } from '@/utils/modelPickerFilters';
 import { warnIfRiskyMemory } from '@/composables/memoryHint';
-import type { SystemInfo, Task } from '@/types';
+import type { SystemInfo, Task, GalleryItem } from '@/types';
 import { assetDisplayLabel, previewDisplayCaption } from '@/utils/assetDisplay';
 import StudioLayout from '@/components/studio/StudioLayout.vue';
 import StudioCanvas from '@/components/studio/StudioCanvas.vue';
 import StudioGalleryFilters from '@/components/studio/StudioGalleryFilters.vue';
 import AudioComposer from '@/components/studio/AudioComposer.vue';
+import InfiniteCanvas from '@/components/studio/InfiniteCanvas.vue';
+import StudioLineagePanel from '@/components/studio/StudioLineagePanel.vue';
 import GalleryPreviewDialog from '@/components/gallery/GalleryPreviewDialog.vue';
 import { useStudioGallery } from '@/composables/useStudioGallery';
+import { canvasAutoAddEnabled, useCanvasStore } from '@/composables/useCanvasStore';
+import { useComposerCollapse } from '@/composables/useComposerCollapse';
+import {
+  activateCanvasViewForResults,
+  maybeShowCanvasWorkspaceHint,
+} from '@/utils/canvasWorkspaceHint';
+import { previewUrlForGalleryItem } from '@/utils/canvasAssets';
+import { isAudioLyricsRequired, audioLyricsRequiredHintKey, resolveVocalLanguageForSubmit } from '@/utils/audioLyrics';
 
 const tasksStore = useTasksStore();
 const registryStore = useRegistryStore();
@@ -176,14 +234,13 @@ const params = reactive({
 });
 
 const coverParams = reactive({
-  prompt: '',
   source_fidelity: 1.0,
-  seed: null as number | null,
-  audio_format: 'wav',
+  duration: null as number | null,
 });
 
 const coverSourceSrc = ref('');
 const coverSourceFile = ref<File | null>(null);
+const coverSourceAssetPath = ref('');
 const coverSourceName = ref('');
 
 const currentTask = reactive({ id: '', progress: 0, step: null as number | null, total: null as number | null, status: '' });
@@ -365,10 +422,19 @@ const filteredModelPickerVersions = computed(() => {
   return rows;
 });
 
+const lyricsRequiredForModel = computed(() =>
+  isAudioLyricsRequired(currentModelConfig.value, !!params.instrumental),
+);
+
+const lyricsMissing = computed(() =>
+  lyricsRequiredForModel.value && !String(params.lyrics || '').trim(),
+);
+
 const submitDisabled = computed(() => {
   if (!params.model) return true;
   if (!modelReady.value) return true;
   if (!params.prompt.trim()) return true;
+  if (lyricsMissing.value) return true;
   if (generating.value) return true;
   return false;
 });
@@ -381,27 +447,13 @@ const coverSubmitDisabled = computed(() => {
   if (!params.model) return true;
   if (!modelReady.value) return true;
   if (!supportsCoverAction.value) return true;
-  if (!coverSourceFile.value && !coverSourceSrc.value) return true;
+  if (!hasCoverSource()) return true;
+  if (lyricsMissing.value) return true;
   if (generating.value) return true;
   return false;
 });
 
 // ---- Composer adapters ----
-
-const audioComposerParams = computed(() => ({
-  steps: params.steps,
-  guidance: params.guidance,
-  seed: params.seed ?? null,
-  negative_prompt: params.negative_prompt,
-  lyrics: params.lyrics,
-  instrumental: params.instrumental,
-  bpm: params.bpm,
-  key_scale: params.key_scale,
-  time_signature: params.time_signature,
-  vocal_language: params.vocal_language,
-  vocal_type: params.vocal_type,
-  source_fidelity: coverParams.source_fidelity,
-}));
 
 function applyAudioComposerParams(val: Record<string, unknown>) {
   params.steps = val.steps as number;
@@ -505,6 +557,9 @@ function applyDefaults(modelConfig: any) {
   params.time_signature = '';
   params.vocal_language = '';
   params.vocal_type = '';
+  if (p.supports_instrumental === false) {
+    params.instrumental = false;
+  }
 }
 
 function getAudioModeStorageKey(mode: string): StorageKey {
@@ -538,15 +593,84 @@ function restoreDefaults() {
   params.seed = null;
 }
 
+const {
+  isEnhancing,
+  isGeneratingLyrics,
+  enhance: doEnhance,
+  generateLyrics,
+} = useComposerLlm();
+const briefApply = usePromptApplyOffer();
+const lyricsApply = usePromptApplyOffer();
+const promptApplyPreview = computed(() => briefApply.pending.value?.result ?? null);
+const lyricsApplyPreview = computed(() => lyricsApply.pending.value?.result ?? null);
+
+async function onGenerateLyrics() {
+  const prompt = String(params.prompt || '').trim();
+  if (!prompt) {
+    toast.warning($tt('studio.enterPrompt'));
+    return;
+  }
+  const lyrics = await generateLyrics(prompt, { quietSuccess: true });
+  if (lyrics) {
+    lyricsApply.offer(params.lyrics, lyrics, (text) => { params.lyrics = text; });
+  }
+}
+
+async function onEnhanceMusicBrief(ctx?: { stylePositive?: string }) {
+  const prompt = String(params.prompt || '').trim();
+  if (!prompt) {
+    toast.warning($tt('studio.enterPrompt'));
+    return;
+  }
+  const enhanced = await doEnhance(
+    prompt,
+    ctx?.stylePositive,
+    'audio_create',
+    params.model,
+    { quietSuccess: true },
+  );
+  if (enhanced) {
+    briefApply.offer(params.prompt, enhanced, (text) => { params.prompt = text; });
+  }
+}
+
+function onBriefApplyReplace() {
+  briefApply.applyReplace((text) => { params.prompt = text; });
+}
+
+function onBriefApplyAppend() {
+  briefApply.applyAppend(() => params.prompt, (text) => { params.prompt = text; });
+}
+
+function onLyricsApplyReplace() {
+  lyricsApply.applyReplace((text) => { params.lyrics = text; });
+}
+
+function onLyricsApplyAppend() {
+  lyricsApply.applyAppend(() => params.lyrics, (text) => { params.lyrics = text; });
+}
+
 function goToDownload() {
   router.push({ name: 'models' });
 }
 
 function loadPromptDraft() {
   try {
+    const assistantDraft = consumePromptDraft(DQ_STORAGE.AUDIO_CREATE_PROMPT_DRAFT);
+    if (assistantDraft) {
+      params.prompt = applyPromptDraft(params.prompt, assistantDraft);
+      return;
+    }
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) params.prompt = raw;
   } catch (e) { /* ignore */ }
+}
+
+function loadAssistantLyricsDraft() {
+  const lyricsDraft = consumePromptDraft(DQ_STORAGE.AUDIO_CREATE_LYRICS_DRAFT);
+  if (lyricsDraft) {
+    params.lyrics = applyPromptDraft(params.lyrics, lyricsDraft);
+  }
 }
 
 function savePromptDraft() {
@@ -575,10 +699,19 @@ function onPickCoverSource() {
   input.click();
 }
 
+function hasCoverSource(): boolean {
+  return (
+    coverSourceFile.value != null ||
+    (typeof coverSourceAssetPath.value === 'string' &&
+      coverSourceAssetPath.value.startsWith('asset:'))
+  );
+}
+
 function onCoverFilePicked(file: File) {
   if (coverSourceSrc.value && coverSourceSrc.value.startsWith('blob:')) {
     URL.revokeObjectURL(coverSourceSrc.value);
   }
+  coverSourceAssetPath.value = '';
   coverSourceFile.value = file;
   coverSourceName.value = file.name;
   coverSourceSrc.value = URL.createObjectURL(file);
@@ -589,8 +722,24 @@ function clearCoverSource() {
     URL.revokeObjectURL(coverSourceSrc.value);
   }
   coverSourceFile.value = null;
+  coverSourceAssetPath.value = '';
   coverSourceName.value = '';
   coverSourceSrc.value = '';
+}
+
+function onCanvasUseAsCoverSource(payload: { path: string; previewUrl: string; quiet?: boolean }) {
+  if (!payload.path.startsWith('asset:')) {
+    toast.warning($tt('audio.coverNeedSource'));
+    return;
+  }
+  audioWorkTab.value = 'cover';
+  clearCoverSource();
+  coverSourceAssetPath.value = payload.path;
+  coverSourceSrc.value = payload.previewUrl || '';
+  const item = galleryItems.value.find((g) => g.path === payload.path);
+  coverSourceName.value = item?.title || item?.name || $tt('audio.coverSource');
+  syncCanvasCoverOverlay(payload.path);
+  if (!payload.quiet) toast.success($tt('canvas.coverSourceBound'));
 }
 
 function attachTaskStream(tid: string) {
@@ -668,11 +817,12 @@ function attachTaskStream(tid: string) {
       applyResultMeta(meta);
       const ids = row.asset_ids as string[] | undefined;
       if (ids?.length) {
+        pendingCanvasAssetIds.value = ids;
         ids.forEach((aid) => addRecentFromAsset(aid, meta));
         setPreviewFromAsset(ids[0], meta);
       }
     },
-    onDone: (doneData: unknown) => {
+    onDone: async (doneData: unknown) => {
       const row = doneData as Record<string, unknown>;
       tasksStore.unregisterPageOwnedStream(tid);
       if (row.status === 'completed') {
@@ -682,9 +832,29 @@ function attachTaskStream(tid: string) {
         applyResultMeta(meta);
         const pid = res?.primary_asset_id;
         if (pid) setPreviewFromAsset(String(pid), meta);
+        const ids = [...pendingCanvasAssetIds.value];
+        const willAutoAdd = shouldAutoAddToCanvas() && ids.length > 0;
+        pendingCanvasAssetIds.value = [];
+        if (!willAutoAdd) {
+          toast.success($tt('studio.genComplete'));
+        }
+        await loadGallery(true);
+        if (willAutoAdd) {
+          await activateCanvasViewForResults(viewMode, syncCompositorOverlaysOnCanvasEnter);
+          addAssetPathsToCanvas(ids.map((id) => `asset:${id}`), { placement: 'staging' });
+        }
       } else if (row.status === 'failed') {
-        tasksStore.appendTaskLog(tid, $tt('studio.genFailed', { msg: String(row.error || '') }), 'error');
-        toast.error($tt('studio.genFailed', { msg: String(row.error || '') }));
+        let errMsg = String(row.error || row.error_message || '');
+        if (!errMsg) {
+          try {
+            const updated = await api.gen.getMediaTask(tid) as Record<string, unknown>;
+            errMsg = String(updated.error || updated.error_message || '');
+          } catch {
+            /* keep empty */
+          }
+        }
+        tasksStore.appendTaskLog(tid, $tt('studio.genFailed', { msg: errMsg }), 'error');
+        toast.error($tt('studio.genFailed', { msg: errMsg }));
       }
       generating.value = false;
     },
@@ -705,8 +875,12 @@ async function startCoverGeneration() {
     toast.warning('Selected model does not support cover');
     return;
   }
-  if (!coverSourceFile.value) {
+  if (!hasCoverSource()) {
     toast.warning($tt('audio.coverNeedSource'));
+    return;
+  }
+  if (lyricsMissing.value) {
+    toast.warning($tt(audioLyricsRequiredHintKey(currentModelConfig.value)));
     return;
   }
 
@@ -720,10 +894,21 @@ async function startCoverGeneration() {
   previewLyricsDownload.value = '';
 
   try {
-    const up = await api.gen.uploadAsset(coverSourceFile.value);
-    const source_asset_id = (up as any)?.id;
-    if (!source_asset_id) {
-      toast.error($tt('studio.error', { msg: 'upload failed' }));
+    persistComposerSnapshot();
+    let source_asset_id: string;
+    const assetPath = coverSourceAssetPath.value;
+    if (typeof assetPath === 'string' && assetPath.startsWith('asset:')) {
+      source_asset_id = assetPath.slice('asset:'.length);
+    } else if (coverSourceFile.value) {
+      const up = await api.gen.uploadAsset(coverSourceFile.value);
+      source_asset_id = (up as any)?.id;
+      if (!source_asset_id) {
+        toast.error($tt('studio.error', { msg: 'upload failed' }));
+        generating.value = false;
+        return;
+      }
+    } else {
+      toast.warning($tt('audio.coverNeedSource'));
       generating.value = false;
       return;
     }
@@ -734,9 +919,17 @@ async function startCoverGeneration() {
       source_asset_id,
       prompt: String(params.prompt || '').trim(),
       source_fidelity: coverParams.source_fidelity ?? 1.0,
-      seed: coverParams.seed ?? params.seed ?? null,
-      n: 1,
+      seed: params.seed ?? null,
+      n: params.n ?? 1,
       audio_format: params.audio_format || 'wav',
+      duration: coverParams.duration ?? null,
+      lyrics: String(params.lyrics || '').trim(),
+      vocal_language: String(params.vocal_language || '').trim(),
+      vocal_type: String(params.vocal_type || '').trim(),
+      bpm: params.bpm ?? null,
+      key_scale: String(params.key_scale || '').trim(),
+      time_signature: String(params.time_signature || '').trim(),
+      metadata: buildCanvasMeta(),
     };
 
     const resp = await api.audios.createEdit(body);
@@ -759,6 +952,10 @@ async function startGeneration() {
   if (!params.model) { toast.warning('Please select a model'); return; }
   if (!modelReady.value) { toast.warning('Model is not ready'); return; }
   if (!params.prompt.trim()) { toast.warning('Please enter a prompt'); return; }
+  if (lyricsMissing.value) {
+    toast.warning($tt(audioLyricsRequiredHintKey(currentModelConfig.value)));
+    return;
+  }
 
   const parsed = parseModelVersion(selectedModelVersion.value || '');
   const mk = parsed.modelKey || parsed.model || currentModelKey.value;
@@ -788,6 +985,7 @@ async function startGeneration() {
   previewLyricsDownload.value = '';
 
   try {
+    persistComposerSnapshot();
     const body = {
       model: params.model,
       title: String(params.title || '').trim(),
@@ -795,9 +993,12 @@ async function startGeneration() {
       negative_prompt: params.negative_prompt || '',
       duration: params.duration ?? null,
       instrumental: !!params.instrumental,
-      // Empty lyrics + prompt → backend auto-inspires lyrics via 5Hz LM when LM is enabled.
+      // Vocal tracks require lyrics (use AI Generate Lyrics); 5Hz LM only format_sample metadata/codes.
       lyrics: params.lyrics?.trim() || '',
-      vocal_language: params.vocal_language?.trim() || '',
+      vocal_language: resolveVocalLanguageForSubmit(
+        String(params.lyrics || '').trim(),
+        String(params.vocal_language || '').trim(),
+      ),
       vocal_type: params.vocal_type?.trim() || '',
       bpm: params.bpm ?? null,
       key_scale: params.key_scale || '',
@@ -807,6 +1008,7 @@ async function startGeneration() {
       seed: params.seed ?? null,
       n: params.n ?? 1,
       audio_format: params.audio_format || 'wav',
+      metadata: buildCanvasMeta(),
     };
 
     const resp = await api.audios.createGeneration(body);
@@ -928,9 +1130,8 @@ onMounted(async () => {
       onModelChange(selectedModelVersion.value);
     }
   }
-  if (!params.model) {
-    loadPromptDraft();
-  }
+  loadPromptDraft();
+  loadAssistantLyricsDraft();
   loadRecentAudio();
   loadGallery();
   loadPresets();
@@ -997,6 +1198,230 @@ watch(modelFilterCommercialOnly, () => {
   onModelChange(selectedModelVersion.value);
 });
 
+const infiniteCanvasRef = ref<InstanceType<typeof InfiniteCanvas> | null>(null);
+const pendingCanvasAssetIds = ref<string[]>([]);
+const audioCanvas = useCanvasStore('audio');
+const canvasSelectedItem = ref<GalleryItem | null>(null);
+const { collapsed: composerCollapsed, setCollapsed: setComposerCollapsed } = useComposerCollapse('audio');
+
+const savedViewMode = getItem(DQ_STORAGE.AUDIO_VIEW_MODE);
+const viewMode = ref<'grid' | 'canvas'>(
+  savedViewMode === 'canvas' || savedViewMode === 'grid' ? savedViewMode : 'grid'
+);
+
+watch(viewMode, (mode) => {
+  setItem(DQ_STORAGE.AUDIO_VIEW_MODE, mode);
+});
+
+function onViewModeChange(mode: 'grid' | 'canvas') {
+  if (viewMode.value === mode) return;
+  const batchPaths =
+    mode === 'canvas' && selectedPaths.value.size > 0
+      ? Array.from(selectedPaths.value)
+      : [];
+  viewMode.value = mode;
+  if (mode === 'canvas') {
+    clearSelection();
+    maybeShowCanvasWorkspaceHint();
+    const batchCount = batchPaths.length;
+    nextTick(() => {
+      syncCompositorOverlaysOnCanvasEnter();
+      persistComposerSnapshot();
+      if (batchCount > 0) {
+        addAssetPathsToCanvas(batchPaths, {
+          fit: true,
+          placement: 'center',
+          focusLast: false,
+        });
+        toast.success($tt('canvas.batchAdded', { n: batchCount }));
+      } else if (Object.keys(audioCanvas.items).length > 0) {
+        infiniteCanvasRef.value?.fitAll();
+      }
+    });
+  } else {
+    clearSelection();
+  }
+}
+
+const showLineageDrawer = ref(false);
+const lineageTargetAssetId = ref('');
+
+const canvasAssetIdsOnCanvas = computed(() =>
+  Object.keys(audioCanvas.items)
+    .filter((p) => p.startsWith('asset:'))
+    .map((p) => p.slice('asset:'.length))
+);
+
+async function onLineageFocusAsset(assetId: string) {
+  if (viewMode.value !== 'canvas') {
+    await activateCanvasViewForResults(viewMode, syncCompositorOverlaysOnCanvasEnter);
+  }
+  infiniteCanvasRef.value?.focusLineageAsset(assetId);
+}
+
+function shouldAutoAddToCanvas(): boolean {
+  return viewMode.value === 'canvas' || canvasAutoAddEnabled('audio');
+}
+
+function addAssetPathsToCanvas(
+  paths: string[],
+  opts?: {
+    fit?: boolean;
+    placement?: 'staging' | 'center';
+    focusLast?: boolean;
+  }
+) {
+  if (!paths.length) return;
+  if (viewMode.value === 'canvas' && infiniteCanvasRef.value) {
+    infiniteCanvasRef.value.addPathsToCanvas(paths, {
+      fit: opts?.fit,
+      placement: opts?.placement ?? 'staging',
+      focusLast: opts?.focusLast ?? true,
+    });
+    return;
+  }
+  audioCanvas.addPathsFromGallery(paths, galleryItems.value, {
+    placement: opts?.placement ?? 'center',
+  });
+}
+
+function onCanvasSessionReady(_payload: { sessionId: string }) {
+  if (viewMode.value === 'canvas') {
+    nextTick(() => {
+      syncCompositorOverlaysOnCanvasEnter();
+      if (Object.keys(audioCanvas.items).length > 0) {
+        infiniteCanvasRef.value?.fitAll();
+      }
+    });
+  }
+}
+
+function syncCanvasCoverOverlay(path: string | null) {
+  if (!path) {
+    audioCanvas.clearOverlay('cover_source');
+    return;
+  }
+  const item = galleryItems.value.find((g) => g.path === path) ?? undefined;
+  audioCanvas.setOverlay('cover_source', path, item);
+}
+
+function restoreComposerFromCanvasOverlays() {
+  const cov = audioCanvas.overlays.cover_source;
+  if (!coverSourceAssetPath.value && cov?.path) {
+    const item = galleryItems.value.find((g) => g.path === cov.path);
+    coverSourceAssetPath.value = cov.path;
+    coverSourceSrc.value = item ? previewUrlForGalleryItem(item) : '';
+    coverSourceName.value = item?.title || item?.name || $tt('audio.coverSource');
+    coverSourceFile.value = null;
+    audioWorkTab.value = 'cover';
+  }
+}
+
+function syncCompositorOverlaysOnCanvasEnter() {
+  restoreComposerFromCanvasOverlays();
+  syncCanvasCoverOverlay(coverSourceAssetPath.value || null);
+}
+
+function onCanvasOverlayCleared(kind: import('@/types').CanvasOverlayKind) {
+  if (kind === 'cover_source') {
+    clearCoverSource();
+  }
+}
+
+function onCanvasNodeSelected(item: GalleryItem | null) {
+  canvasSelectedItem.value = item;
+  if (!item) {
+    persistComposerSnapshot();
+    return;
+  }
+  setComposerCollapsed(false);
+  if (item.prompt) params.prompt = item.prompt;
+  if (item.title) params.title = item.title;
+  persistComposerSnapshot();
+}
+
+function persistComposerSnapshot() {
+  audioCanvas.setComposerSnapshot({
+    prompt: String(params.prompt || ''),
+    title: String(params.title || ''),
+    model: String(params.model || ''),
+    negative_prompt: String(params.negative_prompt || ''),
+    seed: params.seed != null ? String(params.seed) : undefined,
+    mode: audioWorkTab.value,
+    cover_source_path: coverSourceAssetPath.value || undefined,
+  });
+}
+
+function onCanvasComposerRestore(snapshot: {
+  prompt?: string;
+  title?: string;
+  model?: string;
+  negative_prompt?: string;
+  seed?: string;
+  mode?: string;
+  cover_source_path?: string;
+}) {
+  if (!snapshot || typeof snapshot !== 'object') return;
+  if (snapshot.prompt != null) params.prompt = snapshot.prompt;
+  if (snapshot.title != null) params.title = snapshot.title;
+  if (snapshot.negative_prompt != null) params.negative_prompt = snapshot.negative_prompt;
+  if (snapshot.seed != null && snapshot.seed !== '') {
+    const n = parseInt(snapshot.seed, 10);
+    params.seed = Number.isNaN(n) ? null : n;
+  }
+  if (snapshot.mode === 'create' || snapshot.mode === 'cover') {
+    audioWorkTab.value = snapshot.mode;
+  }
+  if (snapshot.cover_source_path) {
+    const item = galleryItems.value.find((g) => g.path === snapshot.cover_source_path);
+    coverSourceAssetPath.value = snapshot.cover_source_path;
+    coverSourceSrc.value = item
+      ? previewUrlForGalleryItem(item)
+      : `/api/assets/${snapshot.cover_source_path.slice('asset:'.length)}/file`;
+    coverSourceName.value = item?.title || item?.name || $tt('audio.coverSource');
+    coverSourceFile.value = null;
+  }
+  if (viewMode.value === 'canvas') {
+    nextTick(() => syncCompositorOverlaysOnCanvasEnter());
+  }
+}
+
+watch(coverSourceAssetPath, () => {
+  persistComposerSnapshot();
+  if (viewMode.value === 'canvas') {
+    syncCanvasCoverOverlay(coverSourceAssetPath.value || null);
+  }
+});
+
+function buildCanvasMeta(extra: Record<string, unknown> = {}): Record<string, unknown> {
+  const meta: Record<string, unknown> = { ...extra };
+  const sid = audioCanvas.sessionId.value;
+  if (sid) meta.canvas_session_id = sid;
+  const parentPath =
+    canvasSelectedItem.value?.path || audioCanvas.activeAssetPath.value || '';
+  if (parentPath.startsWith('asset:')) {
+    meta.parent_asset_id = parentPath.slice('asset:'.length);
+    meta.relation_type = audioWorkTab.value === 'cover' ? 'cover' : 'create';
+  }
+  return meta;
+}
+
+function onCanvasOpenPreview(item: GalleryItem) {
+  const idx = galleryItems.value.findIndex((g) => g.path === item.path);
+  if (idx >= 0) {
+    selectedAudioIndex.value = idx;
+    audioPreviewVisible.value = true;
+  }
+}
+
+function downloadAudioItem(item: GalleryItem) {
+  const a = document.createElement('a');
+  a.href = api.gallery.getImageUrl(item.path);
+  a.download = item.name || 'audio.wav';
+  a.click();
+  toast.success($tt('gallery.startDownload'));
+}
+
 // ---- Gallery / Studio Canvas ----
 const {
   galleryItems,
@@ -1022,6 +1447,23 @@ const {
   clearSelection,
 } = useStudioGallery('audio');
 
+async function addGalleryItemToCanvas(
+  item: GalleryItem,
+  opts?: { switchView?: boolean; fit?: boolean }
+) {
+  if (opts?.switchView !== false && viewMode.value !== 'canvas') {
+    onViewModeChange('canvas');
+    await nextTick();
+    await nextTick();
+  }
+  addAssetPathsToCanvas([item.path], {
+    placement: 'center',
+    focusLast: true,
+    fit: opts?.fit,
+  });
+  toast.success($tt('canvas.addedToCanvas'));
+}
+
 const activeAudioTasks = computed(() => {
   const running = tasksStore.queueState.running.filter((t: Task) =>
     String(t.kind || '').startsWith('audio.')
@@ -1046,8 +1488,17 @@ function onGallerySelect(item: any) {
 }
 
 function onCardAction({ action, item }: { action: string; item: any }) {
-  if (action === 'delete') {
+  if (action === 'add-to-canvas') {
+    void addGalleryItemToCanvas(item, { fit: true });
+  } else if (action === 'delete') {
     deleteItem(item);
+  } else if (action === 'download') {
+    downloadAudioItem(item);
+  } else if (action === 'lineage') {
+    lineageTargetAssetId.value = item.path?.startsWith('asset:')
+      ? item.path.slice('asset:'.length)
+      : '';
+    showLineageDrawer.value = true;
   }
 }
 

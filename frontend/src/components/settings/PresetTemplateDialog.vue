@@ -5,6 +5,7 @@ defineProps<{
     name: string;
     positive: string;
     negative: string;
+    trigger_words: string;
     media_scope: string;
     applies_to: string[];
   };
@@ -65,6 +66,19 @@ const emit = defineEmits<{
             class="settings-preset-dialog-textarea settings-preset-dialog-textarea--negative"
             :rows="5"
             :placeholder="$t('settings.negativePlaceholder')"
+          />
+          <p class="studio-field-footnote">{{ $t('studio.optional') }}</p>
+        </div>
+      </DqPrefRow>
+
+      <DqPrefRow :label="$t('settings.loraTriggerWords')" stacked class="settings-preset-dialog-prompt-row">
+        <div class="settings-stacked-control">
+          <DqInput
+            v-model="presetForm.trigger_words"
+            type="textarea"
+            class="settings-preset-dialog-textarea"
+            :rows="3"
+            :placeholder="$t('settings.loraTriggerWordsHint')"
           />
           <p class="studio-field-footnote">{{ $t('studio.optional') }}</p>
         </div>

@@ -1,5 +1,8 @@
 <template>
-  <div class="video-composer studio-composer-shell dq-glass--panel">
+  <div
+    class="video-composer studio-composer-shell dq-glass--panel"
+    :class="{ 'video-composer--collapsed': collapsed }"
+  >
     <!-- Model not-ready alert -->
     <div v-if="modelNotReady" class="video-composer__model-meta">
       <DqAlert
@@ -18,7 +21,7 @@
     </div>
 
     <!-- Title input -->
-    <div class="video-composer__title-wrap">
+    <div v-if="!collapsed" class="video-composer__title-wrap">
       <DqInput
         v-model="localTitle"
         size="small"
@@ -28,6 +31,7 @@
     </div>
 
     <!-- Prompt -->
+    <div v-if="!collapsed" class="video-composer__prompt-block">
     <div class="video-composer__prompt-wrap">
       <DqInput
         v-model="localPrompt"
@@ -45,53 +49,103 @@
             <img v-if="referenceMedia.type === 'image'" :src="referenceMedia.previewUrl" />
             <video v-else-if="referenceMedia.type === 'video'" :src="referenceMedia.previewUrl" />
             <span class="video-composer__ref-label">{{ referenceMedia.label }}</span>
-            <DqIconButton type="text" size="xs" :label="$tt('common.delete')" @click="$emit('remove-reference')">
-              <DqIcon :size="10"><Close /></DqIcon>
-            </DqIconButton>
+            <ComposerIconTip
+              v-if="referenceMedia.type === 'image' && referenceAssetId"
+              :content="$t('create.composerTip.reversePromptVideo')"
+            >
+              <DqIconButton
+                type="text"
+                size="xs"
+                :disabled="reversing"
+                :aria-label="$t('create.reversePromptVideo')"
+                @click="$emit('reverse-prompt')"
+              >
+                <DqIcon :size="10"><Refresh /></DqIcon>
+              </DqIconButton>
+            </ComposerIconTip>
+            <ComposerIconTip :content="$t('create.composerTip.removeRef')">
+              <DqIconButton
+                type="text"
+                size="xs"
+                :aria-label="$tt('common.delete')"
+                @click="$emit('remove-reference')"
+              >
+                <DqIcon :size="10"><Close /></DqIcon>
+              </DqIconButton>
+            </ComposerIconTip>
           </div>
-          <DqIconButton
-            v-else
-            type="text"
-            size="xs"
-            :label="referenceMediaLabel"
-            class="video-composer__ref-add"
-            @click="$emit('pick-reference')"
-          >
-            <DqIcon :size="14"><Picture /></DqIcon>
-          </DqIconButton>
+          <ComposerIconTip v-else :content="referenceMediaTip">
+            <DqIconButton
+              type="text"
+              size="xs"
+              class="video-composer__ref-add"
+              :aria-label="referenceMediaLabel"
+              @click="$emit('pick-reference')"
+            >
+              <DqIcon :size="14"><Picture /></DqIcon>
+            </DqIconButton>
+          </ComposerIconTip>
         </div>
         <div v-if="workMode === 'animate'" class="video-composer__ref-slot">
           <div v-if="tailReferenceMedia" class="video-composer__ref-pill">
             <img :src="tailReferenceMedia.previewUrl" />
             <span class="video-composer__ref-label">{{ tailReferenceMedia.label }}</span>
-            <DqIconButton type="text" size="xs" :label="$tt('common.delete')" @click="$emit('remove-tail-reference')">
-              <DqIcon :size="10"><Close /></DqIcon>
-            </DqIconButton>
+            <ComposerIconTip :content="$t('create.composerTip.removeRef')">
+              <DqIconButton
+                type="text"
+                size="xs"
+                :aria-label="$tt('common.delete')"
+                @click="$emit('remove-tail-reference')"
+              >
+                <DqIcon :size="10"><Close /></DqIcon>
+              </DqIconButton>
+            </ComposerIconTip>
           </div>
-          <DqIconButton
-            v-else
-            type="text"
-            size="xs"
-            :label="$tt('video.addTailFrame')"
-            class="video-composer__ref-add"
-            @click="$emit('pick-tail-reference')"
-          >
-            <DqIcon :size="14"><Picture /></DqIcon>
-          </DqIconButton>
+          <ComposerIconTip v-else :content="$t('create.composerTip.addTailFrame')">
+            <DqIconButton
+              type="text"
+              size="xs"
+              class="video-composer__ref-add"
+              :aria-label="$tt('video.addTailFrame')"
+              @click="$emit('pick-tail-reference')"
+            >
+              <DqIcon :size="14"><Picture /></DqIcon>
+            </DqIconButton>
+          </ComposerIconTip>
         </div>
       </div>
 
-      <!-- Preset / Style (prompt corner, same as ImageComposer) -->
-      <div v-if="styles && Object.keys(styles).length > 0" class="video-composer__preset-area">
-        <DqDropdown trigger="click" size="small" @command="onStyleCommand">
+      <!-- Preset / enhance (prompt corner, same as ImageComposer) -->
+      <div class="video-composer__preset-area">
+        <ComposerIconTip
+          :content="localPrompt.trim() ? $t('create.composerTip.enhance') : $t('create.composerTip.enhanceEmpty')"
+        >
           <DqIconButton
             type="text"
             size="xs"
-            :label="$tt('create.preset')"
-            class="video-composer__preset-btn"
+            :disabled="enhancing || !localPrompt.trim()"
+            :aria-label="$t('create.enhance')"
+            @click="onEnhanceClick"
           >
-            <DqIcon :size="14"><DocumentCopy /></DqIcon>
+            <DqIcon :size="12"><MagicStick /></DqIcon>
           </DqIconButton>
+        </ComposerIconTip>
+        <DqDropdown
+          v-if="styles && Object.keys(styles).length > 0"
+          trigger="click"
+          size="small"
+          @command="onStyleCommand"
+        >
+          <ComposerIconTip :content="$t('create.composerTip.preset')">
+            <DqIconButton
+              type="text"
+              size="xs"
+              class="video-composer__preset-btn"
+              :aria-label="$tt('create.preset')"
+            >
+              <DqIcon :size="14"><DocumentCopy /></DqIcon>
+            </DqIconButton>
+          </ComposerIconTip>
           <template #dropdown>
             <DqDropdownMenu>
               <DqDropdownItem
@@ -105,6 +159,14 @@
           </template>
         </DqDropdown>
       </div>
+    </div>
+    <ComposerPromptApplyStrip
+      v-if="promptApplyPreview"
+      :preview="promptApplyPreview"
+      @replace="$emit('prompt-apply-replace')"
+      @append="$emit('prompt-apply-append')"
+      @dismiss="$emit('prompt-apply-dismiss')"
+    />
     </div>
 
     <!-- Toolbar -->
@@ -398,6 +460,8 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
 import StudioComposerAdvancedDrawer from './StudioComposerAdvancedDrawer.vue';
+import ComposerPromptApplyStrip from './ComposerPromptApplyStrip.vue';
+import ComposerIconTip from './ComposerIconTip.vue';
 import { useI18n } from 'vue-i18n';
 import {
   Close,
@@ -407,6 +471,7 @@ import {
   Refresh,
   Tools,
 } from '@danqing/dq-shell';
+import { assetIdFromGalleryPath } from '@/utils/copilotHandoff';
 import { $tt, $pn } from '@/utils/i18n';
 
 const props = defineProps<{
@@ -443,12 +508,17 @@ const props = defineProps<{
   showBatchCount?: boolean;
   batchCount?: number;
   referenceMedia: { type: 'image' | 'video'; previewUrl: string; label: string } | null;
+  referenceAssetPath?: string | null;
+  enhancing?: boolean;
+  reversing?: boolean;
   tailReferenceMedia?: { type: 'image'; previewUrl: string; label: string } | null;
   modelNotReady?: boolean;
   modelNotReadyName?: string;
   workModeOptions?: Array<{ label: string; value: string }>;
   currentModelConfig?: Record<string, any> | null;
   compatibleLoras?: Record<string, unknown>[];
+  collapsed?: boolean;
+  promptApplyPreview?: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -468,12 +538,23 @@ const emit = defineEmits<{
   (e: 'model-change', value: string): void;
   (e: 'reset-defaults'): void;
   (e: 'go-download'): void;
+  (e: 'enhance', ctx?: { stylePositive?: string }): void;
+  (e: 'reverse-prompt'): void;
+  (e: 'prompt-apply-replace'): void;
+  (e: 'prompt-apply-append'): void;
+  (e: 'prompt-apply-dismiss'): void;
 }>();
 
 const { t: $t } = useI18n();
 
+const referenceAssetId = computed(() => {
+  if (!props.referenceAssetPath) return null;
+  return assetIdFromGalleryPath(props.referenceAssetPath);
+});
+
 const advancedOpen = ref(false);
 const selectedStyle = ref('');
+const lastStylePositive = ref('');
 
 const localPrompt = computed({
   get: () => props.modelValue,
@@ -543,6 +624,12 @@ const referenceMediaLabel = computed(() => {
   return $tt('create.refImage');
 });
 
+const referenceMediaTip = computed(() => {
+  if (props.workMode === 'upscale') return $tt('video.videoSourceTitle');
+  if (props.workMode === 'animate') return $t('create.composerTip.reversePromptVideo');
+  return $t('create.composerTip.refImage');
+});
+
 const shortcutHint = computed(() => {
   const isMac = navigator.platform.toLowerCase().includes('mac');
   return isMac ? '⌘ + Enter ' + $tt('create.sendShortcutHintMac') : 'Ctrl + Enter ' + $tt('create.sendShortcutHintWin');
@@ -552,10 +639,16 @@ function onStyleCommand(command: string) {
   onStyleChange(command);
 }
 
+function onEnhanceClick() {
+  const style = lastStylePositive.value.trim();
+  emit('enhance', style ? { stylePositive: style } : undefined);
+}
+
 function onStyleChange(name: string) {
   if (!name || !props.styles[name]) return;
   const preset = props.styles[name];
   if (preset.positive) {
+    lastStylePositive.value = String(preset.positive);
     const current = localPrompt.value || '';
     localPrompt.value = current
       ? current + '\nStyle boost: ' + preset.positive
@@ -605,6 +698,11 @@ function onKeydown(e: KeyboardEvent) {
   gap: 10px;
 }
 
+.video-composer--collapsed {
+  padding: 10px 16px 12px;
+  gap: 6px;
+}
+
 /* Model meta */
 .video-composer__model-meta {
   margin-bottom: 8px;
@@ -621,9 +719,20 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 /* Prompt */
+.video-composer__prompt-block {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 8px;
+}
+
 .video-composer__prompt-wrap {
   position: relative;
-  margin-bottom: 8px;
+}
+
+.video-composer__prompt-head {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 2px;
 }
 
 .video-composer__prompt :deep(.dq-input--textarea) {

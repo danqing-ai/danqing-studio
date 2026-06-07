@@ -15,7 +15,10 @@ from pathlib import Path
 
 from backend.cli.base import build_engine_context, build_exec_context
 from backend.core.contracts import (
-    ImageGenerationRequest, ImageEditRequest, ImageUpscaleRequest,
+    ImageGenerationRequest,
+    ImageEditRequest,
+    ImageUpscaleRequest,
+    StructuralGuide,
 )
 
 
@@ -29,6 +32,10 @@ def generate(
     guidance: float | None = None,
     seed: int | None = None,
     scheduler: str | None = None,
+    controlnet: str = "",
+    control_asset_id: str = "",
+    control_image: str = "",
+    controlnet_strength: float = 0.8,
     output: str = "",
     project_root: Path | None = None,
 ) -> str:
@@ -42,6 +49,42 @@ def generate(
     )
 
     sched = (scheduler or "").strip() or None
+    structural_guide: StructuralGuide | None = None
+    cn_key = (controlnet or "").strip()
+    resolved_control_id = (control_asset_id or "").strip()
+    if control_image and not resolved_control_id:
+        mask_path = Path(control_image)
+        resolved_control_id = ctx.asset_store.create_from_file(
+            mask_path,
+            kind="image",
+            mime_type="image/png",
+            source_task_id="",
+            metadata={"cli": "structural_guide"},
+            source_action="upload",
+        )
+        print(f"[cli] uploaded control image {control_image} → asset {resolved_control_id}")
+    if cn_key or resolved_control_id or control_image:
+        if not cn_key:
+            raise ValueError(
+                "structural_guide requires --controlnet when using --control-asset-id or --control-image"
+            )
+        if not resolved_control_id:
+            raise ValueError(
+                "structural_guide requires --control-asset-id or --control-image when --controlnet is set"
+            )
+        from backend.engine.common.structural_guide import infer_guide_type, is_fill_controlnet
+
+        if is_fill_controlnet(cn_key):
+            raise ValueError(
+                "flux-fill-controlnet is for retouch/extend only; use danqing-edit with --operation retouch|extend"
+            )
+        structural_guide = StructuralGuide(
+            asset_id=resolved_control_id,
+            model_id=cn_key,
+            type=infer_guide_type(cn_key),
+            weight=float(controlnet_strength),
+        )
+
     request = ImageGenerationRequest(
         model=model,
         prompt=prompt,
@@ -51,6 +94,7 @@ def generate(
         guidance=guidance,
         seed=seed,
         scheduler=sched,
+        structural_guide=structural_guide,
     )
 
     if not ctx.image_engine.supports(model, "generate"):
@@ -87,6 +131,10 @@ def edit(
     *,
     source_asset_id: str = "",
     source_image: str = "",
+    mask_asset_id: str = "",
+    mask_image: str = "",
+    extend_directions: list[str] | None = None,
+    extend_pixels: int = 256,
     source_fidelity: float = 0.6,
     negative_prompt: str = "",
     guidance: float | None = None,
@@ -97,9 +145,10 @@ def edit(
     project_root: Path | None = None,
 ) -> str:
     """图像编辑。对应 POST /api/images/edits。
-    
+
     source_asset_id 或 source_image 二选一。
-    source_image 为本地文件路径，内部自动上传为 asset。
+    retouch 需 mask_asset_id 或 mask_image（白=重绘区域）。
+    extend 需 extend_directions（top/bottom/left/right 组合）。
     """
     ctx = build_engine_context(project_root)
     exec_ctx = build_exec_context(
@@ -122,11 +171,40 @@ def edit(
     if not source_asset_id:
         raise ValueError("source_asset_id or source_image is required")
 
+    resolved_mask_id = (mask_asset_id or "").strip()
+    if mask_image and not resolved_mask_id:
+        mask_path = Path(mask_image)
+        resolved_mask_id = ctx.asset_store.create_from_file(
+            mask_path, kind="image", mime_type="image/png", source_task_id="",
+        )
+        print(f"[cli] uploaded mask {mask_image} → asset {resolved_mask_id}")
+
+    extend_spec = None
+    if operation == "retouch":
+        if not resolved_mask_id:
+            raise ValueError(
+                "retouch requires --mask-image or --mask-asset-id (white = repaint region)"
+            )
+    elif operation == "extend":
+        dirs = [d for d in (extend_directions or []) if d in ("top", "bottom", "left", "right")]
+        if not dirs:
+            raise ValueError(
+                "extend requires --extend-directions (comma-separated: top,bottom,left,right)"
+            )
+        from backend.core.contracts import ExtendSpec
+
+        extend_spec = ExtendSpec(
+            directions=dirs,
+            pixels=max(64, min(2048, int(extend_pixels))),
+        )
+
     sched = (scheduler or "").strip() or None
     request = ImageEditRequest(
         model=model,
         operation=operation,
         source_asset_id=source_asset_id,
+        mask_asset_id=resolved_mask_id or None,
+        extend=extend_spec,
         prompt=prompt,
         source_fidelity=source_fidelity,
         negative_prompt=negative_prompt,

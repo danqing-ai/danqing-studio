@@ -650,28 +650,21 @@ class QwenVisionLanguageProcessor:
                             break
                     text[i] = text[i].replace("<|placeholder|>", self.image_token)
 
+            if return_tensors == "pt":
+                raise RuntimeError(
+                    "Qwen edit MLX processor does not support return_tensors='pt'; use 'np'"
+                )
             text_inputs = self.tokenizer(
                 text,
                 padding=padding,
-                return_tensors="pt" if return_tensors == "pt" else "np",
+                return_tensors="np",
             )
-
-            if return_tensors == "pt":
-                import torch
-
-                if isinstance(text_inputs["input_ids"], torch.Tensor):
-                    input_ids = mx.array(text_inputs["input_ids"].numpy())
-                    attention_mask = mx.array(text_inputs["attention_mask"].numpy())
-                else:
-                    input_ids = mx.array(text_inputs["input_ids"])
-                    attention_mask = mx.array(text_inputs["attention_mask"])
+            if isinstance(text_inputs["input_ids"], np.ndarray):
+                input_ids = mx.array(text_inputs["input_ids"])
+                attention_mask = mx.array(text_inputs["attention_mask"])
             else:
-                if isinstance(text_inputs["input_ids"], np.ndarray):
-                    input_ids = mx.array(text_inputs["input_ids"])
-                    attention_mask = mx.array(text_inputs["attention_mask"])
-                else:
-                    input_ids = mx.array(np.array(text_inputs["input_ids"]))
-                    attention_mask = mx.array(np.array(text_inputs["attention_mask"]))
+                input_ids = mx.array(np.array(text_inputs["input_ids"]))
+                attention_mask = mx.array(np.array(text_inputs["attention_mask"]))
         else:
             input_ids = None
             attention_mask = None

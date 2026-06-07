@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import re
+import subprocess
 import sys
 from collections.abc import Callable
 from pathlib import Path
@@ -50,7 +51,7 @@ UI_VUE_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\bv-if='motion'\b"), "use `v-if='divided'` on DqDropdownItem"),
 ]
 
-ALL_RULES = ("ep", "theme", "ui")
+ALL_RULES = ("ep", "theme", "ui", "canvas")
 
 
 def _scan_tree(
@@ -188,10 +189,32 @@ def check_ui() -> list[str]:
     return failures
 
 
+def check_canvas() -> list[str]:
+    failures: list[str] = []
+    frontend = ROOT / "frontend"
+    pkg = frontend / "package.json"
+    if not pkg.is_file():
+        failures.append("frontend/package.json missing")
+        return failures
+    proc = subprocess.run(
+        ["npm", "run", "canvas-unit"],
+        cwd=frontend,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip().splitlines()
+        tail = detail[-3:] if detail else ["unknown error"]
+        failures.append("canvas-unit failed: " + " | ".join(tail))
+    return failures
+
+
 RULE_RUNNERS: dict[str, Callable[[], list[str]]] = {
     "ep": check_ep,
     "theme": check_theme,
     "ui": check_ui,
+    "canvas": check_canvas,
 }
 
 

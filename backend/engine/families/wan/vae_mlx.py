@@ -14,6 +14,7 @@ from typing import Any, Callable
 
 import mlx.core as mx
 import mlx.nn as nn
+import numpy as np
 
 from backend.engine.common.attention import scaled_dot_product_attention_bhsd_mx
 from backend.engine.common.mlx_runtime_fallback import load_weights_dict
@@ -1170,15 +1171,13 @@ def _load_vae_state_dict(
     for pth in pth_candidates:
         if pth.is_file():
             logger.info("Loading Wan VAE weights from %s", pth)
-            import torch
+            from backend.engine.common.pytorch_bin_numpy import state_dict_to_numpy
 
-            sd = torch.load(str(pth), map_location="cpu", weights_only=True)
+            sd = state_dict_to_numpy(pth)
             out: dict[str, mx.array] = {}
             for k, v in sd.items():
-                arr = v.detach().cpu()
-                if arr.dtype == torch.bfloat16:
-                    arr = arr.float()
-                out[k] = array_fn(arr.numpy()).astype(mx.float32)
+                arr = np.asarray(v, dtype=np.float32)
+                out[k] = array_fn(arr).astype(mx.float32)
             return out
 
     vae_dir = bundle_root / "vae"

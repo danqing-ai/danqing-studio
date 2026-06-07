@@ -40,6 +40,10 @@ FAMILY_BUNDLE_CONTRACTS: dict[str, FamilyBundleContract] = {
         required=frozenset({"transformer", "text_encoder", "vae"}),
         optional=frozenset({"tokenizer"}),
     ),
+    "ernie_image": FamilyBundleContract(
+        required=frozenset({"transformer", "text_encoder", "vae"}),
+        optional=frozenset({"tokenizer", "scheduler"}),
+    ),
     "seedvr2": FamilyBundleContract(
         required=frozenset({"transformer", "vae"}),
         optional=frozenset({"tokenizer"}),
@@ -63,6 +67,10 @@ FAMILY_BUNDLE_CONTRACTS: dict[str, FamilyBundleContract] = {
     "diffrhythm": FamilyBundleContract(
         required=frozenset({"transformer"}),
         optional=frozenset({"vae"}),
+    ),
+    "qwen2": FamilyBundleContract(
+        required=frozenset({"transformer", "tokenizer"}),
+        optional=frozenset(),
     ),
 }
 

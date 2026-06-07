@@ -88,13 +88,36 @@ class FlowMatchEulerScheduler(Scheduler):
         """
         self._init_timestep = init_timestep
 
-        if use_empirical_mu:
+        raw_sigmas = kwargs.get("sigmas")
+        if raw_sigmas is not None and not use_empirical_mu and kwargs.get("scheduler_shift") is None:
+            # ERNIE-Image / diffusers ``ErnieImagePipeline``: explicit ``linspace(1, 0, N+1)[:-1]``.
+            sigmas_np = np.asarray(raw_sigmas, dtype=np.float32).reshape(-1)
+            if sigmas_np.size != num_inference_steps:
+                raise RuntimeError(
+                    "FlowMatchEulerScheduler: len(sigmas) must equal num_inference_steps "
+                    f"({sigmas_np.size} != {num_inference_steps})"
+                )
+            sigmas_t = self.ctx.array(sigmas_np)
+            timesteps = sigmas_t * float(self._num_train_timesteps)
+            sigmas = self.ctx.concat([sigmas_t, self.ctx.zeros((1,), dtype=sigmas_t.dtype)], axis=0)
+        elif use_empirical_mu:
             # Reference get_timesteps_and_sigmas (for set_image_seq_len)
             sigmas = self.ctx.linspace(1.0, 1.0 / num_inference_steps, num_inference_steps, dtype=self.ctx.float32())
             mu = self._compute_empirical_mu(image_seq_len, num_inference_steps)
             sigmas = self._time_shift_exponential_array(mu, 1.0, sigmas)
             timesteps = sigmas * self._num_train_timesteps
             sigmas = self.ctx.concat([sigmas, self.ctx.zeros((1,), dtype=sigmas.dtype)], axis=0)
+        elif kwargs.get("scheduler_shift") is not None:
+            # Z-Image base: FlowMatchEulerDiscreteScheduler with static ``shift`` (e.g. 6.0),
+            # ``use_dynamic_shifting=false`` — matches diffusers ``ZImagePipeline`` bundle config.
+            ctx = self.ctx
+            num_train = float(self._num_train_timesteps)
+            shift = float(kwargs["scheduler_shift"])
+            timesteps_t = ctx.linspace(num_train, 0.0, num_inference_steps, dtype=ctx.float32())
+            sigmas_t = timesteps_t / num_train
+            sigmas_shifted = shift * sigmas_t / (1.0 + (shift - 1.0) * sigmas_t)
+            timesteps = sigmas_shifted * num_train
+            sigmas = ctx.concat([sigmas_shifted, ctx.zeros((1,), dtype=sigmas_t.dtype)], axis=0)
         else:
             # Reference _compute_timesteps_and_sigmas (default initialization)
             mu_val = kwargs.get("mu", 1.0)

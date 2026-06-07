@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import importlib
-from typing import Any
+from typing import Any, Iterator
+
+import numpy as np
 
 
 def _mlx_core() -> Any:
@@ -27,6 +29,13 @@ def load_weights_dict(load_fn: Any | None, path: str) -> dict[str, Any]:
     if load_fn is not None:
         return dict(load_fn(path))
     return dict(_mlx_core().load(path))
+
+
+def iter_safetensors_float32_numpy(path: str) -> Iterator[tuple[str, np.ndarray]]:
+    """Yield ``(key, float32 ndarray)`` from a safetensors shard without PyTorch."""
+    core = _mlx_core()
+    for key, arr in dict(core.load(path)).items():
+        yield key, np.asarray(arr.astype(core.float32), dtype=np.float32)
 
 
 def random_normal(

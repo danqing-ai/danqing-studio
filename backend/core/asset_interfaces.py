@@ -18,6 +18,8 @@ class IAssetStore(ABC):
         source_task_id: str,
         metadata: Optional[dict[str, Any]] = None,
         source_action: Optional[str] = None,
+        parent_asset_id: Optional[str] = None,
+        relation_type: Optional[str] = None,
     ) -> str:
         """复制/登记文件，返回 asset_id。"""
         pass

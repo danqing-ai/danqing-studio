@@ -370,6 +370,27 @@ def _max_pool1d(mask_bl: mx.array, *, kernel_size: int, stride: int) -> mx.array
     return mx.concatenate(windows, axis=1)
 
 
+def _align_codec_latents_to_target(
+    hints: mx.array,
+    target_len: int,
+    *,
+    pad_from: mx.array,
+) -> mx.array:
+    """Match codec detokenizer length to DiT ``src_latents`` (pool × codes may be shorter)."""
+    cur = int(hints.shape[1])
+    if cur == target_len:
+        return hints
+    if cur > target_len:
+        return hints[:, :target_len, :]
+    pad = pad_from[:, cur:target_len, :]
+    if int(pad.shape[1]) != target_len - cur:
+        raise RuntimeError(
+            f"ACE-Step audio codec latent align failed: hints={cur}, target={target_len}, "
+            f"pad={int(pad.shape[1])}"
+        )
+    return mx.concatenate([hints, pad], axis=1)
+
+
 def apply_audio_code_src_latents(
     codec: AceStepAudioCodecMLX,
     *,
@@ -384,7 +405,11 @@ def apply_audio_code_src_latents(
     lm_hints_5hz = codec.tokenizer.quantizer.get_output_from_indices(audio_code_indices)
     lm_hints_25hz = codec.detokenize(lm_hints_5hz)
     target_len = int(src_latents.shape[1])
-    lm_hints_25hz = lm_hints_25hz[:, :target_len, :]
+    lm_hints_25hz = _align_codec_latents_to_target(
+        lm_hints_25hz,
+        target_len,
+        pad_from=src_latents,
+    )
     cover_flag = is_covers.reshape(-1, 1, 1) > 0
     return mx.where(cover_flag, lm_hints_25hz, src_latents)
 
@@ -401,7 +426,11 @@ def apply_cover_src_latents(
     lm_hints_5hz, _, _ = codec.tokenize(hidden_states, silence_latent, attention_mask)
     lm_hints_25hz = codec.detokenize(lm_hints_5hz)
     target_len = int(src_latents.shape[1])
-    lm_hints_25hz = lm_hints_25hz[:, :target_len, :]
+    lm_hints_25hz = _align_codec_latents_to_target(
+        lm_hints_25hz,
+        target_len,
+        pad_from=src_latents,
+    )
     cover_flag = is_covers.reshape(-1, 1, 1) > 0
     return mx.where(cover_flag, lm_hints_25hz, src_latents)
 
@@ -411,21 +440,21 @@ def _load_special_params(
     *,
     array_fn: Any | None = None,
 ) -> dict[str, mx.array]:
-    from safetensors import safe_open
-
     import mlx.core as mx_mod
+    import numpy as np
+
+    from backend.engine.families.ace_step.weights_mlx import _iter_safetensors_float32_numpy
 
     if array_fn is None:
         array_fn = mx_mod.array
     out: dict[str, mx.array] = {}
-    with safe_open(str(weights_path), framework="pt", device="cpu") as handle:
-        for key in (
-            "tokenizer.attention_pooler.special_token",
-            "detokenizer.special_tokens",
-        ):
-            if key in handle.keys():
-                arr = handle.get_tensor(key).detach().cpu().float().numpy()
-                out[key] = array_fn(arr)
+    wanted = {
+        "tokenizer.attention_pooler.special_token",
+        "detokenizer.special_tokens",
+    }
+    for key, arr in _iter_safetensors_float32_numpy(str(weights_path)):
+        if key in wanted:
+            out[key] = array_fn(np.asarray(arr, dtype=np.float32))
     return out
 
 

@@ -76,52 +76,115 @@
         <div v-if="isHovered && !selectionMode" class="studio-card__overlay">
           <div class="studio-card__overlay-bg" />
           <div class="studio-card__overlay-actions">
-            <!-- Image-specific actions -->
-            <template v-if="isImage">
-              <DqIconButton
-                type="text"
-                size="sm"
-                :label="$t('action.image.retouch')"
-                @click.stop="emitAction('retouch')"
-              >
-                <DqIcon :size="14"><Brush /></DqIcon>
-              </DqIconButton>
-              <DqIconButton
-                type="text"
-                size="sm"
-                :label="$t('action.image.extend')"
-                @click.stop="emitAction('extend')"
-              >
-                <DqIcon :size="14"><Grid /></DqIcon>
-              </DqIconButton>
-              <DqIconButton
-                type="text"
-                size="sm"
-                :label="$t('action.image.upscale')"
-                @click.stop="emitAction('upscale')"
-              >
-                <DqIcon :size="14"><ZoomIn /></DqIcon>
-              </DqIconButton>
+            <!-- Canvas workflow: browse + add to canvas; edit tools live on canvas node toolbar -->
+            <template v-if="galleryCanvasMode && (isImage || isVideo || isAudio)">
+              <ComposerIconTip :content="$t('canvas.addToCanvas')">
+                <DqIconButton
+                  type="text"
+                  size="sm"
+                  :label="$t('canvas.addToCanvas')"
+                  @click.stop="emitAction('add-to-canvas')"
+                >
+                  <DqIcon :size="14"><Plus /></DqIcon>
+                </DqIconButton>
+              </ComposerIconTip>
+              <ComposerIconTip :content="$t('gallery.download')">
+                <DqIconButton
+                  type="text"
+                  size="sm"
+                  :label="$t('gallery.download')"
+                  @click.stop="emitAction('download')"
+                >
+                  <DqIcon :size="14"><Download /></DqIcon>
+                </DqIconButton>
+              </ComposerIconTip>
+              <ComposerIconTip :content="$t('gallery.lineage')">
+                <DqIconButton
+                  type="text"
+                  size="sm"
+                  :label="$t('gallery.lineage')"
+                  @click.stop="emitAction('lineage')"
+                >
+                  <DqIcon :size="14"><Aim /></DqIcon>
+                </DqIconButton>
+              </ComposerIconTip>
+              <ComposerIconTip :content="$t('common.delete')">
+                <DqIconButton
+                  type="text"
+                  size="sm"
+                  :label="$t('common.delete')"
+                  @click.stop="emitAction('delete')"
+                >
+                  <DqIcon :size="14"><Delete /></DqIcon>
+                </DqIconButton>
+              </ComposerIconTip>
             </template>
 
-            <!-- Common actions -->
-            <DqIconButton
-              type="text"
-              size="sm"
-              :label="$t('gallery.download')"
-              @click.stop="emitAction('download')"
-            >
-              <DqIcon :size="14"><Download /></DqIcon>
-            </DqIconButton>
-
-            <DqIconButton
-              type="text"
-              size="sm"
-              :label="$t('common.delete')"
-              @click.stop="emitAction('delete')"
-            >
-              <DqIcon :size="14"><Delete /></DqIcon>
-            </DqIconButton>
+            <!-- Grid-only fallback (no canvas): keep inline edit shortcuts for images -->
+            <template v-else>
+              <template v-if="isImage">
+                <ComposerIconTip :content="$t('action.image.retouch')">
+                  <DqIconButton
+                    type="text"
+                    size="sm"
+                    :label="$t('action.image.retouch')"
+                    @click.stop="emitAction('retouch')"
+                  >
+                    <DqIcon :size="14"><Brush /></DqIcon>
+                  </DqIconButton>
+                </ComposerIconTip>
+                <ComposerIconTip :content="$t('action.image.extend')">
+                  <DqIconButton
+                    type="text"
+                    size="sm"
+                    :label="$t('action.image.extend')"
+                    @click.stop="emitAction('extend')"
+                  >
+                    <DqIcon :size="14"><Grid /></DqIcon>
+                  </DqIconButton>
+                </ComposerIconTip>
+                <ComposerIconTip :content="$t('action.image.upscale')">
+                  <DqIconButton
+                    type="text"
+                    size="sm"
+                    :label="$t('action.image.upscale')"
+                    @click.stop="emitAction('upscale')"
+                  >
+                    <DqIcon :size="14"><ZoomIn /></DqIcon>
+                  </DqIconButton>
+                </ComposerIconTip>
+              </template>
+              <ComposerIconTip :content="$t('gallery.lineage')">
+                <DqIconButton
+                  type="text"
+                  size="sm"
+                  :label="$t('gallery.lineage')"
+                  @click.stop="emitAction('lineage')"
+                >
+                  <DqIcon :size="14"><Aim /></DqIcon>
+                </DqIconButton>
+              </ComposerIconTip>
+              <ComposerIconTip :content="$t('gallery.download')">
+                <DqIconButton
+                  type="text"
+                  size="sm"
+                  :label="$t('gallery.download')"
+                  @click.stop="emitAction('download')"
+                >
+                  <DqIcon :size="14"><Download /></DqIcon>
+                </DqIconButton>
+              </ComposerIconTip>
+              <ComposerIconTip :content="$t('common.delete')">
+                <DqIconButton
+                  type="text"
+                  size="sm"
+                  :label="$t('common.delete')"
+                  @click.stop="emitAction('delete')"
+                >
+                  <DqIcon :size="14"><Delete /></DqIcon>
+                </DqIconButton>
+              </ComposerIconTip>
+            </template>
           </div>
 
           <div class="studio-card__overlay-info">
@@ -147,16 +210,19 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue';
 import {
+  Aim,
   Brush,
   Delete,
   Download,
   Grid,
   Headset,
   Picture,
+  Plus,
   VideoPlay,
   ZoomIn,
 } from '@danqing/dq-shell';
 import { api } from '@/utils/api';
+import ComposerIconTip from '@/components/studio/ComposerIconTip.vue';
 import type { GalleryItem } from '@/types';
 
 const props = defineProps<{
@@ -164,6 +230,8 @@ const props = defineProps<{
   media: 'image' | 'video' | 'audio';
   selectionMode?: boolean;
   selected?: boolean;
+  /** Gallery cards show canvas browse actions (+ add to canvas). */
+  galleryCanvasMode?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -194,13 +262,9 @@ const isAudio = computed(() => {
   return ['wav', 'mp3', 'flac', 'm4a', 'aac', 'opus', 'ogg'].includes(ext);
 });
 
-const fileUrl = computed(() => {
-  return api.gallery.getImageUrl(props.item.path);
-});
+const fileUrl = computed(() => api.gallery.getImageUrl(props.item.path));
 
-const thumbUrl = computed(() => {
-  return props.item.thumbnail || fileUrl.value;
-});
+const thumbUrl = computed(() => props.item.thumbnail || fileUrl.value);
 
 const durationLabel = computed(() => {
   const raw = props.item.duration_seconds ?? (props.item.metadata?.duration_seconds as number | undefined);
@@ -312,33 +376,19 @@ function truncate(text: string, length: number): string {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  color: var(--dq-label-secondary);
-  background:
-    radial-gradient(ellipse 90% 70% at 50% 110%, hsl(var(--dq-audio-hue, 220) 55% 42% / 0.28) 0%, transparent 68%),
-    radial-gradient(ellipse 50% 40% at 18% 16%, hsl(var(--dq-audio-hue, 220) 45% 38% / 0.12) 0%, transparent 62%),
-    linear-gradient(165deg, var(--dq-surface-inset-hover) 0%, var(--dq-bg-elevated) 100%);
+  gap: 6px;
+  background: linear-gradient(
+    145deg,
+    hsl(var(--dq-audio-hue, 220) 28% 16%) 0%,
+    hsl(var(--dq-audio-hue, 220) 22% 10%) 100%
+  );
   position: relative;
   overflow: hidden;
 }
 
-.studio-card__audio-tile::before {
-  content: '';
+.studio-card__audio-visualizer {
   position: absolute;
   inset: 0;
-  background:
-    repeating-linear-gradient(
-      90deg,
-      transparent,
-      transparent 3px,
-      hsl(var(--dq-audio-hue, 220) 50% 50% / 0.04) 3px,
-      hsl(var(--dq-audio-hue, 220) 50% 50% / 0.04) 4px
-    );
-  pointer-events: none;
-}
-
-.studio-card__audio-visualizer {
-  position: relative;
   display: flex;
   align-items: flex-end;
   justify-content: center;
@@ -351,7 +401,6 @@ function truncate(text: string, length: number): string {
   width: 3px;
   border-radius: 2px;
   background: hsl(var(--dq-audio-hue, 220) 60% 55% / 0.55);
-  /* Static symmetric waveform — no motion (avoids implying playback) */
   height: calc(8px + min(var(--bar-i), 7 - var(--bar-i)) * 6px);
   opacity: 0.75;
 }
@@ -420,59 +469,54 @@ function truncate(text: string, length: number): string {
 .studio-card__overlay-actions {
   position: relative;
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
   justify-content: flex-end;
-  opacity: 0;
-  transform: translateY(-4px);
-  transition: opacity 0.2s ease, transform 0.2s ease;
+  z-index: 2;
 }
 
 .studio-card:hover .studio-card__overlay-actions {
   opacity: 1;
-  transform: translateY(0);
 }
 
 .studio-card__overlay-actions :deep(.dq-icon-btn) {
-  background: var(--dq-overlay-card);
-  border: none;
-  color: var(--dq-label-on-media);
-  backdrop-filter: var(--dq-glass-blur-light);
-  -webkit-backdrop-filter: var(--dq-glass-blur-light);
+  background: color-mix(in srgb, var(--dq-bg-page) 55%, transparent);
+  border: 1px solid color-mix(in srgb, var(--dq-border-subtle) 70%, transparent);
+  border-radius: 8px;
+  backdrop-filter: blur(6px);
 }
 
 .studio-card__overlay-actions :deep(.dq-icon-btn:hover) {
-  background: var(--dq-overlay-deep);
+  background: color-mix(in srgb, var(--dq-bg-page) 78%, transparent);
 }
 
 .studio-card__overlay-info {
   position: relative;
   display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
-  gap: 8px;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 2;
 }
 
 .studio-card__overlay-res {
   font-size: 11px;
-  color: var(--dq-label-on-media);
   font-weight: 500;
+  color: var(--dq-label-secondary);
 }
 
 .studio-card__overlay-model {
-  font-size: 11px;
-  color: var(--dq-label-secondary);
-  max-width: 120px;
+  font-size: 10px;
+  color: var(--dq-label-tertiary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-/* Footer */
 .studio-card__footer {
-  padding: 0 2px;
-  min-height: 0;
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 1.2em;
 }
 
 .studio-card__prompt {
@@ -481,26 +525,13 @@ function truncate(text: string, length: number): string {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  line-height: 1.4;
-  letter-spacing: -0.01em;
-}
-
-.studio-card:hover .studio-card__prompt {
-  color: var(--dq-label-primary);
 }
 
 .studio-card__prompt--empty {
   color: var(--dq-label-tertiary);
 }
 
-/* Transition */
-.studio-fade-enter-active,
-.studio-fade-leave-active {
-  transition: opacity 0.2s ease;
-}
-
-.studio-fade-enter-from,
-.studio-fade-leave-to {
-  opacity: 0;
+.studio-card--selection-mode {
+  cursor: default;
 }
 </style>

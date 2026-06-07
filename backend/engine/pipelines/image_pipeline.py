@@ -14,10 +14,17 @@ from typing import Any, Callable
 import numpy as np
 
 from backend.core.contracts import (
-    EngineResult, ExecutionContext, ImageGenerationRequest,
+    AdapterRef,
+    EngineResult,
+    ExecutionContext,
+    ImageGenerationRequest,
     ImageEditRequest,
-    LogEvent, parse_model_version, parse_size, work_title_metadata,
+    LogEvent,
+    parse_model_version,
+    parse_size,
+    work_title_metadata,
 )
+from backend.core.registry_format import registry_declares_action
 from backend.engine.common.bundle_layout import t5_encoder_bundle_paths
 from backend.engine.common.cache import ModelCache
 from backend.engine.common.pipeline_registry import (
@@ -38,7 +45,11 @@ from backend.engine._transformer_registry import (
     get_weight_remap as _get_weight_remap,
     merge_image_lora_adapters as _merge_image_lora_adapters,
 )
-from backend.engine.config.model_configs import assert_image_family_contract, get_config_class
+from backend.engine.config.model_configs import (
+    apply_image_bundle_config_merger,
+    assert_image_family_contract,
+    get_config_class,
+)
 from backend.engine.runtime._base import RuntimeContext
 from backend.engine.vae_codec_registry import (
     get_vae_decode_handler,
@@ -111,7 +122,7 @@ def _image_pipeline_cfg_noise_pred(
     ):
         cfg_kwargs = {
             k: v for k, v in model_kwargs.items()
-            if k not in ("txt_embeds", "neg_embeds")
+            if k not in ("txt_embeds", "neg_embeds", "redux_txt_embeds", "fill_static_packed")
         }
         return forward_cfg(
             latents,
@@ -128,10 +139,12 @@ def _image_pipeline_cfg_noise_pred(
     if neg_embeds is not None and getattr(config, "supports_guidance", False):
         if getattr(ctx, "backend", None) == "mlx":
             ctx.eval(noise_cond)
-        uncond_kwargs = {"txt_embeds": neg_embeds}
-        uncond_kwargs.update(model_kwargs)
-        uncond_kwargs.update(uncond_overrides)
+        uncond_kwargs = {
+            k: v for k, v in model_kwargs.items()
+            if k not in ("txt_embeds", "redux_txt_embeds", "fill_static_packed")
+        }
         uncond_kwargs["txt_embeds"] = neg_embeds
+        uncond_kwargs.update(uncond_overrides)
         noise_uncond = model(latents, t, **uncond_kwargs)
         if getattr(ctx, "backend", None) == "mlx":
             ctx.eval(noise_uncond)
@@ -377,6 +390,7 @@ class ImagePipeline:
             "edit_rmbg_composite_output",
             "edit_use_vl_vision",
             "edit_conditioning_latent_concat",
+            "patch_token_dim",
         ):
             val = _registry_scalar_default_fn(entry, param_key, None)
             if val is not None and hasattr(config, param_key):
@@ -943,6 +957,7 @@ class ImagePipeline:
 
         Returns: ``list[(output_path, metadata_dict)]`` or ``None`` (cancelled)
         """
+        request = self._augment_request_for_structural_guide(request)
         model_key, version_key = parse_model_version(request.model)
         w, h = parse_size(request.size)
         base_seed = request.seed if request.seed is not None else random.randint(0, 2 ** 32 - 1)
@@ -1008,6 +1023,25 @@ class ImagePipeline:
             neg_pooled_embeds,
             encoder_type,
         ) = enc_loaded
+
+        structural_cleanup: Callable[[], None] | None = None
+        try:
+            extra_cond, structural_cleanup = self._attach_structural_conditioning(
+                request=request,
+                family=family,
+                model=model,
+                entry=entry,
+                version_key=version_key,
+                extra_cond=extra_cond,
+                width=w,
+                height=h,
+                ctx_exec=ctx_exec,
+                on_log=on_log,
+            )
+        except Exception:
+            if structural_cleanup is not None:
+                structural_cleanup()
+            raise
 
         # 3. Scheduler (registry default + request params, zero family branching)
         semantics = self._scheduler_semantics_resolver.resolve(
@@ -1080,6 +1114,16 @@ class ImagePipeline:
             packed_shape = (1, seq_len, 64)
 
         n = max(getattr(request, 'n', 1), 1)
+
+        structural_output_meta: dict[str, Any] | None = None
+        guide = getattr(request, "structural_guide", None)
+        if guide is not None:
+            structural_output_meta = {
+                "structural_guide_model": (getattr(guide, "model_id", None) or "").strip(),
+                "structural_guide_type": getattr(guide, "type", None) or "",
+                "structural_guide_weight": float(guide.weight),
+                "structural_guide_asset_id": guide.asset_id,
+            }
 
         def _scale_progress(cb, batch_idx, total):
             if cb is None or total <= 1:
@@ -1223,22 +1267,307 @@ class ImagePipeline:
                 on_progress=batch_on_progress,
                 on_log=on_log,
                 name_infix=_name_infix,
+                extra_meta=structural_output_meta,
             )
 
         results: list[tuple[str, dict]] = []
-        for i in range(n):
-            if ctx_exec.cancel_token.is_cancelled():
-                return results if results else None
-            batch_seed = base_seed + i
-            batch_on_progress = _scale_progress(on_progress, i, n) if n > 1 else on_progress
-            if on_log:
-                on_log("info", f"batch {i+1}/{n} seed={batch_seed}")
-            result = _generate_one(batch_seed, batch_on_progress, i)
-            if result is None:
-                return results if results else None
-            results.append(result)
+        try:
+            for i in range(n):
+                if ctx_exec.cancel_token.is_cancelled():
+                    return results if results else None
+                batch_seed = base_seed + i
+                batch_on_progress = _scale_progress(on_progress, i, n) if n > 1 else on_progress
+                if on_log:
+                    on_log("info", f"batch {i+1}/{n} seed={batch_seed}")
+                result = _generate_one(batch_seed, batch_on_progress, i)
+                if result is None:
+                    return results if results else None
+                results.append(result)
+            return results
+        finally:
+            if structural_cleanup is not None:
+                structural_cleanup()
 
-        return results
+    def _run_flux1_fill_edit(
+        self,
+        request: ImageEditRequest,
+        ctx_exec: ExecutionContext,
+        *,
+        on_progress: Callable | None = None,
+        on_log: Callable | None = None,
+    ):
+        """FLUX.1 Fill inpainting / outpainting (mflux ``Flux1Fill`` 384-dim patch concat)."""
+        from PIL import Image
+
+        from backend.engine.common.controlnet_runtime import require_controlnet_runtime
+        from backend.engine.common.structural_guide import is_fill_controlnet
+
+        require_controlnet_runtime(self.ctx, feature="fill_edit")
+        from backend.engine.families.flux1.fill_mask import (
+            FILL_PATCH_TOKEN_DIM,
+            apply_inpaint_mask_rgb,
+            build_outpaint_image_and_mask,
+            create_fill_static_packed,
+            mask_pil_to_weight,
+        )
+        from backend.engine.families.flux1.transformer_mlx import (
+            _pack_flux1_fill_mask_latents,
+            _pack_flux1_latents,
+            _unpack_flux1_latents,
+        )
+
+        model_key, version_key = parse_model_version(request.model)
+        if not is_fill_controlnet(model_key):
+            raise RuntimeError(
+                f"operation {request.operation!r} requires FLUX.1 Fill (flux-fill-controlnet); "
+                f"got model {model_key!r}"
+            )
+        entry = self._registry.require(model_key)
+        acts_block = entry.raw.get("actions") if hasattr(entry, "raw") else {}
+        if not registry_declares_action(acts_block, request.operation):
+            raise RuntimeError(
+                f"Model {model_key!r} does not declare action {request.operation!r}; "
+                "see config/models_registry.json."
+            )
+
+        config_cls = get_config_class(entry.family)
+        config = config_cls()
+        config.patch_token_dim = FILL_PATCH_TOKEN_DIM
+        self._apply_registry_config_overrides(entry, config)
+        family = getattr(entry, "family", "flux1")
+        assert_image_family_contract(family, config)
+        runtime_contract = FamilyRuntimeContract(family=family, config=config)
+
+        if ctx_exec.cancel_token.is_cancelled():
+            return None
+
+        bundle_root = _local_bundle_root_fn(self._project_root, entry, version_key or None)
+        validate_bundle_graph_step(
+            bundle_root, family=family, model_id=model_key, on_log=on_log
+        )
+
+        src_path = ctx_exec.asset_store.get_file_path(request.source_asset_id)
+        pil = Image.open(str(src_path)).convert("RGB")
+
+        if request.operation == "retouch":
+            if not request.mask_asset_id:
+                raise RuntimeError("retouch requires mask_asset_id")
+            mask_path = ctx_exec.asset_store.get_file_path(request.mask_asset_id)
+            mask_pil = Image.open(str(mask_path))
+        else:
+            if not request.extend:
+                raise RuntimeError("extend requires extend.directions and extend.pixels")
+            pil, mask_pil = build_outpaint_image_and_mask(
+                pil,
+                list(request.extend.directions),
+                int(request.extend.pixels),
+            )
+
+        w0, h0 = pil.size
+        w, h = self._align_hw_multiples(w0, h0, align=16)
+        pil = self._center_crop_pil(pil, w, h)
+        mask_pil = mask_pil.convert("RGB").resize((w, h), Image.Resampling.NEAREST)
+
+        rgb = np.asarray(pil, dtype=np.float32) / 255.0
+        mask_hw = mask_pil_to_weight(mask_pil)
+        masked_rgb = apply_inpaint_mask_rgb(rgb, mask_hw)
+        masked_pil = Image.fromarray(
+            (np.clip(masked_rgb, 0.0, 1.0) * 255.0).astype(np.uint8),
+            mode="RGB",
+        )
+        masked_nchw = self._pil_to_nchw_float01(masked_pil, w, h)
+
+        seed = request.seed if request.seed is not None else random.randint(0, 2 ** 32 - 1)
+        steps_default = _registry_scalar_default_fn(entry, "steps", 28)
+        guidance_default = _registry_scalar_default_fn(entry, "guidance", 30.0)
+        steps = int(request.steps) if request.steps is not None else int(steps_default)
+        steps = max(1, steps)
+        guidance = float(request.guidance) if request.guidance is not None else float(guidance_default)
+        guidance = runtime_contract.resolve_guidance_scalar(guidance)
+        preview_mode, preview_interval, preview_max_edge = _resolve_image_preview_settings(entry)
+        preview_state: dict[str, Any] = {}
+
+        enc_loaded = self._image_encode_load_for_inference(
+            request=request,
+            bundle_root=bundle_root,
+            config=config,
+            guidance=guidance,
+            runtime_contract=runtime_contract,
+            family=family,
+            entry=entry,
+            version_key=version_key,
+            model_key=model_key,
+            steps=steps,
+            ctx_exec=ctx_exec,
+            on_progress=on_progress,
+            on_log=on_log,
+        )
+        if enc_loaded is None:
+            return None
+        (
+            model,
+            extra_cond,
+            txt_embeds,
+            neg_embeds,
+            txt_attn_mask,
+            neg_attn_mask,
+            pooled_embeds,
+            neg_pooled_embeds,
+            encoder_type,
+        ) = enc_loaded
+
+        masked_latents = self._vae_encode_tensor(
+            masked_nchw,
+            entry,
+            version_key or None,
+            height_px=h,
+            width_px=w,
+            on_log=on_log,
+        )
+        if getattr(self.ctx, "backend", None) == "mlx":
+            self.ctx.eval(masked_latents)
+
+        fill_static = create_fill_static_packed(
+            self.ctx,
+            masked_latents_nchw=masked_latents,
+            mask_hw=mask_hw,
+            height=h,
+            width=w,
+            pack_latents_fn=_pack_flux1_latents,
+            pack_mask_latents_fn=_pack_flux1_fill_mask_latents,
+        )
+        if getattr(self.ctx, "backend", None) == "mlx":
+            self.ctx.eval(fill_static)
+
+        extra_cond = dict(extra_cond)
+        extra_cond["fill_static_packed"] = fill_static
+
+        _meta_ed = request.metadata or {}
+        semantics = self._scheduler_semantics_resolver.resolve(
+            entry=entry,
+            config=config,
+            request_scheduler=request.scheduler,
+            request_metadata=_meta_ed,
+            steps=steps,
+            width=w,
+            height=h,
+        )
+        scheduler_default = semantics.scheduler_name
+        scheduler = get_scheduler(scheduler_default, ctx=self.ctx)
+        timesteps = scheduler.set_timesteps(**semantics.set_timesteps_kwargs)
+        sigmas = getattr(scheduler, "sigmas", None)
+        sched_ts = getattr(scheduler, "timesteps", None)
+        timestep_embed_schedule = timestep_embed_schedule_from_scheduler(scheduler)
+        vae_scale = int(getattr(config, "vae_scale", 8))
+
+        if on_log:
+            on_log(
+                "info",
+                f"edit fill model={model_key} operation={request.operation} size={w}x{h} "
+                f"seed={seed} steps={steps} guidance={guidance} scheduler={scheduler_default}",
+            )
+
+        _lnd = runtime_contract.denoise_latent_noise_dtype(self.ctx)
+        _noise_sample_dtype = runtime_contract.noise_sample_dtype(self.ctx, _lnd)
+        _lh, _lw = h // vae_scale, w // vae_scale
+        seq_len = (h // 16) * (w // 16)
+        packed_shape = (1, seq_len, 64)
+
+        latents = self.ctx.seeded_randn(packed_shape, seed, dtype=_noise_sample_dtype)
+        if _noise_sample_dtype != _lnd:
+            latents = latents.astype(_lnd)
+
+        latents_nchw = _unpack_flux1_latents(self.ctx, latents, _lh, _lw)
+        latents_nchw, extra_cond = model.before_denoise(
+            latents_nchw,
+            timesteps,
+            sigmas,
+            txt_embeds=txt_embeds,
+            neg_embeds=neg_embeds,
+            **extra_cond,
+        )
+        latents = _pack_flux1_latents(self.ctx, latents_nchw)
+
+        preview_state["on_log"] = on_log
+        if preview_mode == "stream":
+            self._warm_step_preview_decoders(
+                entry, version_key or None, preview_state, config=config, on_log=on_log
+            )
+            try:
+                preview_state["vae_session"] = self._build_vae_preview_session(
+                    entry, version_key or None, on_log=on_log
+                )
+            except Exception as exc:
+                preview_state["vae_session"] = False
+                if on_log:
+                    on_log("warning", f"preview VAE warmup skipped: {exc}")
+
+        pipeline_graph_step("denoise", on_log)
+        latents = self._denoise_steps(
+            model=model,
+            scheduler=scheduler,
+            timesteps=timesteps,
+            latents=latents,
+            config=config,
+            runtime_contract=runtime_contract,
+            guidance=guidance,
+            txt_embeds=txt_embeds,
+            neg_embeds=neg_embeds,
+            pooled_embeds=pooled_embeds,
+            neg_pooled_embeds=neg_pooled_embeds,
+            txt_attn_mask=txt_attn_mask,
+            neg_attn_mask=neg_attn_mask,
+            encoder_type=encoder_type,
+            width=w,
+            height=h,
+            sched_ts=sched_ts,
+            sigmas=sigmas,
+            timestep_embed_schedule=timestep_embed_schedule,
+            extra_cond=extra_cond,
+            semantics=semantics,
+            ctx_exec=ctx_exec,
+            on_progress=on_progress,
+            on_log=on_log,
+            preview_mode=preview_mode,
+            preview_interval=preview_interval,
+            preview_max_edge=preview_max_edge,
+            preview_state=preview_state,
+            entry=entry,
+            version_key=version_key or None,
+            packed_denoise=True,
+            flux_unpack=_unpack_flux1_latents,
+            latent_h=_lh,
+            latent_w=_lw,
+        )
+        if latents is None:
+            return None
+
+        if ctx_exec.cancel_token.is_cancelled():
+            return None
+
+        latents = _unpack_flux1_latents(self.ctx, latents, _lh, _lw)
+
+        return self._finalize_image_from_latents(
+            latents=latents,
+            timesteps=timesteps,
+            entry=entry,
+            version_key=version_key,
+            model_key=model_key,
+            seed=seed,
+            request=request,
+            ctx_exec=ctx_exec,
+            steps=steps,
+            guidance=guidance,
+            w=w,
+            h=h,
+            on_progress=on_progress,
+            on_log=on_log,
+            name_infix="_fill",
+            extra_meta={
+                "operation": request.operation,
+                "fill_model": model_key,
+            },
+        )
 
     def run_edit(
         self,
@@ -1248,15 +1577,13 @@ class ImagePipeline:
         on_progress: Callable | None = None,
         on_log: Callable | None = None,
     ):
-        """图像编辑：``operation=rewrite`` 走 VAE 编码 + latent 与噪声按 ``source_fidelity`` 混合 + 标准去噪。
-
-        ``retouch`` / ``extend`` 需蒙版或画布扩展，尚未接线 — 显式 ``RuntimeError``。
-        ``rewrite_mode=instruct``（flux1-kontext 指令编辑）未在此管线实现。
-        """
-        if request.operation != "rewrite":
-            raise RuntimeError(
-                f"ImagePipeline.run_edit: operation {request.operation!r} is not implemented on MLX "
-                "(only rewrite / img2img is wired; retouch and extend require masks or canvas logic)."
+        """图像编辑：``rewrite`` img2img；``retouch``/``extend`` 走 FLUX.1 Fill；kontext instruct 未接线。"""
+        if request.operation in ("retouch", "extend"):
+            return self._run_flux1_fill_edit(
+                request,
+                ctx_exec,
+                on_progress=on_progress,
+                on_log=on_log,
             )
         if request.rewrite_mode == "instruct":
             raise RuntimeError(
@@ -1847,6 +2174,161 @@ class ImagePipeline:
     # Internal methods
     # ------------------------------------------------------------------
 
+    def _augment_request_for_structural_guide(
+        self,
+        request: ImageGenerationRequest,
+    ) -> ImageGenerationRequest:
+        guide = getattr(request, "structural_guide", None)
+        if guide is None:
+            return request
+        from backend.engine.common.controlnet_runtime import require_controlnet_runtime
+
+        require_controlnet_runtime(self.ctx, feature="structural_guide")
+        from backend.engine.common.structural_guide import companion_lora_id
+
+        model_id = (getattr(guide, "model_id", None) or "").strip()
+        if not model_id:
+            raise RuntimeError(
+                "structural_guide.model_id is required (registry controlnet id, e.g. flux-canny-controlnet)"
+            )
+        lora_id = companion_lora_id(model_id)
+        if not lora_id:
+            return request
+        adapters = list(request.adapters or [])
+        if any(a.id == lora_id or a.id.startswith(f"{lora_id}:") for a in adapters):
+            return request
+        adapters.append(AdapterRef(id=lora_id, weight=float(guide.weight)))
+        return request.model_copy(update={"adapters": adapters})
+
+    def _attach_structural_conditioning(
+        self,
+        *,
+        request: ImageGenerationRequest,
+        family: str,
+        model: Any,
+        entry: Any,
+        version_key: str | None,
+        extra_cond: dict[str, Any],
+        width: int,
+        height: int,
+        ctx_exec: ExecutionContext,
+        on_log: Callable[..., None] | None,
+    ) -> tuple[dict[str, Any], Callable[[], None] | None]:
+        guide = getattr(request, "structural_guide", None)
+        if guide is None:
+            return extra_cond, None
+        from backend.engine.common.controlnet_runtime import require_controlnet_runtime
+
+        require_controlnet_runtime(self.ctx, feature="structural_guide")
+        if family != "flux1":
+            raise RuntimeError(
+                f"structural_guide is only supported on flux1 base models (got family={family!r})"
+            )
+        from backend.engine.common.structural_guide import (
+            infer_guide_type,
+            is_fill_controlnet,
+            is_redux_controlnet,
+            load_flux1_structural_patch_embed,
+            preprocess_structural_rgb,
+        )
+
+        controlnet_id = (getattr(guide, "model_id", None) or "").strip()
+        if not controlnet_id:
+            raise RuntimeError("structural_guide.model_id is required")
+        if is_fill_controlnet(controlnet_id):
+            raise RuntimeError(
+                "flux-fill is an inpainting model — use image retouch/extend with a mask, "
+                "not text-to-image structural_guide"
+            )
+        guide_type = getattr(guide, "type", None) or infer_guide_type(controlnet_id)
+
+        from PIL import Image
+
+        src_path = ctx_exec.asset_store.get_file_path(guide.asset_id)
+        pil = Image.open(str(src_path))
+
+        if guide_type == "redux" or is_redux_controlnet(controlnet_id):
+            from backend.engine.families.flux1.redux_encode import (
+                encode_redux_context_tokens,
+                resolve_redux_bundle_root,
+            )
+
+            redux_root = resolve_redux_bundle_root(
+                self._registry, self._project_root, controlnet_id
+            )
+            tokens = encode_redux_context_tokens(
+                pil, redux_bundle_root=redux_root, on_log=on_log
+            )
+            w = float(guide.weight)
+            if w <= 0.0:
+                if on_log:
+                    on_log("info", "structural_guide redux skipped (weight <= 0)")
+                return dict(extra_cond), None
+            if w != 1.0:
+                tokens = tokens * np.float32(w)
+            redux_embeds = self.ctx.array(tokens.astype(np.float32))
+            if getattr(self.ctx, "backend", None) == "mlx":
+                self.ctx.eval(redux_embeds)
+            out = dict(extra_cond)
+            out["redux_txt_embeds"] = redux_embeds
+            if on_log:
+                on_log(
+                    "info",
+                    f"structural_guide type=redux controlnet={controlnet_id} "
+                    f"weight={float(guide.weight):.3f} asset={guide.asset_id}",
+                )
+            return out, None
+
+        rgb = preprocess_structural_rgb(
+            pil,
+            guide_type=guide_type,
+            width=width,
+            height=height,
+            registry=self._registry,
+            project_root=self._project_root,
+            on_log=on_log,
+        )
+        arr = rgb[None, ...]
+        image_nchw = self.ctx.array(arr)
+        image_nchw = self.ctx.permute(image_nchw, (0, 3, 1, 2))
+
+        structural_latents = self._vae_encode_tensor(
+            image_nchw,
+            entry,
+            version_key,
+            height_px=height,
+            width_px=width,
+            on_log=on_log,
+        )
+        if getattr(self.ctx, "backend", None) == "mlx":
+            self.ctx.eval(structural_latents)
+
+        activate = getattr(model, "activate_structural_patch_embed", None)
+        deactivate = getattr(model, "deactivate_structural_patch_embed", None)
+        if not callable(activate) or not callable(deactivate):
+            raise RuntimeError(
+                f"structural_guide requires Flux1Transformer structural patch embed; "
+                f"model={type(model).__name__}"
+            )
+        pw, pb = load_flux1_structural_patch_embed(
+            registry=self._registry,
+            project_root=self._project_root,
+            controlnet_model_id=controlnet_id,
+            ctx=self.ctx,
+            on_log=on_log,
+        )
+        activate(pw, pb)
+
+        out = dict(extra_cond)
+        out["structural_latents_nchw"] = structural_latents
+        if on_log:
+            on_log(
+                "info",
+                f"structural_guide type={guide_type} controlnet={controlnet_id} "
+                f"weight={float(guide.weight):.3f} asset={guide.asset_id}",
+            )
+        return out, deactivate
+
     def _apply_image_lora_adapters(
         self,
         family: str,
@@ -1902,11 +2384,13 @@ class ImagePipeline:
             if cached is not None:
                 return cached
 
+        bundle_root = _local_bundle_root_fn(self._project_root, entry, version_key)
+        apply_image_bundle_config_merger(config, bundle_root)
+
         trans_cls = _get_transformer_class(family)
         model = trans_cls(config, self.ctx)
         remap_fn = _get_weight_remap(family)
 
-        bundle_root = _local_bundle_root_fn(self._project_root, entry, version_key)
         tp = (bundle_root / "transformer") if bundle_root else None
         if tp is None or not tp.exists():
             return None

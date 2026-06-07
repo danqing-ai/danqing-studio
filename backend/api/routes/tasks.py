@@ -216,7 +216,12 @@ async def stream_task(task_id: str, sched: TaskScheduler = Depends(get_task_sche
             if st in ("completed", "failed", "cancelled"):
                 if st == "completed" and row.get("result"):
                     yield f"event: result\ndata: {json.dumps(row['result'])}\n\n"
-                yield f"event: done\ndata: {json.dumps({'status': st})}\n\n"
+                done_payload: dict[str, Any] = {"status": st}
+                if st == "failed":
+                    em = (row.get("error_message") or "").strip()
+                    if em:
+                        done_payload["error"] = em
+                yield f"event: done\ndata: {json.dumps(done_payload)}\n\n"
                 break
             # 4. wait: event-driven when realtime queue exists, else short poll
             if rt_queue:

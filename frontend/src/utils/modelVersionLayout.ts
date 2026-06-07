@@ -1,10 +1,19 @@
+export type BilingualVersionName = string | { zh?: string; en?: string };
+
 export interface ModelVersion {
-  name: string;
+  name: BilingualVersionName;
   size?: string;
   source?: string;
   source_type?: string;
   from_version?: string;
   default?: boolean;
+}
+
+/** Flatten registry version name for sort / regex (import $vn at call sites in Vue). */
+export function versionNamePlain(name: BilingualVersionName | undefined, fallback = ''): string {
+  if (name == null || name === '') return fallback;
+  if (typeof name === 'string') return name;
+  return name.zh || name.en || fallback;
 }
 
 export interface ModelVersionLayoutInput {
@@ -38,7 +47,8 @@ export interface LightweightSplit {
 }
 
 function isFourBitLightweight(row: VersionRow): boolean {
-  return /(?:^|-)4bit$|int4/i.test(row.verKey) || /4\s*bit|int4/i.test(row.ver.name);
+  const label = versionNamePlain(row.ver.name);
+  return /(?:^|-)4bit$|int4/i.test(row.verKey) || /4\s*bit|int4/i.test(label);
 }
 
 /** 轻量版默认只展示推荐位（default → 4bit → 首个），其余收进「更多」。 */
@@ -136,10 +146,12 @@ export function buildModelVersionLayout(
   fullRows.sort((a, b) => {
     if (a.ver.default === true && b.ver.default !== true) return -1;
     if (b.ver.default === true && a.ver.default !== true) return 1;
-    return a.ver.name.localeCompare(b.ver.name);
+    return versionNamePlain(a.ver.name).localeCompare(versionNamePlain(b.ver.name));
   });
 
-  lightweightRows.sort((a, b) => a.ver.name.localeCompare(b.ver.name));
+  lightweightRows.sort((a, b) =>
+    versionNamePlain(a.ver.name).localeCompare(versionNamePlain(b.ver.name))
+  );
 
   const fullBlocks: FullVersionBlock[] = fullRows.map((row) => {
     const parentReady = row.vstatus === 'ready';

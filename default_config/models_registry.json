@@ -12,6 +12,10 @@
     "danqing-audio": {
       "media": "audio",
       "description": "DanQing audio engine (MLX/CUDA)"
+    },
+    "danqing-llm": {
+      "media": "llm",
+      "description": "DanQing LLM engine (MLX)"
     }
   },
   "categories": {
@@ -91,6 +95,16 @@
         "en": "Text-to-music and audio generation models"
       },
       "icon": "🎵"
+    },
+    "llm_models": {
+      "name": {
+        "zh": "LLM 语言模型",
+        "en": "LLM Models"
+      },
+      "description": {
+        "zh": "大语言模型，用于提示词增强、对话等",
+        "en": "LLMs for prompt enhancement and conversation"
+      }
     }
   },
   "profiles": {
@@ -134,6 +148,72 @@
   },
   "parameter_templates": {},
   "models": {
+    "qwen2.5-1.5b": {
+      "media": "llm",
+      "engine": "danqing-llm",
+      "family": "qwen2",
+      "category": "llm_models",
+      "backends": ["mlx"],
+      "actions": { "chat": {}, "enhance": {} },
+      "parameters": {
+        "temperature": { "type": "float", "default": 0.7, "min": 0.0, "max": 2.0 },
+        "max_tokens": { "type": "int", "default": 512, "min": 1, "max": 4096 },
+        "top_p": { "type": "float", "default": 0.9, "min": 0.0, "max": 1.0 }
+      },
+      "recommended": true,
+      "source": "huggingface",
+      "versions": {
+        "int4": {
+          "name": { "zh": "4-bit 量化版 (推荐)", "en": "4-bit quantized (recommended)" },
+          "size": "~1.2GB",
+          "default": true,
+          "repo_id": "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
+          "local_path": "models/LLM/qwen2.5-1.5b-int4",
+          "source_type": "full"
+        },
+        "fp16": {
+          "name": { "zh": "FP16 完整版", "en": "FP16 Full" },
+          "size": "~3.6GB",
+          "repo_id": "Qwen/Qwen2.5-1.5B-Instruct",
+          "local_path": "models/LLM/qwen2.5-1.5b-fp16",
+          "source_type": "full"
+        }
+      },
+      "name": { "zh": "Qwen2.5 1.5B Instruct", "en": "Qwen2.5 1.5B Instruct" },
+      "description": {
+        "zh": "通义千问 2.5 轻量级 LLM，4-bit 量化约 1.2GB，适用提示词增强和对话。可在 16GB Mac 上与图像模型并存。",
+        "en": "Qwen2.5 1.5B lightweight LLM, ~1.2GB at 4-bit. Suitable for prompt enhancement and chat. Coexists with image models on 16GB Mac."
+      },
+      "commercial_use_allowed": true
+    },
+    "qwen2.5-vl-7b-instruct": {
+      "media": "llm",
+      "engine": "danqing-llm",
+      "family": "qwen2_vl",
+      "category": "llm_models",
+      "backends": ["mlx"],
+      "actions": { "describe": {} },
+      "parameters": {
+        "max_tokens": { "type": "int", "default": 256, "min": 32, "max": 1024 }
+      },
+      "source": "huggingface",
+      "versions": {
+        "int4": {
+          "name": { "zh": "4-bit 量化版 (推荐)", "en": "4-bit quantized (recommended)" },
+          "size": "~5GB",
+          "default": true,
+          "repo_id": "mlx-community/Qwen2.5-VL-7B-Instruct-4bit",
+          "local_path": "models/Text/qwen2.5-vl-7b-instruct",
+          "source_type": "full"
+        }
+      },
+      "name": { "zh": "Qwen2.5-VL 7B", "en": "Qwen2.5-VL 7B Instruct" },
+      "description": {
+        "zh": "视觉语言模型，用于画布节点 AI 看图写笔记（与 Qwen-Image-Edit 共用 Text 权重目录）。",
+        "en": "Vision-language model for canvas node AI notes (shares Text weights with Qwen-Image-Edit)."
+      },
+      "commercial_use_allowed": true
+    },
     "flux1-schnell": {
       "parameters": {
         "steps": {
@@ -604,11 +684,11 @@
       "profile": "image_dit_standard",
       "parameters": {
         "steps": {
-          "default": 10,
+          "default": 4,
           "min": 1,
           "max": 50,
           "label": "步数",
-          "note": "推荐4-15步，步数越多细节越丰富",
+          "note": "Klein 蒸馏版推荐 4 步；可试 4–15 步以丰富细节",
           "type": "int"
         },
         "guidance": {
@@ -982,10 +1062,11 @@
       ],
       "parameters": {
         "steps": {
-          "default": 50,
+          "default": 28,
           "min": 1,
           "max": 50,
           "label": "步数",
+          "note": "官方推荐28–50步；步数过多未必更锐，人像/快速出图请用 Z-Image-Turbo",
           "type": "int"
         },
         "guidance": {
@@ -994,6 +1075,7 @@
           "max": 20.0,
           "step": 0.5,
           "label": "CFG引导",
+          "note": "官方推荐3–5；可配合负向提示词",
           "type": "float"
         },
         "width": {
@@ -1008,7 +1090,7 @@
           "type": "enum"
         },
         "height": {
-          "default": 1024,
+          "default": 1280,
           "options": [
             512,
             768,
@@ -1019,7 +1101,7 @@
           "type": "enum"
         },
         "strength": {
-          "default": 0.4,
+          "default": 0.35,
           "min": 0.0,
           "max": 1.0,
           "step": 0.05,
@@ -1029,6 +1111,22 @@
         "negative_prompt_support": true,
         "enable_thinking": true,
         "requires_sigma_shift": true,
+        "use_empirical_mu": {
+          "default": false
+        },
+        "scheduler_shift": {
+          "default": 6.0
+        },
+        "scheduler": {
+          "default": "flow_match_euler",
+          "options": [
+            "flow_match_euler",
+            "flow_match_euler_discrete",
+            "linear"
+          ],
+          "label": "调度器",
+          "type": "enum"
+        },
         "vae_scale": 8
       },
       "recommended": false,
@@ -1074,8 +1172,8 @@
         "en": "Z-Image"
       },
       "description": {
-        "zh": "通义实验室Z-Image基础模型，6B单流DiT，50步高质量生成",
-        "en": "通义实验室Z-Image基础模型，6B单流DiT，50步高质量生成"
+        "zh": "通义 Z-Image 完整版基础模型，支持 CFG 与负向提示，适合风格探索、LoRA 与二次开发；快速写实人像请用 Z-Image-Turbo",
+        "en": "Tongyi Z-Image foundation model with CFG and negative prompts; best for style exploration, LoRA, and fine-tuning. Use Z-Image-Turbo for fast photorealistic portraits."
       },
       "media": "image",
       "actions": {
@@ -1092,11 +1190,11 @@
       ],
       "parameters": {
         "steps": {
-          "default": 10,
+          "default": 8,
           "min": 1,
           "max": 50,
           "label": "步数",
-          "note": "真实人像建议15-20步",
+          "note": "Turbo 蒸馏版推荐 8 步；人像可试 9–12 步",
           "type": "int"
         },
         "guidance": {
@@ -1190,15 +1288,28 @@
           }
         },
         "community-4bit": {
-          "name": "魔搭 · 社区预量化 4bit (mflux，无 mlx-community 官方包)",
+          "name": "社区预量化 4bit (mflux)",
           "size": "5.5GB",
           "default": false,
-          "source": "modelscope",
+          "source": "huggingface",
           "repo_id": "filipstrand/Z-Image-Turbo-mflux-4bit",
           "local_path": "models/Image/z-image-turbo-community-4bit",
           "source_type": "prequantized",
           "quantization": {
             "bits": 4,
+            "scheme": "mlx_affine"
+          }
+        },
+        "community-8bit": {
+          "name": "社区预量化 8bit (mflux)",
+          "size": "11GB",
+          "default": false,
+          "source": "huggingface",
+          "repo_id": "carsenk/z-image-turbo-mflux-8bit",
+          "local_path": "models/Image/z-image-turbo-community-8bit",
+          "source_type": "prequantized",
+          "quantization": {
+            "bits": 8,
             "scheme": "mlx_affine"
           }
         }
@@ -1208,8 +1319,8 @@
         "en": "Z-Image-Turbo"
       },
       "description": {
-        "zh": "通义实验室Z-Image-Turbo，6B单流DiT，9步快速高质量出图",
-        "en": "Z-Image turbo version"
+        "zh": "通义 Z-Image-Turbo，6B 单流 DiT，8 步快速高质量出图",
+        "en": "Tongyi Z-Image-Turbo — 6B single-stream DiT, 8-step fast generation"
       },
       "media": "image",
       "actions": {
@@ -1711,16 +1822,16 @@
           "name": "FP16 完整版",
           "size": "40GB",
           "default": true,
-          "repo_id": "Qwen/Qwen-Image",
-          "local_path": "models/Image/qwen-image-fp16",
+          "repo_id": "Qwen/Qwen-Image-2512",
+          "local_path": "models/Image/qwen-image-2512-fp16",
           "source_type": "full"
         },
         "int8": {
           "name": "INT8 量化版",
           "size": "20GB",
           "default": false,
-          "repo_id": "Qwen/Qwen-Image",
-          "local_path": "models/Image/qwen-image-int8",
+          "repo_id": "Qwen/Qwen-Image-2512",
+          "local_path": "models/Image/qwen-image-2512-int8",
           "source_type": "derived",
           "from_version": "fp16",
           "quantization": {
@@ -1732,8 +1843,8 @@
           "name": "INT4 量化版",
           "size": "10GB",
           "default": false,
-          "repo_id": "Qwen/Qwen-Image",
-          "local_path": "models/Image/qwen-image-int4",
+          "repo_id": "Qwen/Qwen-Image-2512",
+          "local_path": "models/Image/qwen-image-2512-int4",
           "source_type": "derived",
           "from_version": "fp16",
           "quantization": {
@@ -1742,25 +1853,38 @@
           }
         },
         "mlx-4bit": {
-          "name": "魔搭 · MLX Community 预量化 4bit",
+          "name": "MLX Community 预量化 4bit",
           "size": "26GB",
           "default": false,
-          "source": "modelscope",
+          "source": "huggingface",
           "repo_id": "mlx-community/Qwen-Image-2512-4bit",
-          "local_path": "models/Image/qwen-image-mlx-community-4bit",
+          "local_path": "models/Image/qwen-image-2512-mlx-community-4bit",
           "source_type": "prequantized",
           "quantization": {
             "bits": 4,
             "scheme": "mlx_affine"
           }
         },
+        "mlx-6bit": {
+          "name": "MindCraft 预量化 6bit (themindstudio)",
+          "size": "31GB",
+          "default": false,
+          "source": "huggingface",
+          "repo_id": "themindstudio/Qwen-Image-2512-6bit-MLX",
+          "local_path": "models/Image/qwen-image-2512-themindstudio-6bit",
+          "source_type": "prequantized",
+          "quantization": {
+            "bits": 6,
+            "scheme": "mlx_affine"
+          }
+        },
         "mlx-8bit": {
-          "name": "魔搭 · MLX Community 预量化 8bit",
+          "name": "MLX Community 预量化 8bit",
           "size": "36GB",
           "default": false,
-          "source": "modelscope",
+          "source": "huggingface",
           "repo_id": "mlx-community/Qwen-Image-2512-8bit",
-          "local_path": "models/Image/qwen-image-mlx-community-8bit",
+          "local_path": "models/Image/qwen-image-2512-mlx-community-8bit",
           "source_type": "prequantized",
           "quantization": {
             "bits": 8,
@@ -1769,12 +1893,12 @@
         }
       },
       "name": {
-        "zh": "Qwen Image",
-        "en": "Qwen Image"
+        "zh": "Qwen Image 2512",
+        "en": "Qwen Image 2512"
       },
       "description": {
-        "zh": "通义千问Qwen Image 20B模型，强提示理解和世界知识，支持生成和编辑",
-        "en": "通义千问Qwen Image 20B模型，强提示理解和世界知识，支持生成和编辑"
+        "zh": "通义千问 Qwen-Image-2512（2025-12 升级版），20B MMDiT，更强人像真实感与自然纹理",
+        "en": "Qwen-Image-2512 (Dec 2025) — 20B MMDiT with improved human realism and textures"
       },
       "media": "image",
       "actions": {
@@ -1886,6 +2010,143 @@
         "rewrite": {}
       },
       "family": "qwen_image",
+      "commercial_use_allowed": true
+    },
+    "ernie-image-turbo": {
+      "profile": "image_dit_standard",
+      "backends": [
+        "mlx"
+      ],
+      "parameters": {
+        "lora_support": false,
+        "use_empirical_mu": false,
+        "scheduler_sigma_schedule": "linspace_1_to_zero",
+        "vae_scale": 16,
+        "requires_sigma_shift": false,
+        "scheduler": {
+          "default": "flow_match_euler_discrete",
+          "options": [
+            "flow_match_euler_discrete",
+            "flow_match_euler"
+          ],
+          "label": "调度器",
+          "type": "enum"
+        },
+        "steps": {
+          "default": 8,
+          "min": 1,
+          "max": 50,
+          "label": "步数",
+          "note": "Turbo 蒸馏版推荐 8 步",
+          "type": "int"
+        },
+        "guidance": {
+          "default": 1.0,
+          "min": 1.0,
+          "max": 1.0,
+          "step": 0.5,
+          "label": "CFG引导",
+          "fixed": true,
+          "note": "蒸馏版固定为 1.0",
+          "type": "float"
+        },
+        "supports_guidance": false,
+        "width": {
+          "default": 1024,
+          "options": [
+            512,
+            768,
+            1024,
+            1280,
+            1536
+          ],
+          "type": "enum"
+        },
+        "height": {
+          "default": 1024,
+          "options": [
+            512,
+            768,
+            1024,
+            1280,
+            1536
+          ],
+          "type": "enum"
+        },
+        "strength": {
+          "default": 0.35,
+          "min": 0.0,
+          "max": 1.0,
+          "step": 0.05,
+          "label": "去噪强度",
+          "type": "float"
+        },
+        "negative_prompt_support": false
+      },
+      "recommended": false,
+      "source": "huggingface",
+      "versions": {
+        "fp16": {
+          "name": "FP16 完整版",
+          "size": "32GB",
+          "default": true,
+          "repo_id": "baidu/ERNIE-Image-Turbo",
+          "local_path": "models/Image/ernie-image-turbo-fp16",
+          "source_type": "full"
+        },
+        "int8": {
+          "name": "INT8 量化版",
+          "size": "16GB",
+          "default": false,
+          "repo_id": "baidu/ERNIE-Image-Turbo",
+          "local_path": "models/Image/ernie-image-turbo-int8",
+          "source_type": "derived",
+          "from_version": "fp16",
+          "quantization": {
+            "bits": 8,
+            "scheme": "mlx_affine"
+          }
+        },
+        "int4": {
+          "name": "INT4 量化版",
+          "size": "8GB",
+          "default": false,
+          "repo_id": "baidu/ERNIE-Image-Turbo",
+          "local_path": "models/Image/ernie-image-turbo-int4",
+          "source_type": "derived",
+          "from_version": "fp16",
+          "quantization": {
+            "bits": 4,
+            "scheme": "mlx_affine"
+          }
+        },
+        "mlx-4bit": {
+          "name": "MindCraft 预量化 4bit (themindstudio)",
+          "size": "6.6GB",
+          "default": false,
+          "source": "huggingface",
+          "repo_id": "themindstudio/ERNIE-Image-Turbo-MLX-4bit",
+          "local_path": "models/Image/ernie-image-turbo-themindstudio-4bit",
+          "source_type": "prequantized",
+          "quantization": {
+            "bits": 4,
+            "scheme": "mlx_affine"
+          }
+        }
+      },
+      "name": {
+        "zh": "ERNIE-Image-Turbo",
+        "en": "ERNIE-Image-Turbo"
+      },
+      "description": {
+        "zh": "百度 ERNIE-Image-Turbo 8B 蒸馏版，8 步快速出图，擅长复杂指令与文字渲染",
+        "en": "Baidu ERNIE-Image-Turbo 8B distilled — 8-step generation with strong instruction following and text rendering"
+      },
+      "media": "image",
+      "actions": {
+        "create": {}
+      },
+      "family": "ernie_image",
       "commercial_use_allowed": true
     },
     "seedvr2-3b": {
@@ -2024,6 +2285,9 @@
       "dependencies": [
         "flux1-dev"
       ],
+      "backends": [
+        "mlx"
+      ],
       "parameters": {
         "controlnet_strength": {
           "default": 0.8,
@@ -2083,6 +2347,9 @@
       "dependencies": [
         "flux1-dev"
       ],
+      "backends": [
+        "mlx"
+      ],
       "parameters": {
         "controlnet_strength": {
           "default": 0.8,
@@ -2140,6 +2407,9 @@
       "type": "controlnet",
       "base_model": "flux1-dev",
       "dependencies": [],
+      "backends": [
+        "mlx"
+      ],
       "parameters": {
         "steps": {
           "default": 28,
@@ -2156,7 +2426,10 @@
           "label": "CFG引导",
           "note": "Fill推荐30",
           "type": "float"
-        }
+        },
+        "supports_guidance": true,
+        "requires_sigma_shift": true,
+        "patch_token_dim": 384
       },
       "edit_config": {
         "inpainting": {
@@ -2203,6 +2476,9 @@
       "base_model": "flux1-dev",
       "dependencies": [
         "flux1-dev"
+      ],
+      "backends": [
+        "mlx"
       ],
       "parameters": {
         "redux_strength": {
@@ -4433,7 +4709,6 @@
           "default": "auto",
           "options": [
             "auto",
-            "inspiration",
             "format",
             "off"
           ],
@@ -4442,8 +4717,8 @@
             "en": "LM expansion (advanced)"
           },
           "description": {
-            "zh": "默认 auto：根据描述/歌词自动选择灵感扩写或格式化；一般无需修改。",
-            "en": "Default auto infers inspiration vs format from prompt/lyrics; usually leave unchanged."
+            "zh": "默认 auto：对描述+歌词执行 format_sample（官方 Custom 路径）；off 关闭 5Hz LM。",
+            "en": "Default auto runs format_sample on caption+lyrics (official Custom path); off disables 5Hz LM."
           }
         },
         "steps": {
@@ -4459,12 +4734,16 @@
           "max": 20.0
         },
         "supports_lyrics": true,
+        "requires_lyrics_for_vocal": true,
         "supports_instrumental": true,
         "supports_vocal_language": true,
         "supports_vocal_type": true,
         "supports_bpm": true,
         "supports_key_scale": true,
         "supports_time_signature": true,
+        "cover_lyrics_support": true,
+        "cover_music_params_support": true,
+        "cover_duration_override_support": true,
         "audio_formats": [
           "wav",
           "flac",
@@ -4583,12 +4862,38 @@
       "versions": {
         "fp16": {
           "name": "FP16",
-          "size": "4GB",
+          "size": "4.1GB",
           "default": true,
           "source": "modelscope",
           "repo_id": "ASLP-lab/DiffRhythm2",
           "local_path": "models/Audio/diffrhythm-v2",
-          "source_type": "full"
+          "source_type": "full",
+          "bundle_repos": [
+            {
+              "repo_id": "ASLP-lab/DiffRhythm2",
+              "local_path": "models/Audio/diffrhythm-v2",
+              "name": "DiffRhythm2",
+              "size": "4GB",
+              "source": "modelscope",
+              "allow_patterns": [
+                "model.safetensors",
+                "config.json",
+                "decoder.bin",
+                "decoder.json",
+                "mulan/**"
+              ]
+            },
+            {
+              "repo_id": "ASLP-lab/DiffRhythm2",
+              "local_path": "models/Audio/diffrhythm-v2",
+              "name": "DiffRhythm2 G2P",
+              "size": "80MB",
+              "source": "huggingface",
+              "allow_patterns": [
+                "g2p/**"
+              ]
+            }
+          ]
         },
         "int8": {
           "name": "INT8 量化版",

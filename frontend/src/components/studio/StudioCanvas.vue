@@ -72,6 +72,7 @@
           :media="media"
           :selection-mode="selectionMode"
           :selected="isItemSelected(item)"
+          :gallery-canvas-mode="media === 'image' || media === 'video' || media === 'audio'"
           @click="handleCardClick(item, $event)"
           @toggle-select="$emit('toggle-select', item)"
           @action="$emit('card-action', $event)"

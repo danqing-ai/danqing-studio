@@ -87,6 +87,7 @@ class SystemInfoResponse(BaseModel):
     env_ready: bool
     dependencies: Optional[Dict[str, str]] = None
     mlx_memory_limit: int = 120
+    controlnet_runtime_available: bool = False
 
 
 def get_settings_service():
@@ -301,6 +302,9 @@ def get_system_info():
             info["mlx_peak_gb"] = mlx["peak_gb"]
     except Exception:
         pass
+    from backend.engine.common.controlnet_runtime import controlnet_runtime_available
+
+    info["controlnet_runtime_available"] = controlnet_runtime_available()
     return SystemInfoResponse(**info)
 
 
@@ -368,9 +372,28 @@ def get_compatible_loras(model_name: str):
     return [{"name": r["name"], "id": r["id"], "base_model": r.get("base_model", "")} for r in rows]
 
 
+def _controlnet_matches_scope(actions: object, scope: str | None) -> bool:
+    """Filter registry controlnets by intended UI surface (create vs edit drawers)."""
+    if not scope:
+        return True
+    acts = actions if isinstance(actions, dict) else {}
+    has_retouch = acts.get("retouch") is not None
+    has_extend = acts.get("extend") is not None
+    if scope == "create":
+        return not (has_retouch or has_extend)
+    if scope == "retouch":
+        return has_retouch
+    if scope == "extend":
+        return has_extend
+    raise HTTPException(status_code=400, detail=f"invalid controlnet scope {scope!r}")
+
+
 @router.get("/controlnets/compatible/{model_name}")
-def get_compatible_controlnets(model_name: str):
-    """Get ControlNets compatible with a given model (reads base_model field from registry)"""
+def get_compatible_controlnets(model_name: str, scope: str | None = None):
+    """Get ControlNets compatible with a given model (reads base_model field from registry).
+
+    ``scope``: ``create`` (structural guide / text-to-image), ``retouch``, or ``extend``.
+    """
     service = get_settings_service()
     registry = service.get_model_registry()
     detailed_status = service.get_models_detailed_status()
@@ -392,12 +415,22 @@ def get_compatible_controlnets(model_name: str):
         if not is_compatible:
             continue
 
+        actions = getattr(config, "actions", None) or {}
+        if not _controlnet_matches_scope(actions, scope):
+            continue
+
         # Check readiness status
         status_info = detailed_status.get(key, {})
         ready = status_info.get("ready", False)
         versions_ready = {}
         for vk, vs in status_info.get("versions", {}).items():
             versions_ready[vk] = vs.get("ready", False)
+
+        from backend.engine.common.controlnet_runtime import (
+            CONTROLNET_CUDA_BATCH_PLANNED,
+            CONTROLNET_DECLARED_BACKENDS,
+            controlnet_runtime_available,
+        )
 
         results.append({
             "name": config.name or key,
@@ -406,8 +439,11 @@ def get_compatible_controlnets(model_name: str):
             "base_model": net_base,
             "ready": ready,
             "versions_ready": versions_ready,
-            "actions": getattr(config, "actions", None) or {},
+            "actions": actions,
             "parameters": config.parameters,
+            "runtime_backends": list(CONTROLNET_DECLARED_BACKENDS),
+            "runtime_available": controlnet_runtime_available(),
+            "cuda_batch_planned": CONTROLNET_CUDA_BATCH_PLANNED,
         })
 
     return results

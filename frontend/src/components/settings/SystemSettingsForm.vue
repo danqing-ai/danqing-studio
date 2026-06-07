@@ -1,7 +1,35 @@
 <script setup lang="ts">
+import { ref } from 'vue';
 import type { ThemeId } from '@/utils/i18n';
+import { canvasAutoAddEnabled, setCanvasAutoAdd } from '@/composables/useCanvasStore';
 
-type SectionId = 'general' | 'performance' | 'workspace' | 'integrations' | 'maintenance' | 'systeminfo';
+const canvasAutoAddImage = ref(canvasAutoAddEnabled('image'));
+const canvasAutoAddVideo = ref(canvasAutoAddEnabled('video'));
+const canvasAutoAddAudio = ref(canvasAutoAddEnabled('audio'));
+
+function onCanvasAutoAddImageChange(enabled: boolean) {
+  canvasAutoAddImage.value = enabled;
+  setCanvasAutoAdd(enabled, 'image');
+}
+
+function onCanvasAutoAddVideoChange(enabled: boolean) {
+  canvasAutoAddVideo.value = enabled;
+  setCanvasAutoAdd(enabled, 'video');
+}
+
+function onCanvasAutoAddAudioChange(enabled: boolean) {
+  canvasAutoAddAudio.value = enabled;
+  setCanvasAutoAdd(enabled, 'audio');
+}
+
+type SectionId =
+  | 'general'
+  | 'performance'
+  | 'studio'
+  | 'workspace'
+  | 'integrations'
+  | 'maintenance'
+  | 'systeminfo';
 
 const props = defineProps<{
   activeSection: SectionId;
@@ -114,6 +142,51 @@ const emit = defineEmits<{
               <DqSwitch v-model="settings.auto_save_prompts" />
               <p class="settings-form-hint settings-form-hint--below-control">
                 {{ $t('settings.autoSavePromptsDesc') }}
+              </p>
+            </div>
+          </DqPrefRow>
+        </DqPrefPane>
+      </section>
+    </template>
+
+    <!-- Studio / Canvas -->
+    <template v-if="props.activeSection === 'studio'">
+      <section class="settings-group-block">
+        <h2 class="settings-section-title">{{ $t('settings.studio') }}</h2>
+        <p class="settings-section-desc">{{ $t('settings.studioDesc') }}</p>
+        <DqPrefPane class="settings-grouped-form settings-pref-pane-form settings-pref-pane-form--system">
+          <DqPrefRow :label="$t('settings.canvasAutoAddImage')" stacked>
+            <div class="settings-stacked-control">
+              <DqSwitch
+                :model-value="canvasAutoAddImage"
+                @update:model-value="onCanvasAutoAddImageChange"
+              />
+              <p class="settings-form-hint settings-form-hint--below-control">
+                {{ $t('settings.canvasAutoAddImageDesc') }}
+              </p>
+            </div>
+          </DqPrefRow>
+
+          <DqPrefRow :label="$t('settings.canvasAutoAddVideo')" stacked>
+            <div class="settings-stacked-control">
+              <DqSwitch
+                :model-value="canvasAutoAddVideo"
+                @update:model-value="onCanvasAutoAddVideoChange"
+              />
+              <p class="settings-form-hint settings-form-hint--below-control">
+                {{ $t('settings.canvasAutoAddVideoDesc') }}
+              </p>
+            </div>
+          </DqPrefRow>
+
+          <DqPrefRow :label="$t('settings.canvasAutoAddAudio')" stacked>
+            <div class="settings-stacked-control">
+              <DqSwitch
+                :model-value="canvasAutoAddAudio"
+                @update:model-value="onCanvasAutoAddAudioChange"
+              />
+              <p class="settings-form-hint settings-form-hint--below-control">
+                {{ $t('settings.canvasAutoAddAudioDesc') }}
               </p>
             </div>
           </DqPrefRow>

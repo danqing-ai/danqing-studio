@@ -12,6 +12,7 @@ _TRANSFORMER = {
     "fibo":     ("backend.engine.families.fibo.transformer",      "FIBOTransformer"),
     "flux1":    ("backend.engine.families.flux1.transformer",     "Flux1Transformer"),
     "qwen_image": ("backend.engine.families.qwen.transformer",    "QwenImageTransformer"),
+    "ernie_image": ("backend.engine.families.ernie_image.transformer", "ErnieImageTransformer"),
 }
 
 _WEIGHT_REMAP = {
@@ -19,6 +20,7 @@ _WEIGHT_REMAP = {
     "flux2":    ("backend.engine.families.flux2.weights",     "remap_flux2_weights"),
     "flux1":    ("backend.engine.families.flux1.weights",    "remap_flux1_weights"),
     "qwen_image": ("backend.engine.families.qwen.weights",    "remap_qwen_transformer_weights"),
+    "ernie_image": ("backend.engine.families.ernie_image.weights", "remap_ernie_image_weights"),
 }
 
 # encoder_type → (模块路径, 类名)
@@ -28,6 +30,7 @@ _TEXT_ENCODER = {
     "z_image":  ("backend.engine.families.z_image.text_encoder",   "ZImageTextEncoder"),
     "qwen_image": ("backend.engine.families.qwen.text_encoder", "QwenImageTextEncoder"),
     "fibo":     ("backend.engine.families.fibo.text_encoder", "FiboTextEncoder"),
+    "ernie_image": ("backend.engine.families.ernie_image.text_encoder", "ErnieImageTextEncoder"),
 }
 
 _IMAGE_LORA_MERGE = {
@@ -118,7 +121,7 @@ def encode_prompt_with_image_text_encoder(
 
     Returns:
         ``(embeddings, attention_mask, pooled_embeds)``.
-        * mask is set for ``qwen_image``;
+        * mask is set for ``qwen_image`` and ``ernie_image`` (``text_lens``);
         * ``pooled_embeds`` for ``flux1`` (CLIP pooled, not a mask).
     """
     enc_cls = get_text_encoder(encoder_type)

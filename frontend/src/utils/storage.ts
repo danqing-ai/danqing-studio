@@ -11,6 +11,11 @@ export const DQ_STORAGE = Object.freeze({
   IMAGE_CREATE_PROMPT_DRAFT: 'dq-studio.imageCreatePromptDraft.v4',
   VIDEO_CREATE_PROMPT_DRAFT: 'dq-studio.videoCreatePromptDraft.v4',
   AUDIO_CREATE_PROMPT_DRAFT: 'dq-studio.audioCreatePromptDraft.v4',
+  AUDIO_CREATE_LYRICS_DRAFT: 'dq-studio.audioCreateLyricsDraft.v4',
+  COPILOT_HANDOFF: 'dq-studio.copilotHandoff.v4',
+  COPILOT_NAV: 'dq-studio.copilotNav.v4',
+  COPILOT_CARDS_COLLAPSED: 'dq-studio.copilotCardsCollapsed.v4',
+  MODELS_CATEGORY: 'dq-studio.modelsCategory.v4',
   MODEL_FILTER_INSTALLED: 'dq-studio.modelFilterInstalled.v4',
   MODEL_FILTER_COMMERCIAL: 'dq-studio.modelFilterCommercial.v4',
   IMAGE_LAST_SIZE: 'dq-studio.imageLastSize.v4',
@@ -26,6 +31,24 @@ export const DQ_STORAGE = Object.freeze({
   VIDEO_MODEL_UPSCALE: 'dq-studio.videoModel.upscale.v4',
   AUDIO_MODEL_CREATE: 'dq-studio.audioModel.create.v4',
   AUDIO_MODEL_COVER: 'dq-studio.audioModel.cover.v4',
+  CANVAS_IMAGE: 'dq-studio.canvas.image.v4',
+  CANVAS_VIDEO: 'dq-studio.canvas.video.v4',
+  CANVAS_AUDIO: 'dq-studio.canvas.audio.v4',
+  CANVAS_ACTIVE_SESSION: 'dq-studio.canvas.activeSession.image.v4',
+  CANVAS_ACTIVE_SESSION_VIDEO: 'dq-studio.canvas.activeSession.video.v4',
+  CANVAS_ACTIVE_SESSION_AUDIO: 'dq-studio.canvas.activeSession.audio.v4',
+  CANVAS_AUTO_ADD: 'dq-studio.canvas.autoAddResults.v4',
+  CANVAS_AUTO_ADD_VIDEO: 'dq-studio.canvas.autoAddResults.video.v4',
+  CANVAS_AUTO_ADD_AUDIO: 'dq-studio.canvas.autoAddResults.audio.v4',
+  IMAGE_VIEW_MODE: 'dq-studio.imageViewMode.v4',
+  VIDEO_VIEW_MODE: 'dq-studio.videoViewMode.v4',
+  AUDIO_VIEW_MODE: 'dq-studio.audioViewMode.v4',
+  CANVAS_PNG_EXPORT_OPTS: 'dq-studio.canvas.pngExportOpts.v4',
+  CANVAS_COMPOSER_COLLAPSED_IMAGE: 'dq-studio.canvas.composerCollapsed.image.v4',
+  CANVAS_COMPOSER_COLLAPSED_VIDEO: 'dq-studio.canvas.composerCollapsed.video.v4',
+  CANVAS_COMPOSER_COLLAPSED_AUDIO: 'dq-studio.canvas.composerCollapsed.audio.v4',
+  CANVAS_WORKSPACE_HINT: 'dq-studio.canvas.workspaceHint.v4',
+  CANVAS_REGION_GUIDES: 'dq-studio.canvas.regionGuides.v4',
 } as const);
 
 export type StorageKey = (typeof DQ_STORAGE)[keyof typeof DQ_STORAGE];
@@ -40,4 +63,16 @@ export function setItem(key: StorageKey, value: string): void {
 
 export function removeItem(key: StorageKey): void {
   localStorage.removeItem(key);
+}
+
+/** Read-once draft handoff (e.g. Assistant → create views). */
+export function consumeStringDraft(key: StorageKey): string | null {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    localStorage.removeItem(key);
+    return raw;
+  } catch {
+    return null;
+  }
 }

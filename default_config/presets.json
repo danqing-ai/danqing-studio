@@ -9,7 +9,8 @@
       "zh": "人像摄影",
       "en": "Portrait Photography"
     },
-    "media_scope": "image"
+    "media_scope": "image",
+    "trigger_words": ""
   },
   "街拍纪实": {
     "positive": "street photography, decisive moment, natural ambient light, 35mm f/1.4 lens, Leica M6, Kodak Tri-X 400 film stock, candid human interaction, urban backdrop, motion blur on passersby, grainy texture, high contrast shadows, documentary style, authentic unfiltered scene",
@@ -21,7 +22,8 @@
       "zh": "街拍纪实",
       "en": "Street Photography"
     },
-    "media_scope": "image"
+    "media_scope": "image",
+    "trigger_words": ""
   },
   "自然风光": {
     "positive": "breathtaking natural landscape, golden hour warm light, dramatic cumulus clouds, crystal-clear lake reflection, wildflowers in foreground, layered mountain ranges in distance, atmospheric haze, cinematic wide-angle composition, Nikon D850, 24mm f/1.8, polarizing filter, natural color science, untouched wilderness",
@@ -33,7 +35,8 @@
       "zh": "自然风光",
       "en": "Nature Landscape"
     },
-    "media_scope": "image"
+    "media_scope": "image",
+    "trigger_words": ""
   },
   "赛博朋克": {
     "positive": "cyberpunk city alley at night, neon signs reflecting on rain-soaked asphalt, steam rising from street vents, holographic advertisements, gritty urban decay, wet surfaces, volumetric light through fog, Blade Runner aesthetic, cinematic composition, natural film grain, cool blue and warm neon orange palette",
@@ -45,7 +48,8 @@
       "zh": "赛博朋克",
       "en": "Cyberpunk"
     },
-    "media_scope": "image"
+    "media_scope": "image",
+    "trigger_words": ""
   },
   "写实增强": {
     "positive": "photorealistic, clear flawless skin, natural pore-level texture, healthy skin radiance, soft directional lighting, professional color grading, analog film aesthetic, authentic atmosphere, fine detail, depth of field, editorial photography style, realistic fabric and material rendering, avoiding artificial smoothness",
@@ -57,7 +61,8 @@
       "zh": "写实增强",
       "en": "Realism Enhancer"
     },
-    "media_scope": "image"
+    "media_scope": "image",
+    "trigger_words": ""
   },
   "动漫风格": {
     "positive": "anime style illustration, vibrant harmonious color palette, clean expressive linework, soft cel shading with subtle gradients, dynamic composition, Ghibli-inspired background art, hand-painted feel, emotional atmosphere, high-quality 2D animation frame, detailed character design",
@@ -69,7 +74,8 @@
       "zh": "动漫风格",
       "en": "Anime Style"
     },
-    "media_scope": "image"
+    "media_scope": "image",
+    "trigger_words": ""
   },
   "油画艺术": {
     "positive": "oil painting on linen canvas, visible impasto brushstrokes, rich layered colors, classical chiaroscuro lighting, textured paint surface, traditional technique, gallery-quality fine art, subtle canvas weave visible, painterly edge quality, museum lighting",
@@ -81,7 +87,8 @@
       "zh": "油画艺术",
       "en": "Oil Painting"
     },
-    "media_scope": "image"
+    "media_scope": "image",
+    "trigger_words": ""
   },
   "极简设计": {
     "positive": "minimalist composition, clean geometric forms, intentional negative space, muted earth-tone color palette, refined simplicity, architectural precision, soft natural light, matte surfaces, elegant restraint, Scandinavian design influence, high-end aesthetic",
@@ -93,7 +100,8 @@
       "zh": "极简设计",
       "en": "Minimalist Design"
     },
-    "media_scope": "image"
+    "media_scope": "image",
+    "trigger_words": ""
   },
   "产品摄影": {
     "positive": "commercial product photography, diffused studio lighting, subtle gradient background, sharp focus on product, premium material texture visible, clean professional composition, soft shadow, luxury branding aesthetic, 100mm f/2.8 macro lens, Phase One capture, product isolated on seamless white",
@@ -105,7 +113,8 @@
       "zh": "产品摄影",
       "en": "Product Photography"
     },
-    "media_scope": "image"
+    "media_scope": "image",
+    "trigger_words": ""
   },
   "美食摄影": {
     "positive": "appetizing food photography, soft window light from 45 degrees, shallow depth of field, genuine steam rising, natural food textures, rustic ceramic plating, weathered wooden surface, fresh herbs garnish, warm inviting atmosphere, editorial cookbook style, subtle fill light, Canon 100mm f/2.8L macro",
@@ -117,7 +126,8 @@
       "zh": "美食摄影",
       "en": "Food Photography"
     },
-    "media_scope": "image"
+    "media_scope": "image",
+    "trigger_words": ""
   },
   "室内设计": {
     "positive": "luxury interior design, natural daylight through large windows, warm oak flooring, textured linen curtains, curated minimal furniture, indoor plants, architectural details, soft shadows, lived-in comfort, Elle Decor editorial style, 24mm architectural lens, balanced composition",
@@ -129,7 +139,8 @@
       "zh": "室内设计",
       "en": "Interior Design"
     },
-    "media_scope": "image"
+    "media_scope": "image",
+    "trigger_words": ""
   },
   "水彩画": {
     "positive": "watercolor painting, soft wet-on-wet washes, transparent layered colors, delicate loose brushwork, cold-press paper texture visible, artistic negative space, dreamy atmospheric mood, controlled bleeds, hand-painted authenticity, Turner-inspired luminosity",
@@ -141,7 +152,8 @@
       "zh": "水彩画",
       "en": "Watercolor"
     },
-    "media_scope": "image"
+    "media_scope": "image",
+    "trigger_words": ""
   },
   "黑白摄影": {
     "positive": "black and white fine art photography, dramatic chiaroscuro lighting, rich deep blacks, subtle mid-tone gradation, silver gelatin print aesthetic, Ilford HP5 Plus 400 film grain, 50mm f/1.4 lens, timeless composition, emotional visual storytelling, Ansel Adams zone system tonality",
@@ -153,7 +165,8 @@
       "zh": "黑白摄影",
       "en": "B&W Photography"
     },
-    "media_scope": "image"
+    "media_scope": "image",
+    "trigger_words": ""
   },
   "浮世绘": {
     "positive": "ukiyo-e woodblock print style, bold dark outlines, flat layered color blocks, traditional Japanese composition, bokashi gradient technique, washi paper texture, Edo period aesthetic, nature motif, Hokusai-inspired wave patterns, handmade print imperfections, subtle wood grain texture",
@@ -165,7 +178,8 @@
       "zh": "浮世绘",
       "en": "Ukiyo-e"
     },
-    "media_scope": "image"
+    "media_scope": "image",
+    "trigger_words": ""
   },
   "儿童插画": {
     "positive": "children's book illustration, whimsical storytelling scene, soft rounded character shapes, warm gentle color palette, storybook watercolor and pencil mix, cozy atmosphere, expressive faces, magical realism, Beatrix Potter-inspired charm, textured paper background",
@@ -177,7 +191,8 @@
       "zh": "儿童插画",
       "en": "Children's Illustration"
     },
-    "media_scope": "image"
+    "media_scope": "image",
+    "trigger_words": ""
   },
   "徽标设计": {
     "positive": "modern minimalist logo design, balanced geometric forms, monochrome with one accent color, vector-clean lines, scalable proportions, brand identity mark, negative space cleverness, professional timeless aesthetic, Swiss design influence",
@@ -189,7 +204,8 @@
       "zh": "徽标设计",
       "en": "Logo Design"
     },
-    "media_scope": "image"
+    "media_scope": "image",
+    "trigger_words": ""
   },
   "电影感画面": {
     "positive": "cinematic still frame, anamorphic lens flare, 2.39:1 aspect ratio, ARRI Alexa color science, motivated practical lighting, shallow depth of field, film grain overlay, moody atmosphere, master shot composition, production design detail, teal and orange color grade, 35mm film aesthetic",
@@ -201,7 +217,8 @@
       "zh": "电影感画面",
       "en": "Cinematic Still"
     },
-    "media_scope": "image"
+    "media_scope": "image",
+    "trigger_words": ""
   },
   "微距摄影": {
     "positive": "extreme macro photography, 5:1 magnification, insect eye facets visible, morning dew droplets, natural diffused light, focus stacking depth, Sony 90mm f/2.8 macro G, intricate biological textures, soft green bokeh background, National Geographic documentary style, scientific precision",
@@ -213,7 +230,8 @@
       "zh": "微距摄影",
       "en": "Macro Photography"
     },
-    "media_scope": "image"
+    "media_scope": "image",
+    "trigger_words": ""
   },
   "时尚摄影": {
     "positive": "high fashion editorial, dramatic studio lighting, one key light from above, strong shadows on face, avant-garde styling, textured fabric detail, model with character, Vogue Italia aesthetic, deep moody color palette, intentional grain, 70-200mm f/2.8 compressed perspective, minimal set design",
@@ -225,7 +243,8 @@
       "zh": "时尚摄影",
       "en": "Fashion Editorial"
     },
-    "media_scope": "image"
+    "media_scope": "image",
+    "trigger_words": ""
   },
   "风格迁移-油画": {
     "positive": "transform into oil painting, thick impasto brushwork, visible palette knife strokes, rich layered oil colors, classical portrait lighting, linen canvas texture, hand-painted authenticity, expressive painterly edges, Old Master technique influence, subtle crackle varnish patina",
@@ -237,7 +256,8 @@
       "zh": "风格迁移-油画",
       "en": "Style Transfer - Oil"
     },
-    "media_scope": "image"
+    "media_scope": "image",
+    "trigger_words": ""
   },
   "风格迁移-水彩": {
     "positive": "transform into watercolor painting, soft wet washes, transparent pigment layers, delicate loose brushwork, preserved white paper highlights, cold-press paper texture, atmospheric color bleeds, artistic negative space, spontaneous flowing style",
@@ -249,7 +269,8 @@
       "zh": "风格迁移-水彩",
       "en": "Style Transfer - Watercolor"
     },
-    "media_scope": "image"
+    "media_scope": "image",
+    "trigger_words": ""
   },
   "风格迁移-素描": {
     "positive": "transform into pencil sketch, detailed graphite and charcoal cross-hatching, varied line weight, smooth tonal transitions, paper grain texture visible, academic drawing style, monochrome, artistic smudge marks, observational accuracy, life drawing quality",
@@ -261,7 +282,8 @@
       "zh": "风格迁移-素描",
       "en": "Style Transfer - Sketch"
     },
-    "media_scope": "image"
+    "media_scope": "image",
+    "trigger_words": ""
   },
   "风格迁移-3D卡通": {
     "positive": "transform into Pixar-style 3D animation, smooth subsurface scattering on skin, vibrant warm color palette, appealing character proportions, soft rim lighting, volumetric atmosphere, animated film still quality, expressive eyes, shallow depth of field",
@@ -273,7 +295,8 @@
       "zh": "风格迁移-3D卡通",
       "en": "Style Transfer - 3D Cartoon"
     },
-    "media_scope": "image"
+    "media_scope": "image",
+    "trigger_words": ""
   },
   "细节增强": {
     "positive": "enhance fine detail and texture, sharp focus on key subject, refined surface micro-texture, improved clarity without over-sharpening, natural contrast boost, preserved original color integrity, high-definition refinement, professional retouch level, realistic detail recovery",
@@ -285,7 +308,8 @@
       "zh": "细节增强",
       "en": "Detail Enhancer"
     },
-    "media_scope": "image"
+    "media_scope": "image",
+    "trigger_words": ""
   },
   "背景替换-影棚": {
     "positive": "studio portrait setup, seamless paper backdrop, soft key light with fill, subtle rim light, three-point professional lighting, clean commercial look, neutral background tone, shadow detail preserved, professional headshot style",
@@ -297,7 +321,8 @@
       "zh": "背景替换-影棚",
       "en": "BG Replace - Studio"
     },
-    "media_scope": "image"
+    "media_scope": "image",
+    "trigger_words": ""
   },
   "背景替换-自然": {
     "positive": "natural outdoor setting, golden hour backlight, lush greenery bokeh, wildflower meadow, shallow depth of field, warm atmospheric haze, organic natural backdrop, sun flare kiss on subject edge, environmental portrait style",
@@ -309,7 +334,8 @@
       "zh": "背景替换-自然",
       "en": "BG Replace - Nature"
     },
-    "media_scope": "image"
+    "media_scope": "image",
+    "trigger_words": ""
   },
   "季节变换": {
     "positive": "change season to autumn, warm amber and gold foliage, soft overcast light, fallen leaves on ground, cozy atmosphere, subtle mist, seasonal color palette, natural transition, preserved original composition",
@@ -321,7 +347,8 @@
       "zh": "季节变换",
       "en": "Season Change"
     },
-    "media_scope": "image"
+    "media_scope": "image",
+    "trigger_words": ""
   },
   "光影重塑": {
     "positive": "re-light scene with dramatic golden hour sun, long shadows, warm directional light, cinematic contrast, preserved subject identity, natural shadow falloff, volumetric light rays through atmosphere, mood elevation, photography-grade relighting",
@@ -333,7 +360,8 @@
       "zh": "光影重塑",
       "en": "Relight"
     },
-    "media_scope": "image"
+    "media_scope": "image",
+    "trigger_words": ""
   },
   "色彩分级": {
     "positive": "apply cinematic color grading, teal and orange complementary palette, lifted blacks, subtle film grain, desaturated mid-tones, professional DaVinci Resolve style grade, enhanced color contrast, preserved skin tones, moody cinematic atmosphere",
@@ -345,7 +373,8 @@
       "zh": "色彩分级",
       "en": "Color Grading"
     },
-    "media_scope": "image"
+    "media_scope": "image",
+    "trigger_words": ""
   },
   "面部精修": {
     "positive": "refine facial features, clear radiant skin, natural pore-level texture, subtle skin tone evening, preserved character identity, soft diffused lighting, realistic skin subsurface scattering, professional beauty retouch level, authentic human appearance, healthy skin glow",
@@ -357,7 +386,8 @@
       "zh": "面部精修",
       "en": "Face Refinement"
     },
-    "media_scope": "image"
+    "media_scope": "image",
+    "trigger_words": ""
   },
   "瑕疵修复": {
     "positive": "remove skin spots, moles, blemishes, and acne, natural healing texture, seamless blending, preserved skin pore detail, realistic skin surface, subtle correction, undetectable retouch, professional restoration quality",
@@ -369,7 +399,8 @@
       "zh": "瑕疵修复",
       "en": "Blemish Removal"
     },
-    "media_scope": "image"
+    "media_scope": "image",
+    "trigger_words": ""
   },
   "物件移除": {
     "positive": "remove unwanted object from scene, seamless background reconstruction, natural inpainting, preserved lighting and shadow consistency, realistic texture filling, coherent perspective continuation, undetectable removal",
@@ -381,7 +412,8 @@
       "zh": "物件移除",
       "en": "Object Removal"
     },
-    "media_scope": "image"
+    "media_scope": "image",
+    "trigger_words": ""
   },
   "局部增强": {
     "positive": "enhance selected area, improved local contrast, refined micro-detail, preserved surrounding context, seamless blend edge, natural texture enhancement, subtle sharpening, realistic detail recovery in masked region",
@@ -393,7 +425,8 @@
       "zh": "局部增强",
       "en": "Local Enhancement"
     },
-    "media_scope": "image"
+    "media_scope": "image",
+    "trigger_words": ""
   },
   "背景虚化": {
     "positive": "add natural bokeh to background behind subject, smooth creamy out-of-focus blur, circular highlights from distant lights, realistic lens depth of field falloff, preserved sharp subject edge, natural optical blur quality, 85mm f/1.4 lens character",
@@ -405,7 +438,8 @@
       "zh": "背景虚化",
       "en": "Background Blur"
     },
-    "media_scope": "image"
+    "media_scope": "image",
+    "trigger_words": ""
   },
   "画布扩展": {
     "positive": "extend image canvas outward, seamless continuation of scene content, consistent lighting and color tone, coherent perspective matching, realistic environmental completion, natural edge blending, preserved original image center, photorealistic extension",
@@ -417,7 +451,8 @@
       "zh": "画布扩展",
       "en": "Canvas Extend"
     },
-    "media_scope": "image"
+    "media_scope": "image",
+    "trigger_words": ""
   },
   "场景补全": {
     "positive": "complete partial scene, fill missing areas with plausible content, consistent architectural or natural elements, matching atmospheric conditions, seamless visual continuity, realistic world-building extension, preserved original composition anchor",
@@ -429,7 +464,8 @@
       "zh": "场景补全",
       "en": "Scene Completion"
     },
-    "media_scope": "image"
+    "media_scope": "image",
+    "trigger_words": ""
   },
   "天空扩展": {
     "positive": "extend sky upward and outward, natural cloud formation continuation, consistent atmospheric haze, matching blue gradient tones, realistic sky dome expansion, seamless horizon blending, preserved landscape below, photorealistic sky extension",
@@ -441,7 +477,8 @@
       "zh": "天空扩展",
       "en": "Sky Extension"
     },
-    "media_scope": "image"
+    "media_scope": "image",
+    "trigger_words": ""
   },
   "无缝延展": {
     "positive": "seamless image extension, expand frame symmetrically, preserve all original detail, consistent global illumination, coherent texture continuation, realistic broader composition, natural feel of original uncropped capture, wide-angle expansion",
@@ -453,7 +490,8 @@
       "zh": "无缝延展",
       "en": "Seamless Extension"
     },
-    "media_scope": "image"
+    "media_scope": "image",
+    "trigger_words": ""
   },
   "高清放大": {
     "positive": "upscale to higher resolution, crisp edge definition, enhanced micro-texture, natural detail recovery, reduced noise, preserved original color fidelity, realistic texture fine detail, no artificial sharpening artifacts, print-ready quality",
@@ -465,7 +503,8 @@
       "zh": "高清放大",
       "en": "HD Upscale"
     },
-    "media_scope": "image"
+    "media_scope": "image",
+    "trigger_words": ""
   },
   "写真精修放大": {
     "positive": "upscale portrait photograph, natural skin texture preservation, eye detail enhancement, hair strand definition, fabric weave clarity, subtle pore-level detail, realistic human appearance at high resolution, professional print quality, preserved original character",
@@ -477,7 +516,8 @@
       "zh": "写真精修放大",
       "en": "Portrait Upscale"
     },
-    "media_scope": "image"
+    "media_scope": "image",
+    "trigger_words": ""
   },
   "细节还原放大": {
     "positive": "upscale with detail restoration, recover lost fine textures, intelligent detail reconstruction, sharp but natural definition, preserved original artistic intent, authentic texture enhancement, realistic high-resolution appearance, artifact-free magnification",
@@ -489,7 +529,8 @@
       "zh": "细节还原放大",
       "en": "Detail Restoration Upscale"
     },
-    "media_scope": "image"
+    "media_scope": "image",
+    "trigger_words": ""
   },
   "电影感视频": {
     "positive": "cinematic video, smooth camera dolly movement, shallow depth of field, warm golden hour lighting, subtle film grain, 24fps motion cadence, anamorphic lens character, atmospheric haze, rich color depth, professional cinematography, coherent temporal consistency",
@@ -501,7 +542,8 @@
       "zh": "电影感视频",
       "en": "Cinematic Video"
     },
-    "media_scope": "video"
+    "media_scope": "video",
+    "trigger_words": ""
   },
   "慢动作写实": {
     "positive": "slow motion video, fluid natural movement, detailed texture in motion, soft diffused daylight, realistic physics, flowing elements, serene atmosphere, 120fps slowed to 24fps aesthetic, graceful motion blur, stabilized steady shot",
@@ -513,7 +555,8 @@
       "zh": "慢动作写实",
       "en": "Slow Motion Realism"
     },
-    "media_scope": "video"
+    "media_scope": "video",
+    "trigger_words": ""
   },
   "微距自然": {
     "positive": "macro nature video, dewdrop on leaf with subtle breeze movement, shallow depth of field, natural morning light, insect crawling slowly, organic textures in motion, documentary BBC Earth style, gentle plant sway, realistic environmental detail",
@@ -525,7 +568,8 @@
       "zh": "微距自然",
       "en": "Macro Nature"
     },
-    "media_scope": "video"
+    "media_scope": "video",
+    "trigger_words": ""
   },
   "城市延时": {
     "positive": "urban scene video, steady tripod shot, pedestrian flow at natural speed, soft evening city light, reflections on wet pavement, atmospheric urban haze, subtle traffic movement, documentary street style, warm streetlamp glow, consistent exposure",
@@ -537,7 +581,8 @@
       "zh": "城市延时",
       "en": "Urban Scene"
     },
-    "media_scope": "video"
+    "media_scope": "video",
+    "trigger_words": ""
   },
   "抽象流动": {
     "positive": "abstract fluid art video, ink dispersing in water, smooth organic flow, vibrant colors blending naturally, slow hypnotic movement, creamy texture transitions, high contrast against dark background, macro close-up, mesmerizing continuous motion",
@@ -549,7 +594,8 @@
       "zh": "抽象流动",
       "en": "Abstract Flow"
     },
-    "media_scope": "video"
+    "media_scope": "video",
+    "trigger_words": ""
   },
   "微妙动态": {
     "positive": "add subtle motion to still image, gentle breeze through hair and clothing, subtle eye blink and micro-expression, slow natural breathing movement, soft background element motion, minimal parallax, realistic physics, preserved original image quality and identity",
@@ -561,7 +607,8 @@
       "zh": "微妙动态",
       "en": "Subtle Motion"
     },
-    "media_scope": "video"
+    "media_scope": "video",
+    "trigger_words": ""
   },
   "电影运镜": {
     "positive": "cinematic camera movement on still image, smooth slow dolly in or out, subtle parallax depth separation, gentle handheld float, natural lens breathing, atmospheric lighting preserved, 2.39:1 cinematic frame, professional filmmaking camera language",
@@ -573,7 +620,8 @@
       "zh": "电影运镜",
       "en": "Cinematic Camera"
     },
-    "media_scope": "video"
+    "media_scope": "video",
+    "trigger_words": ""
   },
   "自然流动": {
     "positive": "animate still image with natural environmental flow, water rippling gently, clouds drifting slowly, leaves swaying in breeze, fabric draping naturally, candle flame flicker, consistent natural physics, outdoor ambient motion, preserved scene integrity",
@@ -585,7 +633,8 @@
       "zh": "自然流动",
       "en": "Natural Flow"
     },
-    "media_scope": "video"
+    "media_scope": "video",
+    "trigger_words": ""
   },
   "展现细节": {
     "positive": "slow reveal animation of still image, gentle camera slide across scene, gradual detail discovery, smooth easing motion, cinematic pacing, preserved image sharpness, subtle focus pull, professional product showcase movement, elegant restrained motion",
@@ -597,6 +646,67 @@
       "zh": "展现细节",
       "en": "Reveal Detail"
     },
-    "media_scope": "video"
+    "media_scope": "video",
+    "trigger_words": ""
+  },
+  "爵士钢琴翻唱": {
+    "positive": "smooth jazz piano arrangement, soft brush drums, walking bass, intimate club atmosphere",
+    "applies_to": [
+      "cover"
+    ],
+    "name": {
+      "zh": "爵士钢琴",
+      "en": "Jazz Piano"
+    },
+    "media_scope": "audio",
+    "model_matches": {
+      "family": "ace_step"
+    },
+    "trigger_words": ""
+  },
+  "不插电翻唱": {
+    "positive": "stripped-down acoustic guitar, gentle fingerpicking, warm intimate vocal, cafe ambiance",
+    "applies_to": [
+      "cover"
+    ],
+    "name": {
+      "zh": "不插电翻唱",
+      "en": "Acoustic Cover"
+    },
+    "media_scope": "audio",
+    "model_matches": {
+      "family": "ace_step"
+    },
+    "trigger_words": ""
+  },
+  "电子混音翻唱": {
+    "positive": "electronic dance remix, four-on-the-floor beat, synth arpeggios, energetic drops",
+    "applies_to": [
+      "cover"
+    ],
+    "name": {
+      "zh": "电子混音",
+      "en": "Electronic Remix"
+    },
+    "media_scope": "audio",
+    "model_matches": {
+      "family": "ace_step"
+    },
+    "trigger_words": ""
+  },
+  "摇篮曲版": {
+    "positive": "soft lullaby, music box chimes, gentle whispered vocals, slow dreamy tempo",
+    "applies_to": [
+      "cover"
+    ],
+    "name": {
+      "zh": "摇篮曲版",
+      "en": "Lullaby Version"
+    },
+    "media_scope": "audio",
+    "model_matches": {
+      "family": "ace_step"
+    },
+    "trigger_words": ""
   }
 }

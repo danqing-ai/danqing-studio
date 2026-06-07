@@ -6,7 +6,7 @@ MLX 操作在 TaskScheduler 线程同步执行（全局串行队列保证互斥�
 from __future__ import annotations
 
 from pathlib import Path
-from typing import ClassVar, List, Any
+from typing import Any, ClassVar, List
 
 from backend.core.contracts import (
     EngineResult, ExecutionContext, ImageEditRequest,
@@ -15,6 +15,7 @@ from backend.core.contracts import (
 from backend.core.media_interfaces import IImageEngine
 from backend.core.interfaces import IPathResolver
 from .common.cache import ModelCache
+from .common.lineage import image_edit_relation_type, resolve_lineage
 from .pipelines.image_pipeline import ImagePipeline
 from .pipelines.image_upscale_pipeline import ImageUpscalePipeline
 from .progress_bridge import make_pipeline_progress_callback
@@ -99,6 +100,7 @@ class DanQingImageEngine(IImageEngine):
         if result is None:
             return EngineResult(primary_asset_id="", metadata={"status": "cancelled"})
 
+        parent_id, relation = resolve_lineage(request.metadata)
         if isinstance(result, list):
             asset_ids: list[str] = []
             output_paths: list[str] = []
@@ -106,6 +108,7 @@ class DanQingImageEngine(IImageEngine):
                 aid = ctx.asset_store.create_from_file(
                     Path(output_path), kind="image", mime_type="image/png",
                     source_task_id=ctx.task_id, metadata=metadata, source_action="create",
+                    parent_asset_id=parent_id, relation_type=relation,
                 )
                 asset_ids.append(aid)
                 output_paths.append(output_path)
@@ -119,6 +122,7 @@ class DanQingImageEngine(IImageEngine):
         aid = ctx.asset_store.create_from_file(
             Path(output_path), kind="image", mime_type="image/png",
             source_task_id=ctx.task_id, metadata=metadata, source_action="create",
+            parent_asset_id=parent_id, relation_type=relation,
         )
         return EngineResult(primary_asset_id=aid, asset_ids=[aid], output_paths=[output_path])
 
@@ -150,9 +154,18 @@ class DanQingImageEngine(IImageEngine):
             return EngineResult(primary_asset_id="", metadata={"status": "cancelled"})
 
         output_path, metadata = result
+        parent_id, relation = resolve_lineage(
+            request.metadata,
+            parent_asset_id=request.source_asset_id,
+            relation_type=image_edit_relation_type(
+                request.operation, rewrite_mode=request.rewrite_mode or ""
+            ),
+        )
         aid = ctx.asset_store.create_from_file(
             Path(output_path), kind="image", mime_type="image/png",
-            source_task_id=ctx.task_id, metadata=metadata, source_action="rewrite",
+            source_task_id=ctx.task_id, metadata=metadata,
+            source_action=request.operation,
+            parent_asset_id=parent_id, relation_type=relation,
         )
         return EngineResult(primary_asset_id=aid, asset_ids=[aid], output_paths=[output_path])
 
@@ -189,6 +202,7 @@ class DanQingImageEngine(IImageEngine):
         aid = ctx.asset_store.create_from_file(
             Path(output_path), kind="image", mime_type="image/png",
             source_task_id=ctx.task_id, metadata=metadata, source_action="upscale",
+            parent_asset_id=request.source_asset_id, relation_type="upscale",
         )
         return EngineResult(primary_asset_id=aid, asset_ids=[aid], output_paths=[output_path])
 

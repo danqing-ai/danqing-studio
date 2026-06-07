@@ -332,14 +332,31 @@ class _AdaLayerNormContinuousOut:
         return apply_scale_shift(x, scale[:, None, :], shift[:, None, :], add_one=True)
 
 
+def _pack_flux1_latents_channels(
+    ctx: RuntimeContext,
+    latents: Any,
+    *,
+    channels: int,
+) -> Any:
+    """Pack spatial latents to tokens (mflux ``FluxLatentCreator.pack_latents``)."""
+    B, c, h, w = latents.shape
+    ch = int(channels)
+    if int(c) != ch:
+        raise RuntimeError(f"Flux1 pack expects {ch} channels, got {c}")
+    token_dim = ch * 4
+    x = ctx.reshape(latents, (B, ch, h // 2, 2, w // 2, 2))
+    x = ctx.permute(x, (0, 2, 4, 1, 3, 5))
+    return ctx.reshape(x, (B, (h // 2) * (w // 2), token_dim))
+
+
 def _pack_flux1_latents(ctx: RuntimeContext, latents: Any) -> Any:
     """[B, 16, H, W] → [B, (H//2)*(W//2), 64]（mflux ``FluxLatentCreator.pack_latents``）。"""
-    B, c, h, w = latents.shape
-    if int(c) != 16:
-        raise RuntimeError(f"Flux1 pack expects 16 VAE latent channels, got {c}")
-    x = ctx.reshape(latents, (B, 16, h // 2, 2, w // 2, 2))
-    x = ctx.permute(x, (0, 2, 4, 1, 3, 5))
-    return ctx.reshape(x, (B, (h // 2) * (w // 2), 64))
+    return _pack_flux1_latents_channels(ctx, latents, channels=16)
+
+
+def _pack_flux1_fill_mask_latents(ctx: RuntimeContext, latents: Any) -> Any:
+    """[B, 64, H, W] mask grid → [B, seq, 256] for Fill concat."""
+    return _pack_flux1_latents_channels(ctx, latents, channels=64)
 
 
 def _unpack_flux1_latents(ctx: RuntimeContext, tokens: Any, h: int, w: int) -> Any:
@@ -401,8 +418,9 @@ class Flux1Transformer(TransformerBase):
         dim = config.hidden_dim
         heads = config.num_heads
 
-        # 权重来自 diffusers ``x_embedder`` Linear(64→dim)；VAE 侧为 16ch，pack 后再过此线性层
-        self.patch_embed = PatchEmbed2D(64, dim, patch_size=1, ctx=ctx)
+        # 权重来自 diffusers ``x_embedder`` Linear(in→dim)；默认 in=64；Fill 为 384
+        patch_in = int(getattr(config, "patch_token_dim", 64) or 64)
+        self.patch_embed = PatchEmbed2D(patch_in, dim, patch_size=1, ctx=ctx)
         self.txt_in = nn.Linear(config.text_dim, dim)
         # diffusers FluxTransformer2DModel：CLIP 仅 pooled 进 time_text_embed，无 clip token 流
         self.clip_in = nn.Linear(config.clip_dim, dim) if config.clip_dim else None
@@ -429,7 +447,28 @@ class Flux1Transformer(TransformerBase):
         self.norm_out = _AdaLayerNormContinuousOut(dim, ctx)
         self.proj_out = nn.Linear(dim, config.out_channels)
 
+        self._structural_patch_active = False
+        self._base_patch_weight: Any = None
+        self._base_patch_bias: Any = None
+
         self._build_param_map()
+
+    def activate_structural_patch_embed(self, weight: Any, bias: Any) -> None:
+        """Swap ``x_embedder`` to 128-dim packed input (noise + structural VAE tokens)."""
+        proj = self.patch_embed.proj
+        if self._base_patch_weight is None:
+            self._base_patch_weight = proj.weight
+            self._base_patch_bias = proj.bias
+        proj.weight = weight
+        proj.bias = bias
+        self._structural_patch_active = True
+
+    def deactivate_structural_patch_embed(self) -> None:
+        if not self._structural_patch_active or self._base_patch_weight is None:
+            return
+        self.patch_embed.proj.weight = self._base_patch_weight
+        self.patch_embed.proj.bias = self._base_patch_bias
+        self._structural_patch_active = False
 
     def _build_param_map(self):
         """Flatten MLX ``nn.Sequential`` ``layers`` list entries for diffusers weight keys."""
@@ -441,11 +480,18 @@ class Flux1Transformer(TransformerBase):
         _flatten_mlx_sequential_in_param_map(self._param_map)
 
     def _patch_embed_packed(self, tokens: Any) -> Any:
-        """diffusers ``x_embedder`` Linear(64, dim) — 权重在 ``patch_embed.proj`` Conv1x1。"""
+        """diffusers ``x_embedder`` Linear(64|128, dim) — 权重在 ``patch_embed.proj`` Conv1x1。"""
         ctx = self.ctx
         w = self.patch_embed.proj.weight
         w = ctx.reshape(w, (w.shape[0], -1))
         b = self.patch_embed.proj.bias
+        in_dim = int(w.shape[1])
+        tok_dim = int(tokens.shape[-1])
+        if tok_dim != in_dim:
+            raise RuntimeError(
+                f"Flux1 patch embed dim mismatch: tokens={tok_dim} weights.in={in_dim}; "
+                "structural guide requires 128-dim x_embedder from controlnet bundle"
+            )
         return tokens @ w.T + b
 
     def forward(self, latents, timestep, txt_embeds=None, clip_embeds=None,
@@ -482,11 +528,31 @@ class Flux1Transformer(TransformerBase):
         # mflux ``compute_text_embeddings``: timestep as ModelConfig.precision (bfloat16)
         t_batch = ctx.full((B,), t_val, dtype=ctx.bfloat16())
 
-        hidden_states = self._patch_embed_packed(_pack_flux1_latents(ctx, latents))
+        fill_static = conditioning.get("fill_static_packed")
+        structural_nchw = conditioning.get("structural_latents_nchw")
+        if fill_static is not None:
+            noise_packed = _pack_flux1_latents(ctx, latents)
+            packed = ctx.concat([noise_packed, fill_static], axis=-1)
+            hidden_states = self._patch_embed_packed(packed)
+        elif structural_nchw is not None:
+            noise_packed = _pack_flux1_latents(ctx, latents)
+            struct_packed = _pack_flux1_latents(ctx, structural_nchw)
+            packed = ctx.concat([noise_packed, struct_packed], axis=-1)
+            hidden_states = self._patch_embed_packed(packed)
+        else:
+            hidden_states = self._patch_embed_packed(_pack_flux1_latents(ctx, latents))
         img_seq_len = hidden_states.shape[1]
 
-        if txt_embeds is not None:
-            txt = self.txt_in(txt_embeds)
+        redux_txt = conditioning.get("redux_txt_embeds")
+        merged_txt = txt_embeds
+        if redux_txt is not None:
+            if merged_txt is not None:
+                merged_txt = ctx.concat([merged_txt, redux_txt], axis=1)
+            else:
+                merged_txt = redux_txt
+
+        if merged_txt is not None:
+            txt = self.txt_in(merged_txt)
         else:
             txt = ctx.zeros((B, 0, cfg.hidden_dim))
 

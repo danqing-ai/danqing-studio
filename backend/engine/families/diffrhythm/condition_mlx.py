@@ -1,8 +1,8 @@
 """
-DiffRhythm 2 conditioning — lyrics G2P tokenization + MuQ-MuLan text style (MLX path).
+DiffRhythm 2 conditioning — lyrics G2P tokenization (MLX path).
 
-Lyrics parsing follows ASLP-lab/DiffRhythm2 ``inference.py``.
-MuQ text encoding uses PyTorch inside this ``*_mlx.py`` module only; outputs are MLX arrays.
+Lyrics parsing follows ASLP-lab/DiffRhythm2 ``g2p/g2p_generation.py`` (bundle g2p + espeak).
+MuQ style encoding lives in ``mulan_mlx.py`` (MLX path via ``mulan.py``).
 """
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import Any, List
+from typing import Any, List, Tuple
 
 import mlx.core as mx
 import numpy as np
@@ -21,6 +21,23 @@ logger = logging.getLogger(__name__)
 
 _STRUCT_PATTERN = re.compile(r"^\[.*?\]$")
 _VOCAB_PATH = Path(__file__).resolve().parent / "data" / "vocab.json"
+_BUNDLE_G2P_ROOT: Path | None = None
+
+_SPECIAL_MAP = [
+    ("t|ɹ", "tɹ"),
+    ("d|ɹ", "dɹ"),
+    ("t|s", "ts"),
+    ("d|z", "dz"),
+    ("ɪ|ɹ", "ɪɹ"),
+    ("ɐ", "ɚ"),
+    ("ᵻ", "ɪ"),
+    ("əl", "l"),
+    ("x", "k"),
+    ("ɬ", "l"),
+    ("ʔ", "t"),
+    ("n̩", "n"),
+    ("oː|ɹ", "oːɹ"),
+]
 
 
 def _load_vocab() -> dict[str, int]:
@@ -28,38 +45,155 @@ def _load_vocab() -> dict[str, int]:
         return json.load(f)["vocab"]
 
 
-def _phonemize_text(text: str, *, language: str) -> List[str]:
-    try:
-        from phonemizer import phonemize
-    except ImportError as exc:
-        raise RuntimeError(
-            "DiffRhythm 2 lyrics require phonemizer and espeak-ng "
-            "(pip install phonemizer; brew install espeak-ng)"
-        ) from exc
+def set_g2p_bundle_root(bundle_root: Path | None) -> None:
+    """Set bundle path used to resolve ``{bundle}/g2p`` for Chinese lyrics."""
+    global _BUNDLE_G2P_ROOT
+    _BUNDLE_G2P_ROOT = Path(bundle_root) if bundle_root is not None else None
 
-    ph = phonemize(
-        text,
-        language=language,
-        backend="espeak",
-        strip=True,
-        preserve_punctuation=True,
-        with_stress=False,
-        njobs=1,
-    )
-    phones: List[str] = []
-    for part in ph.replace("\n", " ").split("|"):
-        part = part.strip()
-        if part:
-            phones.extend(part.split())
-    return phones
+
+def _ensure_bundle_g2p() -> bool:
+    from backend.engine.families.diffrhythm.g2p_bootstrap import bundle_g2p_ready
+
+    return bundle_g2p_ready(_BUNDLE_G2P_ROOT)
+
+
+def _install_bundle_g2p_path() -> None:
+    from backend.engine.families.diffrhythm.g2p_bootstrap import install_bundle_g2p_path
+
+    install_bundle_g2p_path(_BUNDLE_G2P_ROOT)
+
+
+def _phoneme_to_token_ids(phonemes: str, *, vocab: dict[str, int]) -> List[int]:
+    phonemes = phonemes.split("\t")[0]
+    return [vocab[p] + 1 for p in phonemes.split("|") if p in vocab]
+
+
+def _special_map(phonemes: str) -> str:
+    text = phonemes
+    for regex, replacement in _SPECIAL_MAP:
+        escaped = regex.replace("|", r"\|")
+        while re.search(rf"(^|[_|]){escaped}([_|]|$)", text):
+            text = re.sub(rf"(^|[_|]){escaped}([_|]|$)", rf"\1{replacement}\2", text)
+    return text
+
+
+def _make_text_tokenizer(language: str):
+    from phonemizer.backend import EspeakBackend
+    from phonemizer.separator import Separator
+    from phonemizer.utils import list2str, str2list
+
+    class _TextTokenizer:
+        def __init__(self, lang: str):
+            self.backend = EspeakBackend(
+                lang,
+                punctuation_marks=",.?!;:'…",
+                preserve_punctuation=True,
+                with_stress=False,
+                tie=False,
+                language_switch="remove-flags",
+                words_mismatch="ignore",
+            )
+            self.separator = Separator(word="|_|", syllable="-", phone="|")
+
+        def _normalize(self, text: str) -> str:
+            text = text.replace("，", ",").replace("。", ".").replace("！", "!")
+            text = text.replace("？", "?").replace("；", ";").replace("：", ":")
+            text = text.replace("、", ",").replace("‘", "'").replace("’", "'")
+            text = text.replace("⋯", "…").replace("···", "…").replace("・・・", "…")
+            text = text.replace("...", "…")
+            text = re.sub(r"[^\w\s_,\.\?!;:\'…]", "", text.strip())
+            text = re.sub(r"\s*([,\.\?!;:\'…])\s*", r"\1", text)
+            return re.sub(r"\s+", " ", text)
+
+        def __call__(self, text: str, *, strip: bool = True) -> str:
+            lines = [self._normalize(line) for line in str2list(text) if line.strip()]
+            phonemized = self.backend.phonemize(lines, separator=self.separator, strip=strip, njobs=1)
+            out = list2str(phonemized)
+            out = re.sub(r"([,\.\?!;:\'…])", r"|\1|", out)
+            out = re.sub(r"\|+", "|", out).rstrip("|")
+            return out
+
+    lang_map = {"en": "en-us", "zh": "cmn"}
+    return _TextTokenizer(lang_map[language])
+
+
+def _expand_english_abbreviations(text: str) -> str:
+    abbrevs = [
+        (r"\bmrs\b", "misess"),
+        (r"\bmr\b", "mister"),
+        (r"\bdr\b", "doctor"),
+        (r"\bst\b", "saint"),
+    ]
+    for pattern, repl in abbrevs:
+        text = re.sub(pattern, repl, text, flags=re.IGNORECASE)
+    return text
+
+
+def _english_to_ipa(text: str, tokenizer) -> str:
+    cleaned = _expand_english_abbreviations(text.strip())
+    phonemes = tokenizer(cleaned)
+    if phonemes and phonemes[-1] in "p⁼ʰmftnlkxʃs`ɹaoəɛɪeɑʊŋiuɥwæjː":
+        phonemes += "|_"
+    return _special_map(phonemes)
+
+
+def _encode_via_bundle_g2p(text: str) -> List[int]:
+    """Upstream ``CNENTokenizer.encode`` — bundle ``chn_eng_g2p`` for zh/en mixed lines."""
+    if not _ensure_bundle_g2p() and _BUNDLE_G2P_ROOT is not None:
+        from backend.engine.families.diffrhythm.g2p_bootstrap import ensure_bundle_g2p
+
+        ensure_bundle_g2p(_BUNDLE_G2P_ROOT)
+    if not _ensure_bundle_g2p():
+        raise RuntimeError("DiffRhythm 2 bundle g2p is not available")
+    _install_bundle_g2p_path()
+    from g2p.g2p_generation import chn_eng_g2p
+
+    _, tokens = chn_eng_g2p(text)
+    return [t + 1 for t in tokens]
+
+
+def _encode_line_upstream(text: str, *, language: str, sentence: str) -> List[int]:
+    vocab = _load_vocab()
+    text = text.strip()
+    if not text:
+        return []
+
+    lang = language
+    if _ensure_bundle_g2p() or _BUNDLE_G2P_ROOT is not None:
+        try:
+            return _encode_via_bundle_g2p(text)
+        except RuntimeError:
+            if lang == "zh":
+                raise
+
+    if lang == "zh":
+        g2p_hint = f"{_BUNDLE_G2P_ROOT}/g2p" if _BUNDLE_G2P_ROOT is not None else "model bundle/g2p"
+        raise RuntimeError(
+            "DiffRhythm 2 Chinese lyrics require Amphion g2p under "
+            f"{g2p_hint}. Re-install diffrhythm-v2 (fp16) from the model manager "
+            "(bundle_repos includes g2p). English-only lyrics work without it."
+        )
+
+    if lang not in ("en", "en-us"):
+        raise RuntimeError(f"DiffRhythm 2 unsupported vocal language for G2P: {language!r}")
+
+    tokenizer = _make_text_tokenizer("en")
+    phonemes = _english_to_ipa(text, tokenizer)
+    tokens = _phoneme_to_token_ids(phonemes, vocab=vocab)
+    if not tokens:
+        raise RuntimeError(
+            f"DiffRhythm 2 G2P produced no vocab hits for line {text!r} (language={language!r}). "
+            "Check espeak-ng / phonemizer."
+        )
+    return tokens
 
 
 def _is_chinese_char(ch: str) -> bool:
     return "\u4e00" <= ch <= "\u9fff"
 
 
-def _segment_text(text: str) -> List[tuple[str, str]]:
-    segments: List[tuple[str, str]] = []
+def _segment_text(text: str) -> List[Tuple[str, str]]:
+    segments: List[Tuple[str, str]] = []
     buf = ""
     lang = ""
     for ch in text:
@@ -84,36 +218,28 @@ def _segment_text(text: str) -> List[tuple[str, str]]:
 
 
 def _encode_line(text: str, *, language: str) -> List[int]:
-    vocab = _load_vocab()
-    text = text.strip()
-    if not text:
-        return []
-
     lang = (language or "auto").strip().lower()
-    phones: List[str] = []
+    if lang in ("detect", "automatic"):
+        lang = "auto"
+
     if lang == "auto":
+        if _ensure_bundle_g2p() or _BUNDLE_G2P_ROOT is not None:
+            try:
+                return _encode_via_bundle_g2p(text)
+            except RuntimeError:
+                pass
+        tokens: List[int] = []
         for seg, seg_lang in _segment_text(text):
             if seg_lang == "other":
                 continue
-            phones.extend(_encode_line_phones(seg, language=seg_lang))
-    else:
-        phones = _encode_line_phones(text, language=lang)
+            tokens.extend(_encode_line_upstream(seg, language=seg_lang, sentence=text))
+        if not tokens and text.strip():
+            raise RuntimeError(
+                f"DiffRhythm 2 G2P produced no tokens for line {text!r} (auto language)."
+            )
+        return tokens
 
-    tokens = [vocab[p] + 1 for p in phones if p in vocab]
-    if not tokens and text:
-        raise RuntimeError(
-            f"DiffRhythm 2 G2P produced no vocab hits for line {text!r} (language={language!r}). "
-            "Check espeak-ng / phonemizer or simplify lyrics."
-        )
-    return tokens
-
-
-def _encode_line_phones(text: str, *, language: str) -> List[str]:
-    if language == "zh":
-        return _phonemize_text(text, language="cmn")
-    if language in ("en", "en-us"):
-        return _phonemize_text(text, language="en-us")
-    raise RuntimeError(f"DiffRhythm 2 unsupported vocal language for G2P: {language!r}")
+    return _encode_line_upstream(text, language=lang, sentence=text)
 
 
 def parse_lyrics_to_token_ids(lyrics: str, *, vocal_language: str) -> List[int]:
@@ -156,45 +282,6 @@ def parse_lyrics_to_token_ids(lyrics: str, *, vocal_language: str) -> List[int]:
     if not flat:
         raise RuntimeError("DiffRhythm 2 lyrics parsing produced an empty token sequence")
     return flat
-
-
-class MuQStyleEncoderMLX:
-    """MuQ-MuLan text style encoder (PyTorch load, MLX output)."""
-
-    def __init__(self, cache_dir: Path, mulan_repo_id: str):
-        self._cache_dir = Path(cache_dir)
-        self._mulan_repo_id = mulan_repo_id
-        self._model: Any = None
-
-    def load(self) -> None:
-        try:
-            from muq import MuQMuLan
-        except ImportError as exc:
-            raise RuntimeError(
-                "DiffRhythm 2 style encoding requires the muq package (pip install muq)"
-            ) from exc
-
-        self._cache_dir.mkdir(parents=True, exist_ok=True)
-        logger.info("Loading MuQ-MuLan from %s (cache=%s)", self._mulan_repo_id, self._cache_dir)
-        self._model = MuQMuLan.from_pretrained(self._mulan_repo_id, cache_dir=str(self._cache_dir))
-        self._model.eval()
-
-    def encode_text(self, style_prompt: str, *, array_fn: Any) -> mx.array:
-        if self._model is None:
-            raise RuntimeError("MuQStyleEncoderMLX.load() must be called first")
-
-        import torch
-
-        text = (style_prompt or "").strip()
-        if not text:
-            raise RuntimeError("DiffRhythm 2 style prompt must be non-empty")
-
-        with torch.no_grad():
-            latent = self._model(texts=[text])
-        np_latent = latent.detach().cpu().float().numpy()
-        if np_latent.ndim == 2:
-            np_latent = np_latent[0]
-        return array_fn(np_latent.astype(np.float32))
 
 
 def lyrics_to_mx_array(token_ids: List[int], *, array_fn: Any) -> mx.array:

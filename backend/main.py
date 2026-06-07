@@ -27,6 +27,7 @@ from backend.core.i18n import set_locale, _load_translations
 from backend.utils.path_utils import PathResolver
 from backend.persistence.stores import JsonConfigStore, JsonPresetStore
 from backend.persistence.asset_store import SQLiteAssetStore
+from backend.persistence.canvas_session_store import CanvasSessionStore
 from backend.persistence.v3_task_store import V3TaskStore
 from backend.core.model_registry import ModelRegistry
 from backend.engine.engine_registry import EngineRegistry
@@ -42,6 +43,8 @@ from backend.engine.memory_policy import (
 from backend.services.services import SettingsService
 from backend.services.download_service import DownloadService
 from backend.scheduler.task_scheduler import TaskScheduler
+
+from backend.engine.llm import LLMService
 
 from backend.api.routes import (
     adapters, assets, audios, download, gallery, images,
@@ -133,6 +136,12 @@ def create_app() -> FastAPI:
     app.include_router(download.router)
     app.include_router(settings.router)
 
+    # LLM service (standalone, not through TaskScheduler)
+    import backend.api.routes.llm as llm_routes
+    import backend.api.routes.canvas as canvas_routes
+    app.include_router(llm_routes.router)
+    app.include_router(canvas_routes.router)
+
     frontend_dir = _resolve_frontend_static_dir(project_root)
     if frontend_dir is not None:
         app.mount("/", StaticFiles(directory=str(frontend_dir), html=True), name="frontend")
@@ -167,6 +176,14 @@ def _setup_dependencies():
         path_resolver, model_registry, runtimes, model_cache=shared_cache,
     )
 
+    # LLM service (standalone, reuses registry for model path resolution)
+    llm_service = LLMService(
+        model_registry=model_registry,
+        path_resolver=path_resolver,
+    )
+    container = get_container()
+    container.register_instance(LLMService, llm_service)
+
     engine_registry = EngineRegistry(model_registry)
     engine_registry.register(danqing_image)
     engine_registry.register(danqing_video)
@@ -179,6 +196,8 @@ def _setup_dependencies():
     v3_tasks = V3TaskStore(v3_db)
     asset_root = path_resolver.get_project_root() / "outputs" / "assets"
     asset_store = SQLiteAssetStore(v3_db, asset_root)
+    canvas_session_store = CanvasSessionStore(v3_db)
+    container.register_instance(CanvasSessionStore, canvas_session_store)
 
     scheduler = TaskScheduler(
         path_resolver=path_resolver,

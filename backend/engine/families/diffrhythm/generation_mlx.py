@@ -1,7 +1,7 @@
 """
-DiffRhythm 2 text-to-music — pure MLX generation path.
+DiffRhythm 2 text-to-music — MLX generation path.
 
-CFM block flow matching + BigVGAN decode on MLX; MuQ/G2P conditioning in ``condition_mlx``.
+CFM + BigVGAN + MuQ style encoding on MLX (``mulan_mlx``).
 """
 from __future__ import annotations
 
@@ -15,10 +15,10 @@ import mlx.core as mx
 import numpy as np
 
 from backend.engine.families.diffrhythm.condition_mlx import (
-    MuQStyleEncoderMLX,
-    lyrics_to_mx_array,
     parse_lyrics_to_token_ids,
+    set_g2p_bundle_root,
 )
+from backend.engine.families.diffrhythm.mulan import MuQStyleEncoder
 from backend.engine.families.diffrhythm.generation import (
     LATENT_FRAME_RATE,
     SAMPLE_RATE,
@@ -34,10 +34,8 @@ from backend.engine.families.diffrhythm.transformer_mlx import (
     DiffRhythm2DiTMLX,
     load_cfm_weights,
 )
-from backend.engine.families.diffrhythm.vae_mlx import (
-    DiffRhythm2DecoderMLX,
-    make_fake_stereo,
-)
+from backend.engine.families.diffrhythm.vae import DiffRhythmVAE
+from backend.engine.families.diffrhythm.vae_mlx import make_fake_stereo
 from backend.engine.families.diffrhythm.weights_mlx import load_diffrhythm_safetensors_for_mlx
 from backend.engine.config.model_configs import DiffRhythmConfig
 
@@ -51,8 +49,8 @@ class DiffRhythmMlxGenerator:
         self._ctx = ctx
         self._bundle_root = Path(bundle_root)
         self._cfm: DiffRhythm2CFMMLX | None = None
-        self._decoder: DiffRhythm2DecoderMLX | None = None
-        self._style_encoder: MuQStyleEncoderMLX | None = None
+        self._decoder: DiffRhythmVAE | None = None
+        self._style_encoder: MuQStyleEncoder | None = None
         self._model_config: dict[str, Any] | None = None
         self._config = DiffRhythmConfig()
         self.last_latent_frames: int = 0
@@ -71,6 +69,7 @@ class DiffRhythmMlxGenerator:
 
     def load(self) -> None:
         bundle = assert_diffrhythm2_bundle(self._bundle_root)
+        set_g2p_bundle_root(bundle)
         dit_bundle = resolve_dit_bundle(bundle)
         cfg_path = dit_bundle / "config.json"
         with open(cfg_path, encoding="utf-8") as f:
@@ -103,13 +102,14 @@ class DiffRhythmMlxGenerator:
         self._ctx.eval(self._cfm.parameters())
 
         mulan_cache = bundle / "mulan"
-        self._style_encoder = MuQStyleEncoderMLX(
+        self._style_encoder = MuQStyleEncoder(
+            self._ctx,
             mulan_cache,
             self._config.mulan_repo_id,
         )
         self._style_encoder.load()
 
-        self._decoder = DiffRhythm2DecoderMLX(self._ctx, vae_dir=str(bundle))
+        self._decoder = DiffRhythmVAE(self._ctx, vae_dir=str(bundle))
         logger.info("DiffRhythm 2 MLX stack loaded from %s", bundle)
 
     def generate_waveform(
@@ -142,7 +142,7 @@ class DiffRhythmMlxGenerator:
         self.last_latent_frames = latent_frames
 
         token_ids = parse_lyrics_to_token_ids(lyrics, vocal_language=vocal_language)
-        text_mx = lyrics_to_mx_array(token_ids, array_fn=self._ctx.array)
+        text_mx = mx.array(np.asarray(token_ids, dtype=np.int32))
         text_mx = mx.expand_dims(text_mx, 0)
 
         style_mx = self._style_encoder.encode_text(prompt, array_fn=self._ctx.array)
@@ -168,7 +168,7 @@ class DiffRhythmMlxGenerator:
             guidance,
         )
 
-        audio_mx = self._decoder.decode_audio(latents)
+        audio_mx = self._decoder.decode(latents)
         self._ctx.eval(audio_mx)
         wf = np.array(audio_mx, dtype=np.float32)
         if wf.ndim == 3:

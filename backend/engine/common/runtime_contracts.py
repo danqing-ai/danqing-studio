@@ -239,6 +239,9 @@ class SchedulerSemanticsResolver:
         mu = registry_scalar_default(entry, "scheduler_mu", None)
         if mu is not None:
             sched_extra["mu"] = float(mu)
+        scheduler_shift = registry_scalar_default(entry, "scheduler_shift", None)
+        if scheduler_shift is not None:
+            sched_extra["scheduler_shift"] = float(scheduler_shift)
         for key in (
             "scheduler_base_image_seq_len",
             "scheduler_max_image_seq_len",
@@ -254,6 +257,10 @@ class SchedulerSemanticsResolver:
             sched_extra["sigmas"] = np.linspace(
                 1.0, 1.0 / float(steps), steps, dtype=np.float64
             ).tolist()
+        elif sigma_schedule == "linspace_1_to_zero":
+            sched_extra["sigmas"] = np.linspace(
+                1.0, 0.0, int(steps) + 1, dtype=np.float64
+            )[:-1].tolist()
 
         req_sigma_reg = registry_scalar_default(entry, "requires_sigma_shift", None)
         requires_sigma_shift = (

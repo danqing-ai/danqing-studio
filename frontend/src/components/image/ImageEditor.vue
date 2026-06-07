@@ -95,9 +95,10 @@ const props = withDefaults(
   },
 );
 
-defineEmits<{
+const emit = defineEmits<{
   'pick-edit-source': [];
   'submit': [];
+  'mask-preview': [payload: { dataUrl: string; width: number; height: number } | null];
 }>();
 
 const editorRoot = ref<HTMLElement | null>(null);
@@ -204,6 +205,38 @@ function draw() {
     mainCtx.restore();
   }
   mainCtx.restore();
+  scheduleMaskPreviewEmit();
+}
+
+let maskPreviewTimer: ReturnType<typeof setTimeout> | null = null;
+
+function emitMaskPreview() {
+  if (!offscreenCanvas || !hasMaskContent.value || !displayWidth || !displayHeight) {
+    emit('mask-preview', null);
+    return;
+  }
+  const canvas = document.createElement('canvas');
+  canvas.width = displayWidth;
+  canvas.height = displayHeight;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  ctx.fillStyle = 'rgba(233, 69, 96, 0.62)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.globalCompositeOperation = 'destination-in';
+  ctx.drawImage(offscreenCanvas, 0, 0, displayWidth, displayHeight);
+  emit('mask-preview', {
+    dataUrl: canvas.toDataURL('image/png'),
+    width: displayWidth,
+    height: displayHeight,
+  });
+}
+
+function scheduleMaskPreviewEmit() {
+  if (maskPreviewTimer) return;
+  maskPreviewTimer = setTimeout(() => {
+    maskPreviewTimer = null;
+    emitMaskPreview();
+  }, 100);
 }
 
 function fitCanvas() {
@@ -535,6 +568,7 @@ function clearMask() {
   maskCtx.clearRect(0, 0, offscreenCanvas.width, offscreenCanvas.height);
   hasMaskContent.value = false;
   draw();
+  emit('mask-preview', null);
 }
 
 function restoreMaskFromDataUrl(dataUrl: string) {
@@ -612,6 +646,7 @@ watch(
     zoom.value = 1;
     panX.value = 0;
     panY.value = 0;
+    emit('mask-preview', null);
     void loadImage(newSrc);
   },
 );

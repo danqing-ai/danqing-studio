@@ -32,9 +32,10 @@
         >
           <img
             v-if="!thumbFailed[String(item.path)]"
+            :key="`${String(item.path)}-${thumbRetryFile[String(item.path)] ? 'file' : 'thumb'}`"
             :src="thumbUrlForRecent(item)"
             alt=""
-            @error="markThumbFailed(item)"
+            @error="onThumbError(item)"
           />
           <div v-else class="asset-picker__thumb-fallback" />
         </div>
@@ -111,6 +112,8 @@ const { t: $t } = useI18n();
 
 const fileInputRef = ref<HTMLInputElement | null>(null);
 const thumbFailed = ref<Record<string, boolean>>({});
+/** After thumbnail 404, retry once with full image file (image assets only). */
+const thumbRetryFile = ref<Record<string, boolean>>({});
 
 const acceptAttr = computed(() =>
   props.acceptKind === 'video' ? 'video/*,.mp4,.webm,.mov,.mkv,.avi' : 'image/*',
@@ -155,14 +158,27 @@ const recentFiltered = computed(() => {
 });
 
 function thumbUrlForRecent(item: Record<string, unknown>): string {
+  const p = String(item.path || '');
+  if (props.acceptKind === 'image' && thumbRetryFile.value[p] && p.startsWith('asset:')) {
+    return api.gallery.getImageUrl(p);
+  }
   const th = item.thumbnail as string | undefined;
   if (typeof th === 'string' && th.length) return th;
-  const p = String(item.path || '');
   if (p.startsWith('asset:')) {
     const id = p.slice('asset:'.length);
     return `/api/assets/${id}/thumbnail`;
   }
   return '';
+}
+
+function onThumbError(item: Record<string, unknown>) {
+  const p = String(item.path || '');
+  if (!p) return;
+  if (props.acceptKind === 'image' && !thumbRetryFile.value[p] && p.startsWith('asset:')) {
+    thumbRetryFile.value = { ...thumbRetryFile.value, [p]: true };
+    return;
+  }
+  markThumbFailed(item);
 }
 
 function emitPickFromRecent(item: Record<string, unknown>) {

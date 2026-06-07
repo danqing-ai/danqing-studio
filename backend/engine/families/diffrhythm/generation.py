@@ -108,23 +108,21 @@ def resolve_vocal_language(lyrics: str, vocal_language: str) -> str:
 
 
 def normalize_waveform(wf: np.ndarray) -> np.ndarray:
+    """Light post-decode cleanup — upstream writes decoder output without loudness normalization."""
     if wf.ndim == 2:
         wf = wf - np.mean(wf, axis=0, keepdims=True)
     else:
         wf = wf - float(np.mean(wf))
     peak = float(np.abs(wf).max())
     rms = float(np.sqrt(np.mean(wf**2)))
-    if peak < 1e-5 or rms < 1e-6:
+    if peak < 0.02 or rms < 0.005:
         raise RuntimeError(
-            f"DiffRhythm 2 decode produced near-silent audio (peak={peak:.2e}, rms={rms:.2e})"
+            f"DiffRhythm 2 decode produced near-silent audio (peak={peak:.4f}, rms={rms:.4f}). "
+            "Check BigVGAN decoder weights."
         )
     if peak > 1.0:
         wf = wf / peak
-    target_amp = 10.0 ** (-1.0 / 20.0)
-    peak = float(np.abs(wf).max())
-    if peak > 1e-8:
-        wf = wf * (target_amp / peak)
-    return wf
+    return wf.astype(np.float32)
 
 
 def latent_cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
@@ -163,13 +161,22 @@ def diffusion_retry_seed(base_seed: int, attempt: int) -> int:
 def resolve_dit_bundle(bundle_root: Path) -> Path:
     """Resolve DiffRhythm 2 CFM checkpoint directory (``model.safetensors`` + ``config.json``)."""
     root = Path(bundle_root)
-    candidates = [root, root / "diffrhythm-v2", root / "diffrhythm2"]
+    candidates = [
+        root,
+        root / "diffrhythm-v2",
+        root / "diffrhythm2",
+        root / "ASLP-lab" / "DiffRhythm2",
+    ]
     for candidate in candidates:
-        if (candidate / "model.safetensors").is_file():
+        if (candidate / "model.safetensors").is_file() and (candidate / "config.json").is_file():
             return candidate
+    for ckpt in sorted(root.rglob("model.safetensors")):
+        parent = ckpt.parent
+        if (parent / "config.json").is_file():
+            return parent
     raise RuntimeError(
-        f"No DiffRhythm 2 checkpoint (model.safetensors) under {root}. "
-        "Install ASLP-lab/DiffRhythm2 weights at bundle root or diffrhythm-v2/."
+        f"No DiffRhythm 2 checkpoint (model.safetensors + config.json) under {root}. "
+        "Install ASLP-lab/DiffRhythm2 weights at bundle root or nested org/repo folder."
     )
 
 
@@ -220,7 +227,7 @@ def create_diffrhythm_generator(ctx: Any, bundle_root: Path) -> _DiffRhythmGener
 
         return DiffRhythmCudaGenerator(ctx, bundle_root)
     raise RuntimeError(
-        f"DiffRhythm 2 requires cuda runtime (got {backend!r})"
+        f"DiffRhythm 2 requires mlx or cuda runtime (got {backend!r})"
     )
 
 

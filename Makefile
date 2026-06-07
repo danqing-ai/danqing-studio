@@ -1,8 +1,6 @@
 .PHONY: help clean lint dev start stop test test-integration \
-	frontend-install frontend-dev frontend-build frontend-typecheck \
-	bench-setup bench-src bench-mflux bench-mflux-case bench-diffusers bench-diffusers-case bench-sanity bench-sanity-case \
-	bench-audio-sanity bench-audio-sanity-lm \
-	bench-wan-sanity bench-wan-baseline \
+	frontend-install frontend-dev frontend-build frontend-typecheck frontend-canvas-unit \
+	bench-setup bench-download-judge bench-eval bench-eval-smoke bench-eval-case bench-eval-calibrate \
 	check-consistency check-models-registry-contracts check-ep-boundary check-theme-legacy check-ui-compat check-engine-rules check-engine-imports check-engine-family-layout check-engine-family-primitives check-engine-attention-paths check-engine-sdpa-paths check-engine-rope-paths check-engine-modulation-paths check-frontend-governance check-weight-parity check-engine-governance verify-engine-stack \
 	sync-models-registry \
 	strip-el-tokens test-engine-unit \
@@ -23,7 +21,6 @@ BENCH_PY := tests/benchmark/venv/bin/python3
 BENCH_PIP := tests/benchmark/venv/bin/pip
 BENCH_BIN := tests/benchmark/venv/bin
 BENCH_OUT := tests/benchmark/outputs
-SRC_IMG := $(BENCH_OUT)/rewrite_src.png
 OUT_DIR := $(CURDIR)/out
 
 # Release packaging (see scripts/out_paths.py)
@@ -42,67 +39,30 @@ BENCH_PYTHON ?= $(shell command -v python3.11 >/dev/null 2>&1 && echo python3.11
 
 bench-setup:
 	$(BENCH_PYTHON) -m venv tests/benchmark/venv
-	$(BENCH_PIP) install 'mflux>=0.15.0' 'transformers>=5.0,<6' 'huggingface-hub>=1.1.6,<2.0'
-	@echo "Optional video deps: pip install -r tests/benchmark/requirements.txt (LTX git packages)"
+	$(BENCH_PIP) install -r tests/benchmark/requirements.txt
+	@echo "Benchmark venv ready. Run: make bench-download-judge (ModelScope) then make bench-eval-smoke"
 
-$(SRC_IMG):
-	@mkdir -p $(BENCH_OUT)
-	$(PYTHON) $(CURDIR)/bin/danqing-generate \
-		--model z-image-turbo \
-		--prompt "a simple landscape" --seed 1 --steps 4 \
-		--size 256x256 --output $(SRC_IMG)
+bench-download-judge:
+	$(PYTHON) -m tests.benchmark download-judge
 
-bench-src: $(SRC_IMG)
+bench-download-judge-force:
+	$(PYTHON) -m tests.benchmark download-judge --force
 
-bench-mflux: $(SRC_IMG)
-	$(PYTHON) -m tests.benchmark mflux --all
+bench-eval:
+	$(BENCH_PY) -m tests.benchmark eval --all --profile full
 
-bench-mflux-case: $(SRC_IMG)
+bench-eval-smoke:
+	$(BENCH_PY) -m tests.benchmark eval --all --profile smoke
+
+bench-eval-case:
 	@if [ -z "$(ID)" ]; then \
-		echo "Usage: make bench-mflux-case ID=<case-id>"; \
+		echo "Usage: make bench-eval-case ID=<model>:<prompt>:<action>"; \
 		exit 2; \
 	fi
-	$(PYTHON) -m tests.benchmark mflux --case $(ID)
+	$(BENCH_PY) -m tests.benchmark eval --case $(ID)
 
-bench-diffusers: $(SRC_IMG)
-	$(PYTHON) -m tests.benchmark diffusers --all
-
-bench-diffusers-case: $(SRC_IMG)
-	@if [ -z "$(ID)" ]; then \
-		echo "Usage: make bench-diffusers-case ID=<case-id>"; \
-		exit 2; \
-	fi
-	$(PYTHON) -m tests.benchmark diffusers --case $(ID)
-
-bench-sanity:
-	$(PYTHON) -m tests.benchmark sanity --all
-
-bench-sanity-case:
-	@if [ -z "$(ID)" ]; then \
-		echo "Usage: make bench-sanity-case ID=<case-id>"; \
-		exit 2; \
-	fi
-	$(PYTHON) -m tests.benchmark sanity --case $(ID)
-
-bench-audio-sanity:
-	$(PYTHON) -m tests.benchmark sanity --case ace-step-xl-sft-sanity
-	$(PYTHON) -m tests.benchmark sanity --case ace-step-xl-sft-inspiration-lm
-	$(PYTHON) -m tests.benchmark sanity --case ace-step-xl-sft-cover-sanity
-
-bench-audio-sanity-ace-step:
-	$(PYTHON) -m tests.benchmark sanity --case ace-step-xl-sft-sanity
-	$(PYTHON) -m tests.benchmark sanity --case ace-step-xl-sft-sanity-lm
-	$(PYTHON) -m tests.benchmark sanity --case ace-step-xl-sft-inspiration-lm
-	$(PYTHON) -m tests.benchmark sanity --case ace-step-xl-sft-cover-sanity
-
-bench-audio-sanity-lm:
-	$(PYTHON) -m tests.benchmark sanity --case ace-step-xl-sft-sanity-lm
-
-bench-wan-sanity:
-	$(PYTHON) -m tests.benchmark sanity --case wan-2.2-ti2v-5b-sanity
-
-bench-wan-baseline:
-	$(PYTHON) -m tests.benchmark sanity --case wan-2.2-ti2v-5b-baseline
+bench-eval-calibrate:
+	$(BENCH_PY) -m tests.benchmark eval --all --profile full --calibrate
 
 # ============================================================================
 # Frontend
@@ -121,6 +81,9 @@ frontend-build: frontend-install
 
 frontend-typecheck: frontend-install
 	cd $(FRONTEND_DIR) && npm run typecheck
+
+frontend-canvas-unit: frontend-install
+	cd $(FRONTEND_DIR) && npm run canvas-unit
 
 # ============================================================================
 # Dev server
@@ -163,6 +126,9 @@ check-theme-legacy:
 
 check-ui-compat:
 	$(PYTHON) $(FRONTEND_GOV) --rule ui
+
+check-canvas-utils:
+	$(PYTHON) $(FRONTEND_GOV) --rule canvas
 
 strip-el-tokens:
 	$(PYTHON) scripts/strip_el_tokens.py
@@ -317,11 +283,9 @@ help:
 	@echo "DanQing Studio v4 — Makefile"
 	@echo ""
 	@echo "Benchmark:"
-	@echo "  bench-setup / bench-src / bench-mflux / bench-mflux-case"
-	@echo "  bench-diffusers / bench-diffusers-case"
-	@echo "  bench-sanity / bench-sanity-case / bench-audio-sanity"
+	@echo "  bench-setup / bench-download-judge / bench-eval / bench-eval-smoke / bench-eval-case"
 	@echo ""
-	@echo "Frontend:  frontend-install | frontend-dev | frontend-build | frontend-typecheck"
+	@echo "Frontend:  frontend-install | frontend-dev | frontend-build | frontend-typecheck | frontend-canvas-unit"
 	@echo "Dev:       dev | start | stop"
 	@echo "Desktop:   (deprecated — use Tauri desktop via pack-macos-desktop)"
 	@echo "Test:      test | test-integration"

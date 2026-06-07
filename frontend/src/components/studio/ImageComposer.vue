@@ -1,7 +1,11 @@
 <template>
-  <div class="image-composer studio-composer-shell dq-glass--panel">
+  <div
+    class="image-composer studio-composer-shell dq-glass--panel"
+    :class="{ 'image-composer--collapsed': collapsed }"
+  >
     <!-- Top: Title -->
     <DqInput
+      v-if="!collapsed"
       v-model="localTitle"
       size="small"
       :placeholder="$t('studio.workTitlePlaceholder')"
@@ -9,6 +13,7 @@
     />
 
     <!-- Middle: Prompt input -->
+    <div v-if="!collapsed" class="image-composer__prompt-block">
     <div class="image-composer__prompt-wrap">
       <DqInput
         v-model="localPrompt"
@@ -25,38 +30,76 @@
       <div class="image-composer__ref-area">
         <div v-if="referenceImage" class="image-composer__ref-pill">
           <img :src="referenceImage.previewUrl" alt="ref" />
+          <ComposerIconTip
+            v-if="referenceAssetId"
+            :content="$t('create.composerTip.reversePrompt')"
+          >
+            <DqIconButton
+              type="text"
+              size="xs"
+              :disabled="reversing"
+              :aria-label="$t('create.reversePrompt')"
+              @click="$emit('reverse-prompt')"
+            >
+              <DqIcon :size="10"><Refresh /></DqIcon>
+            </DqIconButton>
+          </ComposerIconTip>
+          <ComposerIconTip :content="$t('create.composerTip.removeRef')">
+            <DqIconButton
+              type="text"
+              size="xs"
+              :aria-label="$t('common.delete')"
+              @click="$emit('remove-reference')"
+            >
+              <DqIcon :size="10"><Close /></DqIcon>
+            </DqIconButton>
+          </ComposerIconTip>
+        </div>
+        <ComposerIconTip v-else :content="$t('create.composerTip.refImage')">
           <DqIconButton
             type="text"
             size="xs"
-            :label="$t('common.delete')"
-            @click="$emit('remove-reference')"
+            class="image-composer__ref-add"
+            :aria-label="$t('create.refImage')"
+            @click="$emit('pick-reference')"
           >
-            <DqIcon :size="10"><Close /></DqIcon>
+            <DqIcon :size="14"><Picture /></DqIcon>
           </DqIconButton>
-        </div>
-        <DqIconButton
-          v-else
-          type="text"
-          size="xs"
-          :label="$t('create.refImage')"
-          class="image-composer__ref-add"
-          @click="$emit('pick-reference')"
-        >
-          <DqIcon :size="14"><Picture /></DqIcon>
-        </DqIconButton>
+        </ComposerIconTip>
       </div>
 
       <!-- Bottom-right: Preset / Style picker -->
-      <div v-if="styles && Object.keys(styles).length > 0" class="image-composer__preset-area">
-        <DqDropdown trigger="click" size="small" @command="onStyleCommand">
+      <div class="image-composer__preset-area">
+        <ComposerIconTip
+          :content="localPrompt.trim() ? $t('create.composerTip.enhance') : $t('create.composerTip.enhanceEmpty')"
+        >
           <DqIconButton
+            class="image-composer__preset-area__enhance-btn"
             type="text"
             size="xs"
-            :label="$t('create.preset')"
-            class="image-composer__preset-btn"
+            :disabled="enhancing || !localPrompt.trim()"
+            :aria-label="$t('create.enhance')"
+            @click="onEnhanceClick"
           >
-            <DqIcon :size="14"><DocumentCopy /></DqIcon>
+            <DqIcon :size="12"><MagicStick /></DqIcon>
           </DqIconButton>
+        </ComposerIconTip>
+        <DqDropdown
+          v-if="styles && Object.keys(styles).length > 0"
+          trigger="click"
+          size="small"
+          @command="onStyleCommand"
+        >
+          <ComposerIconTip :content="$t('create.composerTip.preset')">
+            <DqIconButton
+              type="text"
+              size="xs"
+              class="image-composer__preset-btn"
+              :aria-label="$t('create.preset')"
+            >
+              <DqIcon :size="14"><DocumentCopy /></DqIcon>
+            </DqIconButton>
+          </ComposerIconTip>
           <template #dropdown>
             <DqDropdownMenu>
               <DqDropdownItem
@@ -70,6 +113,14 @@
           </template>
         </DqDropdown>
       </div>
+    </div>
+    <ComposerPromptApplyStrip
+      v-if="promptApplyPreview"
+      :preview="promptApplyPreview"
+      @replace="$emit('prompt-apply-replace')"
+      @append="$emit('prompt-apply-append')"
+      @dismiss="$emit('prompt-apply-dismiss')"
+    />
     </div>
 
     <!-- Toolbar -->
@@ -269,22 +320,59 @@
 
               <!-- ControlNet -->
               <div v-if="compatibleControlNets?.length" class="image-composer__advanced-row">
+                <p v-if="!controlNetRuntimeAvailable" class="image-composer__control-hint">
+                  {{ $t('studio.controlnetMlxOnly') }}
+                </p>
                 <div class="image-composer__field image-composer__field--full" style="flex-direction: column; align-items: flex-start; gap: 8px;">
                   <div style="display: flex; align-items: center; gap: 10px; width: 100%;">
                     <label>{{ $t('studio.controlNet') }}</label>
-                    <DqSelect v-model="localParams.controlnet" size="small" clearable :placeholder="$t('studio.noControlNet')" style="flex: 1; max-width: 300px;">
+                    <DqSelect
+                      v-model="localParams.controlnet"
+                      size="small"
+                      clearable
+                      :disabled="!controlNetRuntimeAvailable"
+                      :placeholder="$t('studio.noControlNet')"
+                      style="flex: 1; max-width: 300px;"
+                    >
                       <DqOption
                         v-for="n in compatibleControlNets"
                         :key="String(n.key)"
-                        :label="n.name || String(n.key)"
+                        :label="controlNetOptionLabel(n)"
                         :value="String(n.key)"
+                        :disabled="!controlNetReady(n)"
                       />
                     </DqSelect>
                   </div>
+                  <p v-if="localParams.controlnet" class="image-composer__control-hint">
+                    {{ controlNetGuideHint }}
+                  </p>
+                  <p
+                    v-if="localParams.controlnet && showCompanionLoraHint"
+                    class="image-composer__control-hint image-composer__control-hint--sub"
+                  >
+                    {{ $t('studio.controlnetCompanionLoraHint') }}
+                  </p>
                   <div v-if="localParams.controlnet" style="display: flex; align-items: center; gap: 10px; width: 100%;">
-                    <label style="min-width: 60px;">{{ $t('create.controlNetStrengthLabel') }}</label>
+                    <label style="min-width: 60px;">{{ controlNetStrengthLabel }}</label>
                     <DqSlider v-model="localParams.controlnet_strength" :min="0" :max="2" :step="0.05" style="flex: 1;" />
                     <span class="image-composer__field-val">{{ localParams.controlnet_strength }}</span>
+                  </div>
+                  <div v-if="localParams.controlnet" class="image-composer__control-image-row">
+                    <label>{{ $t('canvas.controlImage') }}</label>
+                    <div v-if="controlImage" class="image-composer__ref-pill image-composer__ref-pill--compact">
+                      <img :src="controlImage.previewUrl" alt="control" />
+                      <DqIconButton
+                        type="text"
+                        size="xs"
+                        :label="$t('common.delete')"
+                        @click="$emit('remove-control')"
+                      >
+                        <DqIcon :size="10"><Close /></DqIcon>
+                      </DqIconButton>
+                    </div>
+                    <DqButton v-else size="xs" type="secondary" @click="$emit('pick-control')">
+                      {{ $t('canvas.pickControlImage') }}
+                    </DqButton>
                   </div>
                 </div>
               </div>
@@ -306,7 +394,7 @@
     </StudioComposerAdvancedDrawer>
 
     <!-- Inline shortcut hint -->
-    <div class="image-composer__hint">
+    <div v-if="!collapsed" class="image-composer__hint">
       {{ shortcutHint }}
     </div>
   </div>
@@ -315,7 +403,16 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
 import StudioComposerAdvancedDrawer from './StudioComposerAdvancedDrawer.vue';
+import ComposerPromptApplyStrip from './ComposerPromptApplyStrip.vue';
+import ComposerIconTip from './ComposerIconTip.vue';
 import { useI18n } from 'vue-i18n';
+import {
+  applyControlNetRegistryDefaults,
+  controlNetDisplayName,
+  controlNetReady,
+  isCannyOrDepthControlNet,
+  isReduxControlNet,
+} from '@/composables/useStructuralGuide';
 import {
   Close,
   DocumentCopy,
@@ -324,6 +421,7 @@ import {
   Refresh,
   Tools,
 } from '@danqing/dq-shell';
+import { assetIdFromGalleryPath } from '@/utils/copilotHandoff';
 import { $tt } from '@/utils/i18n';
 import { img2imgUsesStrength, normalizeParamsDef } from '@/utils/registryParamSchema';
 
@@ -337,7 +435,7 @@ const props = defineProps<{
   canGenerate: boolean;
   modelOptions: Array<{ label: string; value: string; disabled?: boolean; commercialUseAllowed?: boolean }>;
   sizeOptions: Array<{ label: string; value: string; pixelLabel?: string }>;
-  styles: Record<string, { applies_to?: string[]; positive?: string; negative?: string; media_scope?: string }>;
+  styles: Record<string, { applies_to?: string[]; positive?: string; negative?: string; trigger_words?: string; media_scope?: string }>;
   params: {
     steps: number;
     guidance: number;
@@ -353,6 +451,7 @@ const props = defineProps<{
   hasCustomParams: boolean;
   showNegativePrompt: boolean;
   referenceImage: { previewUrl: string; path: string } | null;
+  controlImage?: { previewUrl: string; path: string } | null;
   /**
    * Optional mode selector. If provided, a segmented control is shown in the
    * toolbar for switching between text2img / img2img modes.
@@ -362,6 +461,11 @@ const props = defineProps<{
   currentModelConfig?: Record<string, any> | null;
   compatibleLoras?: Record<string, unknown>[];
   compatibleControlNets?: Record<string, unknown>[];
+  controlNetRuntimeAvailable?: boolean;
+  enhancing?: boolean;
+  reversing?: boolean;
+  collapsed?: boolean;
+  promptApplyPreview?: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -375,14 +479,68 @@ const emit = defineEmits<{
   (e: 'generate'): void;
   (e: 'pick-reference'): void;
   (e: 'remove-reference'): void;
+  (e: 'pick-control'): void;
+  (e: 'remove-control'): void;
   (e: 'model-change', value: string): void;
   (e: 'reset-defaults'): void;
+  (e: 'enhance', ctx?: { stylePositive?: string }): void;
+  (e: 'reverse-prompt'): void;
+  (e: 'prompt-apply-replace'): void;
+  (e: 'prompt-apply-append'): void;
+  (e: 'prompt-apply-dismiss'): void;
 }>();
 
 const { t: $t } = useI18n();
 
+const referenceAssetId = computed(() => {
+  if (!props.referenceImage?.path) return null;
+  return assetIdFromGalleryPath(props.referenceImage.path);
+});
+
+const localParams = computed({
+  get: () => props.params,
+  set: (v) => emit('update:params', v),
+});
+
+function controlNetOptionLabel(n: Record<string, unknown>): string {
+  const name = controlNetDisplayName(n);
+  return controlNetReady(n) ? name : `${name} (${$t('studio.controlnetNotInstalled')})`;
+}
+
+const controlNetGuideHint = computed(() => {
+  const key = String(localParams.value.controlnet || '').toLowerCase();
+  if (key.includes('fill')) return $t('studio.controlnetFillHint');
+  if (key.includes('depth')) return $t('studio.controlnetDepthHint');
+  if (key.includes('redux')) return $t('studio.controlnetReduxHint');
+  return $t('studio.controlnetBundleHint');
+});
+
+const controlNetStrengthLabel = computed(() => {
+  if (isReduxControlNet(String(localParams.value.controlnet || ''))) {
+    return $t('create.reduxStrengthLabel');
+  }
+  return $t('create.controlNetStrengthLabel');
+});
+
+const controlNetRuntimeAvailable = computed(
+  () => props.controlNetRuntimeAvailable !== false,
+);
+
+const showCompanionLoraHint = computed(() =>
+  isCannyOrDepthControlNet(String(localParams.value.controlnet || '')),
+);
+
+watch(
+  () => localParams.value.controlnet,
+  (key, prev) => {
+    if (!key || key === prev) return;
+    applyControlNetRegistryDefaults(String(key), props.compatibleControlNets, localParams.value);
+  },
+);
+
 const advancedOpen = ref(false);
 const selectedStyle = ref('');
+const lastStylePositive = ref('');
 
 const paramSchema = computed(() => normalizeParamsDef(props.currentModelConfig?.parameters));
 
@@ -433,11 +591,6 @@ const localBatchCount = computed({
   set: (v) => emit('update:batchCount', v),
 });
 
-const localParams = computed({
-  get: () => props.params,
-  set: (v) => emit('update:params', v),
-});
-
 function patchParams(patch: Partial<typeof props.params>) {
   Object.assign(props.params, patch);
 }
@@ -451,14 +604,28 @@ const shortcutHint = computed(() => {
   return isMac ? '⌘ + Enter ' + $t('create.sendShortcutHintMac') : 'Ctrl + Enter ' + $t('create.sendShortcutHintWin');
 });
 
+function onEnhanceClick() {
+  const style = lastStylePositive.value.trim();
+  emit('enhance', style ? { stylePositive: style } : undefined);
+}
+
 function onStyleChange(name: string) {
   if (!name || !props.styles[name]) return;
   const preset = props.styles[name];
   if (preset.positive) {
+    lastStylePositive.value = String(preset.positive);
     const current = localPrompt.value || '';
     localPrompt.value = current
       ? current + '\nStyle boost: ' + preset.positive
       : preset.positive;
+  }
+  if (preset.trigger_words) {
+    const tw = String(preset.trigger_words).trim();
+    if (tw) {
+      localPrompt.value = localPrompt.value
+        ? localPrompt.value + '\n' + tw
+        : tw;
+    }
   }
   if (preset.negative && props.showNegativePrompt) {
     const current = localParams.value.negative_prompt || '';
@@ -501,6 +668,11 @@ function onStyleCommand(command: string) {
   gap: 10px;
 }
 
+.image-composer--collapsed {
+  padding: 10px 16px 12px;
+  gap: 0;
+}
+
 /* Title */
 .image-composer__title {
   margin: 0;
@@ -512,6 +684,11 @@ function onStyleCommand(command: string) {
 }
 
 /* Prompt */
+.image-composer__prompt-block {
+  display: flex;
+  flex-direction: column;
+}
+
 .image-composer__prompt-wrap {
   position: relative;
   margin: 0;
@@ -567,6 +744,29 @@ function onStyleCommand(command: string) {
 
 .image-composer__ref-add:hover {
   opacity: 1;
+}
+
+.image-composer__control-image-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+.image-composer__ref-pill--compact img {
+  width: 32px;
+  height: 32px;
+}
+
+.image-composer__control-hint {
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--dq-color-text-tertiary);
+}
+
+.image-composer__control-hint--sub {
+  opacity: 0.85;
 }
 
 /* Preset picker inside textarea (bottom-right) */

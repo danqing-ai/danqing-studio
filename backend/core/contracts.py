@@ -41,8 +41,9 @@ class AdapterRef(BaseModel):
 
 class StructuralGuide(BaseModel):
     asset_id: str
+    model_id: str = ""
     type: Literal["canny", "depth", "pose", "redux"] = "canny"
-    weight: float = 1.0
+    weight: float = Field(0.8, ge=0.0, le=2.0)
 
 
 class StyleGuide(BaseModel):
@@ -190,8 +191,7 @@ class AudioGenerationRequest(BaseModel):
     guidance: Optional[float] = None
     seed: Optional[int] = None
     n: int = Field(2, ge=1, le=8)
-    simple_mode: bool = False  # advanced: force 5Hz LM inspiration (create_sample)
-    lm_expansion: Optional[str] = None  # auto | inspiration | format | off
+    lm_expansion: Optional[str] = None  # auto | format | off
     audio_format: str = "mp3"
     priority: Literal["normal", "high"] = "normal"
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -210,6 +210,94 @@ class AudioEditRequest(BaseModel):
     audio_format: str = "mp3"
     priority: Literal["normal", "high"] = "normal"
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+# ----- LLM / Chat -----
+
+
+class ChatMessage(BaseModel):
+    role: Literal["system", "user", "assistant"]
+    content: str
+
+
+class ChatCompletionRequest(BaseModel):
+    model: str = ""
+    messages: list[ChatMessage]
+    temperature: float = Field(0.7, ge=0.0, le=2.0)
+    max_tokens: Optional[int] = Field(512, ge=1, le=8192)
+    stream: bool = False
+    top_p: float = Field(1.0, ge=0.0, le=1.0)
+
+
+class ChatChoice(BaseModel):
+    index: int = 0
+    message: ChatMessage
+    finish_reason: Optional[str] = "stop"
+
+
+class ChatCompletionResponse(BaseModel):
+    id: str
+    created: int
+    model: str
+    choices: list[ChatChoice]
+    usage: dict[str, Any] = Field(default_factory=dict)
+
+
+class DeltaMessage(BaseModel):
+    role: Optional[str] = None
+    content: Optional[str] = None
+
+
+class ChatDeltaChoice(BaseModel):
+    index: int = 0
+    delta: DeltaMessage
+    finish_reason: Optional[str] = None
+
+
+class ChatCompletionChunk(BaseModel):
+    id: str
+    created: int
+    model: str
+    choices: list[ChatDeltaChoice]
+
+
+class EnhanceRequest(BaseModel):
+    prompt: str
+    style_positive: str = ""
+    style_negative: str = ""
+    target_action: str = ""
+    model_id: str = ""
+
+
+class EnhanceResponse(BaseModel):
+    enhanced_prompt: str
+
+
+class ImageToPromptRequest(BaseModel):
+    asset_id: str
+    prefer_vision: bool = True
+
+
+class ImageToPromptResponse(BaseModel):
+    prompt: str
+    vision_used: bool = False
+
+
+class DescribeNodeResponse(BaseModel):
+    """Canvas node note from vision model and/or text LLM metadata."""
+
+    note: str
+    vision_used: bool = False
+
+
+class VisualAnalyzeRequest(BaseModel):
+    asset_id: str
+    question: str = ""
+
+
+class VisualAnalyzeResponse(BaseModel):
+    answer: str
+    vision_used: bool = False
 
 
 # U+23 U+24 U+25 (video) --- de-later

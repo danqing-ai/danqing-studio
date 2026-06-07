@@ -35,6 +35,7 @@ const presetForm = reactive({
   name: '',
   positive: '',
   negative: '',
+  trigger_words: '',
   media_scope: 'image',
   applies_to: ['create'],
 });
@@ -90,6 +91,7 @@ const savePreset = async () => {
     await api.settings.savePreset(presetForm.name.trim(), {
       positive: presetForm.positive,
       negative: presetForm.negative,
+      trigger_words: presetForm.trigger_words,
       media_scope: presetForm.media_scope,
       applies_to: applies,
     });

@@ -2,11 +2,34 @@
 // @ts-nocheck
 defineProps<{
   params: Record<string, unknown>;
+  modelValue?: string;
+  modelOptions?: Array<{ label: string; value: string; disabled?: boolean; commercialUseAllowed?: boolean }>;
 }>();
 </script>
 
 <template>
-  <DqPrefPane class="studio-create-pref-pane studio-extend-pref">
+  <DqPrefPane class="studio-create-pref-pane studio-editor-drawer-pref-pane">
+    <DqPrefRow :label="$t('studio.model')">
+      <DqSelect :model-value="modelValue" @update:model-value="$emit('update:modelValue', $event)" size="small" style="width: 100%" :placeholder="$t('studio.selectModel')">
+        <DqOption
+          v-for="item in (modelOptions || [])"
+          :key="item.value"
+          :label="item.label"
+          :value="item.value"
+          :disabled="item.disabled"
+        >
+          <DqTag
+            v-if="item.commercialUseAllowed"
+            size="mini"
+            type="success"
+            class="studio-drawer-model-badge"
+          >
+            {{ $t('download.commercialUseBadge') }}
+          </DqTag>
+        </DqOption>
+      </DqSelect>
+    </DqPrefRow>
+
     <DqPrefRow :label="$t('create.extendDirections')">
       <DqCheckboxGroup v-model="params.extend_directions">
         <DqCheckbox label="top">{{ $t('create.extendTop') }}</DqCheckbox>

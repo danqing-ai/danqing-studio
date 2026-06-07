@@ -12,20 +12,18 @@ from backend.engine.common.mlx_runtime_fallback import load_weights_dict, run_ev
 from backend.engine.families.ace_step.constrained_generate import (
     ConstrainedGenerationConfig,
     create_constrained_processor,
-    generate_constrained_mlx,
+    validate_constrained_processor,
 )
+from backend.engine.families.ace_step.constrained_generate_mlx import generate_constrained_mlx
 from backend.engine.families.ace_step.lm_format import (
-    DEFAULT_LM_INSPIRED_INSTRUCTION,
     DEFAULT_LM_REWRITE_INSTRUCTION,
     LmFormatResult,
     build_lm_format_result,
-    ensure_vocal_lyrics_for_inspiration,
+    compact_vocal_lyrics_structure,
     format_sample_understand_config,
-    inspiration_understand_config,
     is_instrumental_lyrics,
     normalize_lyrics_body,
-    parse_inspiration_understand_output,
-    parse_lm_output,
+    parse_lm_understand_output,
     resolve_lm_dir,
     run_planner_codes_phase,
 )
@@ -73,7 +71,7 @@ def load_ace_step_lm_mlx(
 
 
 class AceStepLmFormatterMlx:
-    """Expand caption/lyrics via 5Hz LM on MLX."""
+    """Expand caption/lyrics via 5Hz LM on MLX (format_sample / Custom path only)."""
 
     def __init__(
         self,
@@ -81,13 +79,11 @@ class AceStepLmFormatterMlx:
         *,
         ctx: Any | None = None,
         quantize_bits: Optional[int] = None,
-        simple_mode: bool = False,
         max_duration: int = 600,
     ):
         self._lm_dir = Path(lm_dir)
         self._ctx = ctx
         self._quantize_bits = quantize_bits
-        self._simple_mode = simple_mode
         self._max_duration = max_duration
         self._model: Any = None
         self._tokenizer: Any = None
@@ -102,7 +98,6 @@ class AceStepLmFormatterMlx:
         ctx: Any | None = None,
         lm_dir: Optional[Path] = None,
         quantize_bits: Optional[int] = None,
-        simple_mode: bool = False,
         max_duration: int = 600,
     ) -> Optional["AceStepLmFormatterMlx"]:
         resolved = resolve_lm_dir(bundle_root, preferred=lm_dir)
@@ -112,7 +107,6 @@ class AceStepLmFormatterMlx:
             resolved,
             ctx=ctx,
             quantize_bits=quantize_bits,
-            simple_mode=simple_mode,
             max_duration=max_duration,
         )
 
@@ -140,9 +134,32 @@ class AceStepLmFormatterMlx:
             add_generation_prompt=True,
         )
 
+    def _ensure_processor(self) -> None:
+        """Rebuild processor if a stale cached formatter survived a hot reload."""
+        if self._tokenizer is None:
+            self.load()
+            return
+        if self._processor is None:
+            self._processor = create_constrained_processor(
+                self._tokenizer,
+                max_duration=self._max_duration,
+            )
+            return
+        try:
+            validate_constrained_processor(self._processor)
+        except RuntimeError:
+            logger.warning(
+                "ACE-Step LM constrained processor missing audio-code vocab; rebuilding"
+            )
+            self._processor = create_constrained_processor(
+                self._tokenizer,
+                max_duration=self._max_duration,
+            )
+
     def _generate(self, prompt: str, cfg: ConstrainedGenerationConfig) -> str:
         if self._model is None:
             self.load()
+        self._ensure_processor()
         output_text = generate_constrained_mlx(
             self._model,
             self._tokenizer,
@@ -155,10 +172,8 @@ class AceStepLmFormatterMlx:
         return output_text
 
     def _maybe_score_pmi(self, prompt: str, output_text: str) -> Any:
-        from backend.engine.families.ace_step.pmi_scoring import (
-            pmi_scoring_enabled,
-            score_lm_output_mlx,
-        )
+        from backend.engine.families.ace_step.pmi_scoring import pmi_scoring_enabled
+        from backend.engine.families.ace_step.pmi_scoring_mlx import score_lm_output_mlx
 
         if not pmi_scoring_enabled():
             return None
@@ -185,7 +200,7 @@ class AceStepLmFormatterMlx:
             self.load()
 
         caption_in = (caption or "").strip() or "NO USER INPUT"
-        lyrics_in = normalize_lyrics_body((lyrics or "").strip()) or "[Instrumental]"
+        lyrics_in = compact_vocal_lyrics_structure((lyrics or "").strip()) or "[Instrumental]"
         user_has_vocals = not is_instrumental_lyrics(lyrics_in)
         prompt = self._chat_prompt(
             DEFAULT_LM_REWRITE_INSTRUCTION,
@@ -215,7 +230,7 @@ class AceStepLmFormatterMlx:
                 metadata_only=user_has_vocals,
             ),
         )
-        meta, _parsed_lyrics = parse_inspiration_understand_output(
+        meta, _parsed_lyrics = parse_lm_understand_output(
             output_text,
             instrumental=not user_has_vocals,
         )
@@ -247,82 +262,6 @@ class AceStepLmFormatterMlx:
             caption_in[:60],
             result.caption[:80],
             result.bpm,
-            len(result.audio_code_indices),
-        )
-        return result
-
-    def create_sample(
-        self,
-        *,
-        query: str,
-        instrumental: bool = False,
-        vocal_language: str = "",
-        duration: Optional[float] = None,
-    ) -> LmFormatResult:
-        """Simple Mode: expand a short natural-language query into metadata + lyrics."""
-        if self._model is None:
-            self.load()
-
-        query_in = (query or "").strip() or "NO USER INPUT"
-        user_meta = None
-        if vocal_language and vocal_language.strip().lower() != "unknown":
-            user_meta = {"language": vocal_language.strip()}
-
-        if instrumental:
-            from backend.engine.families.ace_step.lm_format import build_inspiration_user_content
-
-            user_content = build_inspiration_user_content(
-                query_in,
-                instrumental=True,
-                vocal_language=vocal_language,
-            )
-            prompt = self._chat_prompt(DEFAULT_LM_INSPIRED_INSTRUCTION, user_content)
-            output_text = self._generate(
-                prompt,
-                inspiration_understand_config(duration=duration, user_metadata=user_meta),
-            )
-            meta, _lyrics = parse_inspiration_understand_output(
-                output_text,
-                instrumental=True,
-            )
-        else:
-            meta, _lyrics = ensure_vocal_lyrics_for_inspiration(
-                self._generate,
-                self._tokenizer,
-                self._chat_prompt,
-                query_in=query_in,
-                vocal_language=vocal_language,
-                duration=duration,
-                user_metadata=user_meta,
-            )
-
-        want_vocals = not instrumental
-        result = build_lm_format_result(
-            meta,
-            caption_in=query_in,
-            lyrics_in="",
-            duration=duration,
-            bpm=None,
-            keyscale="",
-            timesignature="",
-            language=vocal_language or "en",
-            want_vocals=want_vocals,
-        )
-        try:
-            result = run_planner_codes_phase(
-                generate_fn=self._generate,
-                tokenizer=self._tokenizer,
-                result=result,
-                duration_hint=duration,
-            )
-        except Exception as exc:
-            raise RuntimeError(
-                f"ACE-Step LM planner codes phase failed (MLX create_sample): {exc}"
-            ) from exc
-        logger.info(
-            "ACE-Step LM (MLX) create_sample: query=%r -> caption=%r (codes=%d)",
-            query_in[:60],
-            result.caption[:80],
             len(result.audio_code_indices),
         )
         return result

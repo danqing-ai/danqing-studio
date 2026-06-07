@@ -66,6 +66,7 @@
             'image_models',
             'video_models',
             'music_models',
+            'llm_models',
             'controlnets',
             'upscalers',
             'tools',
@@ -88,6 +89,7 @@
                 'image_models',
                 'video_models',
                 'music_models',
+                'llm_models',
                 'controlnets',
                 'upscalers',
                 'tools',
@@ -204,6 +206,12 @@
                     :source="modelCardSource(model)"
                   />
                 </div>
+
+                <ModelLlmActionBadges
+                  v-if="model.media === 'llm' || model.category === 'llm_models'"
+                  :media="model.media"
+                  :actions="model.actions"
+                />
 
                 <div
                   v-if="model.size || model.base_model"
@@ -425,7 +433,7 @@
             class="models-download-task"
           >
             <div class="models-download-task-head">
-              <span class="models-download-task-name">{{ item.name }}</span>
+              <span class="models-download-task-name">{{ formatDownloadDisplayName(item.name) }}</span>
               <div class="models-download-task-meta">
                 <span class="models-download-progress-text">
                   <span v-if="item.total_size > 0">
@@ -491,23 +499,25 @@ import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
 import { onBeforeRouteLeave } from 'vue-router';
 import { toast, confirm } from '@/utils/feedback';
 import { api } from '@/utils/api';
-import { $tt, $mn, $md } from '@/utils/i18n';
+import { $tt, $mn, $md, $mvn } from '@/utils/i18n';
 import { useRegistryStore } from '@/stores/registry';
-import { DQ_STORAGE, getItem, setItem } from '@/utils/storage';
+import { DQ_STORAGE, consumeStringDraft, getItem, setItem } from '@/utils/storage';
 import ModelLicenseBadges from '@/components/model/ModelLicenseBadges.vue';
 import ModelPickerFilters from '@/components/model/ModelPickerFilters.vue';
 import ModelsImportDialog from '@/components/models/ModelsImportDialog.vue';
 import ModelsCategoryNav from '@/components/models/ModelsCategoryNav.vue';
 import ModelCardVersions from '@/components/models/ModelCardVersions.vue';
+import ModelLlmActionBadges from '@/components/models/ModelLlmActionBadges.vue';
 import ModelVersionSourceBadge from '@/components/models/ModelVersionSourceBadge.vue';
 import { uniformDownloadSource } from '@/utils/modelVersionLayout';
+import { formatDownloadDisplayName } from '@/utils/registryLabel';
 import { useModelRegistryFilters } from '@/composables/useModelRegistryFilters';
 import { modelPassesRegistryFilters } from '@/utils/modelPickerFilters';
 
 /* ───── Types ───── */
 
 interface ModelVersion {
-  name: string;
+  name: string | { zh?: string; en?: string };
   size?: string;
   source?: string;
   source_type?: string;
@@ -515,6 +525,8 @@ interface ModelVersion {
 }
 
 interface ModelConfig {
+  media?: string;
+  actions?: Record<string, unknown>;
   name?: string | { zh?: string; en?: string };
   name_en?: string;
   description?: string | { zh?: string; en?: string };
@@ -605,6 +617,7 @@ const categoryPageIcon = computed(() => {
     image_models: 'PictureFilled',
     video_models: 'VideoCamera',
     music_models: 'Headset',
+    llm_models: 'Document',
     controlnets: 'Aim',
     upscalers: 'ZoomIn',
     tools: 'Tools',
@@ -619,6 +632,7 @@ const categoryTitleText = computed(() => {
     image_models: $tt('download.imageModels'),
     video_models: $tt('download.videoModels'),
     music_models: $tt('download.audioModels'),
+    llm_models: $tt('download.llmModels'),
     controlnets: $tt('download.controlNet'),
     upscalers: $tt('download.upscalers'),
     tools: $tt('download.tools'),
@@ -754,7 +768,7 @@ async function loadActiveDownloads() {
         task.status === 'failed'
       ) {
         activeDownloads.value[task.id] = {
-          name: task.filename || task.url,
+          name: formatDownloadDisplayName(task.filename || task.url || ''),
           progress: task.progress || 0,
           status: task.status,
           speed: '',
@@ -763,7 +777,10 @@ async function loadActiveDownloads() {
           downloaded_size: task.downloaded_size || 0,
         };
         if (task.status === 'running') {
-          connectProgressSSE(task.id, task.filename || task.url);
+          connectProgressSSE(
+            task.id,
+            formatDownloadDisplayName(task.filename || task.url || '')
+          );
         }
       }
     }
@@ -878,7 +895,7 @@ async function downloadVersion(
     const version = model.versions?.[versionKey];
     const data = (await api.models.install(model.id, { version: versionKey })) as any;
     const label = version
-      ? `${$mn(model, model.id)} ${version.name}`
+      ? $mvn(model.id, model, version)
       : `${$mn(model, model.id)} ${versionKey}`;
     connectProgressSSE(data.task_id, label, uiKey);
   } catch (e: any) {
@@ -906,8 +923,8 @@ async function quantizeVersion(model: ModelRow, versionKey: string) {
       to_version: versionKey,
     })) as any;
     const taskId = data.task_id;
-    const label = ver?.name
-      ? `${$mn(model, model.id)} ${ver.name}`
+    const label = ver
+      ? $mvn(model.id, model, ver)
       : `${$mn(model, model.id)} ${versionKey}`;
     connectConversionSSE(taskId, label, uiKey);
   } catch (e: any) {
@@ -922,7 +939,7 @@ async function deleteVersion(model: ModelRow, versionKey: string) {
     const version = model.versions?.[versionKey];
     await confirm(
       $tt('download.deleteConfirm', {
-        name: `${$mn(model, model.id)} ${version?.name || versionKey}`,
+        name: version ? $mvn(model.id, model, version) : `${$mn(model, model.id)} ${versionKey}`,
       }),
       $tt('download.deleteConfirmTitle'),
       {
@@ -935,7 +952,7 @@ async function deleteVersion(model: ModelRow, versionKey: string) {
     if (result.success) {
       toast.success(
         $tt('download.deletedMsg', {
-          name: `${$mn(model, model.id)} ${version?.name || versionKey}`,
+          name: version ? $mvn(model.id, model, version) : `${$mn(model, model.id)} ${versionKey}`,
         })
       );
     } else {
@@ -1306,6 +1323,10 @@ onBeforeRouteLeave(() => {
 /* ───── Lifecycle ───── */
 
 onMounted(() => {
+  const jumpCategory = consumeStringDraft(DQ_STORAGE.MODELS_CATEGORY);
+  if (jumpCategory) {
+    activeCategory.value = jumpCategory;
+  }
   loadModelRegistry();
   loadInstalled();
   loadDiskSpace();

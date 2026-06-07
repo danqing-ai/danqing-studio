@@ -341,20 +341,17 @@ def load_vae_weights_from_bundle(
     array_fn: Any | None = None,
 ) -> None:
     """Load VAE from bundle ``diffusion_pytorch_model.safetensors`` (no diffusers on MLX path)."""
-    import mlx.core as mx
-    from safetensors import safe_open
-
     st_path = Path(vae_dir) / "diffusion_pytorch_model.safetensors"
     if not st_path.is_file():
         raise RuntimeError(
             f"ACE-Step VAE weights not found: {st_path}. "
             "Expected diffusers Oobleck safetensors under bundle vae/."
         )
-    state_dict: dict[str, Any] = {}
-    # Checkpoint may be bfloat16; read via PyTorch bridge then cast to float32 numpy.
-    with safe_open(str(st_path), framework="pt", device="cpu") as handle:
-        for key in handle.keys():
-            state_dict[key] = handle.get_tensor(key).detach().cpu().float().numpy()
+    from backend.engine.families.ace_step.weights_mlx import _iter_safetensors_float32_numpy
+
+    state_dict: dict[str, Any] = {
+        key: arr for key, arr in _iter_safetensors_float32_numpy(str(st_path))
+    }
     weights = convert_vae_weights_from_state_dict(state_dict, array_fn=array_fn)
     mlx_vae.load_weights(weights)
     run_eval(eval_fn, mlx_vae.parameters())

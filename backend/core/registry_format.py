@@ -32,6 +32,24 @@ def parse_i18n_string_pair(
     return nz, ne, dz, de
 
 
+def resolve_registry_label(val: Any, fallback: str = "", *, locale: str = "zh") -> str:
+    """Pick zh/en string from registry name/description/version label."""
+    if val is None:
+        return fallback
+    if isinstance(val, dict):
+        loc = (locale or "zh").lower()
+        if loc.startswith("en"):
+            return str(val.get("en") or val.get("zh") or fallback)
+        return str(val.get("zh") or val.get("en") or fallback)
+    text = str(val).strip()
+    return text if text else fallback
+
+
+def registry_declares_action(actions: Any, action: str) -> bool:
+    """True when models_registry ``actions`` includes *action* (registry verb, not API alias)."""
+    return isinstance(actions, dict) and actions.get(action) is not None
+
+
 def api_action_frozenset(actions: Any, *, media: str) -> FrozenSet[str]:
     """调度器 / IImageEngine.supports 使用的 API 级动作名。"""
     if not isinstance(actions, dict):
@@ -50,6 +68,13 @@ def api_action_frozenset(actions: Any, *, media: str) -> FrozenSet[str]:
         if any(actions.get(k) is not None for k in ("cover", "repaint")):
             s.add("edit")
         return frozenset(s)
+    if media == "llm":
+        s: set[str] = set()
+        if actions.get("chat") is not None:
+            s.add("chat")
+        if actions.get("enhance") is not None:
+            s.add("enhance")
+        return frozenset(s)
     s = set()
     if actions.get("create") is not None:
         s.add("generate")
@@ -62,7 +87,7 @@ def api_action_frozenset(actions: Any, *, media: str) -> FrozenSet[str]:
 
 def media_from_record(raw: Dict[str, Any]) -> str:
     m = raw.get("media")
-    if m in ("image", "video", "audio"):
+    if m in ("image", "video", "audio", "llm"):
         return str(m)
     cat = str(raw.get("category") or "")
     return "video" if cat == "video_models" else "image"

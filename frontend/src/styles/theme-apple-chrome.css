@@ -14,7 +14,10 @@ html.dark .models-page__actions {
 /* —— Side / detail panels —— */
 
 
-html.dark .models-page .models-page__sidebar-card.studio-surface-card.dq-surface-card {
+html.dark .models-page .models-page__sidebar-card.studio-surface-card.dq-surface-card,
+html.dark .copilot-page .copilot-page__sidebar-card.studio-surface-card.dq-surface-card,
+html.dark .copilot-page .copilot-page__workspace-card.studio-surface-card.dq-surface-card,
+html.dark .copilot-page .copilot-page__cards-card.studio-surface-card.dq-surface-card {
   background: var(--dq-glass-grouped-bg);
   -webkit-backdrop-filter: var(--dq-glass-blur);
   backdrop-filter: var(--dq-glass-blur);
@@ -98,11 +101,13 @@ html.dark .settings-grouped-form--version-list .settings-list-row.is-selected {
 }
 
 /* —— Models: lists & panels —— */
-html.dark .models-page .dq-download-menu__item:hover {
+html.dark .models-page .dq-download-menu__item:hover,
+html.dark .copilot-page .dq-download-menu__item:hover {
   background-color: color-mix(in srgb, var(--dq-accent) 9%, transparent);
 }
 
-html.dark .models-page .dq-download-menu__item.is-active {
+html.dark .models-page .dq-download-menu__item.is-active,
+html.dark .copilot-page .dq-download-menu__item.is-active {
   background: color-mix(in srgb, var(--dq-accent) 14%, transparent);
   color: var(--dq-label-primary);
 }

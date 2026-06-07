@@ -165,10 +165,13 @@ class QwenImageTransformerCuda(TransformerBase):
             sample = sample[:, :target_seq_len, :]
 
         seq_len = sample.shape[1]
-        side = int(seq_len**0.5)
-        if side * side != seq_len:
-            raise RuntimeError(f"Qwen CUDA DiT output seq_len={seq_len} is not square.")
-        out_nhwc = sample.reshape(b, side, side, sample.shape[-1])
+        expected_seq_len = latent_h * latent_w
+        if seq_len != expected_seq_len:
+            raise RuntimeError(
+                f"Qwen CUDA DiT output seq_len={seq_len} does not match latent grid "
+                f"{latent_w}x{latent_h} ({expected_seq_len}) for {image_width}x{image_height}."
+            )
+        out_nhwc = sample.reshape(b, latent_h, latent_w, sample.shape[-1])
         return out_nhwc.permute(0, 3, 1, 2).to(dtype=lat.dtype)
 
 

@@ -78,13 +78,21 @@ import {
   Tools,
   Setting,
   Box,
+  Picture,
 } from '@danqing/dq-shell';
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
 /* ------------------------------------------------------------------ */
 
-type SectionId = 'general' | 'performance' | 'workspace' | 'integrations' | 'maintenance' | 'systeminfo';
+type SectionId =
+  | 'general'
+  | 'performance'
+  | 'studio'
+  | 'workspace'
+  | 'integrations'
+  | 'maintenance'
+  | 'systeminfo';
 
 interface NavItem {
   id: SectionId;
@@ -113,6 +121,7 @@ interface MonitorData {
 const navItems: NavItem[] = [
   { id: 'general', labelKey: 'settings.general', icon: Monitor },
   { id: 'performance', labelKey: 'settings.performance', icon: Monitor },
+  { id: 'studio', labelKey: 'settings.studio', icon: Picture },
   { id: 'workspace', labelKey: 'settings.workspace', icon: FolderChecked },
   { id: 'integrations', labelKey: 'settings.integrations', icon: Document },
   { id: 'maintenance', labelKey: 'settings.maintenance', icon: Tools },

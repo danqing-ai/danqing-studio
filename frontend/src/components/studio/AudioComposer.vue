@@ -1,7 +1,11 @@
 <template>
-  <div class="audio-composer studio-composer-shell dq-glass--panel">
+  <div
+    class="audio-composer studio-composer-shell dq-glass--panel"
+    :class="{ 'audio-composer--collapsed': collapsed }"
+  >
     <!-- Title -->
     <DqInput
+      v-if="!collapsed"
       v-model="localTitle"
       size="small"
       :placeholder="$tt('studio.workTitlePlaceholder')"
@@ -9,6 +13,7 @@
     />
 
     <!-- Prompt -->
+    <div v-if="!collapsed" class="audio-composer__prompt-block">
     <div class="audio-composer__prompt-wrap">
       <DqInput
         v-model="localPrompt"
@@ -22,34 +27,75 @@
       <!-- Reference / cover source inside textarea -->
       <div class="audio-composer__ref-area">
         <div v-if="referenceMedia" class="audio-composer__ref-pill">
+          <ComposerIconTip
+            :content="audioPlaying ? $t('create.composerTip.pauseRef') : $t('create.composerTip.playRef')"
+          >
+            <DqIconButton
+              type="text"
+              size="xs"
+              class="audio-composer__ref-play"
+              :aria-label="audioPlaying ? $tt('audio.pause') : $tt('audio.play')"
+              @click.stop="toggleAudioPlayback"
+            >
+              <DqIcon :size="10"><Play v-if="!audioPlaying" /><Pause v-else /></DqIcon>
+            </DqIconButton>
+          </ComposerIconTip>
           <span class="audio-composer__ref-label">{{ referenceMedia.label }}</span>
-          <DqIconButton type="text" size="xs" :label="$tt('common.delete')" @click="$emit('remove-reference')">
-            <DqIcon :size="10"><Close /></DqIcon>
-          </DqIconButton>
+          <ComposerIconTip :content="$t('create.composerTip.removeRef')">
+            <DqIconButton
+              type="text"
+              size="xs"
+              :aria-label="$tt('common.delete')"
+              @click="$emit('remove-reference')"
+            >
+              <DqIcon :size="10"><Close /></DqIcon>
+            </DqIconButton>
+          </ComposerIconTip>
         </div>
-        <DqIconButton
-          v-else-if="workMode === 'cover'"
-          type="text"
-          size="xs"
-          :label="$tt('audio.pickCoverSource')"
-          class="audio-composer__ref-add"
-          @click="$emit('pick-reference')"
-        >
-          <DqIcon :size="14"><Picture /></DqIcon>
-        </DqIconButton>
-      </div>
-
-      <!-- Preset / Style (prompt corner, not toolbar — avoids confusion with advanced params) -->
-      <div v-if="styles && Object.keys(styles).length > 0" class="audio-composer__preset-area">
-        <DqDropdown trigger="click" size="small" @command="onStyleCommand">
+        <ComposerIconTip v-else-if="workMode === 'cover'" :content="$t('create.composerTip.pickCoverSource')">
           <DqIconButton
             type="text"
             size="xs"
-            :label="$tt('create.preset')"
-            class="audio-composer__preset-btn"
+            class="audio-composer__ref-add"
+            :aria-label="$tt('audio.pickCoverSource')"
+            @click="$emit('pick-reference')"
           >
-            <DqIcon :size="14"><DocumentCopy /></DqIcon>
+            <DqIcon :size="14"><Picture /></DqIcon>
           </DqIconButton>
+        </ComposerIconTip>
+      </div>
+
+      <!-- Enhance brief + presets (prompt corner) -->
+      <div class="audio-composer__preset-area">
+        <ComposerIconTip
+          :content="localPrompt.trim() ? $t('create.composerTip.enhanceMusicBrief') : $t('create.composerTip.enhanceEmpty')"
+        >
+          <DqIconButton
+            type="text"
+            size="xs"
+            :disabled="briefEnhancing || !localPrompt.trim()"
+            :aria-label="$t('create.enhanceMusicBrief')"
+            @click="onEnhanceBriefClick"
+          >
+            <DqIcon :size="12"><MagicStick /></DqIcon>
+          </DqIconButton>
+        </ComposerIconTip>
+        <DqDropdown
+          v-if="styles && Object.keys(styles).length > 0"
+          trigger="click"
+          size="small"
+          @command="onStyleCommand"
+        >
+          <ComposerIconTip :content="$t('create.composerTip.preset')">
+            <DqIconButton
+              type="text"
+              size="xs"
+              class="audio-composer__preset-btn"
+              :aria-label="$tt('create.preset')"
+            >
+              <DqIcon :size="14"><DocumentCopy /></DqIcon>
+            </DqIconButton>
+          </ComposerIconTip>
           <template #dropdown>
             <DqDropdownMenu>
               <DqDropdownItem
@@ -64,27 +110,67 @@
         </DqDropdown>
       </div>
     </div>
+    <ComposerPromptApplyStrip
+      v-if="promptApplyPreview"
+      :preview="promptApplyPreview"
+      @replace="$emit('prompt-apply-replace')"
+      @append="$emit('prompt-apply-append')"
+      @dismiss="$emit('prompt-apply-dismiss')"
+    />
+    </div>
 
-    <!-- Lyrics: primary creative input (create mode only, not advanced params) -->
-    <div v-if="showLyrics && workMode === 'create'" class="audio-composer__lyrics-wrap">
+    <!-- Lyrics: primary creative input (create mode or cover with support) -->
+    <div v-if="showLyrics && (workMode === 'create' || supportsCoverLyrics)" class="audio-composer__lyrics-wrap">
       <div class="audio-composer__lyrics-head">
-        <span class="audio-composer__lyrics-label">{{ $tt('audio.lyrics') }}</span>
+        <span class="audio-composer__lyrics-label">
+          {{ workMode === 'cover' ? $tt('audio.coverLyricsLabel') : $tt('audio.lyrics') }}
+          <span v-if="lyricsRequired" class="audio-composer__lyrics-required" aria-hidden="true">*</span>
+        </span>
+        <ComposerIconTip
+          v-if="!localInstrumental"
+          :content="localPrompt.trim() ? $t('create.composerTip.generateLyrics') : $t('create.composerTip.lyricsEmpty')"
+        >
+          <DqIconButton
+            type="text"
+            size="xs"
+            :disabled="lyricsLoading || !localPrompt.trim()"
+            :aria-label="$t('audio.generateLyrics')"
+            @click="$emit('generate-lyrics')"
+          >
+            <DqIcon :size="12"><MagicStick /></DqIcon>
+          </DqIconButton>
+        </ComposerIconTip>
         <div class="audio-composer__inline-switch">
           <span>{{ $tt('audio.instrumental') }}</span>
-          <DqSwitch v-model="localParams.instrumental" size="small" />
+          <DqSwitch
+            v-model="localInstrumental"
+            size="small"
+            :disabled="!supportsInstrumental"
+          />
         </div>
       </div>
       <DqInput
-        v-if="!localParams.instrumental"
-        v-model="localParams.lyrics"
+        v-if="!localInstrumental"
+        v-model="localLyrics"
         type="textarea"
         :rows="4"
-        :placeholder="$tt('audio.lyricsPlaceholder')"
+        :placeholder="workMode === 'cover' ? $tt('audio.lyricsPlaceholder') : $tt('audio.lyricsPlaceholder')"
         resize="none"
         class="audio-composer__lyrics"
       />
+      <ComposerPromptApplyStrip
+        v-if="lyricsApplyPreview"
+        :preview="lyricsApplyPreview"
+        @replace="$emit('lyrics-apply-replace')"
+        @append="$emit('lyrics-apply-append')"
+        @dismiss="$emit('lyrics-apply-dismiss')"
+      />
       <p class="audio-composer__lyrics-hint">
-        {{ localParams.instrumental ? $tt('audio.lyricsPlaceholderInstrumental') : $tt('audio.lyricsHint') }}
+        {{
+          workMode === 'cover'
+            ? coverLyricsHintText
+            : lyricsHintText
+        }}
       </p>
     </div>
 
@@ -187,8 +273,8 @@
       @reset-defaults="$emit('reset-defaults')"
     >
       <div class="audio-composer__advanced-inner">
-              <!-- Steps & Guidance -->
-              <div v-if="stepsDef || guidanceDef" class="audio-composer__advanced-row">
+              <!-- Steps & Guidance (create mode only — not used for cover) -->
+              <div v-if="workMode !== 'cover' && (stepsDef || guidanceDef)" class="audio-composer__advanced-row">
                 <div v-if="stepsDef" class="audio-composer__field">
                   <label>{{ $tt('create.steps') }}</label>
                   <DqSlider
@@ -211,8 +297,8 @@
                 </div>
               </div>
 
-              <!-- Temperature, Top-K & Seed -->
-              <div class="audio-composer__advanced-row">
+              <!-- Temperature & Top-K (create mode only) -->
+              <div v-if="workMode !== 'cover' && (temperatureDef || topKDef)" class="audio-composer__advanced-row">
                 <div v-if="temperatureDef" class="audio-composer__field">
                   <label>{{ $tt('create.temperature') }}</label>
                   <DqSlider
@@ -233,6 +319,10 @@
                   />
                   <span class="audio-composer__field-val">{{ localParams.top_k }}</span>
                 </div>
+              </div>
+
+              <!-- Seed -->
+              <div class="audio-composer__advanced-row">
                 <div class="audio-composer__field">
                   <label>{{ $tt('create.seed') }}</label>
                   <div class="audio-composer__seed-wrap">
@@ -256,15 +346,24 @@
 
               <!-- Cover source fidelity -->
               <div v-if="workMode === 'cover' && showCoverFidelity" class="audio-composer__advanced-row">
-                <div class="audio-composer__field">
-                  <label>{{ $tt('audio.sourceFidelity') }}</label>
-                  <DqSlider
-                    v-model="localParams.source_fidelity"
-                    :min="0"
-                    :max="1"
-                    :step="0.05"
-                  />
-                  <span class="audio-composer__field-val">{{ localParams.source_fidelity }}</span>
+                <div class="audio-composer__field audio-composer__field--full">
+                  <label>{{ $tt('audio.coverFidelity') }}</label>
+                  <div class="audio-composer__fidelity-slider-wrap">
+                    <span class="audio-composer__fidelity-label audio-composer__fidelity-label--left">{{ $tt('audio.coverFidelityCreative') }}</span>
+                    <DqSlider
+                      v-model="localParams.source_fidelity"
+                      :min="0"
+                      :max="1"
+                      :step="0.05"
+                      class="audio-composer__fidelity-slider"
+                    />
+                    <span class="audio-composer__fidelity-label audio-composer__fidelity-label--right">{{ $tt('audio.coverFidelityStrict') }}</span>
+                  </div>
+                  <p class="audio-composer__fidelity-hint">{{
+                    localParams.source_fidelity <= 0.3 ? $tt('audio.coverFidelityHint') + ' (' + $tt('audio.coverFidelityCreative') + ')'
+                    : localParams.source_fidelity <= 0.7 ? $tt('audio.coverFidelityHint') + ' (' + $tt('audio.coverFidelityMid') + ')'
+                    : $tt('audio.coverFidelityHint')
+                  }}</p>
                 </div>
               </div>
 
@@ -283,7 +382,7 @@
               </div>
 
               <!-- Music params: BPM, Key, Time Signature -->
-              <div v-if="workMode === 'create' && (supportsBpm || supportsKeyScale || supportsTimeSignature)" class="audio-composer__advanced-row">
+              <div v-if="(workMode === 'create' || supportsCoverMusicParams) && (supportsBpm || supportsKeyScale || supportsTimeSignature)" class="audio-composer__advanced-row">
                 <div v-if="supportsBpm" class="audio-composer__field">
                   <label>{{ $tt('audio.bpm') }}</label>
                   <DqInput
@@ -314,7 +413,7 @@
               </div>
 
               <!-- Vocal type / language -->
-              <div v-if="workMode === 'create' && (supportsVocalType || supportsVocalLanguage)" class="audio-composer__advanced-row">
+              <div v-if="(workMode === 'create' || supportsCoverVocals) && (supportsVocalType || supportsVocalLanguage)" class="audio-composer__advanced-row">
                 <div v-if="supportsVocalLanguage" class="audio-composer__field">
                   <label>{{ $tt('audio.vocalLanguage') }}</label>
                   <DqSelect v-model="localParams.vocal_language" size="small" clearable :placeholder="$tt('audio.vocalLanguageAuto')">
@@ -336,16 +435,21 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
 import StudioComposerAdvancedDrawer from './StudioComposerAdvancedDrawer.vue';
+import ComposerPromptApplyStrip from './ComposerPromptApplyStrip.vue';
+import ComposerIconTip from './ComposerIconTip.vue';
 import { useI18n } from 'vue-i18n';
 import {
   Close,
   DocumentCopy,
   MagicStick,
   Picture,
+  Pause,
+  Play,
   Refresh,
   Tools,
 } from '@danqing/dq-shell';
 import { $tt } from '@/utils/i18n';
+import { isAudioLyricsRequired, audioLyricsRequiredHintKey } from '@/utils/audioLyrics';
 
 const props = defineProps<{
   modelValue: string;
@@ -359,7 +463,7 @@ const props = defineProps<{
   generateLabel: string;
   modelOptions: Array<{ label: string; value: string; disabled?: boolean; commercialUseAllowed?: boolean }>;
   durationOptions: Array<{ label: string; value: number }>;
-  styles: Record<string, { applies_to?: string[]; positive?: string; negative?: string; media_scope?: string }>;
+  styles: Record<string, { applies_to?: string[]; positive?: string; negative?: string; trigger_words?: string; media_scope?: string }>;
   params: Record<string, any>;
   hasCustomParams: boolean;
   showNegativePrompt: boolean;
@@ -368,6 +472,11 @@ const props = defineProps<{
   showCoverFidelity?: boolean;
   referenceMedia?: { type: string; previewUrl: string; label: string } | null;
   currentModelConfig?: Record<string, any> | null;
+  lyricsLoading?: boolean;
+  briefEnhancing?: boolean;
+  collapsed?: boolean;
+  promptApplyPreview?: string | null;
+  lyricsApplyPreview?: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -383,13 +492,41 @@ const emit = defineEmits<{
   (e: 'remove-reference'): void;
   (e: 'model-change', value: string): void;
   (e: 'reset-defaults'): void;
+  (e: 'generate-lyrics'): void;
+  (e: 'enhance-brief', ctx?: { stylePositive?: string }): void;
+  (e: 'prompt-apply-replace'): void;
+  (e: 'prompt-apply-append'): void;
+  (e: 'prompt-apply-dismiss'): void;
+  (e: 'lyrics-apply-replace'): void;
+  (e: 'lyrics-apply-append'): void;
+  (e: 'lyrics-apply-dismiss'): void;
 }>();
 
 const { t: $t } = useI18n();
 
 const advancedOpen = ref(false);
+const lastStylePositive = ref('');
 const seedInput = ref('');
 const bpmInput = ref('');
+const audioPlaying = ref(false);
+const audioEl = ref<HTMLAudioElement | null>(null);
+
+function toggleAudioPlayback() {
+  if (!props.referenceMedia?.previewUrl) return;
+  if (!audioEl.value) {
+    audioEl.value = new Audio(props.referenceMedia.previewUrl);
+    audioEl.value.addEventListener('ended', () => { audioPlaying.value = false; });
+    audioEl.value.addEventListener('pause', () => { audioPlaying.value = false; });
+    audioEl.value.addEventListener('play', () => { audioPlaying.value = true; });
+  }
+  if (audioPlaying.value) {
+    audioEl.value.pause();
+  } else {
+    audioEl.value.play().catch(() => {
+      audioPlaying.value = false;
+    });
+  }
+}
 
 function patchParams(patch: Record<string, unknown>) {
   emit('update:params', { ...props.params, ...patch });
@@ -433,6 +570,37 @@ const localBatchCount = computed({
 const localParams = computed({
   get: () => props.params,
   set: (v) => emit('update:params', v),
+});
+
+const localLyrics = computed({
+  get: () => String(props.params.lyrics || ''),
+  set: (v) => patchParams({ lyrics: v }),
+});
+
+const localInstrumental = computed({
+  get: () => !!props.params.instrumental,
+  set: (v) => patchParams({ instrumental: v }),
+});
+
+const supportsInstrumental = computed(() => {
+  const flag = props.currentModelConfig?.parameters?.supports_instrumental;
+  return flag !== false;
+});
+
+const lyricsRequired = computed(() =>
+  isAudioLyricsRequired(props.currentModelConfig, localInstrumental.value),
+);
+
+const lyricsHintText = computed(() => {
+  if (localInstrumental.value) return $tt('audio.lyricsPlaceholderInstrumental');
+  if (lyricsRequired.value) return $tt(audioLyricsRequiredHintKey(props.currentModelConfig));
+  return $tt('audio.lyricsHint');
+});
+
+const coverLyricsHintText = computed(() => {
+  if (localInstrumental.value) return $tt('audio.lyricsPlaceholderInstrumental');
+  if (lyricsRequired.value) return $tt(audioLyricsRequiredHintKey(props.currentModelConfig));
+  return $tt('audio.coverLyricsHint');
 });
 
 const promptPlaceholder = computed(() => {
@@ -485,13 +653,27 @@ function presetLabel(name: string, preset: Record<string, unknown>): string {
   return tag ? `${tag} ${display}` : display;
 }
 
+function onEnhanceBriefClick() {
+  const style = lastStylePositive.value.trim();
+  emit('enhance-brief', style ? { stylePositive: style } : undefined);
+}
+
 function onStyleCommand(command: string) {
   const preset = props.styles[command];
   if (!preset) return;
   if (preset.positive) {
+    lastStylePositive.value = String(preset.positive);
     localPrompt.value = localPrompt.value
       ? localPrompt.value + '\nStyle boost: ' + preset.positive
       : preset.positive;
+  }
+  if (preset.trigger_words) {
+    const tw = String(preset.trigger_words).trim();
+    if (tw) {
+      localPrompt.value = localPrompt.value
+        ? localPrompt.value + '\n' + tw
+        : tw;
+    }
   }
   if (preset.negative && props.showNegativePrompt) {
     patchParams({
@@ -534,6 +716,10 @@ const supportsKeyScale = computed(() => props.currentModelConfig?.parameters?.su
 const supportsTimeSignature = computed(() => props.currentModelConfig?.parameters?.supports_time_signature === true);
 const supportsVocalType = computed(() => props.currentModelConfig?.parameters?.supports_vocal_type === true);
 const supportsVocalLanguage = computed(() => props.currentModelConfig?.parameters?.supports_vocal_language === true);
+
+const supportsCoverLyrics = computed(() => props.currentModelConfig?.parameters?.cover_lyrics_support === true);
+const supportsCoverMusicParams = computed(() => props.currentModelConfig?.parameters?.cover_music_params_support === true);
+const supportsCoverVocals = computed(() => props.currentModelConfig?.parameters?.cover_lyrics_support === true);
 
 const musicalKeys = [
   'C Major', 'C# Major', 'D Major', 'D# Major', 'E Major', 'F Major', 'F# Major',
@@ -579,6 +765,11 @@ function onPromptKeydown(e: KeyboardEvent) {
   gap: 10px;
 }
 
+.audio-composer--collapsed {
+  padding: 10px 16px 12px;
+  gap: 0;
+}
+
 .audio-composer__title {
   margin: 0;
 }
@@ -586,6 +777,11 @@ function onPromptKeydown(e: KeyboardEvent) {
 .audio-composer__title :deep(.dq-input) {
   font-size: 13px;
   border-radius: var(--dq-radius-input);
+}
+
+.audio-composer__prompt-block {
+  display: flex;
+  flex-direction: column;
 }
 
 .audio-composer__prompt-wrap {
@@ -734,6 +930,11 @@ function onPromptKeydown(e: KeyboardEvent) {
   color: var(--dq-label-secondary);
 }
 
+.audio-composer__lyrics-required {
+  color: var(--dq-color-danger, #ff3b30);
+  margin-left: 2px;
+}
+
 .audio-composer__lyrics :deep(.dq-input--textarea) {
   border-radius: var(--dq-radius-group);
   font-size: 14px;
@@ -852,12 +1053,44 @@ function onPromptKeydown(e: KeyboardEvent) {
   width: 100%;
 }
 
+.audio-composer__field :deep(.dq-input),
+.audio-composer__field :deep(.dq-select) {
+  height: 28px;
+}
+
 .audio-composer__inline-switch {
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: 12px;
   color: var(--dq-label-secondary);
+}
+
+/* Cover fidelity slider */
+.audio-composer__fidelity-slider-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.audio-composer__fidelity-label {
+  font-size: 11px;
+  color: var(--dq-label-tertiary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.audio-composer__fidelity-slider {
+  flex: 1;
+  min-width: 0;
+}
+
+.audio-composer__fidelity-hint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--dq-label-tertiary);
+  line-height: 1.4;
 }
 
 </style>

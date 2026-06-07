@@ -8,6 +8,7 @@ from transformers import AutoTokenizer
 from transformers.generation.logits_process import LogitsProcessor
 import os
 from pathlib import Path
+import numpy as np
 import torch
 from backend.engine.families.ace_step.lm_constants import (
     VALID_LANGUAGES,
@@ -28,6 +29,62 @@ from backend.engine.families.ace_step.lm_constants import (
 # Audio Code Constants
 # ==============================================================================
 # MAX_AUDIO_CODE imported from lm_constants  # Maximum valid audio code value (codebook size = 64000)
+
+
+def _resolve_tokenizer_candidates(tokenizer: Any) -> list[Any]:
+    """mlx-lm wrappers may expose HF tokenizer as ``_tokenizer`` or ``tokenizer``."""
+    seen: set[int] = set()
+    out: list[Any] = []
+    for candidate in (
+        tokenizer,
+        getattr(tokenizer, "_tokenizer", None),
+        getattr(tokenizer, "tokenizer", None),
+    ):
+        if candidate is None:
+            continue
+        key = id(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(candidate)
+    return out
+
+
+def _iter_vocab_items(tokenizer: Any):
+    """Yield unique ``(token_text, token_id)`` pairs (mlx wrapper + HF may duplicate)."""
+    seen_ids: set[int] = set()
+    for candidate in _resolve_tokenizer_candidates(tokenizer):
+        get_vocab = getattr(candidate, "get_vocab", None)
+        if get_vocab is None:
+            continue
+        try:
+            vocab = get_vocab()
+        except Exception:
+            continue
+        for token_text, token_id in vocab.items():
+            tid = int(token_id)
+            if tid in seen_ids:
+                continue
+            seen_ids.add(tid)
+            yield token_text, tid
+
+
+def _apply_mask_to_scores(scores: np.ndarray, mask: np.ndarray) -> np.ndarray:
+    """Add a logits mask, aligning width to the model output if needed."""
+    if mask is None:
+        return scores
+    sv = int(scores.shape[-1])
+    mv = int(mask.shape[-1])
+    if sv == mv:
+        return scores + mask
+    if sv < mv:
+        return scores + mask[..., :sv]
+    pad = np.full(
+        (*mask.shape[:-1], sv - mv),
+        float("-inf"),
+        dtype=mask.dtype,
+    )
+    return scores + np.concatenate([mask, pad], axis=-1)
 
 
 # ==============================================================================
@@ -488,16 +545,23 @@ class MetadataConstrainedLogitsProcessor(LogitsProcessor):
                     self.minor_start_tokens.append(tokens[-1])
                     self.major_start_tokens.append(tokens[-1])  # "major" also starts with m
         
-        # Vocab size (mlx-lm TokenizerWrapper has no __len__; use vocab_size / get_vocab)
-        inner = getattr(self.tokenizer, "_tokenizer", self.tokenizer)
+        # Vocab size (mlx-lm TokenizerWrapper has no __len__; ACE-Step LM extends
+        # base Qwen3 vocab with <|audio_code_N|> tokens past inner.vocab_size).
         vocab_size = getattr(self.tokenizer, "vocab_size", None)
+        inner = _resolve_tokenizer_candidates(self.tokenizer)
+        inner_tok = inner[0] if inner else self.tokenizer
         if vocab_size is None:
-            vocab_size = getattr(inner, "vocab_size", None)
-        if vocab_size is None:
-            try:
-                vocab_size = len(inner)
-            except TypeError:
-                vocab_size = len(inner.get_vocab())
+            vocab_size = getattr(inner_tok, "vocab_size", None)
+        try:
+            vocab_ids = [token_id for _, token_id in _iter_vocab_items(self.tokenizer)]
+            if vocab_ids:
+                vocab_size = max(int(vocab_size or 0), max(vocab_ids) + 1)
+        except Exception:
+            if vocab_size is None:
+                try:
+                    vocab_size = len(inner)
+                except TypeError:
+                    vocab_size = 151936
         self.vocab_size = int(vocab_size)
 
         # Comma token for multi-genre support
@@ -546,31 +610,50 @@ class MetadataConstrainedLogitsProcessor(LogitsProcessor):
         import re
         audio_code_pattern = re.compile(r'^<\|audio_code_(\d+)\|>$')
         invalid_tokens_count = 0
-        
-        # Iterate through vocabulary to find audio code tokens
-        for token_id in range(self.vocab_size):
-            try:
-                token_text = self.tokenizer.decode([token_id])
+
+        try:
+            for token_text, token_id in _iter_vocab_items(self.tokenizer):
                 match = audio_code_pattern.match(token_text)
-                if match:
-                    # Extract code value from token text
-                    code_value = int(match.group(1))
-                    # Only add tokens with valid code values (0-63999)
-                    if 0 <= code_value <= MAX_AUDIO_CODE:
-                        self.audio_code_token_ids.add(token_id)
-                    else:
-                        invalid_tokens_count += 1
-                        if self.debug:
-                            logger.debug(f"Skipping audio code token {token_id} with invalid code value {code_value} (max: {MAX_AUDIO_CODE})")
-            except Exception:
-                continue
+                if not match:
+                    continue
+                code_value = int(match.group(1))
+                if 0 <= code_value <= MAX_AUDIO_CODE:
+                    self.audio_code_token_ids.add(int(token_id))
+                else:
+                    invalid_tokens_count += 1
+                    if self.debug:
+                        logger.debug(
+                            "Skipping audio code token %s with invalid code value %d (max: %d)",
+                            token_text,
+                            code_value,
+                            MAX_AUDIO_CODE,
+                        )
+        except Exception:
+            # Fallback: scan by token id (slow; may miss extended vocab if vocab_size wrong).
+            for token_id in range(self.vocab_size):
+                try:
+                    token_text = self.tokenizer.decode([token_id])
+                    match = audio_code_pattern.match(token_text)
+                    if match:
+                        code_value = int(match.group(1))
+                        if 0 <= code_value <= MAX_AUDIO_CODE:
+                            self.audio_code_token_ids.add(token_id)
+                        else:
+                            invalid_tokens_count += 1
+                except Exception:
+                    continue
         
         if invalid_tokens_count > 0:
             logger.debug(f"Found {invalid_tokens_count} audio code tokens with values outside valid range [0, {MAX_AUDIO_CODE}]")
         
         # Log warning if no valid tokens found (this would prevent code generation)
         if len(self.audio_code_token_ids) == 0:
-            logger.warning(f"No valid audio code tokens found in vocabulary (range [0, {MAX_AUDIO_CODE}]). Code generation may fail.")
+            logger.error(
+                "No valid audio code tokens found in vocabulary (range [0, %d], vocab_size=%d). "
+                "Codes generation will produce corrupted audio.",
+                MAX_AUDIO_CODE,
+                self.vocab_size,
+            )
         elif self.debug:
             logger.debug(f"Found {len(self.audio_code_token_ids)} valid audio code tokens (range [0, {MAX_AUDIO_CODE}])")
     

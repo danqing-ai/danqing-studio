@@ -1,5 +1,11 @@
 <template>
-  <StudioLayout class="studio-create-page" @scroll="onCanvasScroll">
+  <StudioLayout
+    class="studio-create-page"
+    :freeform="viewMode === 'canvas'"
+    :collapsible="viewMode === 'canvas'"
+    v-model:composer-collapsed="composerCollapsed"
+    @scroll="onCanvasScroll"
+  >
     <template #filters>
       <StudioGalleryFilters
         :filter-time="filterTime"
@@ -7,15 +13,19 @@
         :time-options="timeOptions"
         :model-options="allModelOptions"
         :selection-mode="selectionMode"
+        :view-mode="viewMode"
+        :supports-canvas="true"
         @update:filter-time="filterTime = $event"
         @update:filter-models="filterModels = $event"
         @refresh="refreshGallery"
         @toggle-selection-mode="toggleSelectionMode"
+        @update:view-mode="onViewModeChange"
       />
     </template>
 
     <template #canvas>
       <StudioCanvas
+        v-if="viewMode === 'grid'"
         :items="galleryItems"
         :active-tasks="activeImageTasks"
         :loading="galleryLoading"
@@ -33,6 +43,25 @@
         @select-all="selectAllLoaded"
         @batch-delete="batchDeleteSelected"
         @clear-selection="clearSelection"
+      />
+      <InfiniteCanvas
+        v-else
+        ref="infiniteCanvasRef"
+        :items="galleryItems"
+        media="image"
+        :editing-path="showEditorDrawer && editDrawerItem ? editDrawerItem.path : ''"
+        :mask-preview="canvasMaskPreview"
+        :extend-preview="canvasExtendPreview"
+        @use-as-reference="onCanvasUseAsRef"
+        @use-as-control="onCanvasUseAsControl"
+        @card-action="onCardAction"
+        @download="downloadItem"
+        @toggle-grid-view="() => onViewModeChange('grid')"
+        @node-selected="onCanvasNodeSelected"
+        @session-ready="onCanvasSessionReady"
+        @open-preview="onCanvasOpenPreview"
+        @composer-restore="onCanvasComposerRestore"
+        @overlay-cleared="onCanvasOverlayCleared"
       />
     </template>
 
@@ -52,17 +81,30 @@
         :has-custom-params="hasCustomParams"
         :show-negative-prompt="!!currentModelConfig?.parameters?.negative_prompt_support"
         :reference-image="referenceImage"
+        :control-image="controlImage"
         :mode="imageMode"
         :mode-options="imageModeOptions"
         :current-model-config="currentModelConfig"
         :compatible-loras="compatibleLoras"
         :compatible-control-nets="compatibleControlNets"
+        :control-net-runtime-available="controlNetHostRuntimeAvailable"
         @update:mode="onModeChange"
         @generate="startGeneration"
-        @pick-reference="showAssetPicker = true"
+        @pick-reference="openAssetPicker('reference')"
         @remove-reference="removeReferenceImage"
+        @pick-control="openAssetPicker('control')"
+        @remove-control="removeControlImage"
         @model-change="onModelVersionChange"
         @reset-defaults="resetToDefaults"
+        @enhance="onEnhancePrompt"
+        @reverse-prompt="onReversePromptFromReference"
+        :prompt-apply-preview="promptApplyPreview"
+        @prompt-apply-replace="onPromptApplyReplace"
+        @prompt-apply-append="onPromptApplyAppend"
+        @prompt-apply-dismiss="promptApply.clear()"
+        :enhancing="isEnhancing"
+        :reversing="isReversing"
+        :collapsed="viewMode === 'canvas' && composerCollapsed"
       />
     </template>
   </StudioLayout>
@@ -72,7 +114,7 @@
     <AssetPicker
       accept-kind="image"
       :recent-gallery="recentImages"
-      @pick="onReferencePick"
+      @pick="onAssetPickerPick"
     />
   </DqDialog>
 
@@ -94,7 +136,7 @@
   >
     <div v-if="editDrawerItem" class="studio-editor-drawer">
       <div v-if="editorMode === 'retouch'" class="studio-retouch-panel">
-        <DqPrefPane class="studio-create-pref-pane">
+        <DqPrefPane class="studio-create-pref-pane studio-editor-drawer-pref-pane">
           <DqPrefRow :label="$t('studio.model')">
             <DqSelect v-model="retouchModelVersion" size="small" style="width: 100%" :placeholder="$t('studio.selectModel')">
               <DqOption
@@ -117,12 +159,15 @@
           </DqPrefRow>
         </DqPrefPane>
 
+        <p class="studio-retouch-fill-hint">{{ $t('studio.retouchFillHint') }}</p>
+        <CreateFillEditParams :params="fillEditParams" />
         <div class="studio-retouch-editor-wrap">
           <ImageEditor
             ref="imageEditorRef"
             :src="getImageUrl(editDrawerItem)"
             mode="inpainting"
             :show-submit-button="false"
+            @mask-preview="onEditorMaskPreview"
           />
         </div>
         <DqButton type="primary" block class="studio-drawer-submit" @click="onEditorSubmit">
@@ -130,63 +175,38 @@
         </DqButton>
       </div>
       <div v-else-if="editorMode === 'extend'" class="studio-extend-panel">
-        <DqPrefPane class="studio-create-pref-pane">
-          <DqPrefRow :label="$t('studio.model')">
-            <DqSelect v-model="extendModelVersion" size="small" style="width: 100%" :placeholder="$t('studio.selectModel')">
-              <DqOption
-                v-for="item in extendModelOptions"
-                :key="item.value"
-                :label="item.label"
-                :value="item.value"
-                :disabled="item.disabled"
-              >
-                <DqTag
-                  v-if="item.commercialUseAllowed"
-                  size="mini"
-                  type="success"
-                  class="studio-drawer-model-badge"
-                >
-                  {{ $t('download.commercialUseBadge') }}
-                </DqTag>
-              </DqOption>
-            </DqSelect>
-          </DqPrefRow>
-        </DqPrefPane>
-        <CreateExtendParams :params="extendParams" />
+        <p class="studio-retouch-fill-hint">{{ $t('studio.extendFillHint') }}</p>
+        <CreateFillEditParams :params="fillEditParams" />
+        <CreateExtendParams
+          v-model="extendModelVersion"
+          :model-options="extendModelOptions"
+          :params="extendParams"
+        />
         <DqButton type="primary" block class="studio-drawer-submit" @click="onExtendSubmit">
           {{ $t('action.image.extend') }}
         </DqButton>
       </div>
       <div v-else-if="editorMode === 'upscale'" class="studio-upscale-panel">
-        <DqPrefPane class="studio-create-pref-pane">
-          <DqPrefRow :label="$t('studio.model')">
-            <DqSelect v-model="upscaleModelVersion" size="small" style="width: 100%" :placeholder="$t('studio.selectModel')">
-              <DqOption
-                v-for="item in upscaleModelOptions"
-                :key="item.value"
-                :label="item.label"
-                :value="item.value"
-                :disabled="item.disabled"
-              >
-                <DqTag
-                  v-if="item.commercialUseAllowed"
-                  size="mini"
-                  type="success"
-                  class="studio-drawer-model-badge"
-                >
-                  {{ $t('download.commercialUseBadge') }}
-                </DqTag>
-              </DqOption>
-            </DqSelect>
-          </DqPrefRow>
-        </DqPrefPane>
-        <CreateUpscaleParams :params="upscaleParams" media="image" />
+        <CreateUpscaleParams
+          v-model="upscaleModelVersion"
+          :model-options="upscaleModelOptions"
+          :params="upscaleParams"
+          media="image"
+        />
         <DqButton type="primary" block class="studio-drawer-submit" @click="onUpscaleSubmit">
           {{ $t('action.image.upscale') }}
         </DqButton>
       </div>
     </div>
   </DqDrawer>
+
+  <!-- Lineage Panel -->
+  <StudioLineagePanel
+    v-model:modelValue="showLineageDrawer"
+    :asset-id="lineageTargetAssetId"
+    :on-canvas-ids="canvasAssetIdsOnCanvas"
+    @focus-asset="onLineageFocusAsset"
+  />
 </template>
 
 <script setup lang="ts">
@@ -198,12 +218,16 @@ import { toast } from '@/utils/feedback';
 import { api, taskIdFromSubmitResponse } from '@/utils/api';
 import { $tt, $mn, $md, $mvn, $pn } from '@/utils/i18n';
 import { DQ_STORAGE, getItem, setItem } from '@/utils/storage';
+import { applyPromptDraft, consumePromptDraft } from '@/utils/promptApply';
+import { usePromptApplyOffer } from '@/composables/usePromptApplyOffer';
 import { useTasksStore } from '@/stores/tasks';
 import { useRegistryStore } from '@/stores/registry';
 import type { SystemInfo, GalleryItem, Task } from '@/types';
 import { applyDefaults, hasDeviation, strengthDefaultFromRegistry, strengthToSourceFidelity } from '@/utils/registryParamSchema';
 
 import { warnIfRiskyMemory } from '@/composables/memoryHint';
+import { useComposerLlm } from '@/composables/useComposerLlm';
+import { assetIdFromGalleryPath } from '@/utils/copilotHandoff';
 import { reconcileVersionPickerSelection } from '@/composables/useModelRegistryFilters';
 import { applyModelVersionFilters } from '@/utils/modelPickerFilters';
 import { previewDisplayCaption, truncateDisplayLabel } from '@/utils/assetDisplay';
@@ -215,9 +239,32 @@ import ImageComposer from '@/components/studio/ImageComposer.vue';
 import AssetPicker from '@/components/asset/AssetPicker.vue';
 import ImageEditor from '@/components/image/ImageEditor.vue';
 import CreateExtendParams from '@/components/create/CreateExtendParams.vue';
+import CreateFillEditParams from '@/components/create/CreateFillEditParams.vue';
 import CreateUpscaleParams from '@/components/create/CreateUpscaleParams.vue';
 import GalleryPreviewDialog from '@/components/gallery/GalleryPreviewDialog.vue';
+import StudioLineagePanel from '@/components/studio/StudioLineagePanel.vue';
+import InfiniteCanvas from '@/components/studio/InfiniteCanvas.vue';
+import { canvasAutoAddEnabled, useCanvasStore } from '@/composables/useCanvasStore';
+import { useComposerCollapse } from '@/composables/useComposerCollapse';
+import {
+  activateCanvasViewForResults,
+  maybeShowCanvasWorkspaceHint,
+} from '@/utils/canvasWorkspaceHint';
+import { previewUrlForGalleryItem } from '@/utils/canvasAssets';
 import { useStudioGallery } from '@/composables/useStudioGallery';
+import {
+  applyControlNetRegistryDefaults,
+  buildStructuralGuidePayload,
+  fillModelRegistryDefaultsPatch,
+  isFillControlNet,
+  isControlNetHostRuntimeAvailable,
+  isFluxStructuralBaseModel,
+  pickDefaultStructuralControlNet,
+  resolveControlAssetId,
+  useCompatibleControlNets,
+  validateFillEditPrompt,
+  validateStructuralGuideForCreate,
+} from '@/composables/useStructuralGuide';
 
 /* ------------------------------------------------------------------ */
 /*  Injected / External                                                */
@@ -285,22 +332,511 @@ const selectedModelVersion = ref('');
 const selectedSize = ref(getItem(DQ_STORAGE.IMAGE_LAST_SIZE) || '1024x1024');
 const batchCount = ref(1);
 const generating = ref(false);
+const infiniteCanvasRef = ref<InstanceType<typeof InfiniteCanvas> | null>(null);
+const pendingCanvasAssetIds = ref<string[]>([]);
+const imageCanvas = useCanvasStore('image');
+const canvasSelectedItem = ref<GalleryItem | null>(null);
+const { collapsed: composerCollapsed, setCollapsed: setComposerCollapsed } = useComposerCollapse('image');
+
+const savedViewMode = getItem(DQ_STORAGE.IMAGE_VIEW_MODE);
+const viewMode = ref<'grid' | 'canvas'>(
+  savedViewMode === 'canvas' || savedViewMode === 'grid' ? savedViewMode : 'grid'
+);
+
+watch(viewMode, (mode) => {
+  setItem(DQ_STORAGE.IMAGE_VIEW_MODE, mode);
+});
+
+function onViewModeChange(mode: 'grid' | 'canvas') {
+  if (viewMode.value === mode) return;
+  const batchPaths =
+    mode === 'canvas' && selectedPaths.value.size > 0
+      ? Array.from(selectedPaths.value)
+      : [];
+  viewMode.value = mode;
+  if (mode === 'canvas') {
+    clearSelection();
+    maybeShowCanvasWorkspaceHint();
+    const batchCount = batchPaths.length;
+    nextTick(() => {
+      syncCompositorOverlaysOnCanvasEnter();
+      persistComposerSnapshot();
+      if (batchCount > 0) {
+        addAssetPathsToCanvas(batchPaths, {
+          fit: true,
+          placement: 'center',
+          focusLast: false,
+        });
+        toast.success($tt('canvas.batchAdded', { n: batchCount }));
+      } else if (Object.keys(imageCanvas.items).length > 0) {
+        infiniteCanvasRef.value?.fitAll();
+      }
+    });
+  } else {
+    clearSelection();
+  }
+}
+
+function addAssetPathsToCanvas(
+  paths: string[],
+  opts?: {
+    fit?: boolean;
+    placement?: 'staging' | 'center';
+    focusLast?: boolean;
+  }
+) {
+  if (!paths.length) return;
+  if (viewMode.value === 'canvas' && infiniteCanvasRef.value) {
+    infiniteCanvasRef.value.addPathsToCanvas(paths, {
+      fit: opts?.fit,
+      placement: opts?.placement ?? 'staging',
+      focusLast: opts?.focusLast ?? true,
+    });
+    return;
+  }
+  imageCanvas.addPathsFromGallery(paths, galleryItems.value, {
+    placement: opts?.placement ?? 'center',
+  });
+}
+
+function onCanvasSessionReady(_payload: { sessionId: string }) {
+  if (viewMode.value === 'canvas') {
+    nextTick(() => syncCompositorOverlaysOnCanvasEnter());
+  }
+}
+
+function onCanvasNodeSelected(item: GalleryItem | null) {
+  canvasSelectedItem.value = item;
+  if (!item) {
+    persistComposerSnapshot();
+    return;
+  }
+  setComposerCollapsed(false);
+  if (item.prompt) params.prompt = item.prompt;
+  if (item.title) params.title = item.title;
+  if (item.model) {
+    const raw = String(item.model);
+    if (raw.includes(':')) {
+      const [modelKey, versionKey] = raw.split(':', 2);
+      params.model = modelKey;
+      params.version = versionKey;
+      selectedModelVersion.value = `${modelKey}|${versionKey}`;
+    } else {
+      params.model = raw;
+      selectedModelVersion.value = raw;
+    }
+    loadCompatibleAdapters(String(params.model || ''));
+  }
+  persistComposerSnapshot();
+}
+
+function persistComposerSnapshot() {
+  imageCanvas.setComposerSnapshot({
+    prompt: String(params.prompt || ''),
+    title: String(params.title || ''),
+    model: String(params.model || ''),
+    version: String(params.version || ''),
+    negative_prompt: String(params.negative_prompt || ''),
+    seed: params.seed != null ? String(params.seed) : undefined,
+    mode: imageMode.value,
+    reference_path: referenceImage.value?.path || undefined,
+    control_path: controlImage.value?.path || undefined,
+    controlnet: params.controlnet ? String(params.controlnet) : undefined,
+    controlnet_strength:
+      params.controlnet != null ? String(params.controlnet_strength ?? 0.8) : undefined,
+    extend_directions: JSON.stringify(extendParams.extend_directions || []),
+    extend_pixels: String(extendParams.extend_pixels ?? 256),
+    editor_mode: editorMode.value,
+    edit_asset_path: editDrawerItem.value?.path || undefined,
+    retouch_model_version: retouchModelVersion.value || undefined,
+    extend_model_version: extendModelVersion.value || undefined,
+    upscale_model_version: upscaleModelVersion.value || undefined,
+    upscale_scale: String(upscaleParams.upscale_scale),
+    upscale_denoise: String(upscaleParams.upscale_denoise),
+    fill_edit_steps: String(fillEditParams.steps),
+    fill_edit_guidance: String(fillEditParams.guidance),
+  });
+}
+
+function restoreFillEditParamsFromSnapshot(snapshot: {
+  fill_edit_steps?: string;
+  fill_edit_guidance?: string;
+}) {
+  if (snapshot.fill_edit_steps != null) {
+    const steps = parseInt(snapshot.fill_edit_steps, 10);
+    if (!Number.isNaN(steps)) fillEditParams.steps = Math.min(50, Math.max(1, steps));
+  }
+  if (snapshot.fill_edit_guidance != null) {
+    const guidance = parseFloat(snapshot.fill_edit_guidance);
+    if (!Number.isNaN(guidance)) fillEditParams.guidance = Math.min(50, Math.max(1, guidance));
+  }
+}
+
+function restoreEditorParamsFromSnapshot(snapshot: {
+  editor_mode?: string;
+  edit_asset_path?: string;
+  retouch_model_version?: string;
+  extend_model_version?: string;
+  upscale_model_version?: string;
+  upscale_scale?: string;
+  upscale_denoise?: string;
+  fill_edit_steps?: string;
+  fill_edit_guidance?: string;
+}) {
+  if (
+    snapshot.editor_mode === 'retouch' ||
+    snapshot.editor_mode === 'extend' ||
+    snapshot.editor_mode === 'upscale'
+  ) {
+    editorMode.value = snapshot.editor_mode;
+  }
+  if (snapshot.edit_asset_path) {
+    const item = galleryItems.value.find((g) => g.path === snapshot.edit_asset_path);
+    if (item) editDrawerItem.value = item;
+  }
+  if (snapshot.retouch_model_version) {
+    retouchModelVersion.value = snapshot.retouch_model_version;
+  }
+  if (snapshot.extend_model_version) {
+    extendModelVersion.value = snapshot.extend_model_version;
+  }
+  if (snapshot.upscale_model_version) {
+    upscaleModelVersion.value = snapshot.upscale_model_version;
+  }
+  if (snapshot.upscale_scale != null) {
+    const scale = parseInt(snapshot.upscale_scale, 10);
+    if (!Number.isNaN(scale)) upscaleParams.upscale_scale = scale;
+  }
+  if (snapshot.upscale_denoise != null) {
+    const denoise = parseFloat(snapshot.upscale_denoise);
+    if (!Number.isNaN(denoise)) upscaleParams.upscale_denoise = denoise;
+  }
+  restoreFillEditParamsFromSnapshot(snapshot);
+}
+
+function restoreExtendParamsFromSnapshot(snapshot: {
+  extend_directions?: string;
+  extend_pixels?: string;
+}) {
+  if (snapshot.extend_directions) {
+    try {
+      const parsed = JSON.parse(snapshot.extend_directions);
+      if (Array.isArray(parsed)) {
+        extendParams.extend_directions = parsed.filter((d: string) =>
+          ['top', 'bottom', 'left', 'right'].includes(d)
+        );
+      }
+    } catch {
+      /* ignore malformed snapshot */
+    }
+  }
+  if (snapshot.extend_pixels != null) {
+    const px = parseInt(snapshot.extend_pixels, 10);
+    if (!Number.isNaN(px)) {
+      extendParams.extend_pixels = Math.min(2048, Math.max(64, px));
+    }
+  }
+}
+
+function onCanvasComposerRestore(snapshot: {
+  prompt?: string;
+  title?: string;
+  model?: string;
+  version?: string;
+  negative_prompt?: string;
+  seed?: string;
+  mode?: string;
+  reference_path?: string;
+  control_path?: string;
+  controlnet?: string;
+  controlnet_strength?: string;
+  extend_directions?: string;
+  extend_pixels?: string;
+  editor_mode?: string;
+  edit_asset_path?: string;
+  retouch_model_version?: string;
+  extend_model_version?: string;
+  upscale_model_version?: string;
+  upscale_scale?: string;
+  upscale_denoise?: string;
+  fill_edit_steps?: string;
+  fill_edit_guidance?: string;
+}) {
+  if (!snapshot || typeof snapshot !== 'object') return;
+  if (snapshot.prompt != null) params.prompt = snapshot.prompt;
+  if (snapshot.title != null) params.title = snapshot.title;
+  if (snapshot.negative_prompt != null) params.negative_prompt = snapshot.negative_prompt;
+  if (snapshot.seed != null) params.seed = snapshot.seed;
+  if (snapshot.mode === 'img2img' || snapshot.mode === 'text2img') {
+    imageMode.value = snapshot.mode;
+  }
+  if (snapshot.model) {
+    params.model = snapshot.model;
+    if (snapshot.version) {
+      params.version = snapshot.version;
+      selectedModelVersion.value = `${snapshot.model}|${snapshot.version}`;
+    } else {
+      selectedModelVersion.value = snapshot.model;
+    }
+    loadCompatibleAdapters(snapshot.model);
+  }
+  if (snapshot.reference_path) {
+    referenceImage.value = bindComposerImageFromOverlayPath(snapshot.reference_path);
+    imageMode.value = 'img2img';
+  }
+  if (snapshot.control_path) {
+    controlImage.value = bindComposerImageFromOverlayPath(snapshot.control_path);
+  }
+  if (snapshot.controlnet) {
+    params.controlnet = snapshot.controlnet;
+    const s = parseFloat(String(snapshot.controlnet_strength ?? ''));
+    if (!Number.isNaN(s)) params.controlnet_strength = s;
+  }
+  restoreExtendParamsFromSnapshot(snapshot);
+  restoreEditorParamsFromSnapshot(snapshot);
+  if (viewMode.value === 'canvas') {
+    nextTick(() => syncCompositorOverlaysOnCanvasEnter());
+  }
+}
+
+function canvasImageRelationType(): string {
+  if (showEditorDrawer.value) {
+    const m = editorMode.value;
+    if (m === 'retouch' || m === 'extend' || m === 'upscale') return m;
+  }
+  if (imageMode.value === 'img2img' && referenceImage.value) return 'img2img';
+  if (controlImage.value) return 'controlnet';
+  return 'create';
+}
+
+function buildCanvasMeta(extra: Record<string, unknown> = {}): Record<string, unknown> {
+  const meta: Record<string, unknown> = { ...extra };
+  const sid = imageCanvas.sessionId.value;
+  if (sid) meta.canvas_session_id = sid;
+  const parentPath =
+    (showEditorDrawer.value && editDrawerItem.value?.path) ||
+    canvasSelectedItem.value?.path ||
+    imageCanvas.activeAssetPath.value ||
+    '';
+  if (parentPath.startsWith('asset:')) {
+    meta.parent_asset_id = parentPath.slice('asset:'.length);
+    meta.relation_type = canvasImageRelationType();
+  }
+  return meta;
+}
+
+function shouldAutoAddToCanvas(): boolean {
+  return viewMode.value === 'canvas' || canvasAutoAddEnabled('image');
+}
 
 /* ------------------------------------------------------------------ */
 /*  Reference Image (new: replaces old edit mode tabs)                 */
 /* ------------------------------------------------------------------ */
 
 const referenceImage = ref<{ previewUrl: string; path: string; assetId?: string } | null>(null);
+const controlImage = ref<{ previewUrl: string; path: string; assetId?: string } | null>(null);
 const showAssetPicker = ref(false);
+const assetPickerMode = ref<'reference' | 'control'>('reference');
+
+function openAssetPicker(mode: 'reference' | 'control') {
+  assetPickerMode.value = mode;
+  showAssetPicker.value = true;
+}
+
+function assetIdFromPickPath(path: string): string | undefined {
+  return path.startsWith('asset:') ? path.slice('asset:'.length) : undefined;
+}
 
 function onReferencePick({ path, previewUrl }: { path: string; previewUrl: string }) {
-  referenceImage.value = { path, previewUrl };
+  referenceImage.value = { path, previewUrl, assetId: assetIdFromPickPath(path) };
   showAssetPicker.value = false;
   imageMode.value = 'img2img';
+  syncCanvasReferenceOverlay(path);
+}
+
+function onControlPick({ path, previewUrl }: { path: string; previewUrl: string }) {
+  controlImage.value = { path, previewUrl, assetId: assetIdFromPickPath(path) };
+  showAssetPicker.value = false;
+  syncCanvasControlOverlay(path);
+}
+
+function onAssetPickerPick(payload: { path: string; previewUrl: string }) {
+  if (assetPickerMode.value === 'control') onControlPick(payload);
+  else onReferencePick(payload);
+}
+
+function removeControlImage() {
+  controlImage.value = null;
+  syncCanvasControlOverlay(null);
+}
+
+function onCanvasUseAsRef(payload: { path: string; previewUrl: string; quiet?: boolean }) {
+  const { path, previewUrl } = payload;
+  referenceImage.value = { path, previewUrl, assetId: assetIdFromPickPath(path) };
+  imageMode.value = 'img2img';
+  syncCanvasReferenceOverlay(path);
+  if (!payload.quiet) toast.success($tt('canvas.referenceBound'));
+}
+
+function onCanvasUseAsControl(payload: { path: string; previewUrl: string; quiet?: boolean }) {
+  const { path, previewUrl } = payload;
+  if (!path.startsWith('asset:')) {
+    toast.warning($tt('canvas.controlImageAssetRequired'));
+    return;
+  }
+  onControlPick({ path, previewUrl });
+  syncCanvasControlOverlay(path);
+  if (imageMode.value === 'img2img') {
+    imageMode.value = 'text2img';
+    referenceImage.value = null;
+    syncCanvasReferenceOverlay(null);
+  }
+  if (!params.controlnet) {
+    const key = pickDefaultStructuralControlNet(compatibleControlNets.value);
+    if (key) {
+      params.controlnet = key;
+      applyControlNetRegistryDefaults(key, compatibleControlNets.value, params);
+    }
+  }
+  if (!params.controlnet) {
+    toast.warning($tt('canvas.controlNetRequired'));
+    return;
+  }
+  const guideCheck = structuralGuideValidation();
+  if (!guideCheck.ok && guideCheck.code === 'controlnet_not_ready') {
+    toast.warning($tt('studio.controlnetNotReady'));
+    return;
+  }
+  if (!payload.quiet) toast.success($tt('canvas.controlBound'));
 }
 
 function removeReferenceImage() {
   referenceImage.value = null;
+  syncCanvasReferenceOverlay(null);
+}
+
+function syncCanvasReferenceOverlay(path: string | null) {
+  if (!path) {
+    imageCanvas.setReferenceOverlay(null);
+    return;
+  }
+  const item = galleryItems.value.find((g) => g.path === path) ?? null;
+  imageCanvas.setReferenceOverlay(path, item ?? undefined);
+}
+
+function syncCanvasControlOverlay(path: string | null) {
+  if (!path) {
+    imageCanvas.setControlOverlay(null);
+    return;
+  }
+  const item = galleryItems.value.find((g) => g.path === path) ?? null;
+  imageCanvas.setControlOverlay(path, item ?? undefined);
+}
+
+function bindComposerImageFromOverlayPath(path: string): {
+  path: string;
+  previewUrl: string;
+  assetId?: string;
+} {
+  const item = galleryItems.value.find((g) => g.path === path);
+  return {
+    path,
+    previewUrl: item ? previewUrlForGalleryItem(item) : api.gallery.getImageUrl(path),
+    assetId: assetIdFromPickPath(path),
+  };
+}
+
+function restoreComposerFromCanvasOverlays() {
+  const ref = imageCanvas.overlays.reference;
+  if (!referenceImage.value && ref?.path) {
+    referenceImage.value = bindComposerImageFromOverlayPath(ref.path);
+    imageMode.value = 'img2img';
+  }
+  const ctrl = imageCanvas.overlays.control;
+  if (!controlImage.value && ctrl?.path) {
+    controlImage.value = bindComposerImageFromOverlayPath(ctrl.path);
+  }
+}
+
+function syncCompositorOverlaysOnCanvasEnter() {
+  restoreComposerFromCanvasOverlays();
+  syncCanvasReferenceOverlay(referenceImage.value?.path ?? null);
+  syncCanvasControlOverlay(controlImage.value?.path ?? null);
+}
+
+function onCanvasOverlayCleared(kind: import('@/types').CanvasOverlayKind) {
+  if (kind === 'reference') {
+    referenceImage.value = null;
+    if (imageMode.value === 'img2img' && !controlImage.value) {
+      imageMode.value = 'text2img';
+    }
+  } else {
+    controlImage.value = null;
+  }
+}
+
+watch(
+  () => referenceImage.value?.path ?? null,
+  (path) => {
+    if (viewMode.value === 'canvas') syncCanvasReferenceOverlay(path);
+    persistComposerSnapshot();
+  }
+);
+
+watch(
+  () => controlImage.value?.path ?? null,
+  (path) => {
+    if (viewMode.value === 'canvas') syncCanvasControlOverlay(path);
+    persistComposerSnapshot();
+  }
+);
+
+function onCanvasOpenPreview(item: GalleryItem) {
+  const idx = galleryItems.value.findIndex((g) => g.path === item.path);
+  if (idx >= 0) {
+    selectedImageIndex.value = idx;
+    previewVisible.value = true;
+  }
+}
+
+const { isEnhancing, isReversing, enhance: doEnhance, reversePrompt } = useComposerLlm();
+const promptApply = usePromptApplyOffer();
+const promptApplyPreview = computed(() => promptApply.pending.value?.result ?? null);
+
+async function onEnhancePrompt(ctx?: { stylePositive?: string }) {
+  const prompt = String(params.prompt || '').trim();
+  if (!prompt) return;
+  const enhanced = await doEnhance(
+    prompt,
+    ctx?.stylePositive,
+    'image_create',
+    params.model,
+    { quietSuccess: true },
+  );
+  if (enhanced) {
+    promptApply.offer(params.prompt, enhanced, (text) => { params.prompt = text; });
+  }
+}
+
+async function onReversePromptFromReference() {
+  const path = referenceImage.value?.path || '';
+  const assetId = referenceImage.value?.assetId || assetIdFromGalleryPath(path);
+  if (!assetId) {
+    toast.warning($tt('create.reverseNeedAsset'));
+    return;
+  }
+  const prompt = await reversePrompt(assetId, { quietSuccess: true });
+  if (prompt) {
+    promptApply.offer(params.prompt, prompt, (text) => { params.prompt = text; });
+  }
+}
+
+function onPromptApplyReplace() {
+  promptApply.applyReplace((text) => { params.prompt = text; });
+}
+
+function onPromptApplyAppend() {
+  promptApply.applyAppend(() => params.prompt, (text) => { params.prompt = text; });
 }
 
 /* ------------------------------------------------------------------ */
@@ -308,7 +844,19 @@ function removeReferenceImage() {
 /* ------------------------------------------------------------------ */
 
 const compatibleLoras = ref<Record<string, unknown>[]>([]);
-const compatibleControlNets = ref<Record<string, unknown>[]>([]);
+const {
+  compatibleControlNets,
+  loadCompatibleControlNets,
+  clearIfIncompatible: clearControlNetIfIncompatible,
+} = useCompatibleControlNets('create');
+
+const controlNetHostRuntimeAvailable = computed(() =>
+  isControlNetHostRuntimeAvailable(
+    systemInfo?.value?.controlnet_runtime_available,
+    compatibleControlNets.value,
+    systemInfo?.value,
+  ),
+);
 
 async function loadCompatibleAdapters(modelKey: string) {
   if (!modelKey) {
@@ -317,12 +865,13 @@ async function loadCompatibleAdapters(modelKey: string) {
     return;
   }
   try {
-    const [loras, controlNets] = await Promise.all([
-      api.settings.getCompatibleLoras(modelKey),
-      api.settings.getCompatibleControlNets(modelKey),
-    ]);
+    const loras = await api.settings.getCompatibleLoras(modelKey);
     compatibleLoras.value = (loras as Record<string, unknown>[]) || [];
-    compatibleControlNets.value = (controlNets as Record<string, unknown>[]) || [];
+    await loadCompatibleControlNets(modelKey);
+    clearControlNetIfIncompatible(params, () => {
+      controlImage.value = null;
+      syncCanvasControlOverlay(null);
+    });
   } catch (e) {
     console.error('Failed to load compatible adapters:', e);
     compatibleLoras.value = [];
@@ -359,9 +908,36 @@ const {
   clearSelection,
 } = useStudioGallery('image');
 
+async function addGalleryItemToCanvas(
+  item: GalleryItem,
+  opts?: { switchView?: boolean; fit?: boolean }
+) {
+  if (opts?.switchView !== false && viewMode.value !== 'canvas') {
+    onViewModeChange('canvas');
+    await nextTick();
+    await nextTick();
+  }
+  addAssetPathsToCanvas([item.path], {
+    placement: 'center',
+    focusLast: true,
+    fit: opts?.fit,
+  });
+  toast.success($tt('canvas.addedToCanvas'));
+}
+
 watch(() => params.model, (modelKey) => {
   if (modelKey) loadCompatibleAdapters(String(modelKey));
+  if (params.controlnet && !isFluxStructuralBaseModel(String(modelKey || ''))) {
+    params.controlnet = '';
+    controlImage.value = null;
+    syncCanvasControlOverlay(null);
+  }
 });
+
+watch(
+  () => [params.controlnet, params.controlnet_strength] as const,
+  () => persistComposerSnapshot(),
+);
 
 /* ------------------------------------------------------------------ */
 /*  Active Tasks (generating placeholders)                             */
@@ -504,10 +1080,25 @@ const selectedModelNotReady = computed(() => {
   return !versionStatus || !versionStatus.ready;
 });
 
+function structuralGuideValidation():
+  | { ok: true }
+  | { ok: false; code: import('@/composables/useStructuralGuide').StructuralGuideValidationCode } {
+  return validateStructuralGuideForCreate({
+    controlnet: String(params.controlnet || ''),
+    baseModel: String(params.model || ''),
+    hasReferenceImage: referenceImage.value != null,
+    hasControlImage: controlImage.value != null,
+    hostRuntimeAvailable: systemInfo?.value?.controlnet_runtime_available,
+    compatibleControlNets: compatibleControlNets.value,
+    systemInfo: systemInfo?.value,
+  });
+}
+
 const canGenerate = computed(() => {
   if (selectedModelNotReady.value) return false;
   if (!String(params.prompt || '').trim()) return false;
   if (imageMode.value === 'img2img' && !referenceImage.value) return false;
+  if (String(params.controlnet || '') && !structuralGuideValidation().ok) return false;
   return true;
 });
 
@@ -568,6 +1159,66 @@ function restoreModelForMode(mode: string) {
 const showEditorDrawer = ref(false);
 const editorMode = ref<'retouch' | 'extend' | 'upscale'>('retouch');
 const editDrawerItem = ref<GalleryItem | null>(null);
+const canvasMaskPreview = ref<import('@/types').CanvasMaskPreviewState | null>(null);
+
+function onEditorMaskPreview(
+  payload: { dataUrl: string; width: number; height: number } | null
+) {
+  if (
+    !showEditorDrawer.value ||
+    editorMode.value !== 'retouch' ||
+    viewMode.value !== 'canvas'
+  ) {
+    canvasMaskPreview.value = null;
+    return;
+  }
+  canvasMaskPreview.value = payload;
+}
+
+watch(showEditorDrawer, (open) => {
+  if (!open) canvasMaskPreview.value = null;
+});
+
+watch(editorMode, (mode) => {
+  if (mode !== 'retouch') canvasMaskPreview.value = null;
+});
+
+const canvasExtendPreview = computed((): import('@/types').CanvasExtendPreviewState | null => {
+  if (
+    !showEditorDrawer.value ||
+    editorMode.value !== 'extend' ||
+    viewMode.value !== 'canvas' ||
+    !editDrawerItem.value
+  ) {
+    return null;
+  }
+  const dirs = Array.isArray(extendParams.extend_directions)
+    ? extendParams.extend_directions.filter((d: string) =>
+        ['top', 'bottom', 'left', 'right'].includes(d)
+      )
+    : [];
+  if (!dirs.length) return null;
+  return {
+    directions: dirs as import('@/types').CanvasExtendDirection[],
+    pixels: Math.min(2048, Math.max(64, Number(extendParams.extend_pixels) || 256)),
+  };
+});
+const showLineageDrawer = ref(false);
+const lineageTargetAssetId = ref('');
+
+const canvasAssetIdsOnCanvas = computed(() =>
+  Object.keys(imageCanvas.items)
+    .filter((p) => p.startsWith('asset:'))
+    .map((p) => p.slice('asset:'.length))
+);
+
+async function onLineageFocusAsset(assetId: string) {
+  if (viewMode.value !== 'canvas') {
+    await activateCanvasViewForResults(viewMode, syncCompositorOverlaysOnCanvasEnter);
+  }
+  infiniteCanvasRef.value?.focusLineageAsset(assetId);
+}
+
 const editorDrawerTitle = computed(() => {
   const map: Record<string, string> = {
     retouch: $tt('action.image.retouch'),
@@ -782,13 +1433,28 @@ function attachStreamFromSubmit(submitRes: unknown) {
         };
       }
     },
+    onResult: (resultData: any) => {
+      const ids = (resultData?.asset_ids as string[] | undefined) || [];
+      if (ids.length > 0) pendingCanvasAssetIds.value = ids;
+    },
     onDone: async (doneData: any) => {
       generating.value = false;
       tasksStore.unregisterPageOwnedStream(tid);
       if (doneData.status === 'completed') {
         tasksStore.appendTaskLog(tid, $tt('studio.genComplete'), 'success');
-        toast.success($tt('studio.genComplete'));
-        setTimeout(() => loadGallery(true), 1000);
+        const ids = [...pendingCanvasAssetIds.value];
+        const willAutoAdd = shouldAutoAddToCanvas() && ids.length > 0;
+        if (!willAutoAdd) {
+          toast.success($tt('studio.genComplete'));
+        }
+        pendingCanvasAssetIds.value = [];
+        setTimeout(async () => {
+          await loadGallery(true);
+          if (willAutoAdd) {
+            await activateCanvasViewForResults(viewMode, syncCompositorOverlaysOnCanvasEnter);
+            addAssetPathsToCanvas(ids.map((id) => `asset:${id}`), { placement: 'staging' });
+          }
+        }, 1000);
       } else if (doneData.status === 'failed') {
         const updated = await api.gen.getMediaTask(tid) as any;
         tasksStore.appendTaskLog(
@@ -840,6 +1506,21 @@ const startGeneration = async () => {
     $tt,
   });
 
+  const guideValidation = structuralGuideValidation();
+  if (!guideValidation.ok) {
+    const guideToastKeys = {
+      fill_edit_only: 'studio.controlnetFillEditOnly',
+      flux_only: 'studio.controlnetFluxOnly',
+      no_img2img: 'studio.controlnetNoImg2img',
+      missing_control_image: 'canvas.controlImageRequired',
+      controlnet_not_ready: 'studio.controlnetNotReady',
+      runtime_unavailable: 'studio.controlnetMlxOnly',
+    };
+    const toastKey = guideToastKeys[guideValidation.code];
+    if (toastKey) toast.warning($tt(toastKey));
+    return;
+  }
+
   generating.value = true;
 
   try {
@@ -847,13 +1528,16 @@ const startGeneration = async () => {
     const seedNum = params.seed ? parseInt(String(params.seed), 10) : null;
     const adapters: Array<{ id: string; weight: number }> = [];
     if (params.lora) adapters.push({ id: String(params.lora), weight: Number(params.lora_scale) || 0.8 });
-    const meta: Record<string, unknown> = {};
+    persistComposerSnapshot();
+    const meta = buildCanvasMeta();
     if (params.scheduler) meta.scheduler = params.scheduler;
 
     let control_asset_id: string | null = null;
     if (params.controlnet) {
-      // controlnet image is not yet managed in this simplified composer; skip if not set
-      control_asset_id = null;
+      control_asset_id = resolveControlAssetId(controlImage.value, {
+        assetRequired: $tt('canvas.controlImageAssetRequired'),
+        required: $tt('canvas.controlImageRequired'),
+      });
     }
 
     let submitRes: unknown;
@@ -909,8 +1593,12 @@ const startGeneration = async () => {
         metadata: { ...meta },
         priority: 'normal',
       };
-      if (control_asset_id) {
-        genBody.structural_guide = { asset_id: control_asset_id, strength: Number(params.controlnet_strength) || 0.8 };
+      if (control_asset_id && params.controlnet) {
+        genBody.structural_guide = buildStructuralGuidePayload(
+          String(params.controlnet),
+          control_asset_id,
+          Number(params.controlnet_strength) || 0.8,
+        );
       }
       submitRes = await api.gen.createImageGeneration(genBody);
     }
@@ -1085,7 +1773,7 @@ const upscaleModelOptions = computed(() => {
 });
 const extendModelVersion = ref('');
 const extendModelOptions = computed(() => {
-  return allVersions.value
+  const rows = allVersions.value
     .filter((v) => {
       const acts = (v.actions as Record<string, unknown>) || {};
       return imageSupportsExtend(acts);
@@ -1095,15 +1783,50 @@ const extendModelOptions = computed(() => {
       value: `${v.modelKey}|${v.versionKey}`,
       disabled: !v.ready,
       commercialUseAllowed: v.commercialUseAllowed as boolean,
+      isFill: isFillControlNet(String(v.modelKey || '')),
     }));
+  rows.sort((a, b) => {
+    if (a.isFill !== b.isFill) return a.isFill ? -1 : 1;
+    if (a.disabled !== b.disabled) return a.disabled ? 1 : -1;
+    return a.label.localeCompare(b.label);
+  });
+  return rows;
 });
+
+const fillEditParams = reactive({
+  steps: 28,
+  guidance: 30,
+});
+
+function applyFillEditDefaults(modelVersion: string) {
+  const [modelKey] = String(modelVersion || '').split('|');
+  if (!modelKey) return;
+  const patch = fillModelRegistryDefaultsPatch(modelKey, modelRegistry.value);
+  if (patch.guidance != null) fillEditParams.guidance = patch.guidance;
+  if (patch.steps != null) fillEditParams.steps = patch.steps;
+}
+
+function isEditModelVersionReady(modelVersion: string): boolean {
+  const [modelKey, versionKey] = String(modelVersion || '').split('|');
+  if (!modelKey || !versionKey) return false;
+  const detailed = modelsDetailedStatus.value[modelKey];
+  return Boolean(detailed?.versions?.[versionKey]?.ready);
+}
+
 const extendParams = reactive({
   extend_directions: ['right'],
   extend_pixels: 256,
 });
+
+watch(
+  () => [extendParams.extend_directions, extendParams.extend_pixels],
+  () => persistComposerSnapshot(),
+  { deep: true }
+);
+
 const retouchModelVersion = ref('');
 const retouchModelOptions = computed(() => {
-  return allVersions.value
+  const rows = allVersions.value
     .filter((v) => {
       const acts = (v.actions as Record<string, unknown>) || {};
       return imageSupportsRetouch(acts);
@@ -1113,9 +1836,43 @@ const retouchModelOptions = computed(() => {
       value: `${v.modelKey}|${v.versionKey}`,
       disabled: !v.ready,
       commercialUseAllowed: v.commercialUseAllowed as boolean,
+      modelKey: String(v.modelKey || ''),
+      isFill: isFillControlNet(String(v.modelKey || '')),
     }));
+  rows.sort((a, b) => {
+    if (a.isFill !== b.isFill) return a.isFill ? -1 : 1;
+    if (a.disabled !== b.disabled) return a.disabled ? 1 : -1;
+    return a.label.localeCompare(b.label);
+  });
+  return rows;
 });
 const imageEditorRef = ref<any>(null);
+
+watch(retouchModelVersion, (value, prev) => {
+  if (!value || value === prev) return;
+  applyFillEditDefaults(value);
+});
+
+watch(extendModelVersion, (value, prev) => {
+  if (!value || value === prev) return;
+  applyFillEditDefaults(value);
+});
+
+watch(
+  () => [
+    retouchModelVersion.value,
+    extendModelVersion.value,
+    upscaleModelVersion.value,
+    upscaleParams.upscale_scale,
+    upscaleParams.upscale_denoise,
+    fillEditParams.steps,
+    fillEditParams.guidance,
+    editorMode.value,
+    editDrawerItem.value?.path,
+    showEditorDrawer.value,
+  ],
+  () => persistComposerSnapshot()
+);
 
 function onCardAction({ action, item }: { action: string; item: GalleryItem }) {
   switch (action) {
@@ -1149,32 +1906,46 @@ function onCardAction({ action, item }: { action: string; item: GalleryItem }) {
           const acts = (v.actions as Record<string, unknown>) || {};
           return `${v.modelKey}|${v.versionKey}` === currentKey && imageSupportsExtend(acts);
         });
-        if (currentSupportsExtend) {
+        if (currentSupportsExtend && isFillControlNet(currentKey.split('|')[0] || '')) {
           extendModelVersion.value = currentKey;
         } else {
           const first = extendModelOptions.value.find((o) => !o.disabled);
           extendModelVersion.value = first ? first.value : '';
         }
+        if (extendModelVersion.value) applyFillEditDefaults(extendModelVersion.value);
       } else if (action === 'retouch') {
         const currentKey = params.model && params.version ? `${params.model}|${params.version}` : '';
         const currentSupportsRetouch = allVersions.value.some((v) => {
           const acts = (v.actions as Record<string, unknown>) || {};
           return `${v.modelKey}|${v.versionKey}` === currentKey && imageSupportsRetouch(acts);
         });
-        if (currentSupportsRetouch) {
+        if (currentSupportsRetouch && isFillControlNet(currentKey.split('|')[0] || '')) {
           retouchModelVersion.value = currentKey;
         } else {
           const first = retouchModelOptions.value.find((o) => !o.disabled);
           retouchModelVersion.value = first ? first.value : '';
         }
+        if (retouchModelVersion.value) applyFillEditDefaults(retouchModelVersion.value);
+      }
+      if (viewMode.value === 'canvas') {
+        imageCanvas.placeStagingBeside(item.path, galleryItems.value);
       }
       showEditorDrawer.value = true;
+      break;
+    case 'add-to-canvas':
+      void addGalleryItemToCanvas(item, { fit: true });
       break;
     case 'download':
       downloadItem(item);
       break;
     case 'delete':
       deleteItem(item);
+      break;
+    case 'lineage':
+      lineageTargetAssetId.value = item.path.startsWith('asset:')
+        ? item.path.slice('asset:'.length)
+        : '';
+      showLineageDrawer.value = true;
       break;
   }
 }
@@ -1190,6 +1961,14 @@ function downloadItem(item: GalleryItem) {
 
 async function onEditorSubmit() {
   if (!editDrawerItem.value || !imageEditorRef.value) return;
+  if (!controlNetHostRuntimeAvailable.value) {
+    toast.warning($tt('studio.controlnetMlxOnly'));
+    return;
+  }
+  if (!validateFillEditPrompt(String(params.prompt || ''))) {
+    toast.warning($tt('studio.enterPrompt'));
+    return;
+  }
   try {
     const maskBlob = await imageEditorRef.value.getMaskBlob();
     if (!maskBlob) {
@@ -1218,6 +1997,14 @@ async function onEditorSubmit() {
       return;
     }
     const [modelKey, versionKey] = retouchModelVersion.value.split('|');
+    if (!isFillControlNet(modelKey)) {
+      toast.warning($tt('studio.retouchFillModelRequired'));
+      return;
+    }
+    if (!isEditModelVersionReady(retouchModelVersion.value)) {
+      toast.warning($tt('studio.modelNotReadyDesc', { name: modelKey, version: versionKey }));
+      return;
+    }
     const modelStr = versionKey ? `${modelKey}:${versionKey}` : modelKey;
     const seedNum = params.seed ? parseInt(String(params.seed), 10) : null;
     const adapters: Array<{ id: string; weight: number }> = [];
@@ -1229,17 +2016,14 @@ async function onEditorSubmit() {
       source_asset_id,
       mask_asset_id,
       title: String(params.title || '').trim(),
-      prompt: params.prompt,
+      prompt: String(params.prompt || '').trim(),
       negative_prompt: params.negative_prompt || '',
-      source_fidelity: strengthToSourceFidelity(
-        params.strength,
-        strengthDefaultFromRegistry(currentModelConfig.value?.parameters as Record<string, unknown> | undefined),
-      ),
       n: 1,
-      steps: params.steps,
+      steps: fillEditParams.steps,
+      guidance: fillEditParams.guidance,
       seed: seedNum,
       adapters,
-      metadata: {},
+      metadata: buildCanvasMeta(),
       priority: 'normal',
     });
     attachStreamFromSubmit(submitRes);
@@ -1252,6 +2036,14 @@ async function onEditorSubmit() {
 
 async function onExtendSubmit() {
   if (!editDrawerItem.value) return;
+  if (!controlNetHostRuntimeAvailable.value) {
+    toast.warning($tt('studio.controlnetMlxOnly'));
+    return;
+  }
+  if (!validateFillEditPrompt(String(params.prompt || ''))) {
+    toast.warning($tt('studio.enterPrompt'));
+    return;
+  }
   try {
     const dirs = Array.isArray(extendParams.extend_directions)
       ? extendParams.extend_directions.filter((d: string) => ['top', 'bottom', 'left', 'right'].includes(d))
@@ -1279,6 +2071,14 @@ async function onExtendSubmit() {
       return;
     }
     const [modelKey, versionKey] = extendModelVersion.value.split('|');
+    if (!isFillControlNet(modelKey)) {
+      toast.warning($tt('studio.extendFillModelRequired'));
+      return;
+    }
+    if (!isEditModelVersionReady(extendModelVersion.value)) {
+      toast.warning($tt('studio.modelNotReadyDesc', { name: modelKey, version: versionKey }));
+      return;
+    }
     const modelStr = versionKey ? `${modelKey}:${versionKey}` : modelKey;
     const seedNum = params.seed ? parseInt(String(params.seed), 10) : null;
     const adapters: Array<{ id: string; weight: number }> = [];
@@ -1289,14 +2089,15 @@ async function onExtendSubmit() {
       operation: 'extend',
       source_asset_id,
       title: String(params.title || '').trim(),
-      prompt: params.prompt,
+      prompt: String(params.prompt || '').trim(),
       negative_prompt: params.negative_prompt || '',
       extend: { directions: dirs, pixels: px },
       n: 1,
-      steps: params.steps,
+      steps: fillEditParams.steps,
+      guidance: fillEditParams.guidance,
       seed: seedNum,
       adapters,
-      metadata: {},
+      metadata: buildCanvasMeta(),
       priority: 'normal',
     });
     attachStreamFromSubmit(submitRes);
@@ -1333,7 +2134,7 @@ async function onUpscaleSubmit() {
       source_asset_id,
       scale: upscaleParams.upscale_scale,
       denoise: upscaleParams.upscale_denoise,
-      metadata: {},
+      metadata: buildCanvasMeta(),
       priority: 'normal',
     });
     attachStreamFromSubmit(submitRes);
@@ -1382,6 +2183,10 @@ onMounted(async () => {
   loadRecentImages();
   loadGallery(true);
   tasksStore.ensureQueuePoller();
+  const promptDraft = consumePromptDraft(DQ_STORAGE.IMAGE_CREATE_PROMPT_DRAFT);
+  if (promptDraft) {
+    params.prompt = applyPromptDraft(params.prompt, promptDraft);
+  }
 });
 
 onUnmounted(() => {
@@ -1427,6 +2232,13 @@ onUnmounted(() => {
   border-top: none;
 }
 
+.studio-retouch-fill-hint {
+  margin: 0 16px 8px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--dq-color-text-tertiary);
+}
+
 .studio-retouch-editor-wrap {
   flex: 1;
   min-height: 0;
@@ -1448,16 +2260,31 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
-.studio-image-editor-drawer .studio-create-pref-pane.dq-pref-pane {
+/* Drawer 内统一分组面板：模型选择 + 参数表单合并为一个视觉卡片 */
+.studio-image-editor-drawer .studio-editor-drawer-pref-pane.dq-pref-pane {
   border: 0.5px solid var(--dq-glass-border);
   border-radius: var(--dq-radius-group);
   background: var(--dq-glass-grouped-bg);
   -webkit-backdrop-filter: var(--dq-glass-blur-light);
   backdrop-filter: var(--dq-glass-blur-light);
+  overflow: hidden;
 }
 
-.studio-image-editor-drawer .studio-create-pref-pane .dq-pref-row:first-child {
-  padding-top: 10px;
+/* 面板内所有行：统一水平内边距，避免贴边 */
+.studio-image-editor-drawer .studio-editor-drawer-pref-pane .dq-pref-row {
+  padding-left: 16px;
+  padding-right: 16px;
+}
+
+/* 第一行：顶部无分割线 */
+.studio-image-editor-drawer .studio-editor-drawer-pref-pane .dq-pref-row:first-child {
+  border-top: none;
+  padding-top: 12px;
+}
+
+/* 最后一行：底部留白 */
+.studio-image-editor-drawer .studio-editor-drawer-pref-pane .dq-pref-row:last-child {
+  padding-bottom: 12px;
 }
 </style>
 

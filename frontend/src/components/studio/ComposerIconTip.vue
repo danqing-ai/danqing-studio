@@ -1,0 +1,26 @@
+<template>
+  <DqTooltip :content="content" :placement="placement">
+    <span class="composer-icon-tip">
+      <slot />
+    </span>
+  </DqTooltip>
+</template>
+
+<script setup lang="ts">
+withDefaults(
+  defineProps<{
+    content: string;
+    placement?: 'top' | 'bottom' | 'left' | 'right';
+  }>(),
+  { placement: 'top' },
+);
+</script>
+
+<style scoped>
+.composer-icon-tip {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+  max-width: 100%;
+}
+</style>

@@ -6,6 +6,11 @@ danqing-generate — 文生图 CLI。
 
 用法:
     danqing-generate --model z-image --prompt "a mountain" --seed 42 --steps 4 --output out.png
+
+    # FLUX.1 structural guide (Canny / Depth / Redux)
+    danqing-generate --model flux1-dev --prompt "a castle" \
+        --controlnet flux-canny-controlnet --control-image ref.png \
+        --controlnet-strength 0.8 --guidance 30 --output out.png
 """
 from __future__ import annotations
 
@@ -41,6 +46,23 @@ def main():
         default=None,
         help="Override scheduler id (registry default if omitted; e.g. linear, flow_match_euler_discrete)",
     )
+    parser.add_argument(
+        "--controlnet",
+        default="",
+        help="Registry controlnet id for structural_guide (e.g. flux-canny-controlnet; flux1 base only)",
+    )
+    parser.add_argument("--control-asset-id", default="", help="Gallery asset id for structural guide image")
+    parser.add_argument(
+        "--control-image",
+        default="",
+        help="Local guide image path (uploaded as asset; use with --controlnet)",
+    )
+    parser.add_argument(
+        "--controlnet-strength",
+        type=float,
+        default=0.8,
+        help="Structural guide weight (default 0.8)",
+    )
     parser.add_argument("--output", required=True, help="Output image path")
     parser.add_argument("--project-root", default=str(PROJECT_ROOT))
     args = parser.parse_args()
@@ -55,6 +77,10 @@ def main():
         guidance=args.guidance,
         seed=args.seed,
         scheduler=args.scheduler,
+        controlnet=args.controlnet,
+        control_asset_id=args.control_asset_id,
+        control_image=args.control_image,
+        controlnet_strength=args.controlnet_strength,
         output=args.output,
         project_root=Path(args.project_root).resolve(),
     )

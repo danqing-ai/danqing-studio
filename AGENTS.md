@@ -16,6 +16,9 @@ DanQing Studio — plugin-style **image / video** generation on **MLX** (Apple S
 |------|----------|
 | API entry | `backend/main.py` |
 | Frontend entry | `frontend/index.html` → Vite → `frontend/src/` |
+| Infinite canvas | `frontend/src/components/studio/InfiniteCanvas.vue` + `useCanvasStore.ts` |
+| Canvas sessions API | `backend/api/routes/canvas.py` → `/api/canvas/sessions` |
+| Canvas edge/staging utils | `frontend/src/utils/canvasEdges.ts` (`make frontend-canvas-unit`) |
 | Production UI build | `out/frontend/dist/` (`frontend/vite.config.ts`) |
 | Launch / stop | `make dev` / `make start` / `make stop` → `scripts/start.sh`, `scripts/stop.sh` |
 | Dev ports | Backend **7800**, frontend **5800** (`78xx`/`58xx`, suffix `00` = Studio) |
@@ -181,9 +184,8 @@ Extended execution checklist (review-ready): `docs/engine_new_model_checklist.md
 python -m py_compile <touched files>
 bin/danqing-generate --model <id> --prompt "test"    # image
 bin/danqing-audio-generate --model ace-step-xl-sft --prompt "test" --duration 10 --output /tmp/t.wav
-make bench-mflux          # when mflux reference exists
-make bench-sanity         # no reference CLI
-make bench-audio-sanity   # ACE-Step MLX 10s RMS gate
+make bench-eval-smoke     # image eval L1+L2 (smoke profile)
+make bench-eval           # image eval full prompt matrix
 make verify-engine-stack
 ```
 
@@ -257,6 +259,16 @@ Engines: `ModelRegistry` + `EngineRegistry` → `DanQingImageEngine` / `DanQingV
 - `POST /api/assets/reconcile` — `{ "dry_run": true }` default
 - `GET /api/gallery/images` | `POST /api/gallery/upload` | `DELETE /api/gallery/image?path=asset:{id}`
 - Task metadata: steps, guidance, seed, width/height; video `duration_seconds` (ffprobe or `num_frames/fps`)
+- Lineage fields on assets: `parent_asset_id`, `relation_type` (canvas edges + gallery lineage)
+
+### Canvas sessions
+
+- `GET /api/canvas/sessions?media=image|video|audio` — list sessions
+- `GET /api/canvas/sessions/{id}` — session row (`state`: items, viewport, staging, overlays, edges, `composer_snapshot`)
+- `POST /api/canvas/sessions` — create (`media`, `title`, optional `state`)
+- `PUT /api/canvas/sessions/{id}` — update title/state
+- `DELETE /api/canvas/sessions/{id}` — delete
+- `POST /api/chat/describe-node` — AI node note (vision when available)
 
 ### Registry / models / system
 
@@ -296,9 +308,9 @@ make pack-linux-server   # release Linux server tar.gz
 
 | Target | Purpose |
 |--------|---------|
-| `bench-setup` | Benchmark venv |
-| `bench-mflux` / `bench-mflux-case ID=` | mflux PSNR |
-| `bench-sanity` / `bench-sanity-case ID=` | output sanity |
+| `bench-setup` | Benchmark venv (PickScore judge) |
+| `bench-eval` / `bench-eval-smoke` / `bench-eval-case ID=` | image L1+L2 eval |
+| `bench-eval-calibrate` | write golden PickScore baselines |
 | `test-engine-unit` | `scripts/test_engine_unit.py` |
 | `check-consistency` | registry/routes/i18n |
 | `check-engine-rules` | unified engine governance (`check_engine_governance.py`) |
@@ -308,7 +320,7 @@ make pack-linux-server   # release Linux server tar.gz
 | `verify-engine-stack` | governance + unit tests |
 | `check-engine-family-layout` | alias: `--rule layout` |
 | `lint` | Python syntax |
-| `frontend-install` / `frontend-dev` / `frontend-build` / `frontend-typecheck` | frontend |
+| `frontend-install` / `frontend-dev` / `frontend-build` / `frontend-typecheck` / `frontend-canvas-unit` | frontend |
 | `pack-macos-desktop` | macOS Tauri `.app` / `.dmg` (MLX sidecar) |
 | `pack-linux-server` | Linux CUDA `.tar.gz` server bundle (venv + sidecar + archive) |
 | `pack-windows-desktop-release` | Windows CUDA NSIS installer (venv + Tauri; on Windows) |
@@ -342,6 +354,22 @@ Makefile pattern: `pack-<platform>-<product>-<step>` (`desktop` \| `server`; `ve
 
 `activePage` is a **local `ref`** synced from `route.name` via `watch` — do not bind cross-module route refs directly.
 
+### Infinite canvas (Studio Canvas)
+
+Gallery **grid** vs **canvas** toggle on image/video/audio create views (`StudioGalleryFilters`). Canvas is not a separate asset store — nodes reference gallery `asset:` paths; layout and composer bindings live in per-media canvas sessions (SQLite via `CanvasSessionStore`).
+
+| Piece | Path |
+|-------|------|
+| Orchestrator | `InfiniteCanvas.vue` |
+| Per-media store | `composables/useCanvasStore.ts` (singleton per `image` \| `video` \| `audio`) |
+| Viewport / items / edges | `CanvasViewport.vue`, `CanvasItem.vue`, `CanvasEdges.vue` |
+| Toolbars / panels | `CanvasToolbar.vue`, `CanvasLayerPanel.vue`, `CanvasSessionGraph.vue`, `CanvasLineageSidebar.vue` |
+| Staging / edges math | `utils/canvasStaging.ts`, `utils/canvasEdges.ts` |
+| Import/export | `utils/canvasImport.ts`, `utils/canvasExport.ts` |
+| Create views | `ImageCreateView.vue`, `VideoCreateView.vue`, `AudioCreateView.vue` |
+
+Workflow: import → select node → Composer fills params → generate lands in **staging** → lineage edges from `parent_asset_id` / `relation_type`. User-facing shortcuts: [README.md](README.md) → Infinite canvas workflow.
+
 ---
 
 ## Backend i18n
@@ -372,6 +400,9 @@ Makefile pattern: `pack-<platform>-<product>-<step>` (`desktop` \| `server`; `ve
 - **Add model** — full 5-step checklist above, not registry-only
 - **OpenAI-compatible API** (if added later) — separate `/v1/...` adapter; must delegate to same contracts/engines; do not replace resource-style `/api/images/*` routes
 - **Contributors** — run `make verify-engine-stack` before PR
+- **Structural guide (FLUX.1 create)** — `ImageGenerationRequest.structural_guide` only on `flux1*` + text-to-image; Canny/Depth/Redux preprocess in pipeline; companion LoRA auto-injected for Canny/Depth. UI: `useStructuralGuide.ts` + Composer advanced; not combinable with reference img2img.
+- **FLUX Fill (retouch/extend)** — `flux-fill-controlnet` only; `ImagePipeline._run_flux1_fill_edit` (384-dim patch concat). Retouch needs `mask_asset_id`; extend uses `ExtendSpec`. CLI: `danqing-edit --operation retouch|extend` with `--mask-image` / `--extend-directions`.
+- **ControlNet CUDA** — structural guide + Fill are **MLX-only** today (`backend/engine/common/controlnet_runtime.py`; registry `backends: ["mlx"]` on controlnet rows). CUDA paths are **placeholders** until a unified batch (`families/flux1/transformer_cuda.py` + pipeline hooks). Fail loud on `CudaContext`; do not silent-fallback.
 
 ---
 

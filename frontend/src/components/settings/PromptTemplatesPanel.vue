@@ -12,6 +12,7 @@ const props = defineProps<{
     name: string;
     positive: string;
     negative: string;
+    trigger_words: string;
     media_scope: string;
     applies_to: string[];
   };

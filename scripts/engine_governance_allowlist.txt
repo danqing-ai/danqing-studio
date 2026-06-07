@@ -4,6 +4,8 @@
 
 # --- imports ---
 # mlx/torch top-level import exemptions (exact path per line)
+backend/engine/llm/service.py
+backend/engine/llm/vision.py
 
 # --- layout ---
 # Forbidden family subtree dirs (mlx/torch/runtime/common) and codec wrappers

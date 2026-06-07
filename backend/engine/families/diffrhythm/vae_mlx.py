@@ -71,51 +71,67 @@ class LowPassKernel(nn.Module):
 
 
 class DownSample1d(nn.Module):
-    def __init__(self, kernel_size: int = 12):
+    """Alias-free 2× downsample (upstream ``LowPassFilter1d``)."""
+
+    def __init__(self, ratio: int = 2, kernel_size: int = 12):
         super().__init__()
+        self.ratio = int(ratio)
+        self.kernel_size = int(kernel_size)
         self.lowpass = LowPassKernel(kernel_size)
+        even = 1 if kernel_size % 2 == 0 else 0
+        self.pad_left = kernel_size // 2 - even
+        self.pad_right = kernel_size // 2
 
     def __call__(self, x: mx.array) -> mx.array:
         B, T, C = x.shape
         x = x.transpose(0, 2, 1).reshape(B * C, T, 1)
-        K = self.lowpass.filter.shape[1]
-        even = 1 if K % 2 == 0 else 0
-        pad_left = K // 2 - even
-        pad_right = K // 2
-        left_edge = mx.repeat(x[:, :1, :], pad_left, axis=1)
-        right_edge = mx.repeat(x[:, -1:, :], pad_right, axis=1)
+        left_edge = mx.repeat(x[:, :1, :], self.pad_left, axis=1)
+        right_edge = mx.repeat(x[:, -1:, :], self.pad_right, axis=1)
         x = mx.concatenate([left_edge, x, right_edge], axis=1)
-        x = mx.conv1d(x, self.lowpass.filter, stride=2)
+        x = mx.conv1d(x, self.lowpass.filter, stride=self.ratio)
         T_out = x.shape[1]
         return x.reshape(B, C, T_out).transpose(0, 2, 1)
 
 
 class UpSample1d(nn.Module):
-    def __init__(self, kernel_size: int = 12):
+    """Alias-free 2× upsample (upstream ``alias_free_activation.torch.resample.UpSample1d``)."""
+
+    def __init__(self, ratio: int = 2, kernel_size: int = 12):
         super().__init__()
+        self.ratio = int(ratio)
+        self.kernel_size = int(kernel_size)
+        self.stride = self.ratio
+        self.pad = self.kernel_size // self.ratio - 1
+        self.pad_left = self.pad * self.stride + (self.kernel_size - self.stride) // 2
+        self.pad_right = self.pad * self.stride + (self.kernel_size - self.stride + 1) // 2
         self.filter = mx.ones((1, kernel_size, 1))
 
     def __call__(self, x: mx.array) -> mx.array:
-        B, T, C = x.shape
-        x_up = mx.zeros((B, T * 2, C))
-        x_up = x_up.at[:, ::2, :].add(x)
-        x_up = x_up.transpose(0, 2, 1).reshape(B * C, T * 2, 1)
-        K = self.filter.shape[1]
-        pad = K // 2
-        left_edge = mx.repeat(x_up[:, :1, :], pad, axis=1)
-        right_edge = mx.repeat(x_up[:, -1:, :], pad - 1, axis=1)
-        x_up = mx.concatenate([left_edge, x_up, right_edge], axis=1)
-        x_up = mx.conv1d(x_up, self.filter)
-        T_out = x_up.shape[1]
-        return x_up.reshape(B, C, T_out).transpose(0, 2, 1) * 2.0
+        """x: (B, T, C) — matches upstream replicate-pad + grouped conv_transpose1d."""
+        _B, _T, C = x.shape
+        pad = self.pad
+        ratio = self.ratio
+
+        left_edge = mx.repeat(x[:, :1, :], pad, axis=1)
+        right_edge = mx.repeat(x[:, -1:, :], pad, axis=1)
+        x = mx.concatenate([left_edge, x, right_edge], axis=1)
+
+        weight = mx.repeat(self.filter, C, axis=0)  # (C, K, 1)
+        y = ratio * mx.conv_transpose1d(x, weight, stride=ratio, groups=C)
+
+        if self.pad_right > 0:
+            y = y[:, self.pad_left : -self.pad_right, :]
+        else:
+            y = y[:, self.pad_left :, :]
+        return y
 
 
 class Activation1d(nn.Module):
-    def __init__(self, channels: int, kernel_size: int = 12):
+    def __init__(self, channels: int, ratio: int = 2, kernel_size: int = 12):
         super().__init__()
         self.act = SnakeBeta(channels)
-        self.upsample = UpSample1d(kernel_size)
-        self.downsample = DownSample1d(kernel_size)
+        self.upsample = UpSample1d(ratio=ratio, kernel_size=kernel_size)
+        self.downsample = DownSample1d(ratio=ratio, kernel_size=kernel_size)
 
     def __call__(self, x: mx.array) -> mx.array:
         x = self.upsample(x)
@@ -297,7 +313,7 @@ def _is_conv1d_weight_key(key: str) -> bool:
 
 
 def _convert_torch_tensor(key: str, tensor: Any, array_fn: Callable[[Any], mx.array]) -> mx.array:
-    arr = tensor.detach().cpu().numpy()
+    arr = np.asarray(tensor)
     if _is_conv1d_weight_key(key):
         arr = arr.transpose(0, 2, 1)
     elif _is_conv_transpose_key(key):
@@ -310,24 +326,28 @@ def _convert_torch_tensor(key: str, tensor: Any, array_fn: Callable[[Any], mx.ar
     return array_fn(arr)
 
 
+def _fuse_weight_norm(weight_g: Any, weight_v: Any, *, eps: float = 1e-9) -> np.ndarray:
+    """Merge PyTorch weight_norm ``g * v / ||v||`` into a dense weight array."""
+    g = np.asarray(weight_g, dtype=np.float32)
+    v = np.asarray(weight_v, dtype=np.float32)
+    v_flat = v.reshape(v.shape[0], -1)
+    norm = np.linalg.norm(v_flat, axis=1).reshape(g.shape)
+    return g * v / (norm + eps)
+
+
 def load_decoder_weights(
     decoder: DiffRhythm2BigVGANMLX,
     ckpt_path: str,
     array_fn: Callable[[Any], mx.array],
 ) -> None:
     """Load ``decoder.bin`` (``torch.save`` dict with key ``generator``) into *decoder*."""
-    try:
-        import torch
-    except ImportError as exc:
-        raise RuntimeError(
-            "DiffRhythm 2 decoder weight load requires PyTorch (load time only); install torch"
-        ) from exc
+    from backend.engine.common.pytorch_bin_numpy import load_pytorch_bin
 
     path = Path(ckpt_path)
     if not path.is_file():
         raise RuntimeError(f"DiffRhythm 2 decoder checkpoint missing: {path}")
 
-    checkpoint = torch.load(str(path), map_location="cpu", weights_only=False)
+    checkpoint = load_pytorch_bin(path)
     if not isinstance(checkpoint, dict) or "generator" not in checkpoint:
         raise RuntimeError(
             f"DiffRhythm 2 decoder checkpoint at {path} must be a dict with key 'generator'"
@@ -338,11 +358,32 @@ def load_decoder_weights(
         raise RuntimeError(f"DiffRhythm 2 decoder 'generator' entry must be a state dict, got {type(raw)!r}")
 
     mlx_weights: dict[str, mx.array] = {}
-    for pt_key, tensor in raw.items():
-        mlx_key = _remap_pytorch_generator_key(pt_key)
-        mlx_weights[mlx_key] = _convert_torch_tensor(mlx_key, tensor, array_fn)
+    processed: set[str] = set()
+    for pt_key in sorted(raw.keys()):
+        if pt_key in processed:
+            continue
 
-    decoder.load_weights(list(mlx_weights.items()))
+        if pt_key.endswith(".weight_g"):
+            base = pt_key[: -len(".weight_g")]
+            v_key = base + ".weight_v"
+            if v_key not in raw:
+                processed.add(pt_key)
+                continue
+            fused_key = _remap_pytorch_generator_key(base + ".weight")
+            fused = _fuse_weight_norm(raw[pt_key], raw[v_key])
+            mlx_weights[fused_key] = _convert_torch_tensor(fused_key, fused, array_fn)
+            processed.add(pt_key)
+            processed.add(v_key)
+            continue
+
+        if pt_key.endswith(".weight_v"):
+            continue
+
+        mlx_key = _remap_pytorch_generator_key(pt_key)
+        mlx_weights[mlx_key] = _convert_torch_tensor(mlx_key, raw[pt_key], array_fn)
+        processed.add(pt_key)
+
+    decoder.load_weights(list(mlx_weights.items()), strict=False)
 
 
 def load_decoder_hparams(config_path: Path) -> dict[str, Any]:

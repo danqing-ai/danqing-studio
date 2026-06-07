@@ -696,9 +696,15 @@ class QwenImageTransformer(TransformerBase):
         out_f = out_mx.astype(mx.float32)
         if target_seq_len is not None:
             out_f = out_f[:, :target_seq_len, :]
-        _, seq_len, c_out = out_f.shape
-        side = int(seq_len**0.5)
-        if side * side != seq_len:
-            raise RuntimeError(f"Qwen DiT output seq_len={seq_len} is not square.")
-        out = mx.reshape(out_f, (B, side, side, c_out))
-        return mx.transpose(out, (0, 3, 1, 2))
+        _, seq_len, _c_out = out_f.shape
+        latent_h = int(image_height) // 16
+        latent_w = int(image_width) // 16
+        expected_seq_len = latent_h * latent_w
+        if seq_len != expected_seq_len:
+            raise RuntimeError(
+                f"Qwen DiT output seq_len={seq_len} does not match latent grid "
+                f"{latent_w}x{latent_h} ({expected_seq_len}) for {image_width}x{image_height}."
+            )
+        from backend.engine.families.qwen.edit_util import unpack_qwen_sequence_to_nchw
+
+        return unpack_qwen_sequence_to_nchw(ctx, out_f, int(image_height), int(image_width))

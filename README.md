@@ -22,6 +22,44 @@ Plugin-style image and video generation studio with **MLX** (Apple Silicon) and 
 - **Global task queue** — One worker, image/video (and audio placeholders) serialized; SSE progress, priority, queue position, persistent logs.
 - **Studio UI** — Vue 3 + Vite + TypeScript + `@danqing/dq-ui` + Pinia; macOS-native dark theme; model names and presets are bilingual in the registry.
 - **Four modules** — **Create** (image/video tabs filtered by model `actions`), **Gallery** (SQLite `assets`), **Models** (install/delete weights), **Settings** (presets, queue policy, system health).
+- **Infinite canvas** (image / video / audio create) — Gallery **grid** and **canvas** views share one asset library; canvas sessions persist layout, lineage edges, and composer state per media type.
+
+### Infinite canvas workflow
+
+In **Create → Canvas view** (toggle at the top of the gallery strip):
+
+1. **Import** — bottom-right **Import works** (`I`), gallery hover **Add to canvas**, or multi-select in grid then switch to canvas.
+2. **Iterate** — select a node; the bottom **Composer** fills prompt/model; floating toolbar runs edit / branch / cover workflows.
+3. **Generate** — outputs land in the **staging zone** (orange box); press `S` to snap staging beside the selection.
+4. **Lineage** — parent→child SVG edges (`E`); session graph (`G`); lineage sidebar (`Y`) — click to focus on canvas, double-click to jump and close.
+5. **Sessions** — top-left bar switches/creates/renames canvas sessions (synced via `/api/canvas/sessions`).
+
+| Key | Action |
+|-----|--------|
+| `I` | Import works picker |
+| `S` | Snap staging to selection |
+| `R` | Region guides (staging + overlay links) |
+| `L` / `G` / `E` | Layers / session graph / lineage edges |
+| `Y` | Lineage sidebar |
+| `F2` | Rename selected node |
+| `Esc` | Close panel → clear selection |
+| Space drag | Pan viewport |
+
+Settings → **Auto-add results to canvas** keeps staging placement even when you stay in grid view during generation.
+
+### ControlNet / structural guide (FLUX.1)
+
+Invoke-style **structural conditioning** on image create (FLUX.1 base only, e.g. `flux1-dev`):
+
+1. **Models** — install base `flux1-dev` and a ControlNet bundle (`flux-canny-controlnet`, `flux-depth-controlnet`, `flux-redux`, …). **Depth** also needs the `depth-pro` tool model; **Canny/Depth/Redux preprocess** uses OpenCV (Canny) or **PyTorch** (Depth Pro + SigLIP/Redux) on CPU.
+2. **Composer** — advanced → ControlNet model + strength; pick a **structural guide** image (gallery asset). Selecting a controlnet applies registry defaults (e.g. Canny/Depth CFG ≈ 30).
+3. **Canvas** — select a node → **Guide branch** or **Use as structural guide**; CTRL overlay syncs with the composer.
+4. **Generate** — API sends `structural_guide` (`model_id`, `asset_id`, `type`, `weight`):
+   - **Canny / Depth** — preprocess guide → VAE encode → 128-ch patch concat + companion LoRA (`flux1-canny-dev-lora` / `flux1-depth-dev-lora`).
+   - **Redux** — SigLIP + redux MLP tokens concat to T5 context (no patch embed).
+   - **Fill** (`flux-fill-controlnet`) — inpainting/outpainting only (retouch/extend); not available in text-to-image.
+
+Structural guide cannot combine with reference img2img on the same request. Lineage uses `relation_type: controlnet` when a guide image is bound.
 
 ### Studio tabs ↔ model `actions`
 
@@ -143,8 +181,8 @@ Uses an isolated venv under `tests/benchmark/venv/`:
 
 ```bash
 make bench-setup
-make bench-mflux      # PSNR vs mflux reference CLI
-make bench-sanity     # reject flat / black / white outputs
+make bench-eval-smoke   # image model eval (L1 + ImageReward, fast)
+make bench-eval         # full prompt matrix
 make verify-engine-stack   # governance gates + engine unit tests
 ```
 
@@ -261,7 +299,8 @@ MLX_METAL_MEMORY_LIMIT=120
 | `make frontend-dev` | Vite dev server |
 | `make frontend-build` | Production UI → `out/frontend/dist/` |
 | `make frontend-typecheck` | `vue-tsc` |
-| `make check-consistency` | Registry / routes / i18n gate |
+| `make frontend-canvas-unit` | Canvas edge/staging util self-check |
+| `make check-consistency` | Registry / routes / i18n + frontend governance (incl. canvas unit) |
 | `make check-engine-imports` | mlx/torch import boundary |
 | `make lint` | Python syntax check |
 | `make clean` | Remove `out/` build tree |
@@ -312,6 +351,35 @@ MIT
 - **契约化 API**：路由与 CLI 经 `contracts` 与 `IImageEngine` / `IVideoEngine` 进入引擎。
 - **全局单队列**：图像/视频（及音频占位）串行执行；SSE 进度、优先级、队列位置、日志落库。
 - **四大模块**：**创作**（按 `actions` 过滤模型）、**图库**（`assets` 表）、**模型**（安装/删除权重）、**设置**（预设、队列策略、系统状态）。
+- **无限画布**（图像 / 视频 / 音频创作页）— 画廊 **网格** 与 **画布** 共用作品库；画布会话持久化排版、谱系连线与创作器状态（按媒介隔离）。
+
+### 无限画布工作流
+
+在 **创作页 → 画布视图**（顶部画廊条切换）：
+
+1. **导入** — 右下「导入作品」（`I`）、画廊悬停「添加到画布」，或网格多选后切画布。
+2. **迭代** — 选中节点，底部 **创作器** 灌参；浮动工具栏精修 / 分支 / 翻唱等。
+3. **生成** — 新结果落入 **生成落点**（橙色框）；`S` 贴靠选中节点。
+4. **谱系** — 父子连线（`E`）、会话图谱（`G`）、谱系侧栏（`Y`）；单击定位、双击关闭并跳转。
+5. **会话** — 左上会话栏切换/新建/重命名（`/api/canvas/sessions` 同步）。
+
+常用快捷键：`I` 导入 · `S` 落点贴靠 · `R` 区域引导 · `L/G/E` 图层/图谱/连线 · `Y` 谱系 · `F2` 重命名 · `Esc` 关面板/取消选择 · 空格拖移平移。
+
+设置中的 **生成自动加入画布** 可在画廊视图下仍将结果落入当前会话落点区。
+
+### ControlNet / 结构引导（FLUX.1）
+
+Invoke 风格 **结构条件**（仅 FLUX.1 基底，如 `flux1-dev`）：
+
+1. **模型页** — 安装 `flux1-dev` 与 ControlNet 包（`flux-canny-controlnet`、`flux-depth-controlnet`、`flux-redux` 等）。**Depth** 另需 `depth-pro` 工具模型；**Canny/Depth/Redux 预处理** 使用 OpenCV（Canny）或 **PyTorch**（Depth Pro + SigLIP/Redux，CPU）。
+2. **创作器** — 高级参数选 ControlNet + 强度；绑定 **结构引导图**（须为画廊资产）。切换 ControlNet 会套用注册表推荐参数（如 Canny/Depth CFG ≈ 30）。
+3. **画布** — 选中节点 →「结构引导分支」或「用作结构引导」；CTRL 叠加层与创作器同步。
+4. **生成** — 请求携带 `structural_guide`：
+   - **Canny / Depth** — 预处理 → VAE 编码 → 128 通道 patch 拼接 + 配套 LoRA（`flux1-canny-dev-lora` / `flux1-depth-dev-lora`）。
+   - **Redux** — SigLIP + redux MLP 令牌并入 T5 上下文（无 patch embed）。
+   - **Fill**（`flux-fill-controlnet`）— 仅局部重绘/扩图（retouch/extend），文生图不可用。
+
+结构引导不能与参考图 img2img 同请求并用；绑定引导图时谱系为 `relation_type: controlnet`。
 
 ### 创作页 ↔ 模型 `actions`
 
@@ -385,9 +453,10 @@ make pack-macos-desktop
 |------|------|
 | `make start` / `stop` | 启停 API |
 | `make frontend-dev` / `frontend-build` | 前端开发 / 构建 |
-| `make check-consistency` | 注册表与路由一致性 |
+| `make frontend-canvas-unit` | 画布谱系/落点工具自检 |
+| `make check-consistency` | 注册表与路由一致性（含画布单元测试） |
 | `make check-engine-imports` | mlx/torch 导入边界检查 |
-| `make bench-mflux` / `bench-sanity` | 基准与成片健全性 |
+| `make bench-eval` / `bench-eval-smoke` | 图像模型 L1+L2 评测 |
 | `make pack-macos-desktop` | 完整桌面安装包 |
 
 ### 许可证

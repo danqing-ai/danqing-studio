@@ -174,11 +174,10 @@ class AceStepMlxGenerator:
     def _ensure_lm_formatter(
         self,
         *,
-        simple_mode: bool = False,
         quantize_bits: Optional[int] = None,
         lm_dir: Optional[Path] = None,
     ) -> Any:
-        key = (simple_mode, quantize_bits, str(lm_dir) if lm_dir else "")
+        key = (quantize_bits, str(lm_dir) if lm_dir else "")
         if self._lm_formatter is not None and self._lm_formatter_key == key:
             return self._lm_formatter
         from backend.engine.families.ace_step.lm_format_mlx import AceStepLmFormatterMlx
@@ -191,7 +190,6 @@ class AceStepMlxGenerator:
             ctx=self._ctx,
             lm_dir=resolved_dir,
             quantize_bits=quantize_bits if quantize_bits is not None else policy.lm_quantize_bits,
-            simple_mode=simple_mode,
         )
         if fmt is None:
             return None
@@ -269,7 +267,6 @@ class AceStepMlxGenerator:
         key_scale: str = "",
         time_signature: str = "",
         shift: float = 3.0,
-        simple_mode: bool = False,
         instrumental: bool = False,
         lm_enabled: bool = True,
         lm_quantize_bits: Optional[int] = None,
@@ -298,12 +295,7 @@ class AceStepMlxGenerator:
             instruction = instruction + ":"
         caption = (prompt or "").strip()
         lyrics_input = (lyrics or "").strip()
-        if simple_mode and lm_enabled:
-            lyrics_use = lyrics_input if lyrics_input else (
-                "[Instrumental]" if instrumental else ""
-            )
-        else:
-            lyrics_use = lyrics_input or "[Instrumental]"
+        lyrics_use = lyrics_input or "[Instrumental]"
         lang_use = resolve_vocal_language(lyrics_use or lyrics_input, vocal_language)
         bpm_use = bpm
         key_use = key_scale or ""
@@ -319,7 +311,6 @@ class AceStepMlxGenerator:
 
         if lm_enabled and self._lm_enabled():
             lm_fmt = self._ensure_lm_formatter(
-                simple_mode=simple_mode,
                 quantize_bits=lm_quantize_bits,
             )
             if lm_fmt is None:
@@ -328,25 +319,16 @@ class AceStepMlxGenerator:
                 )
             else:
                 try:
-                    if simple_mode:
-                        logger.info("ACE-Step inspiration LM: 5Hz create_sample (MLX)...")
-                        expanded = lm_fmt.create_sample(
-                            query=caption or "instrumental music",
-                            instrumental=instrumental or is_instrumental_lyrics(lyrics_input),
-                            vocal_language=lang_use,
-                            duration=duration,
-                        )
-                    else:
-                        logger.info("ACE-Step: expanding prompt with 5Hz LM (MLX)...")
-                        expanded = lm_fmt.format_sample(
-                            caption=caption or "instrumental music",
-                            lyrics=lyrics_use,
-                            duration=duration,
-                            bpm=bpm_use,
-                            keyscale=key_use,
-                            timesignature=ts_use,
-                            language=lang_use,
-                        )
+                    logger.info("ACE-Step: 5Hz LM format_sample (MLX)...")
+                    expanded = lm_fmt.format_sample(
+                        caption=caption or "instrumental music",
+                        lyrics=lyrics_use,
+                        duration=duration,
+                        bpm=bpm_use,
+                        keyscale=key_use,
+                        timesignature=ts_use,
+                        language=lang_use,
+                    )
                     caption = expanded.caption
                     lyrics_use = expanded.lyrics
                     if expanded.bpm is not None:

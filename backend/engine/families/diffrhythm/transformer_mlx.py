@@ -480,7 +480,7 @@ class DiffRhythm2DiTMLX(nn.Module):
         ]
 
         self.norm_out = _AdaLayerNormZeroFinal(dim, cond_dim)
-        self.proj_out = nn.Linear(dim, mel_dim, bias=False)
+        self.proj_out = nn.Linear(dim, mel_dim)
 
         self.projectors: Optional[List[_RepaProjector]] = None
         if self.repa_depth > 0 and self.repa_dims:
@@ -750,6 +750,9 @@ def _collect_flat_params(obj: Any, prefix: str, result: Dict[str, Any]) -> None:
         return
 
 
+_NEST_AS_LIST_KEYS = frozenset({"transformer_blocks", "projectors"})
+
+
 def _nest_flat_weights(flat: Dict[str, Any]) -> Dict[str, Any]:
     """Convert flat dot keys into nested dict/list structure for ``Module.update``."""
     root: Dict[str, Any] = {}
@@ -760,7 +763,7 @@ def _nest_flat_weights(flat: Dict[str, Any]) -> Dict[str, Any]:
             tree[key] = value
             return
         nxt = parts[1]
-        if nxt.isdigit():
+        if nxt.isdigit() and key in _NEST_AS_LIST_KEYS:
             idx = int(nxt)
             lst = tree.setdefault(key, [])
             while len(lst) <= idx:
@@ -775,11 +778,18 @@ def _nest_flat_weights(flat: Dict[str, Any]) -> Dict[str, Any]:
             child = tree.setdefault(key, {})
             if not isinstance(child, dict):
                 raise RuntimeError(f"Cannot nest weight key under non-dict node: {key}")
-            _insert(child, parts[1:], value)
+            if nxt.isdigit():
+                _insert(child, [nxt, *parts[2:]], value)
+            else:
+                _insert(child, parts[1:], value)
 
     for key, value in flat.items():
         _insert(root, key.split("."), value)
     return root
+
+
+# RoPE inverse frequencies are derived from head_dim at init, not stored in checkpoints.
+_LOAD_SKIP_PARAMS = frozenset({"rotary_embed.inv_freq"})
 
 
 def load_cfm_weights(model: DiffRhythm2CFMMLX, weights: List[Tuple[str, Any]]) -> None:
@@ -810,7 +820,7 @@ def load_cfm_weights(model: DiffRhythm2CFMMLX, weights: List[Tuple[str, Any]]) -
             suffix,
         )
 
-    missing = [k for k in param_map if k not in updates]
+    missing = [k for k in param_map if k not in updates and k not in _LOAD_SKIP_PARAMS]
     if missing:
         preview = ", ".join(missing[:8])
         suffix = "…" if len(missing) > 8 else ""
@@ -820,4 +830,4 @@ def load_cfm_weights(model: DiffRhythm2CFMMLX, weights: List[Tuple[str, Any]]) -
         )
 
     nested = _nest_flat_weights(updates)
-    model.transformer.update(nested)
+    model.transformer.update(nested, strict=False)

@@ -36,6 +36,11 @@ const routes: RouteRecordRaw[] = [
     name: 'settings',
     component: () => import('@/views/SettingsView.vue'),
   },
+  {
+    path: '/assistant',
+    name: 'assistant',
+    component: () => import('@/views/ChatView.vue'),
+  },
 ];
 
 const router = createRouter({

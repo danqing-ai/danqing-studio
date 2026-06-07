@@ -22,6 +22,7 @@ class Flux1Config:
     """
     in_channels: int = 16            # VAE latent channels（DiT 内 2×2 pack 后为 64 维 token）
     out_channels: int = 64           # ``proj_out`` 每 token 维度，unpack 回 16ch 空间格
+    patch_token_dim: int = 64        # packed token width into ``x_embedder`` (Fill=384, structural=128)
     hidden_dim: int = 3072           # hidden dimension
     num_heads: int = 24
     num_joint_layers: int = 19       # diffusers ``num_layers`` (FluxTransformerBlock)
@@ -177,6 +178,85 @@ class ZImageConfig:
     z_image_noise_layout: bool = True
     use_mlx_compile: bool = False        # keep numerical path close to reference; prioritize parity
     use_mlx_cfg_fusion: bool = False     # disable fused CFG fast-path; use explicit cond/uncond forwards
+
+
+@dataclass
+class ErnieImageConfig:
+    """ERNIE-Image series (Turbo / SFT)
+
+    Architecture: 8B single-stream DiT + Ministral-3 text encoder + FLUX.2 VAE.
+    """
+    in_channels: int = 128
+    out_channels: int = 128
+    hidden_size: int = 4096
+    num_heads: int = 32
+    num_layers: int = 36
+    ffn_hidden_size: int = 12288
+    patch_size: int = 1
+    text_in_dim: int = 3072
+    text_dim: int = 3072
+    rope_axes_dim: tuple = (32, 48, 48)
+    rope_theta: float = 256.0
+    eps: float = 1e-6
+    qk_norm: bool = True
+    encoder_type: str = "ernie_image"
+    max_seq_len: int = 2048
+    text_encoder_mask_key: str = "text_lens"
+    supports_guidance: bool = False
+    requires_sigma_shift: bool = False
+    vae_scale: int = 16
+    latent_noise_dtype: str = "bfloat16"
+    noise_sample_fp32: bool = True
+    vae_preview_warmup: bool = True
+    supports_img2img: bool = False
+    bundle_config_merger: str = "ernie_image"
+
+    @property
+    def head_dim(self) -> int:
+        return self.hidden_size // self.num_heads
+
+
+def merge_ernie_image_config_from_bundle(config: ErnieImageConfig, bundle_root: Path | None) -> None:
+    """Override ``ErnieImageConfig`` from ``transformer/config.json`` (diffusers layout)."""
+    if bundle_root is None:
+        return
+    cfg_path = bundle_root / "transformer" / "config.json"
+    if not cfg_path.is_file():
+        return
+    try:
+        data: dict[str, Any] = json.loads(cfg_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        raise RuntimeError(f"ERNIE-Image: cannot read config {cfg_path}: {e}") from e
+
+    key_map = {
+        "hidden_size": "hidden_size",
+        "num_attention_heads": "num_heads",
+        "num_layers": "num_layers",
+        "ffn_hidden_size": "ffn_hidden_size",
+        "in_channels": "in_channels",
+        "out_channels": "out_channels",
+        "patch_size": "patch_size",
+        "text_in_dim": "text_in_dim",
+        "rope_theta": "rope_theta",
+        "eps": "eps",
+    }
+    for src, dst in key_map.items():
+        if src in data:
+            val = data[src]
+            if isinstance(val, bool):
+                setattr(config, dst, bool(val))
+            elif isinstance(val, float):
+                setattr(config, dst, float(val))
+            else:
+                setattr(config, dst, int(val))
+    if "qk_layernorm" in data:
+        config.qk_norm = bool(data["qk_layernorm"])
+    if "rope_axes_dim" in data:
+        object.__setattr__(
+            config,
+            "rope_axes_dim",
+            tuple(int(x) for x in data["rope_axes_dim"]),
+        )
 
 
 @dataclass
@@ -600,6 +680,7 @@ FAMILY_CONFIG_MAP: dict[str, type] = {
     "qwen_image": QwenImageConfig,
     "fibo": FIBOConfig,
     "z_image": ZImageConfig,
+    "ernie_image": ErnieImageConfig,
     "seedvr2": SeedVR2Config,
     # Audio
     "diffrhythm": DiffRhythmConfig,
@@ -610,7 +691,9 @@ FAMILY_CONFIG_MAP: dict[str, type] = {
     "hunyuan": HunyuanVideoConfig,
 }
 
-IMAGE_FAMILY_REUSE_CONTRACT = frozenset({"flux1", "flux2", "z_image", "qwen_image", "fibo", "seedvr2"})
+IMAGE_FAMILY_REUSE_CONTRACT = frozenset({
+    "flux1", "flux2", "z_image", "qwen_image", "ernie_image", "fibo", "seedvr2",
+})
 
 
 def get_config_class(family: str) -> type:
@@ -619,6 +702,25 @@ def get_config_class(family: str) -> type:
     if cls is None:
         raise KeyError(f"unknown model family: {family}")
     return cls
+
+
+_IMAGE_BUNDLE_CONFIG_MERGERS: dict[str, Any] = {
+    "ernie_image": merge_ernie_image_config_from_bundle,
+}
+
+
+def apply_image_bundle_config_merger(config: Any, bundle_root: Path | None) -> None:
+    """Registry-driven bundle ``config.json`` merge for image families."""
+    merger = str(getattr(config, "bundle_config_merger", "") or "")
+    if not merger:
+        return
+    fn = _IMAGE_BUNDLE_CONFIG_MERGERS.get(merger)
+    if fn is None:
+        raise RuntimeError(
+            f"Unknown image bundle_config_merger={merger!r}. "
+            "Register a merge function in model_configs._IMAGE_BUNDLE_CONFIG_MERGERS."
+        )
+    fn(config, bundle_root)
 
 
 def assert_image_family_contract(family: str, config: Any) -> None:

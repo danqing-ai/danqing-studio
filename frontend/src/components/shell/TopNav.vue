@@ -5,85 +5,54 @@
       <DqIcon :size="22"><MagicStick /></DqIcon>
     </div>
 
-    <!-- Core Creation Tools -->
-    <nav
-      class="dq-sidebar-nav__group dq-sidebar-nav__group--primary"
-      role="navigation"
-      :aria-label="$t('nav.main')"
-    >
-      <template v-for="item in primaryItems" :key="item.id">
-        <DqCountBadge
-          v-if="item.isQueue"
-          :value="queueCount"
-          :hidden="queueCount === 0"
-          class="queue-badge"
-        >
+    <template v-for="group in navGroups" :key="group.id">
+      <div v-if="group.dividerBefore" class="dq-sidebar-nav__divider" aria-hidden="true" />
+
+      <nav
+        class="dq-sidebar-nav__group"
+        role="navigation"
+        :aria-label="group.ariaLabel"
+      >
+        <template v-for="item in group.items" :key="item.id">
+          <DqCountBadge
+            v-if="item.isQueue"
+            :value="queueCount"
+            :hidden="queueCount === 0"
+            class="queue-badge"
+          >
+            <button
+              type="button"
+              class="dq-sidebar-nav__item"
+              @click="openQueue"
+            >
+              <DqIcon :size="22"><component :is="item.icon" /></DqIcon>
+              <span class="dq-sidebar-nav__tooltip">{{ item.label }}</span>
+            </button>
+          </DqCountBadge>
           <button
+            v-else
             type="button"
             class="dq-sidebar-nav__item"
-            @click="openQueue"
+            :class="{ 'is-active': activePage === item.id }"
+            @click="onNavSelect(item.id)"
           >
             <DqIcon :size="22"><component :is="item.icon" /></DqIcon>
             <span class="dq-sidebar-nav__tooltip">{{ item.label }}</span>
           </button>
-        </DqCountBadge>
-        <button
-          v-else
-          type="button"
-          class="dq-sidebar-nav__item"
-          :class="{ 'is-active': activePage === item.id }"
-          @click="onNavSelect(item.id)"
-        >
-          <DqIcon :size="22"><component :is="item.icon" /></DqIcon>
-          <span class="dq-sidebar-nav__tooltip">{{ item.label }}</span>
-        </button>
-      </template>
-    </nav>
+        </template>
+      </nav>
 
-    <!-- Management Tools -->
-    <nav
-      class="dq-sidebar-nav__group dq-sidebar-nav__group--secondary"
-      role="navigation"
-      :aria-label="$t('nav.management')"
-    >
-      <button
-        v-for="item in secondaryItems"
-        :key="item.id"
-        type="button"
-        class="dq-sidebar-nav__item"
-        :class="{ 'is-active': activePage === item.id }"
-        @click="onNavSelect(item.id)"
-      >
-        <DqIcon :size="22"><component :is="item.icon" /></DqIcon>
-        <span class="dq-sidebar-nav__tooltip">{{ item.label }}</span>
-      </button>
-    </nav>
-
-    <!-- Divider -->
-    <div class="dq-sidebar-nav__divider" />
-
-    <!-- System Tools -->
-    <div class="dq-sidebar-nav__group dq-sidebar-nav__group--system">
-      <button
-        type="button"
-        class="dq-sidebar-nav__item"
-        :class="{ 'is-active': activePage === 'settings' }"
-        @click="onNavSelect('settings')"
-      >
-        <DqIcon :size="22"><Setting /></DqIcon>
-        <span class="dq-sidebar-nav__tooltip">{{ t('nav.settings') }}</span>
-      </button>
-    </div>
+      <div v-if="group.spacerAfter" class="dq-sidebar-nav__spacer" aria-hidden="true" />
+    </template>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, type Component } from 'vue';
 import { useI18n } from 'vue-i18n';
 import {
   Box,
   Brush,
-  Menu,
   MagicStick,
   Microphone,
   Picture,
@@ -103,16 +72,64 @@ const emit = defineEmits<{
 
 const { t } = useI18n();
 
-const primaryItems = computed(() => [
-  { id: 'image_create', icon: Picture, label: t('nav.image_create') },
-  { id: 'video_create', icon: VideoCamera, label: t('nav.video_create') },
-  { id: 'audio_create', icon: Microphone, label: t('nav.audio_create') },
-  { id: 'task_queue', icon: Menu, label: t('nav.task_queue'), isQueue: true },
-]);
+interface NavItem {
+  id: string;
+  /** Global icon name from registerDqIcons (dq-ui registry). */
+  icon: Component | string;
+  label: string;
+  isQueue?: boolean;
+}
 
-const secondaryItems = computed(() => [
-  { id: 'models', icon: Box, label: t('nav.models') },
-  { id: 'prompts', icon: Brush, label: t('nav.prompts') },
+interface NavGroup {
+  id: string;
+  ariaLabel: string;
+  items: NavItem[];
+  dividerBefore?: boolean;
+  spacerAfter?: boolean;
+}
+
+/**
+ * Sidebar groups (top → bottom):
+ * 1. Studio — image / video / audio composers (main battlefield)
+ * 2. Workflow — copilot + global generation queue (used while creating)
+ * 3. Library — models + prompt templates (assets & presets)
+ * 4. System — settings
+ */
+const navGroups = computed<NavGroup[]>(() => [
+  {
+    id: 'studio',
+    ariaLabel: t('nav.groupStudio'),
+    items: [
+      { id: 'image_create', icon: Picture, label: t('nav.image_create') },
+      { id: 'video_create', icon: VideoCamera, label: t('nav.video_create') },
+      { id: 'audio_create', icon: Microphone, label: t('nav.audio_create') },
+    ],
+  },
+  {
+    id: 'workflow',
+    ariaLabel: t('nav.groupWorkflow'),
+    dividerBefore: true,
+    items: [
+      { id: 'assistant', icon: 'Bot', label: t('nav.assistant') },
+      { id: 'task_queue', icon: 'ListOrdered', label: t('nav.task_queue'), isQueue: true },
+    ],
+    spacerAfter: true,
+  },
+  {
+    id: 'library',
+    ariaLabel: t('nav.groupLibrary'),
+    dividerBefore: true,
+    items: [
+      { id: 'models', icon: Box, label: t('nav.models') },
+      { id: 'prompts', icon: Brush, label: t('nav.prompts') },
+    ],
+  },
+  {
+    id: 'system',
+    ariaLabel: t('nav.groupSystem'),
+    dividerBefore: true,
+    items: [{ id: 'settings', icon: Setting, label: t('nav.settings') }],
+  },
 ]);
 
 function onNavSelect(index: string) {
@@ -142,7 +159,7 @@ function openQueue() {
   justify-content: center;
   width: 32px;
   height: 32px;
-  margin-bottom: 22px;
+  margin-bottom: 18px;
   color: var(--dq-accent);
   flex-shrink: 0;
 }
@@ -154,19 +171,13 @@ function openQueue() {
   align-items: center;
   gap: 2px;
   width: 100%;
-}
-
-.dq-sidebar-nav__group--primary {
-  flex: 1;
-}
-
-.dq-sidebar-nav__group--secondary {
-  margin-bottom: 2px;
-}
-
-.dq-sidebar-nav__group--system {
   flex-shrink: 0;
-  gap: 2px;
+}
+
+.dq-sidebar-nav__spacer {
+  flex: 1;
+  width: 100%;
+  min-height: 8px;
 }
 
 /* ── Divider ── */
@@ -174,7 +185,7 @@ function openQueue() {
   width: 18px;
   height: 1px;
   background: var(--dq-border-subtle);
-  margin: 10px 0;
+  margin: 8px 0;
   flex-shrink: 0;
   opacity: 0.6;
 }
@@ -203,13 +214,11 @@ function openQueue() {
   flex-shrink: 0;
 }
 
-/* Hover: subtle highlight */
 .dq-sidebar-nav__item:hover {
   color: var(--dq-label-primary);
   background: var(--dq-fill-tertiary);
 }
 
-/* Active: accent tint */
 .dq-sidebar-nav__item.is-active {
   color: var(--dq-accent);
   background: color-mix(in srgb, var(--dq-accent) 16%, transparent);
@@ -219,7 +228,6 @@ function openQueue() {
   background: color-mix(in srgb, var(--dq-accent) 22%, transparent);
 }
 
-/* Press feedback */
 .dq-sidebar-nav__item:active {
   transform: scale(0.94) translateY(0);
   transition-duration: 0.08s;
@@ -246,8 +254,7 @@ function openQueue() {
     opacity 0.12s ease,
     transform 0.12s ease,
     visibility 0.12s;
-  box-shadow:
-    var(--dq-shadow-md);
+  box-shadow: var(--dq-shadow-md);
   backdrop-filter: var(--dq-glass-blur-light);
   -webkit-backdrop-filter: var(--dq-glass-blur-light);
   z-index: 1000;

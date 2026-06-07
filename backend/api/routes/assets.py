@@ -75,12 +75,14 @@ async def list_assets(
     sort_order: str = Query("desc", description="排序方向：asc|desc"),
     limit: int = Query(40, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    parent_asset_id: str | None = Query(None, description="仅列出指定父资产的直接子资产"),
     store: SQLiteAssetStore = Depends(get_asset_store),
 ):
     return {
         "items": store.list_assets(
             kind=kind,
             source_task_id=source_task_id,
+            parent_asset_id=parent_asset_id,
             created_after=created_after,
             created_before=created_before,
             model=model,
@@ -95,6 +97,15 @@ async def list_assets(
         "limit": limit,
         "offset": offset,
     }
+
+
+@router.get("/{asset_id}/lineage")
+async def get_asset_lineage(asset_id: str, store: SQLiteAssetStore = Depends(get_asset_store)):
+    """查询资产生成谱系：当前节点 + 祖先链 + 后代树。"""
+    try:
+        return store.get_lineage(asset_id)
+    except FileNotFoundError as e:
+        raise HTTPException(404, str(e)) from e
 
 
 @router.post("/reconcile")
@@ -112,7 +123,7 @@ async def reconcile_assets_disk(
 
 @router.get("/{asset_id}/thumbnail")
 async def get_asset_thumbnail(asset_id: str, store: SQLiteAssetStore = Depends(get_asset_store)):
-    tp = store.get_thumbnail_path(asset_id)
+    tp = store.ensure_image_thumbnail(asset_id) or store.get_thumbnail_path(asset_id)
     if tp and tp.exists():
         suf = tp.suffix.lower()
         media = "image/png" if suf == ".png" else "image/webp" if suf == ".webp" else "image/jpeg"

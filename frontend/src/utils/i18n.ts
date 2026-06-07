@@ -24,7 +24,7 @@ const i18n = createI18n(options);
 export default i18n;
 
 /** Get current locale string */
-function getLocale(): string {
+export function getLocale(): string {
   return (i18n.global.locale as unknown as { value: string }).value;
 }
 
@@ -62,6 +62,22 @@ export function $md(model: { description?: string | { zh?: string; en?: string }
   return (d as string) || defaultDesc || '';
 }
 
+type BilingualText = string | { zh?: string; en?: string };
+
+/** Version row label from registry ``versions.*.name`` (bilingual object or string). */
+export function $vn(
+  versionConfig?: { name?: BilingualText } | null,
+  fallback = ''
+): string {
+  const vn = versionConfig?.name;
+  if (vn == null || vn === '') return fallback;
+  if (typeof vn === 'object') {
+    const locale = getLocale();
+    return locale === 'en' ? (vn.en || vn.zh || fallback) : (vn.zh || vn.en || fallback);
+  }
+  return String(vn);
+}
+
 /** Model + version name */
 export function $mvn(
   modelKey: string,
@@ -69,15 +85,7 @@ export function $mvn(
   versionConfig?: { name?: string | { zh?: string; en?: string } }
 ): string {
   const base = $mn(config, modelKey);
-  const vn = versionConfig?.name;
-  if (vn == null || vn === '') return base;
-  let suffix = '';
-  if (typeof vn === 'object' && vn !== null && ('zh' in vn || 'en' in vn)) {
-    const locale = getLocale();
-    suffix = locale === 'en' ? (vn.en || vn.zh || '') : (vn.zh || vn.en || '');
-  } else {
-    suffix = String(vn);
-  }
+  const suffix = $vn(versionConfig);
   if (!suffix) return base;
   if (suffix.trim().toLowerCase() === base.trim().toLowerCase()) return base;
   return `${base} - ${suffix}`;

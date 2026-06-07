@@ -114,6 +114,7 @@ html.dark .app-main {
 
 html.dark .studio-create-page,
 html.dark .models-page,
+html.dark .copilot-page,
 html.dark .settings-page {
  width: 100%;
  max-width: none;

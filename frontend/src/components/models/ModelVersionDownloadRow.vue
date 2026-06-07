@@ -72,11 +72,12 @@
 import { computed } from 'vue';
 import ModelVersionDownloadActions from '@/components/models/ModelVersionDownloadActions.vue';
 import ModelVersionSourceBadge from '@/components/models/ModelVersionSourceBadge.vue';
-import { simplifyPrequantizedName } from '@/utils/modelVersionLayout';
+import { $vn } from '@/utils/i18n';
+import { simplifyPrequantizedName, type BilingualVersionName } from '@/utils/modelVersionLayout';
 
 const props = defineProps<{
   verKey: string;
-  ver: { name: string; size?: string; source_type?: string; source?: string };
+  ver: { name: BilingualVersionName; size?: string; source_type?: string; source?: string };
   vstatus: string;
   modelSource?: string;
   isPrequantized?: boolean;
@@ -100,9 +101,11 @@ const resolvedSource = computed(
   () => props.ver.source || props.modelSource || '',
 );
 
+const localizedName = computed(() => $vn(props.ver, props.verKey));
+
 const displayName = computed(() => {
-  if (!props.isPrequantized) return props.ver.name;
-  return simplifyPrequantizedName(props.ver.name, resolvedSource.value);
+  if (!props.isPrequantized) return localizedName.value;
+  return simplifyPrequantizedName(localizedName.value, resolvedSource.value);
 });
 
 const visibleBundleComponents = computed(() => {

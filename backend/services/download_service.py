@@ -29,6 +29,7 @@ from backend.core.interfaces import (
     DownloadTask, DownloadProgress, TaskStatus, ConversionTask
 )
 from backend.core.i18n import t as tt, get_locale
+from backend.core.registry_format import resolve_registry_label
 from backend.core.downloaders import HTTPDownloader
 from backend.services.hf_repo_resolve import resolve_huggingface_repo_id
 
@@ -371,17 +372,19 @@ class DownloadService(IDownloadService):
         local_path = config.get("local_path", f"models/{model_name}")
 
         # Build friendly display name: model name + version name
-        model_display_name = model_name
-        name_cfg = config.get("name", {})
-        if isinstance(name_cfg, dict):
-            model_display_name = name_cfg.get("zh") or name_cfg.get("en") or model_name
+        loc = get_locale()
+        model_display_name = resolve_registry_label(
+            config.get("name"), model_name, locale=loc
+        )
 
         version_display_name = ""
         ver_config = None
         if version and config.get("versions"):
             ver_config = config["versions"].get(version)
             if ver_config:
-                version_display_name = ver_config.get("name", version)
+                version_display_name = resolve_registry_label(
+                    ver_config.get("name"), version, locale=loc
+                )
                 if not repo_id:
                     repo_id = ver_config.get("repo_id")
                 if not download_url:

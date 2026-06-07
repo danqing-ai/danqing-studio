@@ -27,7 +27,20 @@
 
   <div class="studio-gallery-filters__spacer" />
 
+  <div
+    v-if="viewMode && supportsCanvas !== false"
+    class="studio-gallery-filters__view-mode"
+    :aria-label="$t('gallery.viewMode')"
+  >
+    <span class="studio-gallery-filters__view-label">{{ $t('gallery.viewMode') }}</span>
+    <StudioViewModeSwitch
+      :model-value="viewMode"
+      @update:model-value="onViewModeChange"
+    />
+  </div>
+
   <DqButton
+    v-if="!viewMode || viewMode === 'grid'"
     size="sm"
     :type="selectionMode ? 'primary' : 'default'"
     class="studio-gallery-filters__select"
@@ -49,21 +62,30 @@
 
 <script setup lang="ts">
 import { Refresh } from '@danqing/dq-shell';
+import StudioViewModeSwitch from '@/components/studio/StudioViewModeSwitch.vue';
 
-defineProps<{
+const props = defineProps<{
   filterTime: string;
   filterModels: string[];
   timeOptions: { label: string; value: string }[];
   modelOptions: string[];
   selectionMode?: boolean;
+  viewMode?: 'grid' | 'canvas';
+  supportsCanvas?: boolean;
 }>();
 
-defineEmits<{
+const emit = defineEmits<{
   (e: 'update:filterTime', value: string): void;
   (e: 'update:filterModels', value: string[]): void;
   (e: 'refresh'): void;
   (e: 'toggle-selection-mode'): void;
+  (e: 'update:viewMode', value: 'grid' | 'canvas'): void;
 }>();
+
+function onViewModeChange(mode: 'grid' | 'canvas') {
+  if (props.viewMode === mode) return;
+  emit('update:viewMode', mode);
+}
 </script>
 
 <style scoped>
@@ -89,5 +111,19 @@ defineEmits<{
 
 .studio-gallery-filters__refresh {
   flex-shrink: 0;
+}
+
+.studio-gallery-filters__view-mode {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.studio-gallery-filters__view-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--dq-color-text-secondary);
+  white-space: nowrap;
 }
 </style>

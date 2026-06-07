@@ -1,5 +1,11 @@
 <template>
-  <StudioLayout class="studio-create-page" @scroll="onCanvasScroll">
+  <StudioLayout
+    class="studio-create-page"
+    :freeform="viewMode === 'canvas'"
+    :collapsible="viewMode === 'canvas'"
+    v-model:composer-collapsed="composerCollapsed"
+    @scroll="onCanvasScroll"
+  >
     <template #filters>
       <StudioGalleryFilters
         :filter-time="filterTime"
@@ -7,15 +13,19 @@
         :time-options="timeOptions"
         :model-options="allModelOptions"
         :selection-mode="selectionMode"
+        :view-mode="viewMode"
+        :supports-canvas="true"
         @update:filter-time="filterTime = $event"
         @update:filter-models="filterModels = $event"
         @refresh="refreshGallery"
         @toggle-selection-mode="toggleSelectionMode"
+        @update:view-mode="onViewModeChange"
       />
     </template>
 
     <template #canvas>
       <StudioCanvas
+        v-if="viewMode === 'grid'"
         :items="galleryItems"
         :active-tasks="activeVideoTasks"
         :loading="galleryLoading"
@@ -33,6 +43,23 @@
         @select-all="selectAllLoaded"
         @batch-delete="batchDeleteSelected"
         @clear-selection="clearSelection"
+      />
+      <InfiniteCanvas
+        v-else
+        ref="infiniteCanvasRef"
+        :items="galleryItems"
+        media="video"
+        @card-action="onCardAction"
+        @download="downloadVideoItem"
+        @toggle-grid-view="() => onViewModeChange('grid')"
+        @node-selected="onCanvasNodeSelected"
+        @session-ready="onCanvasSessionReady"
+        @open-preview="onCanvasOpenPreview"
+        @composer-restore="onCanvasComposerRestore"
+        @overlay-cleared="onCanvasOverlayCleared"
+        @use-as-start-frame="onCanvasUseAsStartFrame"
+        @use-as-tail-frame="onCanvasUseAsTailFrame"
+        @use-as-video-source="onCanvasUseAsVideoSource"
       />
     </template>
 
@@ -58,6 +85,9 @@
         :show-lora="!!currentModelConfig?.parameters?.lora_support"
         :show-batch-count="true"
         :reference-media="referenceMedia"
+        :reference-asset-path="startImagePath || null"
+        :enhancing="isEnhancing"
+        :reversing="isReversing"
         :tail-reference-media="tailReferenceMedia"
         :current-model-config="currentModelConfig"
         :compatible-loras="compatibleLoras"
@@ -72,6 +102,13 @@
         @model-change="onModelVersionChange"
         @reset-defaults="resetToDefaults"
         @go-download="goToDownload"
+        @enhance="onEnhancePrompt"
+        @reverse-prompt="onReversePromptFromReference"
+        :prompt-apply-preview="promptApplyPreview"
+        @prompt-apply-replace="onPromptApplyReplace"
+        @prompt-apply-append="onPromptApplyAppend"
+        @prompt-apply-dismiss="promptApply.clear()"
+        :collapsed="viewMode === 'canvas' && composerCollapsed"
       />
     </template>
   </StudioLayout>
@@ -79,7 +116,7 @@
   <!-- Start image asset picker -->
   <DqDialog v-model:open="showAssetPicker" :title="assetPickerTitle" width="70%">
     <AssetPicker
-      accept-kind="image"
+      :accept-kind="videoWorkMode === 'upscale' ? 'video' : 'image'"
       :recent-gallery="recentStartImages"
       @pick="onStartAssetPick"
     />
@@ -115,6 +152,13 @@
     :items="galleryItems"
     media="video"
   />
+
+  <StudioLineagePanel
+    v-model:modelValue="showLineageDrawer"
+    :asset-id="lineageTargetAssetId"
+    :on-canvas-ids="canvasAssetIdsOnCanvas"
+    @focus-asset="onLineageFocusAsset"
+  />
 </template>
 
 <script setup lang="ts">
@@ -140,7 +184,21 @@ import StudioLayout from '@/components/studio/StudioLayout.vue';
 import StudioCanvas from '@/components/studio/StudioCanvas.vue';
 import StudioGalleryFilters from '@/components/studio/StudioGalleryFilters.vue';
 import VideoComposer from '@/components/studio/VideoComposer.vue';
+import InfiniteCanvas from '@/components/studio/InfiniteCanvas.vue';
+import StudioLineagePanel from '@/components/studio/StudioLineagePanel.vue';
+import { canvasAutoAddEnabled, useCanvasStore } from '@/composables/useCanvasStore';
+import { useComposerCollapse } from '@/composables/useComposerCollapse';
+import {
+  activateCanvasViewForResults,
+  maybeShowCanvasWorkspaceHint,
+} from '@/utils/canvasWorkspaceHint';
+import { previewUrlForGalleryItem } from '@/utils/canvasAssets';
 import { useStudioGallery } from '@/composables/useStudioGallery';
+import { useComposerLlm } from '@/composables/useComposerLlm';
+import { assetIdFromGalleryPath } from '@/utils/copilotHandoff';
+import { DQ_STORAGE, getItem, setItem } from '@/utils/storage';
+import { applyPromptDraft, consumePromptDraft } from '@/utils/promptApply';
+import { usePromptApplyOffer } from '@/composables/usePromptApplyOffer';
 
 const router = useRouter();
 const registryStore = useRegistryStore();
@@ -233,6 +291,272 @@ const batchCount = ref(1);
 // State
 const currentTask = ref<any>(null);
 const generating = ref(false);
+const infiniteCanvasRef = ref<InstanceType<typeof InfiniteCanvas> | null>(null);
+const pendingCanvasAssetIds = ref<string[]>([]);
+const videoCanvas = useCanvasStore('video');
+const canvasSelectedItem = ref<GalleryItem | null>(null);
+const { collapsed: composerCollapsed, setCollapsed: setComposerCollapsed } = useComposerCollapse('video');
+
+const savedViewMode = getItem(DQ_STORAGE.VIDEO_VIEW_MODE);
+const viewMode = ref<'grid' | 'canvas'>(
+  savedViewMode === 'canvas' || savedViewMode === 'grid' ? savedViewMode : 'grid'
+);
+
+watch(viewMode, (mode) => {
+  setItem(DQ_STORAGE.VIDEO_VIEW_MODE, mode);
+});
+
+function onViewModeChange(mode: 'grid' | 'canvas') {
+  if (viewMode.value === mode) return;
+  const batchPaths =
+    mode === 'canvas' && selectedPaths.value.size > 0
+      ? Array.from(selectedPaths.value)
+      : [];
+  viewMode.value = mode;
+  if (mode === 'canvas') {
+    clearSelection();
+    maybeShowCanvasWorkspaceHint();
+    const batchCount = batchPaths.length;
+    nextTick(() => {
+      syncCompositorOverlaysOnCanvasEnter();
+      persistComposerSnapshot();
+      if (batchCount > 0) {
+        addAssetPathsToCanvas(batchPaths, {
+          fit: true,
+          placement: 'center',
+          focusLast: false,
+        });
+        toast.success($tt('canvas.batchAdded', { n: batchCount }));
+      } else if (Object.keys(videoCanvas.items).length > 0) {
+        infiniteCanvasRef.value?.fitAll();
+      }
+    });
+  } else {
+    clearSelection();
+  }
+}
+
+function shouldAutoAddToCanvas(): boolean {
+  return viewMode.value === 'canvas' || canvasAutoAddEnabled('video');
+}
+
+function addAssetPathsToCanvas(
+  paths: string[],
+  opts?: {
+    fit?: boolean;
+    placement?: 'staging' | 'center';
+    focusLast?: boolean;
+  }
+) {
+  if (!paths.length) return;
+  if (viewMode.value === 'canvas' && infiniteCanvasRef.value) {
+    infiniteCanvasRef.value.addPathsToCanvas(paths, {
+      fit: opts?.fit,
+      placement: opts?.placement ?? 'staging',
+      focusLast: opts?.focusLast ?? true,
+    });
+    return;
+  }
+  videoCanvas.addPathsFromGallery(paths, galleryItems.value, {
+    placement: opts?.placement ?? 'center',
+  });
+}
+
+function bindVideoAssetFromPath(path: string): { path: string; previewUrl: string } {
+  const item = galleryItems.value.find((g) => g.path === path);
+  const previewUrl = item
+    ? previewUrlForGalleryItem(item)
+    : path.startsWith('asset:')
+      ? `/api/assets/${path.slice('asset:'.length)}/file`
+      : path;
+  return { path, previewUrl };
+}
+
+function onCanvasSessionReady(_payload: { sessionId: string }) {
+  if (viewMode.value === 'canvas') {
+    nextTick(() => {
+      syncCompositorOverlaysOnCanvasEnter();
+      if (Object.keys(videoCanvas.items).length > 0) {
+        infiniteCanvasRef.value?.fitAll();
+      }
+    });
+  }
+}
+
+function syncCanvasOverlay(
+  kind: import('@/types').CanvasOverlayKind,
+  path: string | null
+) {
+  if (!path) {
+    videoCanvas.clearOverlay(kind);
+    return;
+  }
+  const item = galleryItems.value.find((g) => g.path === path) ?? undefined;
+  videoCanvas.setOverlay(kind, path, item);
+}
+
+function restoreComposerFromCanvasOverlays() {
+  const sf = videoCanvas.overlays.start_frame;
+  if (!startImagePath.value && sf?.path) {
+    const p = bindVideoAssetFromPath(sf.path);
+    startImagePath.value = p.path;
+    startImageSrc.value = p.previewUrl;
+    videoWorkMode.value = 'animate';
+  }
+  const tf = videoCanvas.overlays.tail_frame;
+  if (!tailImagePath.value && tf?.path) {
+    const p = bindVideoAssetFromPath(tf.path);
+    tailImagePath.value = p.path;
+    tailImageSrc.value = p.previewUrl;
+    videoWorkMode.value = 'animate';
+  }
+  const vs = videoCanvas.overlays.video_source;
+  if (!sourceVideoPath.value && vs?.path) {
+    const p = bindVideoAssetFromPath(vs.path);
+    sourceVideoPath.value = p.path;
+    sourceVideoSrc.value = p.previewUrl;
+    videoWorkMode.value = 'upscale';
+  }
+}
+
+function syncCompositorOverlaysOnCanvasEnter() {
+  restoreComposerFromCanvasOverlays();
+  syncCanvasOverlay('start_frame', startImagePath.value || null);
+  syncCanvasOverlay('tail_frame', tailImagePath.value || null);
+  syncCanvasOverlay('video_source', sourceVideoPath.value || null);
+}
+
+function onCanvasOverlayCleared(kind: import('@/types').CanvasOverlayKind) {
+  if (kind === 'start_frame') {
+    startImageSrc.value = '';
+    startImagePath.value = '';
+  } else if (kind === 'tail_frame') {
+    tailImageSrc.value = '';
+    tailImagePath.value = '';
+  } else if (kind === 'video_source') {
+    sourceVideoSrc.value = '';
+    sourceVideoPath.value = '';
+  }
+}
+
+function onCanvasNodeSelected(item: GalleryItem | null) {
+  canvasSelectedItem.value = item;
+  if (!item) {
+    persistComposerSnapshot();
+    return;
+  }
+  setComposerCollapsed(false);
+  if (item.prompt) params.prompt = item.prompt;
+  if (item.title) params.title = item.title;
+  if (item.model) {
+    const raw = String(item.model);
+    if (raw.includes(':')) {
+      const [modelKey, versionKey] = raw.split(':', 2);
+      params.model = modelKey;
+      params.version = versionKey;
+      selectedModelVersion.value = `${modelKey}|${versionKey}`;
+    } else {
+      params.model = raw;
+      selectedModelVersion.value = raw;
+    }
+  }
+  persistComposerSnapshot();
+}
+
+function persistComposerSnapshot() {
+  videoCanvas.setComposerSnapshot({
+    prompt: String(params.prompt || ''),
+    title: String(params.title || ''),
+    model: String(params.model || ''),
+    version: String(params.version || ''),
+    negative_prompt: String(params.negative_prompt || ''),
+    seed: params.seed != null ? String(params.seed) : undefined,
+    mode: videoWorkMode.value,
+    start_image_path: startImagePath.value || undefined,
+    tail_image_path: tailImagePath.value || undefined,
+    source_video_path: sourceVideoPath.value || undefined,
+  });
+}
+
+function onCanvasComposerRestore(snapshot: {
+  prompt?: string;
+  title?: string;
+  model?: string;
+  version?: string;
+  negative_prompt?: string;
+  seed?: string;
+  mode?: string;
+  start_image_path?: string;
+  tail_image_path?: string;
+  source_video_path?: string;
+}) {
+  if (!snapshot || typeof snapshot !== 'object') return;
+  if (snapshot.prompt != null) params.prompt = snapshot.prompt;
+  if (snapshot.title != null) params.title = snapshot.title;
+  if (snapshot.negative_prompt != null) params.negative_prompt = snapshot.negative_prompt;
+  if (snapshot.seed != null) params.seed = snapshot.seed;
+  if (snapshot.mode === 'create' || snapshot.mode === 'animate' || snapshot.mode === 'upscale') {
+    videoWorkMode.value = snapshot.mode;
+  }
+  if (snapshot.model) {
+    params.model = snapshot.model;
+    if (snapshot.version) {
+      params.version = snapshot.version;
+      selectedModelVersion.value = `${snapshot.model}|${snapshot.version}`;
+    } else {
+      selectedModelVersion.value = snapshot.model;
+    }
+  }
+  if (snapshot.start_image_path) {
+    const p = bindVideoAssetFromPath(snapshot.start_image_path);
+    startImagePath.value = p.path;
+    startImageSrc.value = p.previewUrl;
+  }
+  if (snapshot.tail_image_path) {
+    const p = bindVideoAssetFromPath(snapshot.tail_image_path);
+    tailImagePath.value = p.path;
+    tailImageSrc.value = p.previewUrl;
+  }
+  if (snapshot.source_video_path) {
+    const p = bindVideoAssetFromPath(snapshot.source_video_path);
+    sourceVideoPath.value = p.path;
+    sourceVideoSrc.value = p.previewUrl;
+  }
+  if (viewMode.value === 'canvas') {
+    nextTick(() => syncCompositorOverlaysOnCanvasEnter());
+  }
+}
+
+function buildCanvasMeta(extra: Record<string, unknown> = {}): Record<string, unknown> {
+  const meta: Record<string, unknown> = { ...extra };
+  const sid = videoCanvas.sessionId.value;
+  if (sid) meta.canvas_session_id = sid;
+  const parentPath =
+    canvasSelectedItem.value?.path || videoCanvas.activeAssetPath.value || '';
+  if (parentPath.startsWith('asset:')) {
+    meta.parent_asset_id = parentPath.slice('asset:'.length);
+    if (videoWorkMode.value === 'animate') meta.relation_type = 'animate';
+    else if (videoWorkMode.value === 'upscale') meta.relation_type = 'upscale';
+    else meta.relation_type = 'create';
+  }
+  return meta;
+}
+
+function onCanvasOpenPreview(item: GalleryItem) {
+  const idx = galleryItems.value.findIndex((g) => g.path === item.path);
+  if (idx >= 0) {
+    selectedVideoIndex.value = idx;
+    videoPreviewVisible.value = true;
+  }
+}
+
+function downloadVideoItem(item: GalleryItem) {
+  const a = document.createElement('a');
+  a.href = getVideoUrl(item);
+  a.download = item.name || 'video.mp4';
+  a.click();
+  toast.success($tt('gallery.startDownload'));
+}
 const previewVideo = ref('');
 const previewVideoKey = ref(0);
 const previewVideoDurationSec = ref(0);
@@ -299,14 +623,51 @@ const activeVideoTasks = computed(() => {
   });
 });
 
+const showLineageDrawer = ref(false);
+const lineageTargetAssetId = ref('');
+
+const canvasAssetIdsOnCanvas = computed(() =>
+  Object.keys(videoCanvas.items)
+    .filter((p) => p.startsWith('asset:'))
+    .map((p) => p.slice('asset:'.length))
+);
+
+async function onLineageFocusAsset(assetId: string) {
+  if (viewMode.value !== 'canvas') {
+    await activateCanvasViewForResults(viewMode, syncCompositorOverlaysOnCanvasEnter);
+  }
+  infiniteCanvasRef.value?.focusLineageAsset(assetId);
+}
+
+async function addGalleryItemToCanvas(
+  item: GalleryItem,
+  opts?: { switchView?: boolean; fit?: boolean }
+) {
+  if (opts?.switchView !== false && viewMode.value !== 'canvas') {
+    onViewModeChange('canvas');
+    await nextTick();
+    await nextTick();
+  }
+  addAssetPathsToCanvas([item.path], {
+    placement: 'center',
+    focusLast: true,
+    fit: opts?.fit,
+  });
+  toast.success($tt('canvas.addedToCanvas'));
+}
+
 function onCardAction({ action, item }: { action: string; item: GalleryItem }) {
-  if (action === 'delete') {
+  if (action === 'add-to-canvas') {
+    void addGalleryItemToCanvas(item, { fit: true });
+  } else if (action === 'delete') {
     deleteItem(item);
   } else if (action === 'download') {
-    const a = document.createElement('a');
-    a.href = getVideoUrl(item);
-    a.download = item.name || 'video.mp4';
-    a.click();
+    downloadVideoItem(item);
+  } else if (action === 'lineage') {
+    lineageTargetAssetId.value = item.path.startsWith('asset:')
+      ? item.path.slice('asset:'.length)
+      : '';
+    showLineageDrawer.value = true;
   }
 }
 
@@ -323,10 +684,27 @@ const tailImageViewerVisible = ref(false);
 const sourceVideoSrc = ref('');
 const sourceVideoPath = ref('');
 
+watch(
+  [startImagePath, tailImagePath, sourceVideoPath],
+  () => {
+    persistComposerSnapshot();
+    if (viewMode.value === 'canvas') {
+      syncCanvasOverlay('start_frame', startImagePath.value || null);
+      syncCanvasOverlay('tail_frame', tailImagePath.value || null);
+      syncCanvasOverlay('video_source', sourceVideoPath.value || null);
+    }
+  }
+);
+
 const showAssetPicker = ref(false);
 const showTailAssetPicker = ref(false);
 
 function removeStartImage() {
+  if (videoWorkMode.value === 'upscale') {
+    sourceVideoSrc.value = '';
+    sourceVideoPath.value = '';
+    return;
+  }
   startImageSrc.value = '';
   startImagePath.value = '';
 }
@@ -345,19 +723,96 @@ function onModelVersionChange(val: string) {
   loadCompatibleLoras();
 }
 
+const { isEnhancing, isReversing, enhance: doEnhance, reversePrompt } = useComposerLlm();
+const promptApply = usePromptApplyOffer();
+const promptApplyPreview = computed(() => promptApply.pending.value?.result ?? null);
+
+async function onEnhancePrompt(ctx?: { stylePositive?: string }) {
+  const prompt = String(params.prompt || '').trim();
+  if (!prompt) return;
+  const enhanced = await doEnhance(
+    prompt,
+    ctx?.stylePositive,
+    'video_create',
+    params.model,
+    { quietSuccess: true },
+  );
+  if (enhanced) {
+    promptApply.offer(params.prompt, enhanced, (text) => { params.prompt = text; });
+  }
+}
+
+async function onReversePromptFromReference() {
+  const assetId = assetIdFromGalleryPath(startImagePath.value || '');
+  if (!assetId) {
+    toast.warning($tt('create.reverseNeedAsset'));
+    return;
+  }
+  const prompt = await reversePrompt(assetId, { quietSuccess: true });
+  if (prompt) {
+    promptApply.offer(params.prompt, prompt, (text) => { params.prompt = text; });
+  }
+}
+
+function onPromptApplyReplace() {
+  promptApply.applyReplace((text) => { params.prompt = text; });
+}
+
+function onPromptApplyAppend() {
+  promptApply.applyAppend(() => params.prompt, (text) => { params.prompt = text; });
+}
+
 function goToDownload() {
   router.push({ name: 'models' });
 }
 
 function onStartAssetPick(payload: { path: string; previewUrl: string }) {
+  if (videoWorkMode.value === 'upscale') {
+    sourceVideoSrc.value = payload.previewUrl || '';
+    sourceVideoPath.value = payload.path;
+    if (viewMode.value === 'canvas') {
+      syncCanvasOverlay('video_source', payload.path);
+    }
+  } else {
+    startImageSrc.value = payload.previewUrl || '';
+    startImagePath.value = payload.path;
+    if (viewMode.value === 'canvas') {
+      syncCanvasOverlay('start_frame', payload.path);
+    }
+  }
+  showAssetPicker.value = false;
+}
+
+function onCanvasUseAsStartFrame(payload: { path: string; previewUrl: string; quiet?: boolean }) {
+  videoWorkMode.value = 'animate';
   startImageSrc.value = payload.previewUrl || '';
   startImagePath.value = payload.path;
-  showAssetPicker.value = false;
+  syncCanvasOverlay('start_frame', payload.path);
+  if (!payload.quiet) toast.success($tt('canvas.startFrameBound'));
+}
+
+function onCanvasUseAsTailFrame(payload: { path: string; previewUrl: string; quiet?: boolean }) {
+  videoWorkMode.value = 'animate';
+  tailImageSrc.value = payload.previewUrl || '';
+  tailImagePath.value = payload.path;
+  syncCanvasOverlay('tail_frame', payload.path);
+  if (!payload.quiet) toast.success($tt('canvas.tailFrameBound'));
+}
+
+function onCanvasUseAsVideoSource(payload: { path: string; previewUrl: string; quiet?: boolean }) {
+  videoWorkMode.value = 'upscale';
+  sourceVideoSrc.value = payload.previewUrl || '';
+  sourceVideoPath.value = payload.path;
+  syncCanvasOverlay('video_source', payload.path);
+  if (!payload.quiet) toast.success($tt('canvas.videoSourceBound'));
 }
 
 function onTailAssetPick(payload: { path: string; previewUrl: string }) {
   tailImageSrc.value = payload.previewUrl || '';
   tailImagePath.value = payload.path;
+  if (viewMode.value === 'canvas') {
+    syncCanvasOverlay('tail_frame', payload.path);
+  }
   showTailAssetPicker.value = false;
 }
 
@@ -968,6 +1423,8 @@ const startGeneration = async () => {
   };
 
   try {
+    persistComposerSnapshot();
+    const meta = buildCanvasMeta();
     const modelStr = params.version ? `${params.model}:${params.version}` : params.model;
     let submitRes: any;
     if (videoWorkMode.value === 'animate') {
@@ -1009,6 +1466,7 @@ const startGeneration = async () => {
         guidance: params.guide_scale,
         shift: params.shift || undefined,
         seed: params.seed ? parseInt(params.seed, 10) : null,
+        metadata: { ...meta },
         priority: 'normal',
       };
       if (tail_asset_id) {
@@ -1044,7 +1502,7 @@ const startGeneration = async () => {
           4000,
           Math.max(1, parseInt(String(params.upscale_max_frames), 10) || 300)
         ),
-        metadata: {},
+        metadata: { ...meta },
         priority: 'normal',
       };
       const sd = params.seed ? parseInt(String(params.seed), 10) : null;
@@ -1065,6 +1523,7 @@ const startGeneration = async () => {
         guidance: params.guide_scale,
         shift: params.shift || undefined,
         seed: params.seed ? parseInt(params.seed, 10) : null,
+        metadata: { ...meta },
         priority: 'normal',
       };
       const adapters = buildVideoAdapters();
@@ -1093,6 +1552,10 @@ const startGeneration = async () => {
       onLog: (logData: any) => {
         tasksStore.ingestTaskLog(tid, logData);
       },
+      onResult: (resultData: any) => {
+        const ids = (resultData?.asset_ids as string[] | undefined) || [];
+        if (ids.length > 0) pendingCanvasAssetIds.value = ids;
+      },
       onStatus: (statusData: any) => {
         if (currentTask.value) {
           currentTask.value.progress = statusData.progress ?? 0;
@@ -1107,11 +1570,21 @@ const startGeneration = async () => {
           const updated = await api.gen.getMediaTask(tid) as any;
           currentTask.value = updated;
           const pid = updated.result && updated.result.primary_asset_id;
+          const ids = [...pendingCanvasAssetIds.value];
+          const willAutoAdd = shouldAutoAddToCanvas() && ids.length > 0;
+          pendingCanvasAssetIds.value = [];
           if (pid) {
             previewVideo.value = api.gallery.getImageUrl(`asset:${pid}`);
             previewVideoKey.value += 1;
             previewVideoDurationSec.value = 0;
-            loadGallery(true);
+          }
+          if (!willAutoAdd) {
+            toast.success($tt('studio.genComplete'));
+          }
+          await loadGallery(true);
+          if (willAutoAdd) {
+            await activateCanvasViewForResults(viewMode, syncCompositorOverlaysOnCanvasEnter);
+            addAssetPathsToCanvas(ids.map((id) => `asset:${id}`), { placement: 'staging' });
           }
         } else if (doneData.status === 'failed') {
           const updated = await api.gen.getMediaTask(tid) as any;
@@ -1288,5 +1761,9 @@ onMounted(async () => {
   loadRecentStartImages();
   loadGallery(true);
   tasksStore.ensureQueuePoller();
+  const promptDraft = consumePromptDraft(DQ_STORAGE.VIDEO_CREATE_PROMPT_DRAFT);
+  if (promptDraft) {
+    params.prompt = applyPromptDraft(params.prompt, promptDraft);
+  }
 });
 </script>

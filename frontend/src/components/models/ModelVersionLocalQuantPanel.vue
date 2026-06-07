@@ -55,7 +55,8 @@
 </template>
 
 <script setup lang="ts">
-import { shortDerivedLabel } from '@/utils/modelVersionLayout';
+import { $vn } from '@/utils/i18n';
+import { shortDerivedLabel, type BilingualVersionName } from '@/utils/modelVersionLayout';
 
 defineProps<{
   modelId: string;
@@ -64,7 +65,7 @@ defineProps<{
   dependencyHint: string;
   derivedVariants: Array<{
     verKey: string;
-    ver: { name: string; size?: string };
+    ver: { name: BilingualVersionName; size?: string };
     vstatus: string;
   }>;
   loadingKeys: Record<string, boolean>;
@@ -75,7 +76,7 @@ defineEmits<{
   'delete-derived': [verKey: string];
 }>();
 
-function shortLabel(dv: { verKey: string; ver: { name: string } }) {
-  return shortDerivedLabel(dv.verKey, dv.ver.name);
+function shortLabel(dv: { verKey: string; ver: { name: BilingualVersionName } }) {
+  return shortDerivedLabel(dv.verKey, $vn(dv.ver, dv.verKey));
 }
 </script>

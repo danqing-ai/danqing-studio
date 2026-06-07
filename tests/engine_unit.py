@@ -8,11 +8,171 @@ from types import SimpleNamespace
 
 from backend.engine.common._base import _mlx_affine_infer_bits_and_group_size
 from backend.engine.families.ltx.weights import remap_ltx_weights
-from tests.benchmark.cases import BENCHMARK_EXIT_EXEMPT_MISMATCH_VS_MFLUX
 
 
 def _t(shape: tuple[int, ...]) -> SimpleNamespace:
     return SimpleNamespace(shape=shape)
+
+
+class StructuralGuideTests(unittest.TestCase):
+    def test_infer_guide_type_and_lora_map(self) -> None:
+        from backend.engine.common.structural_guide import (
+            CONTROLNET_LORA_MAP,
+            companion_lora_id,
+            infer_guide_type,
+        )
+
+        self.assertEqual(infer_guide_type("flux-canny-controlnet"), "canny")
+        self.assertEqual(infer_guide_type("flux-depth-controlnet"), "depth")
+        self.assertEqual(infer_guide_type("flux-redux"), "redux")
+        self.assertEqual(companion_lora_id("flux-canny-controlnet"), "flux1-canny-dev-lora")
+        self.assertIn("flux-depth-controlnet", CONTROLNET_LORA_MAP)
+        from backend.engine.common.structural_guide import is_fill_controlnet, is_redux_controlnet
+
+        self.assertTrue(is_fill_controlnet("flux-fill-controlnet"))
+        self.assertTrue(is_redux_controlnet("flux-redux"))
+        self.assertIsNone(companion_lora_id("flux-redux"))
+
+
+class ImageCliGenerateTests(unittest.TestCase):
+    def test_structural_guide_requires_control_asset(self) -> None:
+        from backend.cli.image_cli import generate
+
+        with self.assertRaises(ValueError) as ctx:
+            generate(
+                "flux1-dev",
+                "test",
+                controlnet="flux-canny-controlnet",
+                project_root=Path(__file__).resolve().parents[1],
+            )
+        self.assertIn("control-asset-id", str(ctx.exception).lower())
+
+    def test_fill_rejected_on_generate(self) -> None:
+        from backend.cli.image_cli import generate
+
+        with self.assertRaises(ValueError) as ctx:
+            generate(
+                "flux1-dev",
+                "test",
+                controlnet="flux-fill-controlnet",
+                control_asset_id="ast_fake",
+                project_root=Path(__file__).resolve().parents[1],
+            )
+        self.assertIn("retouch", str(ctx.exception).lower())
+
+
+class ImageCliEditTests(unittest.TestCase):
+    def test_retouch_requires_mask(self) -> None:
+        from backend.cli.image_cli import edit
+
+        with self.assertRaises(ValueError) as ctx:
+            edit(
+                "flux-fill-controlnet",
+                "retouch",
+                "test",
+                source_asset_id="ast_fake",
+                project_root=Path(__file__).resolve().parents[1],
+            )
+        self.assertIn("mask", str(ctx.exception).lower())
+
+    def test_extend_requires_directions(self) -> None:
+        from backend.cli.image_cli import edit
+
+        with self.assertRaises(ValueError) as ctx:
+            edit(
+                "flux-fill-controlnet",
+                "extend",
+                "test",
+                source_asset_id="ast_fake",
+                project_root=Path(__file__).resolve().parents[1],
+            )
+        self.assertIn("extend-directions", str(ctx.exception).lower())
+
+
+class RegistryActionTests(unittest.TestCase):
+    def test_fill_api_actions_collapse_to_edit(self) -> None:
+        from backend.core.registry_format import api_action_frozenset, registry_declares_action
+
+        acts = {"retouch": {}, "extend": {}}
+        self.assertEqual(api_action_frozenset(acts, media="image"), frozenset({"edit"}))
+        self.assertTrue(registry_declares_action(acts, "extend"))
+        self.assertTrue(registry_declares_action(acts, "retouch"))
+        self.assertFalse(registry_declares_action(acts, "create"))
+
+
+class FluxFillPatchEmbedTests(unittest.TestCase):
+    def test_fill_patch_token_dim_matches_x_embedder(self) -> None:
+        from backend.engine.config.model_configs import Flux1Config
+        from backend.engine.families.flux1.fill_mask import FILL_PATCH_TOKEN_DIM
+        from backend.engine.families.flux1.transformer_mlx import Flux1Transformer
+        from backend.engine.runtime.mlx import MLXContext
+
+        ctx = MLXContext()
+        config = Flux1Config(patch_token_dim=FILL_PATCH_TOKEN_DIM, supports_guidance=True)
+        model = Flux1Transformer(config, ctx)
+        w = model._param_map["patch_embed.proj.weight"]
+        self.assertEqual(tuple(w.shape), (3072, 1, 1, FILL_PATCH_TOKEN_DIM))
+
+
+class FluxFillMaskTests(unittest.TestCase):
+    def test_outpaint_mask_layout(self) -> None:
+        from PIL import Image
+
+        from backend.engine.families.flux1.fill_mask import (
+            build_outpaint_image_and_mask,
+            mask_pil_to_weight,
+            reshape_mask_latent_channels,
+        )
+
+        src = Image.new("RGB", (64, 64), color=(128, 64, 32))
+        canvas, mask = build_outpaint_image_and_mask(src, ["right"], 64)
+        self.assertEqual(canvas.size, (128, 64))
+        m = mask_pil_to_weight(mask)
+        self.assertEqual(float(m[:64, :64].max()), 0.0)
+        self.assertGreater(float(m[:, 64:].max()), 0.5)
+        packed = reshape_mask_latent_channels(m, 64, 128)
+        self.assertEqual(packed.shape, (1, 64, 8, 16))
+
+
+class ControlNetRuntimeTests(unittest.TestCase):
+    def test_declared_backends_mlx_placeholder(self) -> None:
+        from backend.engine.common.controlnet_runtime import (
+            CONTROLNET_CUDA_BATCH_PLANNED,
+            CONTROLNET_DECLARED_BACKENDS,
+        )
+
+        self.assertEqual(CONTROLNET_DECLARED_BACKENDS, ("mlx",))
+        self.assertTrue(CONTROLNET_CUDA_BATCH_PLANNED)
+
+    def test_require_fails_on_non_mlx_context(self) -> None:
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from backend.engine.common.controlnet_runtime import require_controlnet_runtime
+
+        fake_ctx = SimpleNamespace()
+        with patch(
+            "backend.engine.common.controlnet_runtime.controlnet_runtime_available",
+            return_value=True,
+        ):
+            with self.assertRaises(RuntimeError) as ctx:
+                require_controlnet_runtime(fake_ctx, feature="structural_guide")
+        msg = str(ctx.exception).lower()
+        self.assertIn("mlx-only", msg)
+        self.assertIn("cuda", msg)
+
+
+class ControlNetScopeTests(unittest.TestCase):
+    def test_scope_filter(self) -> None:
+        from backend.api.routes.settings import _controlnet_matches_scope
+
+        self.assertTrue(_controlnet_matches_scope({}, "create"))
+        self.assertTrue(_controlnet_matches_scope({}, None))
+        self.assertFalse(_controlnet_matches_scope({"retouch": {}}, "create"))
+        self.assertFalse(_controlnet_matches_scope({"extend": {}}, "create"))
+        self.assertTrue(_controlnet_matches_scope({"retouch": {}}, "retouch"))
+        self.assertTrue(_controlnet_matches_scope({"extend": {}}, "extend"))
+        self.assertFalse(_controlnet_matches_scope({}, "retouch"))
 
 
 class RuntimeContractTests(unittest.TestCase):
@@ -150,6 +310,55 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertEqual(len(sigmas), 4)
         self.assertAlmostEqual(sigmas[0], 1.0)
         self.assertAlmostEqual(sigmas[-1], 0.25)
+
+    def test_z_image_scheduler_matches_diffusers_static_shift(self) -> None:
+        import json
+        from pathlib import Path
+
+        import numpy as np
+        from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
+
+        from backend.engine.common.runtime_contracts import SchedulerSemanticsResolver
+        from backend.engine.common.schedulers import FlowMatchEulerScheduler, get_scheduler
+        from backend.engine.runtime.mlx import MLXContext
+
+        reg = json.loads(
+            (Path(__file__).resolve().parents[1] / "default_config" / "models_registry.json").read_text(
+                encoding="utf-8",
+            )
+        )
+        entry = SimpleNamespace(parameters=reg["models"]["z-image"]["parameters"])
+        resolver = SchedulerSemanticsResolver()
+        sem = resolver.resolve(
+            entry=entry,
+            config=SimpleNamespace(requires_sigma_shift=True),
+            request_scheduler=None,
+            request_metadata={},
+            steps=50,
+            width=768,
+            height=1024,
+        )
+        self.assertFalse(sem.use_empirical_mu)
+        self.assertEqual(sem.set_timesteps_kwargs.get("scheduler_shift"), 6.0)
+
+        ctx = MLXContext()
+        sched = get_scheduler(sem.scheduler_name, ctx=ctx)
+        self.assertIsInstance(sched, FlowMatchEulerScheduler)
+        sched.set_timesteps(**sem.set_timesteps_kwargs)
+        danqing_sigmas = np.array(sched.sigmas)
+
+        official = FlowMatchEulerDiscreteScheduler.from_config(
+            {"num_train_timesteps": 1000, "use_dynamic_shifting": False, "shift": 6.0}
+        )
+        official.sigma_min = 0.0
+        official.set_timesteps(50)
+        ref_sigmas = official.sigmas.cpu().numpy()
+
+        self.assertLess(
+            float(np.max(np.abs(danqing_sigmas[:51] - ref_sigmas[:51]))),
+            1e-5,
+            "z-image scheduler sigmas should match diffusers static shift=6.0",
+        )
 
 
 class VideoRuntimeContractTests(unittest.TestCase):
@@ -294,6 +503,167 @@ class QwenImageTransformerTests(unittest.TestCase):
         entry = reg["models"]["qwen-image"]
         self.assertIn("cuda", entry.get("backends", []))
         self.assertIn("mlx", entry.get("backends", []))
+
+    def test_qwen_text_encoder_weights_accepts_pre_remapped_encoder_keys(self) -> None:
+        import mlx.core as mx
+
+        from backend.engine.families.qwen.weights_mlx import apply_qwen_text_encoder_weights
+
+        flat = {
+            "encoder.embed_tokens.weight": mx.zeros((16, 8)),
+            "encoder.layers.0.self_attn.q_proj.weight": mx.zeros((12, 8)),
+        }
+        nested = apply_qwen_text_encoder_weights(flat)
+        enc = nested.get("encoder")
+        self.assertIsInstance(enc, dict)
+        self.assertIn("embed_tokens", enc)
+        self.assertEqual(len(enc["layers"]), 1)
+        self.assertIn("self_attn", enc["layers"][0])
+
+    def test_qwen_edit_unpack_portrait_latent_grid(self) -> None:
+        import mlx.core as mx
+
+        from backend.engine.families.qwen.edit_util import (
+            pack_qwen_latents_to_sequence,
+            unpack_qwen_sequence_to_nchw,
+        )
+        from backend.engine.runtime.mlx import MLXContext
+
+        ctx = MLXContext()
+        width_px, height_px = 832, 1248
+        h_lat, w_lat = height_px // 16, width_px // 16
+        latents = ctx.seeded_randn((1, 64, h_lat, w_lat), 0)
+        seq = pack_qwen_latents_to_sequence(ctx, latents)
+        self.assertEqual(tuple(seq.shape), (1, h_lat * w_lat, 64))
+        out = unpack_qwen_sequence_to_nchw(ctx, seq, height_px, width_px)
+        self.assertEqual(tuple(out.shape), (1, 64, h_lat, w_lat))
+
+
+class ErnieImageTransformerTests(unittest.TestCase):
+    def test_transformer_dispatch_mlx(self) -> None:
+        from backend.engine.config.model_configs import ErnieImageConfig
+        from backend.engine.families.ernie_image.transformer import ErnieImageTransformer
+        from backend.engine.families.ernie_image.transformer_mlx import ErnieImageTransformer as ErnieMLX
+        from backend.engine.runtime.mlx import MLXContext
+
+        model = ErnieImageTransformer(ErnieImageConfig(), MLXContext())
+        self.assertIsInstance(model._inner, ErnieMLX)
+
+    def test_transformer_dispatch_cuda_fail_loud(self) -> None:
+        from types import SimpleNamespace
+
+        from backend.engine.config.model_configs import ErnieImageConfig
+        from backend.engine.families.ernie_image.transformer import ErnieImageTransformer
+
+        with self.assertRaises(RuntimeError):
+            ErnieImageTransformer(ErnieImageConfig(), SimpleNamespace(backend="cuda"))
+
+    def test_remap_ernie_weights(self) -> None:
+        from backend.engine.families.ernie_image.weights import remap_ernie_image_weights
+
+        out = remap_ernie_image_weights(
+            {
+                "transformer.layers.0.self_attention.to_out.0.weight": object(),
+                "model.adaLN_modulation.1.bias": object(),
+                "time_proj.weight": object(),
+            }
+        )
+        self.assertIn("layers.0.self_attention.to_out_0.weight", out)
+        self.assertIn("adaLN_modulation.linear.bias", out)
+        self.assertNotIn("time_proj.weight", out)
+
+    def test_merge_config_from_bundle(self) -> None:
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from backend.engine.config.model_configs import ErnieImageConfig, merge_ernie_image_config_from_bundle
+
+        cfg = ErnieImageConfig()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "transformer").mkdir()
+            (root / "transformer" / "config.json").write_text(
+                json.dumps(
+                    {
+                        "hidden_size": 4096,
+                        "num_attention_heads": 32,
+                        "num_layers": 36,
+                        "text_in_dim": 3072,
+                        "rope_axes_dim": [32, 48, 48],
+                        "qk_layernorm": True,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            merge_ernie_image_config_from_bundle(cfg, root)
+        self.assertEqual(cfg.num_layers, 36)
+        self.assertEqual(cfg.num_heads, 32)
+        self.assertEqual(cfg.rope_axes_dim, (32, 48, 48))
+        self.assertTrue(cfg.qk_norm)
+
+    def test_forward_smoke(self) -> None:
+        import mlx.core as mx
+
+        from backend.engine.config.model_configs import ErnieImageConfig
+        from backend.engine.families.ernie_image.transformer_mlx import ErnieImageTransformer
+        from backend.engine.runtime.mlx import MLXContext
+
+        cfg = ErnieImageConfig(num_layers=2)
+        model = ErnieImageTransformer(cfg, MLXContext())
+        h, w = 64, 64
+        latents = mx.zeros((1, 128, h, w), dtype=mx.bfloat16)
+        txt = mx.zeros((1, 8, 3072), dtype=mx.bfloat16)
+        tl = mx.array([8], dtype=mx.int32)
+        sigmas = mx.array([1.0, 0.875, 0.75, 0.625], dtype=mx.float32)
+        out = model.forward(
+            latents,
+            0,
+            txt_embeds=txt,
+            text_lens=tl,
+            sigmas=sigmas,
+        )
+        self.assertEqual(tuple(out.shape), (1, 128, h, w))
+
+    def test_timestep_resolves_from_sigmas(self) -> None:
+        import mlx.core as mx
+
+        from backend.engine.config.model_configs import ErnieImageConfig
+        from backend.engine.families.ernie_image.transformer_mlx import ErnieImageTransformer
+        from backend.engine.runtime.mlx import MLXContext
+
+        model = ErnieImageTransformer(ErnieImageConfig(), MLXContext())
+        sigmas = mx.array([1.0, 0.5, 0.0], dtype=mx.float32)
+        t = model._resolve_timestep_value(1, 0, sigmas)
+        self.assertAlmostEqual(float(t.item()), 1000.0, places=4)
+        t1 = model._resolve_timestep_value(1, 1, sigmas)
+        self.assertAlmostEqual(float(t1.item()), 500.0, places=4)
+
+    def test_ernie_scheduler_explicit_sigmas(self) -> None:
+        from backend.engine.common.schedulers import FlowMatchEulerScheduler
+        from backend.engine.runtime.mlx import MLXContext
+
+        ctx = MLXContext()
+        sched = FlowMatchEulerScheduler(ctx=ctx)
+        sigmas = [1.0, 0.875, 0.75, 0.625, 0.5, 0.375, 0.25, 0.125]
+        sched.set_timesteps(8, use_empirical_mu=False, sigmas=sigmas)
+        self.assertAlmostEqual(float(sched.sigmas[0]), 1.0, places=4)
+        self.assertAlmostEqual(float(sched.sigmas[7]), 0.125, places=4)
+        self.assertAlmostEqual(float(sched.timesteps[0]), 1000.0, places=4)
+
+    def test_registry_declares_mlx_only(self) -> None:
+        import json
+        from pathlib import Path
+
+        reg = json.loads(
+            (Path(__file__).resolve().parents[1] / "default_config/models_registry.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        entry = reg["models"]["ernie-image-turbo"]
+        self.assertEqual(entry.get("backends"), ["mlx"])
+        self.assertEqual(entry.get("family"), "ernie_image")
+        self.assertFalse(entry["parameters"].get("lora_support", True))
 
 
 class TransformerStemDispatchTests(unittest.TestCase):
@@ -575,14 +945,10 @@ class AceStepGenerationTests(unittest.TestCase):
             self.assertTrue(prepared.is_turbo)
             self.assertEqual(prepared.duration, 10.0)
 
-    def test_resolve_lm_inspiration_auto_vocal(self) -> None:
+    def test_prepare_music_request_requires_vocal_lyrics(self) -> None:
         from backend.core.contracts import AudioGenerationRequest
-        from backend.engine.families.ace_step.generation import (
-            has_substantial_user_lyrics,
-            prepare_music_request,
-            resolve_lm_inspiration_mode,
-        )
         from backend.engine.config.model_configs import AceStepConfig
+        from backend.engine.families.ace_step.generation import prepare_music_request
 
         req = AudioGenerationRequest(
             model="ace-step-xl-sft",
@@ -590,15 +956,7 @@ class AceStepGenerationTests(unittest.TestCase):
             lyrics="",
             instrumental=False,
         )
-        use_inspiration, reason = resolve_lm_inspiration_mode(
-            req, raw_lyrics="", lm_enabled=True
-        )
-        self.assertTrue(use_inspiration)
-        self.assertEqual(reason, "auto_vocal_inspiration")
-        self.assertFalse(has_substantial_user_lyrics("hi there"))
-
         with __import__("tempfile").TemporaryDirectory() as tmp:
-            import json
             from pathlib import Path
 
             bundle = Path(tmp)
@@ -606,34 +964,48 @@ class AceStepGenerationTests(unittest.TestCase):
             dit.mkdir()
             (dit / "config.json").write_text("{}", encoding="utf-8")
             (dit / "model.safetensors").write_bytes(b"")
-            prepared = prepare_music_request(req, AceStepConfig(), bundle, backend="mlx")
-            self.assertTrue(prepared.simple_mode)
-            self.assertEqual(prepared.lyrics, "")
+            with self.assertRaises(RuntimeError):
+                prepare_music_request(req, AceStepConfig(), bundle, backend="mlx")
 
-    def test_resolve_lm_inspiration_substantial_lyrics(self) -> None:
+    def test_resolve_lm_expansion_state(self) -> None:
         from backend.core.contracts import AudioGenerationRequest
         from backend.engine.families.ace_step.generation import (
-            has_substantial_user_lyrics,
             prepare_music_request,
-            resolve_lm_inspiration_mode,
+            resolve_lm_expansion_state,
         )
         from backend.engine.config.model_configs import AceStepConfig
 
-        lyrics = "[verse]\n" + ("la la la " * 10)
-        self.assertTrue(has_substantial_user_lyrics(lyrics))
         req = AudioGenerationRequest(
             model="ace-step-xl-sft",
             prompt="pop",
-            lyrics=lyrics,
+            lyrics="[verse]\nhello world",
         )
-        use_inspiration, reason = resolve_lm_inspiration_mode(
-            req, raw_lyrics=lyrics, lm_enabled=True
+        use_lm, reason = resolve_lm_expansion_state(req, lm_enabled=True)
+        self.assertTrue(use_lm)
+        self.assertEqual(reason, "auto_format")
+
+        off_req = AudioGenerationRequest(
+            model="ace-step-xl-sft",
+            prompt="pop",
+            lyrics="[verse]\nhello",
+            lm_expansion="off",
         )
-        self.assertFalse(use_inspiration)
-        self.assertEqual(reason, "auto_substantial_lyrics")
+        use_lm, reason = resolve_lm_expansion_state(off_req, lm_enabled=True)
+        self.assertFalse(use_lm)
+        self.assertEqual(reason, "override_off")
+
+        with self.assertRaises(RuntimeError):
+            resolve_lm_expansion_state(
+                AudioGenerationRequest(
+                    model="ace-step-xl-sft",
+                    prompt="pop",
+                    lyrics="[verse]\nhello",
+                    lm_expansion="inspiration",
+                ),
+                lm_enabled=True,
+            )
 
         with __import__("tempfile").TemporaryDirectory() as tmp:
-            import json
             from pathlib import Path
 
             bundle = Path(tmp)
@@ -642,8 +1014,8 @@ class AceStepGenerationTests(unittest.TestCase):
             (dit / "config.json").write_text("{}", encoding="utf-8")
             (dit / "model.safetensors").write_bytes(b"")
             prepared = prepare_music_request(req, AceStepConfig(), bundle, backend="mlx")
-            self.assertFalse(prepared.simple_mode)
-            self.assertEqual(prepared.lyrics, lyrics.strip())
+            self.assertTrue(prepared.lm_enabled)
+            self.assertEqual(prepared.lyrics, "[verse]\nhello world")
 
     def test_resource_policy_clamps_duration(self) -> None:
         from backend.engine.families.ace_step.resource_policy import (
@@ -662,6 +1034,68 @@ class AceStepGenerationTests(unittest.TestCase):
         dur, msg = clamp_duration(300.0, lm_enabled=True, policy=policy)
         self.assertEqual(dur, 120.0)
         self.assertIsNotNone(msg)
+
+    def test_constrained_lm_finds_extended_audio_code_vocab(self) -> None:
+        from unittest.mock import MagicMock
+
+        from backend.engine.families.ace_step.constrained_lm import (
+            MetadataConstrainedLogitsProcessor,
+        )
+        from backend.engine.families.ace_step.lm_constants import MAX_AUDIO_CODE
+
+        gv = {f"<|audio_code_{i}|>": 200_000 + i for i in (0, 1, MAX_AUDIO_CODE)}
+        gv["hello"] = 5
+        tok = MagicMock()
+        tok.vocab_size = 151643
+        tok._tokenizer = tok
+        tok.get_vocab.return_value = gv
+        tok.encode = lambda s, add_special_tokens=False: [1]
+        tok.decode = lambda ids: ""
+        tok.eos_token_id = 0
+
+        proc = MetadataConstrainedLogitsProcessor(tokenizer=tok, enabled=False, debug=False)
+        self.assertGreaterEqual(proc.vocab_size, 200_000 + MAX_AUDIO_CODE)
+        self.assertEqual(len(proc.audio_code_token_ids), 3)
+
+    def test_constrained_processor_vocab_size_matches_lm_config(self) -> None:
+        import json
+        from pathlib import Path
+
+        pointer = (
+            Path(__file__).resolve().parents[1]
+            / "default_config"
+            / "workspace.pointer.json"
+        )
+        if not pointer.is_file():
+            self.skipTest("workspace.pointer.json missing")
+        ws = json.loads(pointer.read_text(encoding="utf-8")).get("custom_workspace_dir")
+        lm = Path(ws) / "models" / "Audio" / "acestep-v15-xl-sft" / "acestep-5Hz-lm-1.7B"
+        if not (lm / "config.json").is_file():
+            self.skipTest("ace-step 5Hz LM bundle not present")
+
+        from mlx_lm.utils import load_tokenizer
+
+        from backend.engine.families.ace_step.constrained_generate import (
+            create_constrained_processor,
+        )
+
+        cfg_vocab = json.loads((lm / "config.json").read_text(encoding="utf-8"))["vocab_size"]
+        proc = create_constrained_processor(load_tokenizer(str(lm)))
+        self.assertEqual(proc.vocab_size, cfg_vocab)
+        self.assertEqual(len(proc.audio_code_token_ids), 64000)
+
+    def test_align_codec_latents_pads_shorter_hints(self) -> None:
+        import mlx.core as mx
+
+        from backend.engine.families.ace_step.audio_codec_mlx import (
+            _align_codec_latents_to_target,
+        )
+
+        hints = mx.zeros((1, 370, 64))
+        pad_from = mx.ones((1, 374, 64)) * 0.25
+        out = _align_codec_latents_to_target(hints, 374, pad_from=pad_from)
+        self.assertEqual(tuple(out.shape), (1, 374, 64))
+        self.assertAlmostEqual(float(mx.mean(out[:, 370:, :])), 0.25, places=5)
 
     def test_quality_assessment_flags_hum(self) -> None:
         from backend.engine.families.ace_step.quality_score import assess_generation_quality
@@ -704,23 +1138,17 @@ class AceStepGenerationTests(unittest.TestCase):
     def test_instrumental_lyrics_normalization(self) -> None:
         from backend.engine.families.ace_step.generation import finalize_lyrics_for_inference
         from backend.engine.families.ace_step.lm_format import (
-            build_inspiration_user_content,
             extract_lm_generated_lyrics,
             is_instrumental_lyrics,
             normalize_lyrics_body,
-            synthesize_fallback_vocal_lyrics,
         )
 
         self.assertTrue(is_instrumental_lyrics("# Lyric [Instrumental]"))
         self.assertEqual(normalize_lyrics_body("# Lyric [Instrumental]"), "[Instrumental]")
-        self.assertIn("不要使用", build_inspiration_user_content("pop", instrumental=False, vocal_language="zh"))
         self.assertEqual(
             extract_lm_generated_lyrics("[Verse 1]\nhello", prefilled_think_end=True),
             "[Verse 1]\nhello",
         )
-        fb = synthesize_fallback_vocal_lyrics("夏天", vocal_language="zh")
-        self.assertIn("夏天", fb)
-        self.assertFalse(is_instrumental_lyrics(fb))
         with self.assertRaises(RuntimeError):
             finalize_lyrics_for_inference(
                 "# Lyric [Instrumental]",
@@ -749,6 +1177,35 @@ class AceStepGenerationTests(unittest.TestCase):
         )
         self.assertIn("夏天的风", result.lyrics)
         self.assertNotEqual(result.lyrics.strip().lower(), "[instrumental]")
+        self.assertEqual(result.language, "zh")
+
+    def test_format_sample_zh_lyrics_not_overridden_by_lm_en(self) -> None:
+        from backend.engine.families.ace_step.lm_format import build_lm_format_result
+
+        user = "[Verse 1]\n月光洒在窗前\n[Chorus]\n轻轻唱"
+        meta = {
+            "caption": "English pop caption from LM",
+            "lyrics_tail": "[Verse 1]\nSing in English",
+            "language": "en",
+        }
+        result = build_lm_format_result(
+            meta,
+            caption_in="流行歌",
+            lyrics_in=user,
+            duration=30,
+            bpm=100,
+            keyscale="C major",
+            timesignature="4",
+            language="zh",
+            preserve_user_lyrics=True,
+        )
+        self.assertIn("月光", result.lyrics)
+
+    def test_resolve_vocal_language_from_lyrics(self) -> None:
+        from backend.engine.families.ace_step.generation import resolve_vocal_language
+
+        self.assertEqual(resolve_vocal_language("一首欢快的华语流行歌曲", ""), "zh")
+        self.assertEqual(resolve_vocal_language("hello world", "en"), "en")
 
     def test_format_metadata_as_cot_and_codes_prompt(self) -> None:
         from backend.engine.families.ace_step.lm_format import (
@@ -809,26 +1266,23 @@ class AceStepGenerationTests(unittest.TestCase):
     def test_mlx_lm_tokenizer_wrapper_compat(self) -> None:
         import numpy as np
         import mlx.core as mx
-        import torch
         from transformers import AutoTokenizer
 
-        from backend.engine.families.ace_step.constrained_generate import (
-            create_constrained_processor,
-            mlx_logits_to_torch,
-            resolve_hf_tokenizer,
-        )
+        from backend.engine.families.ace_step.constrained_generate import resolve_hf_tokenizer
+        from backend.engine.families.ace_step.constrained_generate_mlx import mlx_logits_to_numpy
         from mlx_lm.tokenizer_utils import TokenizerWrapper
 
-        inner = AutoTokenizer.from_pretrained("gpt2")
+        try:
+            inner = AutoTokenizer.from_pretrained("gpt2", local_files_only=True)
+        except OSError:
+            self.skipTest("gpt2 tokenizer not cached locally (offline test)")
         wrapped = TokenizerWrapper(inner)
         self.assertIs(resolve_hf_tokenizer(wrapped), inner)
-        processor = create_constrained_processor(wrapped)
-        self.assertEqual(processor.vocab_size, inner.vocab_size)
         bf = mx.array([[[1.0, 2.0]]], dtype=mx.bfloat16)
         mx.eval(bf)
-        t = mlx_logits_to_torch(bf)
-        self.assertEqual(t.dtype, torch.float32)
-        self.assertEqual(float(t[0, 0, 0].item()), 1.0)
+        arr = mlx_logits_to_numpy(bf)
+        self.assertEqual(arr.dtype, np.float32)
+        self.assertEqual(float(arr[0, 0, 0]), 1.0)
 
     def test_lyrics_alignment_structure_estimate(self) -> None:
         from backend.engine.families.ace_step.lyrics_alignment import (
@@ -1051,12 +1505,13 @@ class HunyuanWeightTests(unittest.TestCase):
             _load_umt5_state_dict,
             resolve_wan_umt5_pth,
         )
-        from tests.benchmark.cases import WAN_VIDEO_BUNDLE, wan_video_bundle_installed
+        from tests.benchmark.registry_utils import resolve_benchmark_data_root
 
-        if not wan_video_bundle_installed():
+        wan_bundle = resolve_benchmark_data_root() / "models/Video/wan-2.2-ti2v-5b-original"
+        if not wan_bundle.is_dir():
             self.skipTest("Wan bundle not installed")
 
-        bundle = Path(WAN_VIDEO_BUNDLE)
+        bundle = wan_bundle
         resolved = resolve_wan_umt5_pth(bundle)
         self.assertIsNotNone(resolved)
         pth, tok = resolved
@@ -1545,9 +2000,12 @@ class PipelineProgressBridgeTests(unittest.TestCase):
 
 
 class BenchmarkMetadataTests(unittest.TestCase):
-    def test_exit_exempt_nonempty(self) -> None:
-        self.assertIn("z-image-create", BENCHMARK_EXIT_EXEMPT_MISMATCH_VS_MFLUX)
-        self.assertIn("qwen-image-rewrite", BENCHMARK_EXIT_EXEMPT_MISMATCH_VS_MFLUX)
+    def test_eval_prompt_pack_has_p1(self) -> None:
+        from tests.benchmark.eval_cases import load_prompt_pack
+
+        pack = load_prompt_pack()
+        ids = {p["id"] for p in pack["create"]}
+        self.assertIn("P1", ids)
 
     def test_z_image_turbo_enable_thinking_aligned_with_mflux(self) -> None:
         import json
@@ -1816,6 +2274,351 @@ class BundleManifestTests(unittest.TestCase):
             assert status is not None
             self.assertFalse(status["complete"])
             self.assertIn("text_encoder", status["missing"])
+
+
+class DiffRhythmDecodeTests(unittest.TestCase):
+    def test_pytorch_bin_numpy_loader_decoder(self) -> None:
+        import json
+
+        pointer = (
+            Path(__file__).resolve().parents[1]
+            / "default_config"
+            / "workspace.pointer.json"
+        )
+        if not pointer.is_file():
+            self.skipTest("workspace.pointer.json missing")
+        ws = json.loads(pointer.read_text(encoding="utf-8")).get("custom_workspace_dir")
+        ckpt = Path(ws) / "models" / "Audio" / "diffrhythm-v2" / "decoder.bin"
+        if not ckpt.is_file():
+            self.skipTest("diffrhythm-v2 decoder.bin not installed")
+
+        from backend.engine.common.pytorch_bin_numpy import load_pytorch_bin
+
+        obj = load_pytorch_bin(ckpt)
+        self.assertIn("generator", obj)
+        gen = obj["generator"]
+        self.assertGreater(len(gen), 100)
+        sample = next(iter(gen.values()))
+        import numpy as np
+
+        self.assertIsInstance(sample, np.ndarray)
+
+    def test_alias_free_upsample_matches_torch(self) -> None:
+        import mlx.core as mx
+        import numpy as np
+
+        try:
+            import torch
+            import torch.nn.functional as F
+        except ImportError:
+            self.skipTest("torch not installed (benchmark/CUDA venv only)")
+
+        from backend.engine.families.diffrhythm.vae_mlx import UpSample1d
+
+        rng = np.random.default_rng(7)
+        B, C, T = 1, 16, 24
+        ratio = 2
+        K = 12
+        pad = K // ratio - 1
+        pad_left = pad * ratio + (K - ratio) // 2
+        pad_right = pad * ratio + (K - ratio + 1) // 2
+
+        filt = rng.standard_normal((1, 1, K), dtype=np.float32)
+        filt /= np.abs(filt).sum()
+        x_pt = torch.from_numpy(rng.standard_normal((B, C, T), dtype=np.float32))
+
+        up_mlx = UpSample1d(ratio=ratio, kernel_size=K)
+        up_mlx.filter = mx.array(filt.transpose(0, 2, 1))
+        y_mlx = np.array(up_mlx(mx.array(x_pt.numpy().transpose(0, 2, 1))))
+
+        x_pad = F.pad(x_pt, (pad, pad), mode="replicate")
+        y_pt = ratio * F.conv_transpose1d(
+            x_pad,
+            torch.from_numpy(filt).expand(C, -1, -1),
+            stride=ratio,
+            groups=C,
+        )
+        y_pt = y_pt[..., pad_left:-pad_right].detach().numpy().transpose(0, 2, 1)
+
+        self.assertEqual(y_mlx.shape, y_pt.shape)
+        self.assertLess(float(np.max(np.abs(y_mlx - y_pt))), 1e-5)
+
+    def test_chinese_lyrics_g2p_without_torch(self) -> None:
+        import json
+
+        pointer = (
+            Path(__file__).resolve().parents[1]
+            / "default_config"
+            / "workspace.pointer.json"
+        )
+        if not pointer.is_file():
+            self.skipTest("workspace.pointer.json missing")
+        ws = json.loads(pointer.read_text(encoding="utf-8")).get("custom_workspace_dir")
+        bundle = Path(ws) / "models" / "Audio" / "diffrhythm-v2"
+        if not (bundle / "g2p" / "g2p_generation.py").is_file():
+            self.skipTest("diffrhythm-v2 g2p bundle not present")
+
+        from backend.engine.families.diffrhythm.condition_mlx import (
+            parse_lyrics_to_token_ids,
+            set_g2p_bundle_root,
+        )
+
+        set_g2p_bundle_root(bundle)
+        tokens = parse_lyrics_to_token_ids(
+            "[verse]\n月光洒在窗前\n",
+            vocal_language="zh",
+        )
+        self.assertGreater(len(tokens), 0)
+
+    def test_english_lyrics_g2p_matches_upstream_bundle(self) -> None:
+        import json
+        import sys
+
+        pointer = (
+            Path(__file__).resolve().parents[1]
+            / "default_config"
+            / "workspace.pointer.json"
+        )
+        if not pointer.is_file():
+            self.skipTest("workspace.pointer.json missing")
+        ws = json.loads(pointer.read_text(encoding="utf-8")).get("custom_workspace_dir")
+        bundle = Path(ws) / "models" / "Audio" / "diffrhythm-v2"
+        if not (bundle / "g2p" / "g2p_generation.py").is_file():
+            self.skipTest("diffrhythm-v2 g2p bundle not present")
+
+        from backend.engine.families.diffrhythm import chinese_poly_g2p
+        from backend.engine.families.diffrhythm.condition_mlx import (
+            parse_lyrics_to_token_ids,
+            set_g2p_bundle_root,
+        )
+        from backend.engine.families.diffrhythm.g2p_bootstrap import install_bundle_g2p_path
+
+        install_bundle_g2p_path(bundle)
+        sys.modules["g2p.g2p.chinese_model_g2p"] = chinese_poly_g2p
+        from g2p.g2p_generation import chn_eng_g2p
+
+        set_g2p_bundle_root(bundle)
+        line = "La la la under the moonlight"
+        _, upstream = chn_eng_g2p(line)
+        upstream = [x + 1 for x in upstream]
+        ours = parse_lyrics_to_token_ids(f"[verse]\n{line}\n", vocal_language="en")
+        # strip auto [start] prefix and trailing [stop] after lyric line
+        self.assertEqual(ours[:2], [500, 511])
+        self.assertEqual(ours[2:4], [503, 511])
+        self.assertEqual(ours[4:-1], upstream)
+        self.assertEqual(ours[-1], 511)
+
+    def test_muq_style_encoder_latent_dim_when_bundle_present(self) -> None:
+        import json
+
+        pointer = (
+            Path(__file__).resolve().parents[1]
+            / "default_config"
+            / "workspace.pointer.json"
+        )
+        if not pointer.is_file():
+            self.skipTest("workspace.pointer.json missing")
+        ws = json.loads(pointer.read_text(encoding="utf-8")).get("custom_workspace_dir")
+        bundle = Path(ws) / "models" / "Audio" / "diffrhythm-v2"
+        if not (bundle / "mulan").is_dir():
+            self.skipTest("diffrhythm-v2 mulan cache not present")
+
+        from backend.engine.runtime.mlx import MLXContext
+        from backend.engine.config.model_configs import DiffRhythmConfig
+        from backend.engine.families.diffrhythm.mulan import MuQStyleEncoder
+
+        cfg = DiffRhythmConfig()
+        ctx = MLXContext()
+        enc = MuQStyleEncoder(ctx, bundle / "mulan", cfg.mulan_repo_id)
+        enc.load()
+        latent = enc.encode_text("upbeat pop rock", array_fn=ctx.array)
+        self.assertEqual(tuple(latent.shape), (512,))
+
+    def test_muq_mlx_matches_torch_latent_when_bundle_present(self) -> None:
+        import json
+
+        import numpy as np
+
+        pointer = (
+            Path(__file__).resolve().parents[1]
+            / "default_config"
+            / "workspace.pointer.json"
+        )
+        if not pointer.is_file():
+            self.skipTest("workspace.pointer.json missing")
+        ws = json.loads(pointer.read_text(encoding="utf-8")).get("custom_workspace_dir")
+        bundle = Path(ws) / "models" / "Audio" / "diffrhythm-v2" / "mulan"
+        if not bundle.is_dir():
+            self.skipTest("diffrhythm-v2 mulan cache not present")
+        from backend.engine.config.model_configs import DiffRhythmConfig
+        from backend.engine.families.diffrhythm.mulan_mlx import MuQStyleEncoderMLX
+        from backend.engine.runtime.mlx import MLXContext
+
+        cfg = DiffRhythmConfig()
+        ctx = MLXContext()
+        prompt = "upbeat pop rock with electric guitar"
+        mlx_enc = MuQStyleEncoderMLX(bundle, cfg.mulan_repo_id, ctx)
+        mlx_enc.load()
+        lat_mlx = np.array(mlx_enc.encode_text(prompt), dtype=np.float32)
+        self.assertEqual(lat_mlx.shape, (512,))
+        self.assertAlmostEqual(float(np.linalg.norm(lat_mlx)), 1.0, places=3)
+
+        try:
+            import torch  # noqa: F401
+            from backend.engine.families.diffrhythm.mulan_torch import MuQStyleEncoder as MuQTorch
+        except ImportError:
+            return
+
+        try:
+            import muq  # noqa: F401
+        except ImportError:
+            return
+
+        torch_enc = MuQTorch(bundle, cfg.mulan_repo_id)
+        torch_enc.load()
+        lat_torch = np.array(torch_enc.encode_text(prompt, array_fn=ctx.array), dtype=np.float32)
+        cos = float(
+            np.dot(lat_mlx, lat_torch)
+            / (np.linalg.norm(lat_mlx) * np.linalg.norm(lat_torch) + 1e-9)
+        )
+        self.assertGreater(cos, 0.999)
+        self.assertLess(float(np.max(np.abs(lat_mlx - lat_torch))), 0.01)
+
+    def test_bigvgan_mlx_decode_peak_when_bundle_present(self) -> None:
+        import json
+        import mlx.core as mx
+        import numpy as np
+
+        pointer = (
+            Path(__file__).resolve().parents[1]
+            / "default_config"
+            / "workspace.pointer.json"
+        )
+        if not pointer.is_file():
+            self.skipTest("workspace.pointer.json missing")
+        ws = json.loads(pointer.read_text(encoding="utf-8")).get("custom_workspace_dir")
+        bundle = Path(ws) / "models" / "Audio" / "diffrhythm-v2"
+        if not (bundle / "decoder.bin").is_file():
+            self.skipTest("diffrhythm-v2 bundle not installed")
+
+        from backend.engine.runtime.mlx import MLXContext
+        from backend.engine.families.diffrhythm.vae_mlx import DiffRhythm2DecoderMLX
+
+        ctx = MLXContext()
+        dec = DiffRhythm2DecoderMLX(ctx, vae_dir=str(bundle))
+        lat = mx.array(np.random.default_rng(42).standard_normal((1, 20, 64), dtype=np.float32) * 0.5)
+        audio = np.array(dec.generator(lat), dtype=np.float32)
+        peak = float(np.max(np.abs(audio)))
+        self.assertGreater(peak, 0.05, f"MLX BigVGAN decode too quiet (peak={peak})")
+
+
+class LLMServiceTests(unittest.TestCase):
+    def _load_service(self):
+        from backend.core.model_registry import ModelRegistry
+        from backend.engine.llm.service import LLMService
+        from backend.utils.path_utils import PathResolver
+
+        root = Path(__file__).resolve().parents[1]
+        pr = PathResolver(root)
+        mr = ModelRegistry.load(pr.get_models_registry_path())
+        return LLMService(mr, pr)
+
+    def test_get_model_info_reads_registry_name(self) -> None:
+        svc = self._load_service()
+        info = svc.get_model_info()
+        self.assertEqual(info["model_id"], "qwen2.5-1.5b")
+        self.assertIsInstance(info["name"], dict)
+        self.assertIn("zh", info["name"])
+        self.assertIn("en", info["name"])
+        self.assertIsInstance(info["available"], bool)
+
+        vision = svc.get_vision_model_info()
+        self.assertEqual(vision["model_id"], "qwen2.5-vl-7b-instruct")
+        self.assertIsInstance(vision["name"], dict)
+
+    def test_enhance_system_prompt_by_target_action(self) -> None:
+        from backend.engine.llm.service import LLMService
+
+        self.assertIn("video", LLMService._enhance_system_prompt("video_create").lower())
+        self.assertIn("music", LLMService._enhance_system_prompt("audio_create").lower())
+        self.assertIn("image", LLMService._enhance_system_prompt("image_create").lower())
+
+    def test_sanitize_lyrics_strips_word_loops(self) -> None:
+        from backend.engine.llm.lyrics_sanitize import sanitize_lyrics_output
+
+        raw = """[Intro]
+The melody so soft yet so divine
+
+[Verse 1]
+The wind blows gently on my face
+The sky is vast yet my soul divine divine divine divine divine divine
+
+[Chorus]
+Should not appear
+"""
+        out = sanitize_lyrics_output(raw)
+        self.assertIn("[Verse 1]", out)
+        self.assertIn("The wind blows gently", out)
+        self.assertNotIn("divine divine divine", out)
+        self.assertNotIn("Should not appear", out)
+
+    def test_sanitize_enhanced_prompt_strips_comma_loops(self) -> None:
+        from backend.engine.llm.prompt_sanitize import (
+            prompt_enhance_quality_ok,
+            sanitize_enhanced_prompt,
+        )
+
+        prefix = "赵今麦，古装写真，性感的妆容，素颜，灯光柔和，映衬着素色素衣"
+        raw = prefix + "，" + "，".join(["素色素发"] * 60)
+        out = sanitize_enhanced_prompt(raw)
+        self.assertIn("赵今麦", out)
+        self.assertIn("古装写真", out)
+        self.assertLessEqual(out.count("素色素发"), 1)
+        self.assertNotIn("素色素发，素色素发", out)
+        self.assertTrue(prompt_enhance_quality_ok(out))
+
+    def test_sanitize_enhanced_prompt_strips_tail_phrase_loops(self) -> None:
+        from backend.engine.llm.prompt_sanitize import sanitize_enhanced_prompt
+
+        raw = "A portrait of a woman in soft light" + (" plain hair" * 8)
+        out = sanitize_enhanced_prompt(raw)
+        self.assertIn("soft light", out)
+        self.assertLessEqual(out.count("plain hair"), 2)
+
+    def test_generation_kwargs_use_sampler_not_temp(self) -> None:
+        from backend.core.contracts import ChatCompletionRequest, ChatMessage
+        from backend.engine.llm.service import LLMService
+
+        request = ChatCompletionRequest(
+            messages=[ChatMessage(role="user", content="hi")],
+            temperature=0.7,
+            top_p=0.9,
+            max_tokens=128,
+        )
+        kwargs = LLMService._generation_kwargs(request)
+        self.assertEqual(kwargs["max_tokens"], 128)
+        self.assertIn("sampler", kwargs)
+        self.assertNotIn("temp", kwargs)
+        self.assertTrue(callable(kwargs["sampler"]))
+
+    def test_coerce_vlm_output_text_handles_generation_result(self) -> None:
+        from backend.engine.llm.vision import _coerce_vlm_output_text
+
+        class _FakeGen:
+            text = "  a red apple  "
+
+        self.assertEqual(_coerce_vlm_output_text(_FakeGen()), "a red apple")
+        self.assertEqual(_coerce_vlm_output_text("plain"), "plain")
+
+    def test_enhance_prompt_when_model_installed(self) -> None:
+        from backend.core.contracts import EnhanceRequest
+
+        svc = self._load_service()
+        if not svc.is_available():
+            self.skipTest("qwen2.5-1.5b not installed in workspace")
+
+        result = svc.enhance_prompt(EnhanceRequest(prompt="一只橘猫"))
+        self.assertTrue(result.enhanced_prompt.strip())
 
 
 class DerivedQuantLayoutTests(unittest.TestCase):

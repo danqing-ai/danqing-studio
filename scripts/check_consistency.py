@@ -6,10 +6,11 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 REG = ROOT / "default_config" / "models_registry.json"
-KNOWN = {"danqing-image", "danqing-video", "danqing-audio"}
+KNOWN = {"danqing-image", "danqing-video", "danqing-audio", "danqing-llm"}
 REGISTRY_IMAGE_ACTION_KEYS = frozenset({"create", "rewrite", "retouch", "extend", "upscale"})
 REGISTRY_VIDEO_ACTION_KEYS = frozenset({"create", "animate", "upscale"})
 REGISTRY_AUDIO_ACTION_KEYS = frozenset({"create", "cover", "repaint"})
+REGISTRY_LLM_ACTION_KEYS = frozenset({"chat", "enhance", "describe"})
 I18N_ZH = ROOT / "frontend" / "src" / "locales" / "zh.json"
 I18N_EN = ROOT / "frontend" / "src" / "locales" / "en.json"
 TASKS_ROUTES = ROOT / "backend" / "api" / "routes" / "tasks.py"
@@ -73,6 +74,8 @@ def main():
             invalid = actions - REGISTRY_VIDEO_ACTION_KEYS
         elif engine.startswith("danqing-audio"):
             invalid = actions - REGISTRY_AUDIO_ACTION_KEYS
+        elif engine.startswith("danqing-llm"):
+            invalid = actions - REGISTRY_LLM_ACTION_KEYS
         else:
             invalid = set()
         if invalid:
@@ -154,6 +157,8 @@ def main():
         if not isinstance(actions, dict):
             continue
         media = model.get("media", "image")
+        if media == "llm":
+            continue
         for action in actions:
             kind = task_kind_for_registry_action(media, action)
             if kind is None:

@@ -233,6 +233,14 @@ class SQLiteAssetStore(IAssetStore):
                     CREATE INDEX IF NOT EXISTS idx_assets_created ON assets(created_at);
                     """
                 )
+                # Schema migration: add parent_asset_id and relation_type for lineage tracking
+                cols = {r[1] for r in conn.execute("PRAGMA table_info(assets)").fetchall()}
+                if "parent_asset_id" not in cols:
+                    conn.execute("ALTER TABLE assets ADD COLUMN parent_asset_id TEXT")
+                    conn.execute("ALTER TABLE assets ADD COLUMN relation_type TEXT")
+                    conn.execute(
+                        "CREATE INDEX IF NOT EXISTS idx_assets_parent ON assets(parent_asset_id)"
+                    )
                 conn.commit()
 
     def create_from_file(
@@ -244,6 +252,8 @@ class SQLiteAssetStore(IAssetStore):
         source_task_id: str,
         metadata: Optional[dict[str, Any]] = None,
         source_action: Optional[str] = None,
+        parent_asset_id: Optional[str] = None,
+        relation_type: Optional[str] = None,
     ) -> str:
         aid = "ast_" + uuid.uuid4().hex[:24]
         ext = src_path.suffix or ".bin"
@@ -261,6 +271,9 @@ class SQLiteAssetStore(IAssetStore):
                     w, h = im.size
                     meta.setdefault("width", w)
                     meta.setdefault("height", h)
+                    thumb = self._root / f"{aid}.thumb.webp"
+                    self._write_image_thumb(im, thumb)
+                    thumb_path = thumb
             except Exception:
                 pass
         elif kind in ("video", "audio"):
@@ -303,9 +316,10 @@ class SQLiteAssetStore(IAssetStore):
                 """
                 INSERT INTO assets (
                     id, kind, mime_type, file_path, thumbnail_path,
-                    width, height, duration_seconds, source_task_id, source_action, metadata, created_at
+                    width, height, duration_seconds, source_task_id, source_action, metadata, created_at,
+                    parent_asset_id, relation_type
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     aid,
@@ -320,6 +334,8 @@ class SQLiteAssetStore(IAssetStore):
                     source_action,
                     json.dumps(meta, ensure_ascii=False),
                     datetime.now().isoformat(),
+                    parent_asset_id,
+                    relation_type,
                 ),
             )
             conn.commit()
@@ -334,6 +350,50 @@ class SQLiteAssetStore(IAssetStore):
             nw, nh = max(1, int(w * scale)), max(1, int(h * scale))
             im = im.resize((nw, nh), Image.Resampling.LANCZOS)
         im.save(out_path, "WEBP", quality=82)
+
+    def get_asset_record(self, asset_id: str) -> Optional[dict[str, Any]]:
+        """Return a single asset row dict (same shape as list_assets items)."""
+        with self._conn() as conn:
+            row = conn.execute(
+                """
+                SELECT id, kind, mime_type, file_path, thumbnail_path,
+                       width, height, duration_seconds, source_task_id, source_action,
+                       metadata, created_at, parent_asset_id, relation_type
+                FROM assets WHERE id = ?
+                """,
+                (asset_id,),
+            ).fetchone()
+        if not row:
+            return None
+        meta = {}
+        try:
+            meta = json.loads(row["metadata"] or "{}")
+        except (json.JSONDecodeError, TypeError):
+            pass
+        aid = row["id"]
+        if row["width"]:
+            meta.setdefault("width", row["width"])
+        if row["height"]:
+            meta.setdefault("height", row["height"])
+        if row["duration_seconds"] is not None:
+            meta.setdefault("duration_seconds", row["duration_seconds"])
+        return {
+            "id": aid,
+            "kind": row["kind"],
+            "mime_type": row["mime_type"],
+            "path": row["file_path"],
+            "thumbnail_path": row["thumbnail_path"],
+            "thumbnail_url": f"/api/assets/{aid}/thumbnail",
+            "width": row["width"] or meta.get("width"),
+            "height": row["height"] or meta.get("height"),
+            "duration_seconds": row["duration_seconds"],
+            "source_task_id": row["source_task_id"] or "",
+            "source_action": row["source_action"],
+            "created_at": row["created_at"],
+            "metadata": meta,
+            "parent_asset_id": row["parent_asset_id"],
+            "relation_type": row["relation_type"],
+        }
 
     def get_file_path(self, asset_id: str) -> Path:
         with self._conn() as conn:
@@ -353,6 +413,50 @@ class SQLiteAssetStore(IAssetStore):
             return None
         p = _path_from_storage_key(row["thumbnail_path"], self._root)
         return p if p.exists() else None
+
+    def ensure_image_thumbnail(self, asset_id: str, *, max_edge: int = 512) -> Optional[Path]:
+        """Return thumbnail path, generating a WebP preview for image assets when missing."""
+        tp = self.get_thumbnail_path(asset_id)
+        if tp and tp.exists():
+            return tp
+
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT kind, mime_type FROM assets WHERE id = ?", (asset_id,)
+            ).fetchone()
+        if not row or row["kind"] != "image":
+            return None
+        mime = str(row["mime_type"] or "")
+        if mime and not mime.startswith("image/"):
+            return None
+
+        try:
+            main = self.get_file_path(asset_id)
+        except FileNotFoundError:
+            return None
+        if not main.exists():
+            return None
+        if main.suffix.lower() not in (".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"):
+            return None
+
+        thumb = self._root / f"{asset_id}.thumb.webp"
+        try:
+            with Image.open(main) as im:
+                self._write_image_thumb(im, thumb, max_edge=max_edge)
+        except Exception:
+            return None
+        if not thumb.is_file():
+            return None
+
+        key = _path_to_storage_key(thumb, self._root)
+        with self._lock:
+            conn = self._conn()
+            conn.execute(
+                "UPDATE assets SET thumbnail_path = ? WHERE id = ?",
+                (key, asset_id),
+            )
+            conn.commit()
+        return thumb
 
     def read_bytes(self, asset_id: str) -> bytes:
         p = self.get_file_path(asset_id)
@@ -429,6 +533,7 @@ class SQLiteAssetStore(IAssetStore):
         *,
         kind: Optional[str] = None,
         source_task_id: Optional[str] = None,
+        parent_asset_id: Optional[str] = None,
         created_after: Optional[str] = None,
         created_before: Optional[str] = None,
         model: Optional[str] = None,
@@ -448,6 +553,9 @@ class SQLiteAssetStore(IAssetStore):
         if source_task_id is not None and source_task_id != "":
             where.append("source_task_id = ?")
             args.append(source_task_id)
+        if parent_asset_id is not None and parent_asset_id != "":
+            where.append("parent_asset_id = ?")
+            args.append(parent_asset_id)
         if created_after:
             where.append("created_at >= ?")
             args.append(created_after)
@@ -473,7 +581,8 @@ class SQLiteAssetStore(IAssetStore):
 
         sql = (
             "SELECT id, kind, mime_type, file_path, thumbnail_path, "
-            "width, height, duration_seconds, source_task_id, source_action, metadata, created_at "
+            "width, height, duration_seconds, source_task_id, source_action, metadata, created_at, "
+            "parent_asset_id, relation_type "
             "FROM assets WHERE "
             + " AND ".join(where)
             + f" ORDER BY {order_col} {order_dir} LIMIT ? OFFSET ?"
@@ -508,9 +617,105 @@ class SQLiteAssetStore(IAssetStore):
                     "source_action": r["source_action"],
                     "created_at": r["created_at"],
                     "metadata": meta,
+                    "parent_asset_id": r["parent_asset_id"],
+                    "relation_type": r["relation_type"],
                 }
             )
         return out
+
+    def get_lineage(self, asset_id: str) -> dict[str, Any]:
+        """查询资产的谱系树：当前节点 + 祖先链 + 后代树。"""
+
+        def _row_to_node(row) -> dict:
+            meta = {}
+            raw = row["metadata"] or "{}"
+            try:
+                meta = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                pass
+            return {
+                "id": row["id"],
+                "kind": row["kind"],
+                "file_path": row["file_path"],
+                "thumbnail_path": row["thumbnail_path"],
+                "width": row["width"],
+                "height": row["height"],
+                "created_at": row["created_at"],
+                "metadata": meta,
+                "relation_type": row["relation_type"],
+                "parent": None,
+                "children": [],
+            }
+
+        def _get_row(aid: str):
+            with self._conn() as conn:
+                return conn.execute(
+                    """SELECT id, kind, file_path, thumbnail_path, width, height,
+                       created_at, metadata, relation_type, parent_asset_id
+                       FROM assets WHERE id = ?""",
+                    (aid,),
+                ).fetchone()
+
+        def _get_children_rows(aid: str):
+            with self._conn() as conn:
+                return conn.execute(
+                    """SELECT id, kind, file_path, thumbnail_path, width, height,
+                       created_at, metadata, relation_type, parent_asset_id
+                       FROM assets WHERE parent_asset_id = ?
+                       ORDER BY created_at ASC""",
+                    (aid,),
+                ).fetchall()
+
+        def _build_ancestor_chain(aid: str, visited: set) -> dict | None:
+            if aid in visited:
+                return None
+            visited.add(aid)
+            row = _get_row(aid)
+            if not row:
+                return None
+            node = _row_to_node(row)
+            if row["parent_asset_id"]:
+                node["parent"] = _build_ancestor_chain(
+                    row["parent_asset_id"], visited
+                )
+            return node
+
+        root_row = _get_row(asset_id)
+        if not root_row:
+            raise FileNotFoundError(f"asset not found: {asset_id}")
+
+        node = _row_to_node(root_row)
+
+        # Ancestor chain
+        if root_row["parent_asset_id"]:
+            node["parent"] = _build_ancestor_chain(
+                root_row["parent_asset_id"], {asset_id}
+            )
+
+        # Descendants tree — collect visited ancestors to prevent loops
+        visited_desc = {asset_id}
+        chain_aid = asset_id
+        for _ in range(128):  # safety limit
+            r = _get_row(chain_aid)
+            if not r or not r["parent_asset_id"]:
+                break
+            visited_desc.add(r["parent_asset_id"])
+            chain_aid = r["parent_asset_id"]
+
+        def _build_descendants_tree(aid: str, visited: set) -> list[dict]:
+            result: list[dict] = []
+            for child_row in _get_children_rows(aid):
+                cid = child_row["id"]
+                if cid in visited:
+                    continue
+                visited.add(cid)
+                child = _row_to_node(child_row)
+                child["children"] = _build_descendants_tree(cid, visited)
+                result.append(child)
+            return result
+
+        node["children"] = _build_descendants_tree(asset_id, visited_desc)
+        return node
 
     def delete_batch(self, asset_ids: list[str]) -> dict[str, Any]:
         """Batch delete assets, using explicit transaction to reduce lock holding time."""

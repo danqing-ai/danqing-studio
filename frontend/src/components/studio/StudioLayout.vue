@@ -1,5 +1,10 @@
 <template>
-  <div class="studio-layout">
+  <div
+    ref="layoutRef"
+    class="studio-layout"
+    :class="{ 'studio-layout--composer-collapsed': collapsible && composerCollapsed }"
+    :style="layoutStyle"
+  >
     <!-- Filter bar -->
     <header class="studio-filter-bar dq-glass--bar">
       <div class="studio-filter-bar__inner">
@@ -8,13 +13,28 @@
     </header>
 
     <!-- Canvas area -->
-    <div ref="canvasRef" class="studio-canvas-area" @scroll="onScroll">
+    <div ref="canvasRef" class="studio-canvas-area" :class="{ 'studio-canvas-area--freeform': freeform }" @scroll="onScroll">
       <slot name="canvas" />
     </div>
 
     <!-- Composer -->
-    <div class="studio-composer-bar">
+    <div
+      class="studio-composer-bar"
+      :class="{ 'studio-composer-bar--collapsed': collapsible && composerCollapsed }"
+    >
       <div class="studio-composer-bar__scrim" aria-hidden="true" />
+      <button
+        v-if="collapsible"
+        type="button"
+        class="studio-composer-bar__toggle dq-glass--popover"
+        :aria-label="composerCollapsed ? $t('canvas.composerExpand') : $t('canvas.composerCollapse')"
+        :title="composerCollapsed ? $t('canvas.composerExpand') : $t('canvas.composerCollapse')"
+        @click="toggleComposerCollapsed"
+      >
+        <span class="studio-composer-bar__toggle-icon" aria-hidden="true">
+          {{ composerCollapsed ? '▲' : '▼' }}
+        </span>
+      </button>
       <div class="studio-composer-bar__inner">
         <slot name="composer" />
       </div>
@@ -23,23 +43,72 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
+import { useI18n } from 'vue-i18n';
+import {
+  COMPOSER_RESERVE_CSS_COLLAPSED,
+  COMPOSER_RESERVE_CSS_EXPANDED,
+  COMPOSER_SCRIM_CSS_COLLAPSED,
+  COMPOSER_SCRIM_CSS_EXPANDED,
+  composerReservePx,
+} from '@/utils/composerReserve';
+
+const props = defineProps<{
+  freeform?: boolean;
+  collapsible?: boolean;
+  composerCollapsed?: boolean;
+}>();
 
 const emit = defineEmits<{
   (e: 'scroll', event: Event): void;
+  (e: 'update:composerCollapsed', value: boolean): void;
 }>();
 
+const { t: $t } = useI18n();
+
 const canvasRef = ref<HTMLElement | null>(null);
+const layoutRef = ref<HTMLElement | null>(null);
+const viewportHeight = ref(typeof window !== 'undefined' ? window.innerHeight : 800);
+
+const composerCollapsed = computed(() => props.composerCollapsed === true);
+
+const layoutStyle = computed(() => {
+  const collapsed = props.collapsible && composerCollapsed.value;
+  const vh = viewportHeight.value;
+  return {
+    '--dq-composer-reserve': collapsed ? COMPOSER_RESERVE_CSS_COLLAPSED : COMPOSER_RESERVE_CSS_EXPANDED,
+    '--dq-composer-scrim-height': collapsed ? COMPOSER_SCRIM_CSS_COLLAPSED : COMPOSER_SCRIM_CSS_EXPANDED,
+    '--dq-composer-reserve-px': `${composerReservePx(vh, collapsed)}px`,
+  };
+});
+
+function onResize() {
+  viewportHeight.value = window.innerHeight;
+}
 
 function onScroll(event: Event) {
-  emit('scroll', event);
+  if (!props.freeform) {
+    emit('scroll', event);
+  }
+}
+
+function toggleComposerCollapsed() {
+  emit('update:composerCollapsed', !composerCollapsed.value);
 }
 
 function scrollToTop() {
   canvasRef.value?.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
-defineExpose({ scrollToTop, canvasRef });
+onMounted(() => {
+  window.addEventListener('resize', onResize);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', onResize);
+});
+
+defineExpose({ scrollToTop, canvasRef, layoutRef });
 </script>
 
 <style scoped>
@@ -80,6 +149,11 @@ defineExpose({ scrollToTop, canvasRef });
   scroll-behavior: smooth;
 }
 
+.studio-canvas-area--freeform {
+  overflow: hidden;
+  padding: 0;
+}
+
 .studio-composer-bar {
   position: fixed;
   bottom: 0;
@@ -95,7 +169,7 @@ defineExpose({ scrollToTop, canvasRef });
   left: 0;
   right: 0;
   bottom: 0;
-  height: min(220px, 38vh);
+  height: var(--dq-composer-scrim-height, min(220px, 38vh));
   pointer-events: none;
   background: linear-gradient(
     to top,
@@ -103,6 +177,38 @@ defineExpose({ scrollToTop, canvasRef });
     color-mix(in srgb, var(--dq-bg-page) 72%, transparent) 42%,
     transparent 100%
   );
+  transition: height 0.2s ease;
+}
+
+.studio-composer-bar__toggle {
+  position: absolute;
+  left: 50%;
+  top: -14px;
+  transform: translateX(-50%);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--dq-border-subtle);
+  border-radius: 999px;
+  background: var(--dq-surface);
+  color: var(--dq-label-secondary);
+  cursor: pointer;
+  pointer-events: auto;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.studio-composer-bar__toggle:hover {
+  color: var(--dq-label-primary);
+  border-color: var(--dq-border-strong);
+}
+
+.studio-composer-bar__toggle-icon {
+  font-size: 10px;
+  line-height: 1;
 }
 
 .studio-composer-bar__inner {
@@ -110,6 +216,11 @@ defineExpose({ scrollToTop, canvasRef });
   max-width: 920px;
   margin: 0 auto;
   pointer-events: auto;
+  transition: opacity 0.15s ease;
+}
+
+.studio-composer-bar--collapsed {
+  padding-bottom: 16px;
 }
 
 .studio-canvas-area::-webkit-scrollbar {

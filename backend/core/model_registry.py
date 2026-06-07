@@ -10,7 +10,7 @@ from typing import Any, FrozenSet, Literal, Optional, cast
 from backend.core.registry_format import api_action_frozenset, media_from_record
 from backend.core.registry_profiles import expand_registry_document
 
-MediaKind = Literal["image", "video", "audio"]
+MediaKind = Literal["image", "video", "audio", "llm"]
 
 
 def _require_family(model_id: str, raw: dict[str, Any], media: MediaKind) -> str:

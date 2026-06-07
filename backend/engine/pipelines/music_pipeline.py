@@ -27,6 +27,7 @@ from backend.core.contracts import (
     work_title_metadata,
 )
 from backend.engine.common.cache import ModelCache
+from backend.engine.common.lineage import resolve_lineage
 from backend.engine.common.pipeline_registry import (
     local_bundle_root as _local_bundle_root_fn,
     resolve_version_block as _resolve_version_block_fn,
@@ -39,13 +40,16 @@ from backend.engine.config.model_configs import (
 from backend.engine._transformer_registry import get_audio_generation_factory
 from backend.engine.families.ace_step.generation import (
     AceStepLyricsCapture,
+    finalize_lyrics_for_inference,
     load_reference_waveform,
     lyrics_capture_log_message,
     lyrics_capture_metadata,
     prepare_music_request,
+    resolve_vocal_language,
     write_lyrics_sidecar,
     write_lrc_sidecar,
 )
+from backend.engine.families.ace_step.vocal_prompt import apply_vocal_type_to_prompt
 from backend.engine.families.ace_step.quality_score import quality_log_message
 from backend.engine.runtime._base import RuntimeContext
 
@@ -173,15 +177,44 @@ class MusicPipeline:
             else random.randint(0, 2**31 - 1)
         )
         n = max(request.n, 1)
-        exec_ctx.on_log(
-            LogEvent(
-                level="info",
-                message=(
-                    f"ACE-Step cover: source={src_path.name}, "
-                    f"strength={request.source_fidelity}, seed={seed}, n={n}"
-                ),
-            )
+
+        # --- Resolve lyrics / vocal params for cover ---
+        raw_lyrics = (request.lyrics or "").strip()
+        lyrics = (
+            "[Instrumental]"
+            if not raw_lyrics
+            else finalize_lyrics_for_inference(raw_lyrics, instrumental=False, lm_expanded=False)
         )
+        vocal_lang = resolve_vocal_language(
+            lyrics or raw_lyrics, request.vocal_language or "", prompt=request.prompt or ""
+        )
+
+        effective_prompt, vocal_tpl_log = apply_vocal_type_to_prompt(
+            request.prompt or "",
+            request.vocal_type or "",
+        )
+        if vocal_tpl_log:
+            exec_ctx.on_log(LogEvent(level="info", message=vocal_tpl_log))
+
+        cover_duration: Optional[float] = None
+        if request.duration is not None:
+            cover_duration = float(max(10, min(600, int(request.duration))))
+
+        log_parts = [
+            f"ACE-Step cover: source={src_path.name}",
+            f"strength={request.source_fidelity}",
+            f"seed={seed}",
+            f"n={n}",
+        ]
+        if lyrics != "[Instrumental]":
+            log_parts.append(f"lyrics={len(lyrics)}chars lang={vocal_lang}")
+        if cover_duration is not None:
+            log_parts.append(f"duration={cover_duration}s")
+        if request.bpm is not None:
+            log_parts.append(f"bpm={request.bpm}")
+        if request.key_scale:
+            log_parts.append(f"key={request.key_scale}")
+        exec_ctx.on_log(LogEvent(level="info", message=", ".join(log_parts)))
 
         output_paths: List[str] = []
         output_durations: List[float] = []
@@ -198,10 +231,16 @@ class MusicPipeline:
             )
             waveform = generator.generate_cover_waveform(
                 reference_waveform=ref_wf,
-                prompt=request.prompt or "",
+                prompt=effective_prompt,
                 seed=batch_seed,
                 shift=shift,
                 audio_cover_strength=float(request.source_fidelity),
+                lyrics=lyrics,
+                vocal_language=vocal_lang,
+                bpm=request.bpm,
+                key_scale=request.key_scale or "",
+                time_signature=request.time_signature or "",
+                duration=cover_duration,
             )
             quality = getattr(generator, "last_quality", None)
             q_msg = quality_log_message(quality) if quality is not None else None
@@ -236,7 +275,19 @@ class MusicPipeline:
             "source_fidelity": request.source_fidelity,
             "seed": seed,
         }
+        if lyrics != "[Instrumental]":
+            result_meta["lyrics"] = lyrics
+            result_meta["vocal_language"] = vocal_lang
+        if cover_duration is not None:
+            result_meta["duration"] = cover_duration
+        if request.bpm is not None:
+            result_meta["bpm"] = request.bpm
+        if request.key_scale:
+            result_meta["key_scale"] = request.key_scale
+        if request.time_signature:
+            result_meta["time_signature"] = request.time_signature
         if quality is not None:
+            result_meta.update(quality.as_metadata())
             result_meta.update(quality.as_metadata())
         return EngineResult(
             primary_asset_id=asset_ids[0] if asset_ids else "",
@@ -256,6 +307,11 @@ class MusicPipeline:
         *,
         quality: Any = None,
     ) -> List[str]:
+        parent_id, relation = resolve_lineage(
+            request.metadata,
+            parent_asset_id=request.source_asset_id,
+            relation_type="cover",
+        )
         ids = []
         fmt = (request.audio_format or "wav").lower()
         mime = "audio/mpeg" if fmt == "mp3" else f"audio/{fmt}"
@@ -283,6 +339,8 @@ class MusicPipeline:
                 source_task_id=task_id,
                 metadata=asset_meta,
                 source_action="cover",
+                parent_asset_id=parent_id,
+                relation_type=relation,
             )
             ids.append(aid)
         return ids
@@ -378,7 +436,6 @@ class MusicPipeline:
                     key_scale=request.key_scale or "",
                     time_signature=request.time_signature or "",
                     shift=shift,
-                    simple_mode=prepared.simple_mode,
                     instrumental=bool(request.instrumental),
                     lm_enabled=prepared.lm_enabled,
                     lm_quantize_bits=prepared.lm_quantize_bits,
@@ -580,6 +637,7 @@ class MusicPipeline:
         durations: List[float] | None = None,
         lyrics_capture: AceStepLyricsCapture | None = None,
     ) -> List[str]:
+        parent_id, relation = resolve_lineage(request.metadata)
         ids = []
         fmt = (request.audio_format or "wav").lower()
         mime = "audio/mpeg" if fmt == "mp3" else f"audio/{fmt}"
@@ -617,6 +675,8 @@ class MusicPipeline:
                 source_task_id=task_id,
                 metadata=asset_meta,
                 source_action="create",
+                parent_asset_id=parent_id,
+                relation_type=relation,
             )
             ids.append(aid)
         return ids

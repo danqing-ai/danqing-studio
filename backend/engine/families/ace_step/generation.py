@@ -522,7 +522,6 @@ class AceStepPreparedRequest:
     shift: float
     is_turbo: bool
     duration: float
-    simple_mode: bool = False
     lm_enabled: bool = True
     resource_tier: str = ""
     lm_quantize_bits: Optional[int] = None
@@ -544,69 +543,41 @@ def create_ace_step_generator(ctx: Any, bundle_root: Path) -> _AceStepGeneratorP
     )
 
 
-_LM_SECTION_TAG = re.compile(
-    r"\[(verse|chorus|bridge|intro|outro|pre-chorus|hook)",
-    re.IGNORECASE,
-)
-
 _LM_EXPANSION_REASON_MESSAGES: dict[str, str] = {
-    "override_inspiration": (
-        "高级覆盖：强制 5Hz LM 灵感扩写（create_sample）。"
-    ),
     "override_format": (
         "高级覆盖：强制 5Hz LM 格式化扩写（format_sample）。"
     ),
     "override_off": "高级覆盖：已关闭 5Hz LM 扩写。",
-    "auto_vocal_inspiration": (
-        "已从短描述推断需生成歌词：5Hz LM 将规划 metadata/歌词并生成 audio codes（llm_dit）。"
+    "auto_format": (
+        "5Hz LM 将格式化 caption/元数据并生成 audio codes（llm_dit，对齐官方 Custom 路径）。"
     ),
-    "auto_instrumental_prompt": (
-        "纯器乐：5Hz LM 将规划 metadata 并生成 audio codes（llm_dit）。"
-    ),
-    "auto_substantial_lyrics": (
-        "已提供歌词：5Hz LM 将格式化 caption/元数据并生成 audio codes（llm_dit）。"
-    ),
-    "auto_instrumental_no_prompt": "纯器乐且无描述：跳过 LM 灵感扩写。",
-    "auto_no_prompt": "无描述可扩写：跳过 LM 灵感扩写。",
     "lm_disabled": "5Hz LM 已关闭（ACESTEP_USE_LM=0）。",
 }
 
 
-def has_substantial_user_lyrics(lyrics: str) -> bool:
-    """Heuristic: user supplied lyrics worth format_sample rewrite."""
-    text = (lyrics or "").strip()
-    if not text or is_instrumental_lyrics(text):
-        return False
-    if len(text) >= 40:
-        return True
-    if _LM_SECTION_TAG.search(text):
-        return True
-    lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-    return len(lines) >= 2
-
-
 def _normalize_lm_expansion_mode(raw: Any) -> Optional[str]:
-    """Return inspiration | format | off, or None for auto."""
+    """Return format | off, or None for auto."""
     if raw is None:
         return None
     mode = str(raw).strip().lower()
     if mode in ("", "auto"):
         return None
     if mode in ("inspiration", "create", "create_sample", "simple", "simple_mode"):
-        return "inspiration"
+        raise RuntimeError(
+            "ACE-Step inspiration mode (create_sample) was removed. "
+            "Use AI assistant for lyrics, then generate with lm_expansion auto or format."
+        )
     if mode in ("format", "format_sample", "understand"):
         return "format"
     if mode in ("off", "none", "skip"):
         return "off"
     raise RuntimeError(
-        f"Unknown lm_expansion mode {raw!r}; use auto, inspiration, format, or off"
+        f"Unknown lm_expansion mode {raw!r}; use auto, format, or off"
     )
 
 
 def resolve_lm_expansion_override(request: AudioGenerationRequest) -> Optional[str]:
-    """Explicit LM path override, or None to auto-infer."""
-    if bool(getattr(request, "simple_mode", False)):
-        return "inspiration"
+    """Explicit LM path override, or None for auto."""
     meta = request.metadata or {}
     raw = meta.get("lm_expansion")
     if raw is None:
@@ -614,45 +585,24 @@ def resolve_lm_expansion_override(request: AudioGenerationRequest) -> Optional[s
     return _normalize_lm_expansion_mode(raw)
 
 
-def resolve_lm_inspiration_mode(
+def resolve_lm_expansion_state(
     request: AudioGenerationRequest,
     *,
-    raw_lyrics: str,
     lm_enabled: bool,
-) -> Tuple[bool, str]:
-    """Return (use_create_sample, reason_key)."""
+) -> tuple[bool, str]:
+    """Return (run_5hz_lm, reason_key). LM always uses format_sample when enabled."""
     if not lm_enabled:
         return False, "lm_disabled"
-
     override = resolve_lm_expansion_override(request)
     if override == "off":
         return False, "override_off"
-    if override == "inspiration":
-        return True, "override_inspiration"
     if override == "format":
-        return False, "override_format"
+        return True, "override_format"
+    return True, "auto_format"
 
-    lyrics_stripped = (raw_lyrics or "").strip()
-    prompt_stripped = (request.prompt or "").strip()
-    want_instrumental = bool(request.instrumental)
 
-    if has_substantial_user_lyrics(lyrics_stripped):
-        return False, "auto_substantial_lyrics"
-
-    if want_instrumental:
-        if prompt_stripped:
-            return True, "auto_instrumental_prompt"
-        return False, "auto_instrumental_no_prompt"
-
-    if lyrics_stripped and is_instrumental_lyrics(lyrics_stripped):
-        if prompt_stripped:
-            return True, "auto_instrumental_prompt"
-        return False, "auto_instrumental_no_prompt"
-
-    if prompt_stripped:
-        return True, "auto_vocal_inspiration"
-
-    return False, "auto_no_prompt"
+def vocal_lyrics_required_message() -> str:
+    return vocal_lyrics_required_error()
 
 
 def resolve_bundle_is_turbo(bundle_root: Path) -> bool:
@@ -709,9 +659,8 @@ def prepare_music_request(
         events.append(("warning", dur_warn))
 
     raw_lyrics = (request.lyrics or "").strip()
-    lm_inspiration, lm_reason = resolve_lm_inspiration_mode(
+    lm_use, lm_reason = resolve_lm_expansion_state(
         request,
-        raw_lyrics=raw_lyrics,
         lm_enabled=lm_enabled,
     )
     lm_reason_msg = _LM_EXPANSION_REASON_MESSAGES.get(lm_reason)
@@ -724,17 +673,8 @@ def prepare_music_request(
         lyrics = "[Instrumental]"
     elif raw_lyrics and not is_instrumental_lyrics(raw_lyrics):
         lyrics = raw_lyrics
-    elif lm_inspiration:
-        lyrics = ""
     elif not raw_lyrics:
-        lyrics = "[Instrumental]"
-        events.append(
-            (
-                "warning",
-                "未填写歌词且 LM 未启用灵感扩写：将按纯音乐生成（无人声）。"
-                "要人声请填写歌词，或仅填描述让系统自动生成歌词。",
-            )
-        )
+        raise RuntimeError(vocal_lyrics_required_message())
     else:
         lyrics = raw_lyrics
 
@@ -793,8 +733,7 @@ def prepare_music_request(
         shift=shift,
         is_turbo=is_turbo,
         duration=duration,
-        simple_mode=lm_inspiration,
-        lm_enabled=lm_enabled and lm_reason != "override_off",
+        lm_enabled=lm_use,
         resource_tier=policy.tier,
         lm_quantize_bits=policy.lm_quantize_bits,
         log_events=events,

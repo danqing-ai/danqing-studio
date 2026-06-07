@@ -122,8 +122,8 @@ class WeightMapper:
     def _detect_num_layers(hf_weights: Dict[str, mx.array]) -> int:
         layer_numbers = set()
         for key in hf_weights.keys():
-            # Match pattern: model.layers.{number}.something
-            match = re.search(r"model\.layers\.(\d+)\.", key)
+            # HF Qwen2.5-VL: model.layers.{n}.* ; mlx-community bundles: encoder.layers.{n}.*
+            match = re.search(r"(?:model|encoder)\.layers\.(\d+)\.", key)
             if match:
                 layer_numbers.add(int(match.group(1)))
 
@@ -1227,6 +1227,15 @@ def apply_qwen_transformer_weights(flat_dict: dict) -> dict:
 
 
 def apply_qwen_text_encoder_weights(flat_dict: dict) -> dict:
+    has_encoder_prefix = any(k.startswith("encoder.") for k in flat_dict)
+    has_model_prefix = any(k.startswith("model.") for k in flat_dict)
+    if has_encoder_prefix and not has_model_prefix:
+        # mlx-community / other pre-remapped bundles already use encoder.* flat keys.
+        nested: dict = {}
+        for key, value in flat_dict.items():
+            if key.startswith("encoder."):
+                WeightMapper._set_nested_value(nested, key, value)
+        return nested
     return WeightMapper.apply_mapping(flat_dict, QwenWeightMapping.get_text_encoder_mapping())
 
 

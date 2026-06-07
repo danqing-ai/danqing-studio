@@ -1584,7 +1584,8 @@ body {
 }
 
 /* 下载中心：整页 flex + 侧栏（减少内联 layout） */
-.models-page {
+.models-page,
+.copilot-page {
   display: flex;
   gap: 20px;
   width: 100%;
@@ -4091,25 +4092,74 @@ body {
  * 模型页（下载中心）— 布局与排版；深色玻璃/阴影见 theme-apple-chrome.css
  * ============================================================================= */
 /* 布局与排版；深色玻璃/阴影见 theme-apple-chrome.css */
-.models-page {
+.models-page,
+.copilot-page {
  position: relative;
  isolation: isolate;
 }
 
-.models-page .models-page__main {
+.models-page .models-page__main,
+.copilot-page .copilot-page__main {
  padding-right: 6px;
 }
 
-.models-page .models-page__sidebar-card.studio-surface-card.dq-surface-card {
+.models-page .models-page__sidebar-card.studio-surface-card.dq-surface-card,
+.copilot-page .copilot-page__sidebar-card.studio-surface-card.dq-surface-card,
+.copilot-page .copilot-page__workspace-card.studio-surface-card.dq-surface-card,
+.copilot-page .copilot-page__cards-card.studio-surface-card.dq-surface-card {
  border-radius: var(--dq-radius-group);
 }
 
-.models-page .dq-download-menu__item {
+.models-page .dq-download-menu__item,
+.copilot-page .dq-download-menu__item {
  margin-bottom: 2px;
 }
 
-.models-page .dq-download-menu__item.is-active {
+.models-page .dq-download-menu__item.is-active,
+.copilot-page .dq-download-menu__item.is-active {
  font-weight: 600;
+}
+
+.copilot-page .page-header.copilot-page__page-header {
+ display: flex;
+ flex-direction: row;
+ flex-wrap: wrap;
+ align-items: flex-start;
+ justify-content: space-between;
+ gap: 10px 14px;
+ width: 100%;
+ border-bottom: none;
+ padding-bottom: 18px;
+ margin-bottom: 16px;
+ position: relative;
+ flex-shrink: 0;
+}
+
+.copilot-page .page-header.copilot-page__page-header::after {
+ content: '';
+ position: absolute;
+ left: 0;
+ right: 0;
+ bottom: 0;
+ height: 1px;
+ background: linear-gradient(
+  90deg,
+  color-mix(in srgb, var(--dq-accent) 50%, transparent) 0%,
+  var(--dq-border-subtle) 32%,
+  transparent 92%
+ );
+ opacity: 0.95;
+}
+
+.copilot-page .copilot-page__page-title.page-title {
+ font-size: 22px;
+ font-weight: 700;
+ letter-spacing: -0.045em;
+ line-height: 1.15;
+ display: flex;
+ align-items: center;
+ gap: 8px;
+ margin: 0 0 6px;
 }
 
 /* 下载中心页头：单行 — 标题 | 搜索+筛选 | 操作（覆盖全站 .page-header） */

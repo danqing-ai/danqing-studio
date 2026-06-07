@@ -13,9 +13,6 @@ DEFAULT_LM_REWRITE_INSTRUCTION = (
 DEFAULT_LM_SIMPLE_INSTRUCTION = (
     "Generate audio semantic tokens based on the given conditions:"
 )
-DEFAULT_LM_INSPIRED_INSTRUCTION = (
-    "Expand the user's input into a more detailed and specific musical description:"
-)
 
 THINK_START_RE = re.compile(r"<think>\s*", re.IGNORECASE)
 THINK_END_RE = re.compile(r"</think>", re.IGNORECASE)
@@ -170,6 +167,8 @@ _FORMAT_LYRIC_PREFIX_RE = re.compile(
     r"^#\s*Languages\s*\n.*?\n\n#\s*Lyric\s*",
     re.IGNORECASE | re.DOTALL,
 )
+_SECTION_HEADER_LINE_RE = re.compile(r"^\s*\[(.+?)\]\s*$")
+_DROP_SECTION_KEYS = frozenset({"start", "end"})
 
 
 def normalize_lyrics_body(text: str) -> str:
@@ -181,6 +180,52 @@ def normalize_lyrics_body(text: str) -> str:
     t = _LYRIC_HEADER_RE.sub("", t)
     t = re.sub(r"<\|endoftext\|>\s*$", "", t).strip()
     return t
+
+
+def compact_vocal_lyrics_structure(text: str) -> str:
+    """Drop empty scaffolding sections (e.g. bare ``[intro]``) before LM / DiT conditioning.
+
+    Keeps singable lines intact; removes ``[start]``/``[end]`` and section headers with no lyrics.
+    """
+    t = normalize_lyrics_body(text)
+    if not t or is_instrumental_lyrics(t):
+        return t
+
+    sections: list[tuple[str, list[str]]] = []
+    cur_label = ""
+    cur_lines: list[str] = []
+
+    for raw in t.splitlines():
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        sec = _SECTION_HEADER_LINE_RE.match(stripped)
+        if sec:
+            if cur_label or cur_lines:
+                sections.append((cur_label, cur_lines))
+            key_norm = re.sub(r"[\s\d\-_]+", "", sec.group(1).strip().lower())
+            if key_norm in _DROP_SECTION_KEYS:
+                cur_label = ""
+                cur_lines = []
+            else:
+                cur_label = sec.group(1).strip()
+                cur_lines = []
+            continue
+        cur_lines.append(stripped)
+
+    if cur_label or cur_lines:
+        sections.append((cur_label, cur_lines))
+
+    kept = [(label, lines) for label, lines in sections if lines]
+    if not kept:
+        return t
+
+    out: list[str] = []
+    for label, lines in kept:
+        if label:
+            out.append(f"[{label}]")
+        out.extend(lines)
+    return "\n".join(out)
 
 
 def extract_lyrics_after_thinking(output_text: str) -> str:
@@ -217,75 +262,12 @@ def is_instrumental_lyrics(text: str) -> bool:
 
 def vocal_lyrics_required_error() -> str:
     return (
-        "ACE-Step 5Hz LM did not produce vocal lyrics for this prompt. "
-        "Add lyrics in the lyrics field, or describe lead vocals explicitly in the prompt."
+        "ACE-Step 人声曲目需要歌词：请在歌词框填写内容，或使用 Composer 中的「AI 生成歌词」。"
+        "5Hz LM 仅格式化 caption/元数据，不再从描述自动生成歌词。"
     )
 
 
-def build_inspiration_user_content(
-    query: str,
-    *,
-    instrumental: bool,
-    vocal_language: str = "",
-    force_vocals: bool = False,
-) -> str:
-    """User turn for inspiration / create_sample — steer LM away from [Instrumental]."""
-    query_in = (query or "").strip() or "NO USER INPUT"
-    if instrumental:
-        return f"{query_in}\n\n[Instrumental]"
-    lang = (vocal_language or "en").strip()
-    if lang.lower().startswith("zh"):
-        vocal_hint = (
-            "请生成完整的中文演唱歌词，包含 [Verse]、[Chorus] 等结构标签。"
-            "必须有人声演唱，不要使用 [Instrumental]。"
-        )
-        if force_vocals:
-            vocal_hint = (
-                "重要：这是一首必须有人声演唱的歌曲，不是纯音乐。"
-                "请写出完整、可演唱的中文歌词（含 [Verse]、[Chorus]），"
-                "禁止输出 [Instrumental] 或纯器乐描述。"
-            )
-    else:
-        vocal_hint = (
-            f"Generate full sung lyrics in {lang} with [Verse] and [Chorus] structure tags. "
-            "Include clear lead vocals; do not use [Instrumental]."
-        )
-        if force_vocals:
-            vocal_hint = (
-                f"IMPORTANT: This track MUST have lead vocals in {lang}, not instrumental. "
-                "Write complete singable lyrics with [Verse] and [Chorus]. "
-                "Do NOT output [Instrumental]."
-            )
-    return f"{query_in}\n\n{vocal_hint}"
-
-
-def inspiration_understand_config(
-    *,
-    duration: Optional[float],
-    user_metadata: Optional[dict[str, Any]],
-) -> Any:
-    """Constrained config for inspiration phase-1 (metadata + lyrics)."""
-    from backend.engine.families.ace_step.constrained_generate import (
-        ConstrainedGenerationConfig,
-        compute_max_new_tokens,
-    )
-
-    max_new = compute_max_new_tokens(
-        target_duration=duration,
-        generation_phase="understand",
-    )
-    max_new = min(max_new, 1200)
-    return ConstrainedGenerationConfig(
-        target_duration=duration,
-        generation_phase="understand",
-        user_metadata=user_metadata,
-        stop_at_reasoning=False,
-        skip_genres=False,
-        max_new_tokens=max_new,
-    )
-
-
-def parse_inspiration_understand_output(
+def parse_lm_understand_output(
     output_text: str,
     *,
     instrumental: bool,
@@ -299,162 +281,6 @@ def parse_inspiration_understand_output(
     elif instrumental:
         meta["lyrics_tail"] = "[Instrumental]"
     return meta, lyrics
-
-
-def synthesize_fallback_vocal_lyrics(caption: str, *, vocal_language: str) -> str:
-    """Minimal singable placeholder when 5Hz LM cannot produce lyrics."""
-    theme = normalize_lyrics_body(caption) or "这首歌"
-    lang = (vocal_language or "en").strip().lower()
-    if lang.startswith("zh"):
-        return (
-            f"[Verse 1]\n{theme}\n在风里轻轻唱\n\n"
-            f"[Chorus]\n{theme}\n让我们一起唱"
-        )
-    return (
-        f"[Verse 1]\n{theme}\nSinging through the night\n\n"
-        f"[Chorus]\n{theme}\nSing it out loud"
-    )
-
-
-def build_lyrics_only_prompt(
-    tokenizer: Any,
-    *,
-    caption: str,
-    lyrics_placeholder: str,
-    cot_text: str,
-    instruction: str = DEFAULT_LM_INSPIRED_INSTRUCTION,
-) -> str:
-    """Prefill planner CoT then continue with free-form vocal lyrics."""
-    user_prompt = f"# Caption\n{caption}\n\n# Lyric\n{lyrics_placeholder}\n"
-    formatted = tokenizer.apply_chat_template(
-        [
-            {"role": "system", "content": f"# Instruction\n{instruction}\n\n"},
-            {"role": "user", "content": user_prompt},
-        ],
-        tokenize=False,
-        add_generation_prompt=True,
-    )
-    return formatted + cot_text + "\n\n"
-
-
-def run_lyrics_only_fallback(
-    generate_fn: Callable[[str, Any], str],
-    tokenizer: Any,
-    *,
-    caption: str,
-    metadata: dict[str, Any],
-    vocal_language: str,
-    duration: Optional[float] = None,
-) -> str:
-    """Second pass: metadata is fixed; ask LM to continue with vocal lyrics only."""
-    from backend.engine.families.ace_step.constrained_generate import (
-        ConstrainedGenerationConfig,
-    )
-
-    cot = format_metadata_as_cot(metadata)
-    lang = (vocal_language or "en").strip().lower()
-    if lang.startswith("zh"):
-        placeholder = (
-            "请在此写出完整的中文演唱歌词（含 [Verse]、[Chorus]），"
-            "不要写 [Instrumental]。"
-        )
-    else:
-        placeholder = (
-            "Write complete sung lyrics with [Verse] and [Chorus] here. "
-            "Do not use [Instrumental]."
-        )
-    prompt = build_lyrics_only_prompt(
-        tokenizer,
-        caption=caption,
-        lyrics_placeholder=placeholder,
-        cot_text=cot,
-    )
-    output_text = generate_fn(
-        prompt,
-        ConstrainedGenerationConfig(
-            target_duration=duration,
-            generation_phase="understand",
-            use_constrained_decoding=False,
-            stop_at_reasoning=False,
-            max_new_tokens=800,
-        ),
-    )
-    lyrics = extract_lm_generated_lyrics(output_text, prefilled_think_end=True)
-    if not lyrics:
-        lyrics = normalize_lyrics_body(str(parse_lm_output(output_text).get("lyrics_tail") or ""))
-    return lyrics
-
-
-def ensure_vocal_lyrics_for_inspiration(
-    generate_fn: Callable[[str, Any], str],
-    tokenizer: Any,
-    chat_prompt: Callable[[str, str], str],
-    *,
-    query_in: str,
-    vocal_language: str,
-    duration: Optional[float],
-    user_metadata: Optional[dict[str, Any]],
-) -> tuple[dict[str, Any], str]:
-    """Run understand (+ retry / lyrics-only fallback) until singable lyrics exist."""
-    last_meta: dict[str, Any] = {"caption": query_in}
-    understand_cfg = inspiration_understand_config(
-        duration=duration,
-        user_metadata=user_metadata,
-    )
-
-    for force in (False, True):
-        user_content = build_inspiration_user_content(
-            query_in,
-            instrumental=False,
-            vocal_language=vocal_language,
-            force_vocals=force,
-        )
-        prompt = chat_prompt(DEFAULT_LM_INSPIRED_INSTRUCTION, user_content)
-        output_text = generate_fn(prompt, understand_cfg)
-        meta, lyrics = parse_inspiration_understand_output(output_text, instrumental=False)
-        last_meta = meta
-        if lyrics and not is_instrumental_lyrics(lyrics):
-            return meta, lyrics
-
-    caption = str(last_meta.get("caption") or query_in)
-    fallback_meta = {
-        k: v
-        for k, v in {
-            "bpm": last_meta.get("bpm"),
-            "caption": caption,
-            "duration": last_meta.get("duration"),
-            "keyscale": last_meta.get("keyscale"),
-            "language": last_meta.get("language") or vocal_language,
-            "timesignature": last_meta.get("timesignature"),
-        }.items()
-        if v not in (None, "")
-    }
-    lyrics = run_lyrics_only_fallback(
-        generate_fn,
-        tokenizer,
-        caption=caption,
-        metadata=fallback_meta,
-        vocal_language=vocal_language,
-        duration=duration,
-    )
-    if lyrics and not is_instrumental_lyrics(lyrics):
-        merged = dict(last_meta)
-        merged["lyrics_tail"] = lyrics
-        merged["caption"] = caption
-        return merged, lyrics
-
-    placeholder = synthesize_fallback_vocal_lyrics(caption, vocal_language=vocal_language)
-    import logging
-
-    logging.getLogger(__name__).warning(
-        "ACE-Step LM: using minimal placeholder lyrics for %r (5Hz LM returned no vocals)",
-        query_in[:80],
-    )
-    merged = dict(last_meta)
-    merged["lyrics_tail"] = placeholder
-    merged["caption"] = caption
-    merged["lyrics_fallback"] = True
-    return merged, placeholder
 
 
 def format_sample_understand_config(

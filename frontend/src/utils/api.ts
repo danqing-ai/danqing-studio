@@ -1,5 +1,15 @@
 import axios from 'axios';
-import type { AssetRow, GalleryItem, QueueState, RegistryData, SettingsData, SystemInfo } from '@/types';
+import type {
+  AssetRow,
+  CanvasSessionDetail,
+  CanvasSessionState,
+  CanvasSessionSummary,
+  GalleryItem,
+  QueueState,
+  RegistryData,
+  SettingsData,
+  SystemInfo,
+} from '@/types';
 
 const API_BASE = '';
 
@@ -51,6 +61,8 @@ function assetRowToGalleryItem(a: AssetRow): GalleryItem {
       ...(duration_seconds != null ? { duration_seconds } : {}),
       asset_kind:
         a.kind != null && String(a.kind).trim() !== '' ? String(a.kind) : 'image',
+      ...(a.parent_asset_id ? { parent_asset_id: a.parent_asset_id } : {}),
+      ...(a.relation_type ? { relation_type: a.relation_type } : {}),
     },
   };
 }
@@ -304,8 +316,13 @@ export const api = {
       return response.data;
     },
 
-    async getCompatibleControlNets(modelName: string): Promise<unknown> {
-      const response = await client.get(`/api/settings/controlnets/compatible/${modelName}`);
+    async getCompatibleControlNets(
+      modelName: string,
+      scope?: 'create' | 'retouch' | 'extend',
+    ): Promise<unknown> {
+      const response = await client.get(`/api/settings/controlnets/compatible/${modelName}`, {
+        params: scope ? { scope } : undefined,
+      });
       return response.data;
     },
 
@@ -387,6 +404,11 @@ export const api = {
       }
       const response = await client.get(u, { responseType: 'blob' });
       return response.data as Blob;
+    },
+
+    async getAssetLineage(assetId: string): Promise<unknown> {
+      const response = await client.get(`/api/assets/${encodeURIComponent(assetId)}/lineage`);
+      return response.data;
     },
 
     async createImageGeneration(body: Record<string, unknown>): Promise<unknown> {
@@ -534,6 +556,121 @@ export const api = {
 
       return eventSource;
     },
+
+    async enhancePrompt(body: {
+      prompt: string;
+      style_positive?: string;
+      target_action?: string;
+      model_id?: string;
+    }): Promise<{ enhanced_prompt: string }> {
+      const response = await client.post('/api/chat/enhance', body);
+      return response.data;
+    },
+
+    async generateLyrics(body: {
+      prompt: string;
+      style_positive?: string;
+    }): Promise<{ lyrics: string }> {
+      const response = await client.post('/api/chat/lyrics', body);
+      return response.data;
+    },
+
+    async getLLMModelInfo(): Promise<{
+      model_id: string;
+      name: string | { zh?: string; en?: string };
+      available: boolean;
+      vision?: {
+        model_id: string;
+        name: string | { zh?: string; en?: string };
+        available: boolean;
+        mlx_vlm_installed?: boolean;
+      };
+    }> {
+      const response = await client.get('/api/chat/model');
+      return response.data;
+    },
+
+    async describeCanvasNode(
+      assetId: string,
+      opts?: { preferVision?: boolean }
+    ): Promise<{ note: string; vision_used?: boolean }> {
+      const response = await client.post('/api/chat/describe-node', {
+        asset_id: assetId,
+        prefer_vision: opts?.preferVision !== false,
+      });
+      return response.data;
+    },
+
+    async imageToPrompt(assetId: string): Promise<{ prompt: string; vision_used?: boolean }> {
+      const response = await client.post('/api/chat/image-to-prompt', {
+        asset_id: assetId,
+      });
+      return response.data;
+    },
+
+    async visualAnalyze(
+      assetId: string,
+      question: string,
+    ): Promise<{ answer: string; vision_used?: boolean }> {
+      const response = await client.post('/api/chat/visual-analyze', {
+        asset_id: assetId,
+        question,
+      });
+      return response.data;
+    },
+
+    async chatCompletion(body: {
+      model?: string;
+      messages: { role: string; content: string }[];
+      temperature?: number;
+      max_tokens?: number;
+      stream?: boolean;
+      top_p?: number;
+    }): Promise<{
+      id: string;
+      choices: { message: { role: string; content: string } }[];
+    }> {
+      const response = await client.post('/v1/chat/completions', body);
+      return response.data;
+    },
+
+    async *chatCompletionStream(body: {
+      model?: string;
+      messages: { role: string; content: string }[];
+      temperature?: number;
+      max_tokens?: number;
+      top_p?: number;
+    }): AsyncGenerator<string, void, unknown> {
+      const response = await fetch('/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...body, stream: true }),
+      });
+      if (!response.body) return;
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed.startsWith('data: ')) continue;
+          const data = trimmed.slice(6);
+          if (data === '[DONE]') return;
+          try {
+            const parsed = JSON.parse(data);
+            const content = parsed.choices?.[0]?.delta?.content;
+            if (content) yield content;
+          } catch {
+            // ignore malformed JSON
+          }
+        }
+      }
+    },
   },
 
   registry: {
@@ -557,6 +694,40 @@ export const api = {
     async getCacheStatus(): Promise<unknown> {
       const response = await client.get('/api/system/cache');
       return response.data;
+    },
+  },
+
+  canvas: {
+    async listSessions(media = 'image', limit = 50): Promise<CanvasSessionSummary[]> {
+      const response = await client.get('/api/canvas/sessions', { params: { media, limit } });
+      return (response.data?.items || []) as CanvasSessionSummary[];
+    },
+
+    async getSession(sessionId: string): Promise<CanvasSessionDetail> {
+      const response = await client.get(`/api/canvas/sessions/${encodeURIComponent(sessionId)}`);
+      return response.data as CanvasSessionDetail;
+    },
+
+    async createSession(
+      payload: { media?: string; title?: string; state?: CanvasSessionState } = {}
+    ): Promise<CanvasSessionDetail> {
+      const response = await client.post('/api/canvas/sessions', payload);
+      return response.data as CanvasSessionDetail;
+    },
+
+    async updateSession(
+      sessionId: string,
+      payload: { title?: string; state?: CanvasSessionState }
+    ): Promise<CanvasSessionDetail> {
+      const response = await client.put(
+        `/api/canvas/sessions/${encodeURIComponent(sessionId)}`,
+        payload
+      );
+      return response.data as CanvasSessionDetail;
+    },
+
+    async deleteSession(sessionId: string): Promise<void> {
+      await client.delete(`/api/canvas/sessions/${encodeURIComponent(sessionId)}`);
     },
   },
 
