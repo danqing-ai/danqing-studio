@@ -32,7 +32,7 @@ def _fibo_apply_rotary_emb(ctx: RuntimeContext, x: Any, cos: Any, sin: Any) -> A
 
 
 class _FiboEmbedND:
-    """mflux FiboEmbedND — 3-axis RoPE (axes_dim=[16,56,56])."""
+    """FiboEmbedND — 3-axis RoPE (axes_dim=[16,56,56])."""
 
     def __init__(self, ctx: RuntimeContext, theta: float = 10000.0):
         self.ctx = ctx
@@ -75,7 +75,7 @@ class _TimestepEmbedder:
 
 
 class _BriaFiboTimestepProjEmbeddings:
-    """mflux BriaFiboTimestepProjEmbeddings — sinusoidal + MLP."""
+    """BriaFiboTimestepProjEmbeddings — sinusoidal + MLP."""
 
     def __init__(self, dim: int, ctx: RuntimeContext):
         self.ctx = ctx
@@ -87,7 +87,7 @@ class _BriaFiboTimestepProjEmbeddings:
 
 
 class _FiboAdaLayerNormZero:
-    """mflux FiboAdaLayerNormZero — SiLU + Linear → 6 chunks."""
+    """FiboAdaLayerNormZero — SiLU + Linear → 6 chunks."""
 
     def __init__(self, dim: int, ctx: RuntimeContext):
         self.ctx = ctx
@@ -116,7 +116,7 @@ class _FiboAdaLayerNormZero:
 
 
 class _FiboAdaLayerNormZeroSingle:
-    """mflux AdaLayerNormZeroSingle — SiLU + Linear → shift/scale/gate."""
+    """AdaLayerNormZeroSingle — SiLU + Linear → shift/scale/gate."""
 
     def __init__(self, dim: int, ctx: RuntimeContext):
         self.ctx = ctx
@@ -134,7 +134,7 @@ class _FiboAdaLayerNormZeroSingle:
 
 
 class _FiboJointAttention:
-    """mflux FiboJointAttention — joint QKV for image + context streams."""
+    """FiboJointAttention — joint QKV for image + context streams."""
 
     def __init__(self, dim: int, num_heads: int, head_dim: int, ctx: RuntimeContext):
         self.ctx = ctx
@@ -218,7 +218,7 @@ class _FiboJointAttention:
 
 
 class _FiboSingleAttention:
-    """mflux FiboSingleAttention — single-stream attention."""
+    """FiboSingleAttention — single-stream attention."""
 
     def __init__(self, dim: int, num_heads: int, head_dim: int, ctx: RuntimeContext):
         self.ctx = ctx
@@ -270,7 +270,7 @@ class _FiboSingleAttention:
 
 
 class _FiboGELU:
-    """mflux FiboGELU — Linear + gelu_approx."""
+    """FiboGELU — Linear + gelu_approx."""
 
     def __init__(self, dim_in: int, dim_out: int):
         self.proj = mx_nn.Linear(dim_in, dim_out, bias=True)
@@ -283,7 +283,7 @@ class _FiboGELU:
 
 
 class _FiboFeedForward:
-    """mflux FiboFeedForward — GELU-approx + Linear."""
+    """FiboFeedForward — GELU-approx + Linear."""
 
     def __init__(self, dim: int, ctx: RuntimeContext, mult: float = 4.0):
         inner_dim = int(dim * mult)
@@ -300,7 +300,7 @@ class _FiboFeedForward:
 
 
 class _FiboJointTransformerBlock:
-    """mflux FiboJointTransformerBlock."""
+    """FiboJointTransformerBlock."""
 
     def __init__(self, dim: int, num_heads: int, head_dim: int, ctx: RuntimeContext):
         self.ctx = ctx
@@ -350,7 +350,7 @@ class _FiboJointTransformerBlock:
 
 
 class _FiboSingleTransformerBlock:
-    """mflux FiboSingleTransformerBlock."""
+    """FiboSingleTransformerBlock."""
 
     def __init__(self, dim: int, num_heads: int, head_dim: int, ctx: RuntimeContext):
         self.ctx = ctx
@@ -377,7 +377,7 @@ class _FiboSingleTransformerBlock:
 
 
 class _AdaLayerNormContinuousOut:
-    """mflux AdaLayerNormContinuousOut — SiLU + Linear → scale/shift."""
+    """AdaLayerNormContinuousOut — SiLU + Linear → scale/shift."""
 
     def __init__(self, dim: int, ctx: RuntimeContext):
         self.ctx = ctx
@@ -394,7 +394,7 @@ class _AdaLayerNormContinuousOut:
 
 
 class _BriaFiboTextProjection:
-    """mflux BriaFiboTextProjection — Linear wrapper for caption_projection."""
+    """BriaFiboTextProjection — Linear wrapper for caption_projection."""
 
     def __init__(self, in_features: int, hidden_size: int):
         self.linear = mx_nn.Linear(in_features, hidden_size, bias=False)
@@ -453,7 +453,7 @@ class FIBOTransformer(TransformerBase):
         cfg_renorm_min: float = 0.0,
         **conditioning: Any,
     ) -> Any:
-        """Batched CFG — mflux stacks [uncond, cond] on batch axis 0."""
+        """Batched CFG — Reference stacks [uncond, cond] on batch axis 0."""
         if (
             neg_embeds is None
             and txt_embeds is not None
@@ -593,7 +593,7 @@ class FIBOTransformer(TransformerBase):
         ids = ctx.expand_dims(ids, axis=0)
         cos, sin = self.pos_embed.forward(ids)
 
-        # Attention mask — mflux: full bidirectional over prompt + latent (+ conditioning) tokens
+        # Attention mask — Reference: full bidirectional over prompt + latent (+ conditioning) tokens
         prompt_mask = ctx.ones((B, txt_len), dtype=ctx.float32())
         latent_mask = ctx.ones((B, img_seq_len), dtype=ctx.float32())
         if cond_seq_len > 0:
@@ -610,7 +610,7 @@ class FIBOTransformer(TransformerBase):
         )
         attn_matrix = ctx.expand_dims(attn_matrix, axis=1).astype(ctx.bfloat16())
 
-        # Caption projection — mflux projects all layers once, then splices per block
+        # Caption projection — Reference projects all layers once, then splices per block
         total_layers = cfg.num_joint_layers + cfg.num_single_layers
         projected_layers: list[Any | None]
         if text_encoder_layers is not None and len(text_encoder_layers) > 0:

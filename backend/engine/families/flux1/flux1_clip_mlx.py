@@ -1,4 +1,4 @@
-"""Flux.1 CLIP-L — mflux ``CLIPEncoder`` 对齐（共享实现）。"""
+"""Flux.1 CLIP-L — ``CLIPEncoder`` 对齐（共享实现）。"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -129,7 +129,7 @@ class _CLIPTextModel(nn.Module):
 
 
 class Flux1CLIPEncoder(nn.Module):
-    """mflux-compatible CLIP text encoder for Flux.1 ``text_encoder`` bundle."""
+    """reference-compatible CLIP text encoder for Flux.1 ``text_encoder`` bundle."""
 
     def __init__(
         self,

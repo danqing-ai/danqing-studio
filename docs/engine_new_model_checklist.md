@@ -146,7 +146,7 @@ Requires NVIDIA + local `qwen-image` bundle under `./models/` (sync registry fir
 
 - [ ] `make sync-models-registry`
 - [ ] Smoke: `bin/danqing-generate --model qwen-image --prompt "a red cube" --runtime cuda --steps 4 --width 512 --height 512 --output /tmp/qwen-cuda.png`
-- [ ] Compare against MLX on same seed/steps (visual or `make bench-mflux-case` if reference exists)
+- [ ] Compare against MLX on same seed/steps (visual or `make bench-eval-case`)
 - [ ] If DiT diverges: verify `transformer_cuda.py` timestep scaling (`sigma → int(t×1000)`) and packed latent layout vs diffusers pipeline
 
 ---

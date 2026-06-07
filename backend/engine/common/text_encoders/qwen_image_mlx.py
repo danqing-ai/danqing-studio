@@ -27,7 +27,7 @@ _MLX_CTX = MLXContext()
 
 
 class QwenRMSNorm(nn.Module):
-    """Match mflux QwenRMSNorm exactly (fp32 variance path)."""
+    """Match reference QwenRMSNorm exactly (fp32 variance path)."""
 
     def __init__(self, hidden_size: int, eps: float = 1e-6):
         super().__init__()
@@ -550,7 +550,7 @@ class QwenImageTextEncoder:
         tok_root = Path(raw_tok) if raw_tok and Path(raw_tok).is_dir() else self.bundle_root / "tokenizer"
         if not tok_root.is_dir():
             raise RuntimeError(f"Qwen Image: missing tokenizer directory: {tok_root}")
-        # Align with mflux tokenizer loader workaround for Qwen2Tokenizer
+        # Align with reference tokenizer loader workaround for Qwen2Tokenizer
         # to avoid known vocab/merges loading inconsistencies.
         self._hf = self._load_qwen2_tokenizer(tok_root)
         self._prompt_template = (

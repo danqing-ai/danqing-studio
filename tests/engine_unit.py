@@ -452,7 +452,7 @@ class ZImageCudaTests(unittest.TestCase):
         w = model._param_map["x_embedder.weight"]
         self.assertIsInstance(w, torch.Tensor)
 
-    def test_combine_cfg_noise_matches_mflux(self) -> None:
+    def test_combine_cfg_noise_z_image_convention(self) -> None:
         from backend.engine.config.model_configs import ZImageConfig
         from backend.engine.families.z_image.transformer import ZImageTransformer
         from backend.engine.runtime.cuda import CudaContext
@@ -2007,7 +2007,7 @@ class BenchmarkMetadataTests(unittest.TestCase):
         ids = {p["id"] for p in pack["create"]}
         self.assertIn("P1", ids)
 
-    def test_z_image_turbo_enable_thinking_aligned_with_mflux(self) -> None:
+    def test_z_image_turbo_enable_thinking_default(self) -> None:
         import json
         from pathlib import Path
 
@@ -2019,7 +2019,7 @@ class BenchmarkMetadataTests(unittest.TestCase):
         turbo = reg["models"]["z-image-turbo"]
         self.assertTrue(
             turbo["parameters"].get("enable_thinking"),
-            "z-image-turbo must keep enable_thinking=true to align tokenizer chat-template semantics with mflux",
+            "z-image-turbo must keep enable_thinking=true for tokenizer chat-template semantics",
         )
 
 

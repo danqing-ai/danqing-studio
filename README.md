@@ -209,7 +209,7 @@ DanQing-Studio/
 ├── bin/                     # danqing-* CLI
 ├── default_config/          # factory models_registry, presets, locales, workspace.pointer
 ├── scripts/                 # build, lint gates, desktop packaging
-├── tests/benchmark/         # mflux + sanity harness
+├── tests/benchmark/         # image eval benchmark (L1+L2)
 ├── docs/                    # dual_platform_architecture.md
 ├── models/  outputs/  db/
 └── out/                     # Build artifacts (gitignored)

@@ -955,13 +955,13 @@ graph = GenerationGraph(
 ```
 L1 静态：verify-engine-stack + consistency + import/layout gates
 L2 加载：manifest + key parity + shape check（加载阶段 fail）
-L3 生成：bench-sanity / bench-mflux / family-specific parity case
+L3 生成：bench-eval-smoke / bench-eval
 ```
 
 **规则**
 
-- 改动 family → 至少跑 L1 + L2 + 该 family sanity
-- 有 mflux reference → 必须 PSNR gate
+- 改动 family → 至少跑 L1 + L2 + 该 family 的 `bench-eval-smoke` 用例
+- 图像质量回归 → `make bench-eval-smoke` 或 `make bench-eval-case ID=<model>:<prompt>:<action>`
 - bench FAIL 不允许用 fallback 路径「先合 PR」
 - DiT remap parity < 100% → 加载失败，日志列出 top missing keys
 - manifest 缺 required component → 模型「已下载但不可用」，generate 入口直接拒
@@ -972,8 +972,9 @@ L3 生成：bench-sanity / bench-mflux / family-specific parity case
 |------|------|------|
 | 治理栈 | `make verify-engine-stack` | governance + unit tests |
 | 一致性 | `make check-consistency` | registry / routes / i18n |
-| 无 reference sanity | `make bench-sanity-case ID=` | 输出非空、非 NaN、尺寸正确 |
-| mflux PSNR | `make bench-mflux-case ID=` | 数值对齐 reference |
+| 图像评测 smoke | `make bench-eval-smoke` | L1 完整性 + L2 PickScore（CI 友好） |
+| 图像评测单例 | `make bench-eval-case ID=` | 指定 model:prompt:action |
+| 图像评测全量 | `make bench-eval` | 完整 prompt matrix |
 | 音频 RMS | `make bench-audio-sanity` | 音频非静音 |
 | 引擎单测 | `make test-engine-unit` | contract / registry 回归 |
 
@@ -1000,7 +1001,7 @@ L3 生成：bench-sanity / bench-mflux / family-specific parity case
 - [x] Registry 解析层：`registry_profiles.py`（`profiles` / `parameter_templates`）
 - [x] CI：`check_consistency` + registry profile 单测
 
-**门禁**：§11.1 L1；改动 family 时加 L3 sanity / mflux。
+**门禁**：§11.1 L1；改动 family 时加 L3 bench-eval。
 
 ### Phase 1：注册表瘦身 + 下载可观测（1–2 周）
 
@@ -1097,7 +1098,7 @@ bin/danqing-generate --model my-model --prompt "test" --steps 4
 
 ### PR-4：flux1 / flux2 / fibo ctx 化
 
-- **验收**：`make bench-mflux-case ID=flux2-klein-9b`；sanity；`verify-engine-stack`
+- **验收**：`make bench-eval-case ID=flux2-klein-9b:P1:create`；`verify-engine-stack`
 
 ### PR-5：qwen ctx 化 + CUDA parity
 

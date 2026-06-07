@@ -1,4 +1,4 @@
-"""FLUX.1 Fill — mask reshape + static packed context (mflux ``MaskUtil`` parity)."""
+"""FLUX.1 Fill — mask reshape + static packed context (``MaskUtil`` parity)."""
 from __future__ import annotations
 
 from typing import Any
@@ -6,7 +6,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-# mflux ``ModelConfig.x_embedder_input_dim`` for Fill: 64 noise + 64 masked VAE + 256 mask pack.
+# ``ModelConfig.x_embedder_input_dim`` for Fill: 64 noise + 64 masked VAE + 256 mask pack.
 FILL_PATCH_TOKEN_DIM = 384
 FILL_STATIC_TOKEN_DIM = 320
 
@@ -20,13 +20,13 @@ def mask_pil_to_weight(mask: Image.Image) -> np.ndarray:
 
 
 def apply_inpaint_mask_rgb(rgb: np.ndarray, mask_hw: np.ndarray) -> np.ndarray:
-    """Zero pixels to repaint before VAE encode (mflux ``image * (1 - mask)``)."""
+    """Zero pixels to repaint before VAE encode (``image * (1 - mask)``)."""
     m = mask_hw[..., None] if mask_hw.ndim == 2 else mask_hw[:, :, :1]
     return rgb * (1.0 - m)
 
 
 def reshape_mask_latent_channels(mask_hw: np.ndarray, height: int, width: int) -> np.ndarray:
-    """``[H,W]`` mask → ``[1, 64, H//8, W//8]`` (mflux ``MaskUtil.reshape_mask``)."""
+    """``[H,W]`` mask → ``[1, 64, H//8, W//8]`` (``MaskUtil.reshape_mask``)."""
     if mask_hw.ndim != 2:
         raise RuntimeError(f"reshape_mask_latent_channels expects 2D mask, got {mask_hw.shape}")
     h, w = int(height), int(width)

@@ -19,12 +19,12 @@ def _reshape_patch_embed_weight(key: str, tensor: Any) -> Any:
 
 
 def remap_flux1_clip_weights(weights: dict) -> dict:
-    """diffusers CLIP keys already match mflux ``CLIPEncoder`` module paths."""
+    """diffusers CLIP keys already match ``CLIPEncoder`` module paths."""
     return dict(weights)
 
 
 def nest_flux1_clip_weights(flat: dict[str, Any]) -> dict[str, Any]:
-    """Flat ``text_model.*`` keys → nested dict for ``mlx.nn.Module.update`` (mflux loader shape)."""
+    """Flat ``text_model.*`` keys → nested dict for ``mlx.nn.Module.update`` (reference loader shape)."""
 
     def _insert(root: Any, parts: list[str], value: Any) -> None:
         cur = root
@@ -56,7 +56,7 @@ def nest_flux1_clip_weights(flat: dict[str, Any]) -> dict[str, Any]:
 
 
 def remap_flux1_t5_weights(weights: dict) -> dict:
-    """diffusers T5 keys → mflux ``T5Encoder`` module names."""
+    """diffusers T5 keys → ``T5Encoder`` module names."""
     remapped: dict[str, Any] = {}
     rel_bias_key = "encoder.block.0.layer.0.SelfAttention.relative_attention_bias.weight"
     rel_bias = weights.get(rel_bias_key)
@@ -83,7 +83,7 @@ def remap_flux1_weights(weights: dict) -> dict:
     """Normalize checkpoint keys for ``Flux1Transformer``.
 
     Supports diffusers sharded bundles (``x_embedder``, ``context_embedder``, ``time_text_embed``)
-    and legacy BFL/mflux-style ``double_blocks.*`` (handled via block index rewrites below).
+    and legacy BFL/BFL-style ``double_blocks.*`` (handled via block index rewrites below).
     """
     remapped: dict[str, Any] = {}
     for key, tensor in weights.items():
@@ -146,7 +146,7 @@ def remap_flux1_lora_module_prefix(module: str) -> str:
     m = m.replace(".ff.net.2.", ".ff.net_2.")
     m = m.replace(".ff_context.net.0.proj.", ".ff_context.net_0_proj.")
     m = m.replace(".ff_context.net.2.", ".ff_context.net_2.")
-    # mflux / BFL alias names → DanQing ``ff.net_*_proj``
+    # BFL alias names → DanQing ``ff.net_*_proj``
     m = re.sub(r"\.ff\.linear1$", ".ff.net_0_proj", m)
     m = re.sub(r"\.ff\.linear2$", ".ff.net_2", m)
     m = re.sub(r"\.ff_context\.linear1$", ".ff_context.net_0_proj", m)

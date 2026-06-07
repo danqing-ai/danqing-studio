@@ -1,4 +1,4 @@
-"""Qwen-Image-Edit MLX：VL vision 栈 + 图文 prompt 编码（对齐 mflux QwenImageEdit）。"""
+"""Qwen-Image-Edit MLX：VL vision 栈 + 图文 prompt 编码（对齐参考 QwenImageEdit）。"""
 from __future__ import annotations
 
 import json

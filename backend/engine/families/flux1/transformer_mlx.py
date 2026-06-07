@@ -27,7 +27,7 @@ from backend.engine.runtime._base import RuntimeContext
 
 
 def _rms_norm_fp32(norm: Any, x: Any) -> Any:
-    """mflux ``AttentionUtils.process_qkv`` — RMSNorm in float32, cast back."""
+    """``AttentionUtils.process_qkv`` — RMSNorm in float32, cast back."""
     eps = float(getattr(norm, "eps", 1e-6))
     return apply_rms_norm(x, norm.weight, eps)
 
@@ -41,7 +41,7 @@ def _scalar_to_float(x: Any) -> float:
 
 
 class _Flux1EmbedND:
-    """mflux ``EmbedND`` — 2×2 RoPE blocks for joint + single attention."""
+    """``EmbedND`` — 2×2 RoPE blocks for joint + single attention."""
 
     def __init__(self, ctx: RuntimeContext, theta: float = 10000.0):
         self.ctx = ctx
@@ -71,7 +71,7 @@ class _Flux1EmbedND:
 
 
 def _apply_flux1_rope(ctx: RuntimeContext, xq: Any, xk: Any, freqs_cis: Any) -> tuple[Any, Any]:
-    """mflux ``AttentionUtils.apply_rope`` — ``xq``/``xk`` are [B, H, S, D]."""
+    """``AttentionUtils.apply_rope`` — ``xq``/``xk`` are [B, H, S, D]."""
     xq_ = ctx.reshape(xq.astype(ctx.float32()), (*xq.shape[:-1], -1, 1, 2))
     xk_ = ctx.reshape(xk.astype(ctx.float32()), (*xk.shape[:-1], -1, 1, 2))
     xq_out = freqs_cis[..., 0] * xq_[..., 0] + freqs_cis[..., 1] * xq_[..., 1]
@@ -101,7 +101,7 @@ class _Flux1JointAttention:
         self.add_v_proj = nn.Linear(dim, dim, bias=True)
         self.to_add_out = nn.Linear(dim, dim, bias=True)
 
-        # mflux ``JointAttention``: ``nn.RMSNorm(128)`` — MLX default eps=1e-5 (not ctx.RMSNorm 1e-6)
+        # ``JointAttention``: ``nn.RMSNorm(128)`` — MLX default eps=1e-5 (not ctx.RMSNorm 1e-6)
         self.norm_q = mx_nn.RMSNorm(self.dim_head, eps=1e-5)
         self.norm_k = mx_nn.RMSNorm(self.dim_head, eps=1e-5)
         self.norm_added_q = mx_nn.RMSNorm(self.dim_head, eps=1e-5)
@@ -140,7 +140,7 @@ class _Flux1JointAttention:
         if rotary_emb is not None:
             q_joint, k_joint = _apply_flux1_rope(ctx, q_joint, k_joint, rotary_emb)
 
-        # mflux ``AttentionUtils.compute_attention`` — flat [B, S, H*D] before split
+        # ``AttentionUtils.compute_attention`` — flat [B, S, H*D] before split
         scale = float(q_joint.shape[-1]) ** -0.5
         attn_out = scaled_dot_product_attention_bhsd_mx(
             mx, q_joint, k_joint, v_joint, scale=scale
@@ -234,7 +234,7 @@ class _Flux1JointBlock:
         self.ff = _Flux1FeedForward(dim, ctx, mult=4)
         self.ff_context = _Flux1FeedForward(dim, ctx, mult=4, approximate="gelu_approx")
         self.norm2 = mx_nn.LayerNorm(dim, eps=1e-6, affine=False)
-        # mflux ``JointTransformerBlock.norm2_context``: LayerNorm(1536), not 3072
+        # ``JointTransformerBlock.norm2_context``: LayerNorm(1536), not 3072
         self.norm2_context = mx_nn.LayerNorm(1536, eps=1e-6, affine=False)
 
     @staticmethod
@@ -249,7 +249,7 @@ class _Flux1JointBlock:
         norm_layer: Any,
         ff_layer: _Flux1FeedForward,
     ) -> Any:
-        """mflux ``JointTransformerBlock.apply_norm_and_feed_forward``."""
+        """``JointTransformerBlock.apply_norm_and_feed_forward``."""
         attn_output = ctx.expand_dims(gate_msa, axis=1) * attn_output
         hidden_states = hidden_states + attn_output
         norm_hidden_states = norm_layer(hidden_states)
@@ -321,7 +321,7 @@ class _AdaLayerNormContinuousOut:
     def __init__(self, dim: int, ctx: RuntimeContext):
         self.ctx = ctx
         self.norm = mx_nn.LayerNorm(dim, eps=1e-6, affine=False)
-        # mflux ``AdaLayerNormContinuous``: Linear(..., bias=False); checkpoint bias is unused
+        # ``AdaLayerNormContinuous``: Linear(..., bias=False); checkpoint bias is unused
         self.linear = ctx.Linear(dim, dim * 2, bias=False)
 
     def forward(self, x, c):
@@ -338,7 +338,7 @@ def _pack_flux1_latents_channels(
     *,
     channels: int,
 ) -> Any:
-    """Pack spatial latents to tokens (mflux ``FluxLatentCreator.pack_latents``)."""
+    """Pack spatial latents to tokens (``FluxLatentCreator.pack_latents``)."""
     B, c, h, w = latents.shape
     ch = int(channels)
     if int(c) != ch:
@@ -350,7 +350,7 @@ def _pack_flux1_latents_channels(
 
 
 def _pack_flux1_latents(ctx: RuntimeContext, latents: Any) -> Any:
-    """[B, 16, H, W] → [B, (H//2)*(W//2), 64]（mflux ``FluxLatentCreator.pack_latents``）。"""
+    """[B, 16, H, W] → [B, (H//2)*(W//2), 64]（``FluxLatentCreator.pack_latents``）。"""
     return _pack_flux1_latents_channels(ctx, latents, channels=16)
 
 
@@ -375,7 +375,7 @@ def _unpack_flux1_latents(ctx: RuntimeContext, tokens: Any, h: int, w: int) -> A
 
 
 class _Flux1TimestepMLP:
-    """diffusers ``timestep_embedder`` / mflux ``TimestepEmbedder``。"""
+    """diffusers ``timestep_embedder`` / ``TimestepEmbedder``。"""
 
     def __init__(self, dim: int, ctx: RuntimeContext):
         nn = ctx
@@ -409,7 +409,7 @@ def _flatten_mlx_sequential_in_param_map(param_map: dict) -> None:
 
 
 class Flux1Transformer(TransformerBase):
-    """Flux.1 — Joint MM-DiT 后再 Single 流；与 mflux / diffusers 块序一致。"""
+    """Flux.1 — Joint MM-DiT 后再 Single 流；与 diffusers 块序一致。"""
 
     def __init__(self, config: Flux1Config, ctx: RuntimeContext):
         self.config = config
@@ -452,6 +452,49 @@ class Flux1Transformer(TransformerBase):
         self._base_patch_bias: Any = None
 
         self._build_param_map()
+
+    def sanitize(self, weights: dict[str, Any]) -> dict[str, Any]:
+        """Normalize checkpoint keys for ``Flux1Transformer``.
+
+        Supports diffusers sharded bundles and legacy BFL/mflux-style keys.
+        """
+        remapped: dict[str, Any] = {}
+        for key, tensor in weights.items():
+            new_key = key
+            new_key = new_key.replace(".to_out.0.", ".to_out.")
+            new_key = new_key.replace(".ff.net.0.proj.", ".ff.net_0_proj.")
+            new_key = new_key.replace(".ff.net.2.", ".ff.net_2.")
+            new_key = new_key.replace(".ff_context.net.0.proj.", ".ff_context.net_0_proj.")
+            new_key = new_key.replace(".ff_context.net.2.", ".ff_context.net_2.")
+            new_key = new_key.replace("x_embedder.", "patch_embed.proj.")
+            new_key = new_key.replace("context_embedder.", "txt_in.")
+            new_key = new_key.replace(
+                "time_text_embed.timestep_embedder.linear_1", "time_in.mlp.layers.0"
+            )
+            new_key = new_key.replace(
+                "time_text_embed.timestep_embedder.linear_2", "time_in.mlp.layers.2"
+            )
+            new_key = new_key.replace(
+                "time_text_embed.text_embedder.linear_1", "vector_in.layers.0"
+            )
+            new_key = new_key.replace(
+                "time_text_embed.text_embedder.linear_2", "vector_in.layers.2"
+            )
+            new_key = new_key.replace(
+                "time_text_embed.guidance_embedder.linear_1", "guidance_in.mlp.layers.0"
+            )
+            new_key = new_key.replace(
+                "time_text_embed.guidance_embedder.linear_2", "guidance_in.mlp.layers.2"
+            )
+            new_key = new_key.replace("time_text_embed.text_proj.", "vector_in.layers.0.")
+            # diffusers ``x_embedder`` Linear (out, in) → ``patch_embed.proj`` Conv2d
+            if new_key == "patch_embed.proj.weight" and hasattr(tensor, "shape"):
+                sh = tuple(tensor.shape)
+                if len(sh) == 2:
+                    out_ch, in_ch = sh
+                    tensor = tensor.reshape(out_ch, 1, 1, in_ch)
+            remapped[new_key] = tensor
+        return remapped
 
     def activate_structural_patch_embed(self, weight: Any, bias: Any) -> None:
         """Swap ``x_embedder`` to 128-dim packed input (noise + structural VAE tokens)."""
@@ -505,7 +548,7 @@ class Flux1Transformer(TransformerBase):
         B = latents.shape[0]
         _, _, H, W = latents.shape
 
-        # mflux / diffusers: prefer scheduler ``timesteps`` for time MLP (bench parity).
+        # diffusers: prefer scheduler ``timesteps`` for time MLP (bench parity).
         timestep_embed_value = conditioning.get("timestep_embed_value")
         if timestep_embed_value is not None:
             t_val = float(timestep_embed_value)
@@ -525,7 +568,7 @@ class Flux1Transformer(TransformerBase):
                 t_val = float(tv)
             if t_val <= 1.0 + 1e-5:
                 t_val *= 1000.0
-        # mflux ``compute_text_embeddings``: timestep as ModelConfig.precision (bfloat16)
+        # ``compute_text_embeddings``: timestep as ModelConfig.precision (bfloat16)
         t_batch = ctx.full((B,), t_val, dtype=ctx.bfloat16())
 
         fill_static = conditioning.get("fill_static_packed")
@@ -596,7 +639,7 @@ class Flux1Transformer(TransformerBase):
         return _unpack_flux1_latents(ctx, hidden_states, H, W)
 
     def _prepare_pos_ids(self, latent_h: int, latent_w: int, txt_len: int):
-        """mflux ``_prepare_text_ids`` + ``_prepare_latent_image_ids``（packed 格 H//2 × W//2）。"""
+        """``_prepare_text_ids`` + ``_prepare_latent_image_ids``（packed 格 H//2 × W//2）。"""
         ctx = self.ctx
         ph, pw = latent_h // 2, latent_w // 2
         txt_ids = ctx.zeros((1, txt_len, 3), dtype=ctx.int32())
@@ -609,7 +652,7 @@ class Flux1Transformer(TransformerBase):
         return txt_ids, ctx.reshape(img_ids, (1, ph * pw, 3))
 
     def load_weights(self, weights, strict=False, ctx=None, *, bundle_affine_bits=None):
-        """Load weights and cast to bfloat16 (matches mflux / Flux2 reference precision)."""
+        """Load weights and cast to bfloat16 (matches Flux2 reference precision)."""
         load_ctx = ctx if ctx is not None else self.ctx
         loaded, skipped = super().load_weights(
             weights,

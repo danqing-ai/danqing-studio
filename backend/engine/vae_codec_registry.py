@@ -8,7 +8,7 @@ import numpy as np
 
 
 def qwen_pack_latents_nchw(ctx: Any, encoded_b16hw: Any, height_px: int, width_px: int) -> Any:
-    """[B,16,H_lat,W_lat] → [B,64,H_px/16,W_px/16] (mflux pack_latents, NCHW)."""
+    """[B,16,H_lat,W_lat] → [B,64,H_px/16,W_px/16] (Flux pack_latents, NCHW)."""
     B = int(encoded_b16hw.shape[0])
     Hg = height_px // 16
     Wg = width_px // 16

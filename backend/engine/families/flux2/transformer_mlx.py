@@ -369,6 +369,17 @@ class Flux2Transformer(TransformerBase):
     def __call__(self, *args, **kwargs):
         return self.forward(*args, **kwargs)
 
+    def sanitize(self, weights: dict[str, Any]) -> dict[str, Any]:
+        """Map diffusers Flux.2 Klein weight keys to DanQing engine keys."""
+        remapped: dict[str, Any] = {}
+        for key, tensor in weights.items():
+            new_key = key
+            new_key = new_key.replace(".to_out.0.", ".to_out.")
+            new_key = new_key.replace(".to_add_out.0.", ".to_add_out.")
+            new_key = new_key.replace("time_guidance_embed.timestep_embedder.", "time_guidance_embed.")
+            remapped[new_key] = tensor
+        return remapped
+
     def forward(self, latents, timestep, txt_embeds=None, sigmas=None, **cond):
         """Flux2 前向 — Pipeline 统一传入 int index，由模型自己处理所有转换。"""
         ctx = self.ctx
@@ -531,7 +542,7 @@ class Flux2Transformer(TransformerBase):
 
     def load_weights(self, weights, strict=False,
                      ctx=None, *, bundle_affine_bits=None):
-        """Load weights using checkpoint/native dtype (mflux-aligned)."""
+        """Load weights using checkpoint/native dtype (reference-aligned)."""
         load_ctx = ctx if ctx is not None else self.ctx
         loaded, skipped = super().load_weights(
             weights,

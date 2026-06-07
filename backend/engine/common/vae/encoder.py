@@ -8,10 +8,10 @@ from .decoder import ResnetBlock, SpatialAttention, _to_nchw, _to_nhwc, _vae_cud
 
 
 class Downsample:
-    """2× spatial downsample (diffusers / mflux ``DownSampler``).
+    """2× spatial downsample (diffusers ``DownSampler``).
 
     Reference pads NCHW ``H,W`` by ``(0,1)`` on the tail, then ``Conv2d k=3, stride=2, padding=0``
-    in NHWC — **not** ``padding=1`` on the conv (that diverges from mflux Z-Image VAE and breaks
+    in NHWC — **not** ``padding=1`` on the conv (that diverges from reference Z-Image VAE and breaks
     img2img encode vs reference benchmarks).
     """
 
@@ -163,7 +163,7 @@ class VAEEncoder:
         return list(self._param_map.items())
 
     def cast_floating_params(self, dtype: Any) -> None:
-        """Cast nested MLX submodules to target dtype (for mflux parity-sensitive paths)."""
+        """Cast nested MLX submodules to target dtype (for reference parity-sensitive paths)."""
         from backend.engine.common.mlx_dtype import cast_module_parameters
 
         visited: set[int] = set()

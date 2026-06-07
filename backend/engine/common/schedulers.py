@@ -307,7 +307,7 @@ class LinearScheduler(Scheduler):
         sigma = self._sigmas[t_idx]
         sigma_prev = self._sigmas[t_idx + 1]
         dt = sigma_prev - sigma
-        # mflux ``LinearScheduler.step``: cast dt and noise_pred to ``latents.dtype`` before add-mul.
+        # ``LinearScheduler.step``: cast dt and noise_pred to ``latents.dtype`` before add-mul.
         if hasattr(dt, "astype") and hasattr(latents, "astype") and hasattr(noise_pred, "astype"):
             dt = dt.astype(latents.dtype)
             return latents + noise_pred.astype(latents.dtype) * dt

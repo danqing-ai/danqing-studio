@@ -610,6 +610,16 @@ class QwenImageTransformer(TransformerBase):
     def parameters(self):
         return list(self._param_map.items())
 
+    def sanitize(self, weights: dict[str, Any]) -> dict[str, Any]:
+        """Normalize diffusers Qwen-Image checkpoint keys to DanQing flat ``dit.*`` keys."""
+        from .weights_mlx import (
+            WeightMapper,
+            QwenWeightMapping,
+            remap_qwen_transformer_weights as _remap,
+        )
+
+        return _remap(weights)
+
     def load_weights(
         self,
         weights: list[tuple[str, Any]],

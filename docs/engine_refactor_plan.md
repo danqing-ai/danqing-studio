@@ -22,10 +22,9 @@ Fail loud · 保留 `models_registry.json` · `backend/engine/` 重构净删或�
 ```bash
 make verify-engine-stack
 make sync-models-registry   # 同步 registry 到 workspace
-make bench-mflux-case ID=flux2-klein-9b-create
-make bench-mflux-case ID=flux1-dev-create
-make bench-mflux-case ID=z-image-turbo-create
-make bench-sanity-case ID=seedvr2-7b-upscale-sanity
+make bench-eval-smoke
+make bench-eval-case ID=flux2-klein-9b:P1:create
+make bench-eval-case ID=z-image-turbo:P1:create
 make report-registry-audit      # Phase 1 shrink hints (non-blocking)
 make report-family-budget       # Phase 6 logical-unit report
 make report-family-reuse

@@ -1,4 +1,4 @@
-"""FIBO text encoder — MLX SmolLM3 (mflux-compatible) + PromptEncoder CFG batching.
+"""FIBO text encoder — MLX SmolLM3 (reference-compatible) + PromptEncoder CFG batching.
 
 Family stem: ``backend.engine.families.fibo.text_encoder.FiboTextEncoder``.
 """
@@ -291,7 +291,7 @@ def _select_dit_layers(layers: list[mx.array]) -> list[mx.array]:
 
 
 class FiboTextEncoder:
-    """Encode JSON prompts with bundled SmolLM3 (MLX, mflux PromptEncoder parity)."""
+    """Encode JSON prompts with bundled SmolLM3 (MLX, reference PromptEncoder parity)."""
 
     def __init__(
         self,
@@ -359,7 +359,7 @@ class FiboTextEncoder:
         *,
         guidance: float,
     ) -> tuple[Any, list[Any]]:
-        """mflux ``PromptEncoder.encode_prompt`` — batched [uncond, cond] on axis 0."""
+        """``PromptEncoder.encode_prompt`` — batched [uncond, cond] on axis 0."""
         json.loads(prompt)
         pos_embeds, pos_layers, pos_mask = self._encode_one(prompt)
         if float(guidance) == 1.0:

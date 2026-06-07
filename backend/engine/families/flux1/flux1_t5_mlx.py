@@ -1,4 +1,4 @@
-"""Flux.1 T5-XXL — mflux ``T5Encoder`` 对齐（共享实现，族内 ``flux1/text_encoder`` 薄封装）。"""
+"""Flux.1 T5-XXL — ``T5Encoder`` 对齐（共享实现，族内 ``flux1/text_encoder`` 薄封装）。"""
 from __future__ import annotations
 
 import math
@@ -21,7 +21,7 @@ class _T5LayerNorm:
         return {"weight": self.weight}
 
     def forward(self, hidden_states: Any) -> Any:
-        # Match mflux T5LayerNorm exactly: variance in fp32, then rescale original dtype.
+        # Match reference T5LayerNorm exactly: variance in fp32, then rescale original dtype.
         variance = mx.mean(
             mx.power(hidden_states.astype(mx.float32), 2),
             axis=-1,
@@ -85,7 +85,7 @@ class _T5SelfAttention:
         num_buckets: int = 32,
         max_distance: int = 128,
     ) -> Any:
-        # mflux halves num_buckets before the log-bin formula (see T5SelfAttention).
+        # Reference halves num_buckets before the log-bin formula (see T5SelfAttention).
         relative_buckets = mx.zeros_like(relative_position)
         num_buckets //= 2
         relative_buckets = relative_buckets + mx.where(
@@ -162,7 +162,7 @@ class _T5Block:
 
 
 class Flux1T5Encoder:
-    """mflux-compatible T5-XXL for Flux.1 bundles (``text_encoder_2``)."""
+    """reference-compatible T5-XXL for Flux.1 bundles (``text_encoder_2``)."""
 
     def __init__(
         self,

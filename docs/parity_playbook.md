@@ -1,18 +1,18 @@
 # Parity Playbook (SOP)
 
-This playbook captures the regression-debug workflow used to recover mflux parity for Flux2 and Z-Image families.
+This playbook captures the regression-debug workflow used to recover numerical parity for Flux2 and Z-Image families.
 
 ## Goal Hierarchy
 
 1. **Product usable first**: recover runnable baseline and avoid generation paralysis.
 2. **Case pass second**: benchmark status (`PASS/WARN/FAIL`) must improve case-by-case.
-3. **Pixel parity third**: pursue PSNR alignment only after semantic contracts are verified.
+3. **Quality eval third**: pursue PickScore / visual alignment only after semantic contracts are verified.
 
 ## Standard Workflow
 
 ### 1) Confirm Failure Type
 
-- Run a single failing case first: `make bench-mflux-case ID=<case-id>`.
+- Run a single failing case first: `make bench-eval-case ID=<case-id>`.
 - Classify the failure:
   - `runtime` (crash / missing weights / key mismatch)
   - `semantic` (same inputs, different pipeline behavior)
@@ -71,9 +71,9 @@ Only move to next stage after current stage is bounded.
 
 - [ ] registry flag fallback does not override config with `None`
 - [ ] `requires_sigma_shift` and `use_empirical_mu` are resolved deterministically
-- [ ] z-image noise layout uses mflux-compatible convention
+- [ ] z-image noise layout uses reference convention
 - [ ] flux2 noise sampling uses fp32 sampling then cast when needed
-- [ ] z-image family (including turbo) uses mflux-aligned tokenizer chat-template settings (`enable_thinking`)
+- [ ] z-image family (including turbo) uses reference tokenizer chat-template settings (`enable_thinking`)
 - [ ] structured-prompt families do not enter negative-prompt JSON path
 - [ ] benchmark contract tests cover fallback + override semantics
 
@@ -81,7 +81,7 @@ Only move to next stage after current stage is bounded.
 
 - **Symptom**: only one or two parity cases remain `WARN` while neighboring cases are already `PASS`.
 - **Root cause in this cycle**: tokenizer chat-template mismatch (`enable_thinking`) for `z-image-turbo`, causing different token sequence despite identical prompt/seed/steps.
-- **Fast check**: compare token ids + attention mask lengths between DanQing and mflux before touching transformer math.
+- **Fast check**: compare token ids + attention mask lengths against reference runtime before touching transformer math.
 - **Fix principle**: align registry/runtime tokenizer kwargs to reference first, then re-run targeted case and full family subset.
 
 ## Anti-Patterns

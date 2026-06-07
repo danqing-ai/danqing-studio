@@ -1,4 +1,4 @@
-"""Flux2 VAE (MLX) decode path aligned with mflux ``Flux2VAE.decode_packed_latents``."""
+"""Flux2 VAE (MLX) decode path aligned with ``Flux2VAE.decode_packed_latents``."""
 from __future__ import annotations
 
 from pathlib import Path

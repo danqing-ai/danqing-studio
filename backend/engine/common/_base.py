@@ -122,6 +122,7 @@ class TransformerBase:
     """Simple base class — all current models inherit from this.
 
     Hook methods (default no-op, subclasses override selectively):
+    - sanitize()             → checkpoint key remapping (inside model, cf. mlx-lm)
     - after_load_weights()  → LoRA weight merging
     - prepare_conditioning() → ControlNet / visual encoder / custom preprocessing
     - before_denoise()       → ControlNet conditioning injection, latent modification
@@ -133,6 +134,18 @@ class TransformerBase:
 
     def forward(self, *args, **kwargs):
         raise NotImplementedError
+
+    # ── Hook: checkpoint key sanitization ──────────────────────────
+    def sanitize(self, weights: dict) -> dict:
+        """Transform checkpoint keys to match this model's ``_param_map`` keys.
+
+        Called automatically during ``load_weights()`` **after** dequantization
+        but **before** applying tensors to parameters. Override in subclasses to
+        implement family-specific key remapping (cf. ``mlx-lm`` ``Model.sanitize``).
+
+        Default: identity (no remap).
+        """
+        return weights
 
     # ── Hook: after weight loading ──────────────────────────────────
     def after_load_weights(self, bundle_root=None):
@@ -172,9 +185,9 @@ class TransformerBase:
         ``noise_cond`` / ``noise_uncond`` are forward outputs with positive / negative text.
 
         Note: This is **not** the same as changing the scalar ``guidance`` in the request; it is the
-        **affine combination** of the two branches. mflux Z-Image uses
+        **affine combination** of the two branches. Z-Image reference uses
         ``eps_c + guidance * (eps_c - eps_u)`` instead (see upstream ``ZImage._predict``); bit-level
-        parity with mflux reference images requires matching that convention **and** identical
+        parity with reference images requires matching that convention **and** identical
         per-branch tensors.
         """
         return noise_uncond + guidance * (noise_cond - noise_uncond)
@@ -338,6 +351,8 @@ class TransformerBase:
             )
 
         # ── Load weights ──
+        dequantized = self.sanitize(dequantized)
+
         loaded = []
         skipped = []
         for key, tensor in dequantized.items():
@@ -406,7 +421,7 @@ def _assign_param_tensor(param: Any, tensor: Any) -> None:
 
 
 def collect_params_legacy_tree(obj: Any, prefix: str, result: dict) -> None:
-    """Attribute-tree param walk for Flux1-style MLX models (mflux weight parity)."""
+    """Attribute-tree param walk for Flux1-style MLX models (reference weight parity)."""
     if hasattr(obj, "parameters") and callable(obj.parameters):
         try:
             for pname, ptensor in obj.parameters().items():

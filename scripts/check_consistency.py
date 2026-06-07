@@ -213,6 +213,13 @@ def main():
     import subprocess
 
     rc = subprocess.call(
+        [sys.executable, str(ROOT / "scripts" / "check_registry_i18n.py")],
+        cwd=ROOT,
+    )
+    if rc != 0:
+        failures.append(f"check_registry_i18n.py failed (exit {rc})")
+
+    rc = subprocess.call(
         [sys.executable, str(ROOT / "scripts" / "check_frontend_governance.py")],
         cwd=ROOT,
     )

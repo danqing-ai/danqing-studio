@@ -78,6 +78,11 @@ class DelegatingDiTStem(TransformerBase):
         if hasattr(self._inner, "after_load_weights"):
             self._inner.after_load_weights(bundle_root)
 
+    def sanitize(self, weights: dict) -> dict:
+        if hasattr(self._inner, "sanitize"):
+            return self._inner.sanitize(weights)
+        return weights
+
     def combine_cfg_noise(self, *args: Any, **kwargs: Any) -> Any:
         return self._inner.combine_cfg_noise(*args, **kwargs)
 

@@ -27,7 +27,7 @@ class FamilyRuntimeContract:
         return ctx.float32()
 
     def noise_sample_dtype(self, ctx: Any, denoise_dtype: Any) -> Any:
-        # mflux aligns gaussian sampling in fp32, then casts to latent precision.
+        # Reference aligns gaussian sampling in fp32, then casts to latent precision.
         if not bool(getattr(self.config, "noise_sample_fp32", False)):
             return denoise_dtype
         dtype_name = str(denoise_dtype).split(".")[-1].lower()

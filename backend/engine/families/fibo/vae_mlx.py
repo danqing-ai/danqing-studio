@@ -1,4 +1,4 @@
-"""FIBO Wan2.2 VAE — FIBO weight map + mflux-layout ``wan.vae_diffusers_mlx``."""
+"""FIBO Wan2.2 VAE — FIBO weight map + diffusers-layout ``wan.vae_diffusers_mlx``."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -48,7 +48,7 @@ def unpack_latents(latents: mx.array, height: int, width: int) -> mx.array:
 
 
 def create_conditioning_image_ids(height: int, width: int, *, dtype: Any = mx.float32) -> mx.array:
-    """mflux ``FiboEditUtil.create_conditioning_image_ids`` — RoPE ids with channel-0 = 1."""
+    """``FiboEditUtil.create_conditioning_image_ids`` — RoPE ids with channel-0 = 1."""
     vae_scale = 16
     lh, lw = height // vae_scale, width // vae_scale
     row_indices = mx.arange(0, lh, dtype=dtype)[:, None]

@@ -226,7 +226,7 @@ class ImagePipeline:
 
     @staticmethod
     def _flux2_crop_even_hw_latent(z: Any, _ctx: RuntimeContext) -> Any:
-        """Drop last row/col if odd — matches mflux img2img crop before patchify."""
+        """Drop last row/col if odd — matches reference img2img crop before patchify."""
         if int(z.shape[2]) % 2 != 0:
             z = z[:, :, :-1, :]
         if int(z.shape[3]) % 2 != 0:
@@ -234,7 +234,7 @@ class ImagePipeline:
         return z
 
     def _flux2_patchify_mean_latent(self, z_bchw: Any) -> Any:
-        """Flux2 VAE mean [B,32,H,W] → [B,128,H/2,W/2] (mflux ``Flux2LatentCreator.patchify_latents``)."""
+        """Flux2 VAE mean [B,32,H,W] → [B,128,H/2,W/2] (``Flux2LatentCreator.patchify_latents``)."""
         ctx = self.ctx
         B, C, H, W = (int(z_bchw.shape[0]), int(z_bchw.shape[1]), int(z_bchw.shape[2]), int(z_bchw.shape[3]))
         x = ctx.reshape(z_bchw, (B, C, H // 2, 2, W // 2, 2))
@@ -298,7 +298,7 @@ class ImagePipeline:
     ) -> Any:
         """Encode ``[1,3,H,W]`` float **linear RGB in [0, 1]** → model latent (shape depends on VAE class).
 
-        Applies **[-1, 1] pixel normalization** before ``conv_in`` (mflux / diffusers img2img).
+        Applies **[-1, 1] pixel normalization** before ``conv_in`` (diffusers img2img).
         """
         from backend.engine.common.vae import VAEEncoder, prepare_vae_encoder_weight_items
 
@@ -1296,7 +1296,7 @@ class ImagePipeline:
         on_progress: Callable | None = None,
         on_log: Callable | None = None,
     ):
-        """FLUX.1 Fill inpainting / outpainting (mflux ``Flux1Fill`` 384-dim patch concat)."""
+        """FLUX.1 Fill inpainting / outpainting (``Flux1Fill`` 384-dim patch concat)."""
         from PIL import Image
 
         from backend.engine.common.controlnet_runtime import require_controlnet_runtime
@@ -1680,7 +1680,7 @@ class ImagePipeline:
                 "Check bundle VAE config / model family alignment."
             )
 
-        # source_fidelity ↔ mflux ``--image-strength`` (clamped [0, 1]).
+        # source_fidelity ↔ ``--image-strength`` (clamped [0, 1]).
         fidelity = float(request.source_fidelity)
         fidelity = max(0.0, min(1.0, fidelity))
         edit_conditioning_concat = bool(getattr(config, "edit_conditioning_concat", False))
@@ -1689,7 +1689,7 @@ class ImagePipeline:
         _meta_ed = request.metadata or {}
         steps = int(request.steps) if request.steps is not None else int(steps_default)
         steps = max(1, steps)
-        # mflux ``Config.init_time_step``: img2img starts denoising at this index; latent noise
+        # ``Config.init_time_step``: img2img starts denoising at this index; latent noise
         # uses ``sigmas[init]`` in ``(1 - sigma) * encoded + sigma * noise`` (not linear f·x+(1-f)·ε).
         init_timestep = 0
         if fidelity > 0.0 and not edit_conditioning_concat:
@@ -1759,12 +1759,12 @@ class ImagePipeline:
             raise RuntimeError(
                 f"Image edit (rewrite): scheduler {scheduler_default!r} did not honor "
                 f"init_timestep={init_timestep} (got timesteps={timesteps!r}). "
-                "mflux-compatible img2img requires FlowMatchEuler / Linear / flow_match_euler_flux_dynamic."
+                "reference img2img requires FlowMatchEuler / Linear / flow_match_euler_flux_dynamic."
             )
         if init_timestep >= steps:
             raise RuntimeError(
                 f"Image edit (rewrite): source_fidelity={fidelity} implies init_timestep={init_timestep} "
-                f">= steps={steps}; no denoising steps remain (mflux would also skip the loop)."
+                f">= steps={steps}; no denoising steps remain (reference path would also skip the loop)."
             )
 
         _lnd_edit = runtime_contract.denoise_latent_noise_dtype(self.ctx)
@@ -1800,7 +1800,7 @@ class ImagePipeline:
         else:
             if sigmas is None:
                 raise RuntimeError(
-                    "Image edit (rewrite): scheduler produced no sigmas; cannot build mflux-style img2img latents."
+                    "Image edit (rewrite): scheduler produced no sigmas; cannot build reference img2img latents."
                 )
             sig_blend = sigmas[init_timestep]
             latents = (1.0 - sig_blend) * encoded + sig_blend * noise
@@ -1942,7 +1942,7 @@ class ImagePipeline:
         on_progress: Callable | None = None,
         on_log: Callable | None = None,
     ):
-        """Qwen-Image-Edit：VL 图文编码 + VAE 参考 latent 拼接（对齐 mflux ``QwenImageEdit``）。"""
+        """Qwen-Image-Edit：VL 图文编码 + VAE 参考 latent 拼接（对齐 ``QwenImageEdit``）。"""
         from PIL import Image
 
         from backend.engine.families.qwen.edit_util import (

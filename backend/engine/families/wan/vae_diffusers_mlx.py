@@ -1,4 +1,4 @@
-"""Wan 2.2 VAE — diffusers / mflux layout (``quant_conv``, ``down_blocks``, …).
+"""Wan 2.2 VAE — diffusers layout (``quant_conv``, ``down_blocks``, …).
 
 FIBO ``vae/*.safetensors`` use ``FiboVaeWeightMapping`` + this module tree.
 Official ``.pth`` + temporal-cache path: ``wan.vae_mlx.WanVAE``.

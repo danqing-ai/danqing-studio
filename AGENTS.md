@@ -189,14 +189,6 @@ make bench-eval           # image eval full prompt matrix
 make verify-engine-stack
 ```
 
-**Benchmark snapshot (2026-05, mflux create)**
-
-| Model | Action | PSNR | Status |
-|-------|--------|------|--------|
-| flux2-klein-9b | create | 31.9 dB | PASS |
-| z-image | create | 28.6 dB | WARN |
-| z-image-turbo | create | 44.7 dB | PASS |
-
 ---
 
 ## Configuration

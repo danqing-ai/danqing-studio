@@ -93,7 +93,7 @@ class ImageEditRequest(BaseModel):
     n: int = Field(1, ge=1, le=8)
     steps: Optional[int] = None
     seed: Optional[int] = None
-    # None → 使用注册表 ``parameters.guidance.default``（与 mflux CLI 对齐时应对 rewrite 显式传 0）
+    # None → 使用注册表 ``parameters.guidance.default``（与参考 CLI 对齐时应对 rewrite 显式传 0）
     guidance: Optional[float] = None
     scheduler: Optional[str] = None
     adapters: list[AdapterRef] = Field(default_factory=list)

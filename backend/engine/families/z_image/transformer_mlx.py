@@ -94,7 +94,7 @@ class TimestepEmbedder:
 
     def forward(self, t):
         ctx = self.ctx
-        # mflux z-image timestep embedding uses [cos, sin] concat order.
+        # Z-Image reference timestep embedding uses [cos, sin] concat order.
         emb = sinusoidal_timestep_proj(
             ctx,
             t,
@@ -366,6 +366,26 @@ class ZImageTransformer(TransformerBase):
         super().after_load_weights(bundle_root)
         self._refresh_compiled_forward()
 
+    def sanitize(self, weights: dict[str, Any]) -> dict[str, Any]:
+        """Map diffusers-format Z-Image weight keys to DanQing engine keys."""
+        patch_size = getattr(self.config, "patch_size", 2)
+        prefix_key = f"{patch_size}-1"
+        remapped: dict[str, Any] = {}
+        for key, tensor in weights.items():
+            new_key = key
+            new_key = new_key.replace(f"all_x_embedder.{prefix_key}", "x_embedder")
+            new_key = new_key.replace(f"all_final_layer.{prefix_key}", "final_layer")
+            new_key = new_key.replace("t_embedder.mlp.0.", "t_embedder.linear1.")
+            new_key = new_key.replace("t_embedder.mlp.2.", "t_embedder.linear2.")
+            new_key = new_key.replace("attention_norm1.", "attn_norm1.")
+            new_key = new_key.replace("attention_norm2.", "attn_norm2.")
+            new_key = new_key.replace(".to_out.0.", ".to_out.")
+            new_key = new_key.replace(".adaLN_modulation.1.", ".adaLN_modulation.0.")
+            new_key = new_key.replace("cap_embedder.0.", "cap_norm.")
+            new_key = new_key.replace("cap_embedder.1.", "cap_embedder.")
+            remapped[new_key] = tensor
+        return remapped
+
     def _refresh_compiled_forward(self) -> None:
         self._compiled_forward = None
         self._compiled_cfg_forward = None
@@ -478,7 +498,7 @@ class ZImageTransformer(TransformerBase):
         return self._reshape_output(-noise_pred, input_shape, input_ndim)
 
     def combine_cfg_noise(self, noise_cond, noise_uncond, guidance: float):
-        """mflux Z-Image convention: ``eps_c + g * (eps_c - eps_u)``."""
+        """Z-Image reference CFG convention: ``eps_c + g * (eps_c - eps_u)``."""
         return noise_cond + guidance * (noise_cond - noise_uncond)
 
     def forward(self, latents, timestep,

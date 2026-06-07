@@ -1,4 +1,4 @@
-"""Qwen-Image-Edit 尺寸与 VAE 条件 latent（对齐 mflux ``QwenEditUtil`` / ``_compute_dimensions``）。"""
+"""Qwen-Image-Edit 尺寸与 VAE 条件 latent（对齐 ``QwenEditUtil`` / ``_compute_dimensions``）。"""
 from __future__ import annotations
 
 import math

@@ -31,7 +31,7 @@ class Flux1Config:
     clip_dim: int = 0                # diffusers DiT 无 CLIP token 支路（pooled 见 pooled_dim）
     pooled_dim: int = 768            # CLIP pooled → time_text_embed.text_embedder
     encoder_type: str = "flux1"      # T5 + CLIP pooled（见 families/flux1/text_encoder.py）
-    latent_noise_packed: bool = True  # 初始噪声在 packed [B, (H//16)*(W//16), 64] 上采样（对齐 mflux）
+    latent_noise_packed: bool = True  # 初始噪声在 packed [B, (H//16)*(W//16), 64] 上采样（packed latent 布局）
     max_seq_len: int = 512           # max text token count
     rope_dim: int = 64
     mlp_ratio: float = 4.0
@@ -136,7 +136,7 @@ class FIBOConfig:
     use_mlx_cfg_fusion: bool = True
     vae_scale: int = 16
     text_encoder_mask_key: str = "text_encoder_layers"
-    # FIBO-Edit: mflux concat VAE-packed source latents on the sequence axis (not img2img blend).
+    # FIBO-Edit: Reference concat VAE-packed source latents on the sequence axis (not img2img blend).
     edit_conditioning_concat: bool = False
     edit_rmbg_composite_output: bool = False
 
@@ -172,7 +172,7 @@ class ZImageConfig:
     text_encoder_out_layers: Optional[tuple] = None  # flux2=(9,18,27), z_image=None
     enable_thinking: bool = True       # z_image uses True, flux2 uses False
     vae_scale: int = 8
-    # Match mflux ``ZImageLatentCreator.create_noise`` (``ModelConfig.precision`` = bf16).
+    # Match ``ZImageLatentCreator.create_noise`` (``ModelConfig.precision`` = bf16).
     latent_noise_dtype: str = "bfloat16"
     noise_sample_fp32: bool = True
     z_image_noise_layout: bool = True
