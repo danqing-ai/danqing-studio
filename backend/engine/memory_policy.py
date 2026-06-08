@@ -7,7 +7,7 @@ from typing import Any, Callable, Mapping, TYPE_CHECKING
 from backend.core.interfaces import AppSettings
 
 if TYPE_CHECKING:
-    from backend.engine.common.cache import ModelCache
+    from backend.engine.cache import ModelCache
 
 
 def clamp_mlx_memory_limit_gb(gb: int | float | None, *, default: int = 120) -> int:
@@ -42,7 +42,7 @@ def build_shared_model_cache(
     reserve_gb: float = 20.0,
     max_entries: int = 1,
 ) -> ModelCache:
-    from backend.engine.common.cache import ModelCache
+    from backend.engine.cache import ModelCache
 
     settings = load_settings()
     ttl = int(getattr(settings, "model_cache_ttl_minutes", 30) or 30)

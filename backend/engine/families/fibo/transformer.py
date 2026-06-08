@@ -3,14 +3,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from backend.engine.common.dit_stem import DelegatingDiTStem
+from backend.engine.common.model.dit_stem import DelegatingDiTStem
 
 
 class FIBOTransformer(DelegatingDiTStem):
     """FIBO DiT — selects MLX or CUDA implementation from ``RuntimeContext``."""
 
     def __init__(self, config: Any, ctx: Any):
-        from .transformer_mlx import FIBOTransformer as _MLX
+        from .transformer_mlx import FIBODiTMLX as _MLX
 
         super().__init__(
             config,

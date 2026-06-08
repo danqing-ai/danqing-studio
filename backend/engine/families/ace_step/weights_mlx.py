@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, List, Tuple
 
-from backend.engine.common.mlx_runtime_fallback import (
+from backend.engine.runtime.mlx_runtime import (
     iter_safetensors_float32_numpy as _iter_safetensors_float32_numpy,
 )
 from backend.engine.families.ace_step.weights import _convert_decoder_tensor_for_mlx

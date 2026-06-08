@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from backend.engine.common._base import TransformerBase
+from backend.engine.common.model.base import TransformerBase
 
 
 class DiffRhythmTransformer(TransformerBase):
@@ -33,6 +33,14 @@ class DiffRhythmTransformer(TransformerBase):
 
     def parameters(self):
         return self._model.parameters()
+
+    def sanitize(self, weights: dict[str, Any]) -> dict[str, Any]:
+        """Strip ``module.`` prefix from checkpoint keys."""
+        remapped: dict[str, Any] = {}
+        for key, tensor in weights.items():
+            nk = key[len("module."):] if key.startswith("module.") else key
+            remapped[nk] = tensor
+        return remapped
 
     def _build_param_map(self):
         from backend.engine.families.diffrhythm.transformer_mlx import parameters_flat

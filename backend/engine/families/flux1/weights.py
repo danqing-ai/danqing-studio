@@ -187,7 +187,7 @@ def _flux1_lora_split_qkv(
 
 def remap_flux1_lora_keys(lora_weights: dict) -> dict[str, tuple[Any, Any, float]]:
     """Group LoRA tensors and map module names to DanQing Flux.1 ``_param_map`` prefixes."""
-    from backend.engine.common.weights import _lora_key_to_module
+    from backend.engine.common.bundle.weights import _lora_key_to_module
 
     default_alpha = 8.0
     alphas_by_tgt: dict[str, float] = {}

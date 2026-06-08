@@ -40,7 +40,7 @@ from backend.engine.families.ace_step.generation import (
     resolve_silence_latent_path,
     snap_latent_frames_for_inference,
 )
-from backend.engine.families.ace_step.vae import AceStepVAE
+from backend.engine.families.ace_step.vae.vae import AceStepVAE
 
 logger = logging.getLogger(__name__)
 
@@ -160,8 +160,8 @@ class AceStepCudaGenerator:
         key = (quantize_bits, str(lm_dir) if lm_dir else "")
         if self._lm_formatter is not None and self._lm_formatter_key == key:
             return self._lm_formatter
-        from backend.engine.families.ace_step.lm_format_cuda import AceStepLmFormatterCuda
-        from backend.engine.families.ace_step.resource_policy import resolve_lm_dir_for_policy, resolve_resource_policy
+        from backend.engine.families.ace_step.lm.lm_format_cuda import AceStepLmFormatterCuda
+        from backend.engine.families.ace_step.quality.resource_policy import resolve_lm_dir_for_policy, resolve_resource_policy
 
         import torch
 
@@ -221,7 +221,7 @@ class AceStepCudaGenerator:
         import torch
 
         del steps, guidance
-        from backend.engine.families.ace_step.quality_score import assess_generation_quality
+        from backend.engine.families.ace_step.quality.quality_score import assess_generation_quality
 
         if self._condition_model is None or self._vae is None:
             raise RuntimeError("ACE-Step CUDA generator not loaded; call load() first")
@@ -240,7 +240,7 @@ class AceStepCudaGenerator:
         key_use = key_scale or ""
         ts_use = time_signature or ""
         lang_use = resolve_vocal_language(lyrics_use or lyrics_input, vocal_language)
-        from backend.engine.families.ace_step.lm_format import is_instrumental_lyrics
+        from backend.engine.families.ace_step.lm.lm_format import is_instrumental_lyrics
 
         self.last_lm_expanded = False
         self.last_audio_code_indices = ()
@@ -357,7 +357,7 @@ class AceStepCudaGenerator:
         if self.last_audio_code_indices:
             pool = int(getattr(self._model_config, "pool_window_size", 5))
             max_codes = max(1, max_latent_length // pool)
-            from backend.engine.families.ace_step.lm_format import build_audio_codes_tensor
+            from backend.engine.families.ace_step.lm.lm_format_cuda import build_audio_codes_tensor
 
             audio_codes_t = build_audio_codes_tensor(
                 self.last_audio_code_indices,
@@ -476,7 +476,7 @@ class AceStepCudaGenerator:
         import torch
 
         del kwargs
-        from backend.engine.families.ace_step.quality_score import assess_generation_quality
+        from backend.engine.families.ace_step.quality.quality_score import assess_generation_quality
 
         if self._condition_model is None or self._vae is None:
             raise RuntimeError("ACE-Step CUDA generator not loaded; call load() first")

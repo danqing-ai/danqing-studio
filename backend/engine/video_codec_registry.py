@@ -4,6 +4,28 @@ from __future__ import annotations
 from typing import Any, Callable
 
 
+def resolve_hunyuan_vae_temporal_chunk(
+    entry: Any,
+    latents: Any,
+    registry_scalar_default: Callable[[Any, str, Any], Any],
+) -> int:
+    """Registry-driven Hunyuan VAE temporal chunk size (0 = no chunking)."""
+    chunk = int(registry_scalar_default(entry, "vae_temporal_chunk_size", 8) or 0)
+    if chunk <= 0:
+        return 0
+    if getattr(latents, "ndim", None) == 5:
+        t = int(latents.shape[2])
+        return 0 if t <= chunk else chunk
+    return chunk
+
+
+def resolve_hunyuan_vae_spatial_tiling(
+    entry: Any,
+    registry_scalar_default: Callable[[Any, str, Any], Any],
+) -> bool:
+    return bool(registry_scalar_default(entry, "vae_spatial_tiling", False))
+
+
 def _decode_hunyuan(
     *,
     ctx: Any,
@@ -18,15 +40,10 @@ def _decode_hunyuan(
     from backend.engine.families.hunyuan.vae import decode_hunyuan_latents_to_pil_frames
 
     bundle_root = local_bundle_root(entry, version_key)
-    chunk = int(registry_scalar_default(entry, "vae_temporal_chunk_size", 8) or 0)
-    if chunk <= 0:
-        temporal_chunk = 0
-    elif getattr(latents, "ndim", None) == 5:
-        t = int(latents.shape[2])
-        temporal_chunk = 0 if t <= chunk else chunk
-    else:
-        temporal_chunk = chunk
-    spatial = bool(registry_scalar_default(entry, "vae_spatial_tiling", False))
+    temporal_chunk = resolve_hunyuan_vae_temporal_chunk(
+        entry, latents, registry_scalar_default
+    )
+    spatial = resolve_hunyuan_vae_spatial_tiling(entry, registry_scalar_default)
     return decode_hunyuan_latents_to_pil_frames(
         ctx,
         latents,

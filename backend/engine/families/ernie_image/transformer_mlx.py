@@ -9,9 +9,9 @@ from typing import Any
 import mlx.core as mx
 import mlx.nn as nn
 
-from backend.engine.common._base import TransformerBase
-from backend.engine.common.attention import scaled_dot_product_attention_bhsd_mx
-from backend.engine.common.embeddings import sinusoidal_timestep_proj
+from backend.engine.common.model.base import TransformerBase
+from backend.engine.common.ops.attention import scaled_dot_product_attention_bhsd_mx
+from backend.engine.common.ops.embeddings import sinusoidal_timestep_proj
 from backend.engine.config.model_configs import ErnieImageConfig
 from backend.engine.runtime._base import RuntimeContext
 
@@ -288,7 +288,7 @@ class _ErnieImageDiTCore(nn.Module):
         return out.reshape(b, cfg.out_channels, h, w)
 
 
-class ErnieImageTransformer(TransformerBase):
+class ErnieImageDiTMLX(TransformerBase):
     """ERNIE-Image DiT — ``[B,128,H/16,W/16]`` latents, Ministral-3 text cond."""
 
     def __init__(self, config: ErnieImageConfig | Any, ctx: RuntimeContext):
@@ -319,7 +319,7 @@ class ErnieImageTransformer(TransformerBase):
         return self.forward(*args, **kwargs)
 
     def sanitize(self, weights: dict[str, Any]) -> dict[str, Any]:
-        """Map diffusers ERNIE-Image transformer keys to ``ErnieImageTransformer`` param map."""
+        """Map diffusers ERNIE-Image transformer keys to ``ErnieImageDiTMLX`` param map."""
         remapped: dict[str, Any] = {}
         for key, tensor in weights.items():
             new_key = key

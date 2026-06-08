@@ -13,8 +13,8 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import mlx.core as mx
 import numpy as np
 
-from backend.engine.common.mlx_runtime_fallback import random_normal, seeded_random_normal
-from backend.engine.families.ace_step.condition_mlx import (
+from backend.engine.runtime.mlx_runtime import random_normal, seeded_random_normal
+from backend.engine.families.ace_step.audio.condition_mlx import (
     load_condition_encoder_mlx,
     load_qwen3_embedding_mlx,
     prepare_condition_mlx,
@@ -52,7 +52,7 @@ from backend.engine.families.ace_step.generation import (
 )
 from backend.engine.families.ace_step.transformer import AceStepTransformer
 from backend.engine.families.ace_step.transformer_mlx import _CrossAttentionCache
-from backend.engine.families.ace_step.vae import AceStepVAE
+from backend.engine.families.ace_step.vae.vae import AceStepVAE
 from backend.engine.families.ace_step.weights_mlx import load_decoder_safetensors_for_mlx
 
 logger = logging.getLogger(__name__)
@@ -110,7 +110,7 @@ class AceStepMlxGenerator:
         self._condition_encoder = load_condition_encoder_mlx(
             dit_bundle, eval_fn=self._ctx.eval, array_fn=self._ctx.array
         )
-        from backend.engine.families.ace_step.audio_codec_mlx import load_audio_codec_mlx
+        from backend.engine.families.ace_step.audio.audio_codec_mlx import load_audio_codec_mlx
 
         self._audio_codec = load_audio_codec_mlx(
             dit_bundle, eval_fn=self._ctx.eval, array_fn=self._ctx.array
@@ -180,8 +180,8 @@ class AceStepMlxGenerator:
         key = (quantize_bits, str(lm_dir) if lm_dir else "")
         if self._lm_formatter is not None and self._lm_formatter_key == key:
             return self._lm_formatter
-        from backend.engine.families.ace_step.lm_format_mlx import AceStepLmFormatterMlx
-        from backend.engine.families.ace_step.resource_policy import resolve_lm_dir_for_policy, resolve_resource_policy
+        from backend.engine.families.ace_step.lm.lm_format_mlx import AceStepLmFormatterMlx
+        from backend.engine.families.ace_step.quality.resource_policy import resolve_lm_dir_for_policy, resolve_resource_policy
 
         policy = resolve_resource_policy(backend="mlx")
         resolved_dir = lm_dir or resolve_lm_dir_for_policy(self._bundle_root, policy)
@@ -272,7 +272,7 @@ class AceStepMlxGenerator:
         lm_quantize_bits: Optional[int] = None,
     ) -> np.ndarray:
         del steps, guidance  # turbo schedule is shift-driven
-        from backend.engine.families.ace_step.quality_score import assess_generation_quality
+        from backend.engine.families.ace_step.quality.quality_score import assess_generation_quality
 
         if self._condition_encoder is None or self._dit is None or self._vae is None:
             raise RuntimeError("ACE-Step MLX generator not loaded; call load() first")
@@ -300,7 +300,7 @@ class AceStepMlxGenerator:
         bpm_use = bpm
         key_use = key_scale or ""
         ts_use = time_signature or ""
-        from backend.engine.families.ace_step.lm_format import is_instrumental_lyrics
+        from backend.engine.families.ace_step.lm.lm_format import is_instrumental_lyrics
 
         self.last_lm_expanded = False
         self.last_audio_code_indices = ()
@@ -313,259 +313,279 @@ class AceStepMlxGenerator:
             lm_fmt = self._ensure_lm_formatter(
                 quantize_bits=lm_quantize_bits,
             )
+        else:
+            lm_fmt = None
+
+        def _lm_stage() -> None:
+            nonlocal caption, lyrics_use, duration, requested_samples, max_latent_length
+            nonlocal silence_tiled, bpm_use, key_use, ts_use, lang_use
             if lm_fmt is None:
-                logger.warning(
-                    "ACE-Step 5Hz LM not found in bundle; caption/lyrics expansion skipped"
+                if lm_enabled and self._lm_enabled():
+                    logger.warning(
+                        "ACE-Step 5Hz LM not found in bundle; caption/lyrics expansion skipped"
+                    )
+                return
+            try:
+                logger.info("ACE-Step: 5Hz LM format_sample (MLX)...")
+                expanded = lm_fmt.format_sample(
+                    caption=caption or "instrumental music",
+                    lyrics=lyrics_use,
+                    duration=duration,
+                    bpm=bpm_use,
+                    keyscale=key_use,
+                    timesignature=ts_use,
+                    language=lang_use,
+                )
+                caption = expanded.caption
+                lyrics_use = expanded.lyrics
+                if expanded.bpm is not None:
+                    bpm_use = expanded.bpm
+                if expanded.duration is not None:
+                    duration = float(expanded.duration)
+                    requested_samples = int(round(duration * SAMPLE_RATE))
+                    latent_frames = duration_to_latent_frames(duration)
+                    max_latent_length = snap_latent_frames_for_inference(latent_frames)
+                    self.last_latent_frames = max_latent_length
+                    silence_tiled = self._silence_latent_slice(max_latent_length)
+                key_use = expanded.keyscale or key_use
+                ts_use = expanded.timesignature or ts_use
+                lang_use = expanded.language or lang_use
+                self.last_lm_expanded = True
+                self.last_audio_code_indices = tuple(expanded.audio_code_indices)
+                self.last_pmi = getattr(lm_fmt, "last_pmi", None)
+                if expanded.audio_code_indices:
+                    logger.info(
+                        "ACE-Step: LM produced %d audio codes for DiT hints",
+                        len(expanded.audio_code_indices),
+                    )
+            except Exception as exc:
+                raise RuntimeError(
+                    f"ACE-Step 5Hz LM expansion failed: {exc}"
+                ) from exc
+
+        def _dit_stage(_stage1: Any) -> np.ndarray:
+            nonlocal caption, lyrics_use, lang_use, shift
+
+            lyrics_use = finalize_lyrics_for_inference(
+                lyrics_use,
+                instrumental=instrumental,
+                lm_expanded=self.last_lm_expanded,
+            )
+            caption = ensure_vocal_caption_hint(caption, lyrics_use, lang_use)
+            self.last_lyrics_capture = capture_inference_lyrics(
+                lyrics_input=lyrics_input,
+                lyrics_effective=lyrics_use,
+                caption_effective=caption,
+                lm_expanded=self.last_lm_expanded,
+            )
+
+            vocal_warn = warn_weak_vocal_lyrics(lyrics_use)
+            if vocal_warn:
+                logger.warning("ACE-Step: %s", vocal_warn)
+
+            if not is_instrumental_lyrics(lyrics_use):
+                logger.info(
+                    "ACE-Step vocals enabled (lyrics %d chars, lang=%s)",
+                    len(lyrics_use),
+                    lang_use,
                 )
             else:
-                try:
-                    logger.info("ACE-Step: 5Hz LM format_sample (MLX)...")
-                    expanded = lm_fmt.format_sample(
-                        caption=caption or "instrumental music",
-                        lyrics=lyrics_use,
-                        duration=duration,
-                        bpm=bpm_use,
-                        keyscale=key_use,
-                        timesignature=ts_use,
-                        language=lang_use,
-                    )
-                    caption = expanded.caption
-                    lyrics_use = expanded.lyrics
-                    if expanded.bpm is not None:
-                        bpm_use = expanded.bpm
-                    if expanded.duration is not None:
-                        duration = float(expanded.duration)
-                        requested_samples = int(round(duration * SAMPLE_RATE))
-                        latent_frames = duration_to_latent_frames(duration)
-                        max_latent_length = snap_latent_frames_for_inference(latent_frames)
-                        self.last_latent_frames = max_latent_length
-                        silence_tiled = self._silence_latent_slice(max_latent_length)
-                    key_use = expanded.keyscale or key_use
-                    ts_use = expanded.timesignature or ts_use
-                    lang_use = expanded.language or lang_use
-                    self.last_lm_expanded = True
-                    self.last_audio_code_indices = tuple(expanded.audio_code_indices)
-                    self.last_pmi = getattr(lm_fmt, "last_pmi", None)
-                    if expanded.audio_code_indices:
+                logger.info("ACE-Step instrumental mode (no vocals)")
+
+            metadata = format_metadata(
+                duration=duration,
+                bpm=bpm_use,
+                key_scale=key_use,
+                time_signature=ts_use,
+            )
+            text_prompt = SFT_GEN_PROMPT.format(
+                instruction=instruction,
+                caption=caption,
+                metadata=metadata,
+            )
+            lyrics_text = format_lyrics(lyrics_use, lang_use)
+
+            text_tok = self._text_tokenizer(
+                text_prompt,
+                padding="longest",
+                truncation=True,
+                max_length=256,
+                return_tensors="np",
+            )
+            lyric_len_tok = int(
+                self._text_tokenizer(lyrics_text, truncation=False, return_tensors="np")["input_ids"].shape[1]
+            )
+            trunc_warn = warn_lyrics_token_truncation(lyric_len_tok)
+            if trunc_warn:
+                logger.warning("ACE-Step: %s", trunc_warn)
+            lyric_tok = self._text_tokenizer(
+                lyrics_text,
+                padding="longest",
+                truncation=True,
+                max_length=LYRIC_TOKEN_MAX_LENGTH,
+                return_tensors="np",
+            )
+            text_ids = self._ctx.array(text_tok["input_ids"].astype(np.int32))
+            text_mask = self._ctx.array(text_tok["attention_mask"].astype(np.float32))
+            lyric_ids = self._ctx.array(lyric_tok["input_ids"].astype(np.int32))
+            lyric_mask = self._ctx.array(lyric_tok["attention_mask"].astype(np.float32))
+
+            text_hidden = self._text_encoder.encode(text_ids, text_mask)
+            lyric_hidden = self._text_encoder.token_embed(lyric_ids)
+
+            refer_np, refer_order = self._infer_refer_latent()
+            refer_packed = self._ctx.array(refer_np.astype(np.float32))
+            refer_order_mx = self._ctx.array(refer_order.astype(np.int32))
+
+            src_latents_np = silence_tiled.astype(np.float32)[np.newaxis, ...]
+            src_latents = self._ctx.array(src_latents_np)
+            latent_dim = int(src_latents.shape[-1])
+            chunk_masks = mx.ones((1, max_latent_length, latent_dim), dtype=mx.float32)
+            is_covers = mx.zeros((1,), dtype=mx.int32)
+            attention_mask = mx.ones((1, max_latent_length), dtype=mx.float32)
+            silence_latent_mx = self._ctx.array(self._silence_latent.astype(np.float32))
+            audio_code_mx = None
+            if self.last_audio_code_indices:
+                pool = int(getattr(self._audio_codec, "pool_window_size", 5))
+                max_codes = max(1, max_latent_length // pool)
+                idx = np.array(self.last_audio_code_indices[:max_codes], dtype=np.int32)
+                audio_code_mx = mx.array(idx.reshape(1, -1, 1), dtype=mx.int32)
+                is_covers = mx.ones((1,), dtype=mx.int32)
+
+            if self._is_turbo(self._model_config) and shift >= 2.5:
+                shift = 1.0
+
+            enc_hs, _, ctx = prepare_condition_mlx(
+                self._condition_encoder,
+                text_hidden_states=text_hidden,
+                text_attention_mask=text_mask,
+                lyric_hidden_states=lyric_hidden,
+                lyric_attention_mask=lyric_mask,
+                refer_packed=refer_packed,
+                refer_order=refer_order_mx,
+                src_latents=src_latents,
+                chunk_masks=chunk_masks,
+                is_covers=is_covers,
+                silence_latent=silence_latent_mx,
+                attention_mask=attention_mask,
+                audio_codec=self._audio_codec,
+                audio_code_indices=audio_code_mx,
+            )
+            enc_np = np.array(enc_hs, dtype=np.float32)
+            ctx_np = np.array(ctx, dtype=np.float32)
+            src_shape = tuple(src_latents_np.shape)
+
+            latents = None
+            latent_cos = 1.0
+            latent_diff = 0.0
+            max_attempts = 6 if self.last_lm_expanded else 3
+            run_seed = int(seed)
+
+            for attempt in range(max_attempts):
+                out = mlx_generate_diffusion(
+                    self._dit._model,
+                    encoder_hidden_states_np=enc_np,
+                    context_latents_np=ctx_np,
+                    src_latents_shape=src_shape,
+                    seed=run_seed,
+                    infer_method="ode",
+                    shift=shift,
+                    eval_fn=self._ctx.eval,
+                    array_fn=self._ctx.array,
+                    randn_fn=getattr(self._ctx, "randn", None),
+                    seeded_randn_fn=getattr(self._ctx, "seeded_randn", None),
+                )
+                latents = out["target_latents"]
+                collapsed, latent_cos, latent_diff = latents_collapsed_to_silence(
+                    latents, src_latents_np,
+                )
+                if not collapsed:
+                    if attempt > 0:
                         logger.info(
-                            "ACE-Step: LM produced %d audio codes for DiT hints",
-                            len(expanded.audio_code_indices),
+                            "ACE-Step MLX diffusion recovered on attempt %d "
+                            "(cos=%.4f, diff=%.4f, seed=%d)",
+                            attempt + 1,
+                            latent_cos,
+                            latent_diff,
+                            run_seed,
                         )
-                except Exception as exc:
-                    raise RuntimeError(
-                        f"ACE-Step 5Hz LM expansion failed: {exc}"
-                    ) from exc
-
-        lyrics_use = finalize_lyrics_for_inference(
-            lyrics_use,
-            instrumental=instrumental,
-            lm_expanded=self.last_lm_expanded,
-        )
-        caption = ensure_vocal_caption_hint(caption, lyrics_use, lang_use)
-        self.last_lyrics_capture = capture_inference_lyrics(
-            lyrics_input=lyrics_input,
-            lyrics_effective=lyrics_use,
-            caption_effective=caption,
-            lm_expanded=self.last_lm_expanded,
-        )
-
-        vocal_warn = warn_weak_vocal_lyrics(lyrics_use)
-        if vocal_warn:
-            logger.warning("ACE-Step: %s", vocal_warn)
-
-        if not is_instrumental_lyrics(lyrics_use):
-            logger.info(
-                "ACE-Step vocals enabled (lyrics %d chars, lang=%s)",
-                len(lyrics_use),
-                lang_use,
-            )
-        else:
-            logger.info("ACE-Step instrumental mode (no vocals)")
-
-        metadata = format_metadata(
-            duration=duration,
-            bpm=bpm_use,
-            key_scale=key_use,
-            time_signature=ts_use,
-        )
-        text_prompt = SFT_GEN_PROMPT.format(
-            instruction=instruction,
-            caption=caption,
-            metadata=metadata,
-        )
-        lyrics_text = format_lyrics(lyrics_use, lang_use)
-
-        text_tok = self._text_tokenizer(
-            text_prompt,
-            padding="longest",
-            truncation=True,
-            max_length=256,
-            return_tensors="np",
-        )
-        lyric_len_tok = int(
-            self._text_tokenizer(lyrics_text, truncation=False, return_tensors="np")["input_ids"].shape[1]
-        )
-        trunc_warn = warn_lyrics_token_truncation(lyric_len_tok)
-        if trunc_warn:
-            logger.warning("ACE-Step: %s", trunc_warn)
-        lyric_tok = self._text_tokenizer(
-            lyrics_text,
-            padding="longest",
-            truncation=True,
-            max_length=LYRIC_TOKEN_MAX_LENGTH,
-            return_tensors="np",
-        )
-        text_ids = self._ctx.array(text_tok["input_ids"].astype(np.int32))
-        text_mask = self._ctx.array(text_tok["attention_mask"].astype(np.float32))
-        lyric_ids = self._ctx.array(lyric_tok["input_ids"].astype(np.int32))
-        lyric_mask = self._ctx.array(lyric_tok["attention_mask"].astype(np.float32))
-
-        text_hidden = self._text_encoder.encode(text_ids, text_mask)
-        lyric_hidden = self._text_encoder.token_embed(lyric_ids)
-
-        refer_np, refer_order = self._infer_refer_latent()
-        refer_packed = self._ctx.array(refer_np.astype(np.float32))
-        refer_order_mx = self._ctx.array(refer_order.astype(np.int32))
-
-        src_latents_np = silence_tiled.astype(np.float32)[np.newaxis, ...]
-        src_latents = self._ctx.array(src_latents_np)
-        latent_dim = int(src_latents.shape[-1])
-        chunk_masks = mx.ones((1, max_latent_length, latent_dim), dtype=mx.float32)
-        is_covers = mx.zeros((1,), dtype=mx.int32)
-        attention_mask = mx.ones((1, max_latent_length), dtype=mx.float32)
-        silence_latent_mx = self._ctx.array(self._silence_latent.astype(np.float32))
-        audio_code_mx = None
-        if self.last_audio_code_indices:
-            pool = int(getattr(self._audio_codec, "pool_window_size", 5))
-            max_codes = max(1, max_latent_length // pool)
-            idx = np.array(self.last_audio_code_indices[:max_codes], dtype=np.int32)
-            audio_code_mx = mx.array(idx.reshape(1, -1, 1), dtype=mx.int32)
-            is_covers = mx.ones((1,), dtype=mx.int32)
-
-        if self._is_turbo(self._model_config) and shift >= 2.5:
-            shift = 1.0
-
-        enc_hs, _, ctx = prepare_condition_mlx(
-            self._condition_encoder,
-            text_hidden_states=text_hidden,
-            text_attention_mask=text_mask,
-            lyric_hidden_states=lyric_hidden,
-            lyric_attention_mask=lyric_mask,
-            refer_packed=refer_packed,
-            refer_order=refer_order_mx,
-            src_latents=src_latents,
-            chunk_masks=chunk_masks,
-            is_covers=is_covers,
-            silence_latent=silence_latent_mx,
-            attention_mask=attention_mask,
-            audio_codec=self._audio_codec,
-            audio_code_indices=audio_code_mx,
-        )
-        enc_np = np.array(enc_hs, dtype=np.float32)
-        ctx_np = np.array(ctx, dtype=np.float32)
-        src_shape = tuple(src_latents_np.shape)
-
-        latents = None
-        latent_cos = 1.0
-        latent_diff = 0.0
-        max_attempts = 6 if self.last_lm_expanded else 3
-        run_seed = int(seed)
-
-        for attempt in range(max_attempts):
-            out = mlx_generate_diffusion(
-                self._dit._model,
-                encoder_hidden_states_np=enc_np,
-                context_latents_np=ctx_np,
-                src_latents_shape=src_shape,
-                seed=run_seed,
-                infer_method="ode",
-                shift=shift,
-                eval_fn=self._ctx.eval,
-                array_fn=self._ctx.array,
-                randn_fn=getattr(self._ctx, "randn", None),
-                seeded_randn_fn=getattr(self._ctx, "seeded_randn", None),
-            )
-            latents = out["target_latents"]
-            collapsed, latent_cos, latent_diff = latents_collapsed_to_silence(
-                latents, src_latents_np,
-            )
-            if not collapsed:
-                if attempt > 0:
-                    logger.info(
-                        "ACE-Step MLX diffusion recovered on attempt %d "
-                        "(cos=%.4f, diff=%.4f, seed=%d)",
-                        attempt + 1,
+                    break
+                if attempt < max_attempts - 1:
+                    next_seed = diffusion_retry_seed(int(seed), attempt + 1)
+                    logger.warning(
+                        "ACE-Step MLX latents near silence (cos=%.4f, diff=%.4f); "
+                        "retry seed %d (attempt %d/%d)",
                         latent_cos,
                         latent_diff,
-                        run_seed,
+                        next_seed,
+                        attempt + 1,
+                        max_attempts,
                     )
-                break
-            if attempt < max_attempts - 1:
-                next_seed = diffusion_retry_seed(int(seed), attempt + 1)
+                    run_seed = next_seed
+            else:
                 logger.warning(
-                    "ACE-Step MLX latents near silence (cos=%.4f, diff=%.4f); "
-                    "retry seed %d (attempt %d/%d)",
+                    "ACE-Step MLX latents remain near silence after %d seeds "
+                    "(cos=%.4f, diff=%.4f)",
+                    max_attempts,
                     latent_cos,
                     latent_diff,
-                    next_seed,
-                    attempt + 1,
-                    max_attempts,
                 )
-                run_seed = next_seed
-        else:
-            logger.warning(
-                "ACE-Step MLX latents remain near silence after %d seeds "
-                "(cos=%.4f, diff=%.4f)",
-                max_attempts,
+
+            self.last_latent_cos = latent_cos
+            self.last_latent_diff_mean = latent_diff
+            logger.info(
+                "ACE-Step MLX diffusion done (cos=%.4f, diff=%.4f)",
                 latent_cos,
                 latent_diff,
             )
 
-        self.last_latent_cos = latent_cos
-        self.last_latent_diff_mean = latent_diff
-        logger.info(
-            "ACE-Step MLX diffusion done (cos=%.4f, diff=%.4f)",
-            latent_cos,
-            latent_diff,
-        )
+            audio_nlc = self._decode_latents_mlx(latents)
+            wf = np.array(audio_nlc)
+            if wf.ndim == 3:
+                wf = wf[0]
+            if wf.ndim == 2 and wf.shape[0] <= 8 and wf.shape[0] < wf.shape[1]:
+                wf = wf.T
+            wf = normalize_waveform(wf.astype(np.float32))
+            if wf.shape[0] > requested_samples:
+                wf = wf[:requested_samples]
 
-        audio_nlc = self._decode_latents_mlx(latents)
-        wf = np.array(audio_nlc)
-        if wf.ndim == 3:
-            wf = wf[0]
-        if wf.ndim == 2 and wf.shape[0] <= 8 and wf.shape[0] < wf.shape[1]:
-            wf = wf.T
-        wf = normalize_waveform(wf.astype(np.float32))
-        if wf.shape[0] > requested_samples:
-            wf = wf[:requested_samples]
+            hum_ratio = estimate_hum_ratio(wf)
+            mains_acf = estimate_mains_correlation(wf)
+            self.last_hum_ratio = hum_ratio
+            self.last_mains_acf = mains_acf
 
-        hum_ratio = estimate_hum_ratio(wf)
-        mains_acf = estimate_mains_correlation(wf)
-        self.last_hum_ratio = hum_ratio
-        self.last_mains_acf = mains_acf
-
-        collapsed, _, _ = latents_collapsed_to_silence(latents, src_latents_np)
-        if collapsed and mains_acf > 0.55:
-            raise RuntimeError(
-                "ACE-Step MLX produced near-silence latents that decode as tonal hum "
-                f"(latent_cos={latent_cos:.4f}, latent_diff={latent_diff:.4f}, "
-                f"mains_acf={mains_acf:.3f}). Try another seed or a more specific prompt."
+            collapsed, _, _ = latents_collapsed_to_silence(latents, src_latents_np)
+            if collapsed and mains_acf > 0.55:
+                raise RuntimeError(
+                    "ACE-Step MLX produced near-silence latents that decode as tonal hum "
+                    f"(latent_cos={latent_cos:.4f}, latent_diff={latent_diff:.4f}, "
+                    f"mains_acf={mains_acf:.3f}). Try another seed or a more specific prompt."
+                )
+            if mains_acf > 0.4:
+                logger.warning(
+                    "ACE-Step MLX output may contain mains hum (acf=%.3f); try another seed",
+                    mains_acf,
+                )
+            self.last_quality = assess_generation_quality(
+                hum_ratio=hum_ratio,
+                mains_acf=mains_acf,
+                latent_cos=latent_cos,
+                latent_diff=latent_diff,
+                lm_expanded=self.last_lm_expanded,
+                near_silence=collapsed,
+                pmi_bonus=self.last_pmi.quality_bonus() if self.last_pmi is not None else 0.0,
             )
-        if mains_acf > 0.4:
-            logger.warning(
-                "ACE-Step MLX output may contain mains hum (acf=%.3f); try another seed",
-                mains_acf,
-            )
-        self.last_quality = assess_generation_quality(
-            hum_ratio=hum_ratio,
-            mains_acf=mains_acf,
-            latent_cos=latent_cos,
-            latent_diff=latent_diff,
-            lm_expanded=self.last_lm_expanded,
-            near_silence=collapsed,
-            pmi_bonus=self.last_pmi.quality_bonus() if self.last_pmi is not None else 0.0,
-        )
-        return wf
+            return wf
+
+        if lm_fmt is not None:
+            from backend.engine.inference.two_stage import TwoStageBundle, TwoStageInference
+
+            return TwoStageInference().run(
+                TwoStageBundle(stage1_fn=_lm_stage, stage2_fn=_dit_stage)
+            )["latents"]
+
+        _lm_stage()
+        return _dit_stage(None)
 
     def _encode_reference_latents(self, reference_waveform: np.ndarray) -> np.ndarray:
         wf = np.asarray(reference_waveform, dtype=np.float32)
@@ -598,7 +618,7 @@ class AceStepMlxGenerator:
         **kwargs: Any,
     ) -> np.ndarray:
         del kwargs
-        from backend.engine.families.ace_step.quality_score import assess_generation_quality
+        from backend.engine.families.ace_step.quality.quality_score import assess_generation_quality
 
         if (
             self._condition_encoder is None
@@ -848,9 +868,13 @@ def mlx_generate_diffusion(
     randn_fn: Optional[Callable[..., Any]] = None,
     seeded_randn_fn: Optional[Callable[..., Any]] = None,
 ) -> Dict[str, object]:
-    """Run MLX flow-matching diffusion; returns numpy ``target_latents``."""
+    """Run MLX flow-matching diffusion via L2 ``FlowMatchingInference``."""
+    from backend.engine.inference import (
+        AudioInferenceBundle,
+        FlowMatchingInference,
+        FlowMatchingSpec,
+    )
 
-    time_costs: Dict[str, float] = {}
     total_start = time.time()
     if eval_fn is None:
         eval_fn = mx.eval
@@ -858,7 +882,7 @@ def mlx_generate_diffusion(
         array_fn = mx.array
 
     enc_hs = array_fn(encoder_hidden_states_np)
-    ctx = array_fn(context_latents_np)
+    ctx_lat = array_fn(context_latents_np)
     enc_hs_nc = (
         array_fn(encoder_hidden_states_non_cover_np)
         if encoder_hidden_states_non_cover_np is not None
@@ -875,72 +899,81 @@ def mlx_generate_diffusion(
     channels = int(src_latents_shape[2])
     noise_shape = (bsz, t_len, channels)
 
-    if seed is None:
-        noise = random_normal(randn_fn, noise_shape)
-    elif isinstance(seed, list):
-        parts = []
-        for s in seed:
-            if s is None or s < 0:
-                parts.append(random_normal(randn_fn, (1, t_len, channels)))
-            else:
-                parts.append(
-                    seeded_random_normal(
-                        seeded_randn_fn, (1, t_len, channels), int(s)
-                    )
-                )
-        noise = mx.concatenate(parts, axis=0)
-    else:
-        noise = seeded_random_normal(seeded_randn_fn, noise_shape, int(seed))
-
     t_schedule_list = get_timestep_schedule(shift, timesteps)
     num_steps = len(t_schedule_list)
     cover_steps = int(num_steps * audio_cover_strength)
 
-    cache = _CrossAttentionCache()
-    xt = noise
-    diff_start = time.time()
+    # -- Build closures for AudioInferenceBundle --
 
-    for step_idx in range(num_steps):
-        current_t = t_schedule_list[step_idx]
-        t_curr = mx.full((bsz,), current_t)
+    # Mutable state bag (shared between model_forward and before_step_fn)
+    _state_enc_hs = [enc_hs]
+    _state_ctx = [ctx_lat]
 
-        if step_idx >= cover_steps and enc_hs_nc is not None:
-            enc_hs = enc_hs_nc
-            ctx = ctx_nc
-            cache = _CrossAttentionCache()
-
-        vt, cache = mlx_decoder(
+    def _model_forward(xt: Any, t_curr_val: float, state: dict) -> Any:
+        t_curr = mx.full((bsz,), t_curr_val)
+        vt, new_cache = mlx_decoder(
             hidden_states=xt,
             timestep=t_curr,
             timestep_r=t_curr,
-            encoder_hidden_states=enc_hs,
-            context_latents=ctx,
-            cache=cache,
+            encoder_hidden_states=_state_enc_hs[0],
+            context_latents=_state_ctx[0],
+            cache=state.get("cache"),
             use_cache=True,
         )
-        eval_fn(vt)
+        state["cache"] = new_cache
+        return vt
 
-        if step_idx == num_steps - 1:
-            t_unsq = mx.expand_dims(mx.expand_dims(t_curr, axis=-1), axis=-1)
-            xt = xt - vt * t_unsq
-            eval_fn(xt)
-            break
+    def _init_noise(shape: tuple, _seed: int) -> Any:
+        if seed is None:
+            return random_normal(randn_fn, shape)
+        if isinstance(seed, list):
+            parts = []
+            for s in seed:
+                if s is None or s < 0:
+                    parts.append(random_normal(randn_fn, (1, t_len, channels)))
+                else:
+                    parts.append(seeded_random_normal(seeded_randn_fn, (1, t_len, channels), int(s)))
+            return mx.concatenate(parts, axis=0)
+        return seeded_random_normal(seeded_randn_fn, shape, int(seed))
 
-        next_t = t_schedule_list[step_idx + 1]
+    def _euler_step(x: Any, v: Any, t_curr: float, t_next: float | None, step_idx: int) -> Any:
+        if t_next is None:
+            # Last step: use full timestep as dt
+            t_unsq = mx.expand_dims(mx.expand_dims(mx.full((bsz,), t_curr), axis=-1), axis=-1)
+            return x - v * t_unsq
         if infer_method == "sde":
-            t_unsq = mx.expand_dims(mx.expand_dims(t_curr, axis=-1), axis=-1)
-            pred_clean = xt - vt * t_unsq
-            xt = next_t * random_normal(randn_fn, tuple(xt.shape)) + (1.0 - next_t) * pred_clean
-        else:
-            dt = current_t - next_t
-            xt = xt - vt * mx.full((bsz, 1, 1), dt)
+            t_unsq = mx.expand_dims(mx.expand_dims(mx.full((bsz,), t_curr), axis=-1), axis=-1)
+            pred_clean = x - v * t_unsq
+            return t_next * random_normal(randn_fn, tuple(x.shape)) + (1.0 - t_next) * pred_clean
+        dt = t_curr - t_next
+        return x - v * mx.full((bsz, 1, 1), dt)
 
-        eval_fn(xt)
+    def _before_step(step_idx: int, state: dict) -> None:
+        if step_idx >= cover_steps and enc_hs_nc is not None:
+            _state_enc_hs[0] = enc_hs_nc
+            _state_ctx[0] = ctx_nc
+            state["cache"] = _CrossAttentionCache()
 
-    diff_end = time.time()
+    bundle = AudioInferenceBundle(
+        ctx=None,
+        model_forward=_model_forward,
+        latent_shape=noise_shape,
+        seed=int(seed) if isinstance(seed, int) else 0,
+        eval_fn=eval_fn,
+        flow=FlowMatchingSpec(
+            timestep_schedule=t_schedule_list,
+            init_noise_fn=_init_noise,
+            euler_step_fn=_euler_step,
+            cache_init_fn=lambda: _CrossAttentionCache(),
+            before_step_fn=_before_step if enc_hs_nc is not None else None,
+        ),
+    )
+
+    result = FlowMatchingInference().run(bundle)
+    xt = result["latents"]
+
     total_end = time.time()
-    time_costs["diffusion_time_cost"] = diff_end - diff_start
-    time_costs["diffusion_per_step_time_cost"] = time_costs["diffusion_time_cost"] / max(num_steps, 1)
+    time_costs = result.get("time_costs", {})
     time_costs["total_time_cost"] = total_end - total_start
 
     return {

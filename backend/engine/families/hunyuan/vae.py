@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
-from backend.engine.common.vae.video_frames import ncthw_pixels_to_pil_frames
+from backend.engine.common.codecs.vae.video_frames import ncthw_pixels_to_pil_frames
 
 from .vae_mlx import decode_latents_ncthw, encode_video_ncthw
 

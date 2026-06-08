@@ -12,6 +12,7 @@ from backend.core.contracts import (
     ImageUpscaleRequest,
     VideoEditRequest,
     VideoGenerationRequest,
+    VideoUpscaleRequest,
 )
 import backend.core.task_kinds as TK
 
@@ -29,6 +30,7 @@ TASK_DISPATCH: dict[str, TaskDispatchSpec] = {
     TK.IMAGE_UPSCALE: TaskDispatchSpec(ImageUpscaleRequest, "get_image", "upscale"),
     TK.VIDEO_GENERATION: TaskDispatchSpec(VideoGenerationRequest, "get_video", "generate"),
     TK.VIDEO_EDIT: TaskDispatchSpec(VideoEditRequest, "get_video", "edit"),
+    TK.VIDEO_UPSCALE: TaskDispatchSpec(VideoUpscaleRequest, "get_video", "upscale"),
     TK.AUDIO_GENERATION: TaskDispatchSpec(AudioGenerationRequest, "get_audio", "generate"),
     TK.AUDIO_EDIT: TaskDispatchSpec(AudioEditRequest, "get_audio", "edit"),
 }

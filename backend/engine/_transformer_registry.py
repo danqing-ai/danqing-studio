@@ -1,4 +1,8 @@
-"""Transformer / 权重映射 / Text Encoder 注册表 — 新增模型只需在此添加条目。"""
+"""Transformer / Text Encoder 注册表 — 新增模型只需在此添加条目。
+
+Weight remapping has been internalized into each model's ``sanitize()`` method
+on ``TransformerBase`` subclasses (see ``backend/engine/common/model/base.py``).
+"""
 
 from __future__ import annotations
 
@@ -13,14 +17,6 @@ _TRANSFORMER = {
     "flux1":    ("backend.engine.families.flux1.transformer",     "Flux1Transformer"),
     "qwen_image": ("backend.engine.families.qwen.transformer",    "QwenImageTransformer"),
     "ernie_image": ("backend.engine.families.ernie_image.transformer", "ErnieImageTransformer"),
-}
-
-_WEIGHT_REMAP = {
-    "z_image":  ("backend.engine.families.z_image.weights",  "remap_zimage_weights"),
-    "flux2":    ("backend.engine.families.flux2.weights",     "remap_flux2_weights"),
-    "flux1":    ("backend.engine.families.flux1.weights",    "remap_flux1_weights"),
-    "qwen_image": ("backend.engine.families.qwen.weights",    "remap_qwen_transformer_weights"),
-    "ernie_image": ("backend.engine.families.ernie_image.weights", "remap_ernie_image_weights"),
 }
 
 # encoder_type → (模块路径, 类名)
@@ -40,20 +36,16 @@ _IMAGE_LORA_MERGE = {
     "qwen_image": ("backend.engine.families.qwen.lora_mlx", "merge_qwen_image_lora_adapters"),
 }
 
+_IMAGE_EDIT_EXTRA_COND = {
+    "fibo": ("backend.engine.families.fibo.vae_mlx", "attach_edit_conditioning_extra"),
+}
+
 
 def get_transformer_class(family: str):
     import importlib
     entry = _TRANSFORMER.get(family)
     if entry is None:
         raise RuntimeError(f"Unknown image model family: {family}")
-    return getattr(importlib.import_module(entry[0]), entry[1])
-
-
-def get_weight_remap(family: str):
-    import importlib
-    entry = _WEIGHT_REMAP.get(family)
-    if entry is None:
-        return None
     return getattr(importlib.import_module(entry[0]), entry[1])
 
 
@@ -101,9 +93,25 @@ def merge_image_lora_adapters(
         ctx=ctx,
         on_log=on_log,
     )
-    if family == "z_image":
-        kwargs["patch_size"] = int(getattr(getattr(model, "config", None), "patch_size", 2) or 2)
     merge_fn(**kwargs)
+
+
+def attach_image_edit_extra_cond(
+    family: str,
+    extra_cond: dict[str, Any],
+    encoded: Any,
+    *,
+    height: int,
+    width: int,
+) -> dict[str, Any]:
+    """Family hook for img2img edit paths that need extra conditioning tensors."""
+    import importlib
+
+    entry = _IMAGE_EDIT_EXTRA_COND.get(family)
+    if entry is None:
+        return extra_cond
+    fn = getattr(importlib.import_module(entry[0]), entry[1])
+    return fn(extra_cond, encoded, height=height, width=width)
 
 
 def encode_prompt_with_image_text_encoder(
@@ -131,23 +139,14 @@ def encode_prompt_with_image_text_encoder(
         enc_kwargs["hidden_state_layers"] = tuple(out_layers)
     enc_kwargs["enable_thinking"] = getattr(config, "enable_thinking", False)
 
-    if encoder_type == "flux1":
-        enc = enc_cls(
-            ctx,
-            bundle_root,
-            max_seq_len=getattr(config, "max_seq_len", 512),
-            text_dim=getattr(config, "text_dim", 4096),
-            pooled_dim=getattr(config, "pooled_dim", 768),
-        )
-    else:
-        enc_dir = bundle_root / "text_encoder"
-        tok_dir = bundle_root / "tokenizer"
-        if not tok_dir.exists():
-            tok_dir = enc_dir
-        if not enc_dir.exists():
-            enc_dir = bundle_root
-            tok_dir = bundle_root
-        enc = enc_cls(ctx, str(enc_dir), tokenizer_path=str(tok_dir), **enc_kwargs)
+    enc = _instantiate_image_text_encoder(
+        ctx,
+        enc_cls,
+        encoder_type=encoder_type,
+        bundle_root=bundle_root,
+        config=config,
+        enc_kwargs=enc_kwargs,
+    )
 
     out = enc.encode([text])
     if isinstance(out, tuple):
@@ -163,6 +162,221 @@ def encode_prompt_with_image_text_encoder(
     return out, None, None
 
 
+def _instantiate_image_text_encoder(
+    ctx: Any,
+    enc_cls: Any,
+    *,
+    encoder_type: str,
+    bundle_root: Path,
+    config: Any,
+    enc_kwargs: dict[str, Any] | None = None,
+) -> Any:
+    """Build a registry text encoder instance (bundle paths + config kwargs)."""
+    kw = dict(enc_kwargs or {})
+    if encoder_type == "flux1":
+        return enc_cls(
+            ctx,
+            bundle_root,
+            max_seq_len=getattr(config, "max_seq_len", 512),
+            text_dim=getattr(config, "text_dim", 4096),
+            pooled_dim=getattr(config, "pooled_dim", 768),
+        )
+    enc_dir = bundle_root / "text_encoder"
+    tok_dir = bundle_root / "tokenizer"
+    if not tok_dir.exists():
+        tok_dir = enc_dir
+    if not enc_dir.exists():
+        enc_dir = bundle_root
+        tok_dir = bundle_root
+    return enc_cls(ctx, str(enc_dir), tokenizer_path=str(tok_dir), **kw)
+
+
+def encode_image_text_conditioning(
+    ctx: Any,
+    *,
+    prompt: str,
+    negative_prompt: str | None,
+    bundle_root: Path | None,
+    config: Any,
+    guidance: float,
+    encode_negative: bool,
+) -> tuple[Any, Any, Any, Any, Any, Any, str]:
+    """Encode prompt (+ optional negative) for image DiT conditioning.
+
+    Returns ``(txt, neg, txt_mask, neg_mask, pooled, neg_pooled, encoder_type)``.
+    Fused CFG encoders (``encode_prompt_cfg`` + ``use_mlx_cfg_fusion``) batch uncond/cond
+    into ``txt_embeds`` and skip separate negative encoding.
+    """
+    from backend.engine.common.bundle.layout import t5_encoder_bundle_paths
+    from backend.engine.common.codecs.text_encoders import T5Encoder
+
+    txt_embeds = neg_embeds = txt_attn_mask = neg_attn_mask = None
+    pooled_embeds = neg_pooled_embeds = None
+    encoder_type = getattr(config, "encoder_type", "t5")
+
+    if not prompt:
+        return (
+            txt_embeds,
+            neg_embeds,
+            txt_attn_mask,
+            neg_attn_mask,
+            pooled_embeds,
+            neg_pooled_embeds,
+            encoder_type,
+        )
+
+    if encoder_type == "t5":
+        if config.text_dim <= 0:
+            return (
+                txt_embeds,
+                neg_embeds,
+                txt_attn_mask,
+                neg_attn_mask,
+                pooled_embeds,
+                neg_pooled_embeds,
+                encoder_type,
+            )
+        if bundle_root is None:
+            raise RuntimeError("Cannot load T5 text encoder: model bundle is not installed.")
+        t5_dir, t5_tok = t5_encoder_bundle_paths(bundle_root)
+        enc = T5Encoder(ctx, t5_dir, tokenizer_path=t5_tok)
+        txt_embeds = enc.encode([prompt])
+        return (
+            txt_embeds,
+            neg_embeds,
+            txt_attn_mask,
+            neg_attn_mask,
+            pooled_embeds,
+            neg_pooled_embeds,
+            encoder_type,
+        )
+
+    if bundle_root is None:
+        raise RuntimeError("Cannot load text encoder: model bundle is not installed at local_path.")
+
+    use_fused_cfg = (
+        bool(getattr(config, "use_mlx_cfg_fusion", False))
+        and float(guidance) > 1.0
+    )
+    if use_fused_cfg:
+        enc_cls = get_text_encoder(encoder_type)
+        enc = _instantiate_image_text_encoder(
+            ctx,
+            enc_cls,
+            encoder_type=encoder_type,
+            bundle_root=bundle_root,
+            config=config,
+        )
+        if hasattr(enc, "encode_prompt_cfg"):
+            txt_embeds, txt_attn_mask = enc.encode_prompt_cfg(
+                prompt,
+                negative_prompt,
+                guidance=float(guidance),
+            )
+            return (
+                txt_embeds,
+                neg_embeds,
+                txt_attn_mask,
+                neg_attn_mask,
+                pooled_embeds,
+                neg_pooled_embeds,
+                encoder_type,
+            )
+
+    txt_embeds, txt_attn_mask, pooled_embeds = encode_prompt_with_image_text_encoder(
+        ctx,
+        prompt,
+        encoder_type=encoder_type,
+        bundle_root=bundle_root,
+        config=config,
+    )
+    if encode_negative:
+        neg_txt = (negative_prompt or "").strip() or " "
+        neg_embeds, neg_attn_mask, neg_pooled_embeds = encode_prompt_with_image_text_encoder(
+            ctx,
+            neg_txt,
+            encoder_type=encoder_type,
+            bundle_root=bundle_root,
+            config=config,
+        )
+    return (
+        txt_embeds,
+        neg_embeds,
+        txt_attn_mask,
+        neg_attn_mask,
+        pooled_embeds,
+        neg_pooled_embeds,
+        encoder_type,
+    )
+
+
+# request field → (module, augment_fn) — run when field is present on request
+_IMAGE_REQUEST_AUGMENTS: tuple[tuple[str, tuple[str, str]], ...] = (
+    ("structural_guide", (
+        "backend.engine.families.flux1.structural",
+        "augment_request_for_structural_guide",
+    )),
+)
+
+# request field → (module, attach_fn) — conditioning before denoise
+_IMAGE_CONDITIONING: tuple[tuple[str, tuple[str, str]], ...] = (
+    ("structural_guide", (
+        "backend.engine.families.flux1.structural",
+        "attach_structural_conditioning",
+    )),
+)
+
+
+def augment_image_generation_request(request: Any, ctx: Any) -> Any:
+    """Apply registry request augment hooks (companion LoRA, etc.)."""
+    import importlib
+
+    out = request
+    for field, entry in _IMAGE_REQUEST_AUGMENTS:
+        if getattr(out, field, None) is None:
+            continue
+        fn = getattr(importlib.import_module(entry[0]), entry[1])
+        out = fn(out, ctx)
+    return out
+
+
+def attach_image_conditioning(
+    pipeline: Any,
+    *,
+    request: Any,
+    family: str,
+    model: Any,
+    entry: Any,
+    version_key: str | None,
+    extra_cond: dict[str, Any],
+    width: int,
+    height: int,
+    ctx_exec: Any,
+    on_log: Any | None,
+) -> tuple[dict[str, Any], Any | None]:
+    """Attach optional image conditioning (structural guide, …) via registry."""
+    import importlib
+
+    for field, mod_entry in _IMAGE_CONDITIONING:
+        if getattr(request, field, None) is None:
+            continue
+        fn = getattr(importlib.import_module(mod_entry[0]), mod_entry[1])
+        return fn(
+            pipeline,
+            request=request,
+            family=family,
+            model=model,
+            entry=entry,
+            version_key=version_key,
+            extra_cond=extra_cond,
+            width=width,
+            height=height,
+            ctx_exec=ctx_exec,
+            on_log=on_log,
+        )
+    return extra_cond, None
+
+
 # =========================================================================
 # 视频模型注册表
 # =========================================================================
@@ -173,19 +387,54 @@ _VIDEO_TRANSFORMER = {
     "hunyuan":   ("backend.engine.families.hunyuan.transformer",   "HunyuanVideoTransformer"),
 }
 
-_VIDEO_WEIGHT_REMAP = {
-    "wan":       ("backend.engine.families.wan.weights",       "remap_wan_weights"),
-    "ltx":       ("backend.engine.families.ltx.weights",       "remap_ltx_weights"),
-    "hunyuan":   ("backend.engine.families.hunyuan.weights",   "remap_hunyuan_weights"),
-}
-
 # family → (module, factory_fn) for VideoPipeline Shape C (in-repo family generator)
 _VIDEO_GENERATION_FACTORY = {
     "ltx": ("backend.engine.families.ltx.generation", "create_ltx23_generator"),
 }
 
+_VIDEO_GENERATION_VALIDATE = {
+    "ltx": ("backend.engine.families.ltx.generation", "validate_video_generation_params"),
+}
+
+_VIDEO_TRANSFORMER_WEIGHT_PREPARE = {
+    "ltx": ("backend.engine.families.ltx.weights", "prepare_ltx_video_transformer_weights"),
+}
+
+
+def prepare_video_transformer_weights(
+    family: str,
+    config: Any,
+    weights: dict[str, Any],
+) -> dict[str, Any]:
+    """Family-specific pre-``load_weights`` normalize (registry-driven; no pipeline ``family ==``)."""
+    import importlib
+
+    mod_entry = _VIDEO_TRANSFORMER_WEIGHT_PREPARE.get(family)
+    if mod_entry is None:
+        return weights
+    fn = getattr(importlib.import_module(mod_entry[0]), mod_entry[1])
+    return fn(config, weights)
+
+
+def validate_video_generation_params(
+    family: str,
+    *,
+    entry: Any,
+    config: Any,
+    step_distill: bool,
+) -> None:
+    """Family-specific video generation param guards (registry-driven)."""
+    import importlib
+
+    mod_entry = _VIDEO_GENERATION_VALIDATE.get(family)
+    if mod_entry is None:
+        return
+    fn = getattr(importlib.import_module(mod_entry[0]), mod_entry[1])
+    fn(entry=entry, config=config, step_distill=step_distill)
+
+
 _VIDEO_TEXT_ENCODER = {
-    "t5":              ("backend.engine.common.text_encoders", "T5Encoder"),
+    "t5":              ("backend.engine.common.codecs.text_encoders", "T5Encoder"),
     "hunyuan_video_dual": ("backend.engine.families.hunyuan.text_encoder", "HunyuanVideoTextEncoder"),
 }
 
@@ -213,7 +462,7 @@ def encode_video_prompt(
     """
     enc_cls = get_video_text_encoder_class(encoder_type)
     if encoder_type == "t5":
-        from backend.engine.common.bundle_layout import t5_encoder_bundle_paths
+        from backend.engine.common.bundle.layout import t5_encoder_bundle_paths
 
         t5_dir, t5_tok_dir = t5_encoder_bundle_paths(bundle_root)
         max_seq = int(getattr(config, "max_text_seq_length", 512))
@@ -230,19 +479,38 @@ def encode_video_prompt(
     raise RuntimeError(f"Unsupported video encoder_type: {encoder_type!r}")
 
 
+def encode_video_hunyuan_dual_cfg_batch(
+    ctx: Any,
+    *,
+    prompt: str,
+    negative_prompt: str | None,
+    bundle_root: Path,
+    config: Any,
+    guidance: float,
+    encoder_type: str,
+) -> tuple[Any, Any, Any, Any, Any, Any, Any, Any] | None:
+    """Batch positive + negative Hunyuan dual-encoder forward when CFG applies."""
+    if encoder_type != "hunyuan_video_dual":
+        return None
+    use_cfg = bool(getattr(config, "supports_guidance", True) and guidance > 1.0)
+    if not use_cfg or not prompt or config.text_dim <= 0:
+        return None
+    from backend.engine.families.hunyuan.text_encoder import get_hunyuan_text_encoder
+
+    neg_txt = negative_prompt.strip() if negative_prompt else " "
+    enc = get_hunyuan_text_encoder(ctx, bundle_root, config)
+    e1, m1, e2, m2 = enc.encode([prompt, neg_txt])
+    return (
+        e1[0:1], m1[0:1], e2[0:1], m2[0:1],
+        e1[1:2], m1[1:2], e2[1:2], m2[1:2],
+    )
+
+
 def get_video_transformer_class(family: str):
     import importlib
     entry = _VIDEO_TRANSFORMER.get(family)
     if entry is None:
         raise RuntimeError(f"Unknown video model family: {family}")
-    return getattr(importlib.import_module(entry[0]), entry[1])
-
-
-def get_video_weight_remap(family: str):
-    import importlib
-    entry = _VIDEO_WEIGHT_REMAP.get(family)
-    if entry is None:
-        return None
     return getattr(importlib.import_module(entry[0]), entry[1])
 
 
@@ -266,15 +534,21 @@ _AUDIO_TRANSFORMER = {
     "ace_step": ("backend.engine.families.ace_step.transformer", "AceStepTransformer"),
 }
 
-_AUDIO_WEIGHT_REMAP = {
-    "diffrhythm": ("backend.engine.families.diffrhythm.weights", "remap_diffrhythm_weights"),
-    "ace_step": ("backend.engine.families.ace_step.weights", "remap_ace_step_weights"),
-}
-
 # family → (module, run_method_name) for MusicPipeline Shape C
 _AUDIO_GENERATION_FACTORY = {
     "diffrhythm": ("backend.engine.families.diffrhythm.generation", "create_diffrhythm_generator"),
     "ace_step": ("backend.engine.families.ace_step.generation", "create_ace_step_generator"),
+}
+
+# family → (module, prepare_fn) — request normalization before generation
+_AUDIO_PREPARE_REQUEST = {
+    "ace_step": ("backend.engine.families.ace_step.generation", "prepare_music_request"),
+    "diffrhythm": ("backend.engine.families.diffrhythm.generation", "prepare_music_request"),
+}
+
+# (family, operation) → (module, handler_fn) for MusicPipeline.run_edit
+_AUDIO_EDIT_HANDLERS = {
+    ("ace_step", "cover"): ("backend.engine.families.ace_step.generation", "run_cover_edit"),
 }
 
 
@@ -283,14 +557,6 @@ def get_audio_transformer_class(family: str):
     entry = _AUDIO_TRANSFORMER.get(family)
     if entry is None:
         raise RuntimeError(f"Unknown audio model family: {family}")
-    return getattr(importlib.import_module(entry[0]), entry[1])
-
-
-def get_audio_weight_remap(family: str):
-    import importlib
-    entry = _AUDIO_WEIGHT_REMAP.get(family)
-    if entry is None:
-        return None
     return getattr(importlib.import_module(entry[0]), entry[1])
 
 
@@ -303,6 +569,88 @@ def get_audio_generation_factory(family: str):
             f"MusicPipeline: unsupported audio family {family!r}; supported: {supported}"
         )
     return getattr(importlib.import_module(entry[0]), entry[1])
+
+
+def get_audio_prepare_request(family: str):
+    """Resolve family-specific ``prepare_music_request`` (lazy import)."""
+    import importlib
+    entry = _AUDIO_PREPARE_REQUEST.get(family)
+    if entry is None:
+        supported = ", ".join(sorted(_AUDIO_PREPARE_REQUEST.keys()))
+        raise RuntimeError(
+            f"MusicPipeline: no prepare_music_request for family {family!r}; "
+            f"supported: {supported}"
+        )
+    return getattr(importlib.import_module(entry[0]), entry[1])
+
+
+def get_audio_edit_handler(family: str, operation: str):
+    """Resolve family-specific audio edit handler (lazy import)."""
+    import importlib
+
+    key = (family, operation)
+    entry = _AUDIO_EDIT_HANDLERS.get(key)
+    if entry is None:
+        supported = ", ".join(f"{f}/{op}" for f, op in sorted(_AUDIO_EDIT_HANDLERS))
+        raise RuntimeError(
+            f"MusicPipeline: no audio edit handler for {family!r}/{operation!r}; "
+            f"supported: {supported or '(none)'}"
+        )
+    return getattr(importlib.import_module(entry[0]), entry[1])
+
+
+# family → post-save hook (sidecars, extra metadata) after each WAV
+_AUDIO_POST_GENERATION = {
+    "ace_step": ("backend.engine.families.ace_step.generation", "post_generation_artifacts"),
+}
+
+
+# family → (module, fn) for lyrics metadata on assets / task result
+_AUDIO_LYRICS_METADATA = {
+    "ace_step": ("backend.engine.families.ace_step.generation", "lyrics_capture_metadata"),
+}
+
+
+def audio_lyrics_metadata(family: str, capture: Any, *, duration_sec: float | None = None) -> dict[str, Any]:
+    """Optional family hook — serialize lyrics capture for asset/task metadata."""
+    import importlib
+
+    entry = _AUDIO_LYRICS_METADATA.get(family)
+    if entry is None or capture is None:
+        return {}
+    fn = getattr(importlib.import_module(entry[0]), entry[1])
+    return fn(capture, duration_sec=duration_sec)
+
+
+def get_audio_post_generation(family: str):
+    """Optional family hook after each generated audio file is written."""
+    import importlib
+
+    entry = _AUDIO_POST_GENERATION.get(family)
+    if entry is None:
+        return None
+    return getattr(importlib.import_module(entry[0]), entry[1])
+
+
+# Shared MLX encoder stacks reused across families (registry dispatch, no cross-family imports).
+_MLX_ENCODER_LOADERS: dict[str, tuple[str, str]] = {
+    "qwen25vl": (
+        "backend.engine.families.qwen.text_encoder_mlx",
+        "load_qwen25vl_mlx_encoder",
+    ),
+}
+
+
+def load_mlx_encoder_stack(kind: str, /, *args: Any, **kwargs: Any) -> Any:
+    """Load a reusable MLX encoder stack by registry key (e.g. ``qwen25vl`` for Hunyuan)."""
+    import importlib
+
+    entry = _MLX_ENCODER_LOADERS.get(kind)
+    if entry is None:
+        known = ", ".join(sorted(_MLX_ENCODER_LOADERS))
+        raise RuntimeError(f"Unknown MLX encoder stack {kind!r}; known: {known}")
+    fn = getattr(importlib.import_module(entry[0]), entry[1])
+    return fn(*args, **kwargs)
 
 
 def check_audio_bundle_ready(family: str, bundle_path: Any) -> bool | None:

@@ -11,7 +11,7 @@ from typing import Any
 
 from backend.core.contracts import CancelToken, ExecutionContext
 from backend.core.model_registry import ModelRegistry
-from backend.engine.common.cache import ModelCache
+from backend.engine.cache import ModelCache
 from backend.engine.memory_policy import (
     apply_memory_settings,
     build_gpu_runtimes,
@@ -57,6 +57,10 @@ def build_engine_context(project_root: Path | None = None) -> EngineContext:
     if not runtimes:
         raise RuntimeError("No GPU backend available (need MLX on Apple Silicon or CUDA on NVIDIA)")
     apply_memory_settings(app_settings, runtimes, shared_cache)
+
+    from backend.engine.registry import bootstrap_family_plugins
+
+    bootstrap_family_plugins()
 
     image_engine = DanQingImageEngine(
         path_resolver, model_registry, runtimes, model_cache=shared_cache,

@@ -5,7 +5,7 @@ from typing import Any
 
 import mlx.core as mx
 
-from backend.engine.common.text_encoders.qwen3_mlx import (
+from backend.engine.common.codecs.text_encoders.qwen3_mlx import (
     Qwen3EncoderModel,
     build_qwen3_mlx_encoder,
 )

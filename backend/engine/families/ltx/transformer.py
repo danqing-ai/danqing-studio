@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from backend.engine.common.dit_stem import DelegatingDiTStem
+from backend.engine.common.model.dit_stem import DelegatingDiTStem
 
 
 class LTXTransformer(DelegatingDiTStem):

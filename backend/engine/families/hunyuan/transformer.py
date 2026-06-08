@@ -3,14 +3,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from backend.engine.common.dit_stem import DelegatingDiTStem
+from backend.engine.common.model.dit_stem import DelegatingDiTStem
 
 
 class HunyuanVideoTransformer(DelegatingDiTStem):
     """Hunyuan Video DiT — selects MLX or CUDA implementation from ``RuntimeContext``."""
 
     def __init__(self, config: Any, ctx: Any):
-        from .transformer_mlx import HunyuanVideoTransformer as _MLX
+        from .transformer_mlx import HunyuanVideoDiTMLX as _MLX
 
         super().__init__(
             config,

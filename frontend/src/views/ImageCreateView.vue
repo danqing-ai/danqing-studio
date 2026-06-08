@@ -1410,6 +1410,9 @@ function attachStreamFromSubmit(submitRes: unknown) {
     onLog: (logData: any) => {
       tasksStore.ingestTaskLog(tid, logData);
     },
+    onTrace: (traceData: unknown) => {
+      tasksStore.ingestTaskPipelineTrace(tid, traceData);
+    },
     onStatus: (statusData: any) => {
       if (currentTask.value) {
         currentTask.value = { ...currentTask.value, ...statusData };

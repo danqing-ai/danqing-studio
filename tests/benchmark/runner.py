@@ -101,11 +101,12 @@ class EvalRunner:
         safe = case.id.replace(":", "__")
         return self.output_dir / f"{safe}.png"
 
-    def _subprocess_env(self) -> dict[str, str]:
+    def _subprocess_env(self, case: EvalCase | None = None) -> dict[str, str]:
         env = os.environ.copy()
         env.setdefault("MLX_METAL_DEVICE_ONLY", "1")
         env.setdefault("MLX_METAL_MEMORY_LIMIT", "120")
         env["PYTHONUNBUFFERED"] = "1"
+        _ = case
         return env
 
     def _run_generate(self, case: EvalCase, output_path: Path) -> bool:
@@ -138,7 +139,7 @@ class EvalRunner:
             "--output",
             str(output_path),
         ]
-        return self._exec_cli(cmd, label="generate", timeout_sec=case.timeout_sec)
+        return self._exec_cli(cmd, label="generate", timeout_sec=case.timeout_sec, case=case)
 
     def _run_generate_edit(self, case: EvalCase, output_path: Path) -> bool:
         ensure_edit_source()
@@ -165,7 +166,7 @@ class EvalRunner:
             cmd += ["--steps", str(case.steps)]
         if not case.omit_image_strength:
             cmd += ["--source-fidelity", str(case.image_strength)]
-        return self._exec_cli(cmd, label="edit", timeout_sec=case.timeout_sec)
+        return self._exec_cli(cmd, label="edit", timeout_sec=case.timeout_sec, case=case)
 
     def _run_generate_upscale(self, case: EvalCase, output_path: Path) -> bool:
         ensure_upscale_source()
@@ -187,9 +188,16 @@ class EvalRunner:
             "--output",
             str(output_path),
         ]
-        return self._exec_cli(cmd, label="upscale", timeout_sec=case.timeout_sec)
+        return self._exec_cli(cmd, label="upscale", timeout_sec=case.timeout_sec, case=case)
 
-    def _exec_cli(self, cmd: list[str], *, label: str, timeout_sec: int) -> bool:
+    def _exec_cli(
+        self,
+        cmd: list[str],
+        *,
+        label: str,
+        timeout_sec: int,
+        case: EvalCase | None = None,
+    ) -> bool:
         try:
             t0 = time.time()
             proc = subprocess.run(
@@ -197,7 +205,7 @@ class EvalRunner:
                 capture_output=True,
                 text=True,
                 timeout=int(timeout_sec),
-                env=self._subprocess_env(),
+                env=self._subprocess_env(case),
                 cwd=str(PROJECT_ROOT),
             )
             elapsed = time.time() - t0

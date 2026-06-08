@@ -7,9 +7,9 @@ from typing import Any
 import mlx.core as mx
 import numpy as np
 
-from backend.engine.common.hf_tokenizer_json import load_hf_tokenizer, render_qwen_chat_messages
-from backend.engine.common.mlx_runtime_fallback import run_clear_cache, run_eval
-from backend.engine.common.text_encoders.qwen_image_mlx import load_qwen25vl_mlx_encoder
+from backend.engine.common.bundle.hf_tokenizer_json import load_hf_tokenizer, render_qwen_chat_messages
+from backend.engine.runtime.mlx_runtime import run_clear_cache, run_eval
+from backend.engine._transformer_registry import load_mlx_encoder_stack
 
 
 class HunyuanQwen25VLEncoder:
@@ -33,7 +33,8 @@ class HunyuanQwen25VLEncoder:
             getattr(self._ctx, "clear_cache", None) if self._ctx is not None else None
         )
         self._load_fn = getattr(self._ctx, "load_weights", None) if self._ctx is not None else None
-        self._encoder = load_qwen25vl_mlx_encoder(
+        self._encoder = load_mlx_encoder_stack(
+            "qwen25vl",
             self._enc_dir,
             weight_dtype=weight_dtype,
             skip_lm_head=True,

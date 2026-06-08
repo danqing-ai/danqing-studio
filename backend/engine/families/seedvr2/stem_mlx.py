@@ -17,10 +17,10 @@ import mlx.core as mx
 import numpy as np
 import PIL.Image
 
-from backend.engine.common.bundle_weights import WeightApplier
-from backend.engine.common.mlx_runtime_fallback import seeded_random_normal
-from backend.engine.common.scale_factor import ScaleFactor
-from backend.engine.common.vae.mlx_tiling import TilingConfig, VAEUtil
+from backend.engine.common.bundle.bundle_weights import WeightApplier
+from backend.engine.runtime.mlx_runtime import seeded_random_normal
+from backend.engine.common.ops.scale_factor import ScaleFactor
+from backend.engine.common.codecs.vae.mlx_tiling import TilingConfig, VAEUtil
 from .dit_mlx import SeedVR2DiT
 from .preprocess_mlx import SeedVR2LatentCreator, SeedVR2PositiveEmbeddings, SeedVR2Util
 from .vae_mlx import SeedVR2VAE
@@ -258,7 +258,7 @@ class SeedVR2UpscalePipeline:
         components = {c.name: c for c in weight_definition_cls.get_components()}
         WeightApplier.set_weights(weights, {"transformer": dit, "vae": vae}, components)
 
-        from backend.engine.common.bundle_weights.resolution import QuantizationResolution
+        from backend.engine.common.bundle.bundle_weights.resolution import QuantizationResolution
         stored_q = weights.meta_data.quantization_level
         bits, warning = QuantizationResolution.resolve(stored=stored_q, requested=quantize)
         if warning:
@@ -688,6 +688,32 @@ def validate_seedvr2_bundle(bundle_path: Path, model_key: str) -> None:
             "`seedvr2_ema_7b_fp16.safetensors` or `seedvr2_ema_3b_fp16.safetensors` "
             "(see registry `local_path`, e.g. models/Upscaler/seedvr2-7b-fp16)."
         )
+
+
+def load_seedvr2_upscale_pipeline(
+    *,
+    bundle_path: Path,
+    model_key: str,
+    model_cache: Any | None = None,
+    cache_key: str | None = None,
+    cache_size_gb: float | None = None,
+    on_log: Callable[[str, str], None] | None = None,
+) -> SeedVR2UpscalePipeline:
+    """Load or reuse cached SeedVR2 upscale pipeline (``ImageUpscalePipeline`` registry path)."""
+    if model_cache is not None and cache_key:
+        cached = model_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+    if "7b" in model_key.lower():
+        model_config = ModelConfig.seedvr2_7b()
+    else:
+        model_config = ModelConfig.seedvr2_3b()
+
+    pipeline = SeedVR2UpscalePipeline.from_bundle(bundle_path, model_config)
+    if model_cache is not None and cache_key and cache_size_gb is not None:
+        model_cache.put(cache_key, pipeline, cache_size_gb)
+    return pipeline
 
 
 def run_seedvr2_upscale(

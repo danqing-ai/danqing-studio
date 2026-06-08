@@ -215,6 +215,19 @@ export const api = {
     previewUrl(taskId: string): string {
       return `${API_BASE}/api/tasks/${encodeURIComponent(taskId)}/preview`;
     },
+
+    async fetchGraph(taskId: string): Promise<Record<string, unknown>> {
+      const response = await client.get(`/api/tasks/${encodeURIComponent(taskId)}/graph`);
+      return response.data;
+    },
+
+    async diagnose(taskId: string, body?: { locale?: string }): Promise<{ summary: string }> {
+      const response = await client.post(
+        `/api/tasks/${encodeURIComponent(taskId)}/diagnose`,
+        body ?? {},
+      );
+      return response.data;
+    },
   },
 
   settings: {
@@ -509,6 +522,7 @@ export const api = {
         onError?: (event: Event) => void;
         onProgress?: (data: unknown) => void;
         onResult?: (data: unknown) => void;
+        onTrace?: (data: unknown) => void;
       }
     ): EventSource {
       const url = api.tasks.logStreamUrl(taskId);
@@ -517,6 +531,11 @@ export const api = {
       eventSource.addEventListener('log', (event) => {
         const data = JSON.parse(event.data);
         callbacks.onLog?.(data);
+      });
+
+      eventSource.addEventListener('trace', (event) => {
+        const data = JSON.parse(event.data);
+        callbacks.onTrace?.(data);
       });
 
       eventSource.addEventListener('progress', (event) => {

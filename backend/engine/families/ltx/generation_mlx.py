@@ -10,7 +10,7 @@ import mlx.core as mx
 import numpy as np
 from PIL import Image
 
-from backend.engine.common.mlx_runtime_fallback import run_eval
+from backend.engine.runtime.mlx_runtime import run_eval
 from backend.engine.config.model_configs import LTXConfig
 from backend.engine.families.ltx.pipeline_math import (
     DISTILLED_SIGMAS,

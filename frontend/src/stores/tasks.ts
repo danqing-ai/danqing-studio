@@ -24,6 +24,18 @@ export interface TaskLogEntry {
   level: string;
 }
 
+export interface TaskPipelineGraphState {
+  graph_id?: string;
+  nodes: Array<{
+    id: string;
+    label?: string;
+    status?: string;
+    duration_ms?: number | null;
+  }>;
+  active_node?: string | null;
+  progress?: number;
+}
+
 interface TaskLogPhaseState {
   lastPhase: string;
   lastStep: number;
@@ -37,6 +49,7 @@ export const useTasksStore = defineStore('tasks', () => {
 
   const liveTaskProgress = reactive<Record<string, LiveTaskProgress>>({});
   const taskLogs = reactive<Record<string, TaskLogEntry[]>>({});
+  const taskPipelineGraphs = reactive<Record<string, TaskPipelineGraphState>>({});
   const taskLogPhaseState = new Map<string, TaskLogPhaseState>();
 
   let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -121,6 +134,31 @@ export const useTasksStore = defineStore('tasks', () => {
     taskLogPhaseState.delete(taskId);
   }
 
+  function patchTaskPipelineGraph(taskId: string, graph: TaskPipelineGraphState) {
+    if (!taskId || !graph?.nodes) return;
+    taskPipelineGraphs[taskId] = graph;
+  }
+
+  function ingestTaskPipelineTrace(taskId: string, data: unknown) {
+    patchTaskPipelineGraph(taskId, data as TaskPipelineGraphState);
+  }
+
+  async function loadTaskPipelineGraph(taskId: string) {
+    if (!taskId) return;
+    try {
+      const data = (await api.tasks.fetchGraph(taskId)) as unknown as TaskPipelineGraphState;
+      patchTaskPipelineGraph(taskId, data);
+    } catch {
+      /* graph optional until task runs */
+    }
+  }
+
+  function clearTaskPipelineGraph(taskId: string) {
+    if (taskId && taskPipelineGraphs[taskId] != null) {
+      delete taskPipelineGraphs[taskId];
+    }
+  }
+
   const logStreams = new Map<string, EventSource>();
   /** Task ids whose SSE is owned by a create page (avoid duplicate empty store streams). */
   const pageOwnedStreams = new Set<string>();
@@ -172,6 +210,12 @@ export const useTasksStore = defineStore('tasks', () => {
       const data = JSON.parse(event.data);
       ingestTaskLog(taskId, data);
       callbacks.onLog?.(data);
+    });
+
+    eventSource.addEventListener('trace', (event) => {
+      const data = JSON.parse(event.data);
+      ingestTaskPipelineTrace(taskId, data);
+      callbacks.onProgress?.(data);
     });
 
     eventSource.addEventListener('progress', (event) => {
@@ -264,12 +308,17 @@ export const useTasksStore = defineStore('tasks', () => {
     queueState,
     liveTaskProgress,
     taskLogs,
+    taskPipelineGraphs,
     patchLiveTaskProgress,
     clearLiveTaskProgress,
     appendTaskLog,
     ingestTaskLog,
     ingestTaskProgressLog,
     clearTaskLogs,
+    patchTaskPipelineGraph,
+    ingestTaskPipelineTrace,
+    loadTaskPipelineGraph,
+    clearTaskPipelineGraph,
     openTaskLogStream,
     closeTaskLogStream,
     registerPageOwnedStream,

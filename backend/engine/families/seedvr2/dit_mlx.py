@@ -12,11 +12,11 @@ from typing import Callable
 import mlx.core as mx
 from mlx import nn
 
-from backend.engine.common._base import TransformerBase
-from backend.engine.common.attention import scaled_dot_product_attention_bhsd_mx
-from backend.engine.common.embeddings import sinusoidal_timestep_proj
-from backend.engine.common.norm import apply_rms_norm
-from backend.engine.common.text_encoders.qwen3_mlx import MlxRMSNorm, MlxSwiGLUMLP
+from backend.engine.common.model.base import TransformerBase
+from backend.engine.common.ops.attention import scaled_dot_product_attention_bhsd_mx
+from backend.engine.common.ops.embeddings import sinusoidal_timestep_proj
+from backend.engine.common.ops.norm import apply_rms_norm
+from backend.engine.common.codecs.text_encoders.qwen3_mlx import MlxRMSNorm, MlxSwiGLUMLP
 from backend.engine.runtime.mlx import MLXContext
 
 _MLX_CTX = MLXContext()

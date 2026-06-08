@@ -1,8 +1,10 @@
-"""GET /api/registry — 完整 models_registry.json + 派生索引。"""
+"""GET /api/registry — CatalogResponse DTO (v2/v3 loader projection + index)."""
 
 from fastapi import APIRouter, Depends
 
 from backend.api.deps import get_model_registry
+from backend.catalog.api_dto import build_catalog_response
+from backend.catalog.loader import load_catalog_json
 from backend.core.model_registry import ModelRegistry
 
 router = APIRouter(prefix="/api", tags=["registry"])
@@ -10,7 +12,7 @@ router = APIRouter(prefix="/api", tags=["registry"])
 
 @router.get("/registry")
 def get_public_registry(reg: ModelRegistry = Depends(get_model_registry)):
-    expanded = ModelRegistry.expanded_document(reg.json_source_path)
+    data = load_catalog_json(reg.json_source_path)
     index = {
         mid: {
             "media": e.media,
@@ -20,4 +22,4 @@ def get_public_registry(reg: ModelRegistry = Depends(get_model_registry)):
         }
         for mid, e in reg.all().items()
     }
-    return {**expanded, "_index": index}
+    return build_catalog_response(data, index=index)

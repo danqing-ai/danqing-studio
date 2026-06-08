@@ -6,23 +6,23 @@ from typing import Any
 import mlx.core as mx
 import mlx.nn as nn
 
-from backend.engine.common._base import TransformerBase
-from backend.engine.common.cfg_batch import (
+from backend.engine.common.model.base import TransformerBase
+from backend.engine.common.ops.cfg_batch import (
     TEXT_KEYS_MINIMAL,
     predict_noise_cfg_batched,
 )
-from backend.engine.common.attention import (
+from backend.engine.common.ops.attention import (
     build_key_padding_mask_from_lengths,
     wan_attention,
 )
-from backend.engine.common.embeddings import (
+from backend.engine.common.ops.embeddings import (
     factorized_rope_apply,
     factorized_rope_concat_params,
     factorized_rope_precompute_cos_sin,
     pad_ragged_2d_sequences,
     sinusoidal_embedding_1d,
 )
-from backend.engine.common.norm import (
+from backend.engine.common.ops.norm import (
     apply_layer_norm_fp32,
     apply_scale_shift,
     unpack_modulation_2table,
@@ -31,7 +31,7 @@ from backend.engine.common.norm import (
 from backend.engine.config.model_configs import WanConfig
 from backend.engine.runtime._base import RuntimeContext
 
-from backend.engine.common.text_encoders.qwen3_mlx import MlxRMSNorm
+from backend.engine.common.codecs.text_encoders.qwen3_mlx import MlxRMSNorm
 
 class WanLayerNorm(nn.LayerNorm):
     def __init__(self, dim: int, eps: float = 1e-6, elementwise_affine: bool = False):
@@ -244,6 +244,16 @@ class WanModelMLX(TransformerBase):
             self._compiled_forward = self.ctx.compile(self._forward_compute)
         except Exception:
             self._compiled_forward = None
+
+    def sanitize(self, weights: dict) -> dict:
+        """Transform checkpoint keys to match ``WanModelMLX._param_map``.
+
+        Handles both original Wan keys and diffusers-format checkpoints,
+        including Conv3d → Linear patch embedding reshape.
+        """
+        from backend.engine.families.wan.weights import remap_wan_weights
+
+        return remap_wan_weights(weights)
 
     def _build_param_map(self) -> None:
         self._param_map = {}

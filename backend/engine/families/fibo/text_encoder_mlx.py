@@ -12,9 +12,9 @@ from typing import Any
 import mlx.core as mx
 import mlx.nn as nn
 
-from backend.engine.common.attention import scaled_dot_product_attention_bhsd_mx
-from backend.engine.common.mlx_runtime_fallback import load_weights_dict
-from backend.engine.common.text_encoders.qwen3_mlx import MlxRMSNorm
+from backend.engine.common.ops.attention import rotate_half, scaled_dot_product_attention_bhsd_mx
+from backend.engine.runtime.mlx_runtime import load_weights_dict
+from backend.engine.common.codecs.text_encoders.qwen3_mlx import MlxRMSNorm
 
 _FIBO_TOTAL_DIT_LAYERS = 46  # 8 joint + 38 single
 
@@ -39,11 +39,6 @@ class _SmolLM3RotaryEmbedding(nn.Module):
         sin = mx.expand_dims(mx.expand_dims(mx.sin(emb), axis=0), axis=0)
         return cos, sin
 
-
-def _rotate_half(x: mx.array) -> mx.array:
-    x1 = x[..., : x.shape[-1] // 2]
-    x2 = x[..., x.shape[-1] // 2 :]
-    return mx.concatenate([-x2, x1], axis=-1)
 
 
 class _SmolLM3Attention(nn.Module):
@@ -87,8 +82,8 @@ class _SmolLM3Attention(nn.Module):
         if cos_sin is None:
             cos_sin = self.rotary_emb(seq_len)
         cos, sin = cos_sin
-        q = (q.astype(mx.float32) * cos) + (_rotate_half(q.astype(mx.float32)) * sin)
-        k = (k.astype(mx.float32) * cos) + (_rotate_half(k.astype(mx.float32)) * sin)
+        q = (q.astype(mx.float32) * cos) + (rotate_half(mx, q.astype(mx.float32)) * sin)
+        k = (k.astype(mx.float32) * cos) + (rotate_half(mx, k.astype(mx.float32)) * sin)
         q, k = q.astype(hidden_states.dtype), k.astype(hidden_states.dtype)
         if self.num_key_value_heads != self.num_attention_heads:
             k = self._repeat_kv(k)

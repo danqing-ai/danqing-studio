@@ -1,7 +1,6 @@
 """Video bundle directory layout — diffusers tree vs MLX-forge / dgrauet flat releases."""
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 
@@ -67,16 +66,36 @@ def resolve_video_transformer_weight_sources(
         shards = sorted(tp.glob("*.safetensors"))
         return (tp, shards) if shards else (tp, [])
 
-    if family == "ltx" and is_ltx_mlx_forge_flat_bundle(bundle_root):
-        shards = ltx_flat_transformer_weight_files(bundle_root, model_id)
-        return (bundle_root, shards) if shards else (bundle_root, [])
-
-    if family == "wan":
-        shards = wan_flat_transformer_shards(bundle_root)
-        if shards:
-            return (bundle_root, shards)
+    layout_handlers = {
+        "ltx": _ltx_flat_transformer_sources,
+        "wan": _wan_flat_transformer_sources,
+    }
+    handler = layout_handlers.get(family or "")
+    if handler is not None:
+        result = handler(bundle_root, model_id)
+        if result is not None:
+            return result
 
     return None, []
+
+
+def _ltx_flat_transformer_sources(
+    bundle_root: Path, model_id: str
+) -> tuple[Path, list[Path]] | None:
+    if not is_ltx_mlx_forge_flat_bundle(bundle_root):
+        return None
+    shards = ltx_flat_transformer_weight_files(bundle_root, model_id)
+    return (bundle_root, shards) if shards else (bundle_root, [])
+
+
+def _wan_flat_transformer_sources(
+    bundle_root: Path, model_id: str
+) -> tuple[Path, list[Path]] | None:
+    del model_id
+    shards = wan_flat_transformer_shards(bundle_root)
+    if shards:
+        return (bundle_root, shards)
+    return None
 
 
 def wan_flat_transformer_shards(bundle_root: Path) -> list[Path]:
@@ -97,26 +116,6 @@ def wan_flat_transformer_shards(bundle_root: Path) -> list[Path]:
 def ltx_flat_vae_decoder_file(bundle_root: Path) -> Path | None:
     p = bundle_root / "vae_decoder.safetensors"
     return p if p.is_file() else None
-
-
-def looks_like_mlx_forge_ltx_transformer_keys(weights: dict) -> bool:
-    """Detect mlx-forge ``sanitize_transformer_key`` naming (needs restore before ``remap_ltx_weights``)."""
-    for k in weights:
-        if ".ff.proj_in." in k or ".ff.proj_out." in k:
-            return True
-        if ".audio_ff.proj_in." in k or ".audio_ff.proj_out." in k:
-            return True
-    return False
-
-
-def max_remapped_ltx_block_index(remapped: dict) -> int:
-    """Largest ``N`` in ``blocks.N.*`` keys, or ``-1`` if none."""
-    mx = -1
-    for k in remapped:
-        m = re.match(r"^blocks\.(\d+)\.", k)
-        if m:
-            mx = max(mx, int(m.group(1)))
-    return mx
 
 
 def hunyuan_vae_dir(bundle_root: Path) -> Path | None:

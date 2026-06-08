@@ -11,11 +11,11 @@ from typing import Any
 import mlx.core as mx
 import mlx.nn as nn
 
-from backend.engine.common.embeddings import sinusoidal_timestep_proj
-from backend.engine.common.attention import scaled_dot_product_attention_bhsd_mx
-from backend.engine.common.norm import AdaLayerNormContinuous, apply_scale_shift
+from backend.engine.common.ops.embeddings import sinusoidal_timestep_proj
+from backend.engine.common.ops.attention import scaled_dot_product_attention_bhsd_mx
+from backend.engine.common.ops.norm import AdaLayerNormContinuous, apply_scale_shift
 from backend.engine.runtime._base import RuntimeContext
-from backend.engine.common._base import TransformerBase
+from backend.engine.common.model.base import TransformerBase
 
 
 def _apply_rope_bhsd(x, cos, sin):
@@ -320,7 +320,7 @@ class Flux2SingleBlock:
         return hidden_states
 
 
-class Flux2Transformer(TransformerBase):
+class Flux2DiTMLX(TransformerBase):
     """Flux.2 Klein Transformer — Reference implementation.
 
     in_channels=128, inner_dim=4096 (9B), Qwen3 text encoder

@@ -7,19 +7,19 @@ import mlx.core as mx
 import mlx.nn as nn
 import numpy as np
 
-from backend.engine.common.attention import (
+from backend.engine.common.ops.attention import (
     build_padding_attention_bias,
     scaled_dot_product_attention_bhsd_mx,
 )
-from backend.engine.common._base import TransformerBase
-from backend.engine.common.embeddings import apply_complex_rope_bshd
-from backend.engine.common.norm import (
+from backend.engine.common.model.base import TransformerBase
+from backend.engine.common.ops.embeddings import apply_complex_rope_bshd, sinusoidal_timestep_proj
+from backend.engine.common.ops.norm import (
     apply_ada_layer_norm_continuous,
     apply_scale_shift,
     unpack_modulation_3way,
 )
 from backend.engine.config.model_configs import QwenImageConfig
-from backend.engine.common.text_encoders.qwen3_mlx import MlxRMSNorm
+from backend.engine.common.codecs.text_encoders.qwen3_mlx import MlxRMSNorm
 from backend.engine.runtime.mlx import MLXContext
 from backend.engine.runtime._base import RuntimeContext
 
@@ -67,18 +67,13 @@ class QwenTimeTextEmbed(nn.Module):
         def __call__(self, timesteps: mx.array) -> mx.array:
             if len(timesteps.shape) != 1:
                 raise ValueError("Timesteps should be a 1d-array")
-
-            half_dim = self.proj_dim // 2
-            max_period = 10000
-            exponent = -np.log(max_period) * mx.arange(0, half_dim, dtype=mx.float32)
-            exponent = exponent / (half_dim - self.downscale_freq_shift)
-            emb = mx.exp(exponent).astype(timesteps.dtype)
-            emb = timesteps[:, None].astype(mx.float32) * emb[None, :]
-            emb = self.scale * emb
-            emb = mx.concatenate([mx.sin(emb), mx.cos(emb)], axis=-1)
-            if self.flip_sin_to_cos:
-                emb = mx.concatenate([emb[:, half_dim:], emb[:, :half_dim]], axis=-1)
-            return emb
+            return sinusoidal_timestep_proj(
+                mx, timesteps, self.proj_dim,
+                sin_first=True,
+                flip_sin_to_cos=self.flip_sin_to_cos,
+                downscale_freq_shift=self.downscale_freq_shift,
+                scale=self.scale,
+            )
 
     class _QwenTimestepEmbedding(nn.Module):
         def __init__(self, proj_dim: int, inner_dim: int):
@@ -579,7 +574,7 @@ class _ConfigShim:
         return self._scheduler
 
 
-class QwenImageTransformer(TransformerBase):
+class QwenImageDiTMLX(TransformerBase):
     """Pipeline 入口：NCHW latent ↔ DiT 序列；权重由 Pipeline ``remap_fn`` 扁平载入 ``dit``。"""
 
     def __init__(self, config: QwenImageConfig, ctx: RuntimeContext):

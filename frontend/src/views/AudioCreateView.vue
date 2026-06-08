@@ -792,6 +792,9 @@ function attachTaskStream(tid: string) {
     onLog: (logData: unknown) => {
       tasksStore.ingestTaskLog(tid, logData);
     },
+    onTrace: (traceData: unknown) => {
+      tasksStore.ingestTaskPipelineTrace(tid, traceData);
+    },
     onStatus: (statusData: unknown) => {
       const row = statusData as Record<string, unknown>;
       if (row.status) currentTask.status = row.status as string;

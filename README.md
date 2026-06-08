@@ -8,7 +8,7 @@ Plugin-style image and video generation studio with **MLX** (Apple Silicon) and 
 |---|---|
 | **Docs for contributors / agents** | [AGENTS.md](AGENTS.md) |
 | **Desktop (Tauri 2)** | [desktop/README.md](desktop/README.md) |
-| **Dual-platform engine design** | [docs/dual_platform_architecture.md](docs/dual_platform_architecture.md) |
+| **Engine architecture** | [docs/engine_architecture.md](docs/engine_architecture.md) |
 | **Image benchmarks** | [tests/benchmark/README.md](tests/benchmark/README.md) |
 
 ---
@@ -210,7 +210,7 @@ DanQing-Studio/
 ├── default_config/          # factory models_registry, presets, locales, workspace.pointer
 ├── scripts/                 # build, lint gates, desktop packaging
 ├── tests/benchmark/         # image eval benchmark (L1+L2)
-├── docs/                    # dual_platform_architecture.md
+├── docs/                    # engine_architecture.md (single engine doc)
 ├── models/  outputs/  db/
 └── out/                     # Build artifacts (gitignored)
     ├── frontend/dist/       # Vite production build
@@ -276,7 +276,7 @@ See [desktop/README.md](desktop/README.md).
 }
 ```
 
-**Model registry** — `{workspace}/config/models_registry.json` (`schema_version: 2`; factory copy in `default_config/`): `engines`, `actions`, `parameters`, `versions`, bilingual `name` / `description`.
+**Model registry** — `{workspace}/config/models_registry.json` (`schema_version: 3`; factory copy in `default_config/`): nested `catalog` / `runtime` / `ui` / `distribution`; API returns `CatalogResponse` DTO via `GET /api/registry`.
 
 **Environment** (optional `.env`):
 
@@ -340,7 +340,7 @@ MIT
 |---|---|
 | **贡献者 / Agent 文档** | [AGENTS.md](AGENTS.md) |
 | **桌面版（Tauri 2）** | [desktop/README.md](desktop/README.md) |
-| **双平台引擎设计** | [docs/dual_platform_architecture.md](docs/dual_platform_architecture.md) |
+| **引擎架构（唯一文档）** | [docs/engine_architecture.md](docs/engine_architecture.md) |
 | **图像基准测试** | [tests/benchmark/README.md](tests/benchmark/README.md) |
 
 ### 特性

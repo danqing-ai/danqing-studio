@@ -5,7 +5,7 @@ from __future__ import annotations
 import mlx.core as mx
 from mlx import nn
 
-from backend.engine.common.attention import scaled_dot_product_attention_bhsd_mx
+from backend.engine.common.ops.attention import scaled_dot_product_attention_bhsd_mx
 from .weights_mlx import ModelConfig
 
 

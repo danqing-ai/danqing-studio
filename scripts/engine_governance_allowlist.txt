@@ -6,9 +6,25 @@
 # mlx/torch top-level import exemptions (exact path per line)
 backend/engine/llm/service.py
 backend/engine/llm/vision.py
+# Depth Pro preprocessing (PyTorch-only model, always CPU, guarded try/except)
+backend/engine/families/flux1/structural.py
+# SigLIP preprocessing for FLUX Redux (PyTorch-only model, always CPU, guarded try/except)
+backend/engine/families/flux1/redux_encode.py
+# CUDA memory detection (behind backend=="cuda" guard, logged fallback)
+backend/engine/families/ace_step/quality/resource_policy.py
+# MuQ-MuLan bridge: PyTorch inference producing array output via array_fn (inline torch only)
+backend/engine/families/diffrhythm/mulan.py
 
 # --- layout ---
 # Forbidden family subtree dirs (mlx/torch/runtime/common) and codec wrappers
+# ace_step Shape C (audio/lm/vae/vocals/quality) — documented exception in engine_architecture.md §12
+backend/engine/families/ace_step/audio
+backend/engine/families/ace_step/lm
+backend/engine/families/ace_step/vae
+backend/engine/families/ace_step/vocals
+backend/engine/families/ace_step/quality
+# qwen family 3D VAE codec subtree
+backend/engine/families/qwen/vae
 
 # --- primitives ---
 # Files exempt from generic SelfAttention / RMSNorm class ban

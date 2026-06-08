@@ -20,7 +20,7 @@ def load_diffrhythm_safetensors_for_mlx(
     """
     import mlx.core as mx
 
-    from backend.engine.common.mlx_runtime_fallback import iter_safetensors_float32_numpy
+    from backend.engine.runtime.mlx_runtime import iter_safetensors_float32_numpy
 
     if array_fn is None:
         array_fn = mx.array

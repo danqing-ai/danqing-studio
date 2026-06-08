@@ -160,6 +160,9 @@ class MLXContext(RuntimeContext):
     def seeded_randn(self, shape: tuple, seed: int, dtype: Any = None) -> Any:
         return mx.random.normal(shape, dtype=dtype or mx.float32, key=mx.random.key(seed))
 
+    def seed_random(self, seed: int) -> None:
+        mx.random.seed(int(seed))
+
     def conv2d(self, x: Any, weight: Any, stride: int = 1, padding: int = 0) -> Any:
         return mx.conv2d(x, weight, stride=stride, padding=padding)
 

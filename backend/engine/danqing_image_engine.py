@@ -14,12 +14,15 @@ from backend.core.contracts import (
 )
 from backend.core.media_interfaces import IImageEngine
 from backend.core.interfaces import IPathResolver
-from .common.cache import ModelCache
-from .common.lineage import image_edit_relation_type, resolve_lineage
-from .pipelines.image_pipeline import ImagePipeline
-from .pipelines.image_upscale_pipeline import ImageUpscalePipeline
+from .cache import ModelCache
+from .lineage import image_edit_relation_type, resolve_lineage
 from .progress_bridge import make_pipeline_progress_callback
 from .runtime._base import RuntimeContext
+from .sessions.engine_dispatch import (
+    dispatch_image_create,
+    dispatch_image_edit,
+    dispatch_image_upscale,
+)
 
 
 class DanQingImageEngine(IImageEngine):
@@ -70,6 +73,15 @@ class DanQingImageEngine(IImageEngine):
                 return self._runtimes[b]
         raise RuntimeError(f"No available backend for model {model_id} (backends: {backends})")
 
+    def _dispatch_kwargs(self, runtime: RuntimeContext, ctx: ExecutionContext) -> dict[str, Any]:
+        return {
+            "runtime": runtime,
+            "registry": self._registry,
+            "asset_store": ctx.asset_store,
+            "model_cache": self._cache,
+            "project_root": self._paths.get_project_root(),
+        }
+
     async def generate(self, request: ImageGenerationRequest,
                        ctx: ExecutionContext) -> EngineResult:
         import asyncio
@@ -80,22 +92,16 @@ class DanQingImageEngine(IImageEngine):
                 "see config/models_registry.json actions."
             )
         runtime = self._resolve_runtime(request.model)
-        pipeline = ImagePipeline(
-            runtime,
-            self._registry,
-            ctx.asset_store,
-            model_cache=self._cache,
-            project_root=self._paths.get_project_root(),
-        )
 
         on_progress = make_pipeline_progress_callback(ctx)
 
-        def on_log(lvl, msg):
-            from backend.core.contracts import LogEvent
-            ctx.on_log(LogEvent(level=lvl, message=msg))
-
         result = await asyncio.to_thread(
-            pipeline.run, request, ctx, on_progress=on_progress, on_log=on_log,
+            dispatch_image_create,
+            **self._dispatch_kwargs(runtime, ctx),
+            request=request,
+            exec_ctx=ctx,
+            on_progress=on_progress,
+            on_log=ctx.on_log,
         )
         if result is None:
             return EngineResult(primary_asset_id="", metadata={"status": "cancelled"})
@@ -135,20 +141,15 @@ class DanQingImageEngine(IImageEngine):
                 "see config/models_registry.json actions."
             )
         runtime = self._resolve_runtime(request.model)
-        pipeline = ImagePipeline(
-            runtime, self._registry, ctx.asset_store,
-            model_cache=self._cache,
-            project_root=self._paths.get_project_root(),
-        )
-
         on_progress = make_pipeline_progress_callback(ctx)
 
-        def on_log(lvl, msg):
-            from backend.core.contracts import LogEvent
-            ctx.on_log(LogEvent(level=lvl, message=msg))
-
         result = await asyncio.to_thread(
-            pipeline.run_edit, request, ctx, on_progress=on_progress, on_log=on_log,
+            dispatch_image_edit,
+            **self._dispatch_kwargs(runtime, ctx),
+            request=request,
+            exec_ctx=ctx,
+            on_progress=on_progress,
+            on_log=ctx.on_log,
         )
         if result is None:
             return EngineResult(primary_asset_id="", metadata={"status": "cancelled"})
@@ -177,23 +178,17 @@ class DanQingImageEngine(IImageEngine):
                 "see config/models_registry.json actions."
             )
         runtime = self._resolve_runtime(request.model)
-        pipeline = ImageUpscalePipeline(
-            runtime,
-            self._registry,
-            ctx.asset_store,
-            model_cache=self._cache,
-            project_root=self._paths.get_project_root(),
-        )
         import asyncio
 
         on_progress = make_pipeline_progress_callback(ctx)
 
-        def on_log(lvl, msg):
-            from backend.core.contracts import LogEvent
-            ctx.on_log(LogEvent(level=lvl, message=msg))
-
         result = await asyncio.to_thread(
-            pipeline.run, request, ctx, on_progress=on_progress, on_log=on_log,
+            dispatch_image_upscale,
+            **self._dispatch_kwargs(runtime, ctx),
+            request=request,
+            exec_ctx=ctx,
+            on_progress=on_progress,
+            on_log=ctx.on_log,
         )
         if result is None:
             return EngineResult(primary_asset_id="", metadata={"status": "cancelled"})

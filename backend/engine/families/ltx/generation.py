@@ -49,3 +49,23 @@ def create_ltx23_generator(
     if not bundle_root.is_dir():
         raise RuntimeError(f"LTX 2.3 bundle directory not found: {bundle_root}")
     return LTX23MlxGenerator(ctx, bundle_root, config=config)
+
+
+def validate_video_generation_params(
+    *,
+    entry: Any,
+    config: Any,
+    step_distill: bool,
+) -> None:
+    """LTX: distilled registry rows must declare ``parameters.step_distill=true``."""
+    marker = str(getattr(config, "distilled_model_id_marker", "") or "")
+    if not bool(getattr(config, "require_registry_step_distill_when_distilled", False)):
+        return
+    if not marker:
+        return
+    model_id = str(getattr(entry, "id", "") or "")
+    if marker.lower() in model_id.lower() and not step_distill:
+        raise RuntimeError(
+            f"Model {entry.id!r} requires registry parameters.step_distill=true for LTX "
+            "distilled sigma scheduling; run `make sync-models-registry` to refresh workspace config."
+        )

@@ -12,10 +12,10 @@ import mlx.core as mx
 import mlx.nn as mx_nn
 import numpy as np
 
-from backend.engine.common._base import TransformerBase, collect_params_legacy_tree
-from backend.engine.common.attention import scaled_dot_product_attention_bhsd_mx
-from backend.engine.common.embeddings import PatchEmbed2D, sinusoidal_timestep_proj
-from backend.engine.common.norm import (
+from backend.engine.common.model.base import TransformerBase, collect_params_legacy_tree
+from backend.engine.common.ops.attention import scaled_dot_product_attention_bhsd_mx
+from backend.engine.common.ops.embeddings import PatchEmbed2D, sinusoidal_timestep_proj
+from backend.engine.common.ops.norm import (
     apply_ada_layer_norm_zero,
     apply_ada_layer_norm_zero_single,
     apply_rms_norm,
@@ -408,7 +408,7 @@ def _flatten_mlx_sequential_in_param_map(param_map: dict) -> None:
     param_map.update(to_add)
 
 
-class Flux1Transformer(TransformerBase):
+class Flux1DiTMLX(TransformerBase):
     """Flux.1 — Joint MM-DiT 后再 Single 流；与 diffusers 块序一致。"""
 
     def __init__(self, config: Flux1Config, ctx: RuntimeContext):
@@ -454,7 +454,7 @@ class Flux1Transformer(TransformerBase):
         self._build_param_map()
 
     def sanitize(self, weights: dict[str, Any]) -> dict[str, Any]:
-        """Normalize checkpoint keys for ``Flux1Transformer``.
+        """Normalize checkpoint keys for ``Flux1DiTMLX``.
 
         Supports diffusers sharded bundles and legacy BFL-style keys.
         """
@@ -495,6 +495,14 @@ class Flux1Transformer(TransformerBase):
                     tensor = tensor.reshape(out_ch, 1, 1, in_ch)
             remapped[new_key] = tensor
         return remapped
+
+    def pack_latents(self, ctx: Any, latents: Any) -> Any:
+        """``[B, 16, H, W]`` → ``[B, (H//2)*(W//2), 64]``."""
+        return _pack_flux1_latents(ctx, latents)
+
+    def unpack_latents(self, ctx: Any, tokens: Any, h: int, w: int) -> Any:
+        """``[B, (H//2)*(W//2), 64]`` → ``[B, 16, H, W]``."""
+        return _unpack_flux1_latents(ctx, tokens, h, w)
 
     def activate_structural_patch_embed(self, weight: Any, bias: Any) -> None:
         """Swap ``x_embedder`` to 128-dim packed input (noise + structural VAE tokens)."""
@@ -543,7 +551,7 @@ class Flux1Transformer(TransformerBase):
         cfg = self.config
         if latents.ndim != 4:
             raise RuntimeError(
-                f"Flux1Transformer expects NCHW latents [B,C,H,W], got shape={tuple(latents.shape)}"
+                f"Flux1DiTMLX expects NCHW latents [B,C,H,W], got shape={tuple(latents.shape)}"
             )
         B = latents.shape[0]
         _, _, H, W = latents.shape

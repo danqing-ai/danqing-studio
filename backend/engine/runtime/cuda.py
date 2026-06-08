@@ -78,7 +78,7 @@ class CudaContext(RuntimeContext):
 
     def GroupNorm(self, num_groups: int, num_channels: int, eps: float = 1e-5,
                   pytorch_compatible: bool = False, **_kwargs: Any) -> Any:
-        del pytorch_compatible  # NCHW path (CUDA VAE) / MLX NHWC handled in ``common.vae.decoder`` per backend.
+        del pytorch_compatible  # NCHW path (CUDA VAE) / MLX NHWC handled in ``common.codecs.vae.decoder`` per backend.
         return self._on_device(nn.GroupNorm(num_groups, num_channels, eps=eps))
 
     def SiLU(self) -> Any:
@@ -155,6 +155,11 @@ class CudaContext(RuntimeContext):
         g = torch.Generator(device=self._device)
         g.manual_seed(seed)
         return torch.randn(shape, dtype=dtype or torch.float32, device=self._device, generator=g)
+
+    def seed_random(self, seed: int) -> None:
+        torch.manual_seed(int(seed))
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(int(seed))
 
     def conv2d(self, x: Any, weight: Any, stride: int = 1, padding: int = 0) -> Any:
         return torch.nn.functional.conv2d(x, weight, stride=stride, padding=padding)

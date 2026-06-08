@@ -19,17 +19,17 @@ from typing import Dict, List, Optional, Tuple
 import mlx.core as mx
 import mlx.nn as nn
 
-from backend.engine.common._base import TransformerBase
-from backend.engine.common.attention import (
+from backend.engine.common.model.base import TransformerBase
+from backend.engine.common.ops.attention import (
     build_window_with_padding_bias,
     repeat_kv_heads_mx,
     scaled_dot_product_attention_bhsd_mx,
     rotate_half,
 )
-from backend.engine.common.embeddings import sinusoidal_timestep_proj
-from backend.engine.common.norm import apply_scale_shift, unpack_modulation_6table
+from backend.engine.common.ops.embeddings import sinusoidal_timestep_proj
+from backend.engine.common.ops.norm import apply_scale_shift, unpack_modulation_6table
 from backend.engine.runtime.mlx import MLXContext
-from backend.engine.common.text_encoders.qwen3_mlx import MlxSwiGLUMLP, MlxTimestepEmbeddingMLP
+from backend.engine.common.codecs.text_encoders.qwen3_mlx import MlxSwiGLUMLP, MlxTimestepEmbeddingMLP
 
 logger = logging.getLogger(__name__)
 

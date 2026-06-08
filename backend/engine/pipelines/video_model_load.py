@@ -1,0 +1,143 @@
+"""Shared video DiT load path — VideoPipeline and v3 FamilyPlugin backbones."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+from backend.engine._transformer_registry import (
+    get_video_transformer_class,
+    prepare_video_transformer_weights,
+)
+from backend.engine.config.model_configs import get_config_class
+from backend.engine.contracts import (
+    inject_hunyuan_text_encoder_paths,
+    local_bundle_root,
+    merge_video_bundle_config,
+    registry_scalar_default,
+    resolve_version_block,
+)
+from backend.engine.cache import ModelCache
+from backend.engine.pipelines.video_bundle_layout import resolve_video_transformer_weight_sources
+
+
+def video_model_cache_key(entry: Any, version_key: str | None, num_frames: int) -> str:
+    return f"video:{entry.id}:{version_key or 'default'}:{num_frames}"
+
+
+def resolve_video_num_frames(request: Any, entry: Any) -> int:
+    if getattr(request, "num_frames", None) is not None:
+        return int(request.num_frames)
+    reg = registry_scalar_default(entry, "num_frames", None)
+    if reg is not None:
+        return int(reg)
+    return 81
+
+
+def uses_family_video_generator(config: Any) -> bool:
+    return str(getattr(config, "video_pipeline_shape", "dit_standard") or "dit_standard") == "family_generator"
+
+
+def latent_frame_count_for_video(config: Any, requested_pixel_frames: int) -> int:
+    tvs = getattr(config, "temporal_vae_scale", None)
+    if tvs is not None and int(tvs) > 0:
+        rf = max(int(requested_pixel_frames), 1)
+        return (rf - 1) // int(tvs) + 1
+    return int(requested_pixel_frames)
+
+
+def apply_video_registry_config_overrides(
+    entry: Any,
+    config: Any,
+    *,
+    project_root: Path,
+) -> None:
+    for param_key in (
+        "vae_scale",
+        "default_scheduler",
+        "text_encoder_device",
+        "vae_temporal_chunk_size",
+        "gemma_model_id",
+        "low_ram_streaming",
+        "ltx_stage2_steps",
+    ):
+        val = registry_scalar_default(entry, param_key, None)
+        if val is not None:
+            setattr(config, param_key, val)
+    sg = registry_scalar_default(entry, "supports_guidance", None)
+    if sg is not None:
+        config.supports_guidance = bool(sg)
+    sd = registry_scalar_default(entry, "step_distill", None)
+    if sd is not None:
+        config.step_distill = bool(sd)
+    vst = registry_scalar_default(entry, "vae_spatial_tiling", None)
+    if vst is not None:
+        config.vae_spatial_tiling = bool(vst)
+    if getattr(config, "inject_text_encoder_paths", False):
+        inject_hunyuan_text_encoder_paths(entry, config, project_root)
+
+
+def prepare_video_config(entry: Any, family: str, bundle_root: Path, *, project_root: Path) -> Any:
+    config = get_config_class(family)()
+    apply_video_registry_config_overrides(entry, config, project_root=project_root)
+    merge_video_bundle_config(config, bundle_root)
+    return config
+
+
+def load_video_transformer(
+    *,
+    ctx: Any,
+    family: str,
+    config: Any,
+    entry: Any,
+    version_key: str | None,
+    project_root: Path,
+    num_frames: int,
+    model_cache: ModelCache | None = None,
+) -> Any | None:
+    """Load video transformer weights from bundle (registry-driven)."""
+    cache_key = video_model_cache_key(entry, version_key, num_frames)
+    if model_cache is not None:
+        cached = model_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+    trans_cls = get_video_transformer_class(family)
+    model = trans_cls(config, ctx, num_frames=num_frames)
+
+    bundle_root = local_bundle_root(project_root, entry, version_key)
+    tensor_root, shard_paths = resolve_video_transformer_weight_sources(
+        bundle_root, family, entry.id
+    )
+    if tensor_root is None or not shard_paths:
+        return None
+
+    weights: dict[str, Any] = {}
+    for shard in shard_paths:
+        weights.update(ctx.load_weights(str(shard)))
+
+    weights = prepare_video_transformer_weights(family, config, weights)
+
+    from backend.engine.common.bundle.safetensors_affine_quant import read_bundle_affine_bits_if_quantized
+
+    bundle_affine_bits = read_bundle_affine_bits_if_quantized(weights, tensor_root)
+
+    model.load_weights(
+        list(weights.items()),
+        strict=False,
+        ctx=ctx,
+        bundle_affine_bits=bundle_affine_bits,
+    )
+    ctx.eval(*[p for _, p in model.parameters()])
+    if model_cache is not None:
+        from backend.engine.common.bundle.weights import parse_size_gb
+
+        ver = resolve_version_block(entry, version_key)
+        size_str = ""
+        if ver:
+            size_str = str(ver.get("size") or "")
+        if not size_str:
+            raw = getattr(entry, "raw", {}) or {}
+            size_str = str(raw.get("size") or "10GB")
+        model_cache.put(cache_key, model, parse_size_gb(size_str))
+    return model

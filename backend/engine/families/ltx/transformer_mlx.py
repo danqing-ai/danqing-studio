@@ -11,8 +11,9 @@ from typing import Any
 import mlx.core as mx
 import mlx.nn as nn
 
-from backend.engine.common._base import TransformerBase
-from backend.engine.common.attention import scaled_dot_product_attention_bhsd_mx
+from backend.engine.common.model.base import TransformerBase
+from backend.engine.common.ops.attention import scaled_dot_product_attention_bhsd_mx
+from backend.engine.common.ops.embeddings import sinusoidal_timestep_proj
 from backend.engine.config.model_configs import LTXConfig
 from backend.engine.runtime._base import RuntimeContext
 
@@ -106,29 +107,6 @@ def _apply_rope_split(x: mx.array, cos_freqs: mx.array, sin_freqs: mx.array) -> 
     half = x.shape[-1] // 2
     x1, x2 = x[..., :half], x[..., half:]
     return mx.concatenate([x1 * cos_f - x2 * sin_f, x1 * sin_f + x2 * cos_f], axis=-1)
-
-
-def _get_timestep_embedding(
-    timesteps: mx.array,
-    embedding_dim: int,
-    flip_sin_to_cos: bool = True,
-    downscale_freq_shift: float = 0.0,
-    scale: float = 1.0,
-    max_period: float = 10000.0,
-) -> mx.array:
-    half = embedding_dim // 2
-    exponent = -math.log(max_period) * mx.arange(0, half).astype(mx.float32)
-    exponent = exponent / (half - downscale_freq_shift)
-    freqs = mx.exp(exponent)
-    args = timesteps[:, None].astype(mx.float32) * freqs[None, :]
-    args = scale * args
-    if flip_sin_to_cos:
-        embedding = mx.concatenate([mx.cos(args), mx.sin(args)], axis=-1)
-    else:
-        embedding = mx.concatenate([mx.sin(args), mx.cos(args)], axis=-1)
-    if embedding_dim % 2:
-        embedding = mx.pad(embedding, [(0, 0), (0, 1)])
-    return embedding
 
 
 # ---------------------------------------------------------------------------
@@ -487,12 +465,12 @@ class LTX23Model(nn.Module):
         self._audio_positional_max_pos = (20,)
 
     def _embed_timestep_scalar(self, timestep: mx.array) -> mx.array:
-        return _get_timestep_embedding(timestep * self._timestep_scale, 256)
+        return sinusoidal_timestep_proj(self.ctx, timestep * self._timestep_scale, 256, sin_first=True, flip_sin_to_cos=True)
 
     def _embed_timestep_per_token(self, per_token_timesteps: mx.array) -> mx.array:
         b, n = per_token_timesteps.shape
         flat = (per_token_timesteps * self._timestep_scale).reshape(-1)
-        emb = _get_timestep_embedding(flat, 256)
+        emb = sinusoidal_timestep_proj(self.ctx, flat, 256, sin_first=True, flip_sin_to_cos=True)
         return emb.reshape(b, n, -1)
 
     def _adaln_per_token(
@@ -570,9 +548,12 @@ class LTX23Model(nn.Module):
         t_emb = self._embed_timestep_scalar(timestep)
 
         av_ca_factor = self._av_ca_timestep_scale / self._timestep_scale
-        t_emb_av_gate = _get_timestep_embedding(
+        t_emb_av_gate = sinusoidal_timestep_proj(
+            self.ctx,
             timestep * self._timestep_scale * av_ca_factor,
             256,
+            sin_first=True,
+            flip_sin_to_cos=True,
         )
 
         if video_timesteps is not None:
@@ -778,10 +759,35 @@ class LTX23Transformer(TransformerBase):
 
         self._param_map = pm
 
+    def sanitize(self, weights: dict[str, Any]) -> dict[str, Any]:
+        """Transform checkpoint keys to match ``LTX23Transformer._param_map``.
+
+        Routes LTX 2.3 (48-layer A/V) and legacy 28-layer diffusers checkpoints
+        through the appropriate key normalization.
+        """
+        from backend.engine.families.ltx.weights import remap_ltx_weights
+
+        return remap_ltx_weights(weights)
+
     def parameters(self):
         if not self._param_map:
             self._build_param_map()
         return dict(self._param_map)
+
+    def before_denoise(self, latents: Any, timesteps: Any, sigmas: Any, **cond: Any):
+        """Inject LTX RoPE interpolation scale when ``_pipeline_fps`` is present."""
+        fps = cond.pop("_pipeline_fps", None)
+        if fps is not None:
+            from backend.engine.families.ltx.pipeline_math import ltx_rope_interpolation_scale
+
+            temporal = int(getattr(self.config, "temporal_vae_scale", 8) or 8)
+            vae_sf = int(getattr(self.config, "vae_scale", 32) or 32)
+            cond["ltx_rope_interpolation_scale"] = ltx_rope_interpolation_scale(
+                temporal_vae_scale=temporal,
+                vae_scale=vae_sf,
+                fps=float(fps),
+            )
+        return latents, cond
 
     def forward(
         self,
@@ -877,7 +883,7 @@ def load_ltx23_x0_model(
     """Load LTX 2.3 DiT from bundle safetensors and return an ``LTX23X0Model``."""
     from pathlib import Path as _Path
 
-    from backend.engine.common.mlx_runtime_fallback import load_weights_dict
+    from backend.engine.runtime.mlx_runtime import load_weights_dict
     from backend.engine.families.ltx.weights import remap_ltx23_weights
 
     path = _resolve_bundle_safetensors(_Path(bundle_root), weight_stem)

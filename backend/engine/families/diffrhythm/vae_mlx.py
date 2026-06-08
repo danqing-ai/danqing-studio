@@ -17,7 +17,7 @@ import mlx.core as mx
 import mlx.nn as nn
 import numpy as np
 
-from backend.engine.common.mlx_runtime_fallback import run_eval
+from backend.engine.runtime.mlx_runtime import run_eval
 
 logger = logging.getLogger(__name__)
 
@@ -341,7 +341,7 @@ def load_decoder_weights(
     array_fn: Callable[[Any], mx.array],
 ) -> None:
     """Load ``decoder.bin`` (``torch.save`` dict with key ``generator``) into *decoder*."""
-    from backend.engine.common.pytorch_bin_numpy import load_pytorch_bin
+    from backend.engine.common.bundle.pytorch_bin_numpy import load_pytorch_bin
 
     path = Path(ckpt_path)
     if not path.is_file():

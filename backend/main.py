@@ -166,6 +166,10 @@ def _setup_dependencies():
     apply_memory_settings(app_settings, runtimes, shared_cache)
 
     # v4 丹青引擎
+    from backend.engine.registry import bootstrap_family_plugins
+
+    bootstrap_family_plugins()
+
     danqing_image = DanQingImageEngine(
         path_resolver, model_registry, runtimes, model_cache=shared_cache,
     )

@@ -20,7 +20,7 @@ def _load_vae_model(bundle_root: str) -> Wan2_2_VAE:
     cached = _vae_cache.get(key)
     if cached is not None:
         return cached
-    from backend.engine.common.bundle_weights.loader_mlx import WeightLoader
+    from backend.engine.common.bundle.bundle_weights.loader_mlx import WeightLoader
 
     bundle = Path(bundle_root).parent
     loaded = WeightLoader.load(_FiboVaeWeightDefinition, model_path=str(bundle))
@@ -85,8 +85,22 @@ def decode_latents_nchw(ctx: Any, latents: mx.array, bundle_root: Path | str) ->
     return out
 
 
+def attach_edit_conditioning_extra(
+    extra_cond: dict[str, Any],
+    encoded: Any,
+    *,
+    height: int,
+    width: int,
+) -> dict[str, Any]:
+    out = dict(extra_cond)
+    out["conditioning_latents"] = encoded
+    out["conditioning_image_ids"] = create_conditioning_image_ids(height, width)
+    return out
+
+
 __all__ = [
     "FiboVaeWeightMapping",
+    "attach_edit_conditioning_extra",
     "create_conditioning_image_ids",
     "decode_latents_nchw",
     "encode_image_n11",

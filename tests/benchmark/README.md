@@ -25,6 +25,8 @@ make bench-eval-smoke
 make bench-eval-smoke          # P1 create + E2 edit（CI 友好）
 make bench-eval                # full prompt matrix
 make bench-eval-case ID=flux2-klein-9b:P1:create
+make bench-eval-case ID=z-image-turbo:P1:create
+make bench-eval-case ID=flux2-klein-9b:E2:rewrite
 make bench-eval-calibrate      # 写入 golden PickScore 基线
 python -m tests.benchmark download-judge --force
 ```

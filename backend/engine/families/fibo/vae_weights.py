@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import List
 
-from backend.engine.common.bundle_weight_mapping import WeightTarget, WeightTransforms
+from backend.engine.common.bundle.weight_mapping import WeightTarget, WeightTransforms
 
 class FiboVaeWeightMapping:
     @staticmethod
@@ -303,7 +303,7 @@ class FiboVaeWeightMapping:
 class _FiboVaeWeightDefinition:
     @staticmethod
     def get_components():
-        from backend.engine.common.bundle_weights.definitions import ComponentDefinition
+        from backend.engine.common.bundle.bundle_weights.definitions import ComponentDefinition
 
         return [
             ComponentDefinition(

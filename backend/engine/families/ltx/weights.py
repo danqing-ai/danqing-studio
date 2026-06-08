@@ -68,6 +68,47 @@ def restore_diffusers_names_from_mlx_forge_ltx(weights: dict[str, Any]) -> dict[
     return out
 
 
+def looks_like_mlx_forge_ltx_transformer_keys(weights: dict[str, Any]) -> bool:
+    """Detect mlx-forge ``sanitize_transformer_key`` naming (needs restore before ``remap_ltx_weights``)."""
+    for k in weights:
+        if ".ff.proj_in." in k or ".ff.proj_out." in k:
+            return True
+        if ".audio_ff.proj_in." in k or ".audio_ff.proj_out." in k:
+            return True
+    return False
+
+
+def max_remapped_ltx_block_index(remapped: dict[str, Any]) -> int:
+    """Largest ``N`` in ``blocks.N.*`` keys, or ``-1`` if none."""
+    mx = -1
+    for k in remapped:
+        m = re.match(r"^blocks\.(\d+)\.", k)
+        if m:
+            mx = max(mx, int(m.group(1)))
+    return mx
+
+
+def prepare_ltx_video_transformer_weights(config: Any, weights: dict[str, Any]) -> dict[str, Any]:
+    """Pre-load LTX DiT weight normalize + depth guard (registry-driven from ``VideoPipeline``)."""
+    w = weights
+    if bool(getattr(config, "uses_mlx_forge_weight_restore", False)) and looks_like_mlx_forge_ltx_transformer_keys(w):
+        w = restore_diffusers_names_from_mlx_forge_ltx(w)
+    if bool(getattr(config, "validate_ltx_block_depth", False)):
+        mx_blk = max_remapped_ltx_block_index(w)
+        if mx_blk >= 0:
+            n_blocks = mx_blk + 1
+            depth = int(getattr(config, "depth", 0))
+            if n_blocks != depth:
+                raise RuntimeError(
+                    f"LTX weights map to {n_blocks} transformer blocks after remap, "
+                    f"but LTXConfig.depth={depth} (diffusers LTXVideoTransformer3DModel). "
+                    f"Public MLX-forge / dgrauet LTX-2.3 bundles use 48 layers and are not supported "
+                    f"by this transformer implementation; use ``:original`` or a 28-block "
+                    f"diffusers-compatible checkpoint, or extend the LTX family implementation."
+                )
+    return w
+
+
 # ---------------------------------------------------------------------------
 # Legacy diffusers LTXVideoTransformer3DModel (28 layers)
 # ---------------------------------------------------------------------------

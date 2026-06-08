@@ -51,6 +51,7 @@
                 {{ task.params?.model || $tt('queue.unspecifiedModel') }}
               </div>
               <div class="dq-queue-prompt-line">{{ queueTaskLabel(task) }}</div>
+              <TaskIdBadge :task-id="task.id" compact />
             </div>
             <DqIconButton
               type="danger"
@@ -124,6 +125,7 @@
                   {{ task.params?.model || $tt('queue.unspecifiedModel') }}
                 </div>
                 <div class="dq-queue-prompt-line">{{ queueTaskLabel(task) }}</div>
+                <TaskIdBadge :task-id="task.id" compact />
                 <div
                   v-if="task.estimated_wait_seconds != null"
                   class="dq-task-queue-wait"
@@ -182,6 +184,7 @@ import { toast } from '@/utils/feedback';
 import TopNav from '@/components/shell/TopNav.vue';
 import WorkspaceSetupDialog from '@/components/workspace/WorkspaceSetupDialog.vue';
 import GenTaskLogDialog from '@/components/studio/GenTaskLogDialog.vue';
+import TaskIdBadge from '@/components/studio/TaskIdBadge.vue';
 import { useTasksStore } from '@/stores/tasks';
 import { api } from '@/utils/api';
 import { $tt, applyTheme, PRODUCTIVITY_THEME_IDS, type ThemeId } from '@/utils/i18n';

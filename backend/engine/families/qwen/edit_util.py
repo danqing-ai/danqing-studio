@@ -1,10 +1,38 @@
-"""Qwen-Image-Edit 尺寸与 VAE 条件 latent（对齐 ``QwenEditUtil`` / ``_compute_dimensions``）。"""
+"""Qwen-Image-Edit — VL encode, VAE conditioning, denoise, persist."""
+
 from __future__ import annotations
 
 import math
-from typing import Any
+import random
+from contextlib import AbstractContextManager, nullcontext
+from dataclasses import dataclass
+from typing import Any, Callable
 
 from PIL import Image
+
+from backend.core.contracts import ExecutionContext, ImageEditRequest
+from backend.engine.config.model_configs import assert_image_family_contract
+from backend.engine.contracts import FamilyRuntimeContract
+from backend.engine.pipelines.image_run_common import ResolvedImageModel
+from backend.engine.sessions._context import MediaRunContext
+from backend.engine.inference.image_denoise import run_image_denoise
+from backend.engine.pipelines.image_run_common import (
+    apply_image_lora_adapters,
+    finalize_image_from_latents,
+    image_vae_encode_tensor,
+    load_image_dit_model,
+    resolve_image_preview,
+    resolve_image_steps_guidance,
+    schedule_image_run,
+    warm_image_step_preview_decoders,
+)
+from backend.engine.pipelines.pipeline_progress import (
+    emit_phase,
+    pipeline_graph_step,
+    validate_bundle_graph_step,
+)
+
+PhaseCmFactory = Callable[[str], AbstractContextManager[Any]]
 
 
 def compute_qwen_edit_dimensions(
@@ -104,3 +132,327 @@ def create_qwen_edit_conditioning_latents(
             f"packed={tuple(packed.shape)}",
         )
     return packed, (1, cond_h, cond_w)
+
+
+@dataclass
+class QwenImageEditRunContext(MediaRunContext):
+    """Qwen VL edit — encode through persist (VAE finalize, not rewrite decode)."""
+
+    pipeline: Any
+    request: ImageEditRequest
+    exec_ctx: ExecutionContext
+    entry: Any
+    config: Any
+    runtime_contract: FamilyRuntimeContract
+    family: str
+    model_key: str
+    version_key: str | None
+    bundle_root: Any
+    model: Any
+    extra_cond: dict[str, Any]
+    txt_embeds: Any
+    neg_embeds: Any
+    txt_attn_mask: Any
+    neg_attn_mask: Any
+    pooled_embeds: Any
+    neg_pooled_embeds: Any
+    encoder_type: str
+    scheduler: Any
+    timesteps: list[Any]
+    sigmas: Any
+    sched_ts: Any
+    timestep_embed_schedule: list[float] | None
+    semantics: Any
+    latents: Any
+    w: int
+    h: int
+    seed: int
+    steps: int
+    guidance: float
+    preview_mode: str
+    preview_interval: int
+    preview_max_edge: int
+    preview_state: dict[str, Any]
+    on_progress: Callable | None = None
+    on_log: Callable | None = None
+
+    def session_infer(self, **_ignored: Any) -> Any | None:
+        return execute_qwen_image_edit_denoise(self)
+
+
+def build_qwen_image_edit_context(
+    pipeline: Any,
+    request: ImageEditRequest,
+    ctx_exec: ExecutionContext,
+    *,
+    image: ResolvedImageModel,
+    on_progress: Callable | None = None,
+    on_log: Callable | None = None,
+    phase_cm: PhaseCmFactory | None = None,
+) -> QwenImageEditRunContext | None:
+    phase_cm = phase_cm or (lambda _name: nullcontext())
+    model_key = image.model_key
+    version_key = image.version_key
+    entry = image.entry
+    config = image.config
+    family = image.family
+    runtime_contract = image.runtime_contract
+    vae_scale = int(getattr(config, "vae_scale", 16))
+
+    if ctx_exec.cancel_token.is_cancelled():
+        return None
+
+    bundle_root = image.bundle_root
+    validate_bundle_graph_step(
+        bundle_root, family=family, model_id=model_key, on_log=on_log
+    )
+
+    steps, guidance, _meta_ed = resolve_image_steps_guidance(
+        entry, request, runtime_contract, steps_default=20, guidance_default=4.0
+    )
+    seed = request.seed if request.seed is not None else random.randint(0, 2 ** 32 - 1)
+    preview_mode, preview_interval, preview_max_edge = resolve_image_preview(entry)
+    preview_state: dict[str, Any] = {}
+
+    with phase_cm("encode"):
+        src_path = ctx_exec.asset_store.get_file_path(request.source_asset_id)
+        pil = Image.open(src_path).convert("RGB")
+        w, h, vl_w, vl_h, vae_w, vae_h = compute_qwen_edit_dimensions(pil)
+
+        emit_phase(on_progress, phase="encoding", progress=0.02, n_steps=steps)
+        pipeline_graph_step("encode_prompt", on_log)
+        neg_prompt = (request.negative_prompt or "").strip()
+        if getattr(pipeline.ctx, "backend", None) == "cuda":
+            from backend.engine.families.qwen.text_encoder_cuda import encode_qwen_edit_prompts_cuda
+
+            device = getattr(pipeline.ctx, "_device", "cuda")
+            txt_embeds, txt_attn_mask, neg_embeds, neg_attn_mask = encode_qwen_edit_prompts_cuda(
+                bundle_root=bundle_root,
+                device=device,
+                prompt=request.prompt,
+                negative_prompt=neg_prompt,
+                source=pil,
+            )
+            pooled_embeds = neg_pooled_embeds = None
+        else:
+            from backend.engine.families.qwen.edit_encoder_mlx import (
+                build_qwen_edit_vl_tokenizer,
+                encode_qwen_edit_prompts_mlx,
+                load_qwen_edit_vl_encoder,
+            )
+
+            tok_root = bundle_root / "tokenizer"
+            if not tok_root.is_dir():
+                tok_root = bundle_root / "text_encoder"
+            vl_encoder = load_qwen_edit_vl_encoder(bundle_root, pipeline.ctx)
+            vl_tokenizer = build_qwen_edit_vl_tokenizer(tok_root)
+            txt_embeds, txt_attn_mask, neg_embeds, neg_attn_mask = encode_qwen_edit_prompts_mlx(
+                vl_encoder=vl_encoder,
+                vl_tokenizer=vl_tokenizer,
+                ctx=pipeline.ctx,
+                prompt=request.prompt,
+                negative_prompt=neg_prompt,
+                source=pil,
+                vl_width=vl_w,
+                vl_height=vl_h,
+            )
+            pooled_embeds = neg_pooled_embeds = None
+        encoder_type = getattr(config, "encoder_type", "qwen_image")
+
+        if ctx_exec.cancel_token.is_cancelled():
+            return None
+
+        emit_phase(on_progress, phase="loading_model", progress=0.08, n_steps=steps)
+        pipeline_graph_step("load_transformer", on_log)
+        allow_cache = not (getattr(request, "adapters", None) or [])
+        model = load_image_dit_model(
+            pipeline,
+            family, config, entry, version_key or None, allow_cache=allow_cache
+        )
+        if model is None:
+            raise RuntimeError(f"Failed to load model: {model_key}")
+        model.after_load_weights(bundle_root=str(bundle_root) if bundle_root else None)
+        apply_image_lora_adapters(pipeline, family, model, request, on_log)
+        extra_cond = model.prepare_conditioning(
+            request, bundle_root=str(bundle_root) if bundle_root else None
+        )
+
+        def _vae_enc(img_n11: Any, *, height_px: int, width_px: int) -> Any:
+            return image_vae_encode_tensor(
+                pipeline,
+                img_n11,
+                entry,
+                version_key or None,
+                height_px=height_px,
+                width_px=width_px,
+                on_log=on_log,
+            )
+
+        cond_latents, cond_grid = create_qwen_edit_conditioning_latents(
+            pipeline.ctx,
+            vae_encode_fn=lambda img, height_px, width_px: _vae_enc(
+                img, height_px=height_px, width_px=width_px
+            ),
+            source=pil,
+            vae_width=vae_w,
+            vae_height=vae_h,
+            on_log=on_log,
+        )
+        extra_cond = dict(extra_cond)
+        extra_cond["edit_conditioning_latents"] = cond_latents
+        extra_cond["edit_cond_image_grid"] = cond_grid
+
+    with phase_cm("schedule"):
+        scheduled = schedule_image_run(
+            pipeline,
+            entry=entry,
+            config=config,
+            request_scheduler=request.scheduler,
+            metadata=_meta_ed,
+            steps=steps,
+            width=w,
+            height=h,
+        )
+        semantics = scheduled.semantics
+        scheduler = scheduled.scheduler
+        timesteps = scheduled.timesteps
+        sigmas = scheduled.sigmas
+        sched_ts = scheduled.sched_ts
+        timestep_embed_schedule = scheduled.timestep_embed_schedule
+
+        _lnd = runtime_contract.denoise_latent_noise_dtype(pipeline.ctx)
+        _noise_sample_dtype = runtime_contract.noise_sample_dtype(pipeline.ctx, _lnd)
+        lh, lw = h // vae_scale, w // vae_scale
+        q_seq = lh * lw
+        packed_noise = pipeline.ctx.seeded_randn((1, q_seq, 64), seed, dtype=_noise_sample_dtype)
+        if _noise_sample_dtype != _lnd:
+            packed_noise = packed_noise.astype(_lnd)
+        latents = pipeline.ctx.reshape(packed_noise, (1, lh, lw, 64))
+        latents = pipeline.ctx.permute(latents, (0, 3, 1, 2))
+        if getattr(pipeline.ctx, "backend", None) == "mlx":
+            pipeline.ctx.eval(latents)
+
+        if on_log:
+            on_log(
+                "info",
+                f"qwen_image_edit model={model_key} out={w}x{h} vae_cond={vae_w}x{vae_h} "
+                f"vl={vl_w}x{vl_h} steps={steps} guidance={guidance} seed={seed}",
+            )
+
+        latents, extra_cond = model.before_denoise(
+            latents,
+            timesteps,
+            sigmas,
+            txt_embeds=txt_embeds,
+            neg_embeds=neg_embeds,
+            **extra_cond,
+        )
+
+        preview_state["on_log"] = on_log
+        if preview_mode == "stream":
+            warm_image_step_preview_decoders(
+                pipeline,
+                entry, version_key or None, preview_state, config=config, on_log=on_log
+            )
+
+    return QwenImageEditRunContext(
+        pipeline=pipeline,
+        request=request,
+        exec_ctx=ctx_exec,
+        entry=entry,
+        config=config,
+        runtime_contract=runtime_contract,
+        family=family,
+        model_key=model_key,
+        version_key=version_key,
+        bundle_root=bundle_root,
+        model=model,
+        extra_cond=extra_cond,
+        txt_embeds=txt_embeds,
+        neg_embeds=neg_embeds,
+        txt_attn_mask=txt_attn_mask,
+        neg_attn_mask=neg_attn_mask,
+        pooled_embeds=pooled_embeds,
+        neg_pooled_embeds=neg_pooled_embeds,
+        encoder_type=encoder_type,
+        scheduler=scheduler,
+        timesteps=timesteps,
+        sigmas=sigmas,
+        sched_ts=sched_ts,
+        timestep_embed_schedule=timestep_embed_schedule,
+        semantics=semantics,
+        latents=latents,
+        w=w,
+        h=h,
+        seed=seed,
+        steps=steps,
+        guidance=guidance,
+        preview_mode=preview_mode,
+        preview_interval=preview_interval,
+        preview_max_edge=preview_max_edge,
+        preview_state=preview_state,
+        on_progress=on_progress,
+        on_log=on_log,
+    )
+
+
+def execute_qwen_image_edit_denoise(ctx: QwenImageEditRunContext) -> Any | None:
+    pipeline_graph_step("denoise", ctx.on_log)
+    return run_image_denoise(
+        ctx.pipeline,
+        model=ctx.model,
+        scheduler=ctx.scheduler,
+        timesteps=ctx.timesteps,
+        latents=ctx.latents,
+        config=ctx.config,
+        runtime_contract=ctx.runtime_contract,
+        guidance=ctx.guidance,
+        txt_embeds=ctx.txt_embeds,
+        neg_embeds=ctx.neg_embeds,
+        pooled_embeds=ctx.pooled_embeds,
+        neg_pooled_embeds=ctx.neg_pooled_embeds,
+        txt_attn_mask=ctx.txt_attn_mask,
+        neg_attn_mask=ctx.neg_attn_mask,
+        encoder_type=ctx.encoder_type,
+        width=ctx.w,
+        height=ctx.h,
+        sched_ts=ctx.sched_ts,
+        sigmas=ctx.sigmas,
+        timestep_embed_schedule=ctx.timestep_embed_schedule,
+        extra_cond=ctx.extra_cond,
+        semantics=ctx.semantics,
+        ctx_exec=ctx.exec_ctx,
+        on_progress=ctx.on_progress,
+        on_log=ctx.on_log,
+        preview_mode=ctx.preview_mode,
+        preview_interval=ctx.preview_interval,
+        preview_max_edge=ctx.preview_max_edge,
+        preview_state=ctx.preview_state,
+        entry=ctx.entry,
+        version_key=ctx.version_key,
+    )
+
+
+def persist_qwen_image_edit(ctx: QwenImageEditRunContext, latents: Any) -> tuple[str, dict[str, Any]] | None:
+    if ctx.exec_ctx.cancel_token.is_cancelled():
+        return None
+    return finalize_image_from_latents(
+        ctx.pipeline,
+        latents=latents,
+        timesteps=ctx.timesteps,
+        entry=ctx.entry,
+        version_key=ctx.version_key,
+        model_key=ctx.model_key,
+        seed=ctx.seed,
+        request=ctx.request,
+        ctx_exec=ctx.exec_ctx,
+        steps=ctx.steps,
+        guidance=ctx.guidance,
+        w=ctx.w,
+        h=ctx.h,
+        on_progress=ctx.on_progress,
+        on_log=ctx.on_log,
+        name_infix="_edit",
+        extra_meta={"operation": ctx.request.operation, "edit_model": "qwen-image-edit"},
+    )
+

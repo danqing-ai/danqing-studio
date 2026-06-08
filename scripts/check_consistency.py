@@ -58,7 +58,10 @@ def main():
 
     failures.extend(validate_registry_document(data))
 
-    models = data.get("models", {})
+    from backend.catalog.loader import expand_catalog_document
+
+    expanded = expand_catalog_document(data)
+    models = expanded.get("models", {})
     for m in models.values():
         engine = m.get("engine", "")
         actions_raw = m.get("actions", {})
@@ -82,6 +85,8 @@ def main():
             failures.append(f"Invalid actions for {m.get('id', '?')}: {invalid}")
 
     for model_id, m in models.items():
+        if not isinstance(m, dict):
+            continue
         if m.get("recommended") is True and m.get("commercial_use_allowed") is not True:
             failures.append(
                 f"Model '{model_id}': recommended=true requires commercial_use_allowed=true"
@@ -151,8 +156,10 @@ def main():
     sys.path.insert(0, str(ROOT))
     from backend.core.task_kinds import ALL_KINDS, task_kind_for_registry_action
 
-    registry = _load_json(MODELS_REGISTRY_JSON)
+    registry = expand_catalog_document(_load_json(MODELS_REGISTRY_JSON))
     for model_id, model in registry.get("models", {}).items():
+        if not isinstance(model, dict):
+            continue
         actions = model.get("actions", {})
         if not isinstance(actions, dict):
             continue

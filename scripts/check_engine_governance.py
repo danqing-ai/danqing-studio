@@ -12,6 +12,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 ENGINE = ROOT / "backend" / "engine"
 FAMILIES = ENGINE / "families"
+COMMON = ENGINE / "common"
+COMMON_SUBPACKAGES = frozenset({"ops", "model", "bundle", "codecs"})
+FORBIDDEN_COMMON_SUBDIRS = frozenset({
+    "platform",
+    "features",
+    "vae",
+    "text_encoders",
+    "bundle_weights",
+    "weights",
+})
 ALLOWLIST = ROOT / "scripts" / "engine_governance_allowlist.txt"
 REGISTRY = ROOT / "default_config" / "models_registry.json"
 
@@ -28,6 +38,10 @@ FORBIDDEN_ENGINE_CODEC_DIRS = (
     "backend/engine/vae_codecs",
     "backend/engine/video_codecs",
 )
+FORBIDDEN_COMMON_CODEC_PATHS = (
+    "backend/engine/common/codecs/vae/qwen_image",
+)
+PIPELINE_FAMILY_BRANCH_RE = re.compile(r'\bfamily\s*(!=|==)\s*["\']')
 
 PRIMITIVE_PATTERNS = (
     re.compile(r"^\s*class\s+SelfAttention\s*[\(:]", re.M),
@@ -62,6 +76,8 @@ HUNYUAN_REQUIRED_IDS = (
 )
 HUNYUAN_REPO_ID = "Tencent-Hunyuan/HunyuanVideo-1.5"
 MAX_FAMILY_UNITS = 8
+DOCS = ROOT / "docs"
+ALLOWED_ENGINE_DOCS = frozenset({"engine_architecture.md"})
 
 ALL_RULES = (
     "imports",
@@ -72,6 +88,8 @@ ALL_RULES = (
     "rope",
     "modulation",
     "registry",
+    "docs",
+    "pipeline-family",
 )
 RULE_CHOICES = ALL_RULES + ("parity",)
 
@@ -227,6 +245,53 @@ def check_layout(allow: dict[str, list[str]]) -> list[str]:
                 f"{rel}/: forbidden engine codec wrapper directory "
                 "(register handlers in vae_codec_registry.py / video_codec_registry.py)"
             )
+    if COMMON.is_dir():
+        for path in sorted(COMMON.iterdir()):
+            name = path.name
+            if name.startswith("_") or name == "__pycache__":
+                continue
+            rel = str(path.relative_to(ROOT)).replace("\\", "/")
+            if path.is_file() and path.suffix == ".py" and name != "__init__.py":
+                violations.append(
+                    f"{rel}: forbidden module at common/ root "
+                    "(use common/{{ops,model,bundle,codecs}}/ or engine/{{cache,lineage,contracts,codecs}}.py facade)"
+                )
+            elif path.is_dir() and name not in COMMON_SUBPACKAGES:
+                if name in FORBIDDEN_COMMON_SUBDIRS:
+                    violations.append(
+                        f"{rel}/: stale or forbidden common/ subtree '{name}' "
+                        f"(use common/{{ops,model,bundle,codecs}}/ or families/<id>/; see docs/engine_architecture.md §3)"
+                    )
+                else:
+                    violations.append(
+                        f"{rel}/: unexpected directory under common/ "
+                        f"(allowed: {', '.join(sorted(COMMON_SUBPACKAGES))})"
+                    )
+    for rel in FORBIDDEN_COMMON_CODEC_PATHS:
+        if (ROOT / rel).exists():
+            violations.append(
+                f"{rel}: Qwen VAE belongs in families/qwen/vae/ (stale codec subtree)"
+            )
+    return violations
+
+
+def check_pipeline_family(_allow: dict[str, list[str]]) -> list[str]:
+    violations: list[str] = []
+    pipelines = ROOT / "backend" / "engine" / "pipelines"
+    if not pipelines.is_dir():
+        return violations
+    for path in sorted(pipelines.rglob("*.py")):
+        rel = str(path.relative_to(ROOT)).replace("\\", "/")
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for i, line in enumerate(text.splitlines(), 1):
+            s = line.strip()
+            if s.startswith("#") or not s:
+                continue
+            if PIPELINE_FAMILY_BRANCH_RE.search(s):
+                violations.append(f"{rel}:{i}: {s[:120]}")
     return violations
 
 
@@ -266,8 +331,11 @@ def check_modulation() -> list[str]:
 
 
 def check_registry() -> list[str]:
+    from backend.catalog.loader import expand_catalog_document
+
     with REGISTRY.open(encoding="utf-8") as f:
-        models = json.load(f).get("models") or {}
+        raw = json.load(f)
+    models = expand_catalog_document(raw).get("models") or {}
     failures: list[str] = []
 
     for mid in HUNYUAN_REQUIRED_IDS:
@@ -349,7 +417,10 @@ def _family_dirs() -> list[Path]:
 
 
 def _family_logical_units(family_dir: Path) -> int:
+    """Count logical units: top-level stems + one unit per subpackage directory."""
     stems: set[str] = set()
+    skip_subdirs = frozenset({"data", "__pycache__"})
+
     for path in family_dir.glob("*.py"):
         if path.name == "__init__.py":
             continue
@@ -359,6 +430,13 @@ def _family_logical_units(family_dir: Path) -> int:
         elif stem.endswith("_cuda"):
             stem = stem[:-5]
         stems.add(stem)
+
+    for sub in family_dir.iterdir():
+        if not sub.is_dir() or sub.name.startswith("_") or sub.name in skip_subdirs:
+            continue
+        if any(sub.glob("*.py")):
+            stems.add(sub.name)
+
     return len(stems)
 
 
@@ -378,6 +456,7 @@ def _report_family(mode: str) -> list[str]:
             lines.append(f"{family_dir.name}: {units} logical units [{status}]")
             continue
         common_imports = 0
+        inference_refs = 0
         total = 0
         for path in family_dir.rglob("*.py"):
             try:
@@ -385,14 +464,19 @@ def _report_family(mode: str) -> list[str]:
             except OSError:
                 continue
             total += len(text.splitlines())
-            common_imports += sum(
-                1
-                for line in text.splitlines()
-                if "backend.engine.common" in line
-                and line.strip().startswith(("import ", "from "))
-            )
+            for line in text.splitlines():
+                stripped = line.strip()
+                if not stripped.startswith(("import ", "from ")):
+                    continue
+                if "backend.engine.common" in line:
+                    common_imports += 1
+                if "backend.engine.inference" in line:
+                    inference_refs += 1
         rate = common_imports / max(total, 1)
-        lines.append(f"{family_dir.name}: common imports/lines={common_imports}/{total} ({rate:.1%})")
+        lines.append(
+            f"{family_dir.name}: common={common_imports}/{total} ({rate:.1%}), "
+            f"inference_refs={inference_refs}"
+        )
     return lines
 
 
@@ -418,6 +502,26 @@ def check_parity() -> list[str]:
     return failures
 
 
+def check_docs(_allow: dict[str, list[str]]) -> list[str]:
+    violations: list[str] = []
+    if not DOCS.is_dir():
+        violations.append("docs/: missing engine architecture doc (expected docs/engine_architecture.md)")
+        return violations
+    for path in sorted(DOCS.iterdir()):
+        if path.name.startswith("."):
+            continue
+        rel = str(path.relative_to(ROOT)).replace("\\", "/")
+        if path.is_dir():
+            violations.append(f"{rel}/: no subdirectories under docs/ (single architecture doc only)")
+        elif path.suffix == ".md" and path.name not in ALLOWED_ENGINE_DOCS:
+            violations.append(
+                f"{rel}: forbidden docs/ file (only docs/engine_architecture.md allowed; merge into it)"
+            )
+    if not (DOCS / "engine_architecture.md").is_file():
+        violations.append("docs/engine_architecture.md: required single engine architecture document")
+    return violations
+
+
 RULE_RUNNERS: dict[str, Callable[[dict[str, list[str]]], list[str]]] = {
     "imports": check_imports,
     "layout": check_layout,
@@ -428,6 +532,8 @@ RULE_RUNNERS: dict[str, Callable[[dict[str, list[str]]], list[str]]] = {
     "modulation": lambda _a: check_modulation(),
     "registry": lambda _a: check_registry(),
     "parity": lambda _a: check_parity(),
+    "docs": lambda _a: check_docs({}),
+    "pipeline-family": lambda _a: check_pipeline_family({}),
 }
 
 RULE_HINTS: dict[str, str] = {
@@ -435,13 +541,15 @@ RULE_HINTS: dict[str, str] = {
     f"{ALLOWLIST} [imports]",
     "layout": f"Flatten family layout or shrink allowlist in {ALLOWLIST} [layout]",
     "primitives": f"Reuse common primitives or shrink allowlist in {ALLOWLIST} [primitives]",
-    "attention": "Use backend/engine/common/attention.py helpers or shrink allowlist "
+    "attention": "Use backend/engine/common/ops/attention.py helpers or shrink allowlist "
     f"in {ALLOWLIST} [attention]",
-    "sdpa": "Use backend/engine/common/attention.py helpers",
-    "rope": "Use backend/engine/common/embeddings.py helpers",
-    "modulation": "Use backend/engine/common/norm.py helpers",
+    "sdpa": "Use backend/engine/common/ops/attention.py helpers",
+    "rope": "Use backend/engine/common/ops/embeddings.py helpers",
+    "modulation": "Use backend/engine/common/ops/norm.py helpers",
     "registry": "Fix default_config/models_registry.json Hunyuan contracts",
     "parity": "Fix remap_* vs Transformer _param_map key mismatch (make check-engine-governance --rule parity)",
+    "docs": "Keep only docs/engine_architecture.md; merge or delete other docs/*.md files",
+    "pipeline-family": "Use registry/config dispatch instead of family == in pipelines (see docs/engine_architecture.md §5)",
 }
 
 

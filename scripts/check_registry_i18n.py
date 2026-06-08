@@ -96,10 +96,15 @@ def lint_registry(data: dict[str, Any]) -> list[str]:
 
 
 def main() -> int:
+    if str(ROOT) not in sys.path:
+        sys.path.insert(0, str(ROOT))
+
     path = REGISTRY_PATH
     if len(sys.argv) > 1:
         path = Path(sys.argv[1])
-    data = json.loads(path.read_text(encoding="utf-8"))
+    from backend.catalog.loader import expand_catalog_document
+
+    data = expand_catalog_document(json.loads(path.read_text(encoding="utf-8")))
     failures = lint_registry(data)
     if failures:
         print(f"Registry i18n check failed ({len(failures)} errors):")

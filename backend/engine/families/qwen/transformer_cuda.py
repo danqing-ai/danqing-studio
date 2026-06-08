@@ -6,7 +6,7 @@ from typing import Any
 
 import torch
 
-from backend.engine.common._base import TransformerBase
+from backend.engine.common.model.base import TransformerBase
 from backend.engine.config.model_configs import QwenImageConfig
 
 
@@ -29,7 +29,7 @@ def _scalar_float(value: Any) -> float:
     return float(np.asarray(value, dtype=np.float64).reshape(-1)[0])
 
 
-class QwenImageTransformerCuda(TransformerBase):
+class QwenImageDiTCuda(TransformerBase):
     """Pipeline 入口：NCHW latent ↔ diffusers Qwen DiT（权重自 bundle ``transformer/`` 加载）。"""
 
     def __init__(self, config: QwenImageConfig, ctx: Any):

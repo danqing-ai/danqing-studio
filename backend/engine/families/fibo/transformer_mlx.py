@@ -12,10 +12,15 @@ import mlx.core as mx
 import mlx.nn as mx_nn
 import numpy as np
 
-from backend.engine.common._base import TransformerBase, _collect_params
-from backend.engine.common.attention import scaled_dot_product_attention_bhsd_mx
-from backend.engine.common.cfg_batch import FIBO_CFG_TEXT_KEYS, predict_noise_cfg_batched
-from backend.engine.common.embeddings import sinusoidal_timestep_proj
+from backend.engine.common.model.base import TransformerBase, _collect_params
+from backend.engine.common.ops.attention import scaled_dot_product_attention_bhsd_mx
+from backend.engine.common.ops.cfg_batch import FIBO_CFG_TEXT_KEYS, predict_noise_cfg_batched
+from backend.engine.common.ops.embeddings import sinusoidal_timestep_proj
+from backend.engine.common.ops.norm import (
+    apply_ada_layer_norm_continuous,
+    apply_ada_layer_norm_zero,
+    apply_ada_layer_norm_zero_single,
+)
 from backend.engine.config.model_configs import FIBOConfig
 from backend.engine.runtime._base import RuntimeContext
 
@@ -87,36 +92,22 @@ class _BriaFiboTimestepProjEmbeddings:
 
 
 class _FiboAdaLayerNormZero:
-    """FiboAdaLayerNormZero — SiLU + Linear → 6 chunks."""
+    """FiboAdaLayerNormZero — delegates to ``common/norm.apply_ada_layer_norm_zero``."""
 
     def __init__(self, dim: int, ctx: RuntimeContext):
         self.ctx = ctx
         self.linear = mx_nn.Linear(dim, dim * 6, bias=True)
+        self.norm = mx_nn.LayerNorm(dim, eps=1e-6, affine=False)
 
     def forward(self, hidden_states: Any, text_embeddings: Any) -> tuple[Any, ...]:
-        emb = self.linear(mx_nn.silu(text_embeddings))
-        chunk = hidden_states.shape[-1]
-        shift_msa = emb[:, 0 * chunk : 1 * chunk]
-        scale_msa = emb[:, 1 * chunk : 2 * chunk]
-        gate_msa = emb[:, 2 * chunk : 3 * chunk]
-        shift_mlp = emb[:, 3 * chunk : 4 * chunk]
-        scale_mlp = emb[:, 4 * chunk : 5 * chunk]
-        gate_mlp = emb[:, 5 * chunk : 6 * chunk]
-        norm = self._layer_norm(hidden_states)
-        hidden_states = norm * (1 + scale_msa[:, None, :]) + shift_msa[:, None, :]
-        return hidden_states, gate_msa, shift_mlp, scale_mlp, gate_mlp
-
-    def _layer_norm(self, x: Any) -> Any:
-        ctx = self.ctx
-        x_f32 = x.astype(ctx.float32())
-        mean = ctx.mean(x_f32, axis=-1, keepdims=True)
-        var = ctx.mean((x_f32 - mean) ** 2, axis=-1, keepdims=True)
-        y = (x_f32 - mean) / ctx.sqrt(var + 1e-6)
-        return y.astype(x.dtype)
+        return apply_ada_layer_norm_zero(
+            hidden_states, text_embeddings,
+            linear=self.linear, norm=self.norm, silu=mx_nn.silu,
+        )
 
 
 class _FiboAdaLayerNormZeroSingle:
-    """AdaLayerNormZeroSingle — SiLU + Linear → shift/scale/gate."""
+    """AdaLayerNormZeroSingle — delegates to ``common/norm.apply_ada_layer_norm_zero_single``."""
 
     def __init__(self, dim: int, ctx: RuntimeContext):
         self.ctx = ctx
@@ -124,13 +115,10 @@ class _FiboAdaLayerNormZeroSingle:
         self.norm = mx_nn.LayerNorm(dim, eps=1e-6, affine=False)
 
     def forward(self, hidden_states: Any, text_embeddings: Any) -> tuple[Any, Any]:
-        emb = self.linear(mx_nn.silu(text_embeddings))
-        chunk = hidden_states.shape[-1]
-        shift_msa = emb[:, 0 * chunk : 1 * chunk]
-        scale_msa = emb[:, 1 * chunk : 2 * chunk]
-        gate_msa = emb[:, 2 * chunk : 3 * chunk]
-        hidden_states = self.norm(hidden_states) * (1 + scale_msa[:, None, :]) + shift_msa[:, None, :]
-        return hidden_states, gate_msa
+        return apply_ada_layer_norm_zero_single(
+            hidden_states, text_embeddings,
+            linear=self.linear, norm=self.norm, silu=mx_nn.silu,
+        )
 
 
 class _FiboJointAttention:
@@ -377,20 +365,21 @@ class _FiboSingleTransformerBlock:
 
 
 class _AdaLayerNormContinuousOut:
-    """AdaLayerNormContinuousOut — SiLU + Linear → scale/shift."""
+    """AdaLayerNormContinuousOut — delegates to ``common/norm.apply_ada_layer_norm_continuous``."""
 
     def __init__(self, dim: int, ctx: RuntimeContext):
         self.ctx = ctx
+        self._dim = dim
         self.norm = mx_nn.LayerNorm(dim, eps=1e-6, affine=False)
         self.linear = mx_nn.Linear(dim, dim * 2, bias=False)
 
     def forward(self, x: Any, c: Any) -> Any:
-        ctx = self.ctx
-        v = self.linear(mx_nn.silu(c).astype(ctx.bfloat16()))
-        scale = v[:, : x.shape[-1]]
-        shift = v[:, x.shape[-1] :]
-        x = self.norm(x)
-        return x * (1 + scale[:, None, :]) + shift[:, None, :]
+        return apply_ada_layer_norm_continuous(
+            x, c,
+            linear=self.linear, norm=self.norm,
+            embedding_dim=self._dim, silu=mx_nn.silu,
+            pre_linear_dtype=self.ctx.bfloat16(),
+        )
 
 
 class _BriaFiboTextProjection:
@@ -406,7 +395,7 @@ class _BriaFiboTextProjection:
         return self.linear(caption)
 
 
-class FIBOTransformer(TransformerBase):
+class FIBODiTMLX(TransformerBase):
     """FIBO / Bria4Transformer2DModel — Joint + Single DiT."""
 
     def __init__(self, config: FIBOConfig, ctx: RuntimeContext):

@@ -145,18 +145,22 @@ class DanQingAudioEngine(IAudioEngine):
         ctx.on_log(LogEvent(level="info", message=f"Initializing audio pipeline for {request.model}"))
 
         runtime = self._resolve_runtime(entry)
-
-        from backend.engine.pipelines.music_pipeline import MusicPipeline
-        pipeline = MusicPipeline(
-            ctx=runtime,
-            model_registry=self._registry,
-            asset_store=ctx.asset_store,
-            model_cache=self._cache,
-            project_root=self._paths.get_project_root() if hasattr(self._paths, "get_project_root") else None,
+        project_root = (
+            self._paths.get_project_root() if hasattr(self._paths, "get_project_root") else None
         )
 
-        result = await asyncio.to_thread(pipeline.run, request, ctx)
-        return result
+        from backend.engine.sessions.engine_dispatch import dispatch_audio_create
+
+        return await asyncio.to_thread(
+            dispatch_audio_create,
+            runtime=runtime,
+            registry=self._registry,
+            asset_store=ctx.asset_store,
+            model_cache=self._cache,
+            project_root=project_root,
+            request=request,
+            exec_ctx=ctx,
+        )
 
     async def edit(self, request: AudioEditRequest, ctx: ExecutionContext) -> EngineResult:
         if not self.supports(request.model, request.operation):
@@ -175,16 +179,22 @@ class DanQingAudioEngine(IAudioEngine):
             )
         )
         runtime = self._resolve_runtime(entry)
-        from backend.engine.pipelines.music_pipeline import MusicPipeline
+        project_root = (
+            self._paths.get_project_root() if hasattr(self._paths, "get_project_root") else None
+        )
 
-        pipeline = MusicPipeline(
-            ctx=runtime,
-            model_registry=self._registry,
+        from backend.engine.sessions.engine_dispatch import dispatch_audio_edit
+
+        return await asyncio.to_thread(
+            dispatch_audio_edit,
+            runtime=runtime,
+            registry=self._registry,
             asset_store=ctx.asset_store,
             model_cache=self._cache,
-            project_root=self._paths.get_project_root() if hasattr(self._paths, "get_project_root") else None,
+            project_root=project_root,
+            request=request,
+            exec_ctx=ctx,
         )
-        return await asyncio.to_thread(pipeline.run_edit, request, ctx)
 
     async def cancel(self, task_id: str) -> bool:
         return False

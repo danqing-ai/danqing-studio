@@ -167,20 +167,29 @@ function buildDisplayTitle(message: string, kind: LogDisplayKind): string {
   return message;
 }
 
-function buildDisplayDetail(message: string, kind: LogDisplayKind, showTechnical: boolean): string | undefined {
+function buildDisplayDetail(
+  message: string,
+  kind: LogDisplayKind,
+  showTechnical: boolean,
+  title: string,
+): string | undefined {
   if (!showTechnical && kind === 'technical') return undefined;
+  let detail: string | undefined;
   const graph = parseGraphStep(message);
   if (graph) {
     const d = graph.detail;
-    if (!d || d === 'start') return undefined;
-    return d;
+    detail = !d || d === 'start' ? undefined : d;
+  } else if (parseInferParams(message)) {
+    detail = showTechnical ? message : undefined;
+  } else if (kind === 'technical') {
+    detail = message;
+  } else if (kind === 'milestone' || kind === 'progress') {
+    detail = showTechnical ? message : undefined;
+  } else {
+    detail = showTechnical ? message : undefined;
   }
-  if (parseInferParams(message)) return showTechnical ? message : undefined;
-  if (kind === 'technical') return message;
-  if (kind === 'milestone' || kind === 'progress') {
-    return showTechnical ? message : undefined;
-  }
-  return showTechnical ? message : undefined;
+  if (detail && detail.trim() === title.trim()) return undefined;
+  return detail;
 }
 
 export function buildLogDisplayItems(
@@ -193,12 +202,13 @@ export function buildLogDisplayItems(
     if (kind === 'technical' && !showTechnical) return;
 
     const infer = parseInferParams(entry.message);
+    const title = buildDisplayTitle(entry.message, kind);
     items.push({
       index,
       time: entry.time,
       kind,
-      title: buildDisplayTitle(entry.message, kind),
-      detail: buildDisplayDetail(entry.message, kind, showTechnical),
+      title,
+      detail: buildDisplayDetail(entry.message, kind, showTechnical, title),
       chips: infer ? inferParamChips(infer) : undefined,
     });
   });
@@ -208,6 +218,64 @@ export function buildLogDisplayItems(
 export function latestProgressItem(items: LogDisplayItem[]): LogDisplayItem | null {
   for (let i = items.length - 1; i >= 0; i -= 1) {
     if (items[i].kind === 'progress') return items[i];
+  }
+  return null;
+}
+
+/** 简洁模式下隐藏逐步进度行（顶部状态条已展示最新进度）。 */
+export function filterLogTimelineItems(
+  items: LogDisplayItem[],
+  showTechnical: boolean,
+  excludeIndex?: number | null,
+  options?: { hidePipelineMilestones?: boolean },
+): LogDisplayItem[] {
+  let filtered = items;
+  if (excludeIndex != null) {
+    filtered = filtered.filter((item) => item.index !== excludeIndex);
+  }
+  if (!showTechnical) {
+    filtered = filtered.filter((item) => item.kind !== 'progress');
+  }
+  if (options?.hidePipelineMilestones) {
+    filtered = filtered.filter((item) => {
+      if (item.kind !== 'milestone') return true;
+      return Boolean(item.chips?.length);
+    });
+  }
+  return filtered;
+}
+
+export function parseProgressFraction(
+  title: string,
+): { current: number; total: number } | null {
+  const key = parseDenoiseStepKey(title);
+  if (!key) return null;
+  const [currentRaw, totalRaw] = key.split('/');
+  const current = Number(currentRaw);
+  const total = Number(totalRaw);
+  if (!Number.isFinite(current) || !Number.isFinite(total) || total <= 0) return null;
+  return { current, total };
+}
+
+export function resolveDisplayProgressPercent(
+  graphProgress: number | null | undefined,
+  live: { progress?: number; step?: number; total?: number } | null | undefined,
+  activeTitle: string | null | undefined,
+): number | null {
+  if (live?.step != null && live.total != null && live.total > 0) {
+    return Math.min(100, Math.max(0, (live.step / live.total) * 100));
+  }
+  if (typeof live?.progress === 'number' && live.progress > 0) {
+    return Math.min(100, Math.max(0, live.progress * 100));
+  }
+  if (activeTitle) {
+    const frac = parseProgressFraction(activeTitle);
+    if (frac) {
+      return Math.min(100, Math.max(0, (frac.current / frac.total) * 100));
+    }
+  }
+  if (typeof graphProgress === 'number' && graphProgress > 0) {
+    return Math.min(100, Math.max(0, graphProgress * 100));
   }
   return null;
 }

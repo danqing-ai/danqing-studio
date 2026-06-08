@@ -34,11 +34,14 @@ def resolve_benchmark_data_root() -> Path:
 
 
 def load_registry() -> dict[str, Any]:
-    return json.loads(_REGISTRY_PATH.read_text(encoding="utf-8"))
+    from backend.catalog.loader import expand_catalog_document, load_catalog_json
+
+    return expand_catalog_document(load_catalog_json(_REGISTRY_PATH))
 
 
 def _profile_engine(reg: dict[str, Any], profile_id: str) -> str:
-    profile = (reg.get("profiles") or {}).get(profile_id) or {}
+    profiles = reg.get("profiles") or reg.get("ui_profiles") or {}
+    profile = profiles.get(profile_id) or {}
     return str(profile.get("engine") or "").strip()
 
 

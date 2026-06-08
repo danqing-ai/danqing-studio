@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, FrozenSet, Literal, Optional, cast
 
+from backend.catalog.loader import expand_catalog_document
 from backend.core.registry_format import api_action_frozenset, media_from_record
-from backend.core.registry_profiles import expand_registry_document
 
 MediaKind = Literal["image", "video", "audio", "llm"]
 
@@ -58,7 +58,7 @@ class ModelRegistry:
     @classmethod
     def load(cls, registry_json: Path) -> ModelRegistry:
         data = json.loads(registry_json.read_text(encoding="utf-8"))
-        expanded = expand_registry_document(data)
+        expanded = expand_catalog_document(data)
         raw_models = expanded.get("models") or {}
         built: dict[str, ModelEntry] = {}
         for mid, raw in raw_models.items():
@@ -83,7 +83,7 @@ class ModelRegistry:
     def expanded_document(cls, registry_json: Path) -> dict[str, Any]:
         """Parse registry JSON and apply profiles/templates (for API responses)."""
         data = json.loads(registry_json.read_text(encoding="utf-8"))
-        return expand_registry_document(data)
+        return expand_catalog_document(data)
 
     def get(self, model_id: str) -> Optional[ModelEntry]:
         key = model_id.split(":", 1)[0]

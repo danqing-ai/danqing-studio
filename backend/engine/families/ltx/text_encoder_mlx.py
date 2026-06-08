@@ -14,7 +14,7 @@ from typing import Any
 import mlx.core as mx
 import mlx.nn as nn
 
-from backend.engine.common.mlx_runtime_fallback import load_weights_dict, run_eval
+from backend.engine.runtime.mlx_runtime import load_weights_dict, run_eval
 from backend.engine.config.model_configs import LTXConfig
 
 logger = logging.getLogger(__name__)

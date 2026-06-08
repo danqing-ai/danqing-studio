@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import mlx.core as mx
 import mlx.nn as nn
 
-from backend.engine.common.attention import (
+from backend.engine.common.ops.attention import (
     rotate_half,
     scaled_dot_product_attention_bhsd_mx,
 )
@@ -562,153 +562,218 @@ class DiffRhythm2CFMMLX(nn.Module):
         cfg_strength: float = 1.0,
         seed: Optional[int] = None,
     ) -> mx.array:
-        """Block-wise CFM sampling with KV cache (upstream ``sample_block_cache``)."""
-        if seed is not None:
-            mx.random.seed(int(seed))
-
-        batch = int(text.shape[0])
-        num_blocks = duration // self.block_size + (1 if duration % self.block_size > 0 else 0)
-
-        text_emb = self.transformer.text_embed(text)
-        cfg_text_emb = self.transformer.text_embed(mx.zeros_like(text))
-        text_lens = mx.array([int(text_emb.shape[1])], dtype=mx.int32)
-
-        clean_emb_stream = mx.zeros((batch, 0, self.num_channels), dtype=style_prompt.dtype)
-        noisy_lens = mx.array([self.block_size], dtype=mx.int32)
-
-        kv_cache = BlockFlowMatchingCacheMLX(
-            text_lengths=text_lens,
-            block_size=self.block_size,
-            num_history_block=self.num_history_block,
-        )
-        cfg_kv_cache = BlockFlowMatchingCacheMLX(
-            text_lengths=text_lens,
-            block_size=self.block_size,
-            num_history_block=self.num_history_block,
+        """Block-wise CFM sampling via L2 BlockAutoregressiveInference."""
+        from backend.engine.inference import (
+            AudioInferenceBundle,
+            BlockAutoregressiveInference,
+            BlockAutoregressiveSpec,
+            FlowMatchingSpec,
         )
 
-        cache_time = mx.full((batch, self.block_size), 1.0, dtype=style_prompt.dtype)
+        transformer = self.transformer
+        block_size = self.block_size
+        num_channels = self.num_channels
+        num_history_block = self.num_history_block
+        num_blocks = duration // block_size + (1 if duration % block_size > 0 else 0)
 
-        if int(text_emb.shape[1]) != 0:
-            text_time = mx.full((batch, int(text_emb.shape[1])), -1.0, dtype=style_prompt.dtype)
-            text_position_ids = mx.arange(int(text_emb.shape[1]), dtype=mx.int32)[None, :]
-            text_position_ids = mx.broadcast_to(text_position_ids, (batch, int(text_emb.shape[1])))
+        # -- Mutable closure state (mutated by callbacks) --
+        _state: dict = {
+            "batch": 0,
+            "text_lens": None,
+            "text_seq": 0,
+            "attn_mask": None,
+            "position_ids": None,
+            "kv_cache": None,
+            "cfg_kv_cache": None,
+            "clean_emb_stream": None,
+            "cache_time": None,
+            "noisy_lens": None,
+            "end_pos": 0,
+            "null_style": None,
+        }
+
+        # -- Setup: text prefill + cache init --
+        def _setup():
+            batch = int(text.shape[0])
+            text_emb = transformer.text_embed(text)
+            cfg_text_emb = transformer.text_embed(mx.zeros_like(text))
+            text_lens = mx.array([int(text_emb.shape[1])], dtype=mx.int32)
+            clean_emb_stream = mx.zeros((batch, 0, num_channels), dtype=style_prompt.dtype)
+            noisy_lens = mx.array([block_size], dtype=mx.int32)
+            kv_cache = BlockFlowMatchingCacheMLX(
+                text_lengths=text_lens,
+                block_size=block_size,
+                num_history_block=num_history_block,
+            )
+            cfg_kv_cache = BlockFlowMatchingCacheMLX(
+                text_lengths=text_lens,
+                block_size=block_size,
+                num_history_block=num_history_block,
+            )
+            cache_time = mx.full((batch, block_size), 1.0, dtype=style_prompt.dtype)
+            null_style = mx.zeros_like(style_prompt)
+
             text_seq = int(text_emb.shape[1])
-            text_attn_mask = mx.ones((batch, 1, text_seq, text_seq), dtype=mx.bool_)
+            if text_seq != 0:
+                text_time = mx.full((batch, text_seq), -1.0, dtype=style_prompt.dtype)
+                text_position_ids = mx.arange(text_seq, dtype=mx.int32)[None, :]
+                text_position_ids = mx.broadcast_to(text_position_ids, (batch, text_seq))
+                text_attn_mask = mx.ones((batch, 1, text_seq, text_seq), dtype=mx.bool_)
 
-            with kv_cache.cache_text():
-                _, _, kv_cache = self.transformer(
-                    x=text_emb,
-                    time=text_time,
-                    attn_mask=text_attn_mask,
-                    position_ids=text_position_ids,
-                    style_prompt=style_prompt,
-                    use_cache=True,
-                    past_key_value=kv_cache,
-                )
-            with cfg_kv_cache.cache_text():
-                _, _, cfg_kv_cache = self.transformer(
-                    x=cfg_text_emb,
-                    time=text_time,
-                    attn_mask=text_attn_mask,
-                    position_ids=text_position_ids,
-                    style_prompt=mx.zeros_like(style_prompt),
-                    use_cache=True,
-                    past_key_value=cfg_kv_cache,
-                )
+                with kv_cache.cache_text():
+                    _, _, kv_cache = transformer(
+                        x=text_emb, time=text_time, attn_mask=text_attn_mask,
+                        position_ids=text_position_ids, style_prompt=style_prompt,
+                        use_cache=True, past_key_value=kv_cache,
+                    )
+                with cfg_kv_cache.cache_text():
+                    _, _, cfg_kv_cache = transformer(
+                        x=cfg_text_emb, time=text_time, attn_mask=text_attn_mask,
+                        position_ids=text_position_ids, style_prompt=null_style,
+                        use_cache=True, past_key_value=cfg_kv_cache,
+                    )
 
-        end_pos = 0
-        for _bid in range(num_blocks):
-            clean_lens = mx.array([int(clean_emb_stream.shape[1])], dtype=mx.int32)
-            kv_len = int(text_lens[0]) + int(clean_lens[0]) + int(noisy_lens[0])
-            query_len = int(noisy_lens[0])
-            attn_mask = mx.ones((batch, 1, query_len, kv_len), dtype=mx.bool_)
+            _state.update(
+                batch=batch, text_lens=text_lens, text_seq=text_seq,
+                kv_cache=kv_cache, cfg_kv_cache=cfg_kv_cache,
+                clean_emb_stream=clean_emb_stream, cache_time=cache_time,
+                noisy_lens=noisy_lens, null_style=null_style,
+            )
+            return {"num_blocks": num_blocks}
 
-            total_pos = int(clean_lens[0]) + int(noisy_lens[0])
+        # -- Per-block: update attn_mask, position_ids --
+        def _prepare_block(block_idx: int):
+            clean_lens = mx.array(
+                [int(_state["clean_emb_stream"].shape[1])], dtype=mx.int32
+            )
+            kv_len = (
+                int(_state["text_lens"][0])
+                + int(clean_lens[0])
+                + int(_state["noisy_lens"][0])
+            )
+            query_len = int(_state["noisy_lens"][0])
+            attn_mask = mx.ones(
+                (_state["batch"], 1, query_len, kv_len), dtype=mx.bool_
+            )
+            total_pos = int(clean_lens[0]) + int(_state["noisy_lens"][0])
             position_ids = mx.arange(total_pos, dtype=mx.int32)[None, -query_len:]
-            position_ids = mx.broadcast_to(position_ids, (batch, query_len))
+            position_ids = mx.broadcast_to(position_ids, (_state["batch"], query_len))
+            _state["attn_mask"] = attn_mask
+            _state["position_ids"] = position_ids
 
-            def velocity_fn(t_scalar: mx.array, x_state: mx.array) -> mx.array:
-                noisy_embed = self.transformer.latent_embed(x_state)
-                if int(t_scalar.ndim) == 0:
-                    t_batch = mx.full((batch,), float(t_scalar), dtype=style_prompt.dtype)
-                else:
-                    t_batch = t_scalar
-                time_in = mx.broadcast_to(
-                    mx.expand_dims(t_batch, axis=1),
-                    (batch, query_len),
+        # -- Model forward with CFG (reads mutable _state) --
+        def _velocity(xt, t_curr, state):
+            noisy_embed = transformer.latent_embed(xt)
+            if hasattr(t_curr, "ndim") and int(t_curr.ndim) == 0:
+                t_batch = mx.full(
+                    (_state["batch"],), float(t_curr), dtype=style_prompt.dtype
                 )
+            else:
+                t_batch = mx.full(
+                    (_state["batch"],), float(t_curr), dtype=style_prompt.dtype
+                )
+            query_len = int(_state["noisy_lens"][0])
+            time_in = mx.broadcast_to(
+                mx.expand_dims(t_batch, axis=1),
+                (_state["batch"], query_len),
+            )
+            pred, _, _ = transformer(
+                x=noisy_embed, time=time_in,
+                attn_mask=_state["attn_mask"],
+                position_ids=_state["position_ids"],
+                style_prompt=style_prompt,
+                use_cache=True, past_key_value=_state["kv_cache"],
+            )
+            if cfg_strength < 1e-5:
+                return pred
+            null_pred, _, _ = transformer(
+                x=noisy_embed, time=time_in,
+                attn_mask=_state["attn_mask"],
+                position_ids=_state["position_ids"],
+                style_prompt=_state["null_style"],
+                use_cache=True, past_key_value=_state["cfg_kv_cache"],
+            )
+            return pred + (pred - null_pred) * cfg_strength
 
-                pred, _, _ = self.transformer(
-                    x=noisy_embed,
-                    time=time_in,
-                    attn_mask=attn_mask,
-                    position_ids=position_ids,
+        # -- Euler step (forward Euler: x += dt * v) --
+        def _euler_step(x, v, t_curr, t_next, step_idx):
+            if t_next is None:
+                return x
+            dt = float(t_next) - float(t_curr)
+            return x + dt * v
+
+        # -- Per-block noise init --
+        def _init_noise(shape, _seed):
+            return mx.random.normal(shape).astype(style_prompt.dtype)
+
+        # -- Block cache update --
+        def _update_block_cache(block_idx, sampled):
+            cache_embed = transformer.latent_embed(sampled)
+            attn_mask = _state["attn_mask"]
+            position_ids = _state["position_ids"]
+            with _state["kv_cache"].cache_context():
+                _, _, _state["kv_cache"] = transformer(
+                    x=cache_embed, time=_state["cache_time"],
+                    attn_mask=attn_mask, position_ids=position_ids,
                     style_prompt=style_prompt,
-                    use_cache=True,
-                    past_key_value=kv_cache,
+                    use_cache=True, past_key_value=_state["kv_cache"],
                 )
-                if cfg_strength < 1e-5:
-                    return pred
-
-                null_pred, _, _ = self.transformer(
-                    x=noisy_embed,
-                    time=time_in,
-                    attn_mask=attn_mask,
-                    position_ids=position_ids,
-                    style_prompt=mx.zeros_like(style_prompt),
-                    use_cache=True,
-                    past_key_value=cfg_kv_cache,
+            with _state["cfg_kv_cache"].cache_context():
+                _, _, _state["cfg_kv_cache"] = transformer(
+                    x=cache_embed, time=_state["cache_time"],
+                    attn_mask=attn_mask, position_ids=position_ids,
+                    style_prompt=_state["null_style"],
+                    use_cache=True, past_key_value=_state["cfg_kv_cache"],
                 )
-                return pred + (pred - null_pred) * cfg_strength
+            _state["clean_emb_stream"] = mx.concatenate(
+                [_state["clean_emb_stream"], sampled], axis=1
+            )
 
-            noisy_emb = mx.random.normal((batch, self.block_size, self.num_channels)).astype(style_prompt.dtype)
-            t_set = mx.linspace(0.0, 1.0, int(steps), dtype=noisy_emb.dtype)
-            x_cur = noisy_emb
-            for step_idx in range(int(steps) - 1):
-                t_i = t_set[step_idx]
-                dt = t_set[step_idx + 1] - t_i
-                x_cur = x_cur + dt * velocity_fn(t_i, x_cur)
-            sampled = x_cur
-
-            cache_embed = self.transformer.latent_embed(sampled)
-            with kv_cache.cache_context():
-                _, _, kv_cache = self.transformer(
-                    x=cache_embed,
-                    time=cache_time,
-                    attn_mask=attn_mask,
-                    position_ids=position_ids,
-                    style_prompt=style_prompt,
-                    use_cache=True,
-                    past_key_value=kv_cache,
-                )
-            with cfg_kv_cache.cache_context():
-                _, _, cfg_kv_cache = self.transformer(
-                    x=cache_embed,
-                    time=cache_time,
-                    attn_mask=attn_mask,
-                    position_ids=position_ids,
-                    style_prompt=mx.zeros_like(style_prompt),
-                    use_cache=True,
-                    past_key_value=cfg_kv_cache,
-                )
-
-            clean_emb_stream = mx.concatenate([clean_emb_stream, sampled], axis=1)
-
+        # -- EOS detection --
+        def _check_eos(block_idx):
+            stream = _state["clean_emb_stream"]
             pos = -1
-            curr_frame = clean_emb_stream[:, pos, :]
+            curr_frame = stream[:, pos, :]
             eos = mx.ones_like(curr_frame)
             last_kl = mx.mean(mx.square(curr_frame - eos))
             if float(last_kl) <= 0.05:
-                while float(last_kl) <= 0.05 and abs(pos) < int(clean_emb_stream.shape[1]):
+                while float(last_kl) <= 0.05 and abs(pos) < int(stream.shape[1]):
                     pos -= 1
-                    curr_frame = clean_emb_stream[:, pos, :]
+                    curr_frame = stream[:, pos, :]
                     last_kl = mx.mean(mx.square(curr_frame - eos))
-                end_pos = int(clean_emb_stream.shape[1]) + pos
-                break
-            end_pos = int(clean_emb_stream.shape[1])
+                _state["end_pos"] = int(stream.shape[1]) + pos
+                return True
+            _state["end_pos"] = int(stream.shape[1])
+            return False
 
-        return clean_emb_stream[:, :end_pos, :]
+        # -- Timestep schedule --
+        t_schedule = [
+            float(v) for v in mx.linspace(0.0, 1.0, int(steps), dtype=mx.float32)
+        ]
+
+        bundle = AudioInferenceBundle(
+            ctx=None,
+            model_forward=_velocity,
+            latent_shape=(0, block_size, num_channels),
+            seed=int(seed) if seed is not None else 0,
+            eval_fn=mx.eval,
+            flow=FlowMatchingSpec(
+                timestep_schedule=t_schedule,
+                init_noise_fn=_init_noise,
+                euler_step_fn=_euler_step,
+            ),
+            block_ar=BlockAutoregressiveSpec(
+                num_blocks=num_blocks,
+                seed_fn=lambda s: mx.random.seed(int(s)),
+                setup_fn=_setup,
+                before_block_fn=_prepare_block,
+                after_block_fn=_update_block_cache,
+                eos_check_fn=_check_eos,
+            ),
+        )
+
+        result = BlockAutoregressiveInference().run(bundle)
+        return _state["clean_emb_stream"][:, : _state["end_pos"], :]
 
 
 # ---------------------------------------------------------------------------

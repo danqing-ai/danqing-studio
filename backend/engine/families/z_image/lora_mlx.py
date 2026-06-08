@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
-from backend.engine.common.lora_mlx import merge_lora_adapters_common
+from backend.engine.common.bundle.lora_mlx import merge_lora_adapters_common
 from backend.engine.families.z_image.weights import remap_zimage_lora_keys
 from backend.engine.runtime._base import RuntimeContext
 
@@ -21,9 +21,12 @@ def merge_z_image_lora_adapters(
     project_root: Path,
     registry: Any,
     ctx: RuntimeContext,
-    patch_size: int,
+    patch_size: int | None = None,
     on_log: Callable[[str, str], None] | None = None,
 ) -> None:
+    ps = int(patch_size) if patch_size is not None else int(
+        getattr(getattr(model, "config", None), "patch_size", 2) or 2
+    )
     merge_lora_adapters_common(
         model=model,
         adapters=adapters,
@@ -33,7 +36,7 @@ def merge_z_image_lora_adapters(
         ctx=ctx,
         family_name="Z-Image",
         remap_groups=lambda weights: remap_zimage_lora_keys(
-            weights, patch_size=max(1, int(patch_size))
+            weights, patch_size=max(1, ps)
         ),
         param_key_for_module=lambda module_name: f"{module_name}.weight",
         base_model_scope_key=_base_model_scope_key,

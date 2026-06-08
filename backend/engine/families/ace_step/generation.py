@@ -10,18 +10,18 @@ import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, List, Optional, Protocol, Tuple
+from typing import Any, Callable, List, Optional, Protocol, Tuple
 
 import numpy as np
 
-from backend.core.contracts import AudioGenerationRequest
+from backend.core.contracts import AudioEditRequest, AudioGenerationRequest
 from backend.engine.config.model_configs import AceStepConfig
-from backend.engine.families.ace_step.lm_format import (
+from backend.engine.families.ace_step.lm.lm_format import (
     is_instrumental_lyrics,
     normalize_lyrics_body,
     vocal_lyrics_required_error,
 )
-from backend.engine.families.ace_step.vocal_prompt import apply_vocal_type_to_prompt
+from backend.engine.families.ace_step.vocals.vocal_prompt import apply_vocal_type_to_prompt
 
 SFT_GEN_PROMPT = """# Instruction
 {instruction}
@@ -195,7 +195,7 @@ def lyrics_capture_metadata(
     duration_sec: Optional[float] = None,
 ) -> dict[str, Any]:
     """Serializable fields for task result / asset metadata."""
-    from backend.engine.families.ace_step.lyrics_alignment import estimate_lyrics_alignment
+    from backend.engine.families.ace_step.vocals.lyrics_alignment import estimate_lyrics_alignment
 
     if is_instrumental_lyrics(cap.lyrics_effective):
         return {
@@ -240,7 +240,7 @@ def write_lrc_sidecar(
     duration_sec: float,
 ) -> Optional[Path]:
     """Write ``<stem>.lrc`` when structure-based alignment is available."""
-    from backend.engine.families.ace_step.lyrics_alignment import (
+    from backend.engine.families.ace_step.vocals.lyrics_alignment import (
         estimate_lyrics_alignment,
         format_lrc,
     )
@@ -624,7 +624,7 @@ def prepare_music_request(
     backend: str = "mlx",
 ) -> AceStepPreparedRequest:
     """Resolve lyrics/language/steps/shift from contract + registry config (no family branches in Pipeline)."""
-    from backend.engine.families.ace_step.resource_policy import (
+    from backend.engine.families.ace_step.quality.resource_policy import (
         clamp_duration,
         resolve_resource_policy,
     )
@@ -738,3 +738,139 @@ def prepare_music_request(
         lm_quantize_bits=policy.lm_quantize_bits,
         log_events=events,
     )
+
+
+@dataclass
+class CoverEditBatch:
+    """ACE-Step cover edit outputs before asset persistence."""
+
+    waveforms: list[np.ndarray]
+    seed: int
+    shift: float
+    lyrics: str
+    vocal_lang: str
+    quality: Any | None = None
+
+
+def run_cover_edit(
+    generator: Any,
+    request: AudioEditRequest,
+    *,
+    config: AceStepConfig,
+    bundle_root: Path,
+    source_path: Path,
+    raise_if_cancelled: Callable[[], None],
+    on_progress: Callable[[float, int, int, str], None] | None = None,
+    on_log: Callable[[str, str], None] | None = None,
+) -> CoverEditBatch:
+    """ACE-Step cover: reference waveform + prompt/lyrics → new waveform(s)."""
+    import random
+
+    is_turbo = resolve_bundle_is_turbo(bundle_root)
+    shift = float(config.turbo_shift if is_turbo else config.default_shift)
+    ref_wf = load_reference_waveform(source_path)
+    seed = (
+        request.seed
+        if request.seed is not None and request.seed >= 0
+        else random.randint(0, 2**31 - 1)
+    )
+    n = max(request.n, 1)
+
+    raw_lyrics = (request.lyrics or "").strip()
+    lyrics = (
+        "[Instrumental]"
+        if not raw_lyrics
+        else finalize_lyrics_for_inference(raw_lyrics, instrumental=False, lm_expanded=False)
+    )
+    vocal_lang = resolve_vocal_language(
+        lyrics or raw_lyrics, request.vocal_language or "", prompt=request.prompt or ""
+    )
+
+    effective_prompt, vocal_tpl_log = apply_vocal_type_to_prompt(
+        request.prompt or "",
+        request.vocal_type or "",
+    )
+    if vocal_tpl_log and on_log:
+        on_log("info", vocal_tpl_log)
+
+    cover_duration: Optional[float] = None
+    if request.duration is not None:
+        cover_duration = float(max(10, min(600, int(request.duration))))
+
+    log_parts = [
+        f"ACE-Step cover: source={source_path.name}",
+        f"strength={request.source_fidelity}",
+        f"seed={seed}",
+        f"n={n}",
+    ]
+    if lyrics != "[Instrumental]":
+        log_parts.append(f"lyrics={len(lyrics)}chars lang={vocal_lang}")
+    if cover_duration is not None:
+        log_parts.append(f"duration={cover_duration}s")
+    if request.bpm is not None:
+        log_parts.append(f"bpm={request.bpm}")
+    if request.key_scale:
+        log_parts.append(f"key={request.key_scale}")
+    if on_log:
+        on_log("info", ", ".join(log_parts))
+
+    waveforms: list[np.ndarray] = []
+    quality: Any | None = None
+    for i in range(n):
+        raise_if_cancelled()
+        batch_seed = seed + i
+        if on_progress:
+            on_progress((i + 0.1) / n, i + 1, n, f"Cover generation {i + 1}/{n}")
+        waveform = generator.generate_cover_waveform(
+            reference_waveform=ref_wf,
+            prompt=effective_prompt,
+            seed=batch_seed,
+            shift=shift,
+            audio_cover_strength=float(request.source_fidelity),
+            lyrics=lyrics,
+            vocal_language=vocal_lang,
+            bpm=request.bpm,
+            key_scale=request.key_scale or "",
+            time_signature=request.time_signature or "",
+            duration=cover_duration,
+        )
+        quality = getattr(generator, "last_quality", None)
+        waveforms.append(waveform)
+
+    return CoverEditBatch(
+        waveforms=waveforms,
+        seed=seed,
+        shift=shift,
+        lyrics=lyrics,
+        vocal_lang=vocal_lang,
+        quality=quality,
+    )
+
+
+def post_generation_artifacts(
+    out_path: Path,
+    generator: Any,
+    *,
+    duration_sec: float,
+    on_log: Callable[[str, str], None] | None = None,
+    log_lyrics_preview: bool = True,
+) -> dict[str, Any]:
+    """ACE-Step: lyrics sidecars + metadata after WAV write (MusicPipeline post-hook)."""
+    cap = getattr(generator, "last_lyrics_capture", None)
+    if cap is None:
+        return {}
+    if log_lyrics_preview and on_log:
+        log_msg = lyrics_capture_log_message(cap)
+        if log_msg:
+            on_log("info", log_msg)
+    sidecar = write_lyrics_sidecar(out_path, cap.lyrics_effective)
+    if sidecar is not None and on_log:
+        on_log("info", f"歌词已写入: {sidecar.name}")
+    lrc_path = write_lrc_sidecar(
+        out_path,
+        cap.lyrics_effective,
+        duration_sec=duration_sec,
+    )
+    if lrc_path is not None and on_log:
+        on_log("info", f"歌词时间轴已写入: {lrc_path.name}")
+    return lyrics_capture_metadata(cap, duration_sec=duration_sec)

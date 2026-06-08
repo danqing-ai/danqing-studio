@@ -411,7 +411,7 @@ def create_noised_state(
     if conditionings and spatial_dims is not None:
         state = apply_conditioning(ctx, state, conditionings, spatial_dims)
 
-    from backend.engine.common.mlx_runtime_fallback import set_random_seed
+    from backend.engine.runtime.mlx_runtime import set_random_seed
 
     set_random_seed(getattr(ctx, "set_random_seed", None), seed)
     noise = ctx.randn(state.clean_latent.shape, dtype=dtype)

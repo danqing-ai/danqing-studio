@@ -41,10 +41,12 @@ class Flux1Config:
     supports_img2img: bool = True
     supports_mask: bool = False       # Fill / Depth need this
     supports_controlnet: bool = False
+    supports_structural_guide: bool = True
     vae_scale: int = 8               # VAE latent downsampling factor
     passes_guidance_in_kwargs: bool = True
     preserve_guidance_when_disabled: bool = True
     cfg_negative_eligible: bool = False
+    vae_encoder_cast_bfloat16: bool = True  # MLX VAEEncoder weights → bfloat16 after load
 
     def __post_init__(self):
         pass
@@ -407,6 +409,8 @@ class LTXConfig:
     temporal_patch_size: int = 1
     supports_guidance: bool = True
     step_distill: bool = False
+    distilled_model_id_marker: str = "distilled"
+    require_registry_step_distill_when_distilled: bool = True
     supports_img2img: bool = True
     vae_scale: int = 32
     temporal_vae_scale: int = 8

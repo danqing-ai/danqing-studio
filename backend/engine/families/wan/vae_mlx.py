@@ -16,8 +16,8 @@ import mlx.core as mx
 import mlx.nn as nn
 import numpy as np
 
-from backend.engine.common.attention import scaled_dot_product_attention_bhsd_mx
-from backend.engine.common.mlx_runtime_fallback import load_weights_dict
+from backend.engine.common.ops.attention import scaled_dot_product_attention_bhsd_mx
+from backend.engine.runtime.mlx_runtime import load_weights_dict
 from backend.engine.runtime._base import RuntimeContext
 
 logger = logging.getLogger(__name__)
@@ -1171,7 +1171,7 @@ def _load_vae_state_dict(
     for pth in pth_candidates:
         if pth.is_file():
             logger.info("Loading Wan VAE weights from %s", pth)
-            from backend.engine.common.pytorch_bin_numpy import state_dict_to_numpy
+            from backend.engine.common.bundle.pytorch_bin_numpy import state_dict_to_numpy
 
             sd = state_dict_to_numpy(pth)
             out: dict[str, mx.array] = {}

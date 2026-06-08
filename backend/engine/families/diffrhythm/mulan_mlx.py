@@ -16,7 +16,8 @@ import mlx.core as mx
 import mlx.nn as nn
 import numpy as np
 
-from backend.engine.common.mlx_runtime_fallback import run_eval
+from backend.engine.common.ops.attention import scaled_dot_product_attention_bhsd_mx
+from backend.engine.runtime.mlx_runtime import run_eval
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +133,7 @@ class MuQAttention(nn.Module):
 
         q = _l2norm(q, axis=-1) * self.q_scale.reshape(1, 1, 1, -1)
         k = _l2norm(k, axis=-1) * self.k_scale.reshape(1, 1, 1, -1)
-        out = mx.fast.scaled_dot_product_attention(q, k, v, scale=self.scale)
+        out = scaled_dot_product_attention_bhsd_mx(mx, q, k, v, scale=self.scale)
         out = out.transpose(0, 2, 1, 3).reshape(b, t, self.heads * self.dim_head)
         return self.to_out(out)
 
@@ -360,7 +361,7 @@ def _patch_muq_transformer_keys(weights: list[tuple[str, mx.array]]) -> list[tup
 
 def load_mulan_text_weights(module: nn.Module, ckpt_path: str, *, array_fn: Callable[[Any], mx.array]) -> None:
     """Load MuQ text-tower weights from ``pytorch_model.bin`` (numpy unpickle, no torch)."""
-    from backend.engine.common.pytorch_bin_numpy import load_pytorch_bin
+    from backend.engine.common.bundle.pytorch_bin_numpy import load_pytorch_bin
 
     path = Path(ckpt_path)
     if not path.is_file():

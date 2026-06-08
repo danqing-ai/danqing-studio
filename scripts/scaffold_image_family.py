@@ -51,7 +51,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from backend.engine.common.dit_stem import DelegatingDiTStem
+from backend.engine.common.model.dit_stem import DelegatingDiTStem
 
 
 class {cls_name}(DelegatingDiTStem):
@@ -69,13 +69,18 @@ from __future__ import annotations
 
 from typing import Any
 
-from backend.engine.common._base import TransformerBase
+from backend.engine.common.model.base import TransformerBase
 
 
 class {cls_name}(TransformerBase):
     def __init__(self, config: Any, ctx: Any):
         super().__init__(config, ctx)
         self._param_map: dict[str, Any] = {{}}
+
+    def sanitize(self, weights: dict[str, Any]) -> dict[str, Any]:
+        """Transform checkpoint keys to match ``_param_map``."""
+        from backend.engine.families.{family}.weights import remap_{family}_weights
+        return remap_{family}_weights(weights)
 
     def forward(self, latents, t, *, txt_embeds=None, **kwargs):
         raise NotImplementedError("{cls_name}.forward is not implemented yet")
@@ -99,25 +104,71 @@ def remap_{family}_weights(weights: dict) -> dict:
 ''',
         force=args.force,
     )
+    build_fn = f"build_{family}_plugin"
+    register_fn = f"register_{family}_plugin"
+    _write(
+        family_dir / "plugin.py",
+        f'''"""{cls_name} v3 ``FamilyPlugin`` factory."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from backend.engine.config.model_configs import get_config_class
+from backend.engine.families._image_backbone import ImagePluginBackbone
+from backend.engine.platform.session import PlatformSession
+from backend.engine.protocols.plugin import FamilyPlugin
+from backend.engine.protocols.spec_from_config import family_spec_from_config
+from backend.engine.registry.family_registry import register_family
+
+
+def {build_fn}(
+    platform: PlatformSession,
+    *,
+    model_id: str,
+    bundle_root: Path,
+    version_key: str | None = None,
+) -> FamilyPlugin:
+    _ = platform, model_id, bundle_root, version_key
+    config = get_config_class("{family}")()
+    spec = family_spec_from_config("{family}", config, media="image")
+    return FamilyPlugin(
+        family_id="{family}",
+        spec=spec,
+        backbone=ImagePluginBackbone(spec),
+    )
+
+
+def {register_fn}() -> None:
+    register_family("{family}", {build_fn})
+''',
+        force=args.force,
+    )
 
     print("\nRegistry snippets (manual):")
     print(f'  _TRANSFORMER["{family}"] = ("backend.engine.families.{family}.transformer", "{cls_name}")')
-    print(f'  _WEIGHT_REMAP["{family}"] = ("backend.engine.families.{family}.weights", "remap_{family}_weights")')
+    print(f'  # Weight remap is internalized via sanitize() on the TransformerBase subclass')
     print(f'  bundle_manifest.FAMILY_BUNDLE_CONTRACTS: add "{family}" required components')
-    units = len(
+    # Count root-level stem units + sub-packages
+    root_units = len(
         {
             p.stem.removesuffix("_mlx").removesuffix("_cuda")
             for p in family_dir.glob("*.py")
             if p.name != "__init__.py"
         }
     )
+    sub_pkgs = len(
+        [d for d in family_dir.iterdir() if d.is_dir() and d.name not in ("__pycache__", "data")]
+    )
+    units = root_units + sub_pkgs
     if units > 8:
         print(
-            f"\nWARN: {family} has {units} logical units (budget 8); consolidate stems before merge.",
+            f"\nWARN: {family} has {units} logical units (budget 8); "
+            f"extract sub-packages or consolidate stems.",
             file=sys.stderr,
         )
-    print("\nNext: model_configs dataclass + FAMILY_CONFIG_MAP + models_registry.json entry")
-    print("See docs/engine_new_model_checklist.md")
+    print(f"\nNext: python scripts/register_image_family.py --family {family}")
+    print("See docs/engine_architecture.md §6")
     return 0
 
 

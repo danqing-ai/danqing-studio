@@ -19,6 +19,9 @@ from backend.core.contracts import (
 from backend.core.interfaces import IConfigStore, IV3TaskStore, TaskStatus
 import backend.core.task_kinds as TK
 from backend.engine.engine_registry import EngineRegistry
+from backend.observability.error_codes import classify_exception_message
+from backend.observability.graph_runtime import graph_id_for_task_kind
+from backend.observability.trace import RunTrace
 from backend.persistence.asset_store import SQLiteAssetStore
 from backend.scheduler.task_dispatch import dispatch_task
 
@@ -75,6 +78,10 @@ class TaskScheduler:
                 await self._worker
             except asyncio.CancelledError:
                 pass
+
+    def task_work_dir(self, task_id: str) -> Path:
+        """Public work directory for a task (previews, trace.json)."""
+        return self._work_dir(task_id)
 
     def _work_dir(self, task_id: str) -> Path:
         d = self._paths.get_outputs_dir() / "work" / task_id
@@ -367,9 +374,21 @@ class TaskScheduler:
             }
             loop.call_soon_threadsafe(_put_rt, "progress", ev)
 
+        trace = RunTrace(tid, graph_id=graph_id_for_task_kind(kind))
+
+        def _emit_trace_graph() -> None:
+            from backend.observability.task_graph import trace_graph_payload
+
+            payload = trace_graph_payload(trace)
+            if payload is not None:
+                _put_rt("trace", payload)
+
+        trace.set_update_callback(lambda: loop.call_soon_threadsafe(_emit_trace_graph))
+
         def on_log(ev: LogEvent) -> None:
             # Persist only — ``GET /api/tasks/{id}/stream`` replays from DB (step 1).
             # Pushing the same log onto ``rt_queue`` duplicated every line (DB + queue).
+            trace.ingest_log_line(ev.level, ev.message)
             self._tasks.append_log(tid, ev.message, ev.level)
 
         ctx = ExecutionContext(
@@ -379,6 +398,7 @@ class TaskScheduler:
             on_log=on_log,
             work_dir=self._work_dir(tid),
             asset_store=self._assets,
+            trace=trace,
         )
 
         self._tasks.mark_running(tid)
@@ -395,6 +415,7 @@ class TaskScheduler:
             )
 
             if tok.is_cancelled():
+                trace.mark_cancelled()
                 self._tasks.mark_cancelled(tid)
                 return
 
@@ -409,11 +430,18 @@ class TaskScheduler:
             )
             self._record_duration(tid, kind)
         except asyncio.CancelledError:
+            trace.mark_cancelled()
             self._tasks.mark_cancelled(tid)
         except Exception as e:
+            if trace.failure is None:
+                trace.set_failure(classify_exception_message(str(e)), detail=str(e))
             self._tasks.mark_failed(tid, str(e))
             self._tasks.append_log(tid, str(e), "error")
         finally:
+            try:
+                trace.save(self._work_dir(tid) / "trace.json")
+            except OSError:
+                pass
             try:
                 self._assets.purge_generation_step_previews(tid)
             except Exception:

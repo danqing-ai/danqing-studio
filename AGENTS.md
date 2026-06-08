@@ -27,18 +27,25 @@ DanQing Studio — plugin-style **image / video** generation on **MLX** (Apple S
 | Model registry (runtime) | `{workspace}/config/models_registry.json` — sync via `make sync-models-registry` |
 | Family configs | `backend/engine/config/model_configs.py` |
 | Transformer registry | `backend/engine/_transformer_registry.py` |
-| Contracts | `backend/core/contracts.py` |
+| API contracts | `backend/core/contracts.py` |
 | Media interfaces | `backend/core/media_interfaces.py` (`IImageEngine`, `IVideoEngine`) |
-| Runtime | `backend/engine/runtime/` (`MLXContext`, `CudaContext`) |
+| Pipeline runtime contracts | `backend/engine/contracts/` |
+| Engine dispatch | `backend/engine/sessions/engine_dispatch.py` |
+| Engine sessions | `backend/engine/sessions/` (`ImageSession`, `VideoSession`, …) |
+| Catalog loader + DTO | `backend/catalog/` |
+| Task observability | `backend/observability/` — SSE `trace`, `GET /graph`, `POST /diagnose`; dev `GET /diagnostic` |
+| Model cache | `backend/engine/cache.py` |
+| LLM assistant (engine) | `backend/engine/llm/` — sanitize / vision; not generation inference |
+| Catalog `families` → FamilySpec | `backend/catalog/family_spec_loader.py` |
+| Asset lineage | `backend/engine/lineage.py` |
+| Runtime | `backend/engine/runtime/` (`MLXContext`, `CudaContext`, `mlx_runtime`, `mlx_dtype`) |
 | Task kinds | `backend/core/task_kinds.py` (do not hardcode kind strings) |
 | Cursor rules | `.cursor/rules/model-migration.mdc`, `.cursor/rules/no-silent-degrade.mdc`, `.cursor/rules/models-registry-maintain.mdc` |
-| Dual-platform design | `docs/dual_platform_architecture.md` |
+| Engine architecture (single doc) | `docs/engine_architecture.md` |
+| Bundle layout (T5 paths, ready assert) | `backend/engine/common/bundle/layout.py` |
+| Pipeline progress + graph step logs | `backend/engine/pipelines/pipeline_progress.py` |
 | Registry profiles (expand / shrink) | `backend/core/registry_profiles.py` |
 | Bundle manifest + family contracts | `backend/core/bundle_manifest.py` |
-| Bundle layout (T5 paths, ready assert) | `backend/engine/common/bundle_layout.py` |
-| Pipeline progress + graph step logs | `backend/engine/pipelines/pipeline_progress.py` |
-| Engine refactor index | `docs/engine_refactor_plan.md` → `docs/danqing_architecture_reference.md` |
-| New model integration checklist | `docs/engine_new_model_checklist.md` |
 | Desktop | `desktop/`, `make pack-macos-desktop` |
 
 ### Hardcoded paths
@@ -90,8 +97,9 @@ REST API / CLI
 TaskScheduler (global single queue, serial worker)
     ↓  IImageEngine / IVideoEngine / IAudioEngine
 DanQingImageEngine / DanQingVideoEngine / DanQingAudioEngine
-    ↓  Pipeline + RuntimeContext
-ImagePipeline / VideoPipeline / MusicPipeline (ACE-Step) / …
+    ↓  engine_dispatch → Session (fail loud if no FamilyPlugin route)
+ImageSession / VideoSession / AudioSession / UpscaleSession
+    ↓  phased helpers + FamilyPlugin backbone
     ↓  RuntimeContext + TransformerBase + common/
 V3TaskStore + SQLiteAssetStore
 ```
@@ -103,10 +111,15 @@ V3TaskStore + SQLiteAssetStore
 | `backend/api/routes/` | REST by media (`images`, `videos`, `tasks`, `assets`, `registry`, …) |
 | `backend/cli/` | `bin/danqing-*`, mirrors REST |
 | `backend/scheduler/` | `TaskScheduler` |
-| `backend/engine/pipelines/` | Assembly lines |
-| `backend/engine/families/<family>/` | Per-family transformer, weights, text encoder |
+| `backend/catalog/` | Registry schema v3 loader, `CatalogResponse`, migrate script |
+| `backend/observability/` | RunTrace, SSE trace, graph/diagnose API; dev diagnostic bundle |
+| `backend/engine/sessions/` | Orchestration + `engine_dispatch.py` |
+| `backend/engine/pipelines/` | Phased helpers + pipeline helper objects (ctx/registry bundle) |
+| `backend/engine/families/<family>/` | Per-family transformer, weights, `plugin.py` |
 | `backend/engine/runtime/` | MLX / CUDA contexts |
-| `backend/engine/common/` | VAE, schedulers, encoders, `TransformerBase` |
+| `backend/engine/common/` | Subpackages: ops, model, bundle, codecs (root = facade only) |
+| `backend/engine/cache.py` | ModelCache (LRU + TTL) |
+| `backend/engine/lineage.py` | Asset lineage helpers |
 | `backend/persistence/` | SQLite stores |
 | `backend/core/` | Interfaces, contracts, container, i18n |
 | `backend/services/` | Settings, download |
@@ -121,7 +134,7 @@ V3TaskStore + SQLiteAssetStore
 
 ### Model as plugin
 
-Every DiT on `ImagePipeline` / `VideoPipeline` **extends `TransformerBase`** (`backend/engine/common/_base.py`): unified `forward` / `load_weights` / `parameters`, optional Hooks, default `refine_cfg_noise`.
+Every DiT on `ImagePipeline` / `VideoPipeline` **extends `TransformerBase`** (`backend/engine/common/model/base.py`): unified `forward` / `load_weights` / `parameters`, optional Hooks, default `refine_cfg_noise`.
 
 **Pipeline.run()** (registry-driven, no family branches):
 
@@ -158,7 +171,7 @@ Every DiT on `ImagePipeline` / `VideoPipeline` **extends `TransformerBase`** (`b
 
 Default per family: `transformer.py`, `text_encoder.py` (if needed), `weights.py`. Dual platform: Go-style `stem.py` / `stem_mlx.py` / `stem_cuda.py` (one logical unit). See `.cursor/rules/model-migration.mdc`.
 
-**Weights**: Prefer `remap_<family>_weights` registered in `_WEIGHT_REMAP` / `_VIDEO_WEIGHT_REMAP` (Z-Image / Flux2 style). VAE may use long tables. MLX nested `parameters()` → explicit flat `_param_map` matching remap keys.
+**Weights**: Implement `remap_<family>_weights` in `weights.py` and override `sanitize()` on the DiT (stem or inner impl) to call it before `load_weights` applies tensors. VAE may use long tables. MLX nested `parameters()` → explicit flat `_param_map` matching remap keys.
 
 ### Implemented families (indicative)
 
@@ -168,13 +181,13 @@ Default per family: `transformer.py`, `text_encoder.py` (if needed), `weights.py
 
 ## New model checklist
 
-Extended execution checklist (review-ready): `docs/engine_new_model_checklist.md`.
+Extended execution checklist: `docs/engine_architecture.md` §5–§6.
 
 1. **`default_config/models_registry.json`** — then `make sync-models-registry` to `{workspace}/config/models_registry.json`. Fields: `family`, `engine`, `actions`, `parameters`, `versions`, `backends`, bilingual `name`/`description`. First workspace setup copies from `default_config/` if missing; reset via settings only (no startup merge). See `.cursor/rules/models-registry-maintain.mdc`.
 2. **`backend/engine/config/model_configs.py`** — dataclass + `FAMILY_CONFIG_MAP`
-3. **`backend/engine/families/<family>/transformer.py`** — `TransformerBase`, inject `RuntimeContext`
-4. **`backend/engine/families/<family>/weights.py`** — `remap_<family>_weights` (if needed)
-5. **`backend/engine/_transformer_registry.py`** — `_TRANSFORMER`, `_WEIGHT_REMAP`, `_TEXT_ENCODER` as needed (image/video DiT)
+3. **`backend/engine/families/<family>/transformer.py`** — registry-facing stem (`DelegatingDiTStem` or `TransformerBase`); hooks here, math in `transformer_mlx.py`
+4. **`backend/engine/families/<family>/weights.py`** — `remap_<family>_weights` (if needed); wire via DiT `sanitize()`
+5. **`backend/engine/_transformer_registry.py`** — `_TRANSFORMER`, `_TEXT_ENCODER`, optional `_IMAGE_LORA_MERGE` (image/video DiT)
 
 **Audio (ACE-Step)** — no `ImagePipeline` / `_TRANSFORMER` row: use `MusicPipeline` + `backend/engine/families/ace_step/generation.py` (public entry; MLX/CUDA dispatch inside family). Register `AceStepConfig` in `model_configs.py`; map registry `actions.create` → `task_kinds.AUDIO_GENERATION` via `task_kind_for_registry_action()`.
 
@@ -193,7 +206,7 @@ make verify-engine-stack
 
 ## Configuration
 
-### Registry (`schema_version: 2`)
+### Registry (`schema_version: 3`)
 
 - Top-level `engines`: `danqing-image`, `danqing-video`, `danqing-audio`
 - Per model: `media` (`image` \| `video` \| `audio`), **`actions`** (not legacy `capabilities`)
@@ -221,6 +234,7 @@ make verify-engine-stack
 | `bin/danqing-upscale` | `POST /api/images/upscales` | `IImageEngine.upscale()` |
 | `bin/danqing-video-generate` | `POST /api/videos/generations` | `IVideoEngine.generate()` |
 | `bin/danqing-video-edit` | `POST /api/videos/edits` | `IVideoEngine.edit()` |
+| `bin/danqing-video-upscale` | `POST /api/videos/upscales` | `IVideoEngine.upscale()` |
 
 Engines: `ModelRegistry` + `EngineRegistry` → `DanQingImageEngine` / `DanQingVideoEngine`; runtime from registry `backends` via `_resolve_runtime`.
 
@@ -231,7 +245,7 @@ Engines: `ModelRegistry` + `EngineRegistry` → `DanQingImageEngine` / `DanQingV
 ### Images / video
 
 - `POST /api/images/generations` | `edits` | `upscales`
-- `POST /api/videos/generations` | `edits`
+- `POST /api/videos/generations` | `edits` | `upscales`
 
 ### Tasks / queue
 
@@ -240,7 +254,10 @@ Engines: `ModelRegistry` + `EngineRegistry` → `DanQingImageEngine` / `DanQingV
 - `GET /api/tasks/{id}/logs` — paginated logs
 - `PATCH /api/tasks/{id}` — **`queued` only**: `{ "priority": "normal" \| "high" }`
 - `DELETE /api/tasks/{id}` — cancel
-- `GET /api/tasks/{id}/stream` — SSE: `log`, `progress`, `status`, `result`, `done`
+- `GET /api/tasks/{id}/stream` — SSE: `log`, `progress`, `trace`, `status`, `result`, `done`
+- `GET /api/tasks/{id}/graph` — pipeline DAG snapshot (product UI)
+- `POST /api/tasks/{id}/diagnose` — LLM task diagnosis (local LLM required)
+- `GET /api/tasks/{id}/diagnostic` — dev/agent diagnostic bundle
 - `GET /api/queue` — snapshot; `estimated_wait_seconds` on queued items
 
 `queue_image_first` in settings: image tasks dequeue before video.
@@ -394,7 +411,7 @@ Workflow: import → select node → Composer fills params → generate lands in
 - **Contributors** — run `make verify-engine-stack` before PR
 - **Structural guide (FLUX.1 create)** — `ImageGenerationRequest.structural_guide` only on `flux1*` + text-to-image; Canny/Depth/Redux preprocess in pipeline; companion LoRA auto-injected for Canny/Depth. UI: `useStructuralGuide.ts` + Composer advanced; not combinable with reference img2img.
 - **FLUX Fill (retouch/extend)** — `flux-fill-controlnet` only; `ImagePipeline._run_flux1_fill_edit` (384-dim patch concat). Retouch needs `mask_asset_id`; extend uses `ExtendSpec`. CLI: `danqing-edit --operation retouch|extend` with `--mask-image` / `--extend-directions`.
-- **ControlNet CUDA** — structural guide + Fill are **MLX-only** today (`backend/engine/common/controlnet_runtime.py`; registry `backends: ["mlx"]` on controlnet rows). CUDA paths are **placeholders** until a unified batch (`families/flux1/transformer_cuda.py` + pipeline hooks). Fail loud on `CudaContext`; do not silent-fallback.
+- **ControlNet CUDA** — structural guide + Fill are **MLX-only** today (`backend/engine/families/flux1/structural.py`; registry `backends: ["mlx"]` on controlnet rows). CUDA paths are **placeholders** until a unified batch (`families/flux1/transformer_cuda.py` + pipeline hooks). Fail loud on `CudaContext`; do not silent-fallback.
 
 ---
 

@@ -3,20 +3,20 @@ from __future__ import annotations
 
 from typing import Any
 
-from backend.engine.common.dit_stem import DelegatingDiTStem
+from backend.engine.common.model.dit_stem import DelegatingDiTStem
 
 
 class QwenImageTransformer(DelegatingDiTStem):
     """Qwen-Image DiT — selects MLX or CUDA implementation from ``RuntimeContext``."""
 
     def __init__(self, config: Any, ctx: Any):
-        from .transformer_mlx import QwenImageTransformer as _MLX
+        from .transformer_mlx import QwenImageDiTMLX as _MLX
 
         cuda_cls = None
         if getattr(ctx, "backend", "mlx") == "cuda":
-            from .transformer_cuda import QwenImageTransformerCuda
+            from .transformer_cuda import QwenImageDiTCuda
 
-            cuda_cls = QwenImageTransformerCuda
+            cuda_cls = QwenImageDiTCuda
 
         super().__init__(
             config,

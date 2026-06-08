@@ -8,8 +8,8 @@ import mlx.core as mx
 import mlx.nn as nn
 from PIL import Image
 
-from backend.engine.common.vae import vae_output_to_uint8_hwc
-from backend.engine.common.attention import scaled_dot_product_attention_bhsd_mx
+from backend.engine.common.codecs.vae import vae_output_to_uint8_hwc
+from backend.engine.common.ops.attention import scaled_dot_product_attention_bhsd_mx
 from backend.engine.runtime._base import RuntimeContext
 
 

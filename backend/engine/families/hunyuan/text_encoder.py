@@ -8,8 +8,8 @@ from typing import Any
 
 import numpy as np
 
-from backend.engine.common.hf_tokenizer_json import load_hf_tokenizer
-from backend.engine.common.text_encoders import T5Encoder
+from backend.engine.common.bundle.hf_tokenizer_json import load_hf_tokenizer
+from backend.engine.common.codecs.text_encoders import T5Encoder
 from backend.engine.families.hunyuan.qwen_encoder_mlx import HunyuanQwen25VLEncoder
 
 _HUNYUAN_SYSTEM_MESSAGE = (

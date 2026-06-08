@@ -16,13 +16,13 @@ import mlx.core as mx
 import mlx.nn as nn
 import numpy as np
 
-from backend.engine.common.attention import (
+from backend.engine.common.ops.attention import (
     build_frame_prefix_causal_bias,
     scaled_dot_product_attention_bhsd_mx,
 )
-from backend.engine.common.mlx_runtime_fallback import load_weights_dict
-from backend.engine.common.mlx_dtype import cast_module_parameters
-from backend.engine.common.mlx_runtime_fallback import run_eval
+from backend.engine.runtime.mlx_runtime import load_weights_dict
+from backend.engine.runtime.mlx_dtype import cast_module_parameters
+from backend.engine.runtime.mlx_runtime import run_eval
 from backend.engine.runtime._base import RuntimeContext
 
 logger = logging.getLogger(__name__)

@@ -1552,6 +1552,9 @@ const startGeneration = async () => {
       onLog: (logData: any) => {
         tasksStore.ingestTaskLog(tid, logData);
       },
+      onTrace: (traceData: unknown) => {
+        tasksStore.ingestTaskPipelineTrace(tid, traceData);
+      },
       onResult: (resultData: any) => {
         const ids = (resultData?.asset_ids as string[] | undefined) || [];
         if (ids.length > 0) pendingCanvasAssetIds.value = ids;

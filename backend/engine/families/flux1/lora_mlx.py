@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
-from backend.engine.common.lora_mlx import merge_lora_adapters_common
+from backend.engine.common.bundle.lora_mlx import merge_lora_adapters_common
 from backend.engine.families.flux1.weights import remap_flux1_lora_keys
 from backend.engine.runtime._base import RuntimeContext
 

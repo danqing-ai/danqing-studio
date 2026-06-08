@@ -28,7 +28,7 @@ def validate_bundle_graph_step(
     model_id: str,
     on_log: Callable[[str, str], None] | None,
 ) -> None:
-    from backend.engine.common.bundle_layout import assert_media_bundle_ready
+    from backend.engine.common.bundle.layout import assert_media_bundle_ready
 
     assert_media_bundle_ready(bundle_root, family=family, model_id=model_id)
     pipeline_graph_step(

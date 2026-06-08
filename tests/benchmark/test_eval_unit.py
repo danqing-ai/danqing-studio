@@ -50,6 +50,28 @@ class EvalCaseExpansionTests(unittest.TestCase):
         if edit_cases:
             self.assertEqual(edit_cases[0].prompt_id, SMOKE_EDIT_PROMPT_ID)
 
+    def test_smoke_includes_phased_image_families(self) -> None:
+        smoke = expand_eval_cases(profile="smoke")
+        create_ids = {c.model_id for c in smoke if c.action == "create"}
+        for expected in (
+            "flux2-klein-9b",
+            "z-image-turbo",
+            "qwen-image",
+            "flux1-schnell",
+            "fibo-lite",
+            "ernie-image-turbo",
+        ):
+            self.assertIn(expected, create_ids)
+        rewrite_ids = {c.model_id for c in smoke if c.action == "rewrite"}
+        for expected in (
+            "flux2-klein-9b",
+            "z-image-turbo",
+            "qwen-image",
+            "flux1-schnell",
+            "fibo-lite",
+        ):
+            self.assertIn(expected, rewrite_ids)
+
     def test_edit_judge_prompt_includes_scene(self) -> None:
         pack = load_prompt_pack()
         scene = fixture_scene(pack, key="edit_scene")

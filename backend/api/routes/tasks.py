@@ -4,11 +4,14 @@ import asyncio
 import json
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
-from backend.api.deps import get_task_scheduler
+from backend.api.deps import get_llm_service, get_task_scheduler
+from backend.core.i18n import resolve_locale
+from backend.observability.diagnostic import build_diagnostic_bundle
+from backend.observability.llm_diagnose import llm_diagnose_task
 from backend.scheduler.task_scheduler import TaskScheduler
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
@@ -87,6 +90,95 @@ async def patch_task_priority(
     return sched.public_task_view(row)
 
 
+@router.get("/{task_id}/diagnostic")
+async def get_task_diagnostic(
+    task_id: str,
+    http_request: Request,
+    sched: TaskScheduler = Depends(get_task_scheduler),
+):
+    """Dev/agent bundle: structured trace, graph snapshot, failure code (engine v3)."""
+    row = sched.get_task(task_id)
+    if not row:
+        raise HTTPException(404, "task not found")
+    locale = resolve_locale(http_request.headers.get("Accept-Language"))
+    logs = sched.get_task_logs(task_id, offset=0, limit=2000)
+    health = None
+    try:
+        from backend.api.routes.system import health as system_health
+
+        health = system_health()
+    except Exception:
+        pass
+    return build_diagnostic_bundle(
+        task_id=task_id,
+        task_row=row,
+        logs=logs,
+        work_dir=sched.task_work_dir(task_id),
+        health=health,
+        locale=locale,
+    )
+
+
+@router.get("/{task_id}/graph")
+async def get_task_graph(
+    task_id: str,
+    http_request: Request,
+    sched: TaskScheduler = Depends(get_task_scheduler),
+):
+    """Pipeline DAG snapshot for in-product task UI."""
+    row = sched.get_task(task_id)
+    if not row:
+        raise HTTPException(404, "task not found")
+    locale = resolve_locale(http_request.headers.get("Accept-Language"))
+    bundle = build_diagnostic_bundle(
+        task_id=task_id,
+        task_row=row,
+        logs=sched.get_task_logs(task_id, offset=0, limit=500),
+        work_dir=sched.task_work_dir(task_id),
+        health=None,
+        locale=locale,
+    )
+    graph = bundle.get("graph")
+    if not isinstance(graph, dict):
+        raise HTTPException(404, "graph not available")
+    return graph
+
+
+class TaskDiagnoseRequest(BaseModel):
+    locale: str | None = None
+
+
+@router.post("/{task_id}/diagnose")
+async def post_task_diagnose(
+    task_id: str,
+    http_request: Request,
+    body: TaskDiagnoseRequest | None = None,
+    sched: TaskScheduler = Depends(get_task_scheduler),
+    llm=Depends(get_llm_service),
+):
+    """LLM summary over structured diagnostic bundle (requires local LLM)."""
+    row = sched.get_task(task_id)
+    if not row:
+        raise HTTPException(404, "task not found")
+    locale = resolve_locale(
+        (body.locale if body and body.locale else None) or http_request.headers.get("Accept-Language")
+    )
+    logs = sched.get_task_logs(task_id, offset=0, limit=2000)
+    bundle = build_diagnostic_bundle(
+        task_id=task_id,
+        task_row=row,
+        logs=logs,
+        work_dir=sched.task_work_dir(task_id),
+        health=None,
+        locale=locale,
+    )
+    try:
+        summary = llm_diagnose_task(bundle, llm, locale=locale)
+    except Exception as exc:
+        raise HTTPException(503, f"task diagnosis unavailable: {exc}") from exc
+    return {"task_id": task_id, "summary": summary, "bundle": bundle}
+
+
 @router.get("/{task_id}/logs")
 async def get_task_logs(
     task_id: str,
@@ -150,7 +242,9 @@ async def stream_task(task_id: str, sched: TaskScheduler = Depends(get_task_sche
                 try:
                     while True:
                         ev_type, ev_data = rt_queue.get_nowait()
-                        if ev_type == "progress" and hasattr(ev_data, "progress"):
+                        if ev_type == "trace" and isinstance(ev_data, dict):
+                            yield f"event: trace\ndata: {json.dumps(ev_data)}\n\n"
+                        elif ev_type == "progress" and hasattr(ev_data, "progress"):
                             prog = float(ev_data.progress or 0.0)
                             msg = getattr(ev_data, "message", None)
                             phase = getattr(ev_data, "phase", None)

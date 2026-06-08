@@ -72,7 +72,7 @@ def generate(
             raise ValueError(
                 "structural_guide requires --control-asset-id or --control-image when --controlnet is set"
             )
-        from backend.engine.common.structural_guide import infer_guide_type, is_fill_controlnet
+        from backend.engine.families.flux1.structural import infer_guide_type, is_fill_controlnet
 
         if is_fill_controlnet(cn_key):
             raise ValueError(

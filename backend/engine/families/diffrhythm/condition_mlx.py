@@ -52,13 +52,13 @@ def set_g2p_bundle_root(bundle_root: Path | None) -> None:
 
 
 def _ensure_bundle_g2p() -> bool:
-    from backend.engine.families.diffrhythm.g2p_bootstrap import bundle_g2p_ready
+    from backend.engine.families.diffrhythm.g2p import bundle_g2p_ready
 
     return bundle_g2p_ready(_BUNDLE_G2P_ROOT)
 
 
 def _install_bundle_g2p_path() -> None:
-    from backend.engine.families.diffrhythm.g2p_bootstrap import install_bundle_g2p_path
+    from backend.engine.families.diffrhythm.g2p import install_bundle_g2p_path
 
     install_bundle_g2p_path(_BUNDLE_G2P_ROOT)
 
@@ -140,7 +140,7 @@ def _english_to_ipa(text: str, tokenizer) -> str:
 def _encode_via_bundle_g2p(text: str) -> List[int]:
     """Upstream ``CNENTokenizer.encode`` — bundle ``chn_eng_g2p`` for zh/en mixed lines."""
     if not _ensure_bundle_g2p() and _BUNDLE_G2P_ROOT is not None:
-        from backend.engine.families.diffrhythm.g2p_bootstrap import ensure_bundle_g2p
+        from backend.engine.families.diffrhythm.g2p import ensure_bundle_g2p
 
         ensure_bundle_g2p(_BUNDLE_G2P_ROOT)
     if not _ensure_bundle_g2p():

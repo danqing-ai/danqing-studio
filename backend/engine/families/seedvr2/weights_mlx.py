@@ -13,8 +13,8 @@ from typing import Any, List
 import mlx.core as mx
 import mlx.nn as nn
 
-from backend.engine.common.bundle_weight_mapping import WeightMapping, WeightTarget, WeightTransforms
-from backend.engine.common.bundle_weights import ComponentDefinition, LoadedWeights, TokenizerDefinition, WeightLoader
+from backend.engine.common.bundle.weight_mapping import WeightMapping, WeightTarget, WeightTransforms
+from backend.engine.common.bundle.bundle_weights import ComponentDefinition, LoadedWeights, TokenizerDefinition, WeightLoader
 
 
 class ModelConfig:

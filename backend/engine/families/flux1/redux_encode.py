@@ -98,8 +98,8 @@ def _find_redux_weights(bundle_root: Path) -> Path:
 
 
 def resolve_redux_bundle_root(registry: Any, project_root: Path, controlnet_model_id: str) -> Path:
-    from backend.engine.common.pipeline_registry import local_bundle_root as bundle_root_fn
-    from backend.engine.common.pipeline_registry import resolve_version_block as version_block_fn
+    from backend.engine.contracts.pipeline_registry import local_bundle_root as bundle_root_fn
+    from backend.engine.contracts.pipeline_registry import resolve_version_block as version_block_fn
 
     entry = registry.require(controlnet_model_id)
     version_key = version_block_fn(entry, None)

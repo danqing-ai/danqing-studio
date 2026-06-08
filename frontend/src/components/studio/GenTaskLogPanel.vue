@@ -9,11 +9,19 @@
   >
     <header class="gen-task-log-panel__header">
       <div class="gen-task-log-panel__lead">
-        <span class="gen-task-log-panel__title">{{ $t('studio.logs') }}</span>
-        <span v-if="logs.length > 0" class="gen-task-log-panel__count">{{ logs.length }}</span>
+        <span v-if="!inDialog" class="gen-task-log-panel__title">{{ $t('studio.logs') }}</span>
+        <DqSegmented
+          v-model="activeTab"
+          size="small"
+          class="gen-task-log-panel__tabs"
+          :options="tabOptions"
+          @update:model-value="onTabChange"
+        />
       </div>
       <div class="gen-task-log-panel__actions">
+        <span v-if="logs.length > 0" class="gen-task-log-panel__count">{{ logs.length }}</span>
         <DqButton
+          v-if="activeTab === 'logs'"
           type="text"
           size="sm"
           class="gen-task-log-panel__toggle"
@@ -33,23 +41,57 @@
       </div>
     </header>
 
+    <TaskIdBadge
+      v-if="taskId"
+      :task-id="taskId"
+      compact
+    />
+
     <div
       v-if="activeProgress"
       class="gen-task-log-panel__progress"
       role="status"
     >
-      <span class="gen-task-log-panel__progress-dot" aria-hidden="true" />
-      <span class="gen-task-log-panel__progress-text">{{ activeProgress.title }}</span>
-      <time class="gen-task-log-panel__progress-time">{{ activeProgress.time }}</time>
+      <div class="gen-task-log-panel__progress-head">
+        <span class="gen-task-log-panel__progress-dot" aria-hidden="true" />
+        <span class="gen-task-log-panel__progress-text">{{ activeProgress.title }}</span>
+        <time class="gen-task-log-panel__progress-time">{{ activeProgress.time }}</time>
+      </div>
+      <div
+        v-if="progressPercent != null"
+        class="gen-task-log-panel__progress-bar"
+        role="progressbar"
+        :aria-valuenow="Math.round(progressPercent)"
+        aria-valuemin="0"
+        aria-valuemax="100"
+      >
+        <span
+          class="gen-task-log-panel__progress-fill"
+          :style="{ width: `${progressPercent}%` }"
+        />
+      </div>
     </div>
 
-    <div ref="logContainerRef" class="gen-task-log-panel__body">
-      <div v-if="displayItems.length === 0" class="gen-task-log-panel__empty">
+    <div v-if="activeTab === 'pipeline'" class="gen-task-log-panel__body gen-task-log-panel__body--pipeline">
+      <TaskPipelineGraph
+        :nodes="pipelineNodes"
+        :active-node="pipelineActive"
+        :progress="progressPercent"
+        :progress-label="activeProgress?.title"
+        :show-diagnose="canDiagnose"
+        :diagnosing="diagnosing"
+        :diagnosis="diagnosis"
+        @diagnose="runDiagnose"
+      />
+    </div>
+
+    <div v-else ref="logContainerRef" class="gen-task-log-panel__body">
+      <div v-if="displayItems.length === 0 && !activeProgress" class="gen-task-log-panel__empty">
         <p class="gen-task-log-panel__empty-title">{{ $t('studio.logsEmpty') }}</p>
         <p class="gen-task-log-panel__empty-hint">{{ $t('studio.logsEmptyHint') }}</p>
       </div>
 
-      <ol v-else class="gen-task-log-panel__timeline">
+      <ol v-else-if="displayItems.length > 0" class="gen-task-log-panel__timeline">
         <li
           v-for="(item, rowIndex) in displayItems"
           :key="item.index"
@@ -66,7 +108,12 @@
           <div class="gen-task-log-panel__content">
             <div class="gen-task-log-panel__row-head">
               <span class="gen-task-log-panel__label">{{ item.title }}</span>
-              <time class="gen-task-log-panel__time">{{ item.time }}</time>
+              <time
+                v-if="showEntryTime(item)"
+                class="gen-task-log-panel__time"
+              >
+                {{ item.time }}
+              </time>
             </div>
             <div v-if="item.chips?.length" class="gen-task-log-panel__chips">
               <span
@@ -93,11 +140,18 @@
 
 <script setup lang="ts">
 import { computed, ref, watch, nextTick } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { Delete } from '@danqing/dq-shell';
+import TaskIdBadge from './TaskIdBadge.vue';
+import TaskPipelineGraph from './TaskPipelineGraph.vue';
 import { useTasksStore } from '@/stores/tasks';
+import { api } from '@/utils/api';
 import {
   buildLogDisplayItems,
+  filterLogTimelineItems,
   latestProgressItem,
+  resolveDisplayProgressPercent,
+  type LogDisplayItem,
 } from '@/utils/genTaskLog';
 
 const props = defineProps<{
@@ -108,9 +162,62 @@ const props = defineProps<{
   inDialog?: boolean;
 }>();
 
+const { t: $t } = useI18n();
 const tasksStore = useTasksStore();
 const logContainerRef = ref<HTMLElement | null>(null);
 const showTechnical = ref(false);
+const activeTab = ref<'logs' | 'pipeline'>('logs');
+const diagnosing = ref(false);
+const diagnosis = ref<string | null>(null);
+
+const tabOptions = computed(() => [
+  { label: $t('studio.logs'), value: 'logs' },
+  { label: $t('studio.pipelineTab'), value: 'pipeline' },
+]);
+
+const pipelineGraph = computed(() => {
+  const id = props.taskId;
+  if (!id) return null;
+  return tasksStore.taskPipelineGraphs[id] ?? null;
+});
+
+const pipelineNodes = computed(() => pipelineGraph.value?.nodes ?? []);
+const pipelineActive = computed(() => pipelineGraph.value?.active_node ?? null);
+const canDiagnose = computed(() => Boolean(props.taskId));
+
+const liveProgress = computed(() => {
+  const id = props.taskId;
+  if (!id) return null;
+  return tasksStore.liveTaskProgress[id] ?? null;
+});
+
+async function onTabChange(tab: string | number) {
+  if (tab === 'pipeline') {
+    await switchPipelineTab();
+  }
+}
+
+async function switchPipelineTab() {
+  activeTab.value = 'pipeline';
+  if (props.taskId) {
+    await tasksStore.loadTaskPipelineGraph(props.taskId);
+  }
+}
+
+async function runDiagnose() {
+  if (!props.taskId || diagnosing.value) return;
+  diagnosing.value = true;
+  diagnosis.value = null;
+  try {
+    const res = await api.tasks.diagnose(props.taskId);
+    diagnosis.value = res.summary;
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : String(e);
+    diagnosis.value = msg;
+  } finally {
+    diagnosing.value = false;
+  }
+}
 
 const logs = computed(() => {
   const id = props.taskId;
@@ -124,18 +231,42 @@ const rawDisplayItems = computed(() =>
 
 const activeProgress = computed(() => latestProgressItem(rawDisplayItems.value));
 
-const displayItems = computed(() => {
-  const items = rawDisplayItems.value;
-  const latest = latestProgressItem(items);
-  if (!latest) return items;
-  return items.filter((item) => item.index !== latest.index);
-});
+const progressPercent = computed(() =>
+  resolveDisplayProgressPercent(
+    pipelineGraph.value?.progress,
+    liveProgress.value,
+    activeProgress.value?.title,
+  ),
+);
+
+const displayItems = computed(() =>
+  filterLogTimelineItems(
+    rawDisplayItems.value,
+    showTechnical.value,
+    activeProgress.value?.index ?? null,
+  ),
+);
+
+function showEntryTime(item: LogDisplayItem): boolean {
+  if (showTechnical.value) return true;
+  return item.kind === 'milestone' || item.kind === 'error' || item.kind === 'warning';
+}
 
 function clearLogs() {
   if (props.taskId) {
     tasksStore.clearTaskLogs(props.taskId);
   }
 }
+
+watch(
+  () => props.taskId,
+  (id) => {
+    diagnosis.value = null;
+    if (id && activeTab.value === 'pipeline') {
+      void tasksStore.loadTaskPipelineGraph(id);
+    }
+  },
+);
 
 watch(
   () => logs.value.length,
@@ -169,7 +300,7 @@ watch(
 .gen-task-log-panel__lead {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   min-width: 0;
 }
 
@@ -179,6 +310,11 @@ watch(
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--dq-label-tertiary);
+  flex-shrink: 0;
+}
+
+.gen-task-log-panel__tabs {
+  flex-shrink: 0;
 }
 
 .gen-task-log-panel__count {
@@ -194,7 +330,7 @@ watch(
 .gen-task-log-panel__actions {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
   flex-shrink: 0;
 }
 
@@ -205,12 +341,19 @@ watch(
 
 .gen-task-log-panel__progress {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 8px;
   padding: 8px 12px;
   border-radius: var(--dq-radius-control);
   background: color-mix(in srgb, var(--dq-accent) 12%, transparent);
   border: 0.5px solid color-mix(in srgb, var(--dq-accent) 28%, transparent);
+}
+
+.gen-task-log-panel__progress-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .gen-task-log-panel__progress-dot {
@@ -235,6 +378,25 @@ watch(
   font-variant-numeric: tabular-nums;
   color: var(--dq-label-tertiary);
   flex-shrink: 0;
+}
+
+.gen-task-log-panel__progress-bar {
+  height: 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--dq-accent) 16%, transparent);
+  overflow: hidden;
+}
+
+.gen-task-log-panel__progress-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--dq-accent);
+  transition: width 0.25s ease;
+}
+
+.gen-task-log-panel__body--pipeline {
+  padding: 6px 4px;
 }
 
 .gen-task-log-panel__body {

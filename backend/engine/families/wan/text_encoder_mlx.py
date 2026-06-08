@@ -12,8 +12,8 @@ import mlx.core as mx
 import mlx.nn as nn
 import numpy as np
 
-from backend.engine.common.embeddings import pad_ragged_2d_sequences
-from backend.engine.common.text_encoders.qwen3_mlx import MlxRMSNorm
+from backend.engine.common.ops.embeddings import pad_ragged_2d_sequences
+from backend.engine.common.codecs.text_encoders.qwen3_mlx import MlxRMSNorm
 
 logger = logging.getLogger(__name__)
 
@@ -182,7 +182,7 @@ class _UMT5Encoder(nn.Module):
 def _load_umt5_state_dict(
     checkpoint_path: Path, *, array_fn: Any | None = None
 ) -> dict[str, mx.array]:
-    from backend.engine.common.pytorch_bin_numpy import state_dict_to_numpy
+    from backend.engine.common.bundle.pytorch_bin_numpy import state_dict_to_numpy
 
     logger.info("Loading Wan UMT5 weights from %s", checkpoint_path)
     if array_fn is None:

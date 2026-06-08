@@ -15,9 +15,9 @@ from typing import Any
 
 from backend.engine.config.model_configs import ZImageConfig
 from backend.engine.runtime._base import RuntimeContext
-from backend.engine.common._base import TransformerBase
-from backend.engine.common.attention import attention_blhd, build_padding_attention_bias
-from backend.engine.common.embeddings import (
+from backend.engine.common.model.base import TransformerBase
+from backend.engine.common.ops.attention import attention_blhd, build_padding_attention_bias
+from backend.engine.common.ops.embeddings import (
     apply_complex_rope_from_cis_bshd,
     pad_len_to_multiple as _pad_len_to_multiple,
     build_tail_pad_mask as _build_tail_pad_mask,
@@ -25,7 +25,7 @@ from backend.engine.common.embeddings import (
     apply_pad_token as _apply_pad_token,
     sinusoidal_timestep_proj,
 )
-from backend.engine.common.norm import apply_scale_shift, unpack_modulation_4way
+from backend.engine.common.ops.norm import apply_scale_shift, unpack_modulation_4way
 
 # =========================================================================
 # RopeEmbedder — 复数频率 RoPE
@@ -301,10 +301,10 @@ class FinalLayer:
 
 
 # =========================================================================
-# ZImageTransformer — 主模型
+# ZImageDiTMLX — 主模型
 # =========================================================================
 
-class ZImageTransformer(TransformerBase):
+class ZImageDiTMLX(TransformerBase):
     """Z-Image / Z-Image-Turbo Transformer。
 
     VAE latent [C=16, F=1, H, W] → patchify → embed → noise_refiner
@@ -537,7 +537,7 @@ class ZImageTransformer(TransformerBase):
     def _resolve_cap_feats(self, txt_embeds, conditioning):
         cap_feats = txt_embeds if txt_embeds is not None else conditioning.get("cap_feats")
         if cap_feats is None:
-            raise ValueError("ZImageTransformer requires txt_embeds (Qwen3 cap_feats)")
+            raise ValueError("ZImageDiTMLX requires txt_embeds (Qwen3 cap_feats)")
         if cap_feats.ndim == 3 and cap_feats.shape[0] == 1:
             cap_feats = cap_feats[0]
         return cap_feats
@@ -568,7 +568,7 @@ class ZImageTransformer(TransformerBase):
                     idx = int(t.item())
         if idx is not None:
             if sigmas is None:
-                raise ValueError("ZImageTransformer requires sigmas when timestep is an integer index")
+                raise ValueError("ZImageDiTMLX requires sigmas when timestep is an integer index")
             sigma_t = ctx.reshape(sigmas[idx], (1,))
             t = ctx.ones_like(sigma_t) + ctx.mul(sigma_t, -1.0)
         else:

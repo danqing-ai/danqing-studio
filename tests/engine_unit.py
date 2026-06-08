@@ -6,8 +6,17 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from backend.engine.common._base import _mlx_affine_infer_bits_and_group_size
+from backend.engine.common.model.base import _mlx_affine_infer_bits_and_group_size
 from backend.engine.families.ltx.weights import remap_ltx_weights
+
+
+def _load_default_registry_expanded() -> dict:
+    import json
+
+    from backend.catalog.loader import expand_catalog_document
+
+    path = Path(__file__).resolve().parents[1] / "default_config" / "models_registry.json"
+    return expand_catalog_document(json.loads(path.read_text(encoding="utf-8")))
 
 
 def _t(shape: tuple[int, ...]) -> SimpleNamespace:
@@ -16,7 +25,7 @@ def _t(shape: tuple[int, ...]) -> SimpleNamespace:
 
 class StructuralGuideTests(unittest.TestCase):
     def test_infer_guide_type_and_lora_map(self) -> None:
-        from backend.engine.common.structural_guide import (
+        from backend.engine.families.flux1.structural import (
             CONTROLNET_LORA_MAP,
             companion_lora_id,
             infer_guide_type,
@@ -27,7 +36,7 @@ class StructuralGuideTests(unittest.TestCase):
         self.assertEqual(infer_guide_type("flux-redux"), "redux")
         self.assertEqual(companion_lora_id("flux-canny-controlnet"), "flux1-canny-dev-lora")
         self.assertIn("flux-depth-controlnet", CONTROLNET_LORA_MAP)
-        from backend.engine.common.structural_guide import is_fill_controlnet, is_redux_controlnet
+        from backend.engine.families.flux1.structural import is_fill_controlnet, is_redux_controlnet
 
         self.assertTrue(is_fill_controlnet("flux-fill-controlnet"))
         self.assertTrue(is_redux_controlnet("flux-redux"))
@@ -103,13 +112,13 @@ class RegistryActionTests(unittest.TestCase):
 class FluxFillPatchEmbedTests(unittest.TestCase):
     def test_fill_patch_token_dim_matches_x_embedder(self) -> None:
         from backend.engine.config.model_configs import Flux1Config
-        from backend.engine.families.flux1.fill_mask import FILL_PATCH_TOKEN_DIM
-        from backend.engine.families.flux1.transformer_mlx import Flux1Transformer
+        from backend.engine.families.flux1.fill_edit import FILL_PATCH_TOKEN_DIM
+        from backend.engine.families.flux1.transformer_mlx import Flux1DiTMLX
         from backend.engine.runtime.mlx import MLXContext
 
         ctx = MLXContext()
         config = Flux1Config(patch_token_dim=FILL_PATCH_TOKEN_DIM, supports_guidance=True)
-        model = Flux1Transformer(config, ctx)
+        model = Flux1DiTMLX(config, ctx)
         w = model._param_map["patch_embed.proj.weight"]
         self.assertEqual(tuple(w.shape), (3072, 1, 1, FILL_PATCH_TOKEN_DIM))
 
@@ -118,7 +127,7 @@ class FluxFillMaskTests(unittest.TestCase):
     def test_outpaint_mask_layout(self) -> None:
         from PIL import Image
 
-        from backend.engine.families.flux1.fill_mask import (
+        from backend.engine.families.flux1.fill_edit import (
             build_outpaint_image_and_mask,
             mask_pil_to_weight,
             reshape_mask_latent_channels,
@@ -136,7 +145,7 @@ class FluxFillMaskTests(unittest.TestCase):
 
 class ControlNetRuntimeTests(unittest.TestCase):
     def test_declared_backends_mlx_placeholder(self) -> None:
-        from backend.engine.common.controlnet_runtime import (
+        from backend.engine.families.flux1.structural import (
             CONTROLNET_CUDA_BATCH_PLANNED,
             CONTROLNET_DECLARED_BACKENDS,
         )
@@ -148,11 +157,11 @@ class ControlNetRuntimeTests(unittest.TestCase):
         from types import SimpleNamespace
         from unittest.mock import patch
 
-        from backend.engine.common.controlnet_runtime import require_controlnet_runtime
+        from backend.engine.families.flux1.structural import require_controlnet_runtime
 
         fake_ctx = SimpleNamespace()
         with patch(
-            "backend.engine.common.controlnet_runtime.controlnet_runtime_available",
+            "backend.engine.families.flux1.structural.controlnet_runtime_available",
             return_value=True,
         ):
             with self.assertRaises(RuntimeError) as ctx:
@@ -177,7 +186,7 @@ class ControlNetScopeTests(unittest.TestCase):
 
 class RuntimeContractTests(unittest.TestCase):
     def test_family_runtime_guidance_semantics(self) -> None:
-        from backend.engine.common.runtime_contracts import FamilyRuntimeContract
+        from backend.engine.contracts.runtime_contracts import FamilyRuntimeContract
 
         flux1 = FamilyRuntimeContract(
             family="flux1",
@@ -210,7 +219,7 @@ class RuntimeContractTests(unittest.TestCase):
     def test_family_runtime_zimage_noise_layout(self) -> None:
         import numpy as np
 
-        from backend.engine.common.runtime_contracts import FamilyRuntimeContract
+        from backend.engine.contracts.runtime_contracts import FamilyRuntimeContract
 
         class _FakeCtx:
             @staticmethod
@@ -254,7 +263,7 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertEqual(contract.noise_sample_dtype(_DTypeCtx(), "mlx.core.bfloat16"), "float32")
 
     def test_scheduler_resolver_falls_back_to_config_flags(self) -> None:
-        from backend.engine.common.runtime_contracts import SchedulerSemanticsResolver
+        from backend.engine.contracts.runtime_contracts import SchedulerSemanticsResolver
 
         resolver = SchedulerSemanticsResolver()
         entry = SimpleNamespace(parameters={})
@@ -275,7 +284,7 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertEqual(sem.set_timesteps_kwargs["image_seq_len"], (1024 // 16) * (1024 // 16))
 
     def test_scheduler_resolver_registry_overrides_and_sigma_schedule(self) -> None:
-        from backend.engine.common.runtime_contracts import SchedulerSemanticsResolver
+        from backend.engine.contracts.runtime_contracts import SchedulerSemanticsResolver
 
         resolver = SchedulerSemanticsResolver()
         entry = SimpleNamespace(
@@ -318,15 +327,11 @@ class RuntimeContractTests(unittest.TestCase):
         import numpy as np
         from diffusers.schedulers import FlowMatchEulerDiscreteScheduler
 
-        from backend.engine.common.runtime_contracts import SchedulerSemanticsResolver
-        from backend.engine.common.schedulers import FlowMatchEulerScheduler, get_scheduler
+        from backend.engine.contracts.runtime_contracts import SchedulerSemanticsResolver
+        from backend.engine.common.ops.schedulers import FlowMatchEulerScheduler, get_scheduler
         from backend.engine.runtime.mlx import MLXContext
 
-        reg = json.loads(
-            (Path(__file__).resolve().parents[1] / "default_config" / "models_registry.json").read_text(
-                encoding="utf-8",
-            )
-        )
+        reg = _load_default_registry_expanded()
         entry = SimpleNamespace(parameters=reg["models"]["z-image"]["parameters"])
         resolver = SchedulerSemanticsResolver()
         sem = resolver.resolve(
@@ -363,7 +368,7 @@ class RuntimeContractTests(unittest.TestCase):
 
 class VideoRuntimeContractTests(unittest.TestCase):
     def test_video_contract_config_flags(self) -> None:
-        from backend.engine.common.video_runtime_contracts import video_encoder_type
+        from backend.engine.contracts import video_encoder_type
         from backend.engine.config.model_configs import WanConfig
         from backend.engine.video_codec_registry import get_video_decode_handler
 
@@ -415,7 +420,7 @@ class ZImageCudaTests(unittest.TestCase):
     def test_transformer_dispatch_mlx(self) -> None:
         from backend.engine.config.model_configs import ZImageConfig
         from backend.engine.families.z_image.transformer import ZImageTransformer
-        from backend.engine.families.z_image.transformer_mlx import ZImageTransformer as ZImageMLX
+        from backend.engine.families.z_image.transformer_mlx import ZImageDiTMLX as ZImageMLX
         from backend.engine.runtime.mlx import MLXContext
 
         model = ZImageTransformer(ZImageConfig(), MLXContext())
@@ -432,7 +437,7 @@ class ZImageCudaTests(unittest.TestCase):
     def test_transformer_dispatch_cuda(self) -> None:
         from backend.engine.config.model_configs import ZImageConfig
         from backend.engine.families.z_image.transformer import ZImageTransformer
-        from backend.engine.families.z_image.transformer_mlx import ZImageTransformer as ZImageMLX
+        from backend.engine.families.z_image.transformer_mlx import ZImageDiTMLX as ZImageMLX
         from backend.engine.runtime.cuda import CudaContext
 
         model = ZImageTransformer(ZImageConfig(), CudaContext("cpu"))
@@ -468,7 +473,7 @@ class QwenImageTransformerTests(unittest.TestCase):
     def test_transformer_dispatch_mlx(self) -> None:
         from backend.engine.config.model_configs import QwenImageConfig
         from backend.engine.families.qwen.transformer import QwenImageTransformer
-        from backend.engine.families.qwen.transformer_mlx import QwenImageTransformer as QwenMLX
+        from backend.engine.families.qwen.transformer_mlx import QwenImageDiTMLX as QwenMLX
         from backend.engine.runtime.mlx import MLXContext
 
         model = QwenImageTransformer(QwenImageConfig(), MLXContext())
@@ -477,11 +482,11 @@ class QwenImageTransformerTests(unittest.TestCase):
     def test_transformer_dispatch_cuda(self) -> None:
         from backend.engine.config.model_configs import QwenImageConfig
         from backend.engine.families.qwen.transformer import QwenImageTransformer
-        from backend.engine.families.qwen.transformer_cuda import QwenImageTransformerCuda
+        from backend.engine.families.qwen.transformer_cuda import QwenImageDiTCuda
         from backend.engine.runtime.cuda import CudaContext
 
         model = QwenImageTransformer(QwenImageConfig(), CudaContext("cpu"))
-        self.assertIsInstance(model._inner, QwenImageTransformerCuda)
+        self.assertIsInstance(model._inner, QwenImageDiTCuda)
 
     def test_transformer_unsupported_backend(self) -> None:
         from backend.engine.config.model_configs import QwenImageConfig
@@ -492,15 +497,7 @@ class QwenImageTransformerTests(unittest.TestCase):
             QwenImageTransformer(QwenImageConfig(), ctx)
 
     def test_qwen_image_registry_declares_cuda_backend(self) -> None:
-        import json
-        from pathlib import Path
-
-        reg = json.loads(
-            (Path(__file__).resolve().parents[1] / "default_config/models_registry.json").read_text(
-                encoding="utf-8"
-            )
-        )
-        entry = reg["models"]["qwen-image"]
+        entry = _load_default_registry_expanded()["models"]["qwen-image"]
         self.assertIn("cuda", entry.get("backends", []))
         self.assertIn("mlx", entry.get("backends", []))
 
@@ -543,7 +540,7 @@ class ErnieImageTransformerTests(unittest.TestCase):
     def test_transformer_dispatch_mlx(self) -> None:
         from backend.engine.config.model_configs import ErnieImageConfig
         from backend.engine.families.ernie_image.transformer import ErnieImageTransformer
-        from backend.engine.families.ernie_image.transformer_mlx import ErnieImageTransformer as ErnieMLX
+        from backend.engine.families.ernie_image.transformer_mlx import ErnieImageDiTMLX as ErnieMLX
         from backend.engine.runtime.mlx import MLXContext
 
         model = ErnieImageTransformer(ErnieImageConfig(), MLXContext())
@@ -606,11 +603,11 @@ class ErnieImageTransformerTests(unittest.TestCase):
         import mlx.core as mx
 
         from backend.engine.config.model_configs import ErnieImageConfig
-        from backend.engine.families.ernie_image.transformer_mlx import ErnieImageTransformer
+        from backend.engine.families.ernie_image.transformer_mlx import ErnieImageDiTMLX
         from backend.engine.runtime.mlx import MLXContext
 
         cfg = ErnieImageConfig(num_layers=2)
-        model = ErnieImageTransformer(cfg, MLXContext())
+        model = ErnieImageDiTMLX(cfg, MLXContext())
         h, w = 64, 64
         latents = mx.zeros((1, 128, h, w), dtype=mx.bfloat16)
         txt = mx.zeros((1, 8, 3072), dtype=mx.bfloat16)
@@ -629,10 +626,10 @@ class ErnieImageTransformerTests(unittest.TestCase):
         import mlx.core as mx
 
         from backend.engine.config.model_configs import ErnieImageConfig
-        from backend.engine.families.ernie_image.transformer_mlx import ErnieImageTransformer
+        from backend.engine.families.ernie_image.transformer_mlx import ErnieImageDiTMLX
         from backend.engine.runtime.mlx import MLXContext
 
-        model = ErnieImageTransformer(ErnieImageConfig(), MLXContext())
+        model = ErnieImageDiTMLX(ErnieImageConfig(), MLXContext())
         sigmas = mx.array([1.0, 0.5, 0.0], dtype=mx.float32)
         t = model._resolve_timestep_value(1, 0, sigmas)
         self.assertAlmostEqual(float(t.item()), 1000.0, places=4)
@@ -640,7 +637,7 @@ class ErnieImageTransformerTests(unittest.TestCase):
         self.assertAlmostEqual(float(t1.item()), 500.0, places=4)
 
     def test_ernie_scheduler_explicit_sigmas(self) -> None:
-        from backend.engine.common.schedulers import FlowMatchEulerScheduler
+        from backend.engine.common.ops.schedulers import FlowMatchEulerScheduler
         from backend.engine.runtime.mlx import MLXContext
 
         ctx = MLXContext()
@@ -652,15 +649,7 @@ class ErnieImageTransformerTests(unittest.TestCase):
         self.assertAlmostEqual(float(sched.timesteps[0]), 1000.0, places=4)
 
     def test_registry_declares_mlx_only(self) -> None:
-        import json
-        from pathlib import Path
-
-        reg = json.loads(
-            (Path(__file__).resolve().parents[1] / "default_config/models_registry.json").read_text(
-                encoding="utf-8"
-            )
-        )
-        entry = reg["models"]["ernie-image-turbo"]
+        entry = _load_default_registry_expanded()["models"]["ernie-image-turbo"]
         self.assertEqual(entry.get("backends"), ["mlx"])
         self.assertEqual(entry.get("family"), "ernie_image")
         self.assertFalse(entry["parameters"].get("lora_support", True))
@@ -701,7 +690,7 @@ class DiTBackendDispatchTests(unittest.TestCase):
     def test_flux1_dispatch_mlx(self) -> None:
         from backend.engine.config.model_configs import Flux1Config
         from backend.engine.families.flux1.transformer import Flux1Transformer
-        from backend.engine.families.flux1.transformer_mlx import Flux1Transformer as Flux1MLX
+        from backend.engine.families.flux1.transformer_mlx import Flux1DiTMLX as Flux1MLX
         from backend.engine.runtime.mlx import MLXContext
 
         model = Flux1Transformer(Flux1Config(), MLXContext())
@@ -757,7 +746,7 @@ class TextEncoderStemTests(unittest.TestCase):
     def test_flux1_wan_fibo_stems_reexport_impl(self) -> None:
         from backend.engine.families.fibo.text_encoder import FiboTextEncoder
         from backend.engine.families.fibo.text_encoder_mlx import FiboTextEncoder as FiboImpl
-        from backend.engine.families.flux1.flux1_dual import Flux1TextEncoder as Flux1Impl
+        from backend.engine.families.flux1.flux1_dual_mlx import Flux1TextEncoder as Flux1Impl
         from backend.engine.families.flux1.text_encoder import Flux1TextEncoder
         from backend.engine.families.wan.text_encoder import WanUMT5EncoderMLX
         from backend.engine.families.wan.text_encoder_mlx import WanUMT5EncoderMLX as WanImpl
@@ -801,6 +790,11 @@ class TaskKindMappingTests(unittest.TestCase):
         from backend.core.task_kinds import IMAGE_GENERATION, task_kind_for_registry_action
 
         self.assertEqual(task_kind_for_registry_action("image", "create"), IMAGE_GENERATION)
+
+    def test_registry_action_maps_to_video_upscale(self) -> None:
+        from backend.core.task_kinds import VIDEO_UPSCALE, task_kind_for_registry_action
+
+        self.assertEqual(task_kind_for_registry_action("video", "upscale"), VIDEO_UPSCALE)
 
 
 class TaskSchedulerCancellationTests(unittest.TestCase):
@@ -1018,7 +1012,7 @@ class AceStepGenerationTests(unittest.TestCase):
             self.assertEqual(prepared.lyrics, "[verse]\nhello world")
 
     def test_resource_policy_clamps_duration(self) -> None:
-        from backend.engine.families.ace_step.resource_policy import (
+        from backend.engine.families.ace_step.quality.resource_policy import (
             AceStepResourcePolicy,
             clamp_duration,
         )
@@ -1038,10 +1032,10 @@ class AceStepGenerationTests(unittest.TestCase):
     def test_constrained_lm_finds_extended_audio_code_vocab(self) -> None:
         from unittest.mock import MagicMock
 
-        from backend.engine.families.ace_step.constrained_lm import (
+        from backend.engine.families.ace_step.lm.constrained_lm import (
             MetadataConstrainedLogitsProcessor,
         )
-        from backend.engine.families.ace_step.lm_constants import MAX_AUDIO_CODE
+        from backend.engine.families.ace_step.lm.lm_constants import MAX_AUDIO_CODE
 
         gv = {f"<|audio_code_{i}|>": 200_000 + i for i in (0, 1, MAX_AUDIO_CODE)}
         gv["hello"] = 5
@@ -1075,7 +1069,7 @@ class AceStepGenerationTests(unittest.TestCase):
 
         from mlx_lm.utils import load_tokenizer
 
-        from backend.engine.families.ace_step.constrained_generate import (
+        from backend.engine.families.ace_step.lm.constrained_generate import (
             create_constrained_processor,
         )
 
@@ -1087,7 +1081,7 @@ class AceStepGenerationTests(unittest.TestCase):
     def test_align_codec_latents_pads_shorter_hints(self) -> None:
         import mlx.core as mx
 
-        from backend.engine.families.ace_step.audio_codec_mlx import (
+        from backend.engine.families.ace_step.audio.audio_codec_mlx import (
             _align_codec_latents_to_target,
         )
 
@@ -1098,7 +1092,7 @@ class AceStepGenerationTests(unittest.TestCase):
         self.assertAlmostEqual(float(mx.mean(out[:, 370:, :])), 0.25, places=5)
 
     def test_quality_assessment_flags_hum(self) -> None:
-        from backend.engine.families.ace_step.quality_score import assess_generation_quality
+        from backend.engine.families.ace_step.quality.quality_score import assess_generation_quality
 
         q = assess_generation_quality(hum_ratio=0.4, mains_acf=0.5, latent_cos=0.5, latent_diff=0.2)
         self.assertLess(q.score, 60.0)
@@ -1107,7 +1101,7 @@ class AceStepGenerationTests(unittest.TestCase):
     def test_audio_codec_fsq_roundtrip(self) -> None:
         import mlx.core as mx
 
-        from backend.engine.families.ace_step.audio_codec_mlx import _MlxResidualFSQ
+        from backend.engine.families.ace_step.audio.audio_codec_mlx import _MlxResidualFSQ
 
         levels = [8, 8, 8, 5, 5, 5]
         rf = _MlxResidualFSQ(dim=64, levels=levels, num_quantizers=1)
@@ -1120,7 +1114,7 @@ class AceStepGenerationTests(unittest.TestCase):
     def test_audio_codec_indices_cast_float_to_int(self) -> None:
         import mlx.core as mx
 
-        from backend.engine.families.ace_step.audio_codec_mlx import _MlxResidualFSQ
+        from backend.engine.families.ace_step.audio.audio_codec_mlx import _MlxResidualFSQ
 
         levels = [8, 8, 8, 5, 5, 5]
         rf = _MlxResidualFSQ(dim=64, levels=levels, num_quantizers=1)
@@ -1130,14 +1124,14 @@ class AceStepGenerationTests(unittest.TestCase):
         self.assertEqual(out.shape, (1, 1, 64))
 
     def test_parse_audio_code_indices(self) -> None:
-        from backend.engine.families.ace_step.lm_format import parse_audio_code_indices
+        from backend.engine.families.ace_step.lm.lm_format import parse_audio_code_indices
 
         text = "<|audio_code_12|><|audio_code_345|>"
         self.assertEqual(parse_audio_code_indices(text), (12, 345))
 
     def test_instrumental_lyrics_normalization(self) -> None:
         from backend.engine.families.ace_step.generation import finalize_lyrics_for_inference
-        from backend.engine.families.ace_step.lm_format import (
+        from backend.engine.families.ace_step.lm.lm_format import (
             extract_lm_generated_lyrics,
             is_instrumental_lyrics,
             normalize_lyrics_body,
@@ -1157,7 +1151,7 @@ class AceStepGenerationTests(unittest.TestCase):
             )
 
     def test_format_sample_preserves_user_lyrics(self) -> None:
-        from backend.engine.families.ace_step.lm_format import build_lm_format_result
+        from backend.engine.families.ace_step.lm.lm_format import build_lm_format_result
 
         user = "[Verse 1]\n夏天的风轻轻吹\n[Chorus]\n一起唱"
         meta = {
@@ -1180,7 +1174,7 @@ class AceStepGenerationTests(unittest.TestCase):
         self.assertEqual(result.language, "zh")
 
     def test_format_sample_zh_lyrics_not_overridden_by_lm_en(self) -> None:
-        from backend.engine.families.ace_step.lm_format import build_lm_format_result
+        from backend.engine.families.ace_step.lm.lm_format import build_lm_format_result
 
         user = "[Verse 1]\n月光洒在窗前\n[Chorus]\n轻轻唱"
         meta = {
@@ -1208,7 +1202,7 @@ class AceStepGenerationTests(unittest.TestCase):
         self.assertEqual(resolve_vocal_language("hello world", "en"), "en")
 
     def test_format_metadata_as_cot_and_codes_prompt(self) -> None:
-        from backend.engine.families.ace_step.lm_format import (
+        from backend.engine.families.ace_step.lm.lm_format import (
             build_codes_phase_prompt,
             format_metadata_as_cot,
             lm_planner_codes_enabled,
@@ -1245,12 +1239,12 @@ class AceStepGenerationTests(unittest.TestCase):
         self.assertTrue(prompt.endswith("\n\n"))
 
     def test_lm_codes_cfg_defaults(self) -> None:
-        from backend.engine.families.ace_step.constrained_generate import (
+        from backend.engine.families.ace_step.lm.constrained_generate import (
             ConstrainedGenerationConfig,
             create_constrained_processor,
             resolve_hf_tokenizer,
         )
-        from backend.engine.families.ace_step.lm_format import (
+        from backend.engine.families.ace_step.lm.lm_format import (
             build_codes_uncond_prompt,
             default_lm_codes_cfg_scale,
         )
@@ -1268,8 +1262,8 @@ class AceStepGenerationTests(unittest.TestCase):
         import mlx.core as mx
         from transformers import AutoTokenizer
 
-        from backend.engine.families.ace_step.constrained_generate import resolve_hf_tokenizer
-        from backend.engine.families.ace_step.constrained_generate_mlx import mlx_logits_to_numpy
+        from backend.engine.families.ace_step.lm.constrained_generate import resolve_hf_tokenizer
+        from backend.engine.families.ace_step.lm.constrained_generate_mlx import mlx_logits_to_numpy
         from mlx_lm.tokenizer_utils import TokenizerWrapper
 
         try:
@@ -1285,7 +1279,7 @@ class AceStepGenerationTests(unittest.TestCase):
         self.assertEqual(float(arr[0, 0, 0]), 1.0)
 
     def test_lyrics_alignment_structure_estimate(self) -> None:
-        from backend.engine.families.ace_step.lyrics_alignment import (
+        from backend.engine.families.ace_step.vocals.lyrics_alignment import (
             estimate_lyrics_alignment,
             format_lrc,
         )
@@ -1322,6 +1316,16 @@ class AceStepGenerationTests(unittest.TestCase):
 
         self.assertTrue(callable(generation.create_ace_step_generator))
         self.assertTrue(callable(generation.prepare_music_request))
+
+    def test_audio_prepare_request_registry(self) -> None:
+        from backend.engine._transformer_registry import get_audio_prepare_request
+
+        ace_fn = get_audio_prepare_request("ace_step")
+        dr_fn = get_audio_prepare_request("diffrhythm")
+        self.assertEqual(ace_fn.__module__, "backend.engine.families.ace_step.generation")
+        self.assertEqual(dr_fn.__module__, "backend.engine.families.diffrhythm.generation")
+        with self.assertRaises(RuntimeError):
+            get_audio_prepare_request("unknown_audio_family")
 
 
 class RegistrySeedTests(unittest.TestCase):
@@ -1381,7 +1385,7 @@ class BundleReposTests(unittest.TestCase):
         self.assertEqual(bundle_local_paths(ver), ["models/a", "models/a/b"])
 
     def test_local_bundle_root_from_bundle_repos(self) -> None:
-        from backend.engine.common.pipeline_registry import local_bundle_root
+        from backend.engine.contracts.pipeline_registry import local_bundle_root
 
         class _Entry:
             raw = {
@@ -1422,7 +1426,7 @@ class HunyuanWeightTests(unittest.TestCase):
     def test_hunyuan_cfg_batch_helpers(self) -> None:
         import mlx.core as mx
 
-        from backend.engine.common.cfg_batch import broadcast_batch, merge_cfg_forward_kwargs
+        from backend.engine.common.ops.cfg_batch import broadcast_batch, merge_cfg_forward_kwargs
 
         class _Ctx:
             @staticmethod
@@ -1452,11 +1456,15 @@ class HunyuanWeightTests(unittest.TestCase):
         self.assertEqual(merged["sigmas"].shape, (1,))
 
     def test_wan_predict_noise_cfg(self) -> None:
+        from backend.engine.config.model_configs import WanConfig
         from backend.engine.families.wan.transformer import WanTransformer
         from backend.engine.families.wan.transformer_mlx import WanModelMLX
+        from backend.engine.runtime.mlx import MLXContext
 
         self.assertTrue(hasattr(WanModelMLX, "predict_noise_cfg"))
-        self.assertTrue(hasattr(WanTransformer, "predict_noise_cfg"))
+        model = WanTransformer(WanConfig(), MLXContext(), num_frames=17)
+        self.assertTrue(hasattr(model, "predict_noise_cfg"))
+        self.assertTrue(callable(getattr(model, "predict_noise_cfg")))
 
     def test_wan_mlx_perf_hooks(self) -> None:
         from backend.engine.config.model_configs import WanConfig
@@ -1538,7 +1546,7 @@ class HunyuanWeightTests(unittest.TestCase):
         import mlx.core as mx
         import numpy as np
 
-        from backend.engine.common.schedulers import WanFlowUniPCScheduler
+        from backend.engine.common.ops.schedulers import WanFlowUniPCScheduler
         from backend.engine.runtime.mlx import MLXContext
 
         ctx = MLXContext()
@@ -1561,7 +1569,7 @@ class HunyuanWeightTests(unittest.TestCase):
     def test_wan_attention_padding_mask(self) -> None:
         import mlx.core as mx
 
-        from backend.engine.common.attention import wan_attention
+        from backend.engine.common.ops.attention import wan_attention
         from backend.engine.runtime.mlx import MLXContext
 
         ctx = MLXContext()
@@ -1630,15 +1638,7 @@ class HunyuanWeightTests(unittest.TestCase):
         self.assertEqual(cfg.encoder_type, "hunyuan_video_dual")
 
     def test_hunyuan_registry_entries(self) -> None:
-        import json
-        from pathlib import Path
-
-        reg = json.loads(
-            (Path(__file__).resolve().parents[1] / "default_config" / "models_registry.json").read_text(
-                encoding="utf-8",
-            )
-        )
-        models = reg.get("models") or {}
+        models = _load_default_registry_expanded().get("models") or {}
         self.assertIn("hunyuan-video-1.5-480p-t2v", models)
         self.assertEqual(models["hunyuan-video-1.5-480p-t2v"]["family"], "hunyuan")
         self.assertIn("hunyuan-video-1.5-i2v-step-distill", models)
@@ -1650,7 +1650,7 @@ class HunyuanWeightTests(unittest.TestCase):
     def test_hunyuan_sr_scheduler_sigmas(self) -> None:
         import mlx.core as mx
 
-        from backend.engine.common.schedulers import FlowMatchEulerScheduler
+        from backend.engine.common.ops.schedulers import FlowMatchEulerScheduler
         from backend.engine.families.hunyuan.sr_mlx import _configure_step_distill_scheduler
 
         class _Ctx:
@@ -1676,17 +1676,9 @@ class HunyuanWeightTests(unittest.TestCase):
         self.assertEqual(int(timesteps.shape[0]), 6)
 
     def test_hunyuan_registry_modelscope_repos(self) -> None:
-        import json
-        from pathlib import Path
-
         from backend.core.bundle_repos import bundle_repos_from_version
 
-        reg = json.loads(
-            (Path(__file__).resolve().parents[1] / "default_config" / "models_registry.json").read_text(
-                encoding="utf-8",
-            )
-        )
-        models = reg.get("models") or {}
+        models = _load_default_registry_expanded().get("models") or {}
         for mid in (
             "hunyuan-video-1.5-480p-t2v",
             "hunyuan-video-1.5-480p-i2v",
@@ -1760,7 +1752,7 @@ class HunyuanWeightTests(unittest.TestCase):
             self.assertFalse((root / "transformer" / "480p_t2v").exists())
 
     def test_torch_device_preferences(self) -> None:
-        from backend.engine.common.text_encoders.torch_device import resolve_torch_inference_device
+        from backend.engine.common.codecs.text_encoders.torch_device import resolve_torch_inference_device
 
         self.assertEqual(resolve_torch_inference_device("cpu"), "cpu")
         with self.assertRaises(RuntimeError):
@@ -1802,7 +1794,7 @@ class HunyuanWeightTests(unittest.TestCase):
         import tempfile
         from pathlib import Path
 
-        from backend.engine.common.hf_tokenizer_json import HFTokenizerJson, render_qwen_chat_messages
+        from backend.engine.common.bundle.hf_tokenizer_json import HFTokenizerJson, render_qwen_chat_messages
 
         data = {
             "model": {
@@ -1834,7 +1826,7 @@ class HunyuanWeightTests(unittest.TestCase):
         import tempfile
         from pathlib import Path
 
-        from backend.engine.common.hf_tokenizer_json import HFTokenizerJson
+        from backend.engine.common.bundle.hf_tokenizer_json import HFTokenizerJson
 
         data = {
             "model": {
@@ -1875,7 +1867,7 @@ class HunyuanWeightTests(unittest.TestCase):
     def test_cast_floating_mx_tree(self) -> None:
         import mlx.core as mx
 
-        from backend.engine.common.mlx_dtype import cast_floating_mx_tree
+        from backend.engine.runtime.mlx_dtype import cast_floating_mx_tree
 
         tree = {"a": mx.array([1.0], dtype=mx.float32), "b": mx.array([1], dtype=mx.int32)}
         out = cast_floating_mx_tree(tree, mx.bfloat16)
@@ -1930,15 +1922,7 @@ class HunyuanWeightTests(unittest.TestCase):
         self.assertFalse(_needs_hunyuan_spatial_tiling(True, 16, 16, params))
 
     def test_hunyuan_sr_registry_spatial_tiling(self) -> None:
-        import json
-        from pathlib import Path
-
-        reg = json.loads(
-            (Path(__file__).resolve().parents[1] / "default_config" / "models_registry.json").read_text(
-                encoding="utf-8",
-            )
-        )
-        sr = reg["models"]["hunyuan-video-1.5-1080p-sr"]
+        sr = _load_default_registry_expanded()["models"]["hunyuan-video-1.5-1080p-sr"]
         self.assertTrue(sr["parameters"].get("vae_spatial_tiling"))
 
 
@@ -2008,15 +1992,7 @@ class BenchmarkMetadataTests(unittest.TestCase):
         self.assertIn("P1", ids)
 
     def test_z_image_turbo_enable_thinking_default(self) -> None:
-        import json
-        from pathlib import Path
-
-        reg = json.loads(
-            (Path(__file__).resolve().parents[1] / "default_config" / "models_registry.json").read_text(
-                encoding="utf-8",
-            )
-        )
-        turbo = reg["models"]["z-image-turbo"]
+        turbo = _load_default_registry_expanded()["models"]["z-image-turbo"]
         self.assertTrue(
             turbo["parameters"].get("enable_thinking"),
             "z-image-turbo must keep enable_thinking=true for tokenizer chat-template semantics",
@@ -2033,7 +2009,7 @@ class MemoryPolicyTests(unittest.TestCase):
         self.assertEqual(clamp_mlx_memory_limit_gb("bad", default=64), 64)
 
     def test_model_cache_single_slot(self) -> None:
-        from backend.engine.common.cache import ModelCache
+        from backend.engine.cache import ModelCache
 
         cache = ModelCache(lambda: 120.0, max_entries=1, ttl_minutes=60)
         cache.put("a", object(), 5.0)
@@ -2046,7 +2022,7 @@ class MemoryPolicyTests(unittest.TestCase):
         self.assertIsNotNone(cache.get("b"))
 
     def test_model_cache_set_ttl_and_evict(self) -> None:
-        from backend.engine.common.cache import ModelCache
+        from backend.engine.cache import ModelCache
 
         cache = ModelCache(lambda: 120.0, max_entries=2, ttl_minutes=10)
         cache.set_ttl_minutes(45)
@@ -2058,7 +2034,7 @@ class MemoryPolicyTests(unittest.TestCase):
     def test_model_cache_purge_idle_after_ttl(self) -> None:
         from datetime import datetime, timedelta
 
-        from backend.engine.common.cache import ModelCache
+        from backend.engine.cache import ModelCache
 
         cache = ModelCache(lambda: 120.0, ttl_minutes=30)
         cache.put("idle-model", object(), 2.0)
@@ -2234,7 +2210,7 @@ class BundleManifestTests(unittest.TestCase):
             assert_bundle_ready_for_family(root, family="wan", model_id="wan-2.2-ti2v-5b")
 
     def test_t5_encoder_bundle_paths_flux_layout(self) -> None:
-        from backend.engine.common.bundle_layout import t5_encoder_bundle_paths
+        from backend.engine.common.bundle.layout import t5_encoder_bundle_paths
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2247,7 +2223,7 @@ class BundleManifestTests(unittest.TestCase):
             self.assertTrue(tok.endswith("tokenizer_2"))
 
     def test_assert_media_bundle_ready_none_raises(self) -> None:
-        from backend.engine.common.bundle_layout import assert_media_bundle_ready
+        from backend.engine.common.bundle.layout import assert_media_bundle_ready
 
         with self.assertRaises(RuntimeError) as ctx:
             assert_media_bundle_ready(None, family="flux2", model_id="demo")
@@ -2277,6 +2253,16 @@ class BundleManifestTests(unittest.TestCase):
 
 
 class DiffRhythmDecodeTests(unittest.TestCase):
+    def test_pytorch_bin_bfloat16_storage(self) -> None:
+        import numpy as np
+
+        from backend.engine.common.bundle.pytorch_bin_numpy import _storage_array
+
+        raw = (np.float32(1.5).view(np.uint32) >> 16).astype(np.uint16).tobytes()
+        arr = _storage_array(raw, type("BFloat16Storage", (), {"__name__": "BFloat16Storage"})(), 1)
+        self.assertEqual(arr.shape, (1,))
+        self.assertAlmostEqual(float(arr[0]), 1.5, places=5)
+
     def test_pytorch_bin_numpy_loader_decoder(self) -> None:
         import json
 
@@ -2292,7 +2278,7 @@ class DiffRhythmDecodeTests(unittest.TestCase):
         if not ckpt.is_file():
             self.skipTest("diffrhythm-v2 decoder.bin not installed")
 
-        from backend.engine.common.pytorch_bin_numpy import load_pytorch_bin
+        from backend.engine.common.bundle.pytorch_bin_numpy import load_pytorch_bin
 
         obj = load_pytorch_bin(ckpt)
         self.assertIn("generator", obj)
@@ -2386,12 +2372,12 @@ class DiffRhythmDecodeTests(unittest.TestCase):
         if not (bundle / "g2p" / "g2p_generation.py").is_file():
             self.skipTest("diffrhythm-v2 g2p bundle not present")
 
-        from backend.engine.families.diffrhythm import chinese_poly_g2p
+        from backend.engine.families.diffrhythm import g2p as chinese_poly_g2p
         from backend.engine.families.diffrhythm.condition_mlx import (
             parse_lyrics_to_token_ids,
             set_g2p_bundle_root,
         )
-        from backend.engine.families.diffrhythm.g2p_bootstrap import install_bundle_g2p_path
+        from backend.engine.families.diffrhythm.g2p import install_bundle_g2p_path
 
         install_bundle_g2p_path(bundle)
         sys.modules["g2p.g2p.chinese_model_g2p"] = chinese_poly_g2p
@@ -2465,7 +2451,7 @@ class DiffRhythmDecodeTests(unittest.TestCase):
 
         try:
             import torch  # noqa: F401
-            from backend.engine.families.diffrhythm.mulan_torch import MuQStyleEncoder as MuQTorch
+            from backend.engine.families.diffrhythm.mulan import MuQStyleEncoderTorch
         except ImportError:
             return
 
@@ -2474,7 +2460,7 @@ class DiffRhythmDecodeTests(unittest.TestCase):
         except ImportError:
             return
 
-        torch_enc = MuQTorch(bundle, cfg.mulan_repo_id)
+        torch_enc = MuQStyleEncoderTorch(bundle, cfg.mulan_repo_id)
         torch_enc.load()
         lat_torch = np.array(torch_enc.encode_text(prompt, array_fn=ctx.array), dtype=np.float32)
         cos = float(
@@ -2630,14 +2616,7 @@ class DerivedQuantLayoutTests(unittest.TestCase):
         self.assertEqual(_FAMILY_DEFAULT_LAYOUT["ace_step"], "dit_single_file")
 
     def test_registry_derived_versions_declare_parent_and_bits(self) -> None:
-        import json
-
-        reg = json.loads(
-            (Path(__file__).resolve().parents[1] / "default_config" / "models_registry.json").read_text(
-                encoding="utf-8",
-            )
-        )
-        for model_id, model in reg["models"].items():
+        for model_id, model in _load_default_registry_expanded()["models"].items():
             for ver_key, ver in (model.get("versions") or {}).items():
                 if ver.get("source_type") != "derived":
                     continue
@@ -2647,6 +2626,390 @@ class DerivedQuantLayoutTests(unittest.TestCase):
                 )
                 bits = (ver.get("quantization") or {}).get("bits")
                 self.assertIn(bits, (4, 8), f"{model_id}/{ver_key} missing quantization.bits")
+
+
+class InferenceLayerTests(unittest.TestCase):
+    def test_dual_forward_cfg_renorm(self) -> None:
+        from backend.engine.inference.cfg_strategies import DualForwardCfgStrategy
+
+        class _Model:
+            def __call__(self, latents, t, **kwargs):
+                branch = kwargs.get("branch", "cond")
+                return f"noise_{branch}"
+
+            def combine_cfg_noise(self, cond, uncond, guidance):
+                return f"combined(g={guidance})"
+
+            def refine_cfg_noise(self, cond, pred, *, cfg_renorm_min):
+                return f"refined(min={cfg_renorm_min})"
+
+        model = _Model()
+        strat = DualForwardCfgStrategy()
+        out = strat.predict_noise(
+            model,
+            "latents",
+            0.5,
+            cond_kwargs={"branch": "cond"},
+            uncond_kwargs={"branch": "uncond"},
+            guidance=3.5,
+            cfg_renorm=True,
+            cfg_renorm_min=0.12,
+        )
+        self.assertEqual(out, "refined(min=0.12)")
+
+    def test_diffusion_inference_passes_cfg_renorm(self) -> None:
+        from backend.engine.inference._protocols import InferenceBundle
+        from backend.engine.inference.diffusion import DiffusionInference
+
+        captured: dict[str, float | bool] = {}
+
+        class _CfgStrategy:
+            def predict_noise(self, model, latents, t, **kwargs):
+                captured["cfg_renorm"] = kwargs.get("cfg_renorm", False)
+                captured["cfg_renorm_min"] = kwargs.get("cfg_renorm_min", 0.0)
+                return latents
+
+        class _Scheduler:
+            def step(self, noise_pred, t, latents):
+                return latents
+
+        class _Ctx:
+            backend = "cpu"
+
+            def eval(self, *_args):
+                return None
+
+            def clear_cache(self):
+                return None
+
+            def active_memory_gb(self):
+                return 0.0
+
+        class _Model:
+            def step_callback(self, *_args):
+                return None
+
+        bundle = InferenceBundle(
+            ctx=_Ctx(),
+            model=_Model(),
+            config=object(),
+            scheduler=_Scheduler(),
+            timesteps=[1.0],
+            init_latents="latents",
+            cfg_strategy=_CfgStrategy(),
+            cfg_renorm=True,
+            cfg_renorm_min=0.25,
+        )
+        DiffusionInference(_Ctx()).run(bundle)
+        self.assertTrue(captured["cfg_renorm"])
+        self.assertEqual(captured["cfg_renorm_min"], 0.25)
+
+    def test_cancel_token_requires_is_cancelled(self) -> None:
+        from backend.engine.inference._runtime import is_cancelled
+
+        with self.assertRaises(RuntimeError):
+            is_cancelled(object())
+
+    def test_flow_matching_spec_bundle(self) -> None:
+        from backend.engine.inference._protocols import AudioInferenceBundle, FlowMatchingSpec
+        from backend.engine.inference.flow_matching import FlowMatchingInference
+
+        seen: list[float] = []
+
+        def _forward(x, t, state):
+            seen.append(t)
+            return x
+
+        bundle = AudioInferenceBundle(
+            ctx=None,
+            model_forward=_forward,
+            latent_shape=(1,),
+            flow=FlowMatchingSpec(
+                timestep_schedule=[1.0, 0.0],
+                init_noise_fn=lambda _shape, _seed: 0.0,
+                euler_step_fn=lambda x, _v, _tc, _tn, _i: x,
+            ),
+        )
+        result = FlowMatchingInference().run(bundle)
+        self.assertEqual(seen, [1.0, 0.0])
+        self.assertEqual(result["latents"], 0.0)
+
+    def test_run_diffusion_denoise_helper(self) -> None:
+        from backend.engine.inference.diffusion_bundle import run_diffusion_denoise
+
+        seen: list[int] = []
+
+        class _Scheduler:
+            def step(self, noise_pred, t, latents):
+                return latents
+
+        class _Model:
+            def __call__(self, latents, t, **kwargs):
+                return latents
+
+            def step_callback(self, *_args):
+                return None
+
+        class _Ctx:
+            backend = "cpu"
+
+            def eval(self, *_args):
+                return None
+
+            def clear_cache(self):
+                return None
+
+            def active_memory_gb(self):
+                return 0.0
+
+        def _on_step(result) -> None:
+            seen.append(result.step_idx)
+
+        out = run_diffusion_denoise(
+            _Ctx(),
+            model=_Model(),
+            config=object(),
+            scheduler=_Scheduler(),
+            timesteps=[1.0, 0.5],
+            latents="latents",
+            guidance=0.0,
+            cancel_token=None,
+            step_kwargs_builder=None,
+            on_step_complete=_on_step,
+        )
+        self.assertEqual(out, "latents")
+        self.assertEqual(seen, [0, 1])
+
+    def test_get_audio_edit_handler_resolves_cover(self) -> None:
+        from backend.engine._transformer_registry import get_audio_edit_handler
+        from backend.engine.families.ace_step.generation import run_cover_edit
+
+        handler = get_audio_edit_handler("ace_step", "cover")
+        self.assertIs(handler, run_cover_edit)
+
+    def test_image_fill_edit_routes_to_session(self) -> None:
+        from unittest.mock import MagicMock
+
+        from backend.engine.registry.bootstrap import bootstrap_family_plugins
+        from backend.engine.sessions.image_session import routes_to_image_edit_session
+
+        bootstrap_family_plugins()
+        registry = MagicMock()
+        registry.get.return_value = MagicMock(
+            family="flux1",
+            media="image",
+            actions=frozenset({"edit"}),
+        )
+        self.assertTrue(routes_to_image_edit_session("flux-fill-controlnet", registry))
+
+    def test_get_audio_post_generation_optional(self) -> None:
+        from backend.engine._transformer_registry import get_audio_post_generation
+
+        self.assertIsNotNone(get_audio_post_generation("ace_step"))
+        self.assertIsNone(get_audio_post_generation("diffrhythm"))
+
+    def test_autoregressive_inference_scaffold(self) -> None:
+        from backend.engine.inference.autoregressive import AutoregressiveBundle, AutoregressiveInference
+
+        def prefill_fn(_tokens):
+            return [0.0, 1.0], {"n": 0}
+
+        def logits_fn(_token_id, state):
+            state["n"] += 1
+            return [float(state["n"]), 0.0]
+
+        def sample_fn(logits):
+            return int(logits.index(max(logits)))
+
+        result = AutoregressiveInference().run(
+            AutoregressiveBundle(
+                prompt_tokens=[0],
+                max_new_tokens=2,
+                prefill_fn=prefill_fn,
+                logits_fn=logits_fn,
+                sample_fn=sample_fn,
+                eos_token_ids={99},
+            )
+        )
+        self.assertEqual(result["num_tokens"], 2)
+        self.assertEqual(len(result["tokens"]), 2)
+
+    def test_validate_video_generation_params_ltx_distilled(self) -> None:
+        from types import SimpleNamespace
+
+        from backend.engine._transformer_registry import validate_video_generation_params
+        from backend.engine.config.model_configs import LTXConfig
+
+        entry = SimpleNamespace(id="ltx-2.3-distilled")
+        config = LTXConfig()
+        with self.assertRaises(RuntimeError) as ctx:
+            validate_video_generation_params(
+                "ltx",
+                entry=entry,
+                config=config,
+                step_distill=False,
+            )
+        self.assertIn("step_distill", str(ctx.exception))
+
+    def test_attach_image_conditioning_noop_without_guide(self) -> None:
+        from types import SimpleNamespace
+
+        from backend.engine._transformer_registry import attach_image_conditioning
+
+        request = SimpleNamespace(structural_guide=None)
+        extra = {"txt": 1}
+        out, cleanup = attach_image_conditioning(
+            pipeline=object(),
+            request=request,
+            family="flux1",
+            model=object(),
+            entry=SimpleNamespace(id="flux1-dev"),
+            version_key=None,
+            extra_cond=extra,
+            width=512,
+            height=512,
+            ctx_exec=None,
+            on_log=None,
+        )
+        self.assertIs(out, extra)
+        self.assertIsNone(cleanup)
+
+    def test_vae_preview_handler_lookup_flux2(self) -> None:
+        from backend.engine.vae_codec_registry import (
+            get_vae_preview_decode_handler,
+            get_vae_preview_warmup_handler,
+        )
+
+        self.assertIsNotNone(get_vae_preview_warmup_handler("AutoencoderKLFlux2"))
+        self.assertIsNotNone(get_vae_preview_decode_handler("AutoencoderKLFlux2"))
+        self.assertIsNone(get_vae_preview_warmup_handler("UnknownVAE"))
+
+    def test_load_mlx_encoder_stack_unknown_kind(self) -> None:
+        from backend.engine._transformer_registry import load_mlx_encoder_stack
+
+        with self.assertRaises(RuntimeError) as ctx:
+            load_mlx_encoder_stack("unknown_kind")
+        self.assertIn("qwen25vl", str(ctx.exception))
+
+
+class ArchitectureWrapUpTests(unittest.TestCase):
+    def test_hunyuan_vae_chunk_from_registry(self) -> None:
+        from types import SimpleNamespace
+
+        import numpy as np
+
+        from backend.engine.video_codec_registry import (
+            resolve_hunyuan_vae_spatial_tiling,
+            resolve_hunyuan_vae_temporal_chunk,
+        )
+
+        entry = SimpleNamespace(
+            id="hunyuan-video-1.5-1080p-sr",
+            parameters={"vae_temporal_chunk_size": 8, "vae_spatial_tiling": True},
+        )
+
+        def scalar(entry, key, default):
+            return (getattr(entry, "parameters", None) or {}).get(key, default)
+
+        short = np.zeros((1, 16, 4, 8, 8), dtype=np.float32)
+        self.assertEqual(resolve_hunyuan_vae_temporal_chunk(entry, short, scalar), 0)
+        long = np.zeros((1, 16, 16, 8, 8), dtype=np.float32)
+        self.assertEqual(resolve_hunyuan_vae_temporal_chunk(entry, long, scalar), 8)
+        self.assertTrue(resolve_hunyuan_vae_spatial_tiling(entry, scalar))
+
+    def test_video_bundle_layout_handlers(self) -> None:
+        from backend.engine.pipelines.video_bundle_layout import (
+            resolve_video_transformer_weight_sources,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "transformer-dev.safetensors").write_bytes(b"x")
+            tensor_root, shards = resolve_video_transformer_weight_sources(
+                root, "ltx", "ltx-2.3-dev"
+            )
+            self.assertEqual(tensor_root, root)
+            self.assertEqual(len(shards), 1)
+
+
+    def test_flux2_encode_handler_registered(self) -> None:
+        from backend.engine.vae_codec_registry import (
+            get_vae_encode_handler,
+            registered_vae_encode_classes,
+        )
+
+        self.assertIn("AutoencoderKLFlux2", registered_vae_encode_classes())
+        self.assertIsNotNone(get_vae_encode_handler("AutoencoderKLFlux2"))
+
+    def test_require_entry_family_fail_loud(self) -> None:
+        from types import SimpleNamespace
+
+        from backend.engine.contracts import require_entry_family
+
+        with self.assertRaises(RuntimeError):
+            require_entry_family(SimpleNamespace(id="bad"), model_id="bad")
+
+    def test_video_upscale_registry_resolve(self) -> None:
+        from types import SimpleNamespace
+
+        from backend.engine.video_upscale_registry import (
+            get_video_upscale_runner,
+            resolve_video_upscale_kind,
+        )
+
+        entry = SimpleNamespace(
+            id="hunyuan-video-1.5-1080p-sr",
+            raw={"versions": {"default": {"hunyuan_ms_variant": "1080p_sr_distilled"}}},
+        )
+        self.assertEqual(resolve_video_upscale_kind(entry, "default"), "hunyuan_1080p_sr")
+        self.assertIsNotNone(get_video_upscale_runner("hunyuan_1080p_sr"))
+
+        seed_entry = SimpleNamespace(
+            id="seedvr2-video-7b",
+            family="seedvr2",
+            media="video",
+            raw={"versions": {"fp16": {"video_upscale_kind": "seedvr2_spatiotemporal"}}},
+        )
+        self.assertEqual(resolve_video_upscale_kind(seed_entry, "fp16"), "seedvr2_spatiotemporal")
+        self.assertIsNotNone(get_video_upscale_runner("seedvr2_spatiotemporal"))
+
+    def test_video_ltx_distilled_flag(self) -> None:
+        from types import SimpleNamespace
+
+        from backend.engine.contracts import (
+            video_uses_ltx_distilled_timesteps,
+        )
+
+        cfg = SimpleNamespace(video_i2v_style="ltx23")
+        self.assertTrue(
+            video_uses_ltx_distilled_timesteps(
+                cfg, step_distill=True, scheduler_default="flow_match_euler",
+            )
+        )
+        self.assertFalse(
+            video_uses_ltx_distilled_timesteps(
+                cfg, step_distill=False, scheduler_default="flow_match_euler",
+            )
+        )
+
+    def test_ltx_weight_prepare_registry(self) -> None:
+        from types import SimpleNamespace
+
+        from backend.engine._transformer_registry import prepare_video_transformer_weights
+
+        cfg = SimpleNamespace(uses_mlx_forge_weight_restore=False, validate_ltx_block_depth=False)
+        w = {"blocks.0.weight": [1.0]}
+        self.assertIs(prepare_video_transformer_weights("wan", cfg, w), w)
+        self.assertEqual(
+            prepare_video_transformer_weights("ltx", cfg, w),
+            w,
+        )
+
+    def test_upscale_pipeline_loader_registered(self) -> None:
+        from backend.engine.upscale_job_registry import get_upscale_pipeline_loader
+
+        self.assertIsNotNone(get_upscale_pipeline_loader("seedvr2"))
+        self.assertIsNone(get_upscale_pipeline_loader("flux2"))
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""models_registry.json v2 解析（供 ModelRegistry / Settings）。
+"""models_registry.json 解析辅助（供 ModelRegistry / Settings）。
 
 各模型条目可含 ``commercial_use_allowed``：``true`` / ``false`` / ``null``。
 ``null`` 表示未在注册表断言，须自行核对上游许可；非法律意见。

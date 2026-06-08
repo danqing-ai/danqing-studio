@@ -8,8 +8,8 @@ import mlx.core as mx
 import numpy as np
 from PIL import Image
 
-from backend.engine.common.mlx_runtime_fallback import load_weights_dict, seeded_random_normal
-from backend.engine.common.scale_factor import ScaleFactor
+from backend.engine.runtime.mlx_runtime import load_weights_dict, seeded_random_normal
+from backend.engine.common.ops.scale_factor import ScaleFactor
 
 
 def _package_pos_emb_path() -> Path:

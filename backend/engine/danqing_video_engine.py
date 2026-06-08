@@ -15,12 +15,15 @@ from backend.core.contracts import (
 )
 from backend.core.media_interfaces import IVideoEngine
 from backend.core.interfaces import IPathResolver
-from .common.cache import ModelCache
-from .common.lineage import resolve_lineage, video_edit_relation_type
-from .pipelines.video_pipeline import VideoPipeline
-from .pipelines.video_upscale_pipeline import VideoUpscalePipeline
+from .cache import ModelCache
+from .lineage import resolve_lineage, video_edit_relation_type
 from .progress_bridge import make_pipeline_progress_callback
 from .runtime._base import RuntimeContext
+from .sessions.engine_dispatch import (
+    dispatch_video_create,
+    dispatch_video_edit,
+    dispatch_video_upscale,
+)
 
 
 class DanQingVideoEngine(IVideoEngine):
@@ -71,6 +74,15 @@ class DanQingVideoEngine(IVideoEngine):
                 return self._runtimes[b]
         raise RuntimeError(f"No available backend for model {model_id} (backends: {backends})")
 
+    def _dispatch_kwargs(self, runtime: RuntimeContext, ctx: ExecutionContext) -> dict[str, Any]:
+        return {
+            "runtime": runtime,
+            "registry": self._registry,
+            "asset_store": ctx.asset_store,
+            "model_cache": self._cache,
+            "project_root": self._paths.get_project_root(),
+        }
+
     async def generate(self, request: VideoGenerationRequest,
                        ctx: ExecutionContext) -> EngineResult:
         import asyncio
@@ -81,22 +93,15 @@ class DanQingVideoEngine(IVideoEngine):
                 "see config/models_registry.json actions."
             )
         runtime = self._resolve_runtime(request.model)
-        pipeline = VideoPipeline(
-            runtime,
-            self._registry,
-            ctx.asset_store,
-            model_cache=self._cache,
-            project_root=self._paths.get_project_root(),
-        )
-
         on_progress = make_pipeline_progress_callback(ctx)
 
-        def on_log(lvl, msg):
-            from backend.core.contracts import LogEvent
-            ctx.on_log(LogEvent(level=lvl, message=msg))
-
         result = await asyncio.to_thread(
-            pipeline.run, request, ctx, on_progress=on_progress, on_log=on_log,
+            dispatch_video_create,
+            **self._dispatch_kwargs(runtime, ctx),
+            request=request,
+            exec_ctx=ctx,
+            on_progress=on_progress,
+            on_log=ctx.on_log,
         )
         if result is None:
             return EngineResult(primary_asset_id="", metadata={"status": "cancelled"})
@@ -119,20 +124,15 @@ class DanQingVideoEngine(IVideoEngine):
                 "see config/models_registry.json actions."
             )
         runtime = self._resolve_runtime(request.model)
-        pipeline = VideoPipeline(
-            runtime, self._registry, ctx.asset_store,
-            model_cache=self._cache,
-            project_root=self._paths.get_project_root(),
-        )
-
         on_progress = make_pipeline_progress_callback(ctx)
 
-        def on_log(lvl, msg):
-            from backend.core.contracts import LogEvent
-            ctx.on_log(LogEvent(level=lvl, message=msg))
-
         result = await asyncio.to_thread(
-            pipeline.run_edit, request, ctx, on_progress=on_progress, on_log=on_log,
+            dispatch_video_edit,
+            **self._dispatch_kwargs(runtime, ctx),
+            request=request,
+            exec_ctx=ctx,
+            on_progress=on_progress,
+            on_log=ctx.on_log,
         )
         if result is None:
             return EngineResult(primary_asset_id="", metadata={"status": "cancelled"})
@@ -158,13 +158,6 @@ class DanQingVideoEngine(IVideoEngine):
                 "see config/models_registry.json actions."
             )
         runtime = self._resolve_runtime(request.model)
-        pipeline = VideoUpscalePipeline(
-            runtime,
-            self._registry,
-            ctx.asset_store,
-            model_cache=self._cache,
-            project_root=self._paths.get_project_root(),
-        )
         import asyncio
 
         on_progress = make_pipeline_progress_callback(ctx)
@@ -174,7 +167,12 @@ class DanQingVideoEngine(IVideoEngine):
             ctx.on_log(LogEvent(level=lvl, message=msg))
 
         result = await asyncio.to_thread(
-            pipeline.run, request, ctx, on_progress=on_progress, on_log=on_log,
+            dispatch_video_upscale,
+            **self._dispatch_kwargs(runtime, ctx),
+            request=request,
+            exec_ctx=ctx,
+            on_progress=on_progress,
+            on_log=on_log,
         )
         if result is None:
             return EngineResult(primary_asset_id="", metadata={"status": "cancelled"})

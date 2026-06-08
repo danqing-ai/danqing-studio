@@ -14,7 +14,7 @@
 
 ## New Model Integration Checklist (if applicable)
 
-Reference: `docs/engine_new_model_checklist.md`
+Reference: `docs/engine_architecture.md` §6
 
 - [ ] Updated `default_config/models_registry.json` (+ synced runtime registry when required)
 - [ ] Added/updated `backend/engine/config/model_configs.py`

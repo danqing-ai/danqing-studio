@@ -11,22 +11,22 @@ import mlx.core as mx
 import mlx.nn as nn
 import numpy as np
 
-from backend.engine.common._base import TransformerBase, _collect_params
-from backend.engine.common.attention import (
+from backend.engine.common.model.base import TransformerBase, _collect_params
+from backend.engine.common.ops.attention import (
     _apply_rope,
     attention_blhd,
     attention_bhsd_to_blhd,
     build_bidirectional_bool_attention_mask,
     left_pad_token_mask,
 )
-from backend.engine.common.cfg_batch import (
+from backend.engine.common.ops.cfg_batch import (
     HUNYUAN_CFG_TEXT_KEYS,
     broadcast_batch,
     predict_noise_cfg_batched,
 )
-from backend.engine.common.text_encoders.qwen3_mlx import MlxTimestepEmbeddingMLP
-from backend.engine.common.embeddings import sinusoidal_timestep_proj
-from backend.engine.common.norm import (
+from backend.engine.common.codecs.text_encoders.qwen3_mlx import MlxTimestepEmbeddingMLP
+from backend.engine.common.ops.embeddings import sinusoidal_timestep_proj
+from backend.engine.common.ops.norm import (
     apply_ada_layer_norm_continuous,
     apply_ada_layer_norm_zero,
     apply_scale_shift,
@@ -626,7 +626,7 @@ def _stack_reordered_encoder(
     return array_fn(out_emb), array_fn(out_mask)
 
 
-class HunyuanVideoTransformer(TransformerBase):
+class HunyuanVideoDiTMLX(TransformerBase):
     """HunyuanVideo-1.5 DiT — diffusers ``HunyuanVideo15Transformer3DModel`` layout."""
 
     def __init__(self, config: Any, ctx: RuntimeContext):
@@ -881,6 +881,28 @@ class HunyuanVideoTransformer(TransformerBase):
         out = ctx.permute(out, (0, 4, 1, 5, 2, 6, 3, 7))
         out = ctx.reshape(out, (B, out_ch, post_t * p_t, post_h * p_h, post_w * p_w))
         return out
+
+    def sanitize(self, weights: dict) -> dict:
+        """Transform checkpoint keys to match ``HunyuanVideoDiTMLX._param_map``.
+
+        Strips common checkpoint prefixes, removes LoRA keys, and converts
+        Conv3d patch weights from PyTorch ``[O,I,T,H,W]`` to MLX ``[O,T,H,W,I]`` layout.
+        """
+        remapped: dict = {}
+        for key, tensor in weights.items():
+            new_key = key
+            for prefix in ("transformer.", "model.transformer.", "module."):
+                if new_key.startswith(prefix):
+                    new_key = new_key[len(prefix):]
+                    break
+            new_key = new_key.replace(".default.", ".")
+            if ".lora_" in new_key or new_key.startswith("lora_"):
+                continue
+            if new_key == "x_embedder.proj.weight" and isinstance(tensor, mx.array) and tensor.ndim == 5:
+                # PyTorch Conv3d [O, I, T, H, W] → MLX [O, T, H, W, I]
+                tensor = mx.transpose(tensor, (0, 2, 3, 4, 1))
+            remapped[new_key] = tensor
+        return remapped
 
     def load_weights(
         self,

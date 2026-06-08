@@ -4,6 +4,7 @@
 与 REST API 端点一一对应：
   danqing-video-generate → POST /api/videos/generations → IVideoEngine.generate()
   danqing-video-edit     → POST /api/videos/edits       → IVideoEngine.edit()
+  danqing-video-upscale  → POST /api/videos/upscales    → IVideoEngine.upscale()
 """
 from __future__ import annotations
 
@@ -13,7 +14,7 @@ import time
 from pathlib import Path
 
 from backend.cli.base import build_engine_context, build_exec_context
-from backend.core.contracts import VideoGenerationRequest, VideoEditRequest
+from backend.core.contracts import VideoEditRequest, VideoGenerationRequest, VideoUpscaleRequest
 
 
 def generate(
@@ -125,6 +126,67 @@ def edit(
 
     if result.metadata.get("status") == "cancelled":
         raise RuntimeError("Edit cancelled")
+
+    if output and result.output_paths:
+        out = Path(output)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(result.output_paths[0], out)
+        print(f"[cli] DONE ({elapsed:.1f}s) -> {out}")
+        return str(out)
+
+    if result.output_paths:
+        print(f"[cli] DONE ({elapsed:.1f}s) -> {result.output_paths[0]}")
+        return result.output_paths[0]
+
+    raise RuntimeError("No output generated")
+
+
+def upscale(
+    model: str,
+    source_asset_id: str,
+    *,
+    scale: int = 2,
+    denoise: float = 0.3,
+    max_frames: int = 300,
+    seed: int | None = None,
+    output: str = "",
+    project_root: Path | None = None,
+) -> str:
+    """视频修复 / 超分。对应 POST /api/videos/upscales。"""
+    ctx = build_engine_context(project_root)
+    exec_ctx = build_exec_context(
+        work_dir=ctx.path_resolver.get_outputs_dir() / "cli_tmp",
+        asset_store=ctx.asset_store,
+        on_progress=lambda ev: None,
+        on_log=lambda ev: print(f"  [{ev.level}] {ev.message}"),
+    )
+
+    if scale not in (2, 4):
+        raise ValueError("scale must be 2 or 4")
+    meta: dict = {}
+    if seed is not None:
+        meta["seed"] = int(seed)
+    request = VideoUpscaleRequest(
+        model=model,
+        source_asset_id=source_asset_id,
+        scale=scale,  # type: ignore[arg-type]
+        denoise=float(denoise),
+        max_frames=int(max_frames),
+        metadata=meta,
+    )
+
+    if not ctx.video_engine.supports(model, "upscale"):
+        raise RuntimeError(
+            f"Model {model!r} does not support video upscale; "
+            "check config/models_registry.json actions."
+        )
+
+    t0 = time.time()
+    result = asyncio.run(ctx.video_engine.upscale(request, exec_ctx))
+    elapsed = time.time() - t0
+
+    if result.metadata.get("status") == "cancelled":
+        raise RuntimeError("Video upscale cancelled")
 
     if output and result.output_paths:
         out = Path(output)

@@ -6,7 +6,7 @@ from typing import Any
 
 import numpy as np
 
-from backend.engine.families.hunyuan.transformer_mlx import HunyuanVideoTransformer
+from backend.engine.families.hunyuan.transformer_mlx import HunyuanVideoDiTMLX
 from backend.engine.families.hunyuan.weights import remap_hunyuan_weights
 
 
@@ -18,7 +18,7 @@ def load_hunyuan_sr_transformer(
     model_cache: Any | None = None,
     cache_key: str | None = None,
     cache_size_gb: float = 10.0,
-) -> HunyuanVideoTransformer:
+) -> HunyuanVideoDiTMLX:
     """Load SR DiT from ``bundle_root/transformer/`` (community 1080p-2SR layout)."""
     if model_cache is not None and cache_key:
         cached = model_cache.get(cache_key)
@@ -41,7 +41,7 @@ def load_hunyuan_sr_transformer(
     sr_config = config
     object.__setattr__(sr_config, "use_meanflow", True)
 
-    model = HunyuanVideoTransformer(sr_config, ctx)
+    model = HunyuanVideoDiTMLX(sr_config, ctx)
     model.load_weights(list(w.items()), strict=False, ctx=ctx)
     ctx.eval(*[p for _, p in model.parameters()])
     if model_cache is not None and cache_key:
@@ -66,7 +66,7 @@ def _configure_step_distill_scheduler(ctx: Any, sched: Any, steps: int) -> Any:
 def upscale_latents_to_1080p(
     ctx: Any,
     low_res_latents: Any,
-    sr_model: HunyuanVideoTransformer,
+    sr_model: HunyuanVideoDiTMLX,
     *,
     txt_embeds: Any,
     txt_attn_mask: Any,
@@ -75,7 +75,9 @@ def upscale_latents_to_1080p(
     steps: int = 6,
 ) -> Any:
     """Run few-step mean-flow SR on latents (default 6 steps, step-distill sigmas)."""
-    from backend.engine.common.schedulers import FlowMatchEulerScheduler
+    from backend.engine.common.ops.schedulers import FlowMatchEulerScheduler
+    from backend.engine.inference.diffusion_bundle import run_diffusion_denoise
+    from backend.engine.inference.step_kwargs_builders import FixedStepKwargsBuilder
 
     sched = FlowMatchEulerScheduler(ctx=ctx)
     timesteps = _configure_step_distill_scheduler(ctx, sched, steps)
@@ -97,19 +99,26 @@ def upscale_latents_to_1080p(
         image_embeds=image_embeds,
     )
 
-    for t in timesteps:
-        noise_pred = sr_model(
-            latents,
-            t,
-            txt_embeds=txt_embeds,
-            txt_attn_mask=txt_attn_mask,
-            txt_embeds_2=txt_embeds_2,
-            txt_attn_mask_2=txt_attn_mask_2,
-            image_embeds=image_embeds,
-        )
-        latents = sched.step(noise_pred, t, latents)
-        ctx.eval(latents)
-
+    builder = FixedStepKwargsBuilder({
+        "txt_embeds": txt_embeds,
+        "txt_attn_mask": txt_attn_mask,
+        "txt_embeds_2": txt_embeds_2,
+        "txt_attn_mask_2": txt_attn_mask_2,
+        "image_embeds": image_embeds,
+    })
+    result = run_diffusion_denoise(
+        ctx,
+        model=sr_model,
+        config=sr_model.config,
+        scheduler=sched,
+        timesteps=timesteps,
+        latents=latents,
+        guidance=0.0,
+        cancel_token=None,
+        step_kwargs_builder=builder,
+    )
+    if result is None:
+        return latents
     if hasattr(ctx, "clear_cache"):
         ctx.clear_cache()
-    return latents
+    return result

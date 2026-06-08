@@ -302,7 +302,7 @@ def get_system_info():
             info["mlx_peak_gb"] = mlx["peak_gb"]
     except Exception:
         pass
-    from backend.engine.common.controlnet_runtime import controlnet_runtime_available
+    from backend.engine.families.flux1.structural import controlnet_runtime_available
 
     info["controlnet_runtime_available"] = controlnet_runtime_available()
     return SystemInfoResponse(**info)
@@ -426,7 +426,7 @@ def get_compatible_controlnets(model_name: str, scope: str | None = None):
         for vk, vs in status_info.get("versions", {}).items():
             versions_ready[vk] = vs.get("ready", False)
 
-        from backend.engine.common.controlnet_runtime import (
+        from backend.engine.families.flux1.structural import (
             CONTROLNET_CUDA_BATCH_PLANNED,
             CONTROLNET_DECLARED_BACKENDS,
             controlnet_runtime_available,

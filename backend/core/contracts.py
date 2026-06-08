@@ -166,7 +166,10 @@ class VideoUpscaleRequest(BaseModel):
     denoise: float = Field(0.3, ge=0.0, le=1.0)
     tile_size: int = Field(1024, ge=256, le=4096)
     temporal_window: int = Field(5, ge=1, le=16)
+    max_frames: int = Field(300, ge=1, le=4000)
     fps: int = 16
+    steps: Optional[int] = None
+    prompt: str = ""
     priority: Literal["normal", "high"] = "normal"
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -345,6 +348,7 @@ class ExecutionContext:
     on_log: Callable[[LogEvent], None]
     work_dir: Path
     asset_store: IAssetStore
+    trace: Any = None  # backend.observability.trace.RunTrace | None
 
 
 @dataclass

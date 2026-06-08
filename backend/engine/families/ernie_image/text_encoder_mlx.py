@@ -7,7 +7,7 @@ from typing import Any
 
 import mlx.core as mx
 
-from backend.engine.common.mlx_runtime_fallback import load_weights_dict
+from backend.engine.runtime.mlx_runtime import load_weights_dict
 
 
 def _mistral3_text_config_dict(cfg: dict) -> dict:
