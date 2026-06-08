@@ -1,5 +1,9 @@
 <template>
-  <div class="task-pipeline-graph" role="list">
+  <div
+    class="task-pipeline-graph"
+    :class="{ 'task-pipeline-graph--compact': compact }"
+    role="list"
+  >
     <div v-if="!nodes.length" class="task-pipeline-graph__empty">
       {{ $t('studio.pipelineGraphEmpty') }}
     </div>
@@ -31,14 +35,14 @@
             :aria-current="node.id === activeNode ? 'step' : undefined"
           >
             <span class="task-pipeline-graph__label">{{ node.label || node.id }}</span>
-            <span v-if="node.duration_ms != null" class="task-pipeline-graph__dur">
+            <span v-if="!compact && node.duration_ms != null" class="task-pipeline-graph__dur">
               {{ formatMs(node.duration_ms) }}
             </span>
           </div>
         </li>
       </ol>
 
-      <footer class="task-pipeline-graph__foot">
+      <footer v-if="!compact" class="task-pipeline-graph__foot">
         <div v-if="displayProgress != null" class="task-pipeline-graph__progress-wrap">
           <div class="task-pipeline-graph__progress-meta">
             <span v-if="progressLabel" class="task-pipeline-graph__progress-label">
@@ -71,7 +75,7 @@
           {{ diagnosing ? $t('studio.pipelineDiagnosing') : $t('studio.pipelineDiagnose') }}
         </button>
       </footer>
-      <p v-if="diagnosis" class="task-pipeline-graph__diagnosis">{{ diagnosis }}</p>
+      <p v-if="!compact && diagnosis" class="task-pipeline-graph__diagnosis">{{ diagnosis }}</p>
     </template>
   </div>
 </template>
@@ -95,6 +99,8 @@ const props = defineProps<{
   showDiagnose?: boolean;
   diagnosing?: boolean;
   diagnosis?: string | null;
+  /** 顶部横向步骤条，不含进度/诊断区 */
+  compact?: boolean;
 }>();
 
 defineEmits<{
@@ -129,10 +135,14 @@ function formatMs(ms: number): string {
   min-width: 0;
 }
 
+.task-pipeline-graph--compact {
+  gap: 0;
+}
+
 .task-pipeline-graph__empty {
   color: var(--dq-label-secondary);
-  font-size: 13px;
-  padding: 12px 4px;
+  font-size: 12px;
+  padding: 8px 4px;
 }
 
 .task-pipeline-graph__steps {
@@ -144,11 +154,30 @@ function formatMs(ms: number): string {
   gap: 0;
 }
 
+.task-pipeline-graph--compact .task-pipeline-graph__steps {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 0;
+  padding: 2px 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
 .task-pipeline-graph__step {
   display: grid;
   grid-template-columns: 22px minmax(0, 1fr);
   gap: 10px;
   min-height: 42px;
+}
+
+.task-pipeline-graph--compact .task-pipeline-graph__step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1 1 0;
+  min-width: 52px;
+  min-height: 0;
+  gap: 6px;
 }
 
 .task-pipeline-graph__track {
@@ -159,6 +188,13 @@ function formatMs(ms: number): string {
   padding-top: 10px;
 }
 
+.task-pipeline-graph--compact .task-pipeline-graph__track {
+  flex-direction: row;
+  width: 100%;
+  padding-top: 0;
+  justify-content: center;
+}
+
 .task-pipeline-graph__indicator {
   width: 10px;
   height: 10px;
@@ -167,6 +203,11 @@ function formatMs(ms: number): string {
   background: var(--dq-surface-inset);
   flex-shrink: 0;
   z-index: 1;
+}
+
+.task-pipeline-graph--compact .task-pipeline-graph__indicator {
+  width: 8px;
+  height: 8px;
 }
 
 .task-pipeline-graph__indicator--running {
@@ -198,6 +239,16 @@ function formatMs(ms: number): string {
   background: var(--dq-glass-border);
 }
 
+.task-pipeline-graph--compact .task-pipeline-graph__connector {
+  position: static;
+  flex: 1 1 auto;
+  width: auto;
+  height: 1.5px;
+  min-width: 8px;
+  margin-top: 3px;
+  align-self: center;
+}
+
 .task-pipeline-graph__connector--done {
   background: color-mix(in srgb, var(--dq-success, #34c759) 45%, var(--dq-glass-border));
 }
@@ -214,9 +265,28 @@ function formatMs(ms: number): string {
   background: transparent;
 }
 
+.task-pipeline-graph--compact .task-pipeline-graph__content {
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  min-height: 0;
+  padding: 0 2px;
+  text-align: center;
+}
+
 .task-pipeline-graph__content--active {
   border-color: color-mix(in srgb, var(--dq-accent) 35%, transparent);
   background: color-mix(in srgb, var(--dq-accent) 10%, transparent);
+}
+
+.task-pipeline-graph--compact .task-pipeline-graph__content--active {
+  border-color: transparent;
+  background: transparent;
+}
+
+.task-pipeline-graph--compact .task-pipeline-graph__content--active .task-pipeline-graph__label {
+  color: var(--dq-accent);
+  font-weight: 600;
 }
 
 .task-pipeline-graph__content--running .task-pipeline-graph__label {
@@ -232,6 +302,12 @@ function formatMs(ms: number): string {
   font-size: 13px;
   line-height: 1.35;
   color: var(--dq-label-primary);
+}
+
+.task-pipeline-graph--compact .task-pipeline-graph__label {
+  font-size: 10px;
+  line-height: 1.25;
+  word-break: keep-all;
 }
 
 .task-pipeline-graph__dur {

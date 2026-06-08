@@ -2,7 +2,7 @@
   <DqDialog
     v-model:open="open"
     class="gen-task-log-dialog"
-    :title="$t('studio.logs')"
+    :title="$t('studio.taskProgress')"
     width="min(520px, 92vw)"
     variant="glass"
     destroy-on-close
