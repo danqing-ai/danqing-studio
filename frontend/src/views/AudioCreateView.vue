@@ -13,13 +13,20 @@
         :time-options="timeOptions"
         :model-options="allModelOptions"
         :selection-mode="selectionMode"
+        :selected-count="selectedPaths.size"
+        :all-selected="allLoadedSelected"
         :view-mode="viewMode"
         :supports-canvas="true"
+        canvas-media="audio"
         @update:filter-time="filterTime = $event"
         @update:filter-models="filterModels = $event"
         @refresh="refreshGallery"
         @toggle-selection-mode="toggleSelectionMode"
+        @select-all="selectAllLoaded"
+        @batch-delete="batchDeleteSelected"
+        @clear-selection="clearSelection"
         @update:view-mode="onViewModeChange"
+        @composer-restore="onCanvasComposerRestore"
       />
     </template>
     <template #canvas>

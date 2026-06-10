@@ -18,11 +18,22 @@ from backend.engine.contracts import (
     resolve_version_block,
 )
 from backend.engine.cache import ModelCache
+from backend.engine.common.bundle.quant_inference import (
+    WeightInferenceMode,
+    estimate_dit_cache_size_gb,
+    resolve_inference_weight_mode,
+)
 from backend.engine.pipelines.video_bundle_layout import resolve_video_transformer_weight_sources
 
 
-def video_model_cache_key(entry: Any, version_key: str | None, num_frames: int) -> str:
-    return f"video:{entry.id}:{version_key or 'default'}:{num_frames}"
+def video_model_cache_key(
+    entry: Any,
+    version_key: str | None,
+    num_frames: int,
+    inference_mode: WeightInferenceMode | None = None,
+) -> str:
+    suffix = inference_mode.cache_suffix() if inference_mode is not None else ":dense"
+    return f"video:{entry.id}:{version_key or 'default'}:{num_frames}{suffix}"
 
 
 def resolve_video_num_frames(request: Any, entry: Any) -> int:
@@ -94,17 +105,9 @@ def load_video_transformer(
     project_root: Path,
     num_frames: int,
     model_cache: ModelCache | None = None,
+    on_log: Any | None = None,
 ) -> Any | None:
     """Load video transformer weights from bundle (registry-driven)."""
-    cache_key = video_model_cache_key(entry, version_key, num_frames)
-    if model_cache is not None:
-        cached = model_cache.get(cache_key)
-        if cached is not None:
-            return cached
-
-    trans_cls = get_video_transformer_class(family)
-    model = trans_cls(config, ctx, num_frames=num_frames)
-
     bundle_root = local_bundle_root(project_root, entry, version_key)
     tensor_root, shard_paths = resolve_video_transformer_weight_sources(
         bundle_root, family, entry.id
@@ -121,14 +124,46 @@ def load_video_transformer(
     from backend.engine.common.bundle.safetensors_affine_quant import read_bundle_affine_bits_if_quantized
 
     bundle_affine_bits = read_bundle_affine_bits_if_quantized(weights, tensor_root)
+    inference_mode = resolve_inference_weight_mode(
+        entry,
+        version_key,
+        ctx,
+        weight_keys=frozenset(weights.keys()),
+        bundle_affine_bits=bundle_affine_bits,
+    )
+
+    cache_key = video_model_cache_key(entry, version_key, num_frames, inference_mode)
+    if model_cache is not None:
+        cached = model_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+    trans_cls = get_video_transformer_class(family)
+    model = trans_cls(config, ctx, num_frames=num_frames)
 
     model.load_weights(
         list(weights.items()),
         strict=False,
         ctx=ctx,
         bundle_affine_bits=bundle_affine_bits,
+        inference_mode=inference_mode,
     )
+    setattr(model, "_dq_inference_mode", inference_mode)
     ctx.eval(*[p for _, p in model.parameters()])
+
+    if on_log is not None:
+        from backend.engine.common.bundle.weights import parse_size_gb
+
+        ver = resolve_version_block(entry, version_key)
+        size_str = str((ver or {}).get("size") or getattr(entry, "raw", {}).get("size") or "10GB")
+        disk_gb = parse_size_gb(size_str)
+        est_gb = estimate_dit_cache_size_gb(disk_gb, inference_mode)
+        on_log(
+            "info",
+            f"[load_transformer] {inference_mode.log_label()} "
+            f"disk_gb={disk_gb:.1f} cache_est_gb={est_gb:.1f}",
+        )
+
     if model_cache is not None:
         from backend.engine.common.bundle.weights import parse_size_gb
 
@@ -139,5 +174,10 @@ def load_video_transformer(
         if not size_str:
             raw = getattr(entry, "raw", {}) or {}
             size_str = str(raw.get("size") or "10GB")
-        model_cache.put(cache_key, model, parse_size_gb(size_str))
+        disk_gb = parse_size_gb(size_str)
+        model_cache.put(
+            cache_key,
+            model,
+            estimate_dit_cache_size_gb(disk_gb, inference_mode),
+        )
     return model

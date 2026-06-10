@@ -21,6 +21,7 @@ from tests.benchmark.eval_cases import (  # noqa: E402
     edit_judge_prompt,
     encode_prompt,
     ensure_edit_source,
+    ensure_edit_mask,
     ensure_upscale_source,
     expand_eval_cases,
     fixture_scene,
@@ -60,6 +61,7 @@ class EvalCaseExpansionTests(unittest.TestCase):
             "flux1-schnell",
             "fibo-lite",
             "ernie-image-turbo",
+            "cogview4-6b",
         ):
             self.assertIn(expected, create_ids)
         rewrite_ids = {c.model_id for c in smoke if c.action == "rewrite"}
@@ -69,21 +71,30 @@ class EvalCaseExpansionTests(unittest.TestCase):
             "qwen-image",
             "flux1-schnell",
             "fibo-lite",
+            "cogview4-6b",
         ):
             self.assertIn(expected, rewrite_ids)
 
-    def test_edit_judge_prompt_includes_scene(self) -> None:
+    def test_edit_judge_prompt_uses_instruction(self) -> None:
         pack = load_prompt_pack()
         scene = fixture_scene(pack, key="edit_scene")
         out = edit_judge_prompt(scene=scene, instruction="make colors vivid")
-        self.assertIn(scene, out)
-        self.assertIn("vivid", out)
+        self.assertEqual(out, "make colors vivid")
 
     def test_fibo_create_json_encode(self) -> None:
         text = "a red apple"
         out = encode_prompt(family="fibo", action="create", text=text)
         data = json.loads(out)
         self.assertEqual(data["description"], text)
+
+    def test_cogview4_smoke_uses_eval_steps_override(self) -> None:
+        from tests.benchmark.eval_cases import get_eval_case
+
+        case = get_eval_case("cogview4-6b:P1:create", profile="smoke")
+        self.assertIsNotNone(case)
+        assert case is not None
+        self.assertEqual(case.steps, 4)
+        self.assertEqual(case.timeout_sec, 900)
 
 
 class IntegrityTests(unittest.TestCase):
@@ -115,8 +126,11 @@ class IntegrityTests(unittest.TestCase):
 class FixtureTests(unittest.TestCase):
     def test_fixtures_are_eval_size(self) -> None:
         edit = ensure_edit_source()
+        mask = ensure_edit_mask()
         upscale = ensure_upscale_source()
         with Image.open(edit) as img:
+            self.assertEqual(img.size, (EVAL_SIZE, EVAL_SIZE))
+        with Image.open(mask) as img:
             self.assertEqual(img.size, (EVAL_SIZE, EVAL_SIZE))
         with Image.open(upscale) as img:
             self.assertEqual(img.size, (EVAL_SIZE, EVAL_SIZE))
@@ -126,6 +140,30 @@ class JudgeThresholdTests(unittest.TestCase):
     def test_required_score_uses_golden(self) -> None:
         self.assertAlmostEqual(required_score(golden=1.0), 0.85)
         self.assertAlmostEqual(required_score(golden=None), 0.20)
+        self.assertAlmostEqual(required_score(golden=None, floor=0.17), 0.17)
+
+    def test_e1_edit_case_has_lower_judge_floor(self) -> None:
+        cases = expand_eval_cases(profile="full")
+        e1 = next(c for c in cases if c.prompt_id == "E1" and c.action == "rewrite")
+        self.assertAlmostEqual(e1.judge_floor or 0.0, 0.17)
+
+    def test_extend_l1_expects_outpaint_width(self) -> None:
+        case = next(
+            c for c in expand_eval_cases(profile="full")
+            if c.model_id == "flux-fill-controlnet" and c.action == "extend"
+        )
+        self.assertEqual(case.l1_expected_width, EVAL_SIZE + 256)
+        self.assertEqual(case.l1_expected_height, EVAL_SIZE)
+
+    def test_cogview4_smoke_cases_have_golden_baselines(self) -> None:
+        from tests.benchmark.eval_cases import golden_reward
+
+        for case_id in ("cogview4-6b:P1:create", "cogview4-6b:E2:rewrite"):
+            reward = golden_reward(case_id)
+            self.assertIsNotNone(reward)
+            assert reward is not None
+            self.assertGreater(reward, 0.15)
+            self.assertLess(reward, 0.35)
 
 
 class RunnerMockJudgeTests(unittest.TestCase):

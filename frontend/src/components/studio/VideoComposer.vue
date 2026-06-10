@@ -136,16 +136,14 @@
           size="small"
           @command="onStyleCommand"
         >
-          <ComposerIconTip :content="$t('create.composerTip.preset')">
-            <DqIconButton
-              type="text"
-              size="xs"
-              class="video-composer__preset-btn"
-              :aria-label="$tt('create.preset')"
-            >
-              <DqIcon :size="14"><DocumentCopy /></DqIcon>
-            </DqIconButton>
-          </ComposerIconTip>
+          <DqIconButton
+            type="text"
+            size="xs"
+            class="video-composer__preset-btn"
+            :label="$t('create.composerTip.preset')"
+          >
+            <DqIcon :size="14"><DocumentCopy /></DqIcon>
+          </DqIconButton>
           <template #dropdown>
             <DqDropdownMenu>
               <DqDropdownItem
@@ -208,12 +206,17 @@
 
         <!-- Size selector -->
         <DqSelect
-          v-if="workMode !== 'upscale'"
+          v-if="workMode !== 'upscale' && sizeOptions.length > 0"
           v-model="localSize"
           size="small"
           class="video-composer__select video-composer__select--size"
         >
-          <DqOption v-for="opt in sizeOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
+          <DqOption
+            v-for="opt in sizeOptions"
+            :key="opt.value"
+            :value="opt.value"
+            :label="formatResolutionOptionLabel(opt)"
+          />
         </DqSelect>
 
         <!-- Duration (frames) -->
@@ -473,6 +476,7 @@ import {
 } from '@danqing/dq-shell';
 import { assetIdFromGalleryPath } from '@/utils/copilotHandoff';
 import { $tt, $pn } from '@/utils/i18n';
+import { formatResolutionOptionLabel } from '@/utils/registryParamSchema';
 
 const props = defineProps<{
   modelValue: string;
@@ -485,7 +489,7 @@ const props = defineProps<{
   canGenerate: boolean;
   generateLabel: string;
   modelOptions: Array<{ label: string; value: string; disabled?: boolean; commercialUseAllowed?: boolean }>;
-  sizeOptions: Array<{ label: string; value: string }>;
+  sizeOptions: Array<{ label: string; value: string; pixelLabel?: string }>;
   durationOptions: Array<{ label: string; value: number }>;
   styles: Record<string, { applies_to?: string[]; positive?: string; negative?: string; media_scope?: string }>;
   params: {
@@ -806,6 +810,7 @@ function onKeydown(e: KeyboardEvent) {
   position: absolute;
   bottom: 6px;
   right: 8px;
+  z-index: 1;
   display: flex;
   align-items: center;
 }
@@ -850,7 +855,17 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 .video-composer__select--size {
-  min-width: 70px;
+  min-width: 96px;
+}
+
+.video-composer__size-ratio {
+  font-variant-numeric: tabular-nums;
+}
+
+.video-composer__size-aspect {
+  margin-left: 8px;
+  opacity: 0.65;
+  font-size: 11px;
 }
 
 .video-composer__select--duration {

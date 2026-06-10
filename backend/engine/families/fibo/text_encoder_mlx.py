@@ -375,3 +375,13 @@ class FiboTextEncoder:
             mx.concatenate([neg_layers[i], pos_layers[i]], axis=0) for i in range(len(pos_layers))
         ]
         return encoder_hidden_states.astype(mx.bfloat16), _select_dit_layers(prompt_layers)
+
+    def release_weights(self) -> None:
+        """Drop SmolLM3 MLX weights after encode (tokenizer kept)."""
+        self._model = None
+        clear_cache_fn = getattr(self.ctx, "clear_cache", None)
+        if clear_cache_fn is not None:
+            clear_cache_fn()
+        else:
+            import importlib
+            importlib.import_module("mlx.core").clear_cache()

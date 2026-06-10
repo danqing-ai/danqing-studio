@@ -193,6 +193,21 @@
       "hooks": [],
       "encoder_type": "ernie_image"
     },
+    "cogview4": {
+      "paradigm": "diffusion",
+      "media": [
+        "image"
+      ],
+      "backends": [
+        "mlx"
+      ],
+      "latent_layout": "nchw",
+      "cfg_mode": "dual",
+      "latent_channels": 16,
+      "vae_scale": 8,
+      "hooks": [],
+      "encoder_type": "cogview4"
+    },
     "fibo": {
       "paradigm": "diffusion",
       "media": [
@@ -586,7 +601,28 @@
             "type": "float"
           },
           "negative_prompt_support": true,
-          "max_seq_len": 256
+          "max_seq_len": 256,
+          "resolution_presets": {
+            "default": "1024x1024",
+            "options": [
+              "512x512",
+              "768x768",
+              "1024x1024",
+              "1280x1280",
+              "1536x1536",
+              "1920x1920",
+              "768x1280",
+              "1280x768",
+              "768x1024",
+              "1024x768",
+              "1024x1536",
+              "1536x1024",
+              "1280x1920",
+              "1920x1280",
+              "1536x1920",
+              "1920x1536"
+            ]
+          }
         },
         "extends": "image_dit_standard"
       },
@@ -738,7 +774,28 @@
             "label": "去噪强度",
             "type": "float"
           },
-          "negative_prompt_support": true
+          "negative_prompt_support": true,
+          "resolution_presets": {
+            "default": "1024x1024",
+            "options": [
+              "512x512",
+              "768x768",
+              "1024x1024",
+              "1280x1280",
+              "1536x1536",
+              "1920x1920",
+              "768x1280",
+              "1280x768",
+              "768x1024",
+              "1024x768",
+              "1024x1536",
+              "1536x1024",
+              "1280x1920",
+              "1920x1280",
+              "1536x1920",
+              "1920x1536"
+            ]
+          }
         },
         "extends": "image_dit_standard"
       },
@@ -888,7 +945,23 @@
             "label": "去噪强度",
             "type": "float"
           },
-          "negative_prompt_support": true
+          "negative_prompt_support": true,
+          "resolution_presets": {
+            "default": "1024x1024",
+            "options": [
+              "512x512",
+              "768x768",
+              "1024x1024",
+              "1280x1280",
+              "1536x1536",
+              "768x1280",
+              "1280x768",
+              "768x1024",
+              "1024x768",
+              "1024x1536",
+              "1536x1024"
+            ]
+          }
         },
         "extends": "image_dit_standard"
       },
@@ -1049,7 +1122,23 @@
           "num_heads": 24,
           "joint_attention_dim": 7680,
           "num_layers": 5,
-          "num_single_layers": 20
+          "num_single_layers": 20,
+          "resolution_presets": {
+            "default": "1024x1024",
+            "options": [
+              "512x512",
+              "768x768",
+              "1024x1024",
+              "1280x1280",
+              "1536x1536",
+              "768x1280",
+              "1280x768",
+              "768x1024",
+              "1024x768",
+              "1024x1536",
+              "1536x1024"
+            ]
+          }
         },
         "extends": "image_dit_standard"
       },
@@ -1079,7 +1168,10 @@
             "from_version": "fp16",
             "quantization": {
               "bits": 8,
-              "scheme": "mlx_affine"
+              "scheme": "mlx_affine",
+              "text_encoder": {
+                "bits": 8
+              }
             }
           },
           "int4": {
@@ -1095,7 +1187,10 @@
             "from_version": "fp16",
             "quantization": {
               "bits": 4,
-              "scheme": "mlx_affine"
+              "scheme": "mlx_affine",
+              "text_encoder": {
+                "bits": 4
+              }
             }
           },
           "mlx-4bit": {
@@ -1248,7 +1343,22 @@
             "note": "图生图/编辑时控制原图保留程度，越高变化越大",
             "type": "float"
           },
-          "negative_prompt_support": false
+          "negative_prompt_support": false,
+          "resolution_presets": {
+            "default": "768x1280",
+            "options": [
+              "512x512",
+              "768x768",
+              "1024x1024",
+              "1280x1280",
+              "768x1280",
+              "1280x768",
+              "768x1024",
+              "1024x768",
+              "1024x1536",
+              "1536x1024"
+            ]
+          }
         },
         "extends": "image_dit_standard"
       },
@@ -1439,7 +1549,23 @@
           "num_heads": 24,
           "joint_attention_dim": 7680,
           "num_layers": 5,
-          "num_single_layers": 20
+          "num_single_layers": 20,
+          "resolution_presets": {
+            "default": "1024x1024",
+            "options": [
+              "512x512",
+              "768x768",
+              "1024x1024",
+              "1280x1280",
+              "1536x1536",
+              "768x1280",
+              "1280x768",
+              "768x1024",
+              "1024x768",
+              "1024x1536",
+              "1536x1024"
+            ]
+          }
         },
         "extends": "image_dit_standard"
       },
@@ -1593,7 +1719,23 @@
             "label": "去噪强度",
             "type": "float"
           },
-          "negative_prompt_support": false
+          "negative_prompt_support": false,
+          "resolution_presets": {
+            "default": "1024x1024",
+            "options": [
+              "512x512",
+              "768x768",
+              "1024x1024",
+              "1280x1280",
+              "1536x1536",
+              "768x1280",
+              "1280x768",
+              "768x1024",
+              "1024x768",
+              "1024x1536",
+              "1536x1024"
+            ]
+          }
         },
         "extends": "image_dit_standard"
       },
@@ -1766,6 +1908,21 @@
             ],
             "label": "调度器",
             "type": "enum"
+          },
+          "resolution_presets": {
+            "default": "768x1280",
+            "options": [
+              "512x512",
+              "768x768",
+              "1024x1024",
+              "1280x1280",
+              "768x1280",
+              "1280x768",
+              "768x1024",
+              "1024x768",
+              "1024x1536",
+              "1536x1024"
+            ]
           }
         },
         "extends": "image_dit_standard"
@@ -1932,6 +2089,21 @@
               "flow_match_euler"
             ],
             "type": "enum"
+          },
+          "resolution_presets": {
+            "default": "768x1280",
+            "options": [
+              "512x512",
+              "768x768",
+              "1024x1024",
+              "1280x1280",
+              "768x1280",
+              "1280x768",
+              "768x1024",
+              "1024x768",
+              "1024x1536",
+              "1536x1024"
+            ]
           }
         },
         "extends": "image_dit_standard"
@@ -2113,7 +2285,23 @@
             "label": "去噪强度",
             "type": "float"
           },
-          "negative_prompt_support": false
+          "negative_prompt_support": false,
+          "resolution_presets": {
+            "default": "1024x1024",
+            "options": [
+              "512x512",
+              "768x768",
+              "1024x1024",
+              "1280x1280",
+              "1536x1536",
+              "768x1280",
+              "1280x768",
+              "768x1024",
+              "1024x768",
+              "1024x1536",
+              "1536x1024"
+            ]
+          }
         },
         "extends": "image_dit_standard"
       },
@@ -2259,7 +2447,23 @@
             "label": "去噪强度",
             "type": "float"
           },
-          "negative_prompt_support": false
+          "negative_prompt_support": false,
+          "resolution_presets": {
+            "default": "1024x1024",
+            "options": [
+              "512x512",
+              "768x768",
+              "1024x1024",
+              "1280x1280",
+              "1536x1536",
+              "768x1280",
+              "1280x768",
+              "768x1024",
+              "1024x768",
+              "1024x1536",
+              "1536x1024"
+            ]
+          }
         },
         "extends": "image_dit_standard"
       },
@@ -2397,7 +2601,23 @@
             "type": "enum"
           },
           "negative_prompt_support": false,
-          "edit_conditioning_concat": true
+          "edit_conditioning_concat": true,
+          "resolution_presets": {
+            "default": "1024x1024",
+            "options": [
+              "512x512",
+              "768x768",
+              "1024x1024",
+              "1280x1280",
+              "1536x1536",
+              "768x1280",
+              "1280x768",
+              "768x1024",
+              "1024x768",
+              "1024x1536",
+              "1536x1024"
+            ]
+          }
         },
         "extends": "image_dit_standard"
       },
@@ -2537,7 +2757,23 @@
           },
           "negative_prompt_support": false,
           "edit_conditioning_concat": true,
-          "edit_rmbg_composite_output": true
+          "edit_rmbg_composite_output": true,
+          "resolution_presets": {
+            "default": "1024x1024",
+            "options": [
+              "512x512",
+              "768x768",
+              "1024x1024",
+              "1280x1280",
+              "1536x1536",
+              "768x1280",
+              "1280x768",
+              "768x1024",
+              "1024x768",
+              "1024x1536",
+              "1536x1024"
+            ]
+          }
         },
         "extends": "image_dit_standard"
       },
@@ -2700,7 +2936,23 @@
             "label": "去噪强度",
             "type": "float"
           },
-          "negative_prompt_support": false
+          "negative_prompt_support": false,
+          "resolution_presets": {
+            "default": "1024x1024",
+            "options": [
+              "512x512",
+              "768x768",
+              "1024x1024",
+              "1280x1280",
+              "1536x1536",
+              "768x1280",
+              "1280x768",
+              "768x1024",
+              "1024x768",
+              "1024x1536",
+              "1536x1024"
+            ]
+          }
         },
         "extends": "image_dit_standard"
       },
@@ -3065,7 +3317,23 @@
             "label": "去噪强度",
             "type": "float"
           },
-          "negative_prompt_support": false
+          "negative_prompt_support": false,
+          "resolution_presets": {
+            "default": "1024x1024",
+            "options": [
+              "512x512",
+              "768x768",
+              "1024x1024",
+              "1280x1280",
+              "1536x1536",
+              "768x1280",
+              "1280x768",
+              "768x1024",
+              "1024x768",
+              "1024x1536",
+              "1536x1024"
+            ]
+          }
         },
         "extends": "image_dit_standard"
       },
@@ -3129,6 +3397,163 @@
               "bits": 4,
               "scheme": "mlx_affine"
             }
+          }
+        }
+      }
+    },
+    "cogview4-6b": {
+      "catalog": {
+        "media": "image",
+        "description": {
+          "zh": "智谱 CogView4-6B，原生中文文生图与图生图（rewrite），擅长复杂文字渲染与多语言提示。",
+          "en": "Zhipu CogView4-6B text-to-image and reference img2img (rewrite) with native Chinese support and strong text rendering."
+        },
+        "category": "base_models",
+        "commercial_use_allowed": true,
+        "type": "diffusion",
+        "source": "modelscope",
+        "name": {
+          "zh": "CogView4-6B",
+          "en": "CogView4-6B"
+        },
+        "recommended": false,
+        "engine": "danqing-image"
+      },
+      "runtime": {
+        "family": "cogview4",
+        "backends": [
+          "mlx"
+        ],
+        "overrides": {
+          "vae_scale": 8,
+          "requires_sigma_shift": true,
+          "supports_guidance": true
+        }
+      },
+      "actions": {
+        "create": {},
+        "rewrite": {}
+      },
+      "ui": {
+        "parameters": {
+          "lora_support": false,
+          "seed_support": true,
+          "preview_mode": {
+            "type": "enum",
+            "default": "stream",
+            "options": [
+              "stream",
+              "none"
+            ]
+          },
+          "preview_interval_steps": {
+            "type": "int",
+            "default": 2,
+            "min": 1,
+            "max": 8
+          },
+          "preview_max_edge": {
+            "type": "int",
+            "default": 512,
+            "min": 128,
+            "max": 1024
+          },
+          "scheduler": {
+            "default": "flow_match_euler_cogview4",
+            "options": [
+              "flow_match_euler_cogview4"
+            ],
+            "label": "调度器",
+            "type": "enum"
+          },
+          "scheduler_base_image_seq_len": 256,
+          "scheduler_base_shift": 0.25,
+          "scheduler_max_shift": 0.75,
+          "steps": {
+            "default": 50,
+            "min": 1,
+            "max": 50,
+            "label": "步数",
+            "type": "int"
+          },
+          "guidance": {
+            "default": 3.5,
+            "min": 1.0,
+            "max": 10.0,
+            "step": 0.5,
+            "label": "CFG引导",
+            "type": "float"
+          },
+          "width": {
+            "default": 1024,
+            "options": [
+              512,
+              768,
+              1024,
+              1280,
+              1536,
+              1920
+            ],
+            "type": "enum"
+          },
+          "height": {
+            "default": 1024,
+            "options": [
+              512,
+              768,
+              1024,
+              1280,
+              1536,
+              1920
+            ],
+            "type": "enum"
+          },
+          "strength": {
+            "default": 0.35,
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.05,
+            "label": "去噪强度",
+            "note": "图生图/编辑时控制原图保留程度，越高变化越大",
+            "type": "float"
+          },
+          "negative_prompt_support": true,
+          "resolution_presets": {
+            "default": "1024x1024",
+            "options": [
+              "512x512",
+              "768x768",
+              "1024x1024",
+              "1280x1280",
+              "1536x1536",
+              "1920x1920",
+              "768x1280",
+              "1280x768",
+              "768x1024",
+              "1024x768",
+              "1024x1536",
+              "1536x1024",
+              "1280x1920",
+              "1920x1280",
+              "1536x1920",
+              "1920x1536"
+            ]
+          }
+        },
+        "extends": "image_dit_standard"
+      },
+      "distribution": {
+        "versions": {
+          "bf16": {
+            "name": {
+              "zh": "BF16 完整版",
+              "en": "BF16 Full"
+            },
+            "size": "33GB",
+            "default": true,
+            "repo_id": "ZhipuAI/CogView4-6B",
+            "local_path": "models/Image/cogview4-6b-bf16",
+            "source_type": "full"
           }
         }
       }
@@ -3407,6 +3832,9 @@
             "source_type": "full"
           }
         }
+      },
+      "ui": {
+        "parameters": {}
       }
     },
     "flux-canny-controlnet": {
@@ -3792,7 +4220,23 @@
             "label": "去噪强度",
             "type": "float"
           },
-          "negative_prompt_support": false
+          "negative_prompt_support": false,
+          "resolution_presets": {
+            "default": "1024x1024",
+            "options": [
+              "512x512",
+              "768x768",
+              "1024x1024",
+              "1280x1280",
+              "1536x1536",
+              "768x1280",
+              "1280x768",
+              "768x1024",
+              "1024x768",
+              "1024x1536",
+              "1536x1024"
+            ]
+          }
         },
         "extends": "image_dit_standard"
       },
@@ -5020,7 +5464,11 @@
         "engine": "danqing-video"
       },
       "runtime": {
-        "family": "wan"
+        "family": "wan",
+        "backends": [
+          "mlx",
+          "cuda"
+        ]
       },
       "actions": {},
       "ui": {
@@ -5071,7 +5519,11 @@
         "engine": "danqing-video"
       },
       "runtime": {
-        "family": "wan"
+        "family": "wan",
+        "backends": [
+          "mlx",
+          "cuda"
+        ]
       },
       "actions": {},
       "ui": {
@@ -5122,7 +5574,11 @@
         "engine": "danqing-video"
       },
       "runtime": {
-        "family": "wan"
+        "family": "wan",
+        "backends": [
+          "mlx",
+          "cuda"
+        ]
       },
       "actions": {},
       "ui": {
@@ -5173,7 +5629,11 @@
         "engine": "danqing-video"
       },
       "runtime": {
-        "family": "wan"
+        "family": "wan",
+        "backends": [
+          "mlx",
+          "cuda"
+        ]
       },
       "actions": {},
       "ui": {
@@ -5249,7 +5709,7 @@
             },
             "size": "152MB",
             "default": true,
-            "repo_id": "SecretDongGe/StarFace",
+            "repo_id": "SecretDongGe/StarFace-Z-Image",
             "local_path": "models/Lora/starface-z-image-ms-fp16",
             "source_type": "full"
           }
@@ -5396,7 +5856,18 @@
             "type": "int"
           },
           "negative_prompt_support": false,
-          "default_scheduler": "flow_match_euler"
+          "default_scheduler": "flow_match_euler",
+          "resolution_presets": {
+            "default": "512x768",
+            "options": [
+              "320x512",
+              "512x512",
+              "512x768",
+              "512x1024",
+              "720x768",
+              "720x1024"
+            ]
+          }
         },
         "extends": "video_dit_standard"
       },
@@ -5526,7 +5997,18 @@
             "type": "int"
           },
           "negative_prompt_support": true,
-          "default_scheduler": "flow_match_euler"
+          "default_scheduler": "flow_match_euler",
+          "resolution_presets": {
+            "default": "512x768",
+            "options": [
+              "320x512",
+              "512x512",
+              "512x768",
+              "512x1024",
+              "720x768",
+              "720x1024"
+            ]
+          }
         },
         "extends": "video_dit_standard"
       },
@@ -5650,7 +6132,13 @@
           "negative_prompt_support": true,
           "text_encoder_qwen_local": "models/Text/qwen2.5-vl-7b-instruct",
           "text_encoder_byt5_local": "models/Text/byt5-small",
-          "text_encoder_release_after_encode": true
+          "text_encoder_release_after_encode": true,
+          "resolution_presets": {
+            "default": "480x864",
+            "options": [
+              "480x864"
+            ]
+          }
         },
         "extends": "video_dit_standard"
       },
@@ -5762,7 +6250,13 @@
             "note": "必须为 4n+1",
             "type": "int"
           },
-          "negative_prompt_support": true
+          "negative_prompt_support": true,
+          "resolution_presets": {
+            "default": "480x864",
+            "options": [
+              "480x864"
+            ]
+          }
         },
         "extends": "video_dit_standard"
       },
@@ -5855,7 +6349,13 @@
             "note": "必须为 4n+1",
             "type": "int"
           },
-          "negative_prompt_support": false
+          "negative_prompt_support": false,
+          "resolution_presets": {
+            "default": "480x864",
+            "options": [
+              "480x864"
+            ]
+          }
         },
         "extends": "video_dit_standard"
       },
@@ -5975,7 +6475,11 @@
         "engine": "danqing-video"
       },
       "runtime": {
-        "family": "wan"
+        "family": "wan",
+        "backends": [
+          "mlx",
+          "cuda"
+        ]
       },
       "actions": {
         "create": {}
@@ -6031,7 +6535,14 @@
             "note": "必须为 4n+1",
             "type": "int"
           },
-          "negative_prompt_support": true
+          "negative_prompt_support": true,
+          "resolution_presets": {
+            "default": "720x1280",
+            "options": [
+              "480x720",
+              "720x1280"
+            ]
+          }
         },
         "extends": "video_dit_standard"
       },
@@ -6102,7 +6613,11 @@
         "engine": "danqing-video"
       },
       "runtime": {
-        "family": "wan"
+        "family": "wan",
+        "backends": [
+          "mlx",
+          "cuda"
+        ]
       },
       "actions": {
         "animate": {}
@@ -6167,6 +6682,13 @@
             "step": 0.1,
             "label": "LoRA强度",
             "type": "float"
+          },
+          "resolution_presets": {
+            "default": "720x1280",
+            "options": [
+              "480x720",
+              "720x1280"
+            ]
           }
         },
         "extends": "video_dit_standard"
@@ -6240,7 +6762,8 @@
       "runtime": {
         "family": "wan",
         "backends": [
-          "mlx"
+          "mlx",
+          "cuda"
         ]
       },
       "actions": {
@@ -6258,7 +6781,7 @@
             "type": "int"
           },
           "guide_scale": {
-            "default": 5.0,
+            "default": 1.0,
             "min": 1.0,
             "max": 10.0,
             "step": 0.5,
@@ -6313,7 +6836,16 @@
             "type": "int"
           },
           "negative_prompt_support": true,
-          "vae_spatial_tiling": false
+          "vae_spatial_tiling": false,
+          "resolution_presets": {
+            "default": "480x704",
+            "options": [
+              "320x480",
+              "480x704",
+              "704x1280",
+              "1280x704"
+            ]
+          }
         },
         "extends": "video_dit_standard"
       },

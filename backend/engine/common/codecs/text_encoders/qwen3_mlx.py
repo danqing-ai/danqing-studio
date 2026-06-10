@@ -351,9 +351,21 @@ _ZImageEncoderModel = Qwen3EncoderModel
 
 
 def build_zimage_mlx_encoder(
-    model_path: str, ctx: Any, *, load_fn: Any | None = None
+    model_path: str,
+    ctx: Any,
+    *,
+    load_fn: Any | None = None,
+    registry_entry: Any | None = None,
+    registry_version_key: str | None = None,
 ) -> Qwen3EncoderModel:
     """Load Z-Image Qwen3 text encoder weights from ``model_path`` (safetensors + config.json)."""
+    from backend.engine.common.bundle.quant_inference import (
+        resolve_component_inference_weight_mode,
+        resolve_inference_weight_mode_from_bundle,
+    )
+    from backend.engine.common.bundle.safetensors_affine_quant import read_bundle_affine_bits_if_quantized
+    from backend.engine.common.model.quantized_load import load_weights_quantized_inference
+
     model_dir = Path(model_path)
     weights: dict = {}
     for sf in sorted(model_dir.glob("*.safetensors")):
@@ -383,7 +395,36 @@ def build_zimage_mlx_encoder(
         new_key = key[6:] if key.startswith("model.") else key
         remapped[new_key] = tensor
 
-    model.load_weights(list(remapped.items()), strict=False)
+    bundle_affine_bits = read_bundle_affine_bits_if_quantized(weights, model_dir)
+    if registry_entry is not None:
+        te_mode = resolve_component_inference_weight_mode(
+            registry_entry,
+            registry_version_key,
+            ctx,
+            component="text_encoder",
+            weight_keys=frozenset(remapped.keys()),
+            bundle_affine_bits=bundle_affine_bits,
+        )
+    else:
+        te_mode = resolve_inference_weight_mode_from_bundle(
+            ctx,
+            weight_keys=frozenset(remapped.keys()),
+            bundle_affine_bits=bundle_affine_bits,
+        )
+
+    if te_mode.kind == "quantized" and te_mode.bits in (4, 8):
+        load_weights_quantized_inference(
+            model,
+            list(remapped.items()),
+            strict=False,
+            ctx=ctx,
+            bundle_affine_bits=bundle_affine_bits,
+            bits=int(te_mode.bits),
+            group_size=int(te_mode.group_size),
+            module_root=model,
+        )
+    else:
+        model.load_weights(list(remapped.items()), strict=False)
     ctx.eval(model.parameters())
     return model
 
@@ -393,7 +434,15 @@ def build_qwen3_mlx_encoder(
     ctx: Any,
     *,
     load_fn: Any | None = None,
+    registry_entry: Any | None = None,
+    registry_version_key: str | None = None,
 ) -> Qwen3EncoderModel:
     """Load shared Qwen3 MLX encoder (Flux2/Z-Image/Qwen-Image)."""
-    return build_zimage_mlx_encoder(model_path=model_path, ctx=ctx, load_fn=load_fn)
+    return build_zimage_mlx_encoder(
+        model_path=model_path,
+        ctx=ctx,
+        load_fn=load_fn,
+        registry_entry=registry_entry,
+        registry_version_key=registry_version_key,
+    )
 

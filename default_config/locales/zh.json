@@ -22,6 +22,8 @@
     "target_version_not_derived": "版本 '{version}' 未声明为本地量化衍生版（registry 需设置 source_type: derived）",
     "derived_version_missing_parent": "衍生版本 '{version}' 缺少 from_version 父版本声明",
     "derived_version_parent_mismatch": "衍生版本 '{version}' 的父版本应为 '{expected}'，收到 '{got}'",
+    "quantized_inference_mlx_only": "量化版本 '{version}' 仅支持 MLX 推理，当前后端不可用",
+    "quantized_dit_lora_unsupported": "该量化 DiT 版本在 registry 中禁用了 LoRA（quantization.quantized_lora: false）；请使用全精度版本或移除 adapter",
     "version_not_found": "版本 '{version}' 不存在",
     "missing_dependencies": "缺少依赖: {deps}",
     "load_history_failed": "加载历史任务失败: {error}",

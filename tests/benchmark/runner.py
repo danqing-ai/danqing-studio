@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import gc
 import os
 import subprocess
 import sys
@@ -15,6 +16,7 @@ from .eval_cases import (
     EVAL_UPSCALE_SCALE,
     EvalCase,
     ensure_edit_source,
+    ensure_edit_mask,
     ensure_upscale_source,
     expand_eval_cases,
     get_eval_case,
@@ -32,8 +34,16 @@ Profile = Literal["smoke", "full"]
 
 PROJECT_ROOT = repo_root()
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "tests" / "benchmark" / "outputs"
-STDERR_HEAD_CHARS = 4000
 _DANQING_PY = PROJECT_ROOT / ".venv" / "bin" / "python3"
+_DEFAULT_BENCH_MLX_MEMORY_GB = 64
+
+
+def _bench_mlx_memory_gb() -> int:
+    raw = os.environ.get("DANQING_BENCH_MLX_MEMORY_GB", str(_DEFAULT_BENCH_MLX_MEMORY_GB)).strip()
+    try:
+        return max(16, min(int(raw), 120))
+    except ValueError:
+        return _DEFAULT_BENCH_MLX_MEMORY_GB
 
 
 def _danqing_python() -> str:
@@ -91,11 +101,17 @@ class EvalRunReport:
 
 
 class EvalRunner:
-    def __init__(self, output_dir: str | Path = DEFAULT_OUTPUT_DIR):
+    def __init__(
+        self,
+        output_dir: str | Path = DEFAULT_OUTPUT_DIR,
+        *,
+        release_judge_each_case: bool = True,
+    ):
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.results: list[tuple[EvalCase, EvalResult]] = []
         self.started_at = datetime.now(timezone.utc)
+        self.release_judge_each_case = release_judge_each_case
 
     def _output_path(self, case: EvalCase) -> Path:
         safe = case.id.replace(":", "__")
@@ -103,8 +119,10 @@ class EvalRunner:
 
     def _subprocess_env(self, case: EvalCase | None = None) -> dict[str, str]:
         env = os.environ.copy()
+        mlx_gb = _bench_mlx_memory_gb()
         env.setdefault("MLX_METAL_DEVICE_ONLY", "1")
-        env.setdefault("MLX_METAL_MEMORY_LIMIT", "120")
+        env["MLX_METAL_MEMORY_LIMIT"] = str(mlx_gb)
+        env["DANQING_MLX_MEMORY_LIMIT_GB"] = str(mlx_gb)
         env["PYTHONUNBUFFERED"] = "1"
         _ = case
         return env
@@ -166,6 +184,10 @@ class EvalRunner:
             cmd += ["--steps", str(case.steps)]
         if not case.omit_image_strength:
             cmd += ["--source-fidelity", str(case.image_strength)]
+        if case.action == "extend":
+            cmd += ["--extend-directions", "right"]
+        if case.action == "retouch":
+            cmd += ["--mask-image", str(ensure_edit_mask())]
         return self._exec_cli(cmd, label="edit", timeout_sec=case.timeout_sec, case=case)
 
     def _run_generate_upscale(self, case: EvalCase, output_path: Path) -> bool:
@@ -202,17 +224,14 @@ class EvalRunner:
             t0 = time.time()
             proc = subprocess.run(
                 cmd,
-                capture_output=True,
-                text=True,
                 timeout=int(timeout_sec),
                 env=self._subprocess_env(case),
                 cwd=str(PROJECT_ROOT),
+                start_new_session=True,
             )
             elapsed = time.time() - t0
             if proc.returncode != 0:
                 print(f"    [{label}] fail exit={proc.returncode} ({elapsed:.1f}s)")
-                if proc.stderr:
-                    print(f"    [{label}] stderr: {proc.stderr[:STDERR_HEAD_CHARS]}")
                 return False
             print(f"    [{label}] ok ({elapsed:.1f}s) -> {cmd[-1]}")
             return True
@@ -222,6 +241,8 @@ class EvalRunner:
         except FileNotFoundError:
             print(f"    [{label}] cli missing")
             return False
+        finally:
+            gc.collect()
 
     def run_one(
         self,
@@ -294,53 +315,62 @@ class EvalRunner:
         golden = golden_reward(case.id) if not calibrate else None
         t1 = time.time()
         try:
-            l2 = judge_image(judge_prompt, out_path, golden=golden)
-        except Exception as exc:
+            try:
+                l2 = judge_image(
+                    judge_prompt,
+                    out_path,
+                    golden=golden,
+                    judge_floor=case.judge_floor,
+                )
+            except Exception as exc:
+                res = EvalResult(
+                    case.id,
+                    ok=False,
+                    l1=l1,
+                    gen_sec=gen_sec,
+                    judge_sec=time.time() - t1,
+                    output_path=str(out_path),
+                    reason=str(exc),
+                )
+                self.results.append((case, res))
+                print(f"  FAIL L2: {exc}")
+                return res
+            judge_sec = time.time() - t1
+
+            if calibrate:
+                data = load_golden_scores()
+                cases = data.setdefault("cases", {})
+                cases[case.id] = {
+                    "reward": l2.score,
+                    "prompt_id": case.prompt_id,
+                    "model_id": case.model_id,
+                    "action": case.action,
+                    "calibrated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                }
+                save_golden_scores(data)
+
+            ok = l2.ok if not calibrate else True
             res = EvalResult(
                 case.id,
-                ok=False,
+                ok=ok,
                 l1=l1,
+                l2=l2,
                 gen_sec=gen_sec,
-                judge_sec=time.time() - t1,
+                judge_sec=judge_sec,
                 output_path=str(out_path),
-                reason=str(exc),
+                reason="" if ok else l2.reason,
             )
             self.results.append((case, res))
-            print(f"  FAIL L2: {exc}")
+            tag = "PASS" if ok else "FAIL"
+            golden_note = f" golden={golden:.3f}" if golden is not None else ""
+            print(
+                f"  {tag} L2: PickScore={l2.score:.3f} min={l2.min_required:.3f}{golden_note} "
+                f"({judge_sec:.1f}s judge)"
+            )
             return res
-        judge_sec = time.time() - t1
-
-        if calibrate:
-            data = load_golden_scores()
-            cases = data.setdefault("cases", {})
-            cases[case.id] = {
-                "reward": l2.score,
-                "prompt_id": case.prompt_id,
-                "model_id": case.model_id,
-                "action": case.action,
-                "calibrated_at": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-            }
-            save_golden_scores(data)
-
-        ok = l2.ok if not calibrate else True
-        res = EvalResult(
-            case.id,
-            ok=ok,
-            l1=l1,
-            l2=l2,
-            gen_sec=gen_sec,
-            judge_sec=judge_sec,
-            output_path=str(out_path),
-            reason="" if ok else l2.reason,
-        )
-        self.results.append((case, res))
-        tag = "PASS" if ok else "FAIL"
-        golden_note = f" golden={golden:.3f}" if golden is not None else ""
-        print(
-            f"  {tag} L2: PickScore={l2.score:.3f} min={l2.min_required:.3f}{golden_note} "
-            f"({judge_sec:.1f}s judge)"
-        )
-        return res
+        finally:
+            if self.release_judge_each_case:
+                reset_judge_cache()
 
     def run_all(self, *, profile: Profile = "full", calibrate: bool = False) -> None:
         skipped_models = list_skipped_eval_cases(profile=profile)
@@ -349,6 +379,9 @@ class EvalRunner:
         print(f"DanQing Image Eval — profile={profile} runnable={len(cases)}")
         print(f"Data root: {resolve_benchmark_data_root()}")
         print(f"Judge: {JUDGE_MODEL_ID}")
+        print(f"Gen subprocess MLX limit: {_bench_mlx_memory_gb()} GB")
+        if self.release_judge_each_case:
+            print("Judge: release after each case")
         if skipped_models:
             print(f"Skipped models (bundle not ready): {len(skipped_models)}")
         print(f"{'=' * 60}\n")
@@ -394,8 +427,12 @@ def run_eval(
     output_dir: str = "tests/benchmark/outputs",
     profile: Profile = "full",
     calibrate: bool = False,
+    release_judge_each_case: bool = True,
 ) -> int:
-    runner = EvalRunner(output_dir=output_dir)
+    runner = EvalRunner(
+        output_dir=output_dir,
+        release_judge_each_case=release_judge_each_case,
+    )
     if case_id:
         case = get_eval_case(case_id, profile=profile)
         if case is None:

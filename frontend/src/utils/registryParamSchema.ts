@@ -11,6 +11,7 @@ export type NormalizedParamSpec = RawParamSpec & { type: InferredParamType };
 
 export function inferType(spec: unknown, key?: string): InferredParamType {
   if (!spec || typeof spec !== 'object') return 'skip';
+  if (key === 'resolution_presets') return 'skip';
   const s = spec as RawParamSpec;
   if (typeof s.type === 'string') return s.type as InferredParamType;
   if (typeof s.default === 'boolean' || (key && String(key).endsWith('_support'))) {
@@ -76,6 +77,185 @@ export function resolutionPair(
     return { width: w, height: h };
   }
   return null;
+}
+
+export type ResolutionSizeOption = {
+  label: string;
+  value: string;
+  pixelLabel?: string;
+  /** Registry ``resolution_presets.default`` or width×height default. */
+  isDefault?: boolean;
+};
+
+const CURATED_RESOLUTION_PAIRS: Array<[number, number]> = [
+  [512, 512],
+  [768, 768],
+  [1024, 1024],
+  [1280, 1280],
+  [1536, 1536],
+  [1920, 1920],
+  [512, 768],
+  [768, 512],
+  [768, 1024],
+  [1024, 768],
+  [768, 1280],
+  [1280, 768],
+  [1024, 1280],
+  [1280, 1024],
+  [1024, 1536],
+  [1536, 1024],
+  [1280, 1536],
+  [1536, 1280],
+  [1920, 1280],
+  [1280, 1920],
+  [1920, 1536],
+  [1536, 1920],
+  [1920, 1024],
+  [1024, 1920],
+];
+
+function gcd(a: number, b: number): number {
+  let x = Math.abs(a);
+  let y = Math.abs(b);
+  while (y) {
+    [x, y] = [y, x % y];
+  }
+  return x || 1;
+}
+
+function aspectRatioLabel(width: number, height: number): string {
+  if (width === height) return '1:1';
+  const g = gcd(width, height);
+  return `${width / g}:${height / g}`;
+}
+
+export function parseSizeValue(value: string): { width: number; height: number } | null {
+  const [w, h] = value.split('x').map(Number);
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return null;
+  return { width: w, height: h };
+}
+
+export function formatSizeValue(width: number, height: number): string {
+  return `${width}x${height}`;
+}
+
+function resolutionPresetStrings(raw: Record<string, unknown>): string[] | null {
+  const presets = raw.resolution_presets;
+  if (!presets || typeof presets !== 'object') return null;
+  const spec = presets as RawParamSpec;
+  if (!Array.isArray(spec.options)) return null;
+  return spec.options.map(String);
+}
+
+function resolutionPresetDefault(raw: Record<string, unknown>): string | null {
+  const presets = raw.resolution_presets;
+  if (!presets || typeof presets !== 'object') return null;
+  const def = (presets as RawParamSpec).default;
+  return typeof def === 'string' ? def : null;
+}
+
+function toResolutionSizeOption(value: string, isDefault = false): ResolutionSizeOption {
+  const parsed = parseSizeValue(value);
+  if (!parsed) return { label: value, value, isDefault };
+  const pixelLabel = `${parsed.width}×${parsed.height}`;
+  const label =
+    parsed.width === parsed.height ? '1:1' : aspectRatioLabel(parsed.width, parsed.height);
+  return { label, value, pixelLabel, isDefault };
+}
+
+/** Single-line label for Composer ``DqOption`` (avoids duplicate value + slot text). */
+export function formatResolutionOptionLabel(opt: ResolutionSizeOption): string {
+  const px = opt.pixelLabel || opt.value.replace('x', '×');
+  if (opt.label === '1:1') return px;
+  return `${px} (${opt.label})`;
+}
+
+function orderResolutionOptions(options: ResolutionSizeOption[], preferred?: string | null): ResolutionSizeOption[] {
+  if (!preferred) return options;
+  const idx = options.findIndex((o) => o.value === preferred);
+  if (idx <= 0) return options;
+  return [options[idx]!, ...options.slice(0, idx), ...options.slice(idx + 1)];
+}
+
+/** Build Composer resolution dropdown from registry ``parameters`` (presets or width/height enums). */
+export function buildResolutionSizeOptions(
+  parameters: Record<string, unknown> | undefined | null,
+): ResolutionSizeOption[] {
+  const raw = parameters || {};
+  const presetValues = resolutionPresetStrings(raw);
+  if (presetValues?.length) {
+    const unique = [...new Set(presetValues)];
+    const presetDefault = resolutionPresetDefault(raw);
+    const options = unique.map((value) =>
+      toResolutionSizeOption(value, value === presetDefault),
+    );
+    return orderResolutionOptions(options, presetDefault);
+  }
+
+  const normalized = normalizeParamsDef(raw);
+  const pair = resolutionPair(normalized);
+  if (!pair) return [];
+
+  const wOpts = (pair.width.options as number[] | undefined) ?? [Number(pair.width.default) || 1024];
+  const hOpts = (pair.height.options as number[] | undefined) ?? [Number(pair.height.default) || 1024];
+  const wSet = new Set(wOpts);
+  const hSet = new Set(hOpts);
+  const wDef = Number(pair.width.default) || wOpts[0] || 1024;
+  const hDef = Number(pair.height.default) || hOpts[0] || 1024;
+
+  const seen = new Map<string, [number, number]>();
+  const addPair = (w: number, h: number) => {
+    if (!wSet.has(w) || !hSet.has(h)) return;
+    seen.set(formatSizeValue(w, h), [w, h]);
+  };
+
+  addPair(wDef, hDef);
+  for (const [w, h] of CURATED_RESOLUTION_PAIRS) addPair(w, h);
+
+  if (seen.size < 4) {
+    for (const w of wOpts) {
+      for (const h of hOpts) addPair(w, h);
+    }
+  }
+
+  const defaultValue = formatSizeValue(wDef, hDef);
+  const entries = [...seen.entries()].sort(([a], [b]) => {
+    if (a === defaultValue) return -1;
+    if (b === defaultValue) return 1;
+    const pa = parseSizeValue(a);
+    const pb = parseSizeValue(b);
+    if (!pa || !pb) return a.localeCompare(b);
+    return pa.width * pa.height - pb.width * pb.height;
+  });
+
+  const options = entries.map(([value, [w, h]]) => ({
+    label: w === h ? '1:1' : aspectRatioLabel(w, h),
+    value,
+    pixelLabel: `${w}×${h}`,
+    isDefault: value === defaultValue,
+  }));
+  return orderResolutionOptions(options, defaultValue);
+}
+
+/** Pick saved size if valid, else registry default preset / width×height. */
+export function pickResolutionForModel(
+  parameters: Record<string, unknown> | undefined | null,
+  savedSize: string | null | undefined,
+): string | null {
+  const options = buildResolutionSizeOptions(parameters);
+  if (!options.length) return null;
+  if (savedSize && options.some((o) => o.value === savedSize)) return savedSize;
+
+  const presetDefault = resolutionPresetDefault(parameters || {});
+  if (presetDefault && options.some((o) => o.value === presetDefault)) return presetDefault;
+
+  const normalized = normalizeParamsDef(parameters || {});
+  const pair = resolutionPair(normalized);
+  if (pair) {
+    const def = formatSizeValue(Number(pair.width.default), Number(pair.height.default));
+    if (options.some((o) => o.value === def)) return def;
+  }
+  return options[0]?.value ?? null;
 }
 
 export function scalarKeysForForm(normalized: Record<string, NormalizedParamSpec>): string[] {

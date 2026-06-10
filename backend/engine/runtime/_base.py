@@ -6,7 +6,7 @@ RuntimeContext — backend-agnostic tensor operation context.
 ``xxx_mlx.py`` / ``xxx_cuda.py``（见 ``docs/engine_architecture.md`` §4）承载平台实现，
 ``xxx.py`` 保留基于 ``RuntimeContext`` 的公共路径或对外接口 + dispatch。
 
-``backend/engine/runtime/mlx.py`` 与 ``cuda.py`` 为唯一允许在此包顶层绑定 ``mlx``/``torch`` 的实现文件。
+``backend/engine/runtime/mlx.py`` 绑定 ``mlx``；``cuda.py`` 绑定 ``torch``（``torch``  elsewhere 仅 ``*_cuda.py``）。
 """
 from __future__ import annotations
 

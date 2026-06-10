@@ -13,9 +13,14 @@ import type {
 
 const API_BASE = '';
 
+/** Default REST timeout; generation/training use task SSE — not this client. */
+const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
+/** Dataset auto-caption (vision LLM per image) and bulk uploads can run many minutes. */
+const LONG_REQUEST_TIMEOUT_MS = 600_000;
+
 const client = axios.create({
   baseURL: API_BASE,
-  timeout: 30000,
+  timeout: DEFAULT_REQUEST_TIMEOUT_MS,
 });
 
 /** Task id from media submit 202 body `{ task: { id, ... } }` (legacy flat `{ id }` tolerated). */
@@ -747,6 +752,136 @@ export const api = {
 
     async deleteSession(sessionId: string): Promise<void> {
       await client.delete(`/api/canvas/sessions/${encodeURIComponent(sessionId)}`);
+    },
+  },
+
+  loras: {
+    async listDatasets(): Promise<unknown> {
+      const response = await client.get('/api/loras/datasets');
+      return response.data;
+    },
+
+    async createDataset(body: Record<string, unknown>): Promise<unknown> {
+      const response = await client.post('/api/loras/datasets', body);
+      return response.data;
+    },
+
+    async getDataset(id: string): Promise<unknown> {
+      const response = await client.get(`/api/loras/datasets/${encodeURIComponent(id)}`);
+      return response.data;
+    },
+
+    async patchDataset(id: string, body: Record<string, unknown>): Promise<unknown> {
+      const response = await client.patch(`/api/loras/datasets/${encodeURIComponent(id)}`, body);
+      return response.data;
+    },
+
+    async deleteDataset(id: string): Promise<void> {
+      await client.delete(`/api/loras/datasets/${encodeURIComponent(id)}`);
+    },
+
+    async uploadImages(datasetId: string, files: File[], defaultPrompt?: string): Promise<unknown> {
+      const form = new FormData();
+      for (const f of files) form.append('files', f);
+      if (defaultPrompt) form.append('default_prompt', defaultPrompt);
+      const response = await client.post(
+        `/api/loras/datasets/${encodeURIComponent(datasetId)}/images`,
+        form,
+        {
+          headers: { 'Content-Type': 'multipart/form-data' },
+          timeout: LONG_REQUEST_TIMEOUT_MS,
+        }
+      );
+      return response.data;
+    },
+
+    async updateCaptions(datasetId: string, captions: Array<{ file: string; prompt: string }>): Promise<unknown> {
+      const response = await client.patch(
+        `/api/loras/datasets/${encodeURIComponent(datasetId)}/captions`,
+        { captions }
+      );
+      return response.data;
+    },
+
+    async importDog6(): Promise<unknown> {
+      const response = await client.post('/api/loras/datasets/import-dog6', undefined, {
+        timeout: LONG_REQUEST_TIMEOUT_MS,
+      });
+      return response.data;
+    },
+
+    async importAssets(
+      datasetId: string,
+      assetIds: string[],
+      defaultPrompt?: string,
+      captions?: Record<string, string>
+    ): Promise<unknown> {
+      const response = await client.post(
+        `/api/loras/datasets/${encodeURIComponent(datasetId)}/import-assets`,
+        { asset_ids: assetIds, default_prompt: defaultPrompt || '', captions: captions || {} }
+      );
+      return response.data;
+    },
+
+    async autoCaption(datasetId: string, files?: string[]): Promise<unknown> {
+      const response = await client.post(
+        `/api/loras/datasets/${encodeURIComponent(datasetId)}/auto-caption`,
+        { files: files || [] },
+        { timeout: LONG_REQUEST_TIMEOUT_MS }
+      );
+      return response.data;
+    },
+
+    async listUserAdapters(): Promise<unknown> {
+      const response = await client.get('/api/loras/user-adapters');
+      return response.data;
+    },
+
+    async deleteUserAdapter(loraId: string, removeFiles = false): Promise<unknown> {
+      const response = await client.delete(
+        `/api/loras/user-adapters/${encodeURIComponent(loraId)}`,
+        { params: { remove_files: removeFiles } }
+      );
+      return response.data;
+    },
+
+    async registerCheckpoint(
+      taskId: string,
+      body: { checkpoint: string; name?: string }
+    ): Promise<unknown> {
+      const response = await client.post(
+        `/api/loras/trainings/${encodeURIComponent(taskId)}/register`,
+        body
+      );
+      return response.data;
+    },
+
+    datasetImageUrl(datasetId: string, file: string): string {
+      return `${API_BASE}/api/loras/datasets/${encodeURIComponent(datasetId)}/file/${encodeURIComponent(file)}`;
+    },
+
+    async trainableModels(): Promise<unknown> {
+      const response = await client.get('/api/loras/trainable-models');
+      return response.data;
+    },
+
+    async trainingRequirements(): Promise<unknown> {
+      const response = await client.get('/api/loras/training/requirements');
+      return response.data;
+    },
+
+    async submitTraining(body: Record<string, unknown>): Promise<unknown> {
+      const response = await client.post('/api/loras/trainings', body);
+      return response.data;
+    },
+
+    async trainingArtifacts(taskId: string): Promise<unknown> {
+      const response = await client.get(`/api/loras/trainings/${encodeURIComponent(taskId)}/artifacts`);
+      return response.data;
+    },
+
+    artifactFileUrl(taskId: string, filename: string): string {
+      return `${API_BASE}/api/loras/trainings/${encodeURIComponent(taskId)}/artifacts/file/${encodeURIComponent(filename)}`;
     },
   },
 

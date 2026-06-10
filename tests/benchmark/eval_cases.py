@@ -19,6 +19,7 @@ Profile = Literal["smoke", "full"]
 PROMPTS_PATH = Path(__file__).resolve().parent / "prompts.json"
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 EDIT_SOURCE = FIXTURES_DIR / "edit_source.png"
+EDIT_MASK = FIXTURES_DIR / "edit_mask.png"
 UPSCALE_SOURCE = FIXTURES_DIR / "upscale_source.png"
 GOLDEN_PATH = Path(__file__).resolve().parent / "golden" / "eval_scores.json"
 
@@ -26,14 +27,26 @@ EVAL_SIZE = 384
 EVAL_SEED = 42
 EVAL_IMAGE_STRENGTH = 0.65
 EVAL_UPSCALE_SCALE = 2
+EVAL_EXTEND_PIXELS = 256
+EVAL_EXTEND_DIRECTIONS: tuple[str, ...] = ("right",)
 SMOKE_EDIT_PROMPT_ID = "E2"
+SMOKE_EDIT_ACTION_ORDER: tuple[str, ...] = ("rewrite", "retouch", "extend")
 
 MODEL_TIMEOUT_SEC: dict[str, int] = {
     "qwen-image-edit": 1200,
+    "cogview4-6b": 900,
     "fibo": 900,
     "fibo-lite": 900,
     "fibo-edit": 900,
     "fibo-edit-rmbg": 900,
+}
+
+MODEL_STEPS_OVERRIDE: dict[str, int] = {
+    "cogview4-6b": 4,
+    "fibo": 8,
+    "fibo-lite": 8,
+    "fibo-edit": 8,
+    "fibo-edit-rmbg": 8,
 }
 
 
@@ -55,6 +68,7 @@ class EvalCase:
     upscale_scale: int = EVAL_UPSCALE_SCALE
     timeout_sec: int = 600
     omit_image_strength: bool = False
+    judge_floor: float | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -65,6 +79,13 @@ class EvalCase:
     def l1_expected_width(self) -> int | None:
         if self.action == "create":
             return self.width
+        if self.action == "extend":
+            w = EVAL_SIZE
+            if "left" in EVAL_EXTEND_DIRECTIONS:
+                w += EVAL_EXTEND_PIXELS
+            if "right" in EVAL_EXTEND_DIRECTIONS:
+                w += EVAL_EXTEND_PIXELS
+            return w
         if self.action in EDIT_ACTIONS:
             return EVAL_SIZE
         if self.action == "upscale":
@@ -75,6 +96,13 @@ class EvalCase:
     def l1_expected_height(self) -> int | None:
         if self.action == "create":
             return self.height
+        if self.action == "extend":
+            h = EVAL_SIZE
+            if "top" in EVAL_EXTEND_DIRECTIONS:
+                h += EVAL_EXTEND_PIXELS
+            if "bottom" in EVAL_EXTEND_DIRECTIONS:
+                h += EVAL_EXTEND_PIXELS
+            return h
         if self.action in EDIT_ACTIONS:
             return EVAL_SIZE
         if self.action == "upscale":
@@ -102,11 +130,13 @@ def encode_prompt(*, family: str, action: str, text: str) -> str:
 
 
 def edit_judge_prompt(*, scene: str, instruction: str) -> str:
-    scene = (scene or "").strip()
-    instruction = (instruction or "").strip()
-    if scene and instruction:
-        return f"{scene}. {instruction}"
-    return instruction or scene
+    """PickScore prompt for rewrite/retouch edits.
+
+    The fixture image already encodes ``scene``; judge on the edit instruction only
+    so PickScore reflects whether the edit was applied (scene+instruction scores ~0.17).
+    """
+    _ = scene
+    return (instruction or "").strip()
 
 
 def _prompt_subset(pack: dict[str, Any], profile: Profile) -> tuple[list[dict], list[dict]]:
@@ -127,6 +157,13 @@ def _timeout_for(model_id: str) -> int:
     return int(MODEL_TIMEOUT_SEC.get(model_id, 600))
 
 
+def _optional_judge_floor(item: dict[str, Any]) -> float | None:
+    raw = item.get("judge_floor")
+    if raw is None:
+        return None
+    return float(raw)
+
+
 def _omit_image_strength(model_id: str, family: str) -> bool:
     if model_id in {"qwen-image-edit", "fibo-edit", "fibo-edit-rmbg"}:
         return True
@@ -144,13 +181,14 @@ def expand_eval_cases(*, profile: Profile = "full", reg: dict[str, Any] | None =
     upscale_judge = str(upscale_meta.get("judge_prompt") or "").strip()
     if not upscale_judge:
         upscale_judge = fixture_scene(pack, key="upscale_scene")
+    upscale_judge_floor = _optional_judge_floor(upscale_meta)
     upscale_id = str(upscale_meta.get("id") or "U1")
 
     cases: list[EvalCase] = []
     for model_id, spec in iter_image_eval_models(reg=reg):
         family = str(spec.get("family") or "")
         actions = spec.get("actions") or {}
-        steps = int(param_default(spec, "steps", 4))
+        steps = int(MODEL_STEPS_OVERRIDE.get(model_id, param_default(spec, "steps", 4)))
         guidance = float(param_default(spec, "guidance", 3.5))
         timeout = _timeout_for(model_id)
         omit_strength = _omit_image_strength(model_id, family)
@@ -177,8 +215,11 @@ def expand_eval_cases(*, profile: Profile = "full", reg: dict[str, Any] | None =
                 )
 
         edit_actions = sorted(a for a in actions if a in EDIT_ACTIONS)
-        if profile == "smoke" and edit_actions:
-            edit_actions = edit_actions[:1]
+        if profile == "smoke":
+            if "rewrite" not in actions:
+                edit_actions = []
+            elif edit_actions:
+                edit_actions = ["rewrite"]
 
         for action in edit_actions:
             for item in edit_prompts:
@@ -195,6 +236,7 @@ def expand_eval_cases(*, profile: Profile = "full", reg: dict[str, Any] | None =
                         prompt_id=pid,
                         prompt_text=text,
                         judge_prompt=edit_judge_prompt(scene=edit_scene, instruction=text),
+                        judge_floor=_optional_judge_floor(item),
                         steps=steps,
                         guidance=guidance,
                         timeout_sec=timeout,
@@ -212,6 +254,7 @@ def expand_eval_cases(*, profile: Profile = "full", reg: dict[str, Any] | None =
                     prompt_id=upscale_id,
                     prompt_text="",
                     judge_prompt=upscale_judge,
+                    judge_floor=upscale_judge_floor,
                     steps=1,
                     guidance=0.0,
                     timeout_sec=timeout,
@@ -360,6 +403,17 @@ def ensure_edit_source() -> Path:
     if not _fixture_size_ok(EDIT_SOURCE):
         _write_fixture(EDIT_SOURCE, _render_edit_fixture)
     return EDIT_SOURCE
+
+
+def ensure_edit_mask() -> Path:
+    """Full-white mask matching ``edit_source`` (retouch repaint region)."""
+    from PIL import Image
+
+    ensure_edit_source()
+    if not _fixture_size_ok(EDIT_MASK):
+        FIXTURES_DIR.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (EVAL_SIZE, EVAL_SIZE), color=(255, 255, 255)).save(EDIT_MASK)
+    return EDIT_MASK
 
 
 def ensure_upscale_source() -> Path:

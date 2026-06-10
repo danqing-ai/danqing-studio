@@ -117,8 +117,10 @@ class SettingsService(ISettingsService):
         if not registry_path.exists():
             return {}
         try:
+            from backend.catalog.loader import expand_catalog_document
+
             with open(registry_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
+                data = expand_catalog_document(json.load(f))
             models = {}
             for key, val in data.get("models", {}).items():
                 if not isinstance(val, dict):
@@ -147,6 +149,7 @@ class SettingsService(ISettingsService):
                     description={"zh": dz, "en": de},
                     engine=val.get("engine", ""),
                     type=val.get("type", ""),
+                    family=str(val.get("family") or ""),
                     parameters=params,
                     recommended=val.get("recommended", False),
                     category=val.get("category", "base_models"),
@@ -264,7 +267,37 @@ class SettingsService(ISettingsService):
                     "id": key,
                     "name": (config.name or {}).get("zh") or (config.name or {}).get("en") or key,
                     "base_model": lora_base,
+                    "source": "registry",
                 }
+            )
+        from backend.engine.training.user_lora_registry import list_user_loras
+
+        config_dir = self._path_resolver.get_workspace_config_dir()
+        for ul in list_user_loras(config_dir):
+            lora_base = str(ul.get("base_model") or "")
+            if for_model:
+                model_base_key = for_model.split(":", 1)[0].strip()
+                lora_base_key = lora_base.split(":", 1)[0].strip() if lora_base else ""
+                if lora_base_key and lora_base_key != model_base_key:
+                    if not (
+                        model_base_key.startswith("flux1") and lora_base_key.startswith("flux1")
+                    ):
+                        continue
+            local_path = str(ul.get("local_path") or "")
+            if local_path:
+                resolved = self._path_resolver.resolve_registry_local_path(local_path)
+                if not resolved.is_dir() and not resolved.is_file():
+                    continue
+            out.insert(
+                0,
+                {
+                    "kind": "lora",
+                    "id": str(ul.get("id")),
+                    "name": str(ul.get("name") or ul.get("id")),
+                    "base_model": lora_base,
+                    "source": "user_trained",
+                    "local_path": local_path,
+                },
             )
         return out
 
@@ -316,11 +349,15 @@ class SettingsService(ISettingsService):
                     }
                 else:
                     has_weights = self._path_has_bundle_weights(model_dir)
-                    family = getattr(config, "family", None) or ""
+                    family = config.family or ""
+                    category = getattr(config, "category", None) or ""
                     components: dict[str, Any] | None = None
-                    if has_weights and family:
-                        from backend.core.bundle_manifest import bundle_component_status
+                    from backend.core.bundle_manifest import (
+                        bundle_component_status,
+                        is_registry_lora_category,
+                    )
 
+                    if has_weights and family and not is_registry_lora_category(category):
                         components = bundle_component_status(model_dir, family=family)
 
                     version_entry: dict[str, Any] = {

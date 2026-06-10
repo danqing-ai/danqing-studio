@@ -1,5 +1,20 @@
 {
   "schema_version": 1,
   "judge_model": "yuvalkirstain/PickScore_v1",
-  "cases": {}
+  "cases": {
+    "cogview4-6b:P1:create": {
+      "reward": 0.21111807227134705,
+      "prompt_id": "P1",
+      "model_id": "cogview4-6b",
+      "action": "create",
+      "calibrated_at": "2026-06-10"
+    },
+    "cogview4-6b:E2:rewrite": {
+      "reward": 0.20881426334381104,
+      "prompt_id": "E2",
+      "model_id": "cogview4-6b",
+      "action": "rewrite",
+      "calibrated_at": "2026-06-10"
+    }
+  }
 }

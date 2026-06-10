@@ -86,16 +86,14 @@
           size="small"
           @command="onStyleCommand"
         >
-          <ComposerIconTip :content="$t('create.composerTip.preset')">
-            <DqIconButton
-              type="text"
-              size="xs"
-              class="audio-composer__preset-btn"
-              :aria-label="$tt('create.preset')"
-            >
-              <DqIcon :size="14"><DocumentCopy /></DqIcon>
-            </DqIconButton>
-          </ComposerIconTip>
+          <DqIconButton
+            type="text"
+            size="xs"
+            class="audio-composer__preset-btn"
+            :label="$t('create.composerTip.preset')"
+          >
+            <DqIcon :size="14"><DocumentCopy /></DqIcon>
+          </DqIconButton>
           <template #dropdown>
             <DqDropdownMenu>
               <DqDropdownItem
@@ -843,6 +841,7 @@ function onPromptKeydown(e: KeyboardEvent) {
   position: absolute;
   bottom: 6px;
   right: 8px;
+  z-index: 1;
   display: flex;
   align-items: center;
 }

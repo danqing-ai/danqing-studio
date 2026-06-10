@@ -78,67 +78,28 @@ def estimate_depth_rgb01(
     height: int,
     depth_bundle_root: Path,
     on_log: Any = None,
+    backend: str = "mlx",
 ) -> np.ndarray:
     """Return float01 RGB depth visualization ``[H,W,3]`` (BFL DepthImageEncoder style)."""
-    try:
-        import torch
-    except ImportError as exc:
-        raise RuntimeError(
-            "depth structural guide requires PyTorch for Depth Pro preprocessing; "
-            "run: pip install torch — or use flux-canny-controlnet instead"
-        ) from exc
+    if backend == "mlx":
+        from backend.engine.families.flux1.depth_encode_mlx import estimate_depth_rgb01_mlx
 
-    if not depth_bundle_root.is_dir():
-        raise RuntimeError(
-            f"depth-pro bundle not found at {depth_bundle_root}; "
-            "install depth-pro from Models → Tools"
+        return estimate_depth_rgb01_mlx(
+            pil,
+            width=width,
+            height=height,
+            depth_bundle_root=depth_bundle_root,
+            on_log=on_log,
         )
+    from backend.engine.families.flux1.depth_encode_cuda import estimate_depth_rgb01_cuda
 
-    if pil.mode != "RGB":
-        pil = pil.convert("RGB")
-    if pil.size != (width, height):
-        pil = pil.resize((width, height), Image.Resampling.LANCZOS)
-
-    processor, model, device = _load_depth_pro(depth_bundle_root)
-    inputs = processor(images=pil, return_tensors="pt")
-    inputs = {k: v.to(device) for k, v in inputs.items()}
-
-    with torch.no_grad():
-        outputs = model(**inputs)
-        depth = outputs.predicted_depth
-        if depth.ndim == 4:
-            depth = depth[:, 0]
-        depth = torch.nn.functional.interpolate(
-            depth.unsqueeze(1),
-            size=(height, width),
-            mode="bicubic",
-            align_corners=False,
-        ).squeeze(1)
-
-    d = depth[0].float().cpu().numpy()
-    d = d - float(d.min())
-    mx = float(d.max())
-    if mx > 1e-8:
-        d = d / mx
-    rgb = np.stack([d, d, d], axis=-1).astype(np.float32)
-    if on_log:
-        on_log("info", f"depth_estimate depth-pro bundle={depth_bundle_root.name} size={width}x{height}")
-    return rgb
-
-
-def _load_depth_pro(bundle_root: Path) -> tuple[Any, Any, Any]:
-    import torch
-    from transformers import AutoImageProcessor, AutoModelForDepthEstimation
-
-    device = torch.device("cpu")
-    processor = AutoImageProcessor.from_pretrained(str(bundle_root), local_files_only=True)
-    model = AutoModelForDepthEstimation.from_pretrained(
-        str(bundle_root),
-        local_files_only=True,
+    return estimate_depth_rgb01_cuda(
+        pil,
+        width=width,
+        height=height,
+        depth_bundle_root=depth_bundle_root,
+        on_log=on_log,
     )
-    model.eval()
-    model.to(device)
-    return processor, model, device
 
 
 def resolve_depth_pro_bundle_root(registry: Any, project_root: Path) -> Path:
@@ -189,6 +150,7 @@ def preprocess_structural_rgb(
     registry: Any,
     project_root: Path,
     on_log: Any = None,
+    backend: str = "mlx",
 ) -> np.ndarray:
     """Return float01 RGB ``[H,W,3]`` ready for VAE encode (linear 0..1)."""
     if pil.mode != "RGB":
@@ -207,6 +169,7 @@ def preprocess_structural_rgb(
             height=height,
             depth_bundle_root=depth_root,
             on_log=on_log,
+            backend=backend,
         )
     raise RuntimeError(f"preprocess_structural_rgb does not handle guide_type={guide_type!r}")
 
@@ -317,6 +280,7 @@ def attach_structural_conditioning(
             "not text-to-image structural_guide"
         )
     guide_type = getattr(guide, "type", None) or infer_guide_type(controlnet_id)
+    backend = getattr(pipeline.ctx, "backend", "mlx")
 
     src_path = ctx_exec.asset_store.get_file_path(guide.asset_id)
     pil = Image.open(str(src_path))
@@ -331,7 +295,10 @@ def attach_structural_conditioning(
             pipeline._registry, pipeline._project_root, controlnet_id
         )
         tokens = encode_redux_context_tokens(
-            pil, redux_bundle_root=redux_root, on_log=on_log
+            pil,
+            redux_bundle_root=redux_root,
+            on_log=on_log,
+            backend=backend,
         )
         w = float(guide.weight)
         if w <= 0.0:
@@ -361,6 +328,7 @@ def attach_structural_conditioning(
         registry=pipeline._registry,
         project_root=pipeline._project_root,
         on_log=on_log,
+        backend=backend,
     )
     arr = rgb[None, ...]
     image_nchw = pipeline.ctx.array(arr)

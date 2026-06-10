@@ -528,12 +528,18 @@ class AceStepPreparedRequest:
     log_events: List[Tuple[str, str]] = field(default_factory=list)
 
 
-def create_ace_step_generator(ctx: Any, bundle_root: Path) -> _AceStepGeneratorProto:
+def create_ace_step_generator(
+    ctx: Any,
+    bundle_root: Path,
+    *,
+    entry: Any | None = None,
+    version_key: str | None = None,
+) -> _AceStepGeneratorProto:
     backend = getattr(ctx, "backend", "mlx")
     if backend == "mlx":
         from backend.engine.families.ace_step.generation_mlx import AceStepMlxGenerator
 
-        return AceStepMlxGenerator(ctx, bundle_root)
+        return AceStepMlxGenerator(ctx, bundle_root, entry=entry, version_key=version_key)
     if backend == "cuda":
         from backend.engine.families.ace_step.generation_cuda import AceStepCudaGenerator
 

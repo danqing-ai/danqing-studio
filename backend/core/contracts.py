@@ -26,6 +26,7 @@ TaskKind = Literal[
     "video.edit",
     "audio.generation",
     "audio.edit",
+    "lora.training",
 ]
 
 
@@ -303,7 +304,68 @@ class VisualAnalyzeResponse(BaseModel):
     vision_used: bool = False
 
 
-# U+23 U+24 U+25 (video) --- de-later
+# ----- LoRA training -----
+
+
+class LoraTrainingRequest(BaseModel):
+    base_model: str  # e.g. flux1-dev or flux1-dev:fp16
+    dataset_id: str
+    progress_prompt: str
+    preset: Literal["quick", "standard", "quality", "custom"] = "standard"
+    output_name: str = ""
+    auto_register: bool = True
+    priority: Literal["normal", "high"] = "normal"
+    # Advanced (optional overrides; merged after preset)
+    iterations: Optional[int] = None
+    batch_size: Optional[int] = Field(None, ge=1, le=8)
+    lora_rank: Optional[int] = Field(None, ge=1, le=128)
+    lora_blocks: Optional[int] = None
+    learning_rate: Optional[float] = Field(None, gt=0)
+    grad_accumulate: Optional[int] = Field(None, ge=1, le=64)
+    warmup_steps: Optional[int] = Field(None, ge=0)
+    resolution: Optional[list[int]] = None  # [width, height]
+    num_augmentations: Optional[int] = Field(None, ge=1, le=20)
+    progress_every: Optional[int] = Field(None, ge=10)
+    progress_steps: Optional[int] = Field(None, ge=4, le=100)
+    checkpoint_every: Optional[int] = Field(None, ge=10)
+    guidance: Optional[float] = Field(None, ge=0)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class LoraTrainingResult(BaseModel):
+    adapter_path: str
+    user_lora_id: str = ""
+    output_name: str = ""
+    loss_history: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class DatasetCreateRequest(BaseModel):
+    name: str
+    kind: Literal["concept", "style"] = "concept"
+    trigger_word: str = ""
+    default_prompt: str = ""
+    nsfw: bool = False
+
+
+class DatasetCaptionUpdate(BaseModel):
+    captions: list[dict[str, str]]
+
+
+class DatasetImportAssetsRequest(BaseModel):
+    asset_ids: list[str] = Field(..., min_length=1)
+    default_prompt: str = ""
+    captions: dict[str, str] = Field(default_factory=dict)
+
+
+class DatasetAutoCaptionRequest(BaseModel):
+    files: list[str] = Field(default_factory=list)
+
+
+class LoraRegisterRequest(BaseModel):
+    checkpoint: str = "final_adapters.safetensors"
+    name: str = ""
+    auto_register: bool = True
+
 
 
 class CancelToken:

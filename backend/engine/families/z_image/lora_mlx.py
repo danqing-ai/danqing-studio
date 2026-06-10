@@ -1,4 +1,4 @@
-"""Z-Image LoRA merge via shared MLX skeleton."""
+"""Z-Image LoRA merge via shared MLX skeleton (with CUDA dispatch)."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -27,6 +27,23 @@ def merge_z_image_lora_adapters(
     ps = int(patch_size) if patch_size is not None else int(
         getattr(getattr(model, "config", None), "patch_size", 2) or 2
     )
+
+    backend = getattr(ctx, "backend", "mlx")
+    if backend == "cuda":
+        import importlib
+        lora_cuda = importlib.import_module("backend.engine.families.z_image.lora_cuda")
+        lora_cuda.merge_z_image_lora_adapters_cuda(
+            model=model,
+            adapters=adapters,
+            base_model_id=base_model_id,
+            project_root=project_root,
+            registry=registry,
+            ctx=ctx,
+            patch_size=ps,
+            on_log=on_log,
+        )
+        return
+
     merge_lora_adapters_common(
         model=model,
         adapters=adapters,

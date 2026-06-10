@@ -57,8 +57,9 @@ class AdaLayerNormContinuous(nn.Module):
 
 class QwenTimeTextEmbed(nn.Module):
     class _QwenTimesteps(nn.Module):
-        def __init__(self, proj_dim: int = 256, scale: float = 1000.0):
+        def __init__(self, ctx: Any, proj_dim: int = 256, scale: float = 1000.0):
             super().__init__()
+            self.ctx = ctx
             self.proj_dim = proj_dim
             self.flip_sin_to_cos = True
             self.downscale_freq_shift = 0.0
@@ -68,7 +69,7 @@ class QwenTimeTextEmbed(nn.Module):
             if len(timesteps.shape) != 1:
                 raise ValueError("Timesteps should be a 1d-array")
             return sinusoidal_timestep_proj(
-                mx, timesteps, self.proj_dim,
+                self.ctx, timesteps, self.proj_dim,
                 sin_first=True,
                 flip_sin_to_cos=self.flip_sin_to_cos,
                 downscale_freq_shift=self.downscale_freq_shift,
@@ -87,9 +88,11 @@ class QwenTimeTextEmbed(nn.Module):
             x = self.linear_2(x)
             return x
 
-    def __init__(self, timestep_proj_dim: int, inner_dim: int, scale: float = 1000.0):
+    def __init__(self, ctx: Any, timestep_proj_dim: int, inner_dim: int, scale: float = 1000.0):
         super().__init__()
-        self.time_proj = QwenTimeTextEmbed._QwenTimesteps(proj_dim=timestep_proj_dim, scale=scale)
+        self.time_proj = QwenTimeTextEmbed._QwenTimesteps(
+            ctx, proj_dim=timestep_proj_dim, scale=scale
+        )
         self.timestep_embedder = QwenTimeTextEmbed._QwenTimestepEmbedding(
             proj_dim=timestep_proj_dim,
             inner_dim=inner_dim,
@@ -421,7 +424,12 @@ class QwenTransformer(nn.Module):
     """Inner DiT — hyper-parameters from ``QwenImageConfig``."""
 
     def __init__(
-        self, config: QwenImageConfig, *, patch_size: int = 2, array_fn: Any | None = None
+        self,
+        config: QwenImageConfig,
+        ctx: Any,
+        *,
+        patch_size: int = 2,
+        array_fn: Any | None = None,
     ) -> None:
         super().__init__()
         self.config = config
@@ -431,7 +439,9 @@ class QwenTransformer(nn.Module):
         self.img_in = nn.Linear(config.in_channels, self.inner_dim)
         self.txt_norm = MlxRMSNorm(config.text_dim, eps=1e-6)
         self.txt_in = nn.Linear(config.text_dim, self.inner_dim)
-        self.time_text_embed = QwenTimeTextEmbed(timestep_proj_dim=256, inner_dim=self.inner_dim)
+        self.time_text_embed = QwenTimeTextEmbed(
+            ctx, timestep_proj_dim=256, inner_dim=self.inner_dim
+        )
         self.array_fn = array_fn or mx.array
         self.pos_embed = QwenEmbedRopeMLX(
             theta=10000, axes_dim=[16, 56, 56], scale_rope=True, array_fn=self.array_fn
@@ -580,7 +590,7 @@ class QwenImageDiTMLX(TransformerBase):
     def __init__(self, config: QwenImageConfig, ctx: RuntimeContext):
         self.ctx = ctx
         self.config = config
-        self.dit = QwenTransformer(config, array_fn=ctx.array)
+        self.dit = QwenTransformer(config, ctx, array_fn=ctx.array)
         self._param_map: dict[str, Any] = {}
         self._build_param_map()
 
@@ -622,6 +632,7 @@ class QwenImageDiTMLX(TransformerBase):
         ctx: Any = None,
         *,
         bundle_affine_bits: int | None = None,
+        inference_mode=None,
     ):
         load_ctx = ctx if ctx is not None else self.ctx
         loaded, skipped = super().load_weights(
@@ -629,8 +640,10 @@ class QwenImageDiTMLX(TransformerBase):
             strict=strict,
             ctx=load_ctx,
             bundle_affine_bits=bundle_affine_bits,
+            inference_mode=inference_mode,
         )
-        self._cast_param_map_dtype(mx.bfloat16)
+        if inference_mode is None or getattr(inference_mode, "kind", "dense") != "quantized":
+            self._cast_param_map_dtype(mx.bfloat16)
         return loaded, skipped
 
     def after_load_weights(self, bundle_root: str | None = None):

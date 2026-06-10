@@ -10,6 +10,31 @@ from typing import Any
 
 MANIFEST_FILENAME = "bundle.manifest.json"
 SCHEMA_VERSION = 1
+LORA_REGISTRY_CATEGORY = "loras"
+
+# ACE-Step DiT lives at bundle root or under acestep-v15-*/ (see ace_step.generation.resolve_dit_bundle).
+_ACE_STEP_DIT_SUBDIRS = frozenset(
+    {
+        "acestep-v15-xl-sft",
+        "acestep-v15-sft",
+        "acestep-v15-turbo",
+        "acestep-v15-base",
+    }
+)
+
+
+def _ace_step_dit_safetensors(rel_lower: str, name_lower: str) -> bool:
+    if name_lower != "model.safetensors":
+        return False
+    if rel_lower.count("/") == 0:
+        return True
+    top = rel_lower.split("/", 1)[0]
+    return top in _ACE_STEP_DIT_SUBDIRS
+
+
+def is_registry_lora_category(category: str | None) -> bool:
+    """True for registry ``catalog.category=loras`` rows (single-file adapter bundles)."""
+    return (category or "").strip().lower() == LORA_REGISTRY_CATEGORY
 
 
 @dataclass(frozen=True)
@@ -41,6 +66,10 @@ FAMILY_BUNDLE_CONTRACTS: dict[str, FamilyBundleContract] = {
         optional=frozenset({"tokenizer"}),
     ),
     "ernie_image": FamilyBundleContract(
+        required=frozenset({"transformer", "text_encoder", "vae"}),
+        optional=frozenset({"tokenizer", "scheduler"}),
+    ),
+    "cogview4": FamilyBundleContract(
         required=frozenset({"transformer", "text_encoder", "vae"}),
         optional=frozenset({"tokenizer", "scheduler"}),
     ),
@@ -146,7 +175,9 @@ def scan_components(bundle_root: Path) -> dict[str, list[str]]:
             continue
 
         if path.suffix.lower() == ".safetensors":
-            if "text_encoder" in rel_lower or name_lower.startswith("connector"):
+            if _ace_step_dit_safetensors(rel_lower, name_lower):
+                components["transformer"].append(_rel_path(bundle_root, path))
+            elif "text_encoder" in rel_lower or name_lower.startswith("connector"):
                 components["text_encoder"].append(_rel_path(bundle_root, path))
             elif (
                 "vae" in rel_lower

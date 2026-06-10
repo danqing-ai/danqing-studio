@@ -71,14 +71,14 @@ Three product-level constraints (also in `.cursor/rules/*.mdc`):
 
 1. **Layering / plugin model** — Reuse `backend/engine/common/`; new models = registry + `model_configs` + `families/<family>/` + `_transformer_registry`. **No** `family == …` branches in `ImagePipeline` / `VideoPipeline` for business logic.
 2. **Contract API + CLI** — Routes/CLI only through contracts + `IImageEngine` / `IVideoEngine`. Per-model behavior via registry `actions` / `parameters` and Transformer polymorphism + Hooks — **not** `model_id` switches in `backend/api/routes/` or `backend/cli/`.
-3. **RuntimeContext** — Hot paths use `ctx.*`; literal `import mlx` / `import torch` only in `backend/engine/runtime/` or `*_mlx.py` / `*_cuda.py` (or dynamic import). CI: `make check-engine-imports`. Missing backend for a declared capability → **explicit error**, no silent fallback.
+3. **RuntimeContext** — Hot paths use `ctx.*`; literal `import mlx` only in `backend/engine/runtime/` or `*_mlx.py` / `*_cuda.py`; literal `import torch` only in `*_cuda.py` (plus `runtime/cuda.py`). **MLX hot path (`*_mlx.py`) must not import torch or `*_cuda` modules** — native MLX or fail loud (`make check-engine-governance --rule mlx-torch`). Missing backend → **explicit error**, no silent fallback.
 
 | Dimension | Acceptance |
 |-----------|------------|
 | Plugin | New image family: JSON + `model_configs` + `families/<family>/` + registry; no new Pipeline `family` branches |
 | Family size | `families/<family>/` ≤ **8 logical units**; `stem.py` + `stem_mlx.py` + `stem_cuda.py` = **1** unit |
 | API/CLI | Extend contracts + route/CLI first; REST and CLI stay aligned |
-| Dual platform | Multi-`backends` models must run on each declared runtime or fail loud |
+| Dual platform | Multi-`backends` models must run on each declared runtime or fail loud; MLX hot path no torch |
 | Engine LOC | Refactors under `backend/engine/` should be **net delete or neutral** (bugfix exceptions documented in PR); no new `vae_codecs/` / `video_codecs/` wrapper trees — use `vae_codec_registry.py` / `video_codec_registry.py` only |
 
 ### Fail loud (default)
@@ -324,6 +324,7 @@ make pack-linux-server   # release Linux server tar.gz
 | `check-consistency` | registry/routes/i18n |
 | `check-engine-rules` | unified engine governance (`check_engine_governance.py`) |
 | `check-engine-imports` | alias: `--rule imports` |
+| `check-engine-mlx-torch` | alias: `--rule mlx-torch` — `*_mlx.py` must not depend on torch / `*_cuda` |
 | `check-models-registry-contracts` | alias: `--rule registry` |
 | `check-engine-governance` | engine rules + consistency |
 | `verify-engine-stack` | governance + unit tests |

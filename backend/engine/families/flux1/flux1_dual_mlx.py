@@ -446,9 +446,21 @@ class Flux1TextEncoder:
             str(clip_dir),
             tokenizer_path=str(clip_tok) if clip_tok.is_dir() else str(clip_dir),
         )
+        self.ctx = ctx
 
     def encode(self, texts: list[str]) -> tuple[Any, Any]:
         """Returns ``(t5_hidden_states, clip_pooled)`` — second value is not an attention mask."""
         txt = self._t5.encode(texts)
         pooled, _hidden = self._clip.encode(texts)
         return txt, pooled
+
+    def release_weights(self) -> None:
+        """Drop T5 + CLIP MLX weights before DiT load (tokenizers kept)."""
+        self._t5 = None
+        self._clip = None
+        clear_cache_fn = getattr(self.ctx, "clear_cache", None)
+        if clear_cache_fn is not None:
+            clear_cache_fn()
+        else:
+            import importlib
+            importlib.import_module("mlx.core").clear_cache()

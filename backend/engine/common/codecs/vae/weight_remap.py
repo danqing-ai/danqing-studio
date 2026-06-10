@@ -63,12 +63,21 @@ def load_vae_decoder_from_weights(
     vae_weights: dict,
     *,
     require_conv_in: bool = True,
+    ctx: Any | None = None,
+    bundle_affine_bits: int | None = None,
+    inference_mode: Any | None = None,
 ) -> tuple[dict, list, list]:
     """Attach remapped VAE weights; return ``(decoder_w, loaded, skipped)``."""
     decoder_w = remap_vae_weights(vae_weights)
     if not decoder_w:
         return {}, [], []
-    loaded, skipped = vae.load_weights(list(decoder_w.items()), strict=False)
+    loaded, skipped = vae.load_weights(
+        list(decoder_w.items()),
+        strict=False,
+        ctx=ctx,
+        bundle_affine_bits=bundle_affine_bits,
+        inference_mode=inference_mode,
+    )
     if require_conv_in and not any(k.startswith("conv_in.") for k in loaded):
         raise RuntimeError(
             "VAE decoder failed to load conv_in weights; decode would be garbage. "

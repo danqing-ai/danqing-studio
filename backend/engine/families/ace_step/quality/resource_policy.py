@@ -96,14 +96,11 @@ def detect_memory_gb(*, backend: str = "mlx") -> float:
             pass
 
     if backend == "cuda":
-        try:
-            import torch
+        from backend.engine.families.ace_step.quality.resource_policy_cuda import detect_cuda_memory_gb
 
-            if torch.cuda.is_available():
-                props = torch.cuda.get_device_properties(0)
-                return float(props.total_memory) / (1024**3)
-        except Exception as exc:
-            logger.warning("CUDA memory detection failed: %s; falling back to default tier", exc)
+        cuda_gb = detect_cuda_memory_gb()
+        if cuda_gb is not None:
+            return cuda_gb
 
     if platform.system() == "Darwin":
         try:

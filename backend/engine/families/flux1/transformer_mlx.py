@@ -659,7 +659,15 @@ class Flux1DiTMLX(TransformerBase):
         img_ids = ctx.stack([zeros_img, h_grid, w_grid], axis=1)
         return txt_ids, ctx.reshape(img_ids, (1, ph * pw, 3))
 
-    def load_weights(self, weights, strict=False, ctx=None, *, bundle_affine_bits=None):
+    def load_weights(
+        self,
+        weights,
+        strict=False,
+        ctx=None,
+        *,
+        bundle_affine_bits=None,
+        inference_mode=None,
+    ):
         """Load weights and cast to bfloat16 (matches Flux2 reference precision)."""
         load_ctx = ctx if ctx is not None else self.ctx
         loaded, skipped = super().load_weights(
@@ -667,6 +675,8 @@ class Flux1DiTMLX(TransformerBase):
             strict=strict,
             ctx=load_ctx,
             bundle_affine_bits=bundle_affine_bits,
+            inference_mode=inference_mode,
         )
-        self._cast_param_map_dtype(load_ctx.bfloat16())
+        if inference_mode is None or getattr(inference_mode, "kind", "dense") != "quantized":
+            self._cast_param_map_dtype(load_ctx.bfloat16())
         return loaded, skipped

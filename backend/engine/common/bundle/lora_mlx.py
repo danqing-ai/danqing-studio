@@ -85,20 +85,39 @@ def merge_lora_adapters_common(
     for item in adapters:
         lora_id, strength = adapter_id_weight(item)
         mid, ver = parse_model_version(lora_id)
+        entry = None
+        bundle: Path | None = None
+        declared_base = ""
         try:
             entry = registry.require(mid)
-        except KeyError as e:
-            raise RuntimeError(
-                f"Unknown LoRA adapter {lora_id!r}: add it to config/models_registry.json "
-                "(category=loras) and install weights to the declared local_path."
-            ) from e
-        raw = entry.raw or {}
-        if str(raw.get("category") or "") != "loras":
-            raise RuntimeError(
-                f"Adapter id {lora_id!r} refers to registry model {mid!r}, which is not a LoRA "
-                f"(category={raw.get('category')!r})."
-            )
-        declared_base = str(raw.get("base_model") or "").strip()
+        except KeyError:
+            if str(lora_id).startswith("user-lora-"):
+                from backend.engine.training.user_lora_registry import (
+                    get_user_lora,
+                    resolve_user_lora_bundle,
+                )
+
+                config_dir = project_root / "config"
+                ul = get_user_lora(config_dir, lora_id)
+                if ul is None:
+                    raise RuntimeError(f"Unknown user LoRA adapter {lora_id!r}") from None
+                declared_base = str(ul.get("base_model") or "").strip()
+                bundle = resolve_user_lora_bundle(project_root, config_dir, lora_id)
+                mid = lora_id
+            else:
+                raise RuntimeError(
+                    f"Unknown LoRA adapter {lora_id!r}: add it to config/models_registry.json "
+                    "(category=loras) and install weights to the declared local_path."
+                ) from None
+        if entry is not None:
+            raw = entry.raw or {}
+            if str(raw.get("category") or "") != "loras":
+                raise RuntimeError(
+                    f"Adapter id {lora_id!r} refers to registry model {mid!r}, which is not a LoRA "
+                    f"(category={raw.get('category')!r})."
+                )
+            declared_base = str(raw.get("base_model") or "").strip()
+            bundle = local_bundle_root(project_root, entry, ver or None)
         declared_scope = (
             base_model_scope_key(declared_base) if base_model_scope_key is not None else declared_base
         ).strip()
@@ -107,7 +126,6 @@ def merge_lora_adapters_common(
                 f"LoRA {mid!r} is scoped to base_model={declared_base!r}, "
                 f"but the image request uses {base_model_id!r}."
             )
-        bundle = local_bundle_root(project_root, entry, ver or None)
         if bundle is None:
             raise RuntimeError(
                 f"LoRA {lora_id!r} is not installed on disk (missing registry versions.local_path "
@@ -133,13 +151,43 @@ def merge_lora_adapters_common(
                 raise RuntimeError(f"LoRA {lora_id!r}: invalid rank for {wkey}.")
             scale = (float(alpha) / float(rank)) * float(strength)
             delta = mx.matmul(u_orient.astype(mx.float32), d_orient.astype(mx.float32))
-            updated = param.astype(mx.float32) + (scale * delta)
-            param[:] = updated.astype(param.dtype)
+            scaled_delta = scale * delta
+            from backend.engine.common.model.quantized_lora import (
+                apply_lora_delta_to_weight,
+                inference_mode_from_model,
+            )
+
+            inference_mode = inference_mode_from_model(model)
+            if (
+                inference_mode is not None
+                and getattr(inference_mode, "kind", "dense") == "quantized"
+                and getattr(inference_mode, "bits", None) in (4, 8)
+            ):
+                apply_lora_delta_to_weight(
+                    model=model,
+                    wkey=wkey,
+                    delta=scaled_delta,
+                    ctx=ctx,
+                    bits=int(inference_mode.bits),
+                    group_size=int(getattr(inference_mode, "group_size", 64) or 64),
+                )
+            else:
+                updated = param.astype(mx.float32) + scaled_delta
+                param[:] = updated.astype(param.dtype)
             applied += 1
         if applied == 0:
             raise RuntimeError(
                 f"LoRA {lora_id!r}: remap produced {len(groups)} groups, but none matched this transformer."
             )
         if on_log:
-            on_log("info", f"lora merged source={mid} strength={strength} tensors={applied}")
+            from backend.engine.common.model.quantized_lora import inference_mode_from_model
+
+            mode = inference_mode_from_model(model)
+            quant_note = ""
+            if mode is not None and getattr(mode, "kind", "") == "quantized":
+                quant_note = " requantized_layers=yes"
+            on_log(
+                "info",
+                f"lora merged source={mid} strength={strength} tensors={applied}{quant_note}",
+            )
     ctx.eval(*[t for _, t in model.parameters()])

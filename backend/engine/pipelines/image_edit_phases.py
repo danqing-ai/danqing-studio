@@ -227,6 +227,10 @@ def build_image_edit_rewrite_context(
             return None
         model = enc_loaded.model
         extra_cond = enc_loaded.extra_cond
+        if "original_size" in extra_cond or "target_size" in extra_cond:
+            extra_cond = dict(extra_cond)
+            extra_cond["original_size"] = (w, h)
+            extra_cond["target_size"] = (w, h)
         txt_embeds = enc_loaded.txt_embeds
         neg_embeds = enc_loaded.neg_embeds
         txt_attn_mask = enc_loaded.txt_attn_mask

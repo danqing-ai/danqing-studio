@@ -23,7 +23,7 @@ from backend.core.bundle_repos import (
     version_primary_local_path,
 )
 from backend.core.install_hooks import install_hooks_from_version, run_install_hooks
-from backend.core.bundle_manifest import write_bundle_manifest
+from backend.core.bundle_manifest import is_registry_lora_category, write_bundle_manifest
 from backend.core.interfaces import (
     IDownloadService, IPathResolver, IConfigStore,
     DownloadTask, DownloadProgress, TaskStatus, ConversionTask
@@ -157,8 +157,10 @@ class DownloadService(IDownloadService):
         if not registry_path.exists():
             return {}
         try:
+            from backend.catalog.loader import expand_catalog_document
+
             with open(registry_path, "r", encoding="utf-8") as f:
-                return json.load(f).get("models", {})
+                return expand_catalog_document(json.load(f)).get("models", {})
         except Exception as e:
             print(f"[DownloadService] Failed to load model registry: {e}")
             return {}
@@ -292,7 +294,8 @@ class DownloadService(IDownloadService):
 
         config = self.get_model_download_config(model_name) or {}
         family = str(config.get("family") or "").strip()
-        if family and target.is_dir():
+        category = str(config.get("category") or "").strip()
+        if family and target.is_dir() and not is_registry_lora_category(category):
             try:
                 manifest_path = write_bundle_manifest(
                     target,
@@ -1143,109 +1146,61 @@ class DownloadService(IDownloadService):
                 to_ver_config=to_ver_config,
             )
 
+            def _quantize_target(
+                load_paths: tuple[Path, ...],
+                *,
+                bits: int,
+                output_dir: Path,
+                shard_prefix: str,
+                single_output_file: Path | None,
+            ) -> int:
+                import mlx.core as mx
+
+                from backend.core.derived_quant_mlx import (
+                    quantize_linear_weights_dict,
+                    save_quantized_weight_bundle,
+                )
+
+                weights: dict[str, Any] = {}
+                for sf in load_paths:
+                    weights.update(dict(mx.load(str(sf))))
+                if not weights:
+                    raise RuntimeError(f"No safetensors weights found in {load_paths!r}")
+                quantized = quantize_linear_weights_dict(weights, bits)
+                return save_quantized_weight_bundle(
+                    quantized,
+                    output_dir=output_dir,
+                    shard_prefix=shard_prefix,
+                    bits=bits,
+                    single_output_file=single_output_file,
+                )
+
             def _do_conversion():
                 """Execute quantization in a thread (blocking MLX computation)."""
-                import mlx.core as mx
-                import mlx.nn as nn
+                from backend.core.derived_quant_layout import copy_component_companion_files
 
-                # 1. Load source weights
-                weights = {}
-                for sf in plan.load_paths:
-                    weights.update(dict(mx.load(str(sf))))
+                done = _quantize_target(
+                    plan.load_paths,
+                    bits=int(quantize_bits),
+                    output_dir=plan.output_dir,
+                    shard_prefix=plan.output_shard_prefix,
+                    single_output_file=plan.single_output_file,
+                )
+                total = len([k for k in plan.load_paths])
 
-                if not weights:
-                    raise RuntimeError(f"No safetensors weights found in {from_path}")
-
-                # 2. Quantization — reference ModelSaver approach:
-                #    For each 2D Linear weight, create nn.Linear → to_quantized()
-                #    Skip Embedding / 1D bias / norm etc.
-                quantized = {}
-                processed_bias_keys = set()
-                total = len([k for k in weights if k.endswith(".weight")])
-                done = 0
-
-                for key, tensor in weights.items():
-                    if not key.endswith(".weight"):
-                        continue
-                    if tensor.ndim != 2 or tensor.shape[0] <= 1 or tensor.shape[1] <= 1:
-                        continue
-                    # Skip Embedding (key contains embed / vocab / token)
-                    if any(x in key.lower() for x in ("embed", "vocab", "token")):
-                        quantized[key] = tensor
-                        continue
-
-                    in_features = int(tensor.shape[1])
-                    out_features = int(tensor.shape[0])
-                    bias_key = key.replace(".weight", ".bias")
-                    has_bias = bias_key in weights
-
-                    linear = nn.Linear(in_features, out_features, bias=has_bias)
-                    linear.weight = tensor
-                    if has_bias:
-                        linear.bias = weights[bias_key]
-                        processed_bias_keys.add(bias_key)
-
-                    q_linear = linear.to_quantized(bits=quantize_bits)
-                    base = key[:-7]  # strip ".weight"
-                    quantized[f"{base}.weight"] = q_linear.weight
-                    quantized[f"{base}.scales"] = q_linear.scales
-                    quantized[f"{base}.biases"] = q_linear.biases
-                    # QuantizedLinear keeps the original nn.Linear bias dense; affine ``biases`` are
-                    # per-group dequant params only. Older conversion omitted this and broke load.
-                    if "bias" in q_linear:
-                        quantized[f"{base}.bias"] = q_linear.bias
-                    done += 1
-
-                # Retain unquantized params (norm / conv / unprocessed bias etc.)
-                for key, tensor in weights.items():
-                    if key in processed_bias_keys or key in quantized:
-                        continue
-                    quantized[key] = tensor
-
-                # 3. Save quantized weights
-                max_shard_bytes = 2 << 30
-                plan.output_dir.mkdir(parents=True, exist_ok=True)
-
-                if plan.single_output_file is not None:
-                    mx.save_safetensors(
-                        str(plan.single_output_file),
-                        quantized,
-                        metadata={"quantization_level": str(quantize_bits)},
+                for target in plan.component_targets:
+                    _quantize_target(
+                        target.load_paths,
+                        bits=int(target.bits),
+                        output_dir=target.output_dir,
+                        shard_prefix=target.output_shard_prefix,
+                        single_output_file=target.single_output_file,
                     )
-                else:
-                    shards = []
-                    current_shard = {}
-                    current_size = 0
+                    copy_component_companion_files(
+                        from_path / target.subdir,
+                        to_path / target.subdir,
+                    )
 
-                    for key, value in quantized.items():
-                        if current_size + value.nbytes > max_shard_bytes and current_shard:
-                            shards.append(current_shard)
-                            current_shard = {}
-                            current_size = 0
-                        current_shard[key] = value
-                        current_size += value.nbytes
-                    if current_shard:
-                        shards.append(current_shard)
-
-                    weight_map = {}
-                    for i, shard in enumerate(shards):
-                        shard_name = f"{plan.output_shard_prefix}_{i:05d}.safetensors"
-                        mx.save_safetensors(
-                            str(plan.output_dir / shard_name),
-                            shard,
-                            metadata={"quantization_level": str(quantize_bits)},
-                        )
-                        for k in shard.keys():
-                            weight_map[k] = shard_name
-
-                    index_data = {
-                        "metadata": {"quantization_level": str(quantize_bits)},
-                        "weight_map": weight_map,
-                    }
-                    with open(plan.output_dir / "model.safetensors.index.json", "w") as f:
-                        json.dump(index_data, f, indent=2)
-
-                # 4. Copy unquantized companion files
                 copy_non_quantized_bundle(from_path, to_path, plan)
 
                 return done, total

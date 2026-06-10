@@ -179,48 +179,84 @@ class Upsample:
         return _to_nchw(ctx, h)
 
 
+def _parse_vae_decoder_arch(vae_cfg: dict[str, Any] | None) -> dict[str, Any]:
+    cfg = vae_cfg or {}
+    block_out = cfg.get("block_out_channels") or (128, 256, 512, 512)
+    return {
+        "block_out_channels": tuple(int(x) for x in block_out),
+        "layers_per_block": int(cfg.get("layers_per_block", 3)),
+        "norm_num_groups": int(cfg.get("norm_num_groups", 32)),
+        "mid_block_add_attention": bool(cfg.get("mid_block_add_attention", True)),
+    }
+
+
 class VAEDecoder:
     """AutoencoderKL 解码器 — 适配 RuntimeContext 的通用 VAE 解码路径。
 
-    架构: ConvIn → Mid(resnet+attn+resnet) → Up1 → Up2 → Up3 → Up4 → NormOut → ConvOut
+    架构: ConvIn → Mid(resnet[+attn]+resnet) → Up blocks → NormOut → ConvOut
     """
 
-    def __init__(self, latent_channels: int = 16, ctx: RuntimeContext = None,
-                 scaling_factor: float = 1.0, shift_factor: float = 0.0):
+    def __init__(
+        self,
+        latent_channels: int = 16,
+        ctx: RuntimeContext = None,
+        scaling_factor: float = 1.0,
+        shift_factor: float = 0.0,
+        *,
+        vae_cfg: dict[str, Any] | None = None,
+        block_out_channels: tuple[int, ...] | None = None,
+        layers_per_block: int | None = None,
+        norm_num_groups: int | None = None,
+        mid_block_add_attention: bool | None = None,
+    ):
+        arch = _parse_vae_decoder_arch(vae_cfg)
+        if block_out_channels is not None:
+            arch["block_out_channels"] = tuple(int(x) for x in block_out_channels)
+        if layers_per_block is not None:
+            arch["layers_per_block"] = int(layers_per_block)
+        if norm_num_groups is not None:
+            arch["norm_num_groups"] = int(norm_num_groups)
+        if mid_block_add_attention is not None:
+            arch["mid_block_add_attention"] = bool(mid_block_add_attention)
+
+        blocks = arch["block_out_channels"]
+        if len(blocks) < 2:
+            raise RuntimeError(f"VAEDecoder: block_out_channels must have >= 2 entries, got {blocks!r}")
+
         self.ctx = ctx
-        nn = ctx; C = latent_channels
+        nn = ctx
+        C = latent_channels
         self.scaling_factor = scaling_factor
         self.shift_factor = shift_factor
+        top = int(blocks[-1])
+        layers = int(arch["layers_per_block"])
+        groups = int(arch["norm_num_groups"])
 
-        self.conv_in = nn.Conv2d(C, 512, 3, padding=1)
+        self.conv_in = nn.Conv2d(C, top, 3, padding=1)
+        self.mid_resnet1 = ResnetBlock(top, top, ctx)
+        self.mid_attn = SpatialAttention(top, ctx) if arch["mid_block_add_attention"] else None
+        self.mid_resnet2 = ResnetBlock(top, top, ctx)
 
-        # Mid block
-        self.mid_resnet1 = ResnetBlock(512, 512, ctx)
-        self.mid_attn = SpatialAttention(512, ctx)
-        self.mid_resnet2 = ResnetBlock(512, 512, ctx)
+        rev = list(reversed(blocks))
+        self._up_stages: list[tuple[list[ResnetBlock], Upsample | None]] = []
+        for i, out_ch in enumerate(rev):
+            in_ch = int(rev[i - 1]) if i > 0 else int(rev[0])
+            out_ch = int(out_ch)
+            resnets: list[ResnetBlock] = []
+            for j in range(layers):
+                if j == 0 and in_ch != out_ch:
+                    resnets.append(ResnetBlock(in_ch, out_ch, ctx, use_shortcut=True))
+                else:
+                    resnets.append(ResnetBlock(out_ch, out_ch, ctx))
+            ups = Upsample(out_ch, out_ch, ctx) if i < len(rev) - 1 else None
+            self._up_stages.append((resnets, ups))
+            setattr(self, f"up{i + 1}_resnets", resnets)
+            if ups is not None:
+                setattr(self, f"up{i + 1}_up", ups)
 
-        # Up1: 3×512 → up 2x
-        self.up1_resnets = [ResnetBlock(512, 512, ctx) for _ in range(3)]
-        self.up1_up = Upsample(512, 512, ctx)
-        # Up2: 3×512 → up 2x
-        self.up2_resnets = [ResnetBlock(512, 512, ctx) for _ in range(3)]
-        self.up2_up = Upsample(512, 512, ctx)
-        # Up3: 512→256 (first shortcut) → up 2x
-        self.up3_resnets = [
-            ResnetBlock(512, 256, ctx, use_shortcut=True),
-            ResnetBlock(256, 256, ctx),
-            ResnetBlock(256, 256, ctx),
-        ]
-        self.up3_up = Upsample(256, 256, ctx)
-        # Up4: 256→128 (first shortcut)
-        self.up4_resnets = [
-            ResnetBlock(256, 128, ctx, use_shortcut=True),
-            ResnetBlock(128, 128, ctx),
-            ResnetBlock(128, 128, ctx),
-        ]
-
-        self.norm_out = nn.GroupNorm(32, 128, eps=1e-6, pytorch_compatible=True)
-        self.conv_out = nn.Conv2d(128, 3, 3, padding=1)
+        out_ch = int(rev[-1])
+        self.norm_out = nn.GroupNorm(groups, out_ch, eps=1e-6, pytorch_compatible=True)
+        self.conv_out = nn.Conv2d(out_ch, 3, 3, padding=1)
 
         self._param_map: dict[str, Any] = {}
         self._built = False
@@ -230,7 +266,36 @@ class VAEDecoder:
         _collect_nn_params(self, "", self._param_map)
         self._built = True
 
-    def load_weights(self, weights: list[tuple[str, Any]], strict=False):
+    def sanitize(self, weights: dict[str, Any]) -> dict[str, Any]:
+        return weights
+
+    def load_weights(
+        self,
+        weights: list[tuple[str, Any]],
+        strict: bool = False,
+        ctx: RuntimeContext | None = None,
+        *,
+        bundle_affine_bits: int | None = None,
+        inference_mode: Any | None = None,
+    ):
+        if (
+            inference_mode is not None
+            and getattr(inference_mode, "kind", None) == "quantized"
+            and getattr(inference_mode, "bits", None) in (4, 8)
+        ):
+            from backend.engine.common.model.quantized_load import load_weights_quantized_inference
+
+            load_ctx = ctx if ctx is not None else self.ctx
+            return load_weights_quantized_inference(
+                self,
+                weights,
+                strict=strict,
+                ctx=load_ctx,
+                bundle_affine_bits=bundle_affine_bits,
+                bits=int(inference_mode.bits),
+                group_size=int(getattr(inference_mode, "group_size", 64)),
+            )
+
         self._build_param_map()
         loaded, skipped = [], []
         for key, tensor in weights:
@@ -261,16 +326,15 @@ class VAEDecoder:
             x = _to_nchw(ctx, x)
 
         x = self.mid_resnet1.forward(x)
-        x = self.mid_attn.forward(x)
+        if self.mid_attn is not None:
+            x = self.mid_attn.forward(x)
         x = self.mid_resnet2.forward(x)
 
-        for r in self.up1_resnets: x = r.forward(x)
-        x = self.up1_up.forward(x)
-        for r in self.up2_resnets: x = r.forward(x)
-        x = self.up2_up.forward(x)
-        for r in self.up3_resnets: x = r.forward(x)
-        x = self.up3_up.forward(x)
-        for r in self.up4_resnets: x = r.forward(x)
+        for resnets, ups in self._up_stages:
+            for r in resnets:
+                x = r.forward(x)
+            if ups is not None:
+                x = ups.forward(x)
 
         if _vae_cuda_nchw(ctx):
             x = self.norm_out(x)
@@ -376,6 +440,18 @@ def read_vae_dir_config(vae_dir: Path | None) -> tuple[dict[str, Any], float, fl
     return vae_cfg, scaling_factor, shift_factor
 
 
+def release_vae_decoder_memory(ctx: RuntimeContext, vae: Any | None) -> None:
+    """Drop a short-lived VAE decoder and free MLX cache after decode."""
+    if vae is None:
+        return
+    del vae
+    clear_cache_fn = getattr(ctx, "clear_cache", None)
+    if clear_cache_fn is not None:
+        clear_cache_fn()
+    elif getattr(ctx, "backend", None) == "mlx":
+        importlib.import_module("mlx.core").clear_cache()
+
+
 def load_vae_weight_dict(
     ctx: RuntimeContext,
     vae_dir: Path | None,
@@ -444,6 +520,7 @@ def build_standard_vae_preview_session(
         ctx=ctx,
         scaling_factor=scaling_factor,
         shift_factor=shift_factor,
+        vae_cfg=vae_cfg,
     )
     decoder_w, loaded, _skipped = load_vae_decoder_from_weights(vae, vae_weights)
     if not decoder_w:
@@ -472,8 +549,11 @@ def create_loaded_vae_decoder(
     scaling_factor: float,
     shift_factor: float,
     *,
+    vae_cfg: dict[str, Any] | None = None,
     default_channels: int = 16,
     require_conv_in: bool = True,
+    bundle_affine_bits: int | None = None,
+    inference_mode: Any | None = None,
 ) -> tuple[VAEDecoder, dict[str, Any], list[Any], list[Any]]:
     from backend.engine.common.codecs.vae.weight_remap import load_vae_decoder_from_weights
 
@@ -483,9 +563,15 @@ def create_loaded_vae_decoder(
         ctx=ctx,
         scaling_factor=scaling_factor,
         shift_factor=shift_factor,
+        vae_cfg=vae_cfg,
     )
     decoder_w, loaded, skipped = load_vae_decoder_from_weights(
-        vae, vae_weights, require_conv_in=require_conv_in
+        vae,
+        vae_weights,
+        require_conv_in=require_conv_in,
+        ctx=ctx,
+        bundle_affine_bits=bundle_affine_bits,
+        inference_mode=inference_mode,
     )
     return vae, decoder_w, loaded, skipped
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from backend.core.media_interfaces import IAudioEngine, IImageEngine, IVideoEngine
+from backend.core.lora_train_interface import ILoraTrainEngine
 from backend.core.model_registry import ModelRegistry
 
 
@@ -10,9 +11,21 @@ class EngineRegistry:
     def __init__(self, model_registry: ModelRegistry) -> None:
         self._model_registry = model_registry
         self._by_engine_id: dict[str, object] = {}
+        self._lora_train: ILoraTrainEngine | None = None
 
     def register(self, engine: IImageEngine | IVideoEngine | IAudioEngine) -> None:
         self._by_engine_id[engine.engine_id] = engine
+
+    def register_lora_train(self, engine: ILoraTrainEngine) -> None:
+        self._lora_train = engine
+        self._by_engine_id[engine.engine_id] = engine
+
+    def get_lora_train(self, model_id: str = "") -> ILoraTrainEngine:
+        """Return the singleton LoRA train engine (``model_id`` ignored; base model is on the request)."""
+        del model_id
+        if self._lora_train is None:
+            raise RuntimeError("LoRA train engine is not registered")
+        return self._lora_train
 
     def get_image(self, model_id: str) -> IImageEngine:
         cfg = self._model_registry.require(model_id)

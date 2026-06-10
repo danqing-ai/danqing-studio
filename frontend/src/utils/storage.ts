@@ -19,7 +19,11 @@ export const DQ_STORAGE = Object.freeze({
   MODEL_FILTER_INSTALLED: 'dq-studio.modelFilterInstalled.v4',
   MODEL_FILTER_COMMERCIAL: 'dq-studio.modelFilterCommercial.v4',
   IMAGE_LAST_SIZE: 'dq-studio.imageLastSize.v4',
+  /** Per image model id → ``WxH`` (bump suffix when preset schema changes). */
+  IMAGE_SIZE_BY_MODEL: 'dq-studio.imageSizeByModel.v5',
   VIDEO_LAST_SIZE: 'dq-studio.videoLastSize.v4',
+  /** Per video model id → ``WxH`` (bump suffix when preset schema changes). */
+  VIDEO_SIZE_BY_MODEL: 'dq-studio.videoSizeByModel.v5',
   // Per-mode model cache
   IMAGE_MODEL_TEXT2IMG: 'dq-studio.imageModel.text2img.v4',
   IMAGE_MODEL_IMG2IMG: 'dq-studio.imageModel.img2img.v4',

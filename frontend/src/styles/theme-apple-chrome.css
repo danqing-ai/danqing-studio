@@ -16,6 +16,7 @@ html.dark .models-page__actions {
 
 html.dark .models-page .models-page__sidebar-card.studio-surface-card.dq-surface-card,
 html.dark .copilot-page .copilot-page__sidebar-card.studio-surface-card.dq-surface-card,
+html.dark .lora-train-page .copilot-page__sidebar-card.studio-surface-card.dq-surface-card,
 html.dark .copilot-page .copilot-page__workspace-card.studio-surface-card.dq-surface-card,
 html.dark .copilot-page .copilot-page__cards-card.studio-surface-card.dq-surface-card {
   background: var(--dq-glass-grouped-bg);
@@ -167,6 +168,59 @@ html.dark .models-page .model-card-header {
   background: var(--dq-surface-inset) !important;
 }
 
+/* —— LoRA train: smooth corners + model cards (parity with models-page) —— */
+html.dark .lora-train-page .copilot-page__sidebar-card.studio-surface-card.dq-surface-card,
+html.dark .lora-train-page .copilot-page__workspace-card.studio-surface-card.dq-surface-card {
+  border-radius: var(--dq-radius-group);
+  overflow: hidden;
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+  outline: 0.5px solid color-mix(in srgb, var(--dq-border) 45%, transparent);
+  outline-offset: -0.5px;
+}
+
+html.dark .lora-train-page .dq-download-menu__item {
+  border-radius: var(--dq-radius-control, 8px);
+  overflow: hidden;
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+}
+
+html.dark .lora-train-page .model-card {
+  border: 0.5px solid var(--dq-glass-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: linear-gradient(
+    168deg,
+    color-mix(in srgb, var(--dq-bg-base) 82%, var(--dq-fill-dim)) 0%,
+    var(--dq-bg-base) 38%,
+    var(--dq-bg-base) 100%
+  );
+  box-shadow: 0 10px 30px var(--dq-shadow-md);
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+}
+
+html.dark .lora-train-page .model-card-header {
+  background: var(--dq-surface-inset) !important;
+}
+
+html.dark .lora-train-page .model-card.model-ready {
+  border-color: color-mix(in srgb, var(--dq-success) 28%, var(--dq-border));
+}
+
+html.dark .lora-train-page .model-card.model-ready .model-card-header {
+  background: var(--dq-success-surface) !important;
+}
+
+html.dark .lora-train-page .lora-train-page__model-pick.is-selected .model-card.model-ready {
+  border-color: var(--dq-accent);
+}
+
+html.dark .lora-train-page .lora-train-page__model-pick.is-selected .model-card.model-ready .model-card-header {
+  background: color-mix(in srgb, var(--dq-accent) 20%, var(--dq-surface-inset)) !important;
+}
+
 /* —— Scrollbar —— */
 html.dark ::-webkit-scrollbar-thumb {
   background: var(--dq-scrollbar-thumb-hover);
@@ -194,6 +248,8 @@ html.dark .log-container {
   html.dark .gallery-batch-bar-content,
   html.dark .download-queue,
   html.dark .models-page .models-page__sidebar-card.studio-surface-card.dq-surface-card,
+  html.dark .lora-train-page .copilot-page__sidebar-card.studio-surface-card.dq-surface-card,
+  html.dark .lora-train-page .copilot-page__workspace-card.studio-surface-card.dq-surface-card,
   html.dark .settings-page--macos .settings-inspector-stack {
     -webkit-backdrop-filter: none;
     backdrop-filter: none;

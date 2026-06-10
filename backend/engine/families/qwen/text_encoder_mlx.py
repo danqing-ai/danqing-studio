@@ -538,14 +538,6 @@ class QwenImageTextEncoder:
         self.ctx = ctx
         te_path = Path(model_path)
         self.bundle_root = te_path.parent if te_path.name == "text_encoder" else te_path
-        if getattr(ctx, "backend", None) == "cuda":
-            from backend.engine.families.qwen.text_encoder_cuda import QwenImageTextEncoderCuda
-
-            self._cuda_enc = QwenImageTextEncoderCuda(ctx, self.bundle_root, **_kw)
-            self.model = None
-            self._hf = None
-            return
-        self._cuda_enc = None
         raw_tok = tokenizer_path.strip() if tokenizer_path else ""
         tok_root = Path(raw_tok) if raw_tok and Path(raw_tok).is_dir() else self.bundle_root / "tokenizer"
         if not tok_root.is_dir():
@@ -568,8 +560,6 @@ class QwenImageTextEncoder:
         )
 
     def encode(self, texts: list[str]) -> tuple[Any, Any]:
-        if self._cuda_enc is not None:
-            return self._cuda_enc.encode(texts)
         prompt = texts[0] if texts else ""
         filled = self._prompt_template.format(prompt)
         batch = self._hf(
@@ -586,6 +576,16 @@ class QwenImageTextEncoder:
         pe, pm = self.model(input_ids=input_ids, attention_mask=attention_mask)
         self.ctx.eval(pe, pm)
         return pe, pm
+
+    def release_weights(self) -> None:
+        """Drop Qwen MLX weights after encode (tokenizer kept)."""
+        self.model = None
+        clear_cache_fn = getattr(self.ctx, "clear_cache", None)
+        if clear_cache_fn is not None:
+            clear_cache_fn()
+        else:
+            import importlib
+            importlib.import_module("mlx.core").clear_cache()
 
     @staticmethod
     def _load_qwen2_tokenizer(tok_root: Path):

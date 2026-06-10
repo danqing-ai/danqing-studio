@@ -39,15 +39,23 @@
     />
   </div>
 
-  <DqButton
-    v-if="!viewMode || viewMode === 'grid'"
-    size="sm"
-    :type="selectionMode ? 'primary' : 'default'"
-    class="studio-gallery-filters__select"
-    @click="$emit('toggle-selection-mode')"
-  >
-    {{ selectionMode ? $t('gallery.exitSelectMode') : $t('gallery.selectMode') }}
-  </DqButton>
+  <div class="studio-gallery-filters__actions">
+    <StudioGalleryBatchActions
+      v-if="!viewMode || viewMode === 'grid'"
+      :selection-mode="selectionMode"
+      :selected-count="selectedCount ?? 0"
+      :all-selected="allSelected"
+      @toggle-selection-mode="$emit('toggle-selection-mode')"
+      @select-all="$emit('select-all')"
+      @batch-delete="$emit('batch-delete')"
+      @clear-selection="$emit('clear-selection')"
+    />
+    <StudioCanvasSessionControls
+      v-else-if="canvasMedia"
+      :media="canvasMedia"
+      @composer-restore="$emit('composer-restore', $event)"
+    />
+  </div>
 
   <DqIconButton
     type="text"
@@ -63,6 +71,9 @@
 <script setup lang="ts">
 import { Refresh } from '@danqing/dq-shell';
 import StudioViewModeSwitch from '@/components/studio/StudioViewModeSwitch.vue';
+import StudioGalleryBatchActions from '@/components/studio/StudioGalleryBatchActions.vue';
+import StudioCanvasSessionControls from '@/components/studio/StudioCanvasSessionControls.vue';
+import type { CanvasMedia } from '@/composables/useCanvasStore';
 
 const props = defineProps<{
   filterTime: string;
@@ -70,8 +81,11 @@ const props = defineProps<{
   timeOptions: { label: string; value: string }[];
   modelOptions: string[];
   selectionMode?: boolean;
+  selectedCount?: number;
+  allSelected?: boolean;
   viewMode?: 'grid' | 'canvas';
   supportsCanvas?: boolean;
+  canvasMedia?: CanvasMedia;
 }>();
 
 const emit = defineEmits<{
@@ -79,7 +93,11 @@ const emit = defineEmits<{
   (e: 'update:filterModels', value: string[]): void;
   (e: 'refresh'): void;
   (e: 'toggle-selection-mode'): void;
+  (e: 'select-all'): void;
+  (e: 'batch-delete'): void;
+  (e: 'clear-selection'): void;
   (e: 'update:viewMode', value: 'grid' | 'canvas'): void;
+  (e: 'composer-restore', snapshot: Record<string, string>): void;
 }>();
 
 function onViewModeChange(mode: 'grid' | 'canvas') {
@@ -105,8 +123,13 @@ function onViewModeChange(mode: 'grid' | 'canvas') {
   min-width: 8px;
 }
 
-.studio-gallery-filters__select {
-  flex-shrink: 0;
+.studio-gallery-filters__actions {
+  display: flex;
+  align-items: center;
+  flex: 0 0 240px;
+  min-width: 200px;
+  max-width: 320px;
+  justify-content: flex-end;
 }
 
 .studio-gallery-filters__refresh {

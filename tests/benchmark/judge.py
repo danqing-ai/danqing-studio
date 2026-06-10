@@ -1,6 +1,7 @@
 """L2 PickScore judge for image eval benchmark."""
 from __future__ import annotations
 
+import gc
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -27,9 +28,26 @@ class JudgeResult:
 
 def reset_judge_cache() -> None:
     global _MODEL, _PROCESSOR, _LOADED_FROM
+    if _MODEL is not None:
+        try:
+            import torch
+
+            _MODEL.cpu()
+        except Exception:
+            pass
     _MODEL = None
     _PROCESSOR = None
     _LOADED_FROM = ""
+    gc.collect()
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            torch.mps.empty_cache()
+    except Exception:
+        pass
 
 
 def _load_pickscore() -> tuple[Any, Any]:
@@ -105,10 +123,11 @@ def score_pickscore(prompt: str, path: str | Path) -> float:
     return score
 
 
-def required_score(*, golden: float | None) -> float:
+def required_score(*, golden: float | None, floor: float | None = None) -> float:
+    base = JUDGE_FLOOR if floor is None else float(floor)
     if golden is None:
-        return JUDGE_FLOOR
-    return max(JUDGE_FLOOR, float(golden) * GOLDEN_RELATIVE)
+        return base
+    return max(base, float(golden) * GOLDEN_RELATIVE)
 
 
 def judge_image(
@@ -116,9 +135,10 @@ def judge_image(
     path: str | Path,
     *,
     golden: float | None = None,
+    judge_floor: float | None = None,
 ) -> JudgeResult:
     score = score_pickscore(prompt, path)
-    min_required = required_score(golden=golden)
+    min_required = required_score(golden=golden, floor=judge_floor)
     loaded = _LOADED_FROM or resolve_judge_model_path()
     if score < min_required:
         return JudgeResult(

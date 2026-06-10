@@ -33,6 +33,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     p.add_argument("--calibrate", action="store_true", help="Write PickScore baselines to golden/")
     p.add_argument("--output-dir", default="tests/benchmark/outputs")
+    p.add_argument(
+        "--keep-judge-loaded",
+        action="store_true",
+        help="Keep PickScore loaded across cases (faster eval, higher parent RAM)",
+    )
 
     args = parser.parse_args(argv)
 
@@ -76,6 +81,7 @@ def main(argv: list[str] | None = None) -> int:
         output_dir=args.output_dir,
         profile=profile,
         calibrate=args.calibrate,
+        release_judge_each_case=not bool(args.keep_judge_loaded),
     )
 
 

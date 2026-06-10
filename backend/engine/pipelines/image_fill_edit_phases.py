@@ -52,6 +52,7 @@ class ImageFillEditRunContext(MediaRunContext):
     steps: int
     guidance: float
     flux_unpack: Callable[..., Any]
+    flux_pack: Callable[..., Any]
     preview_mode: str
     preview_interval: int
     preview_max_edge: int

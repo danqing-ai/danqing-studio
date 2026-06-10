@@ -66,7 +66,11 @@ def video_scheduler_ctor_kwargs(
     if not extras or scheduler_name != extras:
         return {}
     if extras == "wan_flow_unipc":
-        ctor_kwargs: dict[str, Any] = {"num_train_timesteps": 1000}
+        ctor_kwargs: dict[str, Any] = {
+            "num_train_timesteps": 1000,
+            "use_corrector": getattr(config, "wan_scheduler_use_corrector", False),
+            "velocity_scale": getattr(config, "wan_velocity_scale", None),
+        }
         if bundle_root is not None:
             sched_cfg = bundle_root / "scheduler" / "scheduler_config.json"
             if sched_cfg.is_file():
@@ -340,9 +344,11 @@ def create_video_t5_encoder(
     from backend.engine.common.codecs.text_encoders import T5Encoder
 
     if bool(getattr(config, "uses_wan_t5_bundle", False)):
-        from backend.engine.families.wan.text_encoder_mlx import WanUMT5EncoderMLX
-
         pth_path, tok_dir = wan_t5_bundle_paths(bundle_root)
+        if getattr(ctx, "backend", "mlx") == "cuda":
+            from backend.engine.families.wan.text_encoder_cuda import WanUMT5EncoderCUDA
+            return WanUMT5EncoderCUDA(ctx, pth_path, tok_dir, text_len=max_seq_len)
+        from backend.engine.families.wan.text_encoder_mlx import WanUMT5EncoderMLX
         return WanUMT5EncoderMLX(ctx, pth_path, tok_dir, text_len=max_seq_len)
     t5_dir, t5_tok_dir = t5_encoder_bundle_paths(bundle_root)
     return T5Encoder(ctx, t5_dir, max_seq_len=max_seq_len, tokenizer_path=t5_tok_dir)

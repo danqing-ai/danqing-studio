@@ -15,6 +15,18 @@ from backend.engine.pipelines.video_bundle_layout import wan_flat_transformer_sh
 
 
 @dataclass(frozen=True)
+class ComponentQuantPlan:
+    """Optional TE/VAE (or second text encoder) derived quantization target."""
+
+    subdir: str
+    load_paths: tuple[Path, ...]
+    output_dir: Path
+    bits: int
+    output_shard_prefix: str = "model"
+    single_output_file: Path | None = None
+
+
+@dataclass(frozen=True)
 class DerivedQuantPlan:
     """Where to read dense weights, write quantized shards, and copy the rest."""
 
@@ -25,6 +37,8 @@ class DerivedQuantPlan:
     copy_subdirs: tuple[str, ...]
     copy_root_except_globs: tuple[str, ...]
     copy_entire_bundle_except_inputs: bool = False
+    component_targets: tuple[ComponentQuantPlan, ...] = ()
+    exclude_subdirs: tuple[str, ...] = ()
 
 
 _FAMILY_DEFAULT_LAYOUT: dict[str, str] = {
@@ -54,16 +68,35 @@ def resolve_derived_quant_layout(
     layout_name = str(quant.get("layout") or _FAMILY_DEFAULT_LAYOUT.get(family) or "diffusers_transformer")
 
     if layout_name == "wan_dit_shards":
-        return _plan_wan_dit_shards(from_root, to_root)
-    if layout_name == "dit_single_file":
-        return _plan_dit_single_file(from_root, to_root, family)
-    if layout_name == "diffusers_transformer":
-        return _plan_diffusers_transformer(from_root, to_root)
+        plan = _plan_wan_dit_shards(from_root, to_root)
+    elif layout_name == "dit_single_file":
+        plan = _plan_dit_single_file(from_root, to_root, family)
+    elif layout_name == "diffusers_transformer":
+        plan = _plan_diffusers_transformer(from_root, to_root)
+    else:
+        raise RuntimeError(
+            f"Unknown derived quantization layout {layout_name!r} for family={family!r}. "
+            "Set quantization.layout on the derived version or register a family default."
+        )
 
-    raise RuntimeError(
-        f"Unknown derived quantization layout {layout_name!r} for family={family!r}. "
-        "Set quantization.layout on the derived version or register a family default."
-    )
+    return _attach_component_quant_targets(from_root, to_root, to_ver_config, plan)
+
+
+def copy_component_companion_files(src_dir: Path, dst_dir: Path) -> None:
+    """Copy config/tokenizer sidecars; quantized safetensors are written separately."""
+    if not src_dir.is_dir():
+        return
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    for item in sorted(src_dir.iterdir()):
+        if item.is_dir():
+            companion_dst = dst_dir / item.name
+            if companion_dst.exists():
+                shutil.rmtree(companion_dst)
+            shutil.copytree(item, companion_dst)
+            continue
+        if item.suffix == ".safetensors" or item.name == "model.safetensors.index.json":
+            continue
+        shutil.copy2(item, dst_dir / item.name)
 
 
 def copy_non_quantized_bundle(from_root: Path, to_root: Path, plan: DerivedQuantPlan) -> None:
@@ -71,7 +104,12 @@ def copy_non_quantized_bundle(from_root: Path, to_root: Path, plan: DerivedQuant
     to_root.mkdir(parents=True, exist_ok=True)
 
     if plan.copy_entire_bundle_except_inputs:
-        _copy_tree_excluding(from_root, to_root, plan.load_paths)
+        _copy_tree_excluding(
+            from_root,
+            to_root,
+            plan.load_paths,
+            exclude_subdirs=plan.exclude_subdirs,
+        )
         return
 
     for subdir in plan.copy_subdirs:
@@ -88,6 +126,7 @@ def copy_non_quantized_bundle(from_root: Path, to_root: Path, plan: DerivedQuant
 
     skip_dirs = set(plan.copy_subdirs)
     skip_dirs.add("transformer")
+    skip_dirs.update(plan.exclude_subdirs)
 
     for item in sorted(from_root.iterdir()):
         if item.is_dir():
@@ -105,12 +144,86 @@ def copy_non_quantized_bundle(from_root: Path, to_root: Path, plan: DerivedQuant
         shutil.copy2(item, to_root / item.name)
 
 
-def _copy_tree_excluding(from_root: Path, to_root: Path, exclude_files: tuple[Path, ...]) -> None:
+def _component_quant_bits(quant: dict[str, Any], component: str) -> int | None:
+    block = quant.get(component)
+    if not isinstance(block, dict):
+        return None
+    bits = block.get("bits")
+    return int(bits) if bits in (4, 8) else None
+
+
+def _safetensors_paths_under(dir_path: Path) -> tuple[Path, ...]:
+    if not dir_path.is_dir():
+        return ()
+    single = dir_path / "model.safetensors"
+    if single.is_file():
+        return (single,)
+    shards = tuple(sorted(dir_path.glob("*.safetensors")))
+    return shards
+
+
+def _attach_component_quant_targets(
+    from_root: Path,
+    to_root: Path,
+    to_ver_config: dict[str, Any],
+    plan: DerivedQuantPlan,
+) -> DerivedQuantPlan:
+    quant = to_ver_config.get("quantization") or {}
+    targets: list[ComponentQuantPlan] = []
+    for component in ("text_encoder", "text_encoder_2", "vae"):
+        bits = _component_quant_bits(quant, component)
+        if bits is None:
+            continue
+        src_dir = from_root / component
+        load_paths = _safetensors_paths_under(src_dir)
+        if not load_paths:
+            raise RuntimeError(
+                f"Registry declares {component} {bits}-bit derived quantization, "
+                f"but no safetensors weights were found under {src_dir}."
+            )
+        single_file = load_paths[0] if len(load_paths) == 1 and load_paths[0].name == "model.safetensors" else None
+        targets.append(
+            ComponentQuantPlan(
+                subdir=component,
+                load_paths=load_paths,
+                output_dir=to_root / component,
+                bits=bits,
+                single_output_file=(to_root / component / "model.safetensors") if single_file else None,
+            )
+        )
+
+    if not targets:
+        return plan
+
+    quant_subdirs = {t.subdir for t in targets}
+    return DerivedQuantPlan(
+        load_paths=plan.load_paths,
+        output_dir=plan.output_dir,
+        output_shard_prefix=plan.output_shard_prefix,
+        single_output_file=plan.single_output_file,
+        copy_subdirs=tuple(s for s in plan.copy_subdirs if s not in quant_subdirs),
+        copy_root_except_globs=plan.copy_root_except_globs,
+        copy_entire_bundle_except_inputs=plan.copy_entire_bundle_except_inputs,
+        component_targets=tuple(targets),
+        exclude_subdirs=tuple(sorted(quant_subdirs)),
+    )
+
+
+def _copy_tree_excluding(
+    from_root: Path,
+    to_root: Path,
+    exclude_files: tuple[Path, ...],
+    *,
+    exclude_subdirs: tuple[str, ...] = (),
+) -> None:
     excluded = {p.resolve() for p in exclude_files}
+    excluded_prefixes = tuple(from_root / name for name in exclude_subdirs)
     for src in sorted(from_root.rglob("*")):
         if not src.is_file():
             continue
         if src.resolve() in excluded:
+            continue
+        if any(src.is_relative_to(prefix) for prefix in excluded_prefixes if prefix.exists()):
             continue
         rel = src.relative_to(from_root)
         dest = to_root / rel

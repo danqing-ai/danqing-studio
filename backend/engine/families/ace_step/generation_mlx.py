@@ -61,9 +61,18 @@ logger = logging.getLogger(__name__)
 class AceStepMlxGenerator:
     """MLX-only ACE-Step generator."""
 
-    def __init__(self, ctx: Any, bundle_root: Path):
+    def __init__(
+        self,
+        ctx: Any,
+        bundle_root: Path,
+        *,
+        entry: Any | None = None,
+        version_key: str | None = None,
+    ):
         self._ctx = ctx
         self._bundle_root = Path(bundle_root)
+        self._registry_entry = entry
+        self._version_key = version_key
         self._condition_encoder: Any = None
         self._audio_codec: Any = None
         self._dit: AceStepTransformer | None = None
@@ -117,6 +126,24 @@ class AceStepMlxGenerator:
         )
 
         cfg = self._model_config
+        from backend.engine.common.bundle.quant_inference import resolve_dit_inference_weight_mode
+        from backend.engine.common.bundle.safetensors_affine_quant import read_bundle_affine_bits_if_quantized
+
+        dit_path = dit_bundle / "model.safetensors"
+        dit_weights = load_decoder_safetensors_for_mlx(
+            str(dit_path), array_fn=self._ctx.array
+        )
+        weight_items = list(dit_weights)
+        weight_keys = frozenset(k for k, _ in weight_items)
+        bundle_affine_bits = read_bundle_affine_bits_if_quantized(dict(weight_items), dit_path)
+        inference_mode = resolve_dit_inference_weight_mode(
+            self._ctx,
+            entry=self._registry_entry,
+            version_key=self._version_key,
+            weight_keys=weight_keys,
+            bundle_affine_bits=bundle_affine_bits,
+        )
+
         self._dit = AceStepTransformer(
             self._ctx,
             hidden_size=cfg["hidden_size"],
@@ -135,11 +162,15 @@ class AceStepMlxGenerator:
             rope_theta=cfg["rope_theta"],
             max_position_embeddings=cfg["max_position_embeddings"],
         )
-        dit_weights = load_decoder_safetensors_for_mlx(
-            str(dit_bundle / "model.safetensors"), array_fn=self._ctx.array
+        self._dit.load_weights(
+            weight_items,
+            strict=False,
+            ctx=self._ctx,
+            bundle_affine_bits=bundle_affine_bits,
+            inference_mode=inference_mode,
         )
-        self._dit._model.load_weights(dit_weights)
-        self._ctx.eval(self._dit._model.parameters())
+        setattr(self._dit, "_dq_inference_mode", inference_mode)
+        self._ctx.eval(self._dit.parameters())
 
         enc_dir = bundle / "Qwen3-Embedding-0.6B"
         if not enc_dir.is_dir():

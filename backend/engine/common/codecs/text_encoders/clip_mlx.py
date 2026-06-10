@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 
-class CLIPEncoder:
+class CLIPEncoderMlx:
     """CLIP 文本/图像编码器。用于: Flux1 系列的双编码器（T5 + CLIP）。"""
 
     def __init__(self, ctx: Any, model_path: str,
@@ -14,7 +14,6 @@ class CLIPEncoder:
         self.embed_dim = embed_dim
         self._tokenizer = None
         self._model = None
-        self._torch_bridge_model = None
 
     @property
     def tokenizer(self):
@@ -31,20 +30,20 @@ class CLIPEncoder:
             truncation=True, return_tensors="np",
         )
         input_ids = tokens["input_ids"]
-        if ctx.backend == "mlx":
-            import mlx.core as mx
-            input_ids_mx = ctx.array(input_ids, dtype=mx.int32)
-            return self._forward_mlx(input_ids_mx)
-        from backend.engine.common.codecs.text_encoders.clip_cuda import clip_encoder_encode_from_numpy
-        return clip_encoder_encode_from_numpy(self, input_ids)
+        import mlx.core as mx
+        input_ids_mx = ctx.array(input_ids, dtype=mx.int32)
+        return self._forward_mlx(input_ids_mx)
 
     def _forward_mlx(self, input_ids):
         import mlx.core as mx
 
         try:
             from mlx_lm.models.clip import CLIPTextModel, CLIPTextConfig
-        except ImportError:
-            return self._forward_mlx_via_torch_bridge(input_ids)
+        except ImportError as e:
+            raise RuntimeError(
+                "CLIP MLX forward requires mlx_lm.models.clip; torch bridge is not allowed "
+                "on the MLX hot path."
+            ) from e
         if self._model is None:
             config = CLIPTextConfig.from_pretrained(self.model_path)
             self._model = CLIPTextModel(config)
@@ -53,11 +52,5 @@ class CLIPEncoder:
         pooled, hidden = self._model(input_ids)
         return pooled, hidden
 
-    def _forward_mlx_via_torch_bridge(self, input_ids):
-        import numpy as np
-
-        from backend.engine.common.codecs.text_encoders.clip_cuda import clip_cpu_torch_bridge_numpy
-
-        ids_np = np.asarray(input_ids, dtype=np.int32)
-        pooled_np, hidden_np = clip_cpu_torch_bridge_numpy(self, ids_np)
-        return self.ctx.array(pooled_np), self.ctx.array(hidden_np)
+    def release_weights(self) -> None:
+        self._model = None

@@ -13,13 +13,20 @@
         :time-options="timeOptions"
         :model-options="allModelOptions"
         :selection-mode="selectionMode"
+        :selected-count="selectedPaths.size"
+        :all-selected="allLoadedSelected"
         :view-mode="viewMode"
         :supports-canvas="true"
+        canvas-media="image"
         @update:filter-time="filterTime = $event"
         @update:filter-models="filterModels = $event"
         @refresh="refreshGallery"
         @toggle-selection-mode="toggleSelectionMode"
+        @select-all="selectAllLoaded"
+        @batch-delete="batchDeleteSelected"
+        @clear-selection="clearSelection"
         @update:view-mode="onViewModeChange"
+        @composer-restore="onCanvasComposerRestore"
       />
     </template>
 
@@ -213,7 +220,7 @@
 // @ts-nocheck — legacy create view; narrow types in a follow-up pass
 import { ref, reactive, computed, watch, onMounted, onUnmounted, inject, nextTick, unref } from 'vue';
 import type { Ref } from 'vue';
-import { useRouter } from 'vue-router';
+import { useRouter, useRoute } from 'vue-router';
 import { toast } from '@/utils/feedback';
 import { api, taskIdFromSubmitResponse } from '@/utils/api';
 import { $tt, $mn, $md, $mvn, $pn } from '@/utils/i18n';
@@ -223,7 +230,8 @@ import { usePromptApplyOffer } from '@/composables/usePromptApplyOffer';
 import { useTasksStore } from '@/stores/tasks';
 import { useRegistryStore } from '@/stores/registry';
 import type { SystemInfo, GalleryItem, Task } from '@/types';
-import { applyDefaults, hasDeviation, strengthDefaultFromRegistry, strengthToSourceFidelity } from '@/utils/registryParamSchema';
+import { applyDefaults, buildResolutionSizeOptions, hasDeviation, parseSizeValue, pickResolutionForModel, strengthDefaultFromRegistry, strengthToSourceFidelity } from '@/utils/registryParamSchema';
+import { getImageSizeForModel, migrateLegacyImageLastSize, setImageSizeForModel } from '@/utils/imageSizeStorage';
 
 import { warnIfRiskyMemory } from '@/composables/memoryHint';
 import { useComposerLlm } from '@/composables/useComposerLlm';
@@ -274,6 +282,7 @@ const systemInfo = inject<Ref<SystemInfo>>('systemInfo');
 const tasksStore = useTasksStore();
 const registryStore = useRegistryStore();
 const router = useRouter();
+const route = useRoute();
 
 /* ------------------------------------------------------------------ */
 /*  RegistryActions helpers                                            */
@@ -329,7 +338,7 @@ const params = reactive<Record<string, unknown>>({
 });
 
 const selectedModelVersion = ref('');
-const selectedSize = ref(getItem(DQ_STORAGE.IMAGE_LAST_SIZE) || '1024x1024');
+const selectedSize = ref('1024x1024');
 const batchCount = ref(1);
 const generating = ref(false);
 const infiniteCanvasRef = ref<InstanceType<typeof InfiniteCanvas> | null>(null);
@@ -1236,6 +1245,7 @@ function onModelVersionChange(value: string) {
   const activeMode = showEditorDrawer.value ? editorMode.value : imageMode.value;
   setItem(getImageModeStorageKey(activeMode), value);
   loadModelDefaults();
+  syncResolutionForModel(parsed.modelKey);
   loadCompatibleAdapters(parsed.modelKey);
 }
 
@@ -1243,16 +1253,29 @@ function onModelVersionChange(value: string) {
 /*  Size options                                                       */
 /* ------------------------------------------------------------------ */
 
-const sizeOptions = computed(() => [
-  { label: '1:1', value: '512x512', pixelLabel: '512×512' },
-  { label: '1:1 HD', value: '1024x1024', pixelLabel: '1024×1024' },
-  { label: '2:3', value: '1024x1536', pixelLabel: '1024×1536' },
-  { label: '3:2', value: '1536x1024', pixelLabel: '1536×1024' },
-  { label: '16:9 (1080p)', value: '1920x1080', pixelLabel: '1920×1080' },
-  { label: '9:16 (1080p)', value: '1080x1920', pixelLabel: '1080×1920' },
-  { label: '16:9 (720p)', value: '1344x768', pixelLabel: '1344×768' },
-  { label: '9:16 (720p)', value: '768x1344', pixelLabel: '768×1344' },
-]);
+const sizeOptions = computed(() =>
+  buildResolutionSizeOptions(currentModelConfig.value?.parameters as Record<string, unknown> | undefined),
+);
+
+function applySelectedSize(val: string) {
+  const parsed = parseSizeValue(val);
+  if (!parsed) return;
+  params.width = parsed.width;
+  params.height = parsed.height;
+}
+
+function syncResolutionForModel(modelId?: string) {
+  const mid = modelId || String(params.model || '');
+  if (!mid) return;
+  migrateLegacyImageLastSize(mid);
+  const pick = pickResolutionForModel(
+    currentModelConfig.value?.parameters as Record<string, unknown> | undefined,
+    getImageSizeForModel(mid),
+  );
+  if (!pick) return;
+  if (selectedSize.value !== pick) selectedSize.value = pick;
+  else applySelectedSize(pick);
+}
 
 const imageMode = ref('text2img');
 
@@ -1282,6 +1305,7 @@ watch(imageMode, (newMode, oldMode) => {
       params.model = parsed.modelKey;
       params.version = parsed.versionKey;
       loadModelDefaults();
+      syncResolutionForModel(parsed.modelKey);
       loadCompatibleAdapters(parsed.modelKey);
       return;
     }
@@ -1291,17 +1315,19 @@ watch(imageMode, (newMode, oldMode) => {
     reconcileVersionPickerSelection(filteredModelPickerVersions.value, params, selectedModelVersion)
   ) {
     loadModelDefaults();
+    syncResolutionForModel(String(params.model || ''));
     loadCompatibleAdapters(String(params.model || ''));
   }
 });
 
 watch(selectedSize, (val) => {
-  const [w, h] = val.split('x').map(Number);
-  if (w && h) {
-    params.width = w;
-    params.height = h;
-  }
-  setItem(DQ_STORAGE.IMAGE_LAST_SIZE, val);
+  applySelectedSize(val);
+  const mid = String(params.model || '');
+  if (mid) setImageSizeForModel(mid, val);
+});
+
+watch(sizeOptions, () => {
+  syncResolutionForModel();
 });
 
 // Drawer 关闭时保存 editor 模型并恢复 composer 模型
@@ -1710,27 +1736,16 @@ const loadModelRegistry = async () => {
 const loadModelDefaults = () => {
   const config = currentModelConfig.value;
   if (!config || !config.parameters) return;
-  const prevWidth = params.width;
-  const prevHeight = params.height;
   applyDefaults(config.parameters as Record<string, unknown>, params);
-  params.width = prevWidth;
-  params.height = prevHeight;
 };
 
 function restoreSavedSize() {
-  const savedSize = getItem(DQ_STORAGE.IMAGE_LAST_SIZE);
-  if (savedSize && sizeOptions.value.some((o) => o.value === savedSize)) {
-    selectedSize.value = savedSize;
-    const [w, h] = savedSize.split('x').map(Number);
-    if (w && h) {
-      params.width = w;
-      params.height = h;
-    }
-  }
+  syncResolutionForModel(String(params.model || ''));
 }
 
 const resetToDefaults = () => {
   loadModelDefaults();
+  syncResolutionForModel(String(params.model || ''));
   toast.success($tt('studio.restoredDefaults'));
 };
 
@@ -2190,6 +2205,10 @@ onMounted(async () => {
   if (promptDraft) {
     params.prompt = applyPromptDraft(params.prompt, promptDraft);
   }
+  const q = route.query;
+  if (typeof q.model === 'string' && q.model) params.model = q.model;
+  if (typeof q.prompt === 'string' && q.prompt) params.prompt = q.prompt;
+  if (typeof q.lora === 'string' && q.lora) params.lora = q.lora;
 });
 
 onUnmounted(() => {

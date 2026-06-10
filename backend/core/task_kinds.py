@@ -8,6 +8,7 @@ VIDEO_EDIT = "video.edit"
 VIDEO_UPSCALE = "video.upscale"
 AUDIO_GENERATION = "audio.generation"
 AUDIO_EDIT = "audio.edit"
+LORA_TRAINING = "lora.training"
 
 ALL_KINDS: frozenset[str] = frozenset(
     {
@@ -19,6 +20,7 @@ ALL_KINDS: frozenset[str] = frozenset(
         VIDEO_UPSCALE,
         AUDIO_GENERATION,
         AUDIO_EDIT,
+        LORA_TRAINING,
     }
 )
 
@@ -59,3 +61,7 @@ def is_video_kind(kind: str) -> bool:
 
 def is_audio_kind(kind: str) -> bool:
     return kind.startswith("audio.")
+
+
+def is_lora_training_kind(kind: str) -> bool:
+    return kind == LORA_TRAINING

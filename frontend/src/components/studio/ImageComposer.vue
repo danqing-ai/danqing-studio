@@ -90,16 +90,14 @@
           size="small"
           @command="onStyleCommand"
         >
-          <ComposerIconTip :content="$t('create.composerTip.preset')">
-            <DqIconButton
-              type="text"
-              size="xs"
-              class="image-composer__preset-btn"
-              :aria-label="$t('create.preset')"
-            >
-              <DqIcon :size="14"><DocumentCopy /></DqIcon>
-            </DqIconButton>
-          </ComposerIconTip>
+          <DqIconButton
+            type="text"
+            size="xs"
+            class="image-composer__preset-btn"
+            :label="$t('create.composerTip.preset')"
+          >
+            <DqIcon :size="14"><DocumentCopy /></DqIcon>
+          </DqIconButton>
           <template #dropdown>
             <DqDropdownMenu>
               <DqDropdownItem
@@ -171,10 +169,8 @@
             v-for="opt in sizeOptions"
             :key="opt.value"
             :value="opt.value"
-          >
-            <span class="image-composer__size-ratio">{{ opt.label }}</span>
-            <span v-if="opt.pixelLabel" class="image-composer__size-pixel">{{ opt.pixelLabel }}</span>
-          </DqOption>
+            :label="formatResolutionOptionLabel(opt)"
+          />
         </DqSelect>
 
         <!-- Advanced params toggle -->
@@ -305,7 +301,7 @@
                       <DqOption
                         v-for="l in compatibleLoras"
                         :key="String(l.id)"
-                        :label="l.name || String(l.id)"
+                        :label="loraOptionLabel(l)"
                         :value="l.id"
                       />
                     </DqSelect>
@@ -423,7 +419,7 @@ import {
 } from '@danqing/dq-shell';
 import { assetIdFromGalleryPath } from '@/utils/copilotHandoff';
 import { $tt } from '@/utils/i18n';
-import { img2imgUsesStrength, normalizeParamsDef } from '@/utils/registryParamSchema';
+import { formatResolutionOptionLabel, img2imgUsesStrength, normalizeParamsDef } from '@/utils/registryParamSchema';
 
 const props = defineProps<{
   modelValue: string;
@@ -505,6 +501,14 @@ const localParams = computed({
 function controlNetOptionLabel(n: Record<string, unknown>): string {
   const name = controlNetDisplayName(n);
   return controlNetReady(n) ? name : `${name} (${$t('studio.controlnetNotInstalled')})`;
+}
+
+function loraOptionLabel(l: Record<string, unknown>): string {
+  const base = String(l.name || l.id || '');
+  if (l.source === 'user_trained') {
+    return `${base} (${$t('studio.myLoraTag')})`;
+  }
+  return base;
 }
 
 const controlNetGuideHint = computed(() => {
@@ -716,6 +720,7 @@ function onStyleCommand(command: string) {
   position: absolute;
   bottom: 6px;
   left: 8px;
+  z-index: 1;
   display: flex;
   align-items: center;
 }
@@ -774,6 +779,7 @@ function onStyleCommand(command: string) {
   position: absolute;
   bottom: 6px;
   right: 8px;
+  z-index: 1;
   display: flex;
   align-items: center;
 }

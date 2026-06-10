@@ -171,6 +171,263 @@ class ControlNetRuntimeTests(unittest.TestCase):
         self.assertIn("cuda", msg)
 
 
+class DepthProMlxTests(unittest.TestCase):
+    def test_depth_encode_mlx_when_bundle_present(self) -> None:
+        import json
+
+        import numpy as np
+        from PIL import Image
+
+        pointer = (
+            Path(__file__).resolve().parents[1]
+            / "default_config"
+            / "workspace.pointer.json"
+        )
+        if not pointer.is_file():
+            self.skipTest("workspace.pointer.json missing")
+        ws = json.loads(pointer.read_text(encoding="utf-8")).get("custom_workspace_dir")
+        bundle = Path(ws) / "models" / "Tools" / "depth-pro-fp16"
+        if not (bundle / "model.safetensors").is_file():
+            self.skipTest("depth-pro bundle not installed")
+
+        from backend.engine.families.flux1.depth_encode_mlx import estimate_depth_rgb01_mlx
+
+        img = Image.new("RGB", (256, 256), color=(40, 120, 200))
+        out = estimate_depth_rgb01_mlx(
+            img, width=256, height=256, depth_bundle_root=bundle,
+        )
+        self.assertEqual(out.shape, (256, 256, 3))
+        self.assertEqual(out.dtype, np.float32)
+        self.assertGreaterEqual(float(out.min()), 0.0)
+        self.assertLessEqual(float(out.max()), 1.0)
+
+
+class FluxReduxParityTests(unittest.TestCase):
+    def test_redux_mlx_matches_cuda_when_bundle_present(self) -> None:
+        import json
+
+        import numpy as np
+        from PIL import Image
+
+        pointer = (
+            Path(__file__).resolve().parents[1]
+            / "default_config"
+            / "workspace.pointer.json"
+        )
+        if not pointer.is_file():
+            self.skipTest("workspace.pointer.json missing")
+        ws = json.loads(pointer.read_text(encoding="utf-8")).get("custom_workspace_dir")
+        bundle = Path(ws) / "models" / "ControlNet" / "flux-redux-fp16"
+        if not bundle.is_dir():
+            self.skipTest("flux-redux bundle not installed")
+
+        from backend.engine.families.flux1.redux_encode_cuda import encode_redux_context_tokens_cuda
+        from backend.engine.families.flux1.redux_encode_mlx import encode_redux_context_tokens_mlx
+
+        img = Image.new("RGB", (512, 512), color=(40, 120, 200))
+        out_mlx = encode_redux_context_tokens_mlx(img, redux_bundle_root=bundle)
+        out_cuda = encode_redux_context_tokens_cuda(img, redux_bundle_root=bundle)
+        self.assertEqual(out_mlx.shape, out_cuda.shape)
+        self.assertEqual(out_mlx.shape[1:], (729, 4096))
+        cos = float(
+            np.sum(out_mlx.flatten() * out_cuda.flatten())
+            / (np.linalg.norm(out_mlx) * np.linalg.norm(out_cuda) + 1e-8)
+        )
+        # Native MLX SigLIP + redux MLP — not bit-identical to HF torch path.
+        self.assertGreater(cos, 0.85)
+
+
+class FluxDepthParityTests(unittest.TestCase):
+    def test_depth_mlx_matches_cuda_when_bundle_present(self) -> None:
+        import importlib.util
+        import json
+
+        import numpy as np
+        from PIL import Image
+
+        if importlib.util.find_spec("torchvision") is None:
+            self.skipTest("torchvision required for depth-pro CUDA reference path")
+
+        pointer = (
+            Path(__file__).resolve().parents[1]
+            / "default_config"
+            / "workspace.pointer.json"
+        )
+        if not pointer.is_file():
+            self.skipTest("workspace.pointer.json missing")
+        ws = json.loads(pointer.read_text(encoding="utf-8")).get("custom_workspace_dir")
+        bundle = Path(ws) / "models" / "Tools" / "depth-pro-fp16"
+        if not (bundle / "model.safetensors").is_file():
+            self.skipTest("depth-pro bundle not installed")
+
+        from backend.engine.families.flux1.depth_encode_cuda import estimate_depth_rgb01_cuda
+        from backend.engine.families.flux1.depth_encode_mlx import estimate_depth_rgb01_mlx
+
+        img = Image.new("RGB", (512, 512), color=(40, 120, 200))
+        out_mlx = estimate_depth_rgb01_mlx(
+            img, width=256, height=256, depth_bundle_root=bundle,
+        )
+        out_cuda = estimate_depth_rgb01_cuda(
+            img, width=256, height=256, depth_bundle_root=bundle,
+        )
+        self.assertEqual(out_mlx.shape, out_cuda.shape)
+        cos = float(
+            np.sum(out_mlx.flatten() * out_cuda.flatten())
+            / (np.linalg.norm(out_mlx) * np.linalg.norm(out_cuda) + 1e-8)
+        )
+        # Native Depth Pro MLX reimplementation — min-max RGB postprocess aligns; internals differ.
+        self.assertGreater(cos, 0.90)
+
+
+class CogView4GlmEncoderMlxTests(unittest.TestCase):
+    def test_glm_encode_mlx_matches_torch_when_bundle_present(self) -> None:
+        import json
+
+        import mlx.core as mx
+        import numpy as np
+
+        pointer = (
+            Path(__file__).resolve().parents[1]
+            / "default_config"
+            / "workspace.pointer.json"
+        )
+        if not pointer.is_file():
+            self.skipTest("workspace.pointer.json missing")
+        ws = json.loads(pointer.read_text(encoding="utf-8")).get("custom_workspace_dir")
+        bundle = Path(ws) / "models" / "Image" / "cogview4-6b-bf16"
+        te_dir = bundle / "text_encoder"
+        tok_dir = bundle / "tokenizer"
+        if not (te_dir / "config.json").is_file():
+            self.skipTest("cogview4-6b text encoder bundle not installed")
+
+        from backend.engine.families.cogview4.text_encoder import CogView4TextEncoder
+        from backend.engine.families.cogview4.text_encoder_cuda import build_glm4_text_encoder_torch
+        from backend.engine.runtime.mlx import MLXContext
+
+        ctx = MLXContext()
+        enc = CogView4TextEncoder(
+            ctx,
+            str(te_dir),
+            tokenizer_path=str(tok_dir),
+            max_seq_len=256,
+        )
+        prompt = "a studio photo of a red backpack"
+        out_mlx = np.array(enc.encode([prompt]).astype(mx.float32))
+        torch_enc = build_glm4_text_encoder_torch(str(te_dir))
+        np_ids = enc._tokenize_glm_np([prompt]).astype(np.int64)
+        out_torch = torch_enc.encode_numpy(np_ids)
+        self.assertEqual(out_mlx.shape, out_torch.shape)
+        cos = float(
+            np.sum(out_mlx.flatten() * out_torch.flatten())
+            / (np.linalg.norm(out_mlx) * np.linalg.norm(out_torch) + 1e-8)
+        )
+        self.assertGreater(cos, 0.999)
+
+
+class CogView4DiTForwardSmokeTests(unittest.TestCase):
+    def test_forward_smoke(self) -> None:
+        import mlx.core as mx
+
+        from backend.engine.config.model_configs import CogView4Config
+        from backend.engine.families.cogview4.transformer_mlx import CogView4DiTMLX
+        from backend.engine.runtime.mlx import MLXContext
+
+        cfg = CogView4Config(num_layers=2)
+        model = CogView4DiTMLX(cfg, MLXContext())
+        latents = mx.zeros((1, 16, 32, 32), dtype=mx.bfloat16)
+        txt = mx.zeros((1, 16, 4096), dtype=mx.bfloat16)
+        sigmas = mx.array([1.0, 0.75, 0.5, 0.25], dtype=mx.float32)
+        out = model.forward(
+            latents,
+            0,
+            txt_embeds=txt,
+            sigmas=sigmas,
+            original_size=(512, 512),
+            target_size=(512, 512),
+            crop_coords=(0, 0),
+        )
+        self.assertEqual(tuple(out.shape), (1, 16, 32, 32))
+
+    def test_encode_output_fits_dit_when_bundle_present(self) -> None:
+        import json
+
+        import mlx.core as mx
+
+        pointer = (
+            Path(__file__).resolve().parents[1]
+            / "default_config"
+            / "workspace.pointer.json"
+        )
+        if not pointer.is_file():
+            self.skipTest("workspace.pointer.json missing")
+        ws = json.loads(pointer.read_text(encoding="utf-8")).get("custom_workspace_dir")
+        bundle = Path(ws) / "models" / "Image" / "cogview4-6b-bf16"
+        te_dir = bundle / "text_encoder"
+        tok_dir = bundle / "tokenizer"
+        if not (te_dir / "config.json").is_file():
+            self.skipTest("cogview4-6b text encoder bundle not installed")
+
+        from backend.engine.config.model_configs import CogView4Config
+        from backend.engine.families.cogview4.text_encoder import CogView4TextEncoder
+        from backend.engine.families.cogview4.transformer_mlx import CogView4DiTMLX
+        from backend.engine.runtime.mlx import MLXContext
+
+        ctx = MLXContext()
+        enc = CogView4TextEncoder(
+            ctx,
+            str(te_dir),
+            tokenizer_path=str(tok_dir),
+            max_seq_len=256,
+        )
+        txt = enc.encode(["一只橘猫"])
+        self.assertEqual(int(txt.shape[-1]), 4096)
+        self.assertGreater(int(txt.shape[1]), 0)
+
+        model = CogView4DiTMLX(CogView4Config(num_layers=2), ctx)
+        latents = mx.zeros((1, 16, 32, 32), dtype=mx.bfloat16)
+        sigmas = mx.array([1.0, 0.5], dtype=mx.float32)
+        out = model.forward(
+            latents,
+            0,
+            txt_embeds=txt,
+            sigmas=sigmas,
+            original_size=(512, 512),
+            target_size=(512, 512),
+            crop_coords=(0, 0),
+        )
+        self.assertEqual(tuple(out.shape), (1, 16, 32, 32))
+
+
+class CogView4SchedulerTests(unittest.TestCase):
+    def test_calculate_shift_mu_512_latent(self) -> None:
+        from backend.engine.common.ops.schedulers import cogview4_calculate_shift_mu
+
+        mu = cogview4_calculate_shift_mu(1024, base_seq_len=256, base_shift=0.25, max_shift=0.75)
+        self.assertAlmostEqual(mu, 1.75, places=4)
+
+    def test_scheduler_sigmas_endpoints(self) -> None:
+        from backend.engine.common.ops.schedulers import FlowMatchEulerCogView4Scheduler
+        from backend.engine.runtime.mlx import MLXContext
+
+        sched = FlowMatchEulerCogView4Scheduler(ctx=MLXContext())
+        sched.set_timesteps(
+            4,
+            image_seq_len=1024,
+            scheduler_base_image_seq_len=256,
+            scheduler_base_shift=0.25,
+            scheduler_max_shift=0.75,
+        )
+        self.assertAlmostEqual(float(sched.sigmas[0]), 1.0, places=3)
+        self.assertAlmostEqual(float(sched.timesteps[0]), 1000.0, places=3)
+
+
+class CogView4RegistryTests(unittest.TestCase):
+    def test_registry_declares_mlx_only(self) -> None:
+        entry = _load_default_registry_expanded()["models"]["cogview4-6b"]
+        self.assertEqual(entry.get("backends"), ["mlx"])
+        self.assertEqual(entry.get("family"), "cogview4")
+
+
 class ControlNetScopeTests(unittest.TestCase):
     def test_scope_filter(self) -> None:
         from backend.api.routes.settings import _controlnet_matches_scope
@@ -2210,6 +2467,30 @@ class BundleManifestTests(unittest.TestCase):
             self.assertIn("tokenizer", components)
             assert_bundle_ready_for_family(root, family="wan", model_id="wan-2.2-ti2v-5b")
 
+    def test_scan_components_acestep_nested_dit_layout(self) -> None:
+        from backend.core.bundle_manifest import assert_bundle_ready_for_family, scan_components
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            dit = root / "acestep-v15-turbo"
+            dit.mkdir(parents=True)
+            (dit / "model.safetensors").write_bytes(b"x")
+            (dit / "config.json").write_text("{}", encoding="utf-8")
+            vae = root / "vae"
+            vae.mkdir(parents=True)
+            (vae / "diffusion_pytorch_model.safetensors").write_bytes(b"y")
+            (root / "acestep-5Hz-lm-1.7B").mkdir(parents=True)
+            (root / "acestep-5Hz-lm-1.7B" / "model.safetensors").write_bytes(b"z")
+
+            components = scan_components(root)
+            self.assertIn("transformer", components)
+            self.assertIn("vae", components)
+            self.assertNotIn(
+                "acestep-5Hz-lm-1.7B/model.safetensors",
+                components.get("transformer", []),
+            )
+            assert_bundle_ready_for_family(root, family="ace_step", model_id="ace-step-xl-sft")
+
     def test_t5_encoder_bundle_paths_flux_layout(self) -> None:
         from backend.engine.common.bundle.layout import t5_encoder_bundle_paths
 
@@ -2251,6 +2532,54 @@ class BundleManifestTests(unittest.TestCase):
             assert status is not None
             self.assertFalse(status["complete"])
             self.assertIn("text_encoder", status["missing"])
+
+    def test_lora_registry_category_skips_full_bundle_contract(self) -> None:
+        from backend.core.bundle_manifest import is_registry_lora_category
+        from backend.core.interfaces import ModelConfig
+        from backend.services.services import SettingsService
+
+        self.assertTrue(is_registry_lora_category("loras"))
+        self.assertFalse(is_registry_lora_category("base_models"))
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            lora_dir = root / "models" / "Lora" / "test-lora-fp16"
+            lora_dir.mkdir(parents=True)
+            (lora_dir / "adapter.safetensors").write_bytes(b"x")
+
+            config = ModelConfig(
+                engine="danqing-image",
+                type="lora",
+                name={"zh": "Test LoRA", "en": "Test LoRA"},
+                category="loras",
+                family="qwen_image",
+                versions={
+                    "fp16": {
+                        "local_path": "models/Lora/test-lora-fp16",
+                    }
+                },
+            )
+
+            class _Resolver:
+                def resolve_registry_local_path(self, local_path: str) -> Path:
+                    return (root / local_path).resolve()
+
+            svc = SettingsService.__new__(SettingsService)
+            svc._path_resolver = _Resolver()
+            model_dir = svc._resolve_registry_version_bundle_dir(
+                "test-lora", "fp16", config.versions["fp16"]
+            )
+            self.assertTrue(model_dir.exists())
+            self.assertTrue(SettingsService._path_has_bundle_weights(model_dir))
+
+            category = config.category or ""
+            family = config.family or ""
+            components = None
+            if SettingsService._path_has_bundle_weights(model_dir) and family and category != "loras":
+                from backend.core.bundle_manifest import bundle_component_status
+
+                components = bundle_component_status(model_dir, family=family)
+            self.assertIsNone(components)
 
 
 class DiffRhythmDecodeTests(unittest.TestCase):
@@ -2452,7 +2781,7 @@ class DiffRhythmDecodeTests(unittest.TestCase):
 
         try:
             import torch  # noqa: F401
-            from backend.engine.families.diffrhythm.mulan import MuQStyleEncoderTorch
+            from backend.engine.families.diffrhythm.mulan_cuda import MuQStyleEncoderTorch
         except ImportError:
             return
 
@@ -2572,7 +2901,23 @@ Should not appear
         self.assertIn("soft light", out)
         self.assertLessEqual(out.count("plain hair"), 2)
 
-    def test_generation_kwargs_use_sampler_not_temp(self) -> None:
+    def test_sanitize_enhanced_prompt_strips_cjk_tail_loops(self) -> None:
+        from backend.engine.llm.prompt_sanitize import (
+            prompt_enhance_quality_ok,
+            sanitize_enhanced_prompt,
+        )
+
+        prefix = (
+            "赵今麦身着透视旗袍，展示真实人体质感，其乳房和下体部分裸露，"
+            "背景中可见丰富细节，整体呈现自然质感，"
+        )
+        raw = prefix + "背景中" * 20
+        out = sanitize_enhanced_prompt(raw)
+        self.assertIn("赵今麦", out)
+        self.assertIn("整体呈现自然质感", out)
+        self.assertLessEqual(out.count("背景中"), 2)
+        self.assertFalse(out.endswith("背景中背景中"))
+        self.assertTrue(prompt_enhance_quality_ok(out))
         from backend.core.contracts import ChatCompletionRequest, ChatMessage
         from backend.engine.llm.service import LLMService
 
@@ -2608,13 +2953,263 @@ Should not appear
         self.assertTrue(result.enhanced_prompt.strip())
 
 
+class QuantizedInferenceModeTests(unittest.TestCase):
+    def test_resolve_dense_for_full_precision_version(self) -> None:
+        from backend.engine.common.bundle.quant_inference import resolve_inference_weight_mode
+
+        entry = type("E", (), {"raw": {"versions": {"fp16": {"source_type": "full"}}}})()
+        mode = resolve_inference_weight_mode(entry, "fp16", type("C", (), {"backend": "mlx"})())
+        self.assertEqual(mode.kind, "dense")
+
+    def test_resolve_quantized_for_registry_bits(self) -> None:
+        from backend.engine.common.bundle.quant_inference import resolve_inference_weight_mode
+
+        entry = type(
+            "E",
+            (),
+            {
+                "raw": {
+                    "versions": {
+                        "int4": {
+                            "quantization": {"bits": 4, "scheme": "mlx_affine"},
+                        }
+                    }
+                }
+            },
+        )()
+        mode = resolve_inference_weight_mode(
+            entry,
+            "int4",
+            type("C", (), {"backend": "mlx"})(),
+            weight_keys=frozenset({"layers.0.weight", "layers.0.scales", "layers.0.biases"}),
+            bundle_affine_bits=4,
+        )
+        self.assertEqual(mode.kind, "quantized")
+        self.assertEqual(mode.bits, 4)
+        self.assertEqual(mode.cache_suffix(), ":q4")
+
+    def test_quantized_inference_rejects_non_mlx_backend(self) -> None:
+        from backend.engine.common.bundle.quant_inference import resolve_inference_weight_mode
+
+        entry = type(
+            "E",
+            (),
+            {"raw": {"versions": {"int4": {"quantization": {"bits": 4, "scheme": "mlx_affine"}}}}},
+        )()
+        with self.assertRaises(RuntimeError):
+            resolve_inference_weight_mode(
+                entry,
+                "int4",
+                type("C", (), {"backend": "cuda"})(),
+                weight_keys=frozenset({"a.weight", "a.scales"}),
+            )
+
+    def test_quantized_bundle_without_scales_fails_loud(self) -> None:
+        from backend.engine.common.bundle.quant_inference import resolve_inference_weight_mode
+
+        entry = type(
+            "E",
+            (),
+            {"raw": {"versions": {"int4": {"quantization": {"bits": 4, "scheme": "mlx_affine"}}}}},
+        )()
+        with self.assertRaises(RuntimeError):
+            resolve_inference_weight_mode(
+                entry,
+                "int4",
+                type("C", (), {"backend": "mlx"})(),
+                weight_keys=frozenset({"layers.0.weight"}),
+            )
+
+    def test_cache_size_estimate_scales_with_bits(self) -> None:
+        from backend.engine.common.bundle.quant_inference import (
+            WeightInferenceMode,
+            estimate_dit_cache_size_gb,
+        )
+
+        dense = estimate_dit_cache_size_gb(24.0, WeightInferenceMode(kind="dense"))
+        q4 = estimate_dit_cache_size_gb(24.0, WeightInferenceMode(kind="quantized", bits=4))
+        self.assertEqual(dense, 24.0)
+        self.assertLess(q4, dense)
+        self.assertAlmostEqual(q4, 6.0)
+
+    def test_quantized_lora_allowed_by_default(self) -> None:
+        from backend.engine.common.bundle.quant_inference import (
+            assert_quantized_dit_lora_compatible,
+            entry_allows_quantized_lora,
+        )
+
+        entry = type(
+            "E",
+            (),
+            {"raw": {"versions": {"int4": {"quantization": {"bits": 4, "scheme": "mlx_affine"}}}}},
+        )()
+        self.assertTrue(entry_allows_quantized_lora(entry, "int4"))
+        assert_quantized_dit_lora_compatible(entry, "int4", [{"id": "lora"}])
+
+    def test_quantized_lora_opt_out_in_registry(self) -> None:
+        from backend.engine.common.bundle.quant_inference import (
+            assert_quantized_dit_lora_compatible,
+            entry_allows_quantized_lora,
+        )
+
+        entry = type(
+            "E",
+            (),
+            {
+                "raw": {
+                    "versions": {
+                        "int4": {
+                            "quantization": {
+                                "bits": 4,
+                                "scheme": "mlx_affine",
+                                "quantized_lora": False,
+                            }
+                        }
+                    }
+                }
+            },
+        )()
+        self.assertFalse(entry_allows_quantized_lora(entry, "int4"))
+        with self.assertRaises(RuntimeError):
+            assert_quantized_dit_lora_compatible(entry, "int4", [{"id": "lora"}])
+
+    def test_resolve_from_bundle_without_registry_entry(self) -> None:
+        from backend.engine.common.bundle.quant_inference import (
+            resolve_dit_inference_weight_mode,
+            resolve_inference_weight_mode_from_bundle,
+        )
+
+        ctx = type("C", (), {"backend": "mlx"})()
+        mode = resolve_inference_weight_mode_from_bundle(
+            ctx,
+            weight_keys=frozenset({"layers.0.weight", "layers.0.scales"}),
+            bundle_affine_bits=4,
+        )
+        self.assertEqual(mode.kind, "quantized")
+        self.assertEqual(mode.bits, 4)
+
+        dense = resolve_dit_inference_weight_mode(
+            ctx,
+            entry=None,
+            version_key=None,
+            weight_keys=frozenset({"layers.0.weight"}),
+            bundle_affine_bits=None,
+        )
+        self.assertEqual(dense.kind, "dense")
+
+    def test_vae_stays_dense_when_dit_quant_but_no_affine_tensors(self) -> None:
+        from backend.engine.common.bundle.quant_inference import resolve_component_inference_weight_mode
+
+        entry = type(
+            "E",
+            (),
+            {"raw": {"versions": {"int4": {"quantization": {"bits": 4, "scheme": "mlx_affine"}}}}},
+        )()
+        mode = resolve_component_inference_weight_mode(
+            entry,
+            "int4",
+            type("C", (), {"backend": "mlx"})(),
+            component="vae",
+            weight_keys=frozenset({"decoder.conv_in.weight"}),
+        )
+        self.assertEqual(mode.kind, "dense")
+
+    def test_vae_quantized_when_affine_tensors_present(self) -> None:
+        from backend.engine.common.bundle.quant_inference import resolve_component_inference_weight_mode
+
+        entry = type(
+            "E",
+            (),
+            {"raw": {"versions": {"int4": {"quantization": {"bits": 4, "scheme": "mlx_affine"}}}}},
+        )()
+        mode = resolve_component_inference_weight_mode(
+            entry,
+            "int4",
+            type("C", (), {"backend": "mlx"})(),
+            component="vae",
+            weight_keys=frozenset({"mid_attn.to_q.weight", "mid_attn.to_q.scales"}),
+            bundle_affine_bits=4,
+        )
+        self.assertEqual(mode.kind, "quantized")
+        self.assertEqual(mode.bits, 4)
+
+    def test_explicit_vae_quant_without_scales_fails_loud(self) -> None:
+        from backend.engine.common.bundle.quant_inference import resolve_component_inference_weight_mode
+
+        entry = type(
+            "E",
+            (),
+            {
+                "raw": {
+                    "versions": {
+                        "int4": {
+                            "quantization": {
+                                "bits": 4,
+                                "scheme": "mlx_affine",
+                                "vae": {"bits": 4},
+                            }
+                        }
+                    }
+                }
+            },
+        )()
+        with self.assertRaises(RuntimeError):
+            resolve_component_inference_weight_mode(
+                entry,
+                "int4",
+                type("C", (), {"backend": "mlx"})(),
+                component="vae",
+                weight_keys=frozenset({"decoder.conv_in.weight"}),
+            )
+
+
 class DerivedQuantLayoutTests(unittest.TestCase):
+    def test_component_quant_targets_exclude_copy_subdirs(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from backend.core.derived_quant_layout import resolve_derived_quant_layout
+
+        with tempfile.TemporaryDirectory() as tmp:
+            from_root = Path(tmp) / "from"
+            to_root = Path(tmp) / "to"
+            te_dir = from_root / "text_encoder"
+            tr_dir = from_root / "transformer"
+            te_dir.mkdir(parents=True)
+            tr_dir.mkdir(parents=True)
+            (te_dir / "model.safetensors").write_bytes(b"stub")
+            (tr_dir / "model_00000.safetensors").write_bytes(b"stub")
+
+            plan = resolve_derived_quant_layout(
+                family="flux2",
+                from_root=from_root,
+                to_root=to_root,
+                to_ver_config={
+                    "quantization": {
+                        "bits": 4,
+                        "text_encoder": {"bits": 4},
+                    }
+                },
+            )
+            self.assertEqual(len(plan.component_targets), 1)
+            self.assertEqual(plan.component_targets[0].subdir, "text_encoder")
+            self.assertEqual(plan.component_targets[0].bits, 4)
+            self.assertNotIn("text_encoder", plan.copy_subdirs)
+            self.assertIn("text_encoder", plan.exclude_subdirs)
+
     def test_family_layout_defaults(self) -> None:
         from backend.core.derived_quant_layout import _FAMILY_DEFAULT_LAYOUT
 
         self.assertEqual(_FAMILY_DEFAULT_LAYOUT["wan"], "wan_dit_shards")
         self.assertEqual(_FAMILY_DEFAULT_LAYOUT["diffrhythm"], "dit_single_file")
         self.assertEqual(_FAMILY_DEFAULT_LAYOUT["ace_step"], "dit_single_file")
+
+    def test_flux2_klein_4b_derived_declares_text_encoder_quant(self) -> None:
+        model = _load_default_registry_expanded()["models"]["flux2-klein-4b"]
+        for ver_key in ("int4", "int8"):
+            quant = (model["versions"][ver_key].get("quantization") or {})
+            te = quant.get("text_encoder") or {}
+            self.assertEqual(te.get("bits"), quant.get("bits"), ver_key)
 
     def test_registry_derived_versions_declare_parent_and_bits(self) -> None:
         for model_id, model in _load_default_registry_expanded()["models"].items():
@@ -3011,6 +3606,145 @@ class ArchitectureWrapUpTests(unittest.TestCase):
 
         self.assertIsNotNone(get_upscale_pipeline_loader("seedvr2"))
         self.assertIsNone(get_upscale_pipeline_loader("flux2"))
+
+
+class LoraDatasetStoreTests(unittest.TestCase):
+    def test_create_and_import_assets(self) -> None:
+        from backend.engine.training import dataset_store
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            assets = root / "outputs" / "assets"
+            assets.mkdir(parents=True)
+            sample = assets / "sample.png"
+            sample.write_bytes(
+                b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
+                b"\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xdb\x00\x00\x00\x00IEND\xaeB`\x82"
+            )
+
+            ds = dataset_store.create_dataset(root, name="test", default_prompt="A photo of sks")
+            dataset_id = ds["id"]
+            self.assertEqual(ds["image_count"], 0)
+
+            def resolve(aid: str) -> Path:
+                if aid == "ast_test":
+                    return sample
+                raise FileNotFoundError(aid)
+
+            out = dataset_store.import_dataset_from_assets(
+                root,
+                dataset_id,
+                ["asset:ast_test"],
+                resolve_asset_path=resolve,
+            )
+            self.assertEqual(out["image_count"], 1)
+            rows = dataset_store.load_training_pairs(root, dataset_id)
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0][1], "A photo of sks")
+
+    def test_user_lora_registry_delete(self) -> None:
+        from backend.engine.training.user_lora_registry import (
+            delete_user_lora,
+            list_user_loras,
+            register_user_lora,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cfg = Path(tmp)
+            entry = register_user_lora(
+                cfg,
+                name="demo",
+                base_model="flux1-dev",
+                local_path="models/Lora/demo",
+            )
+            self.assertEqual(len(list_user_loras(cfg)), 1)
+            ok = delete_user_lora(cfg, entry["id"])
+            self.assertTrue(ok)
+            self.assertEqual(list_user_loras(cfg), [])
+
+    def test_import_bundled_dog6_example(self) -> None:
+        from backend.engine.training import dataset_store
+
+        bundled = dataset_store.bundled_dog6_example_dir(
+            Path(__file__).resolve().parents[1] / "default_config"
+        )
+        self.assertTrue((bundled / "train.jsonl").is_file(), bundled)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ds = dataset_store.import_dog6_example(root, bundled_root=bundled)
+            self.assertGreaterEqual(int(ds.get("image_count") or 0), 3)
+            rows = dataset_store.load_training_pairs(root, ds["id"])
+            self.assertGreaterEqual(len(rows), 3)
+            self.assertTrue(all("sks dog" in p for _, p in rows))
+
+    def test_prepare_dit_for_lora_training_z_image(self) -> None:
+        from backend.engine.runtime.mlx import MLXContext
+        from backend.engine.config.model_configs import ZImageConfig
+        from backend.engine.families.z_image.transformer import ZImageTransformer
+        from backend.engine.training.lora_layers import (
+            apply_lora_to_zimage_dit,
+            prepare_dit_for_lora_training,
+        )
+        import mlx.nn as nn
+
+        ctx = MLXContext()
+        model = ZImageTransformer(ZImageConfig(), ctx)
+        dit, train_module = prepare_dit_for_lora_training(
+            model,
+            apply_lora_to_zimage_dit,
+            rank=4,
+            lora_blocks=1,
+        )
+        self.assertIs(model, dit)
+        self.assertIsInstance(train_module, nn.Module)
+        self.assertTrue(train_module.trainable_parameters())
+
+    def test_delete_dataset(self) -> None:
+        from backend.engine.training import dataset_store
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ds = dataset_store.create_dataset(root, name="to-delete")
+            dataset_id = ds["id"]
+            dataset_store.delete_dataset(root, dataset_id)
+            self.assertFalse((root / "datasets" / dataset_id).exists())
+            with self.assertRaises(FileNotFoundError):
+                dataset_store.get_dataset(root, dataset_id)
+
+
+class LoraTrainingPresetsTests(unittest.TestCase):
+    def test_trainable_base_models_include_z_image(self) -> None:
+        from backend.engine.training.presets import TRAINABLE_BASE_MODELS
+
+        self.assertIn("z-image", TRAINABLE_BASE_MODELS)
+        self.assertIn("flux1-dev", TRAINABLE_BASE_MODELS)
+        self.assertNotIn("z-image-turbo", TRAINABLE_BASE_MODELS)
+
+    def test_resolve_preset_by_base_model(self) -> None:
+        from backend.engine.training.presets import resolve_preset
+
+        flux = resolve_preset("standard", base_model="flux1-dev")
+        zimg = resolve_preset("standard", base_model="z-image")
+        self.assertEqual(flux["lora_rank"], 8)
+        self.assertEqual(zimg["lora_rank"], 16)
+        self.assertEqual(zimg["resolution"], [768, 768])
+
+    def test_merge_training_request_config_keeps_preset(self) -> None:
+        from backend.core.contracts import LoraTrainingRequest
+        from backend.engine.training.presets import merge_training_request_config, resolve_preset
+
+        preset = resolve_preset("quick", base_model="z-image")
+        req = LoraTrainingRequest(
+            base_model="z-image",
+            dataset_id="ds_test",
+            progress_prompt="test",
+            preset="quick",
+        )
+        cfg = merge_training_request_config(req, preset)
+        self.assertEqual(cfg["iterations"], 400)
+        self.assertEqual(cfg["lora_rank"], 8)
+        self.assertEqual(cfg["resolution"], [512, 512])
 
 
 if __name__ == "__main__":

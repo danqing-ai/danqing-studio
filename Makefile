@@ -139,6 +139,9 @@ check-engine-rules:
 check-engine-imports:
 	$(PYTHON) $(ENGINE_GOV) --rule imports
 
+check-engine-mlx-torch:
+	$(PYTHON) $(ENGINE_GOV) --rule mlx-torch
+
 check-engine-family-layout:
 	$(PYTHON) $(ENGINE_GOV) --rule layout
 

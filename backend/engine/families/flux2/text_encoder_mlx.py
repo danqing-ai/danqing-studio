@@ -28,6 +28,8 @@ class Flux2TextEncoder:
         self.max_seq_len = max_seq_len
         self._tokenizer = None
         self._model: Qwen3EncoderModel | None = None
+        self._registry_entry = _kw.pop("registry_entry", None)
+        self._registry_version_key = _kw.pop("registry_version_key", None)
 
     @property
     def tokenizer(self):
@@ -41,7 +43,12 @@ class Flux2TextEncoder:
 
     def _ensure_model(self) -> Qwen3EncoderModel:
         if self._model is None:
-            self._model = build_qwen3_mlx_encoder(self.model_path, self.ctx)
+            self._model = build_qwen3_mlx_encoder(
+                self.model_path,
+                self.ctx,
+                registry_entry=self._registry_entry,
+                registry_version_key=self._registry_version_key,
+            )
         return self._model
 
     def encode(self, texts: list[str]) -> Any:
@@ -72,3 +79,13 @@ class Flux2TextEncoder:
             hidden_state_layers=(9, 18, 27),
         )
         return out.astype(mx.bfloat16)
+
+    def release_weights(self) -> None:
+        """Drop Qwen3 MLX weights after encode (tokenizer kept)."""
+        self._model = None
+        clear_cache_fn = getattr(self.ctx, "clear_cache", None)
+        if clear_cache_fn is not None:
+            clear_cache_fn()
+        else:
+            import importlib
+            importlib.import_module("mlx.core").clear_cache()

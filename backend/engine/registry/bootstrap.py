@@ -11,6 +11,7 @@ def bootstrap_family_plugins() -> None:
         return
     from backend.engine.families.ace_step.plugin import register_ace_step_plugin
     from backend.engine.families.diffrhythm.plugin import register_diffrhythm_plugin
+    from backend.engine.families.cogview4.plugin import register_cogview4_plugin
     from backend.engine.families.ernie_image.plugin import register_ernie_image_plugin
     from backend.engine.families.fibo.plugin import register_fibo_plugin
     from backend.engine.families.flux1.plugin import register_flux1_plugin
@@ -28,6 +29,7 @@ def bootstrap_family_plugins() -> None:
     register_flux1_plugin()
     register_fibo_plugin()
     register_ernie_image_plugin()
+    register_cogview4_plugin()
     register_wan_plugin()
     register_ltx_plugin()
     register_hunyuan_plugin()

@@ -300,6 +300,7 @@ class ModelConfig:
 
     engine: str
     type: str
+    family: str = ""
     name: Dict[str, str] = field(default_factory=dict)
     description: Dict[str, str] = field(default_factory=dict)
     parameters: Dict[str, Any] = field(default_factory=dict)

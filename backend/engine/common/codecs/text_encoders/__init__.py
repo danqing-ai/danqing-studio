@@ -11,11 +11,11 @@ __all__ = (
 
 def __getattr__(name: str):
     if name == "T5Encoder":
-        from backend.engine.common.codecs.text_encoders.t5_mlx import T5Encoder
+        from backend.engine.common.codecs.text_encoders.t5 import T5Encoder
 
         return T5Encoder
     if name == "CLIPEncoder":
-        from backend.engine.common.codecs.text_encoders.clip_mlx import CLIPEncoder
+        from backend.engine.common.codecs.text_encoders.clip import CLIPEncoder
 
         return CLIPEncoder
     if name == "build_zimage_mlx_encoder":

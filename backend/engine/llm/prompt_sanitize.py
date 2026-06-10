@@ -41,21 +41,37 @@ def _truncate_segment_loop(text: str) -> str:
     return _join_segments(out, prefer_chinese=_looks_chinese(text))
 
 
+def _count_trailing_repeats(text: str, period: int) -> tuple[int, int]:
+    """Return (start_index, repeat_count) for ``text[-period:]`` tiled at the tail."""
+    n = len(text)
+    if period <= 0 or n < period:
+        return n, 0
+    phrase = text[-period:]
+    count = 0
+    pos = n
+    while pos >= period and text[pos - period : pos] == phrase:
+        count += 1
+        pos -= period
+    return pos, count
+
+
+def _strip_consecutive_tail_repeats(text: str, *, min_repeats: int = 3) -> str:
+    """Cut when the tail is the same substring repeated (prefer shortest period)."""
+    trimmed = text.rstrip()
+    n = len(trimmed)
+    if n < min_repeats * 2:
+        return trimmed
+    max_period = min(24, n // min_repeats)
+    for period in range(1, max_period + 1):
+        pos, count = _count_trailing_repeats(trimmed, period)
+        if count >= min_repeats:
+            return trimmed[:pos].rstrip("，,;； ")
+    return trimmed
+
+
 def _truncate_tail_phrase_loop(text: str) -> str:
     """Cut when the same short suffix repeats 3+ times without delimiters."""
-    trimmed = text.rstrip()
-    length = len(trimmed)
-    max_phrase = min(40, length // 3)
-    for phrase_len in range(max_phrase, 1, -1):
-        phrase = trimmed[-phrase_len:]
-        repeats = 0
-        pos = length
-        while pos >= phrase_len and trimmed[pos - phrase_len : pos] == phrase:
-            repeats += 1
-            pos -= phrase_len
-        if repeats >= 3:
-            return trimmed[: pos + phrase_len].rstrip("，,;； ")
-    return trimmed
+    return _strip_consecutive_tail_repeats(text)
 
 
 def _strip_wrapping_quotes(text: str) -> str:
@@ -64,12 +80,27 @@ def _strip_wrapping_quotes(text: str) -> str:
     return text
 
 
+def _has_degenerate_tail_repeat(text: str, *, min_repeats: int = 3) -> bool:
+    trimmed = (text or "").rstrip()
+    n = len(trimmed)
+    if n < min_repeats * 2:
+        return False
+    max_period = min(24, n // min_repeats)
+    for period in range(1, max_period + 1):
+        _, count = _count_trailing_repeats(trimmed, period)
+        if count >= min_repeats:
+            return True
+    return False
+
+
 def prompt_enhance_quality_ok(text: str) -> bool:
     """Heuristic guard against degenerate mlx-lm prompt loops."""
     cleaned = (text or "").strip()
     if not cleaned:
         return False
     if len(cleaned) > _MAX_PROMPT_CHARS:
+        return False
+    if _has_degenerate_tail_repeat(cleaned):
         return False
 
     segments = _split_segments(cleaned)
@@ -82,6 +113,10 @@ def prompt_enhance_quality_ok(text: str) -> bool:
         if segments[idx] == segments[idx + 1]:
             return False
 
+    for segment in segments:
+        if _has_degenerate_tail_repeat(segment):
+            return False
+
     return True
 
 
@@ -92,7 +127,15 @@ def sanitize_enhanced_prompt(text: str) -> str:
         return raw
 
     cleaned = _truncate_segment_loop(raw)
+    segments = _split_segments(cleaned)
+    if len(segments) > 1:
+        cleaned = _join_segments(
+            [_strip_consecutive_tail_repeats(seg) for seg in segments],
+            prefer_chinese=_looks_chinese(cleaned),
+        )
+    else:
+        cleaned = _strip_consecutive_tail_repeats(cleaned)
     cleaned = _truncate_tail_phrase_loop(cleaned)
     if len(cleaned) > _MAX_PROMPT_CHARS:
         cleaned = cleaned[:_MAX_PROMPT_CHARS].rstrip("，,;； ")
-    return cleaned.strip()
+    return cleaned.strip().rstrip("，,;； ")

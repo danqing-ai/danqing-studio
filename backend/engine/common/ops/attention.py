@@ -691,3 +691,24 @@ def apply_rope_interleaved_real(ctx, x, cos, sin):
     if x_tail is not None and x_tail.shape[-1] > 0:
         return ctx.concat([out, x_tail], axis=-1)
     return out
+
+
+def apply_rope_real_unbind_dim2(ctx, x, cos, sin):
+    """diffusers CogView4 / Stable Audio RoPE — ``use_real_unbind_dim=-2``."""
+    rope_dim = int(cos.shape[-1])
+    x_tail = x[..., rope_dim:] if x.shape[-1] > rope_dim else None
+    xr = x[..., :rope_dim]
+    xf = xr.astype(ctx.float32())
+    cf = cos.astype(ctx.float32())
+    sf = sin.astype(ctx.float32())
+    sh = xf.shape
+    half = rope_dim // 2
+    x2 = ctx.reshape(xf, (*sh[:-1], 2, half))
+    real = x2[..., 0, :]
+    imag = x2[..., 1, :]
+    rot = ctx.concat([-imag, real], axis=-1)
+    out = xf * cf + rot * sf
+    out = out.astype(x.dtype)
+    if x_tail is not None and x_tail.shape[-1] > 0:
+        return ctx.concat([out, x_tail], axis=-1)
+    return out

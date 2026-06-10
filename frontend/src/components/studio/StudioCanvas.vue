@@ -1,5 +1,5 @@
 <template>
-  <div class="studio-canvas" :class="{ 'studio-canvas--batch': selectedCount > 0 }">
+  <div class="studio-canvas">
     <!-- Empty state -->
     <div v-if="items.length === 0 && !loading" class="studio-canvas__empty">
       <DqEmpty :description="emptyMessage" />
@@ -96,48 +96,13 @@
     <div v-if="!hasMore && items.length > 0" class="studio-canvas__end">
       {{ $t('gallery.noMore') }}
     </div>
-
-    <!-- Batch action bar -->
-    <teleport to="body">
-      <div
-        v-if="selectedCount > 0"
-        class="gallery-batch-bar"
-        role="toolbar"
-        :aria-label="$tt('gallery.selectedCount', { count: selectedCount })"
-      >
-        <div class="gallery-batch-bar-content">
-          <div class="gallery-batch-bar__lead">
-            <span class="gallery-batch-count">
-              {{ $tt('gallery.selectedCount', { count: selectedCount }) }}
-            </span>
-            <DqButton class="gallery-batch-bar__select-all" type="text" size="sm" @click="$emit('select-all')">
-              {{ allSelected ? $t('gallery.deselectAll') : $t('gallery.selectAll') }}
-            </DqButton>
-          </div>
-          <div class="gallery-batch-bar__actions">
-            <DqButton type="danger" size="sm" round @click="$emit('batch-delete')">
-              <DqIcon><Delete /></DqIcon>
-              {{ $t('gallery.batchDelete') }}
-            </DqButton>
-          </div>
-          <DqButton
-            class="gallery-batch-bar__dismiss dq-btn--icon-circle"
-            type="text"
-            :aria-label="$t('common.close')"
-            @click="$emit('clear-selection')"
-          >
-            <DqIcon><Close /></DqIcon>
-          </DqButton>
-        </div>
-      </div>
-    </teleport>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Close, Delete, Loading } from '@danqing/dq-shell';
+import { Loading } from '@danqing/dq-shell';
 import { $tt } from '@/utils/i18n';
 import { useTasksStore } from '@/stores/tasks';
 import {
@@ -177,8 +142,6 @@ const tasksStore = useTasksStore();
 const showTaskLogs = ref(false);
 /** Persists after task leaves queue so logs stay viewable on failure. */
 const logTaskId = ref<string | null>(null);
-
-const selectedCount = computed(() => props.selectedPaths?.size ?? 0);
 
 const primaryRunningTaskId = computed(() => {
   const running = props.activeTasks.find((task) => task.status === 'running');
@@ -303,10 +266,6 @@ function handleCardClick(item: GalleryItem, event: MouseEvent) {
   max-width: 1400px;
   margin: 0 auto;
   width: 100%;
-}
-
-.studio-canvas--batch {
-  padding-bottom: 88px;
 }
 
 .studio-canvas__empty {

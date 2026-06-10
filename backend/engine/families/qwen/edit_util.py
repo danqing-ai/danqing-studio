@@ -44,18 +44,20 @@ def compute_qwen_edit_dimensions(
     """返回 ``(out_w, out_h, vl_w, vl_h, vae_w, vae_h)``，均为 32 对齐。"""
     image_size = source.size
     ratio = image_size[0] / max(image_size[1], 1)
-    target_area = 1024 * 1024
-    calculated_width = math.sqrt(target_area * ratio)
-    calculated_height = calculated_width / ratio
-    calculated_width = round(calculated_width / 32) * 32
-    calculated_height = round(calculated_height / 32) * 32
-
-    use_height = int(height or calculated_height)
-    use_width = int(width or calculated_width)
-
     multiple_of = 16
-    use_width = max(multiple_of, use_width // multiple_of * multiple_of)
-    use_height = max(multiple_of, use_height // multiple_of * multiple_of)
+    if width is None and height is None:
+        use_width = max(multiple_of, int(image_size[0]) // multiple_of * multiple_of)
+        use_height = max(multiple_of, int(image_size[1]) // multiple_of * multiple_of)
+    else:
+        target_area = 1024 * 1024
+        calculated_width = math.sqrt(target_area * ratio)
+        calculated_height = calculated_width / ratio
+        calculated_width = round(calculated_width / 32) * 32
+        calculated_height = round(calculated_height / 32) * 32
+        use_height = int(height or calculated_height)
+        use_width = int(width or calculated_width)
+        use_width = max(multiple_of, use_width // multiple_of * multiple_of)
+        use_height = max(multiple_of, use_height // multiple_of * multiple_of)
 
     condition_area = 384 * 384
     condition_ratio = image_size[0] / max(image_size[1], 1)

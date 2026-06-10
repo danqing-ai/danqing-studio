@@ -443,6 +443,16 @@ class FIBODiTMLX(TransformerBase):
         **conditioning: Any,
     ) -> Any:
         """Batched CFG — Reference stacks [uncond, cond] on batch axis 0."""
+        if neg_embeds is None and not (
+            txt_embeds is not None and int(txt_embeds.shape[0]) == 2
+        ):
+            return self.forward(
+                latents,
+                timestep,
+                txt_embeds=txt_embeds,
+                sigmas=sigmas,
+                **conditioning,
+            )
         if (
             neg_embeds is None
             and txt_embeds is not None
@@ -654,10 +664,23 @@ class FIBODiTMLX(TransformerBase):
         hidden_states = ctx.reshape(hidden_states, (B, H, W, cfg.out_channels))
         return ctx.permute(hidden_states, (0, 3, 1, 2))
 
-    def load_weights(self, weights, strict=False, ctx=None, *, bundle_affine_bits=None):
+    def load_weights(
+        self,
+        weights,
+        strict=False,
+        ctx=None,
+        *,
+        bundle_affine_bits=None,
+        inference_mode=None,
+    ):
         load_ctx = ctx if ctx is not None else self.ctx
         loaded, skipped = super().load_weights(
-            weights, strict=strict, ctx=load_ctx, bundle_affine_bits=bundle_affine_bits
+            weights,
+            strict=strict,
+            ctx=load_ctx,
+            bundle_affine_bits=bundle_affine_bits,
+            inference_mode=inference_mode,
         )
-        self._cast_param_map_dtype(load_ctx.bfloat16())
+        if inference_mode is None or getattr(inference_mode, "kind", "dense") != "quantized":
+            self._cast_param_map_dtype(load_ctx.bfloat16())
         return loaded, skipped

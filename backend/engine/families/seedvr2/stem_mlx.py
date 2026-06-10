@@ -24,7 +24,7 @@ from backend.engine.common.codecs.vae.mlx_tiling import TilingConfig, VAEUtil
 from .dit_mlx import SeedVR2DiT
 from .preprocess_mlx import SeedVR2LatentCreator, SeedVR2PositiveEmbeddings, SeedVR2Util
 from .vae_mlx import SeedVR2VAE
-from .weights_mlx import ModelConfig, load_flat_bundle
+from .weights_mlx import ModelConfig, load_flat_bundle, load_seedvr2_transformer_flat_checkpoint
 
 logger = logging.getLogger(__name__)
 
@@ -255,17 +255,39 @@ class SeedVR2UpscalePipeline:
         vae = SeedVR2VAE()
         dit = SeedVR2DiT(**(model_config.transformer_overrides or {}))
 
-        components = {c.name: c for c in weight_definition_cls.get_components()}
-        WeightApplier.set_weights(weights, {"transformer": dit, "vae": vae}, components)
-
         from backend.engine.common.bundle.bundle_weights.resolution import QuantizationResolution
+        from backend.engine.common.bundle.quant_inference import WeightInferenceMode
+        from backend.engine.runtime.mlx import MLXContext
+
         stored_q = weights.meta_data.quantization_level
         bits, warning = QuantizationResolution.resolve(stored=stored_q, requested=quantize)
         if warning:
             print(f"⚠️  {warning}")
-        if bits is not None and stored_q is None:
-            dit.quantize_runtime(bits=bits)
-            vae.quantize_runtime(bits=bits)
+
+        ctx = MLXContext()
+        components = {c.name: c for c in weight_definition_cls.get_components()}
+
+        if stored_q is not None:
+            flat, file_q = load_seedvr2_transformer_flat_checkpoint(path, model_config)
+            bundle_bits = stored_q if stored_q is not None else file_q
+            inference_mode = WeightInferenceMode(kind="quantized", bits=int(bundle_bits))
+            dit.load_weights(
+                list(flat.items()),
+                strict=False,
+                ctx=ctx,
+                bundle_affine_bits=bundle_bits,
+                inference_mode=inference_mode,
+                module_root=dit,
+            )
+            setattr(dit, "_dq_inference_mode", inference_mode)
+            vae_weights = weights.components.get("vae")
+            if vae_weights is not None:
+                vae.update(vae_weights, strict=False)
+        else:
+            WeightApplier.set_weights(weights, {"transformer": dit, "vae": vae}, components)
+            if bits is not None:
+                dit.quantize_runtime(bits=bits, ctx=ctx)
+                vae.quantize_runtime(bits=bits, ctx=ctx)
 
         dit.after_load_weights(bundle_root=path)
         return cls(

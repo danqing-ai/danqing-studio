@@ -9,6 +9,28 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import importlib
+
+
+def _clear_text_encoder_mlx_cache(ctx: Any) -> None:
+    clear_cache_fn = getattr(ctx, "clear_cache", None)
+    if clear_cache_fn is not None:
+        clear_cache_fn()
+    else:
+        importlib.import_module("mlx.core").clear_cache()
+
+
+def _release_image_text_encoder_if_configured(enc: Any, ctx: Any, config: Any) -> None:
+    """Drop TE weights after encode when ``release_text_encoder_after_encode`` (default on)."""
+    if enc is None or not bool(getattr(config, "release_text_encoder_after_encode", True)):
+        return
+    release_fn = getattr(enc, "release_weights", None)
+    if release_fn is not None:
+        release_fn()
+    else:
+        _clear_text_encoder_mlx_cache(ctx)
+
+
 # (模块路径, 类名)
 _TRANSFORMER = {
     "z_image":  ("backend.engine.families.z_image.transformer",  "ZImageTransformer"),
@@ -17,6 +39,7 @@ _TRANSFORMER = {
     "flux1":    ("backend.engine.families.flux1.transformer",     "Flux1Transformer"),
     "qwen_image": ("backend.engine.families.qwen.transformer",    "QwenImageTransformer"),
     "ernie_image": ("backend.engine.families.ernie_image.transformer", "ErnieImageTransformer"),
+    "cogview4": ("backend.engine.families.cogview4.transformer", "CogView4Transformer"),
 }
 
 # encoder_type → (模块路径, 类名)
@@ -27,6 +50,7 @@ _TEXT_ENCODER = {
     "qwen_image": ("backend.engine.families.qwen.text_encoder", "QwenImageTextEncoder"),
     "fibo":     ("backend.engine.families.fibo.text_encoder", "FiboTextEncoder"),
     "ernie_image": ("backend.engine.families.ernie_image.text_encoder", "ErnieImageTextEncoder"),
+    "cogview4": ("backend.engine.families.cogview4.text_encoder", "CogView4TextEncoder"),
 }
 
 _IMAGE_LORA_MERGE = {
@@ -121,6 +145,8 @@ def encode_prompt_with_image_text_encoder(
     encoder_type: str,
     bundle_root: Path,
     config: Any,
+    registry_entry: Any | None = None,
+    registry_version_key: str | None = None,
 ) -> tuple[Any, Any | None, Any | None]:
     """Instantiate registry text encoder for ``encoder_type`` and encode one prompt.
 
@@ -146,20 +172,26 @@ def encode_prompt_with_image_text_encoder(
         bundle_root=bundle_root,
         config=config,
         enc_kwargs=enc_kwargs,
+        registry_entry=registry_entry,
+        registry_version_key=registry_version_key,
     )
 
     out = enc.encode([text])
     if isinstance(out, tuple):
         if len(out) == 2 and encoder_type == "flux1":
-            return out[0], None, out[1]
-        if len(out) == 2 and encoder_type == "fibo":
-            return out[0], out[1], None
-        if len(out) != 2:
+            result = out[0], None, out[1]
+        elif len(out) == 2 and encoder_type == "fibo":
+            result = out[0], out[1], None
+        elif len(out) != 2:
             raise RuntimeError(
                 f"Text encoder {encoder_type!r} returned a tuple of len {len(out)}; expected 2."
             )
-        return out[0], out[1], None
-    return out, None, None
+        else:
+            result = out[0], out[1], None
+    else:
+        result = out, None, None
+    _release_image_text_encoder_if_configured(enc, ctx, config)
+    return result
 
 
 def _instantiate_image_text_encoder(
@@ -170,9 +202,15 @@ def _instantiate_image_text_encoder(
     bundle_root: Path,
     config: Any,
     enc_kwargs: dict[str, Any] | None = None,
+    registry_entry: Any | None = None,
+    registry_version_key: str | None = None,
 ) -> Any:
     """Build a registry text encoder instance (bundle paths + config kwargs)."""
     kw = dict(enc_kwargs or {})
+    if registry_entry is not None:
+        kw["registry_entry"] = registry_entry
+    if registry_version_key is not None:
+        kw["registry_version_key"] = registry_version_key
     if encoder_type == "flux1":
         return enc_cls(
             ctx,
@@ -200,6 +238,8 @@ def encode_image_text_conditioning(
     config: Any,
     guidance: float,
     encode_negative: bool,
+    registry_entry: Any | None = None,
+    registry_version_key: str | None = None,
 ) -> tuple[Any, Any, Any, Any, Any, Any, str]:
     """Encode prompt (+ optional negative) for image DiT conditioning.
 
@@ -241,6 +281,7 @@ def encode_image_text_conditioning(
         t5_dir, t5_tok = t5_encoder_bundle_paths(bundle_root)
         enc = T5Encoder(ctx, t5_dir, tokenizer_path=t5_tok)
         txt_embeds = enc.encode([prompt])
+        _release_image_text_encoder_if_configured(enc, ctx, config)
         return (
             txt_embeds,
             neg_embeds,
@@ -266,6 +307,8 @@ def encode_image_text_conditioning(
             encoder_type=encoder_type,
             bundle_root=bundle_root,
             config=config,
+            registry_entry=registry_entry,
+            registry_version_key=registry_version_key,
         )
         if hasattr(enc, "encode_prompt_cfg"):
             txt_embeds, txt_attn_mask = enc.encode_prompt_cfg(
@@ -273,6 +316,7 @@ def encode_image_text_conditioning(
                 negative_prompt,
                 guidance=float(guidance),
             )
+            _release_image_text_encoder_if_configured(enc, ctx, config)
             return (
                 txt_embeds,
                 neg_embeds,
@@ -289,6 +333,8 @@ def encode_image_text_conditioning(
         encoder_type=encoder_type,
         bundle_root=bundle_root,
         config=config,
+        registry_entry=registry_entry,
+        registry_version_key=registry_version_key,
     )
     if encode_negative:
         neg_txt = (negative_prompt or "").strip() or " "
@@ -298,6 +344,8 @@ def encode_image_text_conditioning(
             encoder_type=encoder_type,
             bundle_root=bundle_root,
             config=config,
+            registry_entry=registry_entry,
+            registry_version_key=registry_version_key,
         )
     return (
         txt_embeds,
@@ -436,6 +484,7 @@ def validate_video_generation_params(
 _VIDEO_TEXT_ENCODER = {
     "t5":              ("backend.engine.common.codecs.text_encoders", "T5Encoder"),
     "hunyuan_video_dual": ("backend.engine.families.hunyuan.text_encoder", "HunyuanVideoTextEncoder"),
+    "wan_umt5":        ("backend.engine.families.wan.text_encoder", "WanUMT5Encoder"),
 }
 
 
@@ -459,6 +508,7 @@ def encode_video_prompt(
 
     T5: ``(embeds, None, None, None, None, None)``.
     Hunyuan dual: ``(qwen_embeds, qwen_mask, byt5_embeds, byt5_mask, None, None)``.
+    Wan UMT5: ``(embeds, None, None, None, None, None)`` from .pth bundle.
     """
     enc_cls = get_video_text_encoder_class(encoder_type)
     if encoder_type == "t5":
@@ -475,6 +525,20 @@ def encode_video_prompt(
         enc = get_hunyuan_text_encoder(ctx, bundle_root, config)
         e1, m1, e2, m2 = enc.encode([text])
         return e1, m1, e2, m2, None, None
+
+    if encoder_type == "wan_umt5":
+        from backend.engine.families.wan.text_encoder_mlx import resolve_wan_umt5_pth
+
+        paths = resolve_wan_umt5_pth(bundle_root)
+        if paths is None:
+            raise RuntimeError(
+                f"Wan UMT5 encoder requires original bundle with models_t5_umt5-xxl-enc-bf16.pth "
+                f"and google/umt5-xxl tokenizer at {bundle_root}"
+            )
+        checkpoint_pth, tokenizer_dir = paths
+        text_len = int(getattr(config, "text_len", 512))
+        enc = enc_cls(ctx, checkpoint_pth, tokenizer_dir, text_len=text_len)
+        return enc.encode([text]), None, None, None, None, None
 
     raise RuntimeError(f"Unsupported video encoder_type: {encoder_type!r}")
 

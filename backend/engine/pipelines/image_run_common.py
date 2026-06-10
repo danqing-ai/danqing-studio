@@ -27,7 +27,11 @@ from backend.engine.codecs import (
     get_vae_preview_warmup_handler,
     warmup_vae_preview,
 )
-from backend.engine.config.model_configs import assert_image_family_contract, get_config_class
+from backend.engine.config.model_configs import (
+    apply_image_registry_config_overrides,
+    assert_image_family_contract,
+    get_config_class,
+)
 
 if TYPE_CHECKING:
     from backend.engine.sessions._context import ResolvedRun
@@ -95,7 +99,7 @@ def _build_resolved_image_model(
     family = require_entry_family(entry, model_id=model_key)
     config_cls = get_config_class(family)
     config = config_cls()
-    apply_image_registry_config_overrides(pipeline, entry, config)
+    apply_image_registry_config_overrides(entry, config)
     assert_image_family_contract(family, config)
     runtime_contract = FamilyRuntimeContract(family=family, config=config)
     if bundle_root is None:
@@ -325,7 +329,8 @@ def assert_edit_rewrite_schedule(
         raise RuntimeError(
             f"Image edit (rewrite): scheduler {scheduler_name!r} did not honor "
             f"init_timestep={init_timestep} (got timesteps={timesteps!r}). "
-            "reference img2img requires FlowMatchEuler / Linear / flow_match_euler_flux_dynamic."
+            "reference img2img requires FlowMatchEuler / Linear / flow_match_euler_flux_dynamic "
+            "/ flow_match_euler_cogview4."
         )
     if init_timestep >= steps:
         raise RuntimeError(
@@ -557,35 +562,6 @@ def image_vae_encode_tensor(pipeline,
     z = latent5[:, :, 0, :, :] if getattr(latent5, "ndim", 0) == 5 else latent5
     return z
 
-def apply_image_registry_config_overrides(pipeline, entry: Any, config: Any) -> None:
-    for param_key in (
-        "text_encoder_out_layers",
-        "vae_scale",
-        "enable_thinking",
-        "latent_noise_dtype",
-        "max_seq_len",
-        "inner_dim",
-        "num_heads",
-        "attn_head_dim",
-        "num_layers",
-        "num_single_layers",
-        "joint_attention_dim",
-        "edit_conditioning_concat",
-        "edit_rmbg_composite_output",
-        "edit_use_vl_vision",
-        "edit_conditioning_latent_concat",
-        "patch_token_dim",
-    ):
-        val = _registry_scalar_default_fn(entry, param_key, None)
-        if val is not None and hasattr(config, param_key):
-            if param_key == "text_encoder_out_layers" and isinstance(val, list):
-                setattr(config, param_key, tuple(int(x) for x in val))
-            else:
-                setattr(config, param_key, val)
-    sg = _registry_scalar_default_fn(entry, "supports_guidance", None)
-    if sg is not None:
-        config.supports_guidance = bool(sg)
-
 def encode_image_text_for_pipeline(pipeline,
     *,
     prompt: str,
@@ -594,6 +570,8 @@ def encode_image_text_for_pipeline(pipeline,
     config: Any,
     guidance: float,
     runtime_contract: FamilyRuntimeContract,
+    entry: Any | None = None,
+    version_key: str | None = None,
 ) -> tuple[Any, Any, Any, Any, Any, Any, str]:
     return encode_image_text_conditioning(
         pipeline.ctx,
@@ -603,6 +581,8 @@ def encode_image_text_for_pipeline(pipeline,
         config=config,
         guidance=guidance,
         encode_negative=runtime_contract.should_encode_negative_prompt(guidance),
+        registry_entry=entry,
+        registry_version_key=version_key,
     )
 
 def image_encode_load_for_inference(pipeline,
@@ -639,18 +619,38 @@ def image_encode_load_for_inference(pipeline,
         config=config,
         guidance=guidance,
         runtime_contract=runtime_contract,
+        entry=entry,
+        version_key=version_key,
     )
     if ctx_exec.cancel_token.is_cancelled():
         return None
+
+    # TE weights released inside encode_image_text_conditioning; gc + MLX cache flush before DiT.
+    import gc
+
+    gc.collect()
+    if hasattr(pipeline.ctx, "clear_cache"):
+        pipeline.ctx.clear_cache()
 
     emit_phase(on_progress, phase="loading_model", progress=0.08, n_steps=steps)
     if preloaded_model is not None:
         model = preloaded_model
     else:
+        from backend.engine.common.bundle.quant_inference import assert_quantized_dit_lora_compatible
+
+        assert_quantized_dit_lora_compatible(
+            entry, version_key or None, getattr(request, "adapters", None)
+        )
         pipeline_graph_step("load_transformer", on_log)
         allow_cache = not (getattr(request, "adapters", None) or [])
-        model = load_image_dit_model(pipeline, 
-            family, config, entry, version_key or None, allow_cache=allow_cache
+        model = load_image_dit_model(
+            pipeline,
+            family,
+            config,
+            entry,
+            version_key or None,
+            allow_cache=allow_cache,
+            on_log=on_log,
         )
         if model is None:
             raise RuntimeError(f"Failed to load model: {model_key}")
@@ -849,7 +849,7 @@ def decode_latents_for_image_step_preview(pipeline,
 
     flux2_vae = preview_state.get("vae_preview_model")
     if flux2_vae not in (None, False):
-        vae_dir_cfg, _, _ = load_image_vae_dir_cfg_weights(pipeline, entry, version_key)
+        _, vae_dir_cfg, _ = load_image_vae_dir_cfg_weights(pipeline, entry, version_key)
         vae_cls = str(vae_dir_cfg.get("_class_name") or "")
         entry_family = str(getattr(entry, "family", "") or "")
         return decode_vae_preview(
@@ -982,13 +982,15 @@ def apply_image_lora_adapters(pipeline,
         on_log=on_log,
     )
 
-def load_image_dit_model(pipeline,
+def load_image_dit_model(
+    pipeline,
     family: str,
     config,
     entry,
     version_key: str | None,
     *,
     allow_cache: bool = True,
+    on_log: Callable | None = None,
 ):
     return load_image_transformer(
         ctx=pipeline.ctx,
@@ -999,6 +1001,7 @@ def load_image_dit_model(pipeline,
         project_root=pipeline._project_root,
         model_cache=pipeline._cache,
         allow_cache=allow_cache,
+        on_log=on_log,
     )
 
 def image_vae_decode(pipeline,
@@ -1010,11 +1013,14 @@ def image_vae_decode(pipeline,
 ):
     """VAE decode latent → PIL Image."""
     ctx = pipeline.ctx
+    from backend.engine.common.bundle.quant_inference import resolve_component_inference_weight_mode
+    from backend.engine.common.bundle.safetensors_affine_quant import read_bundle_affine_bits_if_quantized
     from backend.engine.common.codecs.vae import (
         apply_flux2_latent_preprocess_if_enabled,
         create_loaded_vae_decoder,
         load_vae_weight_dict,
         read_vae_dir_config,
+        release_vae_decoder_memory,
         reshape_packed_latents_to_nchw,
         vae_forward_to_pil,
         vae_output_to_uint8_hwc,
@@ -1041,28 +1047,53 @@ def image_vae_decode(pipeline,
         )
 
     vae_weights = load_vae_weight_dict(pipeline.ctx, vae_dir, fail_if_config_only=True)
+    bundle_affine_bits = read_bundle_affine_bits_if_quantized(vae_weights, vae_dir or Path("."))
+    vae_inference_mode = resolve_component_inference_weight_mode(
+        entry,
+        version_key,
+        ctx,
+        component="vae",
+        weight_keys=frozenset(vae_weights.keys()),
+        bundle_affine_bits=bundle_affine_bits,
+    )
     latents, scaling_factor, shift_factor = apply_flux2_latent_preprocess_if_enabled(
         ctx, latents, vae_cfg, vae_weights, scaling_factor, shift_factor
     )
-    vae, decoder_w, loaded, skipped = create_loaded_vae_decoder(
-        ctx, latents, vae_weights, scaling_factor, shift_factor
-    )
-    if not decoder_w:
-        raise RuntimeError(
-            f"VAE weights under {vae_dir} produced no decoder tensors after remap; check bundle."
+    release_after = bool(_registry_scalar_default_fn(entry, "vae_release_after_decode", True))
+    vae = None
+    try:
+        vae, decoder_w, loaded, skipped = create_loaded_vae_decoder(
+            ctx,
+            latents,
+            vae_weights,
+            scaling_factor,
+            shift_factor,
+            vae_cfg=vae_cfg,
+            bundle_affine_bits=bundle_affine_bits,
+            inference_mode=vae_inference_mode,
         )
-    if on_log:
-        on_log(
-            "info",
-            " ".join(
-                [
-                    f"vae_decode latent_shape={tuple(latents.shape)}",
-                    f"scaling_factor={scaling_factor}",
-                    f"shift_factor={shift_factor}",
-                    f"decoder_tensors={len(decoder_w)}",
-                    f"loaded_params={len(loaded)}",
-                    f"skipped_params={len(skipped)}",
-                ]
-            ),
-        )
-    return vae_forward_to_pil(ctx, vae, latents)
+        if not decoder_w:
+            raise RuntimeError(
+                f"VAE weights under {vae_dir} produced no decoder tensors after remap; check bundle."
+            )
+        if on_log:
+            on_log(
+                "info",
+                " ".join(
+                    [
+                        f"vae_decode latent_shape={tuple(latents.shape)}",
+                        f"{vae_inference_mode.log_label()}",
+                        f"scaling_factor={scaling_factor}",
+                        f"shift_factor={shift_factor}",
+                        f"decoder_tensors={len(decoder_w)}",
+                        f"loaded_params={len(loaded)}",
+                        f"skipped_params={len(skipped)}",
+                    ]
+                ),
+            )
+        return vae_forward_to_pil(ctx, vae, latents)
+    finally:
+        if release_after:
+            release_vae_decoder_memory(ctx, vae)
+            if on_log:
+                on_log("info", "vae_released_after_decode=yes")

@@ -6,7 +6,10 @@ and override ``forward``, ``load_weights``, hooks, etc.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from backend.engine.common.bundle.quant_inference import WeightInferenceMode
 
 
 def _mlx_affine_infer_bits_and_group_size(
@@ -267,8 +270,16 @@ class TransformerBase:
             changed += 1
         return changed
 
-    def load_weights(self, weights: list[tuple[str, Any]], strict: bool = False,
-                     ctx: Any = None, *, bundle_affine_bits: int | None = None):
+    def load_weights(
+        self,
+        weights: list[tuple[str, Any]],
+        strict: bool = False,
+        ctx: Any = None,
+        *,
+        bundle_affine_bits: int | None = None,
+        inference_mode: WeightInferenceMode | None = None,
+        module_root: Any | None = None,
+    ):
         """Default weight loading (via _param_map).
 
         Automatically handles MLX **affine** QuantizedLinear checkpoints (``uint32`` packed codes
@@ -277,6 +288,10 @@ class TransformerBase:
         metadata ``quantization_level``) must agree with shape inference and resolves ambiguity
         when the dense map alone cannot.
 
+        When ``inference_mode.kind == "quantized"``, loads packed weights into
+        ``QuantizedLinear`` without dequantizing (low VRAM). Otherwise affine checkpoints are
+        dequantized to dense ``nn.Linear`` (legacy / debug ``inference: dense``).
+
         Quantized bundles must be **self-contained**; there is **no** alternate fp16 directory
         merge (avoids silent cross-precision parameter mixing).
 
@@ -284,6 +299,23 @@ class TransformerBase:
         :class:`RuntimeError` is raised (missing tensor or shape mismatch). If ``strict`` is
         ``True``, checkpoint keys that do not map to any parameter also raise.
         """
+        if (
+            inference_mode is not None
+            and inference_mode.kind == "quantized"
+            and inference_mode.bits in (4, 8)
+        ):
+            from backend.engine.common.model.quantized_load import load_weights_quantized_inference
+
+            return load_weights_quantized_inference(
+                self,
+                weights,
+                strict=strict,
+                ctx=ctx,
+                bundle_affine_bits=bundle_affine_bits,
+                bits=int(inference_mode.bits),
+                group_size=int(inference_mode.group_size),
+                module_root=module_root,
+            )
 
         if not hasattr(self, '_param_map'):
             self._build_param_map()

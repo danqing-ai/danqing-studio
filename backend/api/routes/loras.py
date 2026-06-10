@@ -1,0 +1,419 @@
+"""LoRA training + dataset API."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, Optional
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+
+from backend.api.deps import get_asset_store, get_engine_registry, get_llm_service, get_task_scheduler
+from backend.core import task_kinds as TK
+from backend.core.container import get_container
+from backend.core.contracts import (
+    DatasetAutoCaptionRequest,
+    DatasetCreateRequest,
+    DatasetCaptionUpdate,
+    DatasetImportAssetsRequest,
+    LoraRegisterRequest,
+    LoraTrainingRequest,
+)
+from backend.core.interfaces import IPathResolver, ISettingsService
+from backend.engine.engine_registry import EngineRegistry
+from backend.engine.training import dataset_store
+from backend.engine.training.presets import (
+    FLUX1_TRAIN_MIN_MEMORY_GB,
+    PRESETS,
+    TRAINABLE_BASE_MODELS,
+    Z_IMAGE_PRESETS,
+    train_min_memory_gb,
+)
+from backend.engine.training.user_lora_registry import delete_user_lora, list_user_loras, register_user_lora
+from backend.persistence.asset_store import SQLiteAssetStore
+from backend.scheduler.task_scheduler import TaskScheduler
+from backend.utils.path_utils import get_memory_gb
+
+router = APIRouter(prefix="/api/loras", tags=["loras"])
+
+
+def _paths() -> IPathResolver:
+    return get_container().resolve(IPathResolver)
+
+
+@router.get("/datasets")
+def list_datasets():
+    root = _paths().get_project_root()
+    return {"items": dataset_store.list_datasets(root)}
+
+
+@router.post("/datasets", status_code=201)
+def create_dataset(body: DatasetCreateRequest):
+    root = _paths().get_project_root()
+    return dataset_store.create_dataset(
+        root,
+        name=body.name,
+        kind=body.kind,
+        trigger_word=body.trigger_word,
+        default_prompt=body.default_prompt,
+        nsfw=body.nsfw,
+    )
+
+
+@router.get("/datasets/{dataset_id}")
+def get_dataset(dataset_id: str):
+    root = _paths().get_project_root()
+    try:
+        return dataset_store.get_dataset(root, dataset_id)
+    except FileNotFoundError as e:
+        raise HTTPException(404, detail={"code": "not_found", "message": str(e)}) from e
+
+
+@router.patch("/datasets/{dataset_id}")
+def patch_dataset(dataset_id: str, body: DatasetCreateRequest):
+    root = _paths().get_project_root()
+    try:
+        return dataset_store.update_dataset_meta(
+            root,
+            dataset_id,
+            body.model_dump(),
+        )
+    except FileNotFoundError as e:
+        raise HTTPException(404, detail={"code": "not_found", "message": str(e)}) from e
+
+
+@router.post("/datasets/{dataset_id}/images", status_code=201)
+async def upload_dataset_images(
+    dataset_id: str,
+    files: list[UploadFile] = File(...),
+    default_prompt: Optional[str] = Form(None),
+):
+    root = _paths().get_project_root()
+    payload: list[tuple[str, bytes]] = []
+    for f in files:
+        payload.append((f.filename or "image.png", await f.read()))
+    try:
+        return dataset_store.add_dataset_images(
+            root, dataset_id, payload, default_prompt=default_prompt
+        )
+    except FileNotFoundError as e:
+        raise HTTPException(404, detail={"code": "not_found", "message": str(e)}) from e
+    except ValueError as e:
+        raise HTTPException(400, detail={"code": "invalid", "message": str(e)}) from e
+
+
+@router.patch("/datasets/{dataset_id}/captions")
+def patch_captions(dataset_id: str, body: DatasetCaptionUpdate):
+    root = _paths().get_project_root()
+    try:
+        return dataset_store.update_dataset_captions(root, dataset_id, body.captions)
+    except FileNotFoundError as e:
+        raise HTTPException(404, detail={"code": "not_found", "message": str(e)}) from e
+
+
+@router.delete("/datasets/{dataset_id}", status_code=204)
+def delete_dataset(dataset_id: str):
+    root = _paths().get_project_root()
+    try:
+        dataset_store.delete_dataset(root, dataset_id)
+    except FileNotFoundError as e:
+        raise HTTPException(404, detail={"code": "not_found", "message": str(e)}) from e
+    except ValueError as e:
+        raise HTTPException(400, detail={"code": "invalid", "message": str(e)}) from e
+
+
+@router.delete("/datasets/{dataset_id}/images/{file_path:path}")
+def delete_dataset_image(dataset_id: str, file_path: str):
+    root = _paths().get_project_root()
+    try:
+        return dataset_store.remove_dataset_image(root, dataset_id, file_path)
+    except FileNotFoundError as e:
+        raise HTTPException(404, detail={"code": "not_found", "message": str(e)}) from e
+
+
+@router.post("/datasets/{dataset_id}/import-assets", status_code=201)
+def import_dataset_assets(dataset_id: str, body: DatasetImportAssetsRequest, store: SQLiteAssetStore = Depends(get_asset_store)):
+    root = _paths().get_project_root()
+
+    def _resolve(aid: str) -> Path:
+        return store.get_file_path(aid)
+
+    try:
+        return dataset_store.import_dataset_from_assets(
+            root,
+            dataset_id,
+            body.asset_ids,
+            resolve_asset_path=_resolve,
+            default_prompt=body.default_prompt,
+            asset_captions=body.captions,
+        )
+    except FileNotFoundError as e:
+        raise HTTPException(404, detail={"code": "not_found", "message": str(e)}) from e
+    except ValueError as e:
+        raise HTTPException(400, detail={"code": "invalid", "message": str(e)}) from e
+
+
+@router.post("/datasets/{dataset_id}/auto-caption")
+async def auto_caption_dataset(
+    dataset_id: str,
+    body: DatasetAutoCaptionRequest,
+):
+    """Generate captions for dataset images using the vision LLM (fail loud if unavailable)."""
+    import asyncio
+
+    service = get_llm_service()
+    if not service.is_available():
+        raise HTTPException(
+            503,
+            detail={"code": "llm_unavailable", "message": "LLM model not installed. Install via Models page."},
+        )
+    if not service.is_vision_available():
+        raise HTTPException(
+            503,
+            detail={"code": "vision_unavailable", "message": "Vision model not available for auto-caption."},
+        )
+    root = _paths().get_project_root()
+    try:
+        ds = dataset_store.get_dataset(root, dataset_id)
+    except FileNotFoundError as e:
+        raise HTTPException(404, detail={"code": "not_found", "message": str(e)}) from e
+    targets = [img for img in ds.get("images") or [] if img.get("exists")]
+    if body.files:
+        allow = set(body.files)
+        targets = [img for img in targets if img.get("file") in allow]
+    if not targets:
+        raise HTTPException(400, detail={"code": "invalid", "message": "No images to caption"})
+    captions: list[dict[str, str]] = []
+    for img in targets:
+        file_rel = str(img.get("file") or "")
+        img_path = root / "datasets" / dataset_id / file_rel
+        if not img_path.is_file():
+            continue
+        ctx = {"id": dataset_id, "metadata": {"source": "lora_dataset", "file": file_rel}}
+        try:
+            prompt, _vision = await asyncio.to_thread(
+                service.image_to_prompt,
+                ctx,
+                image_path=img_path,
+                media="image",
+            )
+        except RuntimeError as e:
+            raise HTTPException(503, detail={"code": "caption_failed", "message": str(e)}) from e
+        captions.append({"file": file_rel, "prompt": prompt.strip()})
+    if not captions:
+        raise HTTPException(400, detail={"code": "invalid", "message": "Caption generation produced no results"})
+    return dataset_store.update_dataset_captions(root, dataset_id, captions)
+
+
+@router.post("/datasets/import-dog6", status_code=201)
+def import_dog6():
+    paths = _paths()
+    root = paths.get_project_root()
+    bundled = dataset_store.bundled_dog6_example_dir(paths.get_default_config_root())
+    try:
+        return dataset_store.import_dog6_example(root, bundled_root=bundled)
+    except Exception as e:
+        raise HTTPException(500, detail={"code": "import_failed", "message": str(e)}) from e
+
+
+@router.get("/trainable-models")
+def trainable_models():
+    service = get_container().resolve(ISettingsService)
+    registry = service.get_model_registry()
+    detailed = service.get_models_detailed_status()
+    items: list[dict[str, Any]] = []
+    for mid in sorted(TRAINABLE_BASE_MODELS):
+        cfg = registry.get(mid)
+        status = detailed.get(mid, {})
+        items.append(
+            {
+                "id": mid,
+                "name": (cfg.name if cfg else {}) or {},
+                "ready": bool(status.get("ready")),
+                "trainable": mid in TRAINABLE_BASE_MODELS,
+                "phase": 1 if mid in TRAINABLE_BASE_MODELS else 2,
+            }
+        )
+    # Not trainable in this release
+    phase2 = (
+        ("z-image-turbo", "z-image-turbo", {"zh": "Z-Image Turbo", "en": "Z-Image Turbo"}),
+        ("qwen-image", "qwen-image", {"zh": "Qwen Image", "en": "Qwen Image"}),
+    )
+    for mid, registry_key, label in phase2:
+        cfg = registry.get(registry_key)
+        status = detailed.get(registry_key, {})
+        items.append(
+            {
+                "id": mid,
+                "name": (cfg.name if cfg else label) or label,
+                "ready": bool(status.get("ready")),
+                "trainable": False,
+                "phase": 2,
+            }
+        )
+    return {
+        "items": items,
+        "presets": PRESETS,
+        "presets_by_model": {
+            "flux1-dev": PRESETS,
+            "z-image": Z_IMAGE_PRESETS,
+        },
+    }
+
+
+@router.get("/training/requirements")
+def training_requirements(base_model: str = "flux1-dev"):
+    mem = get_memory_gb()
+    min_gb = train_min_memory_gb(base_model)
+    return {
+        "min_memory_gb": min_gb,
+        "detected_memory_gb": mem,
+        "mlx_required": True,
+        "can_submit": mem <= 0 or mem >= min_gb - 2,
+    }
+
+
+@router.post("/trainings", status_code=202)
+async def submit_training(
+    body: LoraTrainingRequest,
+    sched: TaskScheduler = Depends(get_task_scheduler),
+    engines: EngineRegistry = Depends(get_engine_registry),
+):
+    mem = get_memory_gb()
+    min_gb = train_min_memory_gb(body.base_model)
+    if mem > 0 and mem < min_gb - 2:
+        raise HTTPException(
+            409,
+            detail={
+                "code": "insufficient_memory",
+                "message": f"LoRA training for {body.base_model.split(':', 1)[0]!r} "
+                f"requires ~{min_gb:.0f}GB unified memory",
+            },
+        )
+    train_eng = engines.get_lora_train()
+    if not train_eng.supports_base_model(body.base_model):
+        raise HTTPException(
+            409,
+            detail={"code": "unsupported", "message": f"base model {body.base_model!r} not trainable"},
+        )
+    root = _paths().get_project_root()
+    try:
+        dataset_store.validate_dataset_for_training(root, body.dataset_id)
+    except (FileNotFoundError, ValueError) as e:
+        raise HTTPException(400, detail={"code": "invalid_dataset", "message": str(e)}) from e
+
+    r = await sched.submit(
+        kind=TK.LORA_TRAINING,
+        model_id=body.base_model.split(":", 1)[0],
+        params=body.model_dump(),
+        priority=body.priority,
+    )
+    return {"task": r}
+
+
+@router.get("/datasets/{dataset_id}/file/{file_path:path}")
+def dataset_image_file(dataset_id: str, file_path: str):
+    from fastapi.responses import FileResponse
+
+    root = _paths().get_project_root()
+    path = root / "datasets" / dataset_id / file_path
+    if not path.is_file():
+        raise HTTPException(404, detail={"code": "not_found", "message": "image not found"})
+    return FileResponse(path)
+
+
+@router.get("/trainings/{task_id}/artifacts/file/{filename}")
+def training_artifact_file(task_id: str, filename: str, sched: TaskScheduler = Depends(get_task_scheduler)):
+    from fastapi.responses import FileResponse
+
+    work = sched.task_work_dir(task_id)
+    candidates = [
+        work / filename,
+        work / "adapters" / filename,
+    ]
+    for path in candidates:
+        if path.is_file() and path.suffix.lower() in {".png", ".safetensors", ".json"}:
+            return FileResponse(path)
+    raise HTTPException(404, detail={"code": "not_found", "message": "artifact not found"})
+
+
+@router.get("/trainings/{task_id}/artifacts")
+def training_artifacts(task_id: str, sched: TaskScheduler = Depends(get_task_scheduler)):
+    work = sched.task_work_dir(task_id)
+    if not work.is_dir():
+        raise HTTPException(404, detail={"code": "not_found", "message": "task work dir not found"})
+    progress_images = sorted(work.glob("*_progress.png"))
+    checkpoints = sorted((work / "adapters").glob("*_adapters.safetensors")) if (work / "adapters").is_dir() else []
+    loss_path = work / "loss_history.json"
+    loss_history = []
+    if loss_path.is_file():
+        import json
+
+        loss_history = json.loads(loss_path.read_text(encoding="utf-8"))
+    return {
+        "progress_images": [p.name for p in progress_images],
+        "checkpoints": [p.name for p in checkpoints],
+        "loss_history": loss_history,
+    }
+
+
+@router.get("/user-adapters")
+def list_user_adapters():
+    paths = _paths()
+    items = list_user_loras(paths.get_workspace_config_dir())
+    out: list[dict[str, Any]] = []
+    for ul in items:
+        local_path = str(ul.get("local_path") or "")
+        resolved = paths.resolve_registry_local_path(local_path) if local_path else None
+        out.append(
+            {
+                **ul,
+                "installed": bool(resolved and (resolved.is_file() or resolved.is_dir())),
+            }
+        )
+    return {"items": out}
+
+
+@router.delete("/user-adapters/{lora_id}")
+def remove_user_adapter(lora_id: str, remove_files: bool = False):
+    paths = _paths()
+    ok = delete_user_lora(
+        paths.get_workspace_config_dir(),
+        lora_id,
+        remove_files=remove_files,
+        project_root=paths.get_project_root(),
+    )
+    if not ok:
+        raise HTTPException(404, detail={"code": "not_found", "message": f"user LoRA {lora_id!r} not found"})
+    return {"ok": True, "id": lora_id}
+
+
+@router.post("/trainings/{task_id}/register")
+def register_training_checkpoint(
+    task_id: str,
+    body: LoraRegisterRequest,
+    sched: TaskScheduler = Depends(get_task_scheduler),
+):
+    work = sched.task_work_dir(task_id)
+    ckpt = work / "adapters" / body.checkpoint
+    if not ckpt.is_file():
+        raise HTTPException(404, detail={"code": "not_found", "message": f"checkpoint {body.checkpoint!r} not found"})
+    task_row = sched.get_task(task_id) or {}
+    params = task_row.get("params") or {}
+    base_model = str(params.get("base_model") or "flux1-dev").split(":", 1)[0]
+    paths = _paths()
+    slug = body.name.strip() or f"trained-{task_id[-8:]}"
+    slug = "".join(c if c.isalnum() or c in "-_" else "-" for c in slug)[:64]
+    dest_dir = paths.get_loras_dir() / slug
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    import shutil
+
+    dest_file = dest_dir / "adapter.safetensors"
+    shutil.copy2(ckpt, dest_file)
+    entry = register_user_lora(
+        paths.get_workspace_config_dir(),
+        name=body.name or slug,
+        base_model=base_model,
+        local_path=f"models/Lora/{slug}",
+        task_id=task_id,
+    )
+    return {"user_lora": entry, "adapter_path": str(dest_file)}

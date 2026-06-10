@@ -351,12 +351,21 @@ class ErnieImageDiTMLX(TransformerBase):
         for i, layer in enumerate(core.layers):
             _flatten_mlx_module_params(layer, f"layers.{i}", self._param_map)
 
-    def load_weights(self, weights, strict=False, ctx=None, *, bundle_affine_bits=None):
+    def load_weights(
+        self,
+        weights,
+        strict=False,
+        ctx=None,
+        *,
+        bundle_affine_bits=None,
+        inference_mode=None,
+    ):
         loaded, skipped = super().load_weights(
             weights,
             strict=strict,
             ctx=ctx,
             bundle_affine_bits=bundle_affine_bits,
+            inference_mode=inference_mode,
         )
         self._build_param_map()
         return loaded, skipped

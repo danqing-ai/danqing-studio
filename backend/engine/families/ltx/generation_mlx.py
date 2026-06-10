@@ -201,10 +201,20 @@ def _i2v_conditionings(
 class LTX23MlxGenerator:
     """In-repo two-stage LTX 2.3 T2V/I2V generator (MLX only)."""
 
-    def __init__(self, ctx: RuntimeContext, bundle_root: Path, config: LTXConfig | None = None):
+    def __init__(
+        self,
+        ctx: RuntimeContext,
+        bundle_root: Path,
+        config: LTXConfig | None = None,
+        *,
+        entry: Any | None = None,
+        version_key: str | None = None,
+    ):
         self.ctx = ctx
         self.bundle_root = Path(bundle_root)
         self.config = config or LTXConfig()
+        self._registry_entry = entry
+        self._version_key = version_key
         self._encoder: LTX23GemmaEncoder | None = None
         self._dit: LTX23X0Model | None = None
         self._video_encoder = None
@@ -234,6 +244,8 @@ class LTX23MlxGenerator:
             self.bundle_root,
             self.config,
             weight_stem=stem,
+            entry=self._registry_entry,
+            version_key=self._version_key,
         )
         return self._dit
 

@@ -26,6 +26,17 @@ def flux_calculate_shift_mu(
     return float(image_seq_len * m + b)
 
 
+def cogview4_calculate_shift_mu(
+    image_seq_len: int,
+    base_seq_len: int = 256,
+    base_shift: float = 0.25,
+    max_shift: float = 0.75,
+) -> float:
+    """CogView4 ``calculate_shift`` — sqrt seq scaling (diffusers ``pipeline_cogview4``)."""
+    m = (float(image_seq_len) / float(base_seq_len)) ** 0.5
+    return float(m * max_shift + base_shift)
+
+
 class Scheduler(ABC):
     """扩散调度器基类。"""
 
@@ -190,6 +201,43 @@ class FlowMatchEulerScheduler(Scheduler):
         # Euler: x_{t-1} = x_t + (sigma_{t-1} - sigma_t) * v
         dt = sigma_next - sigma
         return latents + dt * noise_pred
+
+
+class FlowMatchEulerCogView4Scheduler(FlowMatchEulerScheduler):
+    """Flow Match Euler + CogView4 ``calculate_shift`` μ (sqrt image_seq_len scaling)."""
+
+    def set_timesteps(self, num_inference_steps: int,
+                      init_timestep: int = 0,
+                      image_seq_len: int = 256,
+                      use_empirical_mu: bool = True,
+                      **kwargs) -> Any:
+        del use_empirical_mu
+        self._init_timestep = init_timestep
+        mu = kwargs.get("mu")
+        if mu is None:
+            mu = cogview4_calculate_shift_mu(
+                image_seq_len,
+                int(kwargs.get("scheduler_base_image_seq_len", 256)),
+                float(kwargs.get("scheduler_base_shift", 0.25)),
+                float(kwargs.get("scheduler_max_shift", 0.75)),
+            )
+        num_train = float(self._num_train_timesteps)
+        sigma_max = 1.0
+        sigma_min = 1.0 / num_train
+        timesteps_np = np.linspace(
+            sigma_max * num_train,
+            sigma_min * num_train,
+            num_inference_steps,
+            dtype=np.float32,
+        )
+        sigmas_t = self.ctx.array(timesteps_np / num_train)
+        sigmas_shifted = self._time_shift_exponential_array(float(mu), 1.0, sigmas_t)
+        sigmas = self.ctx.concat([sigmas_shifted, self.ctx.zeros((1,), dtype=sigmas_shifted.dtype)], axis=0)
+        timesteps = sigmas_shifted * num_train
+        self._sigmas = sigmas
+        self._timesteps = timesteps
+        self._step_index = init_timestep
+        return list(range(init_timestep, num_inference_steps))
 
 
 class FlowMatchEulerFluxDynamicScheduler(FlowMatchEulerScheduler):
@@ -462,6 +510,7 @@ class WanFlowUniPCScheduler(Scheduler):
         lower_order_final: bool = True,
         disable_corrector: list[int] | None = None,
         use_corrector: bool = True,
+        velocity_scale: float | None = None,
     ):
         self._num_train_timesteps = num_train_timesteps
         self.ctx = ctx
@@ -472,6 +521,7 @@ class WanFlowUniPCScheduler(Scheduler):
         self._lower_order_final = bool(lower_order_final)
         self._use_corrector = bool(use_corrector)
         self._disable_corrector = set(disable_corrector or [])
+        self._velocity_scale = float(velocity_scale) if velocity_scale is not None else None
         self._timesteps: Any = None
         self._sigmas: np.ndarray | None = None
         self._sigmas_float: list[float] = []
@@ -528,13 +578,21 @@ class WanFlowUniPCScheduler(Scheduler):
         if not self._predict_x0:
             return model_output
         sigma = self._sigmas_float[self._step_index]
-        return sample - sigma * model_output
+        # Apply velocity scale calibration if configured
+        v = model_output
+        if self._velocity_scale is not None and self._velocity_scale != 1.0:
+            v = v / self._velocity_scale
+        return sample - sigma * v
 
     def _uni_p_bh2(self, x0: Any, sample: Any, order: int) -> Any:
         i = self._step_index
         s = self._sigmas_float
         sigma_s0 = s[i]
         sigma_t = s[i + 1]
+
+        # When sigma_t = 0, we've reached the target distribution.
+        # Return x0 (the denoised prediction from current step) instead of
+        # running the multi-step predictor, which can be unstable at sigma=0.
         if sigma_t == 0.0:
             return x0
 
@@ -654,8 +712,15 @@ class WanFlowUniPCScheduler(Scheduler):
         i = self._step_index
         x0 = self.convert_model_output(noise_pred, latents)
 
+        # Check if this is the final step (sigma_t = 0)
+        sigma_t = self._sigmas_float[i + 1] if i + 1 < len(self._sigmas_float) else 0.0
+        is_final_step = (sigma_t == 0.0)
+
+        # On final step, skip corrector and directly return x0
+        # Corrector can introduce instability when sigma is very small
         use_corrector = (
-            self._use_corrector
+            not is_final_step
+            and self._use_corrector
             and i > 0
             and (i - 1) not in self._disable_corrector
             and self._last_sample is not None
@@ -672,6 +737,12 @@ class WanFlowUniPCScheduler(Scheduler):
         else:
             this_order = self._solver_order
         self._this_order = min(this_order, self._lower_order_nums + 1)
+
+        # On final step, return x0 directly without predictor
+        if is_final_step:
+            self._last_sample = latents
+            self._step_index += 1
+            return x0
 
         self._last_sample = latents
         x_next = self._uni_p_bh2(x0, latents, self._this_order)
@@ -727,6 +798,7 @@ class SeedVR2EulerScheduler(Scheduler):
 
 _scheduler_registry: dict[str, type[Scheduler]] = {
     "flow_match_euler": FlowMatchEulerScheduler,
+    "flow_match_euler_cogview4": FlowMatchEulerCogView4Scheduler,
     "flow_match_euler_flux_dynamic": FlowMatchEulerFluxDynamicScheduler,
     "linear": LinearScheduler,
     "unipc": UniPCScheduler,

@@ -102,7 +102,9 @@ backend/
 
 - **Tier 1:** hot path uses `ctx.*` (Linear, RMSNorm, attention helpers).
 - **Tier 2:** platform-specific blocks in `*_mlx.py` / `*_cuda.py` when `ctx` cannot express required APIs.
-- **`import mlx` / `import torch`** only in `runtime/` or `*_mlx.py` / `*_cuda.py` (enforced by `make check-engine-imports`).
+- **`import mlx`** only in `runtime/` or `*_mlx.py` / `*_cuda.py`.
+- **`import torch`** only in `*_cuda.py` (plus `runtime/cuda.py` for `CudaContext`; enforced by `make check-engine-imports`).
+- **MLX hot path** — `*_mlx.py` must not `import torch` or import from `*_cuda` modules; CUDA dispatch belongs in `text_encoder.py` / `t5.py` / fail loud (`make check-engine-governance --rule mlx-torch`).
 
 ### 4.2 Go-style stem (one logical unit)
 
@@ -207,6 +209,7 @@ Implementation: [`scripts/check_engine_governance.py`](../scripts/check_engine_g
 | Full stack | `make verify-engine-stack` |
 | All engine rules | `make check-engine-governance` |
 | Imports | `make check-engine-imports` |
+| MLX / torch | `make check-engine-governance --rule mlx-torch` |
 | Family layout / budget | `make check-engine-family-layout` |
 | Weight key parity | `make check-engine-governance --rule parity` |
 | Registry contracts | `make check-engine-governance --rule registry` |
@@ -218,7 +221,8 @@ Implementation: [`scripts/check_engine_governance.py`](../scripts/check_engine_g
 
 | Rule | Checks |
 |------|--------|
-| `imports` | No raw `mlx`/`torch` outside runtime and `*_mlx`/`*_cuda` |
+| `imports` | No raw `mlx` outside `runtime` / `*_mlx` / `*_cuda`; no raw `torch` outside `*_cuda` / `runtime/cuda.py` |
+| `mlx-torch` | No `torch` or `*_cuda` imports inside `*_mlx.py` (MLX hot path) |
 | `layout` | No forbidden family subtrees; `common/` subpackage layout; ≤8 logical units |
 | `primitives` | No duplicate SelfAttention/RMSNorm classes in families |
 | `attention` | Prefer `common/ops/attention` over raw `ctx.attention` |
@@ -410,7 +414,22 @@ Scaffold emits `transformer.py`, `transformer_mlx.py`, `weights.py`, **`plugin.p
 | **ace_step** (Shape C) | `audio/`, `lm/`, `vae/`, `vocals/`, `quality/` subtrees — documented, not a template for image DiT |
 | **qwen** | `vae/` 3D VAE codec subtree — long mapping table, registry via `vae_codec_registry` |
 
-### 12.6 Ongoing (non-blocking)
+### 12.6 Quantized DiT inference (MLX)
+
+Registry versions with `quantization.bits` (4/8, `mlx_affine`) load DiT weights into
+`QuantizedLinear` for low-VRAM inference — shared path for **local derived** and
+**pre-downloaded** bundles. Resolution: `backend/engine/common/bundle/quant_inference.py`;
+loader: `backend/engine/common/model/quantized_load.py`;
+LoRA on quantized DiT: `backend/engine/common/model/quantized_lora.py` (merge → re-quantize touched layers).
+TE/VAE (optional): `resolve_component_inference_weight_mode()`; local `convert_model` may also
+quantize `text_encoder/` / `vae/` when registry sets `quantization.<component>.bits` (reference:
+`flux2-klein-4b` derived `int4`/`int8`); Qwen3/Flux2 TE loads affine weights via registry +
+`build_zimage_mlx_encoder`; VAE decode releases after `vae_forward_to_pil` when
+`vae_release_after_decode` (default true). CUDA int4/int8 versions fail loud (Phase 5 placeholder).
+Design and rollout status:
+[`docs/plans/quantized-inference-memory.md`](plans/quantized-inference-memory.md).
+
+### 12.7 Ongoing (non-blocking)
 
 | Item | Status |
 |------|--------|

@@ -29,7 +29,8 @@
   "edit": [
     {
       "id": "E1",
-      "text": "shift the scene toward cool blue hour lighting"
+      "text": "shift the scene toward cool blue hour lighting",
+      "judge_floor": 0.17
     },
     {
       "id": "E2",
@@ -38,6 +39,7 @@
   ],
   "upscale": {
     "id": "U1",
-    "judge_prompt": "a sharp detailed photograph of colorful fruit in a bowl on a kitchen counter"
+    "judge_prompt": "a sharp detailed photograph of colorful fruit in a bowl on a kitchen counter",
+    "judge_floor": 0.17
   }
 }

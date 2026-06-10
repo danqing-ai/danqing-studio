@@ -540,8 +540,15 @@ class Flux2DiTMLX(TransformerBase):
             return ctx.zeros((1,)), ctx.zeros((1,))
         return self.pos_embed.forward(ids_2d)
 
-    def load_weights(self, weights, strict=False,
-                     ctx=None, *, bundle_affine_bits=None):
+    def load_weights(
+        self,
+        weights,
+        strict=False,
+        ctx=None,
+        *,
+        bundle_affine_bits=None,
+        inference_mode=None,
+    ):
         """Load weights using checkpoint/native dtype (reference-aligned)."""
         load_ctx = ctx if ctx is not None else self.ctx
         loaded, skipped = super().load_weights(
@@ -549,5 +556,6 @@ class Flux2DiTMLX(TransformerBase):
             strict=strict,
             ctx=load_ctx,
             bundle_affine_bits=bundle_affine_bits,
+            inference_mode=inference_mode,
         )
         return loaded, skipped

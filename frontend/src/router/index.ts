@@ -22,6 +22,11 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/AudioCreateView.vue'),
   },
   {
+    path: '/lora_train',
+    name: 'lora_train',
+    component: () => import('@/views/LoraTrainView.vue'),
+  },
+  {
     path: '/models',
     name: 'models',
     component: () => import('@/views/ModelsView.vue'),

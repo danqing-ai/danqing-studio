@@ -13,13 +13,20 @@
         :time-options="timeOptions"
         :model-options="allModelOptions"
         :selection-mode="selectionMode"
+        :selected-count="selectedPaths.size"
+        :all-selected="allLoadedSelected"
         :view-mode="viewMode"
         :supports-canvas="true"
+        canvas-media="video"
         @update:filter-time="filterTime = $event"
         @update:filter-models="filterModels = $event"
         @refresh="refreshGallery"
         @toggle-selection-mode="toggleSelectionMode"
+        @select-all="selectAllLoaded"
+        @batch-delete="batchDeleteSelected"
+        @clear-selection="clearSelection"
         @update:view-mode="onViewModeChange"
+        @composer-restore="onCanvasComposerRestore"
       />
     </template>
 
@@ -199,6 +206,16 @@ import { assetIdFromGalleryPath } from '@/utils/copilotHandoff';
 import { DQ_STORAGE, getItem, setItem } from '@/utils/storage';
 import { applyPromptDraft, consumePromptDraft } from '@/utils/promptApply';
 import { usePromptApplyOffer } from '@/composables/usePromptApplyOffer';
+import {
+  buildResolutionSizeOptions,
+  parseSizeValue,
+  pickResolutionForModel,
+} from '@/utils/registryParamSchema';
+import {
+  getVideoSizeForModel,
+  migrateLegacyVideoLastSize,
+  setVideoSizeForModel,
+} from '@/utils/videoSizeStorage';
 
 const router = useRouter();
 const registryStore = useRegistryStore();
@@ -284,7 +301,7 @@ const params = reactive({
 });
 
 const selectedModelVersion = ref('');
-const selectedSize = ref('720x480');
+const selectedSize = ref('720x1280');
 const selectedDurationSec = ref(5);
 const batchCount = ref(1);
 
@@ -720,6 +737,7 @@ function onModelVersionChange(val: string) {
   params.model = parsed.modelKey;
   params.version = parsed.versionKey;
   loadModelDefaults();
+  syncResolutionForModel(parsed.modelKey);
   loadCompatibleLoras();
 }
 
@@ -1100,28 +1118,31 @@ function syncNumFramesFromDuration() {
   params.num_frames = framesFromDurationSec(selectedDurationSec.value, schema, params.fps);
 }
 
-const sizeOptions = computed(() => {
-  const p = currentModelConfig.value?.parameters;
-  if (!p?.width?.options || !p?.height?.options) {
-    return [
-      { label: '480p', value: '832x480' },
-      { label: '720p', value: '1280x720' },
-      { label: '1080p', value: '1920x1080' },
-    ];
-  }
-  const pairs = new Map<string, string>();
-  const addPair = (w: number, h: number) => {
-    const value = `${w}x${h}`;
-    pairs.set(value, `${w}×${h}`);
-  };
-  addPair(p.width.default, p.height.default);
-  for (const w of p.width.options) {
-    for (const h of p.height.options) {
-      addPair(w, h);
-    }
-  }
-  return [...pairs.entries()].map(([value, label]) => ({ label, value }));
-});
+const sizeOptions = computed(() =>
+  buildResolutionSizeOptions(currentModelConfig.value?.parameters as Record<string, unknown> | undefined),
+);
+
+function applySelectedSize(val: string) {
+  const parsed = parseSizeValue(val);
+  if (!parsed) return;
+  params.width = parsed.width;
+  params.height = parsed.height;
+}
+
+function syncResolutionForModel(modelId?: string, opts?: { ignoreSaved?: boolean }) {
+  if (videoWorkMode.value === 'upscale') return;
+  const mid = modelId || String(params.model || '');
+  if (!mid) return;
+  migrateLegacyVideoLastSize(mid);
+  const saved = opts?.ignoreSaved ? null : getVideoSizeForModel(mid);
+  const pick = pickResolutionForModel(
+    currentModelConfig.value?.parameters as Record<string, unknown> | undefined,
+    saved,
+  );
+  if (!pick) return;
+  if (selectedSize.value !== pick) selectedSize.value = pick;
+  else applySelectedSize(pick);
+}
 
 const durationOptions = computed(() => {
   const p = currentModelConfig.value?.parameters;
@@ -1184,6 +1205,7 @@ const loadModelRegistry = async () => {
     }
 
     loadModelDefaults();
+    syncResolutionForModel(String(params.model || ''));
     loadCompatibleLoras();
   } catch (e) {
     console.error('Failed to load model registry:', e);
@@ -1191,7 +1213,6 @@ const loadModelRegistry = async () => {
 };
 
 function syncComposerPickersFromParams() {
-  selectedSize.value = `${params.width}x${params.height}`;
   selectedDurationSec.value = snapDurationSecToOptions(
     durationSecFromFrames(params.num_frames, params.fps),
     durationOptions.value,
@@ -1219,8 +1240,6 @@ const loadModelDefaults = () => {
   if (p.steps) params.steps = p.steps.default;
   if (p.guide_scale) params.guide_scale = p.guide_scale.default;
   if (p.shift) params.shift = p.shift.default;
-  if (p.width) params.width = p.width.default;
-  if (p.height) params.height = p.height.default;
   if (p.num_frames) params.num_frames = p.num_frames.default;
   if (p.fps) params.fps = p.fps.default;
   if (p.lora_scale?.default != null) params.lora_scale = p.lora_scale.default;
@@ -1231,6 +1250,7 @@ const loadModelDefaults = () => {
 
 const resetToDefaults = () => {
   loadModelDefaults();
+  syncResolutionForModel(String(params.model || ''), { ignoreSaved: true });
   toast.success($tt('studio.restoredDefaults'));
 };
 
@@ -1693,7 +1713,10 @@ watch(videoWorkMode, () => {
       params.version = first.versionKey;
       selectedModelVersion.value = first.modelKey + '|' + first.versionKey;
       loadModelDefaults();
+      syncResolutionForModel(first.modelKey);
     }
+  } else if (videoWorkMode.value !== 'upscale') {
+    syncResolutionForModel();
   }
 });
 
@@ -1713,16 +1736,19 @@ watch(modelFilterCommercialOnly, () => {
     reconcileVersionPickerSelection(videoModelPickerVersions.value, params, selectedModelVersion)
   ) {
     loadModelDefaults();
+    syncResolutionForModel(String(params.model || ''));
   }
 });
 
 // Watch size and duration changes to update params
 watch(selectedSize, (val) => {
-  const [w, h] = val.split('x').map(Number);
-  if (w && h) {
-    params.width = w;
-    params.height = h;
-  }
+  applySelectedSize(val);
+  const mid = String(params.model || '');
+  if (mid) setVideoSizeForModel(mid, val);
+});
+
+watch(sizeOptions, () => {
+  syncResolutionForModel();
 });
 
 watch(selectedDurationSec, () => {
@@ -1744,18 +1770,6 @@ watch(durationOptions, (opts) => {
 
 watch(selectedModelVersion, (val) => {
   onModelVersionChange(val);
-});
-
-watch(sizeOptions, (opts) => {
-  if (!opts.length) return;
-  if (!opts.some((o) => o.value === selectedSize.value)) {
-    selectedSize.value = opts[0].value;
-    const [w, h] = opts[0].value.split('x').map(Number);
-    if (w && h) {
-      params.width = w;
-      params.height = h;
-    }
-  }
 });
 
 onMounted(async () => {

@@ -911,6 +911,7 @@ class HunyuanVideoDiTMLX(TransformerBase):
         ctx: Any = None,
         *,
         bundle_affine_bits: int | None = None,
+        inference_mode=None,
     ):
         """Load weights and cast floating params to bfloat16 (matches Flux2 / Qwen families)."""
         load_ctx = ctx if ctx is not None else self.ctx
@@ -919,7 +920,9 @@ class HunyuanVideoDiTMLX(TransformerBase):
             strict=strict,
             ctx=load_ctx,
             bundle_affine_bits=bundle_affine_bits,
+            inference_mode=inference_mode,
         )
-        self._cast_param_map_dtype(mx.bfloat16)
+        if inference_mode is None or getattr(inference_mode, "kind", "dense") != "quantized":
+            self._cast_param_map_dtype(mx.bfloat16)
         self.ctx.eval(*[p for _, p in self._param_map.items()])
         return loaded, skipped

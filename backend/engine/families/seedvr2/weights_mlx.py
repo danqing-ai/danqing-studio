@@ -905,3 +905,34 @@ def load_flat_bundle(
         model_path=str(bundle_path),
     )
     return weights, definition_cls
+
+
+def load_seedvr2_transformer_flat_checkpoint(
+    bundle_path: str | Path,
+    model_config: ModelConfig,
+) -> tuple[dict[str, Any], int | None]:
+    """Load raw flat transformer safetensors (+ ``quantization_level`` metadata if present)."""
+    import mlx.core as mx
+
+    from backend.engine.common.bundle.bundle_weights.loader_mlx import WeightLoader
+
+    definition_cls = SeedVR2WeightDefinition.resolve(model_config)
+    component = next(c for c in definition_cls.get_components() if c.name == "transformer")
+    root = Path(bundle_path)
+    shard_files = [root / f for f in (component.weight_files or []) if (root / f).is_file()]
+    if not shard_files:
+        shard_files = sorted(f for f in root.glob("*.safetensors") if not f.name.startswith("._"))
+    if not shard_files:
+        raise FileNotFoundError(f"No SeedVR2 transformer safetensors under {root}")
+
+    flat: dict[str, Any] = {}
+    quant_level: int | None = None
+    for shard in shard_files:
+        data = mx.load(str(shard), return_metadata=True)
+        if quant_level is None:
+            meta = data[1] if len(data) > 1 else {}
+            raw_q = (meta or {}).get("quantization_level")
+            if raw_q not in (None, "", "None", "null"):
+                quant_level = int(raw_q)
+        flat.update(dict(data[0].items()))
+    return flat, quant_level

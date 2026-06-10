@@ -97,6 +97,7 @@ export type PageKey =
   | 'image_create'
   | 'video_create'
   | 'audio_create'
+  | 'lora_train'
   | 'models'
   | 'prompts'
   | 'assistant'

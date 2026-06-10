@@ -47,6 +47,7 @@ class Flux1Config:
     preserve_guidance_when_disabled: bool = True
     cfg_negative_eligible: bool = False
     vae_encoder_cast_bfloat16: bool = True  # MLX VAEEncoder weights → bfloat16 after load
+    release_text_encoder_after_encode: bool = True
 
     def __post_init__(self):
         pass
@@ -80,6 +81,7 @@ class Flux2Config:
     latent_noise_dtype: str = "bfloat16"
     noise_sample_fp32: bool = True
     vae_preview_warmup: bool = True
+    release_text_encoder_after_encode: bool = True
 
 
 @dataclass
@@ -109,6 +111,7 @@ class QwenImageConfig:
     # Qwen-Image-Edit（独立权重）：VL 图文编码 + VAE 参考 latent 序列拼接
     edit_use_vl_vision: bool = False
     edit_conditioning_latent_concat: bool = False
+    release_text_encoder_after_encode: bool = True
 
 
 @dataclass
@@ -141,6 +144,7 @@ class FIBOConfig:
     # FIBO-Edit: Reference concat VAE-packed source latents on the sequence axis (not img2img blend).
     edit_conditioning_concat: bool = False
     edit_rmbg_composite_output: bool = False
+    release_text_encoder_after_encode: bool = True
 
 
 @dataclass
@@ -180,6 +184,7 @@ class ZImageConfig:
     z_image_noise_layout: bool = True
     use_mlx_compile: bool = False        # keep numerical path close to reference; prioritize parity
     use_mlx_cfg_fusion: bool = False     # disable fused CFG fast-path; use explicit cond/uncond forwards
+    release_text_encoder_after_encode: bool = True
 
 
 @dataclass
@@ -212,6 +217,7 @@ class ErnieImageConfig:
     vae_preview_warmup: bool = True
     supports_img2img: bool = False
     bundle_config_merger: str = "ernie_image"
+    release_text_encoder_after_encode: bool = True
 
     @property
     def head_dim(self) -> int:
@@ -253,6 +259,73 @@ def merge_ernie_image_config_from_bundle(config: ErnieImageConfig, bundle_root: 
                 setattr(config, dst, int(val))
     if "qk_layernorm" in data:
         config.qk_norm = bool(data["qk_layernorm"])
+    if "rope_axes_dim" in data:
+        object.__setattr__(
+            config,
+            "rope_axes_dim",
+            tuple(int(x) for x in data["rope_axes_dim"]),
+        )
+
+
+@dataclass
+class CogView4Config:
+    """CogView4-6B — joint-attention DiT + GLM-4-9B + AutoencoderKL."""
+
+    patch_size: int = 2
+    in_channels: int = 16
+    out_channels: int = 16
+    num_layers: int = 30
+    attention_head_dim: int = 40
+    num_attention_heads: int = 64
+    text_embed_dim: int = 4096
+    time_embed_dim: int = 512
+    condition_dim: int = 256
+    pos_embed_max_size: int = 128
+    sample_size: int = 128
+    rope_axes_dim: tuple[int, int] = (256, 256)
+    encoder_type: str = "cogview4"
+    max_seq_len: int = 1024
+    supports_guidance: bool = True
+    requires_sigma_shift: bool = True
+    vae_scale: int = 8
+    latent_noise_dtype: str = "bfloat16"
+    noise_sample_fp32: bool = True
+    supports_img2img: bool = True
+    bundle_config_merger: str = "cogview4"
+    release_text_encoder_after_encode: bool = True
+
+    @property
+    def text_dim(self) -> int:
+        return self.text_embed_dim
+
+
+def merge_cogview4_config_from_bundle(config: CogView4Config, bundle_root: Path | None) -> None:
+    """Override ``CogView4Config`` from ``transformer/config.json`` (diffusers layout)."""
+    if bundle_root is None:
+        return
+    cfg_path = bundle_root / "transformer" / "config.json"
+    if not cfg_path.is_file():
+        return
+    try:
+        data: dict[str, Any] = json.loads(cfg_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        raise RuntimeError(f"CogView4: cannot read config {cfg_path}: {e}") from e
+    key_map = {
+        "patch_size": "patch_size",
+        "in_channels": "in_channels",
+        "out_channels": "out_channels",
+        "num_layers": "num_layers",
+        "attention_head_dim": "attention_head_dim",
+        "num_attention_heads": "num_attention_heads",
+        "text_embed_dim": "text_embed_dim",
+        "time_embed_dim": "time_embed_dim",
+        "condition_dim": "condition_dim",
+        "pos_embed_max_size": "pos_embed_max_size",
+        "sample_size": "sample_size",
+    }
+    for src, dst in key_map.items():
+        if src in data:
+            setattr(config, dst, int(data[src]))
     if "rope_axes_dim" in data:
         object.__setattr__(
             config,
@@ -453,6 +526,8 @@ class WanConfig:
     text_dim: int = 4096
     max_seq_len: int = 512
     text_len: int = 512
+    # Text encoder — UMT5-XXL from .pth bundle (not HuggingFace T5)
+    encoder_type: str = "wan_umt5"
     # Spatiotemporal parameters
     patch_size: tuple = (1, 2, 2)
     window_size: tuple = (-1, -1)
@@ -486,6 +561,10 @@ class WanConfig:
     release_t5_after_encode: bool = True
     cfg_negative_prompt_style: str = "wan"
     scheduler_bundle_extras: str = "wan_flow_unipc"
+    # Disable UniPC corrector for stability (velocity scale mismatch causes instability)
+    wan_scheduler_use_corrector: bool = False
+    # Velocity scale calibration - None means no scaling (model output matches scheduler assumption)
+    wan_velocity_scale: float | None = None
 
 
 def merge_wan_config_from_bundle(config: WanConfig, bundle_root: Path | None) -> None:
@@ -685,6 +764,7 @@ FAMILY_CONFIG_MAP: dict[str, type] = {
     "fibo": FIBOConfig,
     "z_image": ZImageConfig,
     "ernie_image": ErnieImageConfig,
+    "cogview4": CogView4Config,
     "seedvr2": SeedVR2Config,
     # Audio
     "diffrhythm": DiffRhythmConfig,
@@ -696,7 +776,7 @@ FAMILY_CONFIG_MAP: dict[str, type] = {
 }
 
 IMAGE_FAMILY_REUSE_CONTRACT = frozenset({
-    "flux1", "flux2", "z_image", "qwen_image", "ernie_image", "fibo", "seedvr2",
+    "flux1", "flux2", "z_image", "qwen_image", "ernie_image", "fibo", "cogview4", "seedvr2",
 })
 
 
@@ -710,7 +790,42 @@ def get_config_class(family: str) -> type:
 
 _IMAGE_BUNDLE_CONFIG_MERGERS: dict[str, Any] = {
     "ernie_image": merge_ernie_image_config_from_bundle,
+    "cogview4": merge_cogview4_config_from_bundle,
 }
+
+
+def apply_image_registry_config_overrides(entry: Any, config: Any) -> None:
+    """Apply registry ``ui.parameters`` scalars onto a family config dataclass."""
+    from backend.engine.contracts.pipeline_registry import registry_scalar_default
+
+    for param_key in (
+        "text_encoder_out_layers",
+        "vae_scale",
+        "enable_thinking",
+        "latent_noise_dtype",
+        "max_seq_len",
+        "inner_dim",
+        "num_heads",
+        "attn_head_dim",
+        "num_layers",
+        "num_single_layers",
+        "joint_attention_dim",
+        "edit_conditioning_concat",
+        "edit_rmbg_composite_output",
+        "edit_use_vl_vision",
+        "edit_conditioning_latent_concat",
+        "patch_token_dim",
+        "release_text_encoder_after_encode",
+    ):
+        val = registry_scalar_default(entry, param_key, None)
+        if val is not None and hasattr(config, param_key):
+            if param_key == "text_encoder_out_layers" and isinstance(val, list):
+                setattr(config, param_key, tuple(int(x) for x in val))
+            else:
+                setattr(config, param_key, val)
+    sg = registry_scalar_default(entry, "supports_guidance", None)
+    if sg is not None:
+        config.supports_guidance = bool(sg)
 
 
 def apply_image_bundle_config_merger(config: Any, bundle_root: Path | None) -> None:

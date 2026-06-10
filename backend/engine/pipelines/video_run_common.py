@@ -291,8 +291,20 @@ def video_encode_load_and_condition(pipeline,
     if preloaded_model is not None:
         model = preloaded_model
     else:
+        from backend.engine.common.bundle.quant_inference import assert_quantized_dit_lora_compatible
+
+        assert_quantized_dit_lora_compatible(
+            entry, version_key or None, getattr(request, "adapters", None)
+        )
         pipeline_graph_step("load_transformer", on_log)
-        model = load_model(pipeline, config, entry, version_key or None, latent_frames)
+        model = load_model(
+            pipeline,
+            config,
+            entry,
+            version_key or None,
+            latent_frames,
+            on_log=on_log,
+        )
         if model is None:
             raise RuntimeError(f"Failed to load model: {model_key}")
         model.after_load_weights(bundle_root=str(bundle_root) if bundle_root else None)
@@ -528,7 +540,13 @@ def execute_family_video_generator(pipeline,
         )
 
     factory = _get_video_generation_factory(family)
-    generator = factory(pipeline.ctx, bundle_root, config=config)
+    generator = factory(
+        pipeline.ctx,
+        bundle_root,
+        config=config,
+        entry=entry,
+        version_key=version_key,
+    )
     generator.load()
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -813,11 +831,14 @@ def encode_t5_texts_with_mask(pipeline, texts: list[str]) -> tuple[Any, Any]:
 def model_cache_key(pipeline, entry, version_key: str | None, num_frames: int) -> str:
     return video_model_cache_key(entry, version_key, num_frames)
 
-def load_model(pipeline,
+def load_model(
+    pipeline,
     config,
     entry,
     version_key: str | None,
     num_frames: int,
+    *,
+    on_log: Callable | None = None,
 ) -> Any:
     """加载视频模型 — 注册表驱动，零 family 分支。"""
     family = getattr(entry, "family", "")
@@ -830,6 +851,7 @@ def load_model(pipeline,
         project_root=pipeline._project_root,
         num_frames=num_frames,
         model_cache=pipeline._cache,
+        on_log=on_log,
     )
 
 def vae_decode_video(pipeline,
@@ -857,11 +879,14 @@ def vae_decode_video(pipeline,
             on_post_log=on_post_log,
         )
 
+    from backend.engine.common.bundle.quant_inference import resolve_component_inference_weight_mode
+    from backend.engine.common.bundle.safetensors_affine_quant import read_bundle_affine_bits_if_quantized
     from backend.engine.common.codecs.vae import (
         apply_flux2_latent_preprocess_if_enabled,
         create_loaded_vae_decoder,
         load_vae_weight_dict,
         read_vae_dir_config,
+        release_vae_decoder_memory,
         vae_forward_to_pil,
     )
 
@@ -872,11 +897,24 @@ def vae_decode_video(pipeline,
     latent_cfg = int(vae_cfg.get("latent_channels", 16)) if vae_cfg else 16
 
     vae_weights = load_vae_weight_dict(ctx, vae_dir)
+    vae_affine_root = vae_dir or Path(".")
     if not vae_weights and bool(getattr(config, "uses_ltx_flat_vae_decoder", False)) and bundle_root is not None:
         dec_path = ltx_flat_vae_decoder_file(bundle_root)
         if dec_path is not None:
             raw_dec = ctx.load_weights(str(dec_path))
             vae_weights = {f"decoder.{k}": v for k, v in raw_dec.items()}
+            vae_affine_root = dec_path
+
+    bundle_affine_bits = read_bundle_affine_bits_if_quantized(vae_weights, vae_affine_root)
+    vae_inference_mode = resolve_component_inference_weight_mode(
+        entry,
+        version_key,
+        ctx,
+        component="vae",
+        weight_keys=frozenset(vae_weights.keys()),
+        bundle_affine_bits=bundle_affine_bits,
+    )
+    release_after = bool(_registry_scalar_default_fn(entry, "vae_release_after_decode", True))
 
     if latents.ndim == 5:
         B, C, T, H, W = latents.shape
@@ -888,25 +926,36 @@ def vae_decode_video(pipeline,
     sample_latent, vae_sf, vae_shf = apply_flux2_latent_preprocess_if_enabled(
         ctx, sample_latent, vae_cfg, vae_weights, scaling_factor, shift_factor
     )
-    vae, _, _, _ = create_loaded_vae_decoder(
-        ctx,
-        sample_latent,
-        vae_weights,
-        vae_sf,
-        vae_shf,
-        default_channels=latent_cfg,
-        require_conv_in=False,
-    )
-
-    frames = []
-    for t_idx in range(T):
-        frame_latent = latents[:, :, t_idx, :, :]
-        frame_latent, _, _ = apply_flux2_latent_preprocess_if_enabled(
-            ctx, frame_latent, vae_cfg, vae_weights, scaling_factor, shift_factor
+    vae = None
+    try:
+        vae, _, _, _ = create_loaded_vae_decoder(
+            ctx,
+            sample_latent,
+            vae_weights,
+            vae_sf,
+            vae_shf,
+            default_channels=latent_cfg,
+            require_conv_in=False,
+            bundle_affine_bits=bundle_affine_bits,
+            inference_mode=vae_inference_mode,
         )
-        frames.append(vae_forward_to_pil(ctx, vae, frame_latent))
 
-    return frames
+        frames = []
+        for t_idx in range(T):
+            frame_latent = latents[:, :, t_idx, :, :]
+            frame_latent, _, _ = apply_flux2_latent_preprocess_if_enabled(
+                ctx, frame_latent, vae_cfg, vae_weights, scaling_factor, shift_factor
+            )
+            frames.append(vae_forward_to_pil(ctx, vae, frame_latent))
+
+        if on_post_log:
+            on_post_log(f"vae_decode {vae_inference_mode.log_label()}")
+        return frames
+    finally:
+        if release_after:
+            release_vae_decoder_memory(ctx, vae)
+            if on_post_log:
+                on_post_log("vae_released_after_decode=yes")
 
 def vae_encode_frame(pipeline,
     image_tensor,

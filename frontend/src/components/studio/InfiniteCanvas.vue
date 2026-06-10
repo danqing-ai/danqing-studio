@@ -1,17 +1,5 @@
 <template>
   <div class="infinite-canvas">
-    <CanvasSessionBar
-      v-if="storeReady"
-      :session-id="sessionIdStr"
-      :session-title="sessionTitleStr"
-      :sessions="sessionList"
-      :syncing="sessionSyncing"
-      @switch-session="onSwitchSession"
-      @create-session="onCreateSession"
-      @delete-session="onDeleteSession"
-      @rename-session="onRenameSession"
-    />
-
     <CanvasViewport
       ref="viewportComp"
       :items="store.items"
@@ -149,7 +137,6 @@ import { $tt } from '@/utils/i18n';
 import CanvasViewport from '@/components/studio/CanvasViewport.vue';
 import CanvasToolbar from '@/components/studio/CanvasToolbar.vue';
 import CanvasLayerPanel from '@/components/studio/CanvasLayerPanel.vue';
-import CanvasSessionBar from '@/components/studio/CanvasSessionBar.vue';
 import CanvasLineageSidebar from '@/components/studio/CanvasLineageSidebar.vue';
 import CanvasSessionGraph from '@/components/studio/CanvasSessionGraph.vue';
 import CanvasMultiToolbar from '@/components/studio/CanvasMultiToolbar.vue';
@@ -212,11 +199,6 @@ const emit = defineEmits<{
 }>();
 
 const store = useCanvasStore(props.media);
-const storeReady = computed(() => unref(store.ready));
-const sessionIdStr = computed(() => unref(store.sessionId));
-const sessionTitleStr = computed(() => unref(store.sessionTitle));
-const sessionList = computed(() => unref(store.sessions));
-const sessionSyncing = computed(() => unref(store.syncing));
 const sessionEdges = computed(() => unref(store.edges));
 
 const showLayers = ref(false);
@@ -666,29 +648,6 @@ function onToolbarAction(action: string) {
   }
 }
 
-async function onSwitchSession(id: string) {
-  await store.switchSession(id);
-  selectedPaths.value = store.activeAssetPath.value ? [store.activeAssetPath.value] : [];
-  emitPrimarySelection();
-  emit('composer-restore', { ...store.composerSnapshot });
-}
-
-async function onCreateSession() {
-  await store.createSession();
-  onClearSelection();
-  toast.success($tt('canvas.sessionCreated'));
-}
-
-async function onDeleteSession(id: string) {
-  const ok = await store.deleteSession(id);
-  if (ok) toast.success($tt('canvas.sessionDeleted'));
-}
-
-async function onRenameSession(title: string) {
-  await store.renameSession(title);
-  toast.success($tt('canvas.sessionRenamed'));
-}
-
 function onOverlayUpdate(
   kind: CanvasOverlayKind,
   patch: Partial<import('@/types').CanvasOverlayLayer>
@@ -995,6 +954,15 @@ watch(
     }
   },
   { immediate: true }
+);
+
+watch(
+  () => unref(store.sessionId),
+  () => {
+    if (!unref(store.ready)) return;
+    selectedPaths.value = store.activeAssetPath.value ? [store.activeAssetPath.value] : [];
+    emitPrimarySelection();
+  }
 );
 
 watch(

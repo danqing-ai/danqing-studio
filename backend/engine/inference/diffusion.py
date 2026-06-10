@@ -40,7 +40,8 @@ class DiffusionInference:
         latents = self._init_latents(bundle)
 
         # ── 2. Pack ──────────────────────────────────────────────────
-        if bundle.pack_fn is not None:
+        # Create/edit paths may already pass packed tokens (B, seq, C); only pack 4D NCHW.
+        if bundle.pack_fn is not None and getattr(latents, "ndim", None) != 3:
             latents = bundle.pack_fn(bundle.ctx, latents)
 
         # ── 3. 解析策略 ──────────────────────────────────────────────

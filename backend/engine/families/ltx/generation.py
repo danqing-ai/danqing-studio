@@ -39,6 +39,8 @@ def create_ltx23_generator(
     bundle_root: Path,
     *,
     config: LTXConfig | None = None,
+    entry: Any | None = None,
+    version_key: str | None = None,
 ) -> LTX23GeneratorProto:
     backend = getattr(ctx, "backend", "mlx")
     if backend != "mlx":
@@ -48,7 +50,13 @@ def create_ltx23_generator(
         )
     if not bundle_root.is_dir():
         raise RuntimeError(f"LTX 2.3 bundle directory not found: {bundle_root}")
-    return LTX23MlxGenerator(ctx, bundle_root, config=config)
+    return LTX23MlxGenerator(
+        ctx,
+        bundle_root,
+        config=config,
+        entry=entry,
+        version_key=version_key,
+    )
 
 
 def validate_video_generation_params(

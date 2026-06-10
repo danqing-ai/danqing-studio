@@ -89,6 +89,11 @@ class QwenImageTextEncoderCuda:
         )()
         return encode_qwen_image_prompt_cuda(wrapper, prompt=prompt, device=self._device)
 
+    def release_weights(self) -> None:
+        self._text_model = None
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
 
 _QWEN_EDIT_PROMPT_TEMPLATE = (
     "<|im_start|>system\n"

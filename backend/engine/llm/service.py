@@ -44,13 +44,16 @@ from backend.utils.path_utils import PathResolver
 
 logger = logging.getLogger(__name__)
 
-ENHANCE_IMAGE_SYSTEM_PROMPT = """You are a professional prompt engineer for AI image generation.
-Given a user's prompt, rewrite it into a detailed, vivid description suitable for AI image generation models.
-Add details about lighting, composition, style, colors, textures, and atmosphere while keeping the original intent.
-Match the user's language: Chinese input → Chinese output; English input → English output.
-Keep it concise: one flowing paragraph, at most ~120 Chinese characters or ~80 English words.
-CRITICAL: Never repeat the same phrase or word. No filler loops.
-Output ONLY the enhanced prompt text, without any explanation or quotation marks."""
+ENHANCE_IMAGE_SYSTEM_PROMPT = """You are a prompt engineer for AI image models (Flux, Z-Image, Qwen-Image).
+Rewrite the user's idea into one vivid, comma-separated description. Keep their subject, names, and intent.
+
+Language: Chinese in → Chinese out; English in → English out.
+If the input is already detailed, lightly polish only — do not lengthen.
+
+Add at most a few cues for lighting, composition, color, texture, and mood.
+Length cap: ~120 Chinese characters or ~80 English words.
+Never repeat the same word or phrase; never loop filler at the end.
+Do not write "Okay", explanations, or quotes. Output ONLY the enhanced prompt."""
 
 ENHANCE_VIDEO_SYSTEM_PROMPT = """You are a professional prompt engineer for AI video generation.
 Given a user's brief, rewrite it into a detailed prompt for image-to-video or text-to-video models.
@@ -66,35 +69,49 @@ vocal style, and emotional arc. Match the user's language when the input is Chin
 Keep it concise: one short paragraph. Never repeat the same phrase or word. No filler loops.
 Output ONLY the enhanced brief text, without explanation or quotation marks."""
 
-LYRICS_SYSTEM_PROMPT = """You are a professional lyricist for AI music generation (ACE-Step).
-Given a music description, write concise lyrics with section tags.
+LYRICS_SYSTEM_PROMPT = """You write singable lyrics for ACE-Step music generation.
 
-Required structure (use only what fits the song; do not add extra sections):
-[Intro] (optional, 1-2 lines)
-[Verse 1] (2-4 lines)
-[Chorus] (2-4 lines)
-[Verse 2] (optional, 2-4 lines)
-[Bridge] (optional, 2 lines)
-[Outro] (1-2 lines) — then STOP immediately.
+Format:
+- Section tags on their own line: [Intro], [Verse], [Verse 1], [Chorus], [Bridge], [Outro]
+- 2–4 short lines per section; use only sections that fit a ~30–90s song
+- Typical flow: [Verse 1] → [Chorus] → [Verse 2] → [Chorus] → [Outro] (skip optional sections when unnecessary)
+- If the description asks for instrumental or no vocals: output only `[Instrumental]` and stop
 
-CRITICAL:
-- Never repeat the same word twice in a row. No filler loops.
-- Each line: about 4-12 words, one complete sung phrase.
-- Total output: at most ~24 lyric lines plus section tags.
-- Language: match the user's description (Chinese, English, etc.).
-- Output ONLY the formatted lyrics. No explanation, no quotes.
+Line rules:
+- English: 4–10 words per line, one complete sung phrase
+- Chinese: 5–12 characters per line, natural rhythm, each line self-contained
+- Match the language and theme of the music description
 
-Example:
+Anti-loop (critical):
+- Never repeat a word twice in a row
+- Do not reuse the same line or filler hook ("la la", "oh oh") more than once
+- After [Outro] lines, STOP — no extra sections or commentary
+
+Output ONLY lyrics with section tags. No title, quotes, or explanation.
+
+Example (English):
 [Verse 1]
-The morning light breaks through the window
-A gentle breeze whispers your name today
+Walking down the empty street at dawn
+City lights fading one by one
 
 [Chorus]
-Every star above reminds me of your smile
-I'll keep on searching till I'm home again
+We are the stars tonight
+Shining through the endless sky
 
 [Outro]
-Fade into the quiet night"""
+Fade into the quiet night
+
+Example (Chinese):
+[Verse 1]
+清晨的风吹过旧街角
+你的笑容还在心头绕
+
+[Chorus]
+我们是今夜的星光
+照亮这片无尽的天
+
+[Outro]
+慢慢沉入安静的夜"""
 
 DESCRIBE_NODE_SYSTEM_PROMPT = """You are a creative studio assistant writing short notes on canvas nodes.
 Given metadata about a generated asset (title, prompt, model, dimensions, lineage), write a concise note (2-4 sentences)
@@ -275,9 +292,19 @@ class LLMService:
     def enhance_prompt(self, request: EnhanceRequest) -> EnhanceResponse:
         """Enhance a creative brief for image, video, or audio generation."""
         system_prompt = self._enhance_system_prompt(request.target_action)
+        action = (request.target_action or "image_create").strip().lower()
+        raw_prompt = (request.prompt or "").strip()
+        user_content = raw_prompt
+        if action in ("image_create", "create", "image") and len(raw_prompt) >= 60:
+            if any("\u4e00" <= ch <= "\u9fff" for ch in raw_prompt):
+                user_content += "\n\n（输入已够详细：只做轻微润色，禁止加长或重复用词。）"
+            elif len(raw_prompt) >= 80:
+                user_content += "\n\n(Input is already detailed: light polish only; do not lengthen or repeat phrases.)"
+
         attempts = (
-            (0.7, 280),
-            (0.5, 220),
+            (0.65, 200),
+            (0.45, 160),
+            (0.35, 140),
         )
         last_clean = ""
         for temperature, max_tokens in attempts:
@@ -285,7 +312,7 @@ class LLMService:
                 model=self._model_id,
                 messages=[
                     ChatMessage(role="system", content=system_prompt),
-                    ChatMessage(role="user", content=request.prompt),
+                    ChatMessage(role="user", content=user_content),
                 ],
                 temperature=temperature,
                 top_p=0.9,
@@ -298,7 +325,10 @@ class LLMService:
                 return EnhanceResponse(enhanced_prompt=cleaned)
             last_clean = cleaned
 
-        return EnhanceResponse(enhanced_prompt=last_clean)
+        fallback = sanitize_enhanced_prompt(raw_prompt)
+        if prompt_enhance_quality_ok(last_clean):
+            return EnhanceResponse(enhanced_prompt=last_clean)
+        return EnhanceResponse(enhanced_prompt=fallback or last_clean)
 
     # ------------------------------------------------------------------
     # Lyrics generation
@@ -340,7 +370,10 @@ class LLMService:
         user_msg = f"Music description: {prompt}"
         if style:
             user_msg += f"\nStyle/Genre: {style}"
-        user_msg += "\n\nWrite concise ACE-Step lyrics. End with [Outro] and stop."
+        user_msg += (
+            "\n\nWrite ACE-Step lyrics with section tags. "
+            "Match the description language. End with [Outro] (or [Instrumental] if no vocals) and stop."
+        )
 
         attempts = (
             (0.65, 420),

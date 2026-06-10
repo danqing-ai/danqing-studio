@@ -15,13 +15,16 @@ from backend.engine.contracts.pipeline_registry import (
 )
 from backend.engine.contracts.runtime_contracts import FamilyRuntimeContract
 from backend.engine.common.ops.schedulers import get_scheduler
-from backend.engine.config.model_configs import assert_image_family_contract, get_config_class
+from backend.engine.config.model_configs import (
+    apply_image_registry_config_overrides,
+    assert_image_family_contract,
+    get_config_class,
+)
 from backend.engine.inference.image_denoise import run_image_denoise
 from backend.engine.sessions._context import ResolvedRun, require_resolved_bundle
 from backend.engine.pipelines.image_run_common import (
     _IMAGE_SCHEDULER_SEMANTICS,
     align_image_hw_multiples,
-    apply_image_registry_config_overrides,
     build_image_vae_preview_session,
     center_crop_image_pil,
     finalize_image_from_latents,
@@ -140,7 +143,7 @@ def build_flux1_fill_edit_context(
         _pack_flux1_latents,
         _unpack_flux1_latents,
     )
-    from backend.engine.pipelines.image_pipeline import _resolve_image_preview_settings
+    from backend.engine.pipelines.image_run_common import resolve_image_preview_settings
 
     model_key = resolved.model_id
     version_key = resolved.version_key
@@ -160,7 +163,7 @@ def build_flux1_fill_edit_context(
     config_cls = get_config_class(entry.family)
     config = config_cls()
     config.patch_token_dim = FILL_PATCH_TOKEN_DIM
-    apply_image_registry_config_overrides(pipeline, entry, config)
+    apply_image_registry_config_overrides(entry, config)
     family = getattr(entry, "family", "flux1")
     assert_image_family_contract(family, config)
     runtime_contract = FamilyRuntimeContract(family=family, config=config)
@@ -211,7 +214,7 @@ def build_flux1_fill_edit_context(
     steps = max(1, steps)
     guidance = float(request.guidance) if request.guidance is not None else float(guidance_default)
     guidance = runtime_contract.resolve_guidance_scalar(guidance)
-    preview_mode, preview_interval, preview_max_edge = _resolve_image_preview_settings(entry)
+    preview_mode, preview_interval, preview_max_edge = resolve_image_preview_settings(entry)
     preview_state: dict[str, Any] = {}
 
     with phase_cm("encode"):
@@ -354,6 +357,7 @@ def build_flux1_fill_edit_context(
         steps=steps,
         guidance=guidance,
         flux_unpack=_unpack_flux1_latents,
+        flux_pack=_pack_flux1_latents,
         preview_mode=preview_mode,
         preview_interval=preview_interval,
         preview_max_edge=preview_max_edge,
@@ -423,6 +427,7 @@ def execute_flux1_fill_edit_denoise(ctx: Any) -> Any | None:
         entry=ctx.entry,
         version_key=ctx.version_key or None,
         packed_denoise=True,
+        flux_pack=ctx.flux_pack,
         flux_unpack=ctx.flux_unpack,
         latent_h=ctx.lh,
         latent_w=ctx.lw,

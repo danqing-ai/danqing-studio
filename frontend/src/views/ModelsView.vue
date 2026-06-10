@@ -263,6 +263,43 @@
           class="models-lora-section"
         >
           <div class="page-header">
+            <h2 class="page-title">{{ $t('download.myTrainedLoras') }}</h2>
+          </div>
+
+          <DqSurfaceCard v-if="userLoras.length" class="studio-surface-card models-page__col-mb">
+            <DqRow :gutter="16">
+              <DqCol
+                v-for="ul in userLoras"
+                :key="ul.id"
+                :xs="24"
+                :sm="12"
+                :md="8"
+                class="models-page__col-mb"
+              >
+                <DqSurfaceCard class="user-lora-card">
+                  <div class="user-lora-card__name">{{ ul.name }}</div>
+                  <div class="user-lora-card__meta">
+                    {{ ul.base_model }} · {{ ul.id }}
+                  </div>
+                  <div class="user-lora-card__actions">
+                    <DqButton size="sm" type="primary" @click="verifyUserLora(ul)">
+                      {{ $t('loraTrain.verifyGenerate') }}
+                    </DqButton>
+                    <DqButton size="sm" type="danger" @click="deleteUserLora(ul)">
+                      {{ $t('common.delete') }}
+                    </DqButton>
+                  </div>
+                </DqSurfaceCard>
+              </DqCol>
+            </DqRow>
+          </DqSurfaceCard>
+          <DqEmpty
+            v-else
+            class="models-page__col-mb"
+            :description="$t('download.noUserLoras')"
+          />
+
+          <div class="page-header">
             <h2 class="page-title">{{ $t('download.civitaiSearch') }}</h2>
           </div>
 
@@ -495,8 +532,8 @@
 
 <script setup lang="ts">
 // @ts-nocheck
-import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
-import { onBeforeRouteLeave } from 'vue-router';
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue';
+import { onBeforeRouteLeave, useRouter } from 'vue-router';
 import { toast, confirm } from '@/utils/feedback';
 import { api } from '@/utils/api';
 import { $tt, $mn, $md, $mvn } from '@/utils/i18n';
@@ -574,6 +611,8 @@ interface DiskSpaceData {
 /* ───── State ───── */
 
 const activeCategory = ref('all');
+const userLoras = ref<any[]>([]);
+const router = useRouter();
 const modelRegistry = ref<Record<string, ModelConfig>>({});
 const modelsStatus = ref<Record<string, boolean>>({});
 const modelsDetailedStatus = ref<Record<string, any>>({});
@@ -746,6 +785,44 @@ async function loadInstalled() {
     console.error('Failed to load installed:', e);
   }
 }
+
+async function loadUserLoras() {
+  try {
+    const res = (await api.loras.listUserAdapters()) as { items?: any[] };
+    userLoras.value = res.items || [];
+  } catch {
+    userLoras.value = [];
+  }
+}
+
+function verifyUserLora(ul: { id?: string; base_model?: string }) {
+  router.push({
+    name: 'image_create',
+    query: {
+      model: String(ul.base_model || 'flux1-dev'),
+      lora: String(ul.id || ''),
+    },
+  });
+}
+
+async function deleteUserLora(ul: { id?: string; name?: string }) {
+  const ok = await confirm({
+    title: $tt('download.deleteUserLoraTitle'),
+    message: $tt('download.deleteUserLoraMessage', { name: ul.name || ul.id }),
+  });
+  if (!ok) return;
+  try {
+    await api.loras.deleteUserAdapter(String(ul.id), true);
+    await loadUserLoras();
+    toast.success($tt('download.userLoraDeleted'));
+  } catch (e: any) {
+    toast.error(e?.message || String(e));
+  }
+}
+
+watch(activeCategory, (cat) => {
+  if (cat === 'loras') loadUserLoras();
+});
 
 async function loadDiskSpace() {
   try {
@@ -1331,6 +1408,7 @@ onMounted(() => {
   loadInstalled();
   loadDiskSpace();
   loadActiveDownloads();
+  if (activeCategory.value === 'loras') loadUserLoras();
 });
 
 onUnmounted(() => {

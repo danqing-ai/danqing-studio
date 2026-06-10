@@ -5,9 +5,10 @@ CLI 和 REST API 都通过此模块初始化 Engine，确保路径一致。
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from backend.core.contracts import CancelToken, ExecutionContext
 from backend.core.model_registry import ModelRegistry
@@ -93,6 +94,35 @@ def build_engine_context(project_root: Path | None = None) -> EngineContext:
         asset_store=asset_store,
         model_cache=shared_cache,
     )
+
+
+def release_engine_context(ctx: EngineContext | None) -> None:
+    """Unload cached DiT / pipeline weights and release GPU allocator caches."""
+    if ctx is None:
+        return
+    cache = getattr(ctx, "model_cache", None)
+    if cache is not None:
+        cache.unload_all()
+    for runtime in getattr(ctx, "runtimes", {}).values():
+        clear_fn = getattr(runtime, "clear_cache", None)
+        if clear_fn is not None:
+            try:
+                clear_fn()
+            except Exception:
+                pass
+    import gc
+
+    gc.collect()
+
+
+@contextmanager
+def engine_session(project_root: Path | None = None) -> Iterator[EngineContext]:
+    """Build engine context and release model cache when the CLI command finishes."""
+    ctx = build_engine_context(project_root)
+    try:
+        yield ctx
+    finally:
+        release_engine_context(ctx)
 
 
 def build_exec_context(

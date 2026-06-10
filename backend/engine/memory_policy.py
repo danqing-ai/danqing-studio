@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import gc
+import os
 from typing import Any, Callable, Mapping, TYPE_CHECKING
 
 from backend.core.interfaces import AppSettings
@@ -55,12 +56,20 @@ def build_shared_model_cache(
     )
 
 
+def resolve_mlx_memory_limit_gb(settings: AppSettings) -> int:
+    """Workspace setting, overridable via ``DANQING_MLX_MEMORY_LIMIT_GB`` (CLI / bench subprocess)."""
+    override = os.environ.get("DANQING_MLX_MEMORY_LIMIT_GB", "").strip()
+    if override:
+        return clamp_mlx_memory_limit_gb(override)
+    return clamp_mlx_memory_limit_gb(settings.mlx_memory_limit)
+
+
 def build_gpu_runtimes(settings: AppSettings) -> dict[str, Any]:
     from backend.engine.platform import PlatformInfo
 
     platforms = PlatformInfo.detect()
     runtimes: dict[str, Any] = {}
-    limit_gb = clamp_mlx_memory_limit_gb(settings.mlx_memory_limit)
+    limit_gb = resolve_mlx_memory_limit_gb(settings)
     if "mlx" in platforms:
         from backend.engine.runtime.mlx import MLXContext
 

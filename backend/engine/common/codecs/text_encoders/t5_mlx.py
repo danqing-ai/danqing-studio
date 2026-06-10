@@ -4,7 +4,7 @@ import importlib
 from typing import Any
 
 
-class T5Encoder:
+class T5EncoderMlx:
     """T5-XXL 文本编码器。
 
     用于: Flux1 / Flux2 / LTX / Wan 全系列。
@@ -31,7 +31,6 @@ class T5Encoder:
         self._native_mlx_only = native_mlx_only
         self._tokenizer = None
         self._model = None
-        self._torch_bridge_model = None
 
     @property
     def tokenizer(self):
@@ -51,10 +50,6 @@ class T5Encoder:
         )
         input_ids = tokens["input_ids"]
         attention_mask = tokens["attention_mask"]
-        if ctx.backend != "mlx":
-            from backend.engine.common.codecs.text_encoders.t5_cuda import t5_forward_torch, t5_prepare_torch_tensors
-            tid, tam = t5_prepare_torch_tensors(ctx, input_ids, attention_mask)
-            return t5_forward_torch(self, tid, tam)
         import mlx.core as mx
         input_ids_mx = ctx.array(input_ids, dtype=mx.int32)
         attention_mask_mx = ctx.array(attention_mask, dtype=mx.float32)
@@ -70,12 +65,6 @@ class T5Encoder:
         )
         input_ids = tokens["input_ids"]
         attention_mask = tokens["attention_mask"]
-        if ctx.backend != "mlx":
-            from backend.engine.common.codecs.text_encoders.t5_cuda import t5_prepare_torch_tensors, t5_forward_torch
-            tid, tam = t5_prepare_torch_tensors(ctx, input_ids, attention_mask)
-            hidden = t5_forward_torch(self, tid, tam)
-            mask = ctx.array(attention_mask.astype(bool))
-            return hidden, mask
         import mlx.core as mx
         input_ids_mx = ctx.array(input_ids, dtype=mx.int32)
         attention_mask_mx = ctx.array(attention_mask, dtype=mx.float32)
@@ -92,60 +81,80 @@ class T5Encoder:
         import numpy as np
         import mlx.core as mx
 
-        ctx = self.ctx
-        if ctx.backend != "mlx":
-            from backend.engine.common.codecs.text_encoders.t5_cuda import t5_prepare_torch_tensors, t5_forward_torch
-            tid, tam = t5_prepare_torch_tensors(ctx, input_ids, attention_mask)
-            hidden = t5_forward_torch(self, tid, tam)
-            mask = ctx.array(np.asarray(attention_mask).astype(bool))
-            return hidden, mask
-        input_ids_mx = ctx.array(input_ids, dtype=mx.int32)
-        attention_mask_mx = ctx.array(attention_mask, dtype=mx.float32)
+        input_ids_mx = self.ctx.array(input_ids, dtype=mx.int32)
+        attention_mask_mx = self.ctx.array(attention_mask, dtype=mx.float32)
         hidden = self._forward_mlx(input_ids_mx, attention_mask_mx)
-        mask = ctx.array(np.asarray(attention_mask).astype(bool))
+        mask = self.ctx.array(np.asarray(attention_mask).astype(bool))
         return hidden, mask
+
+    def _load_t5_weight_dict(self) -> dict[str, Any]:
+        from pathlib import Path
+
+        from backend.engine.runtime.mlx_runtime import load_weights_dict
+
+        root = Path(self.model_path)
+        weights: dict[str, Any] = {}
+        load_fn = getattr(self.ctx, "load_weights", None)
+        for sf in sorted(root.glob("*.safetensors")):
+            if load_fn is not None:
+                weights.update(load_fn(str(sf)))
+            else:
+                weights.update(load_weights_dict(None, str(sf)))
+        return weights
 
     def _forward_mlx(self, input_ids, attention_mask):
         import mlx.core as mx
         try:
             from mlx_lm.models.t5 import T5Model, T5Config
         except ImportError as e:
-            if self._native_mlx_only:
-                raise RuntimeError(
-                    "T5 MLX forward requires mlx_lm.models.t5; torch bridge disabled for this encoder."
-                ) from e
-            return self._forward_mlx_via_torch_bridge(input_ids, attention_mask)
+            raise RuntimeError(
+                "T5 MLX forward requires mlx_lm.models.t5; torch bridge is not allowed on the MLX hot path."
+            ) from e
         if self._model is None:
+            from pathlib import Path
+
+            from backend.engine.common.bundle.quant_inference import (
+                resolve_inference_weight_mode_from_bundle,
+            )
+            from backend.engine.common.bundle.safetensors_affine_quant import (
+                read_bundle_affine_bits_if_quantized,
+            )
+            from backend.engine.common.model.quantized_load import load_weights_quantized_inference
+
             config = T5Config.from_pretrained(self.model_path)
             self._model = T5Model(config)
-            self._model.load_weights(str(self.model_path))
-            if self._weight_dtype is not None:
-                from backend.engine.runtime.mlx_dtype import cast_module_parameters
-
-                cast_module_parameters(
-                    self._model, self._weight_dtype, eval_fn=self.ctx.eval
+            weights = self._load_t5_weight_dict()
+            bundle_affine_bits = read_bundle_affine_bits_if_quantized(weights, Path(self.model_path))
+            te_mode = resolve_inference_weight_mode_from_bundle(
+                self.ctx,
+                weight_keys=frozenset(weights.keys()),
+                bundle_affine_bits=bundle_affine_bits,
+            )
+            if te_mode.kind == "quantized" and te_mode.bits in (4, 8):
+                load_weights_quantized_inference(
+                    self._model,
+                    list(weights.items()),
+                    strict=False,
+                    ctx=self.ctx,
+                    bundle_affine_bits=bundle_affine_bits,
+                    bits=int(te_mode.bits),
+                    group_size=int(te_mode.group_size),
+                    module_root=self._model,
                 )
+            else:
+                self._model.load_weights(str(self.model_path))
+                if self._weight_dtype is not None:
+                    from backend.engine.runtime.mlx_dtype import cast_module_parameters
+
+                    cast_module_parameters(
+                        self._model, self._weight_dtype, eval_fn=self.ctx.eval
+                    )
             self.ctx.eval(self._model.parameters())
         return self._model(input_ids, attention_mask)
-
-    def _forward_mlx_via_torch_bridge(self, input_ids, attention_mask):
-        """mlx-lm 已移除 ``models.t5`` 时：HF T5Encoder → numpy → MLX（数值与原生 MLX T5 不完全一致）。"""
-        try:
-            from backend.engine.common.codecs.text_encoders.t5_cuda import t5_cpu_torch_bridge_hidden_numpy
-        except ImportError as e:
-            raise RuntimeError(
-                "T5 MLX forward failed: mlx-lm has no T5 module and the PyTorch CPU bridge "
-                "is not available in this build (desktop MLX bundle excludes torch/*_cuda). "
-                "Ensure mlx-lm provides T5 or use a full CUDA-capable install."
-            ) from e
-
-        hidden_np = t5_cpu_torch_bridge_hidden_numpy(self, input_ids, attention_mask)
-        return self.ctx.array(hidden_np)
 
     def release_weights(self) -> None:
         """Drop loaded MLX / bridge weights (tokenizers unchanged)."""
         self._model = None
-        self._torch_bridge_model = None
         clear_cache_fn = getattr(self.ctx, "clear_cache", None)
         if clear_cache_fn is not None:
             clear_cache_fn()

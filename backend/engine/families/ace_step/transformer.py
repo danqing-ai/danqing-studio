@@ -75,3 +75,38 @@ class AceStepTransformer(TransformerBase):
 
         self._param_map = {}
         _collect_nn_params(self._model, "", self._param_map)
+
+    def load_weights(
+        self,
+        weights,
+        strict: bool = False,
+        ctx: Any = None,
+        *,
+        bundle_affine_bits: int | None = None,
+        inference_mode=None,
+    ):
+        load_ctx = ctx if ctx is not None else self._ctx
+        if (
+            inference_mode is not None
+            and getattr(inference_mode, "kind", "dense") == "quantized"
+            and getattr(inference_mode, "bits", None) in (4, 8)
+        ):
+            from backend.engine.common.model.quantized_load import load_weights_quantized_inference
+
+            return load_weights_quantized_inference(
+                self,
+                weights,
+                strict=strict,
+                ctx=load_ctx,
+                bundle_affine_bits=bundle_affine_bits,
+                bits=int(inference_mode.bits),
+                group_size=int(getattr(inference_mode, "group_size", 64) or 64),
+                module_root=self._model,
+            )
+        return super().load_weights(
+            weights,
+            strict=strict,
+            ctx=load_ctx,
+            bundle_affine_bits=bundle_affine_bits,
+            inference_mode=inference_mode,
+        )

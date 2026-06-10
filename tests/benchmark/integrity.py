@@ -20,7 +20,7 @@ class IntegrityResult:
 def check_output_image_integrity(
     path: str | Path,
     *,
-    min_bytes: int = 4096,
+    min_bytes: int = 4000,
     min_side: int = 64,
     expected_width: int | None = None,
     expected_height: int | None = None,

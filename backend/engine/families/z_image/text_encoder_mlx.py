@@ -93,10 +93,8 @@ class ZImageTextEncoder:
             )
         return self._tokenizer
 
-    def encode(self, texts: list[str]) -> Any:
+    def _tokenize_np(self, texts: list[str]) -> tuple[Any, Any, int]:
         tokenizer = self.tokenizer
-        ctx = self.ctx
-
         if hasattr(tokenizer, "apply_chat_template") and tokenizer.chat_template:
             chat_texts = []
             for text in texts:
@@ -126,18 +124,14 @@ class ZImageTextEncoder:
         input_ids = tokens["input_ids"]
         attention_mask = tokens["attention_mask"]
         num_valid = int(attention_mask.sum())
+        return input_ids, attention_mask, num_valid
 
-        if ctx.backend == "mlx":
-            input_ids = ctx.array(input_ids, dtype=mx.int32)
-            attention_mask = ctx.array(attention_mask, dtype=mx.float32)
-            return self._forward_mlx(input_ids, attention_mask, num_valid)
-        from backend.engine.families.z_image.text_encoder_cuda import (
-            zimage_prepare_torch_ids,
-            zimage_text_encoder_forward_torch,
-        )
-
-        tid, tam = zimage_prepare_torch_ids(ctx, input_ids, attention_mask)
-        return zimage_text_encoder_forward_torch(self, tid, tam, num_valid)
+    def encode(self, texts: list[str]) -> Any:
+        input_ids, attention_mask, num_valid = self._tokenize_np(texts)
+        ctx = self.ctx
+        input_ids = ctx.array(input_ids, dtype=mx.int32)
+        attention_mask = ctx.array(attention_mask, dtype=mx.float32)
+        return self._forward_mlx(input_ids, attention_mask, num_valid)
 
     def _forward_mlx(self, input_ids, attention_mask, num_valid: int):
         if self._model is None:
@@ -182,3 +176,14 @@ class ZImageTextEncoder:
 
         result = result[:, :num_valid, :]
         return result.astype(mx.bfloat16)
+
+    def release_weights(self) -> None:
+        """Drop Qwen3 MLX weights after encode (tokenizer kept)."""
+        self._model = None
+        self._compiled_layers = None
+        clear_cache_fn = getattr(self.ctx, "clear_cache", None)
+        if clear_cache_fn is not None:
+            clear_cache_fn()
+        else:
+            import importlib
+            importlib.import_module("mlx.core").clear_cache()

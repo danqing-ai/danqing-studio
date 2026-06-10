@@ -10,6 +10,7 @@ from backend.core.contracts import (
     ImageEditRequest,
     ImageGenerationRequest,
     ImageUpscaleRequest,
+    LoraTrainingRequest,
     VideoEditRequest,
     VideoGenerationRequest,
     VideoUpscaleRequest,
@@ -20,7 +21,7 @@ import backend.core.task_kinds as TK
 @dataclass(frozen=True)
 class TaskDispatchSpec:
     request_cls: type
-    engine_getter: str  # get_image | get_video | get_audio
+    engine_getter: str  # get_image | get_video | get_audio | get_lora_train
     method_name: str
 
 
@@ -33,6 +34,7 @@ TASK_DISPATCH: dict[str, TaskDispatchSpec] = {
     TK.VIDEO_UPSCALE: TaskDispatchSpec(VideoUpscaleRequest, "get_video", "upscale"),
     TK.AUDIO_GENERATION: TaskDispatchSpec(AudioGenerationRequest, "get_audio", "generate"),
     TK.AUDIO_EDIT: TaskDispatchSpec(AudioEditRequest, "get_audio", "edit"),
+    TK.LORA_TRAINING: TaskDispatchSpec(LoraTrainingRequest, "get_lora_train", "train"),
 }
 
 

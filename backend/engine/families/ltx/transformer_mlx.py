@@ -769,6 +769,41 @@ class LTX23Transformer(TransformerBase):
 
         return remap_ltx_weights(weights)
 
+    def load_weights(
+        self,
+        weights,
+        strict: bool = False,
+        ctx: Any = None,
+        *,
+        bundle_affine_bits: int | None = None,
+        inference_mode=None,
+    ):
+        load_ctx = ctx if ctx is not None else self.ctx
+        if (
+            inference_mode is not None
+            and getattr(inference_mode, "kind", "dense") == "quantized"
+            and getattr(inference_mode, "bits", None) in (4, 8)
+        ):
+            from backend.engine.common.model.quantized_load import load_weights_quantized_inference
+
+            return load_weights_quantized_inference(
+                self,
+                weights,
+                strict=strict,
+                ctx=load_ctx,
+                bundle_affine_bits=bundle_affine_bits,
+                bits=int(inference_mode.bits),
+                group_size=int(getattr(inference_mode, "group_size", 64) or 64),
+                module_root=self.model,
+            )
+        return super().load_weights(
+            weights,
+            strict=strict,
+            ctx=load_ctx,
+            bundle_affine_bits=bundle_affine_bits,
+            inference_mode=inference_mode,
+        )
+
     def parameters(self):
         if not self._param_map:
             self._build_param_map()
@@ -849,51 +884,44 @@ def _resolve_bundle_safetensors(bundle_root: Path, stem: str) -> Path:
     return matches[0]
 
 
-def _apply_ltx23_quantization(model: nn.Module, weights: dict[str, mx.array], *, group_size: int = 64) -> None:
-    quantized: set[str] = set()
-    for key in weights:
-        if key.endswith(".scales"):
-            quantized.add(key.rsplit(".scales", 1)[0])
-    if not quantized:
-        return
-
-    bits = 8
-    for key in weights:
-        if key.endswith(".scales"):
-            weight_key = key.rsplit(".scales", 1)[0] + ".weight"
-            if weight_key in weights:
-                w_cols = int(weights[weight_key].shape[-1])
-                s_cols = int(weights[key].shape[-1])
-                bits = round(w_cols * 32 / (s_cols * group_size))
-                break
-
-    def _predicate(path: str, module: nn.Module) -> bool:
-        return path in quantized and isinstance(module, nn.Linear)
-
-    nn.quantize(model, group_size=group_size, bits=bits, class_predicate=_predicate)
-
-
 def load_ltx23_x0_model(
     ctx: RuntimeContext,
     bundle_root: Path,
     config: LTXConfig | None = None,
     *,
     weight_stem: str,
+    entry: Any | None = None,
+    version_key: str | None = None,
 ) -> LTX23X0Model:
     """Load LTX 2.3 DiT from bundle safetensors and return an ``LTX23X0Model``."""
     from pathlib import Path as _Path
 
+    from backend.engine.common.bundle.quant_inference import resolve_dit_inference_weight_mode
+    from backend.engine.common.bundle.safetensors_affine_quant import read_bundle_affine_bits_if_quantized
     from backend.engine.runtime.mlx_runtime import load_weights_dict
-    from backend.engine.families.ltx.weights import remap_ltx23_weights
 
     path = _resolve_bundle_safetensors(_Path(bundle_root), weight_stem)
     raw = load_weights_dict(getattr(ctx, "load_weights", None), str(path))
-    weights = remap_ltx23_weights(raw)
-    if not weights:
-        raise RuntimeError(f"LTX 2.3 transformer weights empty after remap: {path}")
+    if not raw:
+        raise RuntimeError(f"LTX 2.3 transformer weights empty: {path}")
 
-    model = LTX23Model(config or LTXConfig())
-    _apply_ltx23_quantization(model, weights)
-    model.load_weights(list(weights.items()))
-    _mx_eval(model.parameters())
-    return LTX23X0Model(model)
+    bundle_affine_bits = read_bundle_affine_bits_if_quantized(raw, path)
+    inference_mode = resolve_dit_inference_weight_mode(
+        ctx,
+        entry=entry,
+        version_key=version_key,
+        weight_keys=frozenset(raw.keys()),
+        bundle_affine_bits=bundle_affine_bits,
+    )
+
+    ltx = LTX23Transformer(config or LTXConfig(), ctx)
+    ltx.load_weights(
+        list(raw.items()),
+        strict=False,
+        ctx=ctx,
+        bundle_affine_bits=bundle_affine_bits,
+        inference_mode=inference_mode,
+    )
+    setattr(ltx, "_dq_inference_mode", inference_mode)
+    _mx_eval(ltx.parameters())
+    return LTX23X0Model(ltx.model)

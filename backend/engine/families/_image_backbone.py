@@ -5,7 +5,11 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from backend.engine.config.model_configs import apply_image_bundle_config_merger, get_config_class
+from backend.engine.config.model_configs import (
+    apply_image_bundle_config_merger,
+    apply_image_registry_config_overrides,
+    get_config_class,
+)
 from backend.engine.pipelines.image_model_load import load_image_transformer
 from backend.engine.platform.session import PlatformSession
 from backend.engine.protocols.bundle import MediaBundle
@@ -68,6 +72,7 @@ class ImagePluginBackbone:
             )
         family = self.spec.family_id
         config = get_config_class(family)()
+        apply_image_registry_config_overrides(self._registry_entry, config)
         apply_image_bundle_config_merger(config, bundle.root)
         self._model = load_image_transformer(
             ctx=platform.kernels,

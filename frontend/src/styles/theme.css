@@ -1635,6 +1635,114 @@ body {
  overflow-y: auto;
 }
 
+/* Copilot / LoRA train: sidebar + main workspace (shared with ChatView layout) */
+.copilot-page__sidebar {
+ width: 220px;
+ flex-shrink: 0;
+}
+
+.copilot-page__sidebar-card {
+ height: 100%;
+ display: flex;
+ flex-direction: column;
+}
+
+.copilot-page__sidebar-card.dq-surface-card > .dq-surface-card__body {
+ flex: 1;
+ min-height: 0;
+ display: flex;
+ flex-direction: column;
+ overflow: hidden;
+}
+
+.copilot-page__sidebar-intro {
+ font-size: 12px;
+ color: var(--dq-label-tertiary);
+ margin: 0 0 12px;
+ line-height: 1.45;
+}
+
+.copilot-page__nav {
+ flex: 1;
+ min-height: 0;
+ overflow-y: auto;
+ display: flex;
+ flex-direction: column;
+ gap: 2px;
+}
+
+.copilot-page__status-panel {
+ margin-top: 12px;
+ padding-top: 12px;
+ border-top: 0.5px solid var(--dq-border-subtle);
+ display: flex;
+ flex-direction: column;
+ align-items: flex-start;
+ gap: 6px;
+ flex-shrink: 0;
+}
+
+.copilot-page__status-model {
+ font-size: 11px;
+ color: var(--dq-label-tertiary);
+ line-height: 1.35;
+ word-break: break-word;
+}
+
+.copilot-page__main {
+ flex: 1;
+ min-width: 0;
+ overflow: hidden;
+ padding: 4px 8px 16px 0;
+ display: flex;
+ flex-direction: column;
+ gap: 12px;
+}
+
+.copilot-page__header-main {
+ flex: 1;
+ min-width: 0;
+}
+
+.copilot-page__header-actions {
+ display: flex;
+ gap: 8px;
+ flex-wrap: wrap;
+ flex-shrink: 0;
+ align-items: center;
+}
+
+.copilot-page__title-icon {
+ color: var(--dq-accent);
+ flex-shrink: 0;
+}
+
+.copilot-page__page-desc {
+ margin: 0;
+ font-size: 13px;
+ line-height: 1.5;
+ color: var(--dq-label-tertiary);
+ max-width: 720px;
+}
+
+.copilot-page__workspace-card {
+ flex: 1;
+ min-width: 0;
+ min-height: 0;
+ overflow: hidden;
+ display: flex;
+ flex-direction: column;
+}
+
+.copilot-page__workspace-card > .dq-surface-card__body {
+ flex: 1;
+ min-height: 0;
+ overflow-y: auto;
+ display: flex;
+ flex-direction: column;
+ gap: 12px;
+}
+
 .model-version-name {
  font-size: 13px;
  font-weight: 500;
@@ -4105,6 +4213,7 @@ body {
 
 .models-page .models-page__sidebar-card.studio-surface-card.dq-surface-card,
 .copilot-page .copilot-page__sidebar-card.studio-surface-card.dq-surface-card,
+.lora-train-page .copilot-page__sidebar-card.studio-surface-card.dq-surface-card,
 .copilot-page .copilot-page__workspace-card.studio-surface-card.dq-surface-card,
 .copilot-page .copilot-page__cards-card.studio-surface-card.dq-surface-card {
  border-radius: var(--dq-radius-group);
