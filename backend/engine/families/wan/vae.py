@@ -6,8 +6,6 @@ from typing import Any, Callable
 
 from backend.engine.common.codecs.vae.video_frames import ncthw_pixels_to_pil_frames
 
-from .vae_mlx import decode_wan_vae_latents, encode_wan_vae_image
-
 
 def decode_wan_latents_to_pil_frames(
     ctx: Any,
@@ -26,15 +24,29 @@ def decode_wan_latents_to_pil_frames(
     if on_log is not None:
         on_log(f"Wan VAE decode start (latent shape {tuple(getattr(latents_bcthw, 'shape', ()))})")
 
-    pixels_ncthw = decode_wan_vae_latents(
-        ctx,
-        latents_bcthw,
-        bundle_root,
-        on_stage=on_stage,
-        on_log=on_log,
-        spatial_tiling=spatial_tiling,
-        spatial_scale=spatial_scale,
-    )
+    backend = getattr(ctx, "backend", "mlx")
+    if backend == "cuda":
+        from .vae_cuda import decode_wan_vae_latents_cuda
+        pixels_ncthw = decode_wan_vae_latents_cuda(
+            ctx,
+            latents_bcthw,
+            bundle_root,
+            on_stage=on_stage,
+            on_log=on_log,
+            spatial_tiling=spatial_tiling,
+            spatial_scale=spatial_scale,
+        )
+    else:
+        from .vae_mlx import decode_wan_vae_latents
+        pixels_ncthw = decode_wan_vae_latents(
+            ctx,
+            latents_bcthw,
+            bundle_root,
+            on_stage=on_stage,
+            on_log=on_log,
+            spatial_tiling=spatial_tiling,
+            spatial_scale=spatial_scale,
+        )
     frames = ncthw_pixels_to_pil_frames(ctx, pixels_ncthw, model_label="Wan")
     if on_log is not None and frames:
         w, h = frames[0].size
@@ -51,7 +63,13 @@ def encode_wan_image_to_latent(
     if bundle_root is None:
         raise RuntimeError("Wan VAE encode requires a local model bundle path.")
 
-    latents = encode_wan_vae_image(ctx, image_chw, bundle_root)
+    backend = getattr(ctx, "backend", "mlx")
+    if backend == "cuda":
+        from .vae_cuda import encode_wan_vae_image_cuda
+        latents = encode_wan_vae_image_cuda(ctx, image_chw, bundle_root)
+    else:
+        from .vae_mlx import encode_wan_vae_image
+        latents = encode_wan_vae_image(ctx, image_chw, bundle_root)
     if getattr(ctx, "is_tensor", lambda _x: False)(latents):
         ctx.eval(latents)
     return latents

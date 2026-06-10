@@ -7,14 +7,19 @@ from backend.engine.common.model.dit_stem import DelegatingDiTStem
 
 
 class ZImageTransformer(DelegatingDiTStem):
-    """Z-Image DiT — MLX on both backends today (CUDA ctx runs MLX graph)."""
+    """Z-Image DiT — native PyTorch on CUDA, MLX on Apple Silicon."""
 
     def __init__(self, config: Any, ctx: Any):
         from .transformer_mlx import ZImageDiTMLX as _MLX
+
+        cuda_cls = None
+        if getattr(ctx, "backend", "mlx") == "cuda":
+            from .transformer_cuda import ZImageDiTCuda
+            cuda_cls = ZImageDiTCuda
 
         super().__init__(
             config,
             ctx,
             mlx_cls=_MLX,
-            cuda_cls=_MLX,
+            cuda_cls=cuda_cls,
         )

@@ -437,11 +437,11 @@ class ZImageCudaTests(unittest.TestCase):
     def test_transformer_dispatch_cuda(self) -> None:
         from backend.engine.config.model_configs import ZImageConfig
         from backend.engine.families.z_image.transformer import ZImageTransformer
-        from backend.engine.families.z_image.transformer_mlx import ZImageDiTMLX as ZImageMLX
+        from backend.engine.families.z_image.transformer_cuda import ZImageDiTCuda
         from backend.engine.runtime.cuda import CudaContext
 
         model = ZImageTransformer(ZImageConfig(), CudaContext("cpu"))
-        self.assertIs(model._inner.__class__, ZImageMLX)
+        self.assertIsInstance(model._inner, ZImageDiTCuda)
 
     def test_transformer_param_map_on_cuda_context(self) -> None:
         from backend.engine.config.model_configs import ZImageConfig
@@ -721,13 +721,14 @@ class DiTBackendDispatchTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             LTXTransformer(LTXConfig(), CudaContext("cpu"))
 
-    def test_wan_dispatch_cuda_fail_loud(self) -> None:
+    def test_wan_dispatch_cuda(self) -> None:
         from backend.engine.config.model_configs import WanConfig
         from backend.engine.families.wan.transformer import WanTransformer
+        from backend.engine.families.wan.transformer_cuda import WanModelCUDA
         from backend.engine.runtime.cuda import CudaContext
 
-        with self.assertRaises(RuntimeError):
-            WanTransformer(WanConfig(), CudaContext("cpu"))
+        model = WanTransformer(WanConfig(), CudaContext("cpu"))
+        self.assertIsInstance(model._inner, WanModelCUDA)
 
     def test_flux2_and_fibo_cuda_fail_loud(self) -> None:
         from backend.engine.config.model_configs import FIBOConfig, Flux2Config

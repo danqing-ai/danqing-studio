@@ -47,3 +47,84 @@ def zimage_text_encoder_forward_torch(encoder: Any, input_ids, attention_mask, n
 
     result = result[:, :num_valid, :]
     return result.to(dtype=torch.bfloat16)
+
+
+class ZImageTextEncoderCuda:
+    """CUDA Z-Image text encoder (HF Qwen3 trunk + chat template)."""
+
+    def __init__(
+        self,
+        ctx: Any,
+        model_path: str,
+        max_seq_len: int = 512,
+        tokenizer_path: str = "",
+        hidden_state_layers: tuple[int, ...] | None = None,
+        enable_thinking: bool = False,
+        **_kw: Any,
+    ):
+        self.ctx = ctx
+        self.model_path = model_path
+        self.tokenizer_path = tokenizer_path or model_path
+        self.max_seq_len = max_seq_len
+        self.hidden_state_layers = hidden_state_layers
+        self.enable_thinking = enable_thinking
+        self._tokenizer = None
+        self._model = None
+
+    @property
+    def tokenizer(self):
+        if self._tokenizer is None:
+            from transformers import AutoTokenizer
+
+            self._tokenizer = AutoTokenizer.from_pretrained(
+                self.tokenizer_path,
+                trust_remote_code=True,
+            )
+        return self._tokenizer
+
+    def _tokenize_np(self, texts: list[str]) -> tuple[Any, Any, int]:
+        tokenizer = self.tokenizer
+        if hasattr(tokenizer, "apply_chat_template") and tokenizer.chat_template:
+            chat_texts = []
+            for text in texts:
+                chat = [{"role": "user", "content": text}]
+                chat_text = tokenizer.apply_chat_template(
+                    chat,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                    enable_thinking=self.enable_thinking,
+                )
+                chat_texts.append(chat_text)
+            tokens = tokenizer(
+                chat_texts,
+                padding="max_length",
+                max_length=self.max_seq_len,
+                truncation=True,
+                return_tensors="np",
+            )
+        else:
+            tokens = tokenizer(
+                texts,
+                padding="max_length",
+                max_length=self.max_seq_len,
+                truncation=True,
+                return_tensors="np",
+            )
+        input_ids = tokens["input_ids"]
+        attention_mask = tokens["attention_mask"]
+        num_valid = int(attention_mask.sum())
+        return input_ids, attention_mask, num_valid
+
+    def encode(self, texts: list[str]) -> Any:
+        input_ids, attention_mask, num_valid = self._tokenize_np(texts)
+        tid, tam = zimage_prepare_torch_ids(self.ctx, input_ids, attention_mask)
+        return zimage_text_encoder_forward_torch(self, tid, tam, num_valid)
+
+    def release_weights(self) -> None:
+        self._model = None
+        self.ctx.clear_cache()
+
+
+def zimage_encode_cuda(encoder: Any, texts: list[str]) -> Any:
+    """Backward-compatible helper — prefer ``ZImageTextEncoderCuda.encode``."""
+    return encoder.encode(texts)

@@ -1,4 +1,4 @@
-"""Wan video Transformer — public entry (MLX via ``DelegatingDiTStem``)."""
+"""Wan video Transformer — public entry (MLX/CUDA via ``DelegatingDiTStem``)."""
 from __future__ import annotations
 
 from typing import Any
@@ -12,14 +12,18 @@ from .transformer_mlx import WanModelMLX
 
 
 class WanTransformer(DelegatingDiTStem):
-    """Wan TI2V / T2V / I2V DiT — hooks on stem, math on ``WanModelMLX``."""
+    """Wan TI2V / T2V / I2V DiT — hooks on stem, math on ``WanModelMLX`` / ``WanModelCUDA``."""
 
     def __init__(self, config: WanConfig, ctx: RuntimeContext, num_frames: int = 81):
+        cuda_cls = None
+        if getattr(ctx, "backend", "mlx") == "cuda":
+            from .transformer_cuda import WanModelCUDA
+            cuda_cls = WanModelCUDA
         super().__init__(
             config,
             ctx,
             mlx_cls=WanModelMLX,
-            cuda_cls=None,
+            cuda_cls=cuda_cls,
             unavailable_product="Wan",
             num_frames=num_frames,
         )
