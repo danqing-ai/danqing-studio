@@ -14,7 +14,7 @@ a SwiGLU MLP.  Modulation is via AdaLN (scale_shift_table + timestep projection)
 from __future__ import annotations
 
 import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -487,3 +487,36 @@ class AceStepDiTMLX(nn.Module):
         hidden_states = hidden_states[:, :original_seq_len, :]
 
         return hidden_states, cache
+
+
+def collect_ace_step_dit_param_map(module: nn.Module) -> dict[str, mx.array]:
+    """Flatten ``AceStepDiTMLX`` leaves for ``TransformerBase.load_weights``."""
+    flat: dict[str, mx.array] = {}
+    _collect_ace_step_dit_params(module, "", flat)
+    return flat
+
+
+def _collect_ace_step_dit_params(obj: Any, prefix: str, result: dict[str, mx.array]) -> None:
+    if isinstance(obj, mx.array):
+        if prefix:
+            result[prefix] = obj
+        return
+
+    if isinstance(obj, nn.Module):
+        params = obj.parameters()
+        if isinstance(params, dict) and params:
+            for name, value in params.items():
+                key = f"{prefix}.{name}" if prefix else str(name)
+                _collect_ace_step_dit_params(value, key, result)
+            return
+
+    if isinstance(obj, dict):
+        for name, value in obj.items():
+            key = f"{prefix}.{name}" if prefix else str(name)
+            _collect_ace_step_dit_params(value, key, result)
+        return
+
+    if isinstance(obj, (list, tuple)):
+        for idx, value in enumerate(obj):
+            key = f"{prefix}.{idx}" if prefix else str(idx)
+            _collect_ace_step_dit_params(value, key, result)

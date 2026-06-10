@@ -2012,7 +2012,7 @@
       },
       "ui": {
         "parameters": {
-          "lora_support": true,
+          "lora_support": false,
           "seed_support": true,
           "preview_mode": {
             "type": "enum",

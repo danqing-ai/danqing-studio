@@ -71,10 +71,14 @@ class AceStepTransformer(TransformerBase):
         return remapped
 
     def _build_param_map(self):
-        from backend.engine.common.codecs.vae.decoder import _collect_nn_params
-
         self._param_map = {}
-        _collect_nn_params(self._model, "", self._param_map)
+        if self._backend == "mlx":
+            from .transformer_mlx import collect_ace_step_dit_param_map
+
+            self._param_map = collect_ace_step_dit_param_map(self._model)
+            return
+        for name, param in self._model.named_parameters():
+            self._param_map[name] = param
 
     def load_weights(
         self,

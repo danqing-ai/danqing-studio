@@ -157,110 +157,45 @@
 
         <!-- Step 2: dataset -->
         <div v-show="step === 1" class="lora-train-page__panel">
-          <div class="lora-train-page__toolbar">
-            <DqSelect
-              v-model="form.dataset_id"
-              :placeholder="$t('loraTrain.selectDataset')"
-              class="lora-train-page__dataset-select"
-            >
-              <DqOption
-                v-for="d in datasets"
-                :key="d.id"
-                :label="`${d.name} (${d.image_count})`"
-                :value="d.id"
-              />
-            </DqSelect>
-            <DqButton
-              size="sm"
-              type="secondary"
-              :disabled="!form.dataset_id"
-              @click="deleteSelectedDataset"
-            >
-              {{ $t('loraTrain.deleteDataset') }}
-            </DqButton>
-            <div class="lora-train-page__toolbar-actions">
-              <DqButton size="sm" @click="createEmptyDataset">{{ $t('loraTrain.newDataset') }}</DqButton>
-              <DqButton size="sm" type="secondary" :loading="importingDog6" @click="importDog6">
-                {{ $t('loraTrain.importDog6') }}
-              </DqButton>
-              <DqButton
-                size="sm"
-                type="secondary"
-                :disabled="!form.dataset_id"
-                @click="showGalleryImport = true"
-              >
-                {{ $t('loraTrain.importGallery') }}
-              </DqButton>
-              <DqButton
-                size="sm"
-                type="secondary"
-                :disabled="!form.dataset_id || !selectedDataset?.images?.length"
-                :loading="autoCaptioning"
-                @click="runAutoCaption"
-              >
-                {{ $t('loraTrain.autoCaption') }}
-              </DqButton>
-              <input
-                ref="uploadInputRef"
-                type="file"
-                multiple
-                accept="image/*"
-                hidden
-                @change="onUploadImages"
-              />
-              <DqButton
-                size="sm"
-                type="secondary"
-                :disabled="!form.dataset_id"
-                @click="openUploadPicker"
-              >
-                {{ $t('loraTrain.uploadImages') }}
-              </DqButton>
-            </div>
-          </div>
-
-          <div v-if="selectedDataset?.images?.length" class="lora-train-page__image-grid">
-            <div v-for="img in selectedDataset.images" :key="img.file" class="lora-train-page__image-cell">
-              <img
-                v-if="datasetImageUrl(img.file)"
-                :src="datasetImageUrl(img.file)"
-                :alt="img.file"
-                loading="lazy"
-              />
-              <DqInput
-                v-model="captionEdits[img.file]"
-                size="xs"
-                :placeholder="$t('loraTrain.captionPlaceholder')"
-                @blur="saveCaptions"
-              />
-            </div>
-          </div>
-          <DqEmpty v-else :description="$t('loraTrain.noImages')" />
-
-          <div class="lora-train-page__field">
-            <label class="lora-train-page__label">{{ $t('loraTrain.defaultPrompt') }}</label>
-            <DqInput v-model="form.default_prompt" @blur="patchDatasetMeta" />
-          </div>
+          <LoraDatasetPanel
+            ref="datasetPanelRef"
+            :selected-id="form.dataset_id"
+            :datasets="datasets"
+            :default-prompt="form.default_prompt"
+            :caption-edits="captionEdits"
+            @update:selected-id="form.dataset_id = $event"
+            @update:default-prompt="form.default_prompt = $event"
+            @update:caption-edits="onCaptionEditsUpdate"
+            @datasets-changed="datasets = $event"
+          />
         </div>
 
         <!-- Step 3: config -->
         <div v-show="step === 2" class="lora-train-page__panel">
-          <div class="lora-train-page__preset-row">
-            <DqButton
+          <div class="lora-train-page__preset-grid">
+            <button
               v-for="p in presetKeys"
               :key="p"
-              size="sm"
-              :type="form.preset === p ? 'primary' : 'secondary'"
+              type="button"
+              class="lora-train-page__preset-card"
+              :class="{ 'is-selected': form.preset === p }"
               @click="form.preset = p"
             >
-              {{ $t(`loraTrain.preset.${p}`) }}
-            </DqButton>
+              <span class="lora-train-page__preset-name">{{ $t(`loraTrain.preset.${p}`) }}</span>
+              <span class="lora-train-page__preset-desc">{{ $t(`loraTrain.presetDesc.${p}`) }}</span>
+            </button>
           </div>
           <div class="lora-train-page__field">
             <label class="lora-train-page__label">{{ $t('loraTrain.progressPrompt') }}</label>
             <DqInput v-model="form.progress_prompt" type="textarea" :rows="3" />
+            <p class="lora-train-page__field-hint">{{ $t('loraTrain.progressPromptDesc') }}</p>
           </div>
-          <details class="lora-train-page__advanced">
+          <div class="lora-train-page__field">
+            <label class="lora-train-page__label">{{ $t('loraTrain.outputName') }}</label>
+            <DqInput v-model="form.output_name" :placeholder="$t('loraTrain.outputNamePlaceholder')" />
+            <p class="lora-train-page__field-hint">{{ $t('loraTrain.outputNameDesc') }}</p>
+          </div>
+          <details v-if="form.preset === 'custom'" class="lora-train-page__advanced">
             <summary>{{ $t('loraTrain.advanced') }}</summary>
             <div class="lora-train-page__field">
               <label class="lora-train-page__label">{{ $t('loraTrain.iterations') }}</label>
@@ -279,43 +214,23 @@
 
         <!-- Step 4: confirm -->
         <div v-show="step === 3" class="lora-train-page__panel">
+          <p class="lora-train-page__confirm-intro">{{ $t('loraTrain.confirmIntro') }}</p>
           <ul class="lora-train-page__summary">
             <li><span>{{ $t('loraTrain.summaryBase') }}</span><strong>{{ form.base_model }}</strong></li>
             <li>
               <span>{{ $t('loraTrain.summaryDataset') }}</span>
               <strong>{{ selectedDataset?.name }} ({{ selectedDataset?.image_count }})</strong>
             </li>
-            <li><span>{{ $t('loraTrain.summaryPreset') }}</span><strong>{{ form.preset }}</strong></li>
+            <li><span>{{ $t('loraTrain.summaryPreset') }}</span><strong>{{ $t(`loraTrain.preset.${form.preset}`) }}</strong></li>
             <li><span>{{ $t('loraTrain.summaryPrompt') }}</span><strong>{{ form.progress_prompt }}</strong></li>
+            <li v-if="form.output_name.trim()">
+              <span>{{ $t('loraTrain.summaryOutput') }}</span><strong>{{ form.output_name }}</strong>
+            </li>
           </ul>
         </div>
       </DqSurfaceCard>
     </div>
 
-    <DqDialog
-      v-model:open="showGalleryImport"
-      :title="$t('loraTrain.importGalleryTitle')"
-      width="min(560px, 92vw)"
-      destroy-on-close
-    >
-      <p class="lora-train-page__import-hint">{{ $t('loraTrain.importGalleryHint') }}</p>
-      <AssetPicker accept-kind="image" @pick="onGalleryPick" />
-      <div v-if="pendingGalleryAssets.length" class="lora-train-page__pending-tags">
-        <DqTag v-for="a in pendingGalleryAssets" :key="a" size="sm">{{ a }}</DqTag>
-      </div>
-      <template #footer>
-        <DqButton size="sm" @click="showGalleryImport = false">{{ $t('common.cancel') }}</DqButton>
-        <DqButton
-          size="sm"
-          type="primary"
-          :disabled="!pendingGalleryAssets.length || !form.dataset_id"
-          :loading="importingGallery"
-          @click="confirmGalleryImport"
-        >
-          {{ $t('loraTrain.importGalleryConfirm', { count: pendingGalleryAssets.length }) }}
-        </DqButton>
-      </template>
-    </DqDialog>
   </div>
 </template>
 
@@ -325,10 +240,10 @@ import { useRouter, useRoute } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { FolderChecked, MagicStick, PictureFilled, Setting } from '@danqing/dq-shell';
 import { api, taskIdFromSubmitResponse } from '@/utils/api';
-import { toast, confirm } from '@/utils/feedback';
+import { toast } from '@/utils/feedback';
 import { openGlobalTaskQueue } from '@/utils/appEvents';
 import LoraTrainRunDetail from '@/components/lora/LoraTrainRunDetail.vue';
-import AssetPicker from '@/components/asset/AssetPicker.vue';
+import LoraDatasetPanel from '@/components/lora/LoraDatasetPanel.vue';
 
 const { t } = useI18n();
 const router = useRouter();
@@ -336,17 +251,12 @@ const route = useRoute();
 
 const step = ref(0);
 const submitting = ref(false);
-const importingDog6 = ref(false);
-const importingGallery = ref(false);
-const autoCaptioning = ref(false);
-const showGalleryImport = ref(false);
-const pendingGalleryAssets = ref<string[]>([]);
 const activeRunId = ref('');
 const trainableModels = ref<any[]>([]);
 const datasets = ref<any[]>([]);
 const requirements = ref<any>(null);
 const captionEdits = reactive<Record<string, string>>({});
-const uploadInputRef = ref<HTMLInputElement | null>(null);
+const datasetPanelRef = ref<InstanceType<typeof LoraDatasetPanel> | null>(null);
 const presetKeys = ['quick', 'standard', 'quality', 'custom'];
 
 const stepNavItems = computed(() => [
@@ -422,18 +332,9 @@ function apiErrorMessage(e: unknown): string {
   return err?.message || String(e);
 }
 
-async function refreshDatasets(selectId?: string) {
-  const dsRes = await api.loras.listDatasets();
-  datasets.value = (dsRes as any).items || [];
-  if (selectId) form.dataset_id = selectId;
-}
-
-function openUploadPicker() {
-  if (!form.dataset_id) {
-    toast.error(t('loraTrain.selectDatasetFirst'));
-    return;
-  }
-  uploadInputRef.value?.click();
+function onCaptionEditsUpdate(next: Record<string, string>) {
+  Object.keys(captionEdits).forEach((k) => delete captionEdits[k]);
+  Object.assign(captionEdits, next);
 }
 
 function selectBase(m: any) {
@@ -462,112 +363,12 @@ watch(
       for (const img of (ds as any).images || []) {
         captionEdits[img.file] = img.prompt || '';
       }
-      datasets.value = datasets.value.map((d) => (d.id === id ? { ...d, ...ds } : d));
+      datasets.value = datasets.value.map((d) => (d.id === id ? { ...d, ...(ds as Record<string, unknown>) } : d));
     } catch (e: unknown) {
       toast.error(apiErrorMessage(e));
     }
   }
 );
-
-function datasetImageUrl(file: string): string {
-  if (!form.dataset_id || !file) return '';
-  return api.loras.datasetImageUrl(form.dataset_id, file);
-}
-
-async function deleteSelectedDataset() {
-  const id = form.dataset_id;
-  if (!id) return;
-  const name = selectedDataset.value?.name || id;
-  const ok = await confirm({
-    title: t('loraTrain.deleteDataset'),
-    message: t('loraTrain.deleteDatasetConfirm', { name }),
-    type: 'warning',
-  });
-  if (!ok) return;
-  try {
-    await api.loras.deleteDataset(id);
-    if (form.dataset_id === id) form.dataset_id = '';
-    Object.keys(captionEdits).forEach((k) => delete captionEdits[k]);
-    await refreshDatasets();
-    toast.success(t('loraTrain.deleteDatasetDone'));
-  } catch (e: unknown) {
-    toast.error(apiErrorMessage(e));
-  }
-}
-
-async function createEmptyDataset() {
-  const name = window.prompt(t('loraTrain.newDatasetName')) || t('loraTrain.newDatasetDefault');
-  if (!name.trim()) return;
-  try {
-    const ds = await api.loras.createDataset({ name: name.trim(), default_prompt: form.default_prompt });
-    await refreshDatasets((ds as any).id);
-    toast.success(t('loraTrain.datasetCreated'));
-  } catch (e: unknown) {
-    toast.error(apiErrorMessage(e));
-  }
-}
-
-async function importDog6() {
-  importingDog6.value = true;
-  try {
-    const ds = await api.loras.importDog6();
-    await refreshDatasets((ds as any).id);
-    toast.success(t('loraTrain.dog6Imported'));
-  } catch (e: unknown) {
-    toast.error(apiErrorMessage(e));
-  } finally {
-    importingDog6.value = false;
-  }
-}
-
-function onGalleryPick(payload: { path: string }) {
-  const p = payload.path?.trim();
-  if (!p || pendingGalleryAssets.value.includes(p)) return;
-  pendingGalleryAssets.value.push(p);
-}
-
-async function confirmGalleryImport() {
-  if (!form.dataset_id || !pendingGalleryAssets.value.length) return;
-  importingGallery.value = true;
-  try {
-    const ds = await api.loras.importAssets(
-      form.dataset_id,
-      pendingGalleryAssets.value,
-      form.default_prompt
-    );
-    datasets.value = datasets.value.map((d) =>
-      d.id === form.dataset_id ? { ...d, ...(ds as object) } : d
-    );
-    pendingGalleryAssets.value = [];
-    showGalleryImport.value = false;
-    toast.success(t('loraTrain.galleryImported'));
-  } catch (e: any) {
-    const msg = e?.response?.data?.detail?.message || e?.message || String(e);
-    toast.error(msg);
-  } finally {
-    importingGallery.value = false;
-  }
-}
-
-async function runAutoCaption() {
-  if (!form.dataset_id) return;
-  autoCaptioning.value = true;
-  try {
-    const ds = await api.loras.autoCaption(form.dataset_id);
-    for (const img of (ds as any).images || []) {
-      captionEdits[img.file] = img.prompt || '';
-    }
-    datasets.value = datasets.value.map((d) =>
-      d.id === form.dataset_id ? { ...d, ...(ds as object) } : d
-    );
-    toast.success(t('loraTrain.autoCaptionDone'));
-  } catch (e: any) {
-    const msg = e?.response?.data?.detail?.message || e?.message || String(e);
-    toast.error(msg);
-  } finally {
-    autoCaptioning.value = false;
-  }
-}
 
 async function importFromRouteQuery() {
   const raw = route.query.import;
@@ -577,18 +378,27 @@ async function importFromRouteQuery() {
     .filter(Boolean);
   if (!ids.length) return;
   if (!form.dataset_id) {
-    const ds = await api.loras.createDataset({
-      name: t('loraTrain.canvasImportDataset'),
-      default_prompt: form.default_prompt,
-    });
-    datasets.value.unshift(ds);
-    form.dataset_id = (ds as any).id;
+    if (datasetPanelRef.value) {
+      await datasetPanelRef.value.createDatasetWithName(t('loraTrain.canvasImportDataset'));
+    } else {
+      const ds = (await api.loras.createDataset({
+        name: t('loraTrain.canvasImportDataset'),
+        default_prompt: form.default_prompt,
+      })) as Record<string, any>;
+      datasets.value.unshift(ds);
+      form.dataset_id = ds.id;
+    }
   }
+  if (!form.dataset_id) return;
   try {
     const ds = await api.loras.importAssets(form.dataset_id, ids, form.default_prompt);
     datasets.value = datasets.value.map((d) =>
       d.id === form.dataset_id ? { ...d, ...(ds as object) } : d
     );
+    Object.keys(captionEdits).forEach((k) => delete captionEdits[k]);
+    for (const img of (ds as any).images || []) {
+      captionEdits[img.file] = img.prompt || form.default_prompt || '';
+    }
     step.value = 1;
     toast.success(t('loraTrain.galleryImported'));
     const q = { ...route.query };
@@ -599,42 +409,11 @@ async function importFromRouteQuery() {
   }
 }
 
-async function onUploadImages(ev: Event) {
-  const input = ev.target as HTMLInputElement;
-  const files = input.files;
-  if (!files?.length || !form.dataset_id) return;
-  try {
-    await api.loras.uploadImages(form.dataset_id, Array.from(files), form.default_prompt);
-    const ds = (await api.loras.getDataset(form.dataset_id)) as any;
-    datasets.value = datasets.value.map((d) => (d.id === form.dataset_id ? { ...d, ...ds } : d));
-    for (const img of ds.images || []) {
-      captionEdits[img.file] = img.prompt || form.default_prompt || '';
-    }
-    toast.success(t('loraTrain.uploadDone', { count: files.length }));
-  } catch (e: unknown) {
-    toast.error(apiErrorMessage(e));
-  } finally {
-    input.value = '';
+watch(step, (s) => {
+  if (s === 2 && !form.progress_prompt.trim() && form.default_prompt.trim()) {
+    form.progress_prompt = form.default_prompt.trim();
   }
-}
-
-async function saveCaptions() {
-  if (!form.dataset_id) return;
-  const captions = Object.entries(captionEdits).map(([file, prompt]) => ({ file, prompt }));
-  try {
-    await api.loras.updateCaptions(form.dataset_id, captions);
-  } catch (e: unknown) {
-    toast.error(apiErrorMessage(e));
-  }
-}
-
-async function patchDatasetMeta() {
-  if (!form.dataset_id) return;
-  await api.loras.patchDataset(form.dataset_id, {
-    name: selectedDataset.value?.name || '',
-    default_prompt: form.default_prompt,
-  });
-}
+});
 
 async function submitTraining() {
   submitting.value = true;
@@ -779,41 +558,61 @@ onMounted(async () => {
   margin-bottom: 16px;
 }
 
-.lora-train-page__dataset-select {
-  min-width: min(280px, 100%);
-}
-
-.lora-train-page__toolbar-actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  flex: 1;
-}
-
-.lora-train-page__dataset-select :deep(.dq-select__content) {
-  min-width: var(--reka-select-trigger-width, 280px);
-}
-
-.lora-train-page__dataset-select :deep(.dq-select__viewport) {
-  height: auto !important;
-  max-height: 240px !important;
-  flex: none !important;
-}
-
-.lora-train-page__image-grid {
+.lora-train-page__preset-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 10px;
   margin-bottom: 16px;
 }
 
-.lora-train-page__image-cell img {
-  width: 100%;
-  aspect-ratio: 1;
-  object-fit: cover;
+.lora-train-page__preset-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 0.5px solid var(--dq-border-subtle);
   border-radius: var(--radius-md);
-  border: 0.5px solid var(--dq-border);
-  background: var(--dq-bg-base);
+  background: var(--dq-fill-secondary);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.lora-train-page__preset-card:hover {
+  border-color: var(--dq-border);
+}
+
+.lora-train-page__preset-card.is-selected {
+  border-color: var(--dq-accent);
+  background: color-mix(in srgb, var(--dq-accent) 10%, var(--dq-fill-secondary));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dq-accent) 30%, transparent);
+}
+
+.lora-train-page__preset-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--dq-label-primary);
+}
+
+.lora-train-page__preset-desc {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--dq-label-tertiary);
+}
+
+.lora-train-page__field-hint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--dq-label-tertiary);
+  line-height: 1.4;
+}
+
+.lora-train-page__confirm-intro {
+  margin: 0 0 14px;
+  font-size: 13px;
+  color: var(--dq-label-secondary);
+  line-height: 1.5;
 }
 
 .lora-train-page__field {
@@ -826,13 +625,6 @@ onMounted(async () => {
   font-size: 11px;
   font-weight: 500;
   color: var(--dq-label-secondary);
-}
-
-.lora-train-page__preset-row {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 16px;
-  flex-wrap: wrap;
 }
 
 .lora-train-page__advanced {
@@ -875,18 +667,5 @@ onMounted(async () => {
   font-weight: 600;
   text-align: right;
   word-break: break-word;
-}
-
-.lora-train-page__import-hint {
-  margin: 0 0 12px;
-  font-size: 13px;
-  color: var(--dq-label-tertiary);
-}
-
-.lora-train-page__pending-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 12px;
 }
 </style>

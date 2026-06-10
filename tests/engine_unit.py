@@ -1159,6 +1159,39 @@ class TaskSchedulerCancellationTests(unittest.TestCase):
         asyncio.run(_run())
 
 class AceStepGenerationTests(unittest.TestCase):
+    def test_ace_step_dit_param_map_flattens_mlx_leaves(self) -> None:
+        from backend.engine.config.model_configs import AceStepConfig
+        from backend.engine.families.ace_step.transformer import AceStepTransformer
+        from backend.engine.runtime.mlx import MLXContext
+
+        cfg = AceStepConfig()
+        ctx = MLXContext()
+        dit = AceStepTransformer(
+            ctx,
+            hidden_size=cfg.hidden_size,
+            intermediate_size=cfg.intermediate_size,
+            num_hidden_layers=2,
+            num_attention_heads=cfg.num_attention_heads,
+            num_key_value_heads=cfg.num_key_value_heads,
+            head_dim=cfg.head_dim,
+            rms_norm_eps=cfg.rms_norm_eps,
+            attention_bias=cfg.attention_bias,
+            in_channels=cfg.in_channels,
+            audio_acoustic_hidden_dim=cfg.audio_acoustic_hidden_dim,
+            patch_size=cfg.patch_size,
+            sliding_window=cfg.sliding_window,
+            layer_types=list(cfg.layer_types)[:2],
+            rope_theta=cfg.rope_theta,
+            max_position_embeddings=cfg.max_position_embeddings,
+        )
+        pm = dit._param_map
+        self.assertGreater(len(pm), 50)
+        self.assertIn("proj_in.weight", pm)
+        self.assertIn("layers.0.self_attn.q_proj.weight", pm)
+        self.assertIn("time_embed.time_proj.weight", pm)
+        self.assertNotIn("layers", pm)
+        self.assertNotIn("proj_in", pm)
+
     def test_prepare_music_request_auto_zh_and_turbo_steps(self) -> None:
         import json
         import tempfile
@@ -2255,6 +2288,10 @@ class BenchmarkMetadataTests(unittest.TestCase):
             turbo["parameters"].get("enable_thinking"),
             "z-image-turbo must keep enable_thinking=true for tokenizer chat-template semantics",
         )
+
+    def test_z_image_turbo_no_lora_support(self) -> None:
+        turbo = _load_default_registry_expanded()["models"]["z-image-turbo"]
+        self.assertFalse(turbo["parameters"].get("lora_support", True))
 
 
 class MemoryPolicyTests(unittest.TestCase):

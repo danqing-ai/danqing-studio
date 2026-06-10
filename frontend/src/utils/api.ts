@@ -803,6 +803,13 @@ export const api = {
       return response.data;
     },
 
+    async deleteDatasetImage(datasetId: string, file: string): Promise<unknown> {
+      const response = await client.delete(
+        `/api/loras/datasets/${encodeURIComponent(datasetId)}/images/${encodeURIComponent(file)}`
+      );
+      return response.data;
+    },
+
     async importDog6(): Promise<unknown> {
       const response = await client.post('/api/loras/datasets/import-dog6', undefined, {
         timeout: LONG_REQUEST_TIMEOUT_MS,
