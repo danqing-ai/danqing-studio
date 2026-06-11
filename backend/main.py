@@ -45,7 +45,7 @@ from backend.services.download_service import DownloadService
 from backend.scheduler.task_scheduler import TaskScheduler
 
 from backend.engine.llm import LLMService
-from backend.engine.llm.service import resolve_llm_model_id, resolve_vlm_model_id
+from backend.engine.llm.service import normalize_app_llm_settings, resolve_llm_model_id, resolve_vlm_model_id
 
 from backend.api.routes import (
     adapters, assets, audios, download, gallery, images, loras,
@@ -159,6 +159,8 @@ def _setup_dependencies():
     model_registry = ModelRegistry.load(registry_json)
 
     app_settings = config_store.load()
+    if normalize_app_llm_settings(app_settings, model_registry):
+        config_store.save(app_settings)
     shared_cache = build_shared_model_cache(config_store.load)
     platforms = PlatformInfo.detect()
     _logger.info(f"Detected GPU backends: {platforms}")

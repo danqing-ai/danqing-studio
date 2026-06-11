@@ -10,6 +10,7 @@ import {
   Headset,
   MagicStick,
   PictureFilled,
+  Search,
   Tools,
   VideoCamera,
   ZoomIn,
@@ -32,7 +33,7 @@ type NavEntry =
   | {
       kind: 'item';
       id: string;
-      icon: object;
+      icon: object | string;
       label: string;
       count?: number;
       badge?: number;
@@ -56,6 +57,8 @@ const entries = computed<NavEntry[]>(() => [
   { kind: 'item', id: 'upscalers', icon: ZoomIn, label: t('download.upscalers') },
   { kind: 'item', id: 'tools', icon: Tools, label: t('download.tools') },
   { kind: 'item', id: 'loras', icon: MagicStick, label: t('download.loraModels') },
+  { kind: 'item', id: 'trained_loras', icon: 'Wand2', label: t('download.myTrainedLoras') },
+  { kind: 'item', id: 'civitai_search', icon: Search, label: t('download.civitaiSearch') },
   { kind: 'divider' },
   {
     kind: 'item',
@@ -70,7 +73,7 @@ const entries = computed<NavEntry[]>(() => [
 </script>
 
 <template>
-  <nav class="dq-download-menu models-page__menu" role="navigation" :aria-label="$t('download.downloadCenter')">
+  <nav class="dq-download-menu models-page__menu" role="navigation" :aria-label="$t('download.modelLibrary')">
     <template v-for="(entry, idx) in entries" :key="entry.kind === 'divider' ? `div-${idx}` : entry.id">
       <hr v-if="entry.kind === 'divider'" class="models-page__menu-divider" />
       <button

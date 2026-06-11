@@ -12,6 +12,100 @@ from typing import Any, Callable
 from PIL import Image
 
 MIN_DATASET_IMAGES = 3
+
+_HEIF_OPENER_READY = False
+
+
+def _ensure_heif_opener() -> bool:
+    """Register HEIC/HEIF with Pillow when pillow-heif is installed."""
+    global _HEIF_OPENER_READY
+    if _HEIF_OPENER_READY:
+        return True
+    try:
+        import pillow_heif
+
+        pillow_heif.register_heif_opener()
+        _HEIF_OPENER_READY = True
+        return True
+    except ImportError:
+        return False
+
+
+def _is_heif_payload(data: bytes) -> bool:
+    if len(data) < 12:
+        return False
+    brand = data[8:12]
+    return data[4:8] == b"ftyp" and brand in {
+        b"heic",
+        b"heix",
+        b"hevc",
+        b"heif",
+        b"mif1",
+        b"msf1",
+    }
+
+
+def open_rgb_image(path: Path) -> Image.Image:
+    """Open a dataset/training image as RGB (JPEG/PNG/WebP/HEIC)."""
+    from io import BytesIO
+
+    _ensure_heif_opener()
+    try:
+        with Image.open(path) as img:
+            img.load()
+            return img.convert("RGB")
+    except Exception as exc:
+        try:
+            raw = path.read_bytes()
+        except OSError:
+            raise RuntimeError(f"Cannot read image file {path}") from exc
+        if _is_heif_payload(raw):
+            if not _ensure_heif_opener():
+                raise RuntimeError(
+                    f"Image {path.name!r} is HEIC/HEIF but pillow-heif is not installed "
+                    "(pip install pillow-heif or re-upload as JPEG/PNG)."
+                ) from exc
+            with Image.open(BytesIO(raw)) as img:
+                img.load()
+                return img.convert("RGB")
+        raise RuntimeError(
+            f"Cannot identify image file {path} "
+            f"({exc}). Re-upload as JPEG/PNG or install pillow-heif for HEIC."
+        ) from exc
+
+
+def _normalize_dataset_image_bytes(filename: str, data: bytes) -> tuple[str, bytes]:
+    """Decode upload bytes and store as JPEG (or PNG when source is non-HEIC PNG)."""
+    from io import BytesIO
+
+    if not data:
+        raise ValueError(f"Uploaded image {filename!r} is empty")
+    _ensure_heif_opener()
+    try:
+        with Image.open(BytesIO(data)) as img:
+            img.load()
+            rgb = img.convert("RGB")
+    except Exception as exc:
+        raise ValueError(
+            f"Cannot read uploaded image {filename!r}: {exc}. "
+            "Use JPEG, PNG, WebP, or HEIC."
+        ) from exc
+
+    ext = Path(filename).suffix.lower()
+    stem = Path(filename).stem
+    while stem.lower().endswith((".heic", ".heif")):
+        stem = Path(stem).stem
+
+    if ext == ".png" and not _is_heif_payload(data):
+        out = BytesIO()
+        rgb.save(out, format="PNG")
+        safe = f"{stem}.png" if stem else "image.png"
+        return safe, out.getvalue()
+
+    out = BytesIO()
+    rgb.save(out, format="JPEG", quality=92)
+    safe = f"{stem}.jpg" if stem else "image.jpg"
+    return safe, out.getvalue()
 MAX_DATASET_IMAGES = 500
 
 
@@ -175,9 +269,13 @@ def add_dataset_images(
     images_dir = path / "images"
     images_dir.mkdir(exist_ok=True)
     for idx, (filename, data) in enumerate(files):
-        safe_name = Path(filename).name or f"image_{len(rows):04d}.png"
-        if not safe_name.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
-            safe_name = f"{safe_name}.png"
+        try:
+            safe_name, data = _normalize_dataset_image_bytes(
+                Path(filename).name or f"image_{len(rows):04d}.jpg",
+                data,
+            )
+        except ValueError:
+            raise
         dest = images_dir / safe_name
         counter = 0
         while dest.exists():
@@ -442,7 +540,7 @@ def resize_rgb_image(
 
     target_w, target_h = resolution
     mode = (resize_mode or "cover").strip().lower()
-    img = Image.open(path).convert("RGB")
+    img = open_rgb_image(path)
     src_w, src_h = img.size
 
     if mode == "stretch":

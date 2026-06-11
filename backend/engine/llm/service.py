@@ -30,9 +30,14 @@ from backend.core.contracts import (
     EnhanceResponse,
 )
 from backend.core.interfaces import AppSettings
-from backend.core.model_registry import ModelRegistry
+from backend.core.model_registry import ModelEntry, ModelRegistry
 from backend.engine.llm.lyrics_sanitize import sanitize_lyrics_output
-from backend.engine.llm.prompt_sanitize import prompt_enhance_quality_ok, sanitize_enhanced_prompt
+from backend.engine.llm.prompt_sanitize import (
+    extract_final_llm_content,
+    looks_like_reasoning_trace,
+    prompt_enhance_quality_ok,
+    sanitize_enhanced_prompt,
+)
 from backend.engine.llm.vision import (
     IMAGE_TO_PROMPT_INSTRUCTION,
     VIDEO_FRAME_TO_PROMPT_INSTRUCTION,
@@ -45,26 +50,92 @@ from backend.utils.path_utils import PathResolver
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_LLM_MODEL_ID = "qwen3-4b-thinking-2507"
-DEFAULT_VLM_MODEL_ID = "qwen3-vl-4b-instruct"
+_SETTINGS_DEFAULTS = AppSettings()
+DEFAULT_LLM_MODEL_ID = _SETTINGS_DEFAULTS.default_model_llm
+DEFAULT_VLM_MODEL_ID = _SETTINGS_DEFAULTS.default_model_vlm
+
+
+def _is_valid_llm_entry(entry: ModelEntry | None) -> bool:
+    if entry is None or entry.media != "llm":
+        return False
+    return bool(entry.actions & {"chat", "enhance"})
+
+
+def _is_valid_vlm_entry(entry: ModelEntry | None) -> bool:
+    if entry is None or entry.media != "llm":
+        return False
+    return "describe" in entry.actions
+
+
+def _pick_first_llm(registry: ModelRegistry) -> str | None:
+    for mid in sorted(registry.all()):
+        if _is_valid_llm_entry(registry.get(mid)):
+            return mid
+    return None
+
+
+def _pick_first_vlm(registry: ModelRegistry) -> str | None:
+    for mid in sorted(registry.all()):
+        if _is_valid_vlm_entry(registry.get(mid)):
+            return mid
+    return None
+
+
+def _coerce_llm_model_id(preferred: str, registry: ModelRegistry) -> str:
+    candidate = (preferred or "").strip()
+    if candidate and _is_valid_llm_entry(registry.get(candidate)):
+        return candidate
+    fallback = DEFAULT_LLM_MODEL_ID
+    if _is_valid_llm_entry(registry.get(fallback)):
+        return fallback
+    picked = _pick_first_llm(registry)
+    return picked or fallback
+
+
+def _coerce_vlm_model_id(preferred: str, registry: ModelRegistry) -> str:
+    candidate = (preferred or "").strip()
+    if candidate and _is_valid_vlm_entry(registry.get(candidate)):
+        return candidate
+    fallback = DEFAULT_VLM_MODEL_ID
+    if _is_valid_vlm_entry(registry.get(fallback)):
+        return fallback
+    picked = _pick_first_vlm(registry)
+    return picked or fallback
+
+
+def normalize_app_llm_settings(settings: AppSettings, registry: ModelRegistry) -> bool:
+    """Align saved LLM/VLM defaults with registry; return True if settings changed."""
+    changed = False
+    coerced_llm = _coerce_llm_model_id(settings.default_model_llm, registry)
+    if settings.default_model_llm != coerced_llm:
+        if (settings.default_model_llm or "").strip():
+            logger.warning(
+                "default_model_llm %r not in registry; using %r",
+                settings.default_model_llm,
+                coerced_llm,
+            )
+        settings.default_model_llm = coerced_llm
+        changed = True
+
+    coerced_vlm = _coerce_vlm_model_id(settings.default_model_vlm, registry)
+    if settings.default_model_vlm != coerced_vlm:
+        if (settings.default_model_vlm or "").strip():
+            logger.warning(
+                "default_model_vlm %r not in registry; using %r",
+                settings.default_model_vlm,
+                coerced_vlm,
+            )
+        settings.default_model_vlm = coerced_vlm
+        changed = True
+    return changed
 
 
 def resolve_llm_model_id(settings: AppSettings, registry: ModelRegistry) -> str:
-    preferred = (getattr(settings, "default_model_llm", "") or "").strip()
-    if preferred:
-        if registry.get(preferred):
-            return preferred
-        logger.warning("Unknown default_model_llm %r; using %s", preferred, DEFAULT_LLM_MODEL_ID)
-    return DEFAULT_LLM_MODEL_ID
+    return _coerce_llm_model_id(settings.default_model_llm, registry)
 
 
 def resolve_vlm_model_id(settings: AppSettings, registry: ModelRegistry) -> str:
-    preferred = (getattr(settings, "default_model_vlm", "") or "").strip()
-    if preferred:
-        if registry.get(preferred):
-            return preferred
-        logger.warning("Unknown default_model_vlm %r; using %s", preferred, DEFAULT_VLM_MODEL_ID)
-    return DEFAULT_VLM_MODEL_ID
+    return _coerce_vlm_model_id(settings.default_model_vlm, registry)
 
 ENHANCE_IMAGE_SYSTEM_PROMPT = """You are a prompt engineer for AI image models (Flux, Z-Image, Qwen-Image).
 Rewrite the user's idea into one vivid, comma-separated description. Keep their subject, names, and intent.
@@ -169,12 +240,14 @@ class LLMService:
         default_model_id: str | None = None,
         vision_model_id: str | None = None,
     ) -> None:
-        if default_model_id:
-            self._registry.require(default_model_id)
-            self._model_id = default_model_id
-        if vision_model_id:
-            self._registry.require(vision_model_id)
-            self._vision_model_id = vision_model_id
+        if default_model_id is not None:
+            coerced = _coerce_llm_model_id(default_model_id, self._registry)
+            self._registry.require(coerced)
+            self._model_id = coerced
+        if vision_model_id is not None:
+            coerced = _coerce_vlm_model_id(vision_model_id, self._registry)
+            self._registry.require(coerced)
+            self._vision_model_id = coerced
 
     # ------------------------------------------------------------------
     # Public status
@@ -226,12 +299,21 @@ class LLMService:
     # Chat completion
     # ------------------------------------------------------------------
 
-    def chat_completion(self, request: ChatCompletionRequest) -> ChatCompletionResponse:
+    def chat_completion(
+        self,
+        request: ChatCompletionRequest,
+        *,
+        enable_thinking: bool | None = None,
+    ) -> ChatCompletionResponse:
         """Run a single-turn non-streaming chat completion (sync, for asyncio.to_thread)."""
         with self._generation_lock:
             model, tokenizer = self._load_model()
             try:
-                prompt = self._build_chat_prompt(tokenizer, request.messages)
+                prompt = self._build_chat_prompt(
+                    tokenizer,
+                    request.messages,
+                    enable_thinking=enable_thinking,
+                )
                 result = mlx_lm.generate(
                     model,
                     tokenizer,
@@ -239,7 +321,8 @@ class LLMService:
                     verbose=False,
                     **self._generation_kwargs(request),
                 )
-                return self._format_response(result, request.model)
+                content = extract_final_llm_content(result)
+                return self._format_response(content, request.model)
             finally:
                 self._unload_model(model, tokenizer)
 
@@ -330,6 +413,8 @@ class LLMService:
         action = (request.target_action or "image_create").strip().lower()
         raw_prompt = (request.prompt or "").strip()
         user_content = raw_prompt
+        if self._model_prefers_no_think():
+            user_content = self._with_no_think_suffix(user_content)
         if action in ("image_create", "create", "image") and len(raw_prompt) >= 60:
             if any("\u4e00" <= ch <= "\u9fff" for ch in raw_prompt):
                 user_content += "\n\n（输入已够详细：只做轻微润色，禁止加长或重复用词。）"
@@ -354,7 +439,7 @@ class LLMService:
                 max_tokens=max_tokens,
                 stream=False,
             )
-            result = self.chat_completion(internal)
+            result = self.chat_completion(internal, enable_thinking=False)
             cleaned = sanitize_enhanced_prompt(result.choices[0].message.content)
             if prompt_enhance_quality_ok(cleaned):
                 return EnhanceResponse(enhanced_prompt=cleaned)
@@ -390,13 +475,32 @@ class LLMService:
 
     @staticmethod
     def _lyrics_quality_ok(text: str) -> bool:
-        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-        lyric_lines = [ln for ln in lines if not ln.startswith("[")]
-        if len(lyric_lines) < 4:
+        cleaned = (text or "").strip()
+        if not cleaned or looks_like_reasoning_trace(cleaned):
             return False
+
+        lines = [ln.strip() for ln in cleaned.splitlines() if ln.strip()]
+        if not lines:
+            return False
+
+        if len(lines) == 1 and lines[0].lower().strip("[]") == "instrumental":
+            return True
+
+        lyric_lines = [ln for ln in lines if not (ln.startswith("[") and ln.endswith("]"))]
+        if not lyric_lines:
+            return False
+
+        total_chars = sum(len(ln) for ln in lyric_lines)
+        if total_chars < 8:
+            return False
+        if len(lyric_lines) < 2 and total_chars < 16:
+            return False
+
         for ln in lyric_lines:
             words = ln.split()
             if len(words) >= 6 and len(set(w.lower() for w in words)) / len(words) < 0.35:
+                return False
+            if len(ln) > 120:
                 return False
         return True
 
@@ -409,22 +513,38 @@ class LLMService:
             "\n\nWrite ACE-Step lyrics with section tags. "
             "Match the description language. End with [Outro] (or [Instrumental] if no vocals) and stop."
         )
+        if self._model_prefers_no_think():
+            user_msg = self._with_no_think_suffix(user_msg)
 
         attempts = (
             (0.65, 420),
             (0.5, 360),
+            (0.4, 512),
         )
         last_raw = ""
+        best = ""
         for temp, max_tokens in attempts:
             result = self.chat_completion(
                 self._lyrics_chat_request(user_msg, temperature=temp, max_tokens=max_tokens),
+                enable_thinking=False,
             )
             last_raw = result.choices[0].message.content.strip()
             cleaned = sanitize_lyrics_output(last_raw)
             if self._lyrics_quality_ok(cleaned):
                 return cleaned
+            if cleaned and not looks_like_reasoning_trace(cleaned) and len(cleaned) > len(best):
+                best = cleaned
 
-        return sanitize_lyrics_output(last_raw)
+        if best:
+            return best
+
+        fallback = sanitize_lyrics_output(last_raw)
+        if fallback and not looks_like_reasoning_trace(fallback):
+            return fallback
+
+        raise RuntimeError(
+            "LLM returned no usable lyrics. Check Settings → Default LLM Model or try again."
+        )
 
     # ------------------------------------------------------------------
     # Vision: image/video → generation prompt & reference analysis
@@ -564,8 +684,8 @@ class LLMService:
             max_tokens=256,
             stream=False,
         )
-        result = self.chat_completion(internal)
-        return result.choices[0].message.content.strip()
+        result = self.chat_completion(internal, enable_thinking=False)
+        return extract_final_llm_content(result.choices[0].message.content).strip()
 
     # ------------------------------------------------------------------
     # Model lifecycle (load-on-demand, release-immediately)
@@ -650,26 +770,58 @@ class LLMService:
         }
 
     @staticmethod
-    def _build_chat_prompt(tokenizer, messages: list[ChatMessage]) -> str:
+    def _is_thinking_model(model_id: str) -> bool:
+        return "thinking" in (model_id or "").lower()
+
+    def _model_prefers_no_think(self) -> bool:
+        return self._is_thinking_model(self._model_id)
+
+    @staticmethod
+    def _with_no_think_suffix(text: str) -> str:
+        body = (text or "").rstrip()
+        if not body or "/no_think" in body or "/think" in body:
+            return body
+        return f"{body} /no_think"
+
+    @staticmethod
+    def _build_chat_prompt(
+        tokenizer,
+        messages: list[ChatMessage],
+        *,
+        enable_thinking: bool | None = None,
+    ) -> str:
         msg_dicts = [{"role": m.role, "content": m.content} for m in messages]
+        template_kwargs: dict[str, Any] = {
+            "tokenize": False,
+            "add_generation_prompt": True,
+        }
+        if enable_thinking is not None:
+            template_kwargs["enable_thinking"] = enable_thinking
         try:
-            return tokenizer.apply_chat_template(
-                msg_dicts,
-                tokenize=False,
-                add_generation_prompt=True,
-            )
+            return tokenizer.apply_chat_template(msg_dicts, **template_kwargs)
+        except TypeError:
+            if enable_thinking is not None:
+                try:
+                    return tokenizer.apply_chat_template(
+                        msg_dicts,
+                        tokenize=False,
+                        add_generation_prompt=True,
+                    )
+                except Exception:
+                    pass
         except Exception:
-            # Fallback: simple concatenation for tokenizers without chat template
-            parts: list[str] = []
-            for m in messages:
-                if m.role == "system":
-                    parts.append(f"<|system|>\n{m.content}</s>")
-                elif m.role == "user":
-                    parts.append(f"<|user|>\n{m.content}</s>")
-                elif m.role == "assistant":
-                    parts.append(f"<|assistant|>\n{m.content}</s>")
-            parts.append("<|assistant|>\n")
-            return "\n".join(parts)
+            pass
+        # Fallback: simple concatenation for tokenizers without chat template
+        parts: list[str] = []
+        for m in messages:
+            if m.role == "system":
+                parts.append(f"<|system|>\n{m.content}</s>")
+            elif m.role == "user":
+                parts.append(f"<|user|>\n{m.content}</s>")
+            elif m.role == "assistant":
+                parts.append(f"<|assistant|>\n{m.content}</s>")
+        parts.append("<|assistant|>\n")
+        return "\n".join(parts)
 
     @staticmethod
     def _format_response(text: str, model_name: str) -> ChatCompletionResponse:

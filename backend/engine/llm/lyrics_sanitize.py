@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import re
 
+from backend.engine.llm.prompt_sanitize import extract_final_llm_content, looks_like_reasoning_trace
+
 _SECTION_TAG = re.compile(r"^\[[^\]]+\]\s*$", re.IGNORECASE)
 _MAX_LINES = 36
 _MAX_LINE_CHARS = 120
@@ -37,7 +39,7 @@ def _line_is_degenerate(line: str) -> bool:
 
 def sanitize_lyrics_output(text: str) -> str:
     """Trim ACE-Step lyrics after mlx-lm generation (repetition / runaway length)."""
-    raw = (text or "").strip()
+    raw = extract_final_llm_content(text)
     if not raw:
         return raw
 

@@ -6,9 +6,11 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 
+from backend.api.deps import get_model_registry
 from backend.core.container import get_container
 from backend.core.interfaces import ISettingsService, AppSettings, ModelConfig, IPresetStore, IPathResolver
 from backend.core.i18n import t, resolve_locale
+from backend.engine.llm.service import normalize_app_llm_settings
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
@@ -103,6 +105,9 @@ def get_settings():
     """Get settings"""
     service = get_settings_service()
     settings = service.get_settings()
+    registry = get_model_registry()
+    if normalize_app_llm_settings(settings, registry):
+        service.update_settings(settings)
     return SettingsResponse(**settings.__dict__)
 
 
@@ -126,6 +131,9 @@ def update_settings(request: SettingsUpdateRequest, req: Request):
     for key, value in payload.items():
         if value is not None:
             setattr(settings, key, value)
+
+    registry = get_model_registry()
+    normalize_app_llm_settings(settings, registry)
 
     service.update_settings(settings)
 

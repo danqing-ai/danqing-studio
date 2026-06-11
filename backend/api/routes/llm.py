@@ -103,11 +103,19 @@ async def generate_lyrics(
             detail="LLM model not installed. Install via Models page.",
         )
 
-    lyrics = await asyncio.to_thread(
-        service.generate_lyrics,
-        prompt=request.prompt,
-        style=request.style_positive,
-    )
+    try:
+        lyrics = await asyncio.to_thread(
+            service.generate_lyrics,
+            prompt=request.prompt,
+            style=request.style_positive,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    if not (lyrics or "").strip():
+        raise HTTPException(
+            status_code=502,
+            detail="LLM returned empty lyrics. Check Settings → Default LLM Model or try again.",
+        )
     return {"lyrics": lyrics}
 
 

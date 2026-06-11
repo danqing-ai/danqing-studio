@@ -442,7 +442,8 @@
     "generateLyrics": "AI 生成歌词",
     "generatingLyrics": "生成歌词中...",
     "lyricsGenerated": "歌词已生成",
-    "lyricsGenFailed": "歌词生成失败: {msg}"
+    "lyricsGenFailed": "歌词生成失败: {msg}",
+    "lyricsGenEmpty": "模型未返回可用歌词"
   },
   "create": {
     "title": "AI 图像创作",
@@ -1064,6 +1065,7 @@
     "failed": "失败",
     "tasks": "下载任务",
     "downloadCenter": "下载中心",
+    "modelLibrary": "模型库",
     "allModels": "全部模型",
     "baseModels": "基础模型",
     "imageModels": "图像模型",

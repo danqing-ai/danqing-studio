@@ -44,6 +44,6 @@ export function openLoraTrainingRun(router: Router, taskId: string): void {
 }
 
 export function openModelsUserLoras(router: Router): void {
-  setItem(DQ_STORAGE.MODELS_CATEGORY, 'loras');
+  setItem(DQ_STORAGE.MODELS_CATEGORY, 'trained_loras');
   void router.push({ name: 'models' });
 }

@@ -6,7 +6,7 @@
       <DqSurfaceCard class="models-page__sidebar-card">
         <div class="card-title">
           <DqIcon><box /></DqIcon>
-          {{ $t('download.downloadCenter') }}
+          {{ $t('download.modelLibrary') }}
         </div>
         <div class="models-page__sidebar-intro">
           {{ $t('models.pageSubtitle') }}
@@ -253,188 +253,188 @@
         </DqRow>
 
         <DqEmpty
-          v-if="filteredModels.length === 0 && activeCategory !== 'loras'"
+          v-if="filteredModels.length === 0"
           :description="$t('download.noModelsInCategory')"
         />
+      </div>
 
-        <!-- LoRA search -->
-        <div
-          v-if="activeCategory === 'loras'"
-          class="models-lora-section"
-        >
-          <div class="page-header">
-            <h2 class="page-title">{{ $t('download.myTrainedLoras') }}</h2>
-          </div>
+      <!-- User-trained LoRAs -->
+      <div v-if="activeCategory === 'trained_loras'">
+        <div class="page-header">
+          <h2 class="page-title">{{ $t('download.myTrainedLoras') }}</h2>
+        </div>
 
-          <DqSurfaceCard v-if="userLoras.length" class="studio-surface-card models-page__col-mb">
-            <DqRow :gutter="16">
-              <DqCol
-                v-for="ul in userLoras"
-                :key="ul.id"
-                :xs="24"
-                :sm="12"
-                :md="8"
-                class="models-page__col-mb"
-              >
-                <DqSurfaceCard class="user-lora-card">
-                  <div class="user-lora-card__name">{{ ul.name }}</div>
-                  <div class="user-lora-card__meta">
-                    {{ ul.base_model }} · {{ ul.id }}
-                  </div>
-                  <div v-if="ul.created_at" class="user-lora-card__meta user-lora-card__meta--muted">
-                    {{ formatUserLoraDate(ul.created_at) }}
-                  </div>
-                  <div class="user-lora-card__actions">
-                    <DqButton size="sm" type="primary" @click="verifyUserLora(ul)">
-                      {{ $t('loraTrain.verifyGenerate') }}
-                    </DqButton>
-                    <DqButton
-                      v-if="ul.task_id"
-                      size="sm"
-                      type="secondary"
-                      @click="openTrainingRun(ul.task_id)"
-                    >
-                      {{ $t('loraTrain.viewTrainingRun') }}
-                    </DqButton>
-                    <DqButton size="sm" type="danger" @click="deleteUserLora(ul)">
-                      {{ $t('common.delete') }}
-                    </DqButton>
-                  </div>
-                </DqSurfaceCard>
-              </DqCol>
-            </DqRow>
-          </DqSurfaceCard>
-          <div v-else class="models-page__col-mb models-lora-empty">
-            <DqEmpty :description="$t('download.noUserLoras')" />
-            <DqButton type="primary" size="sm" @click="goToLoraTrain">
-              {{ $t('loraTrain.startTraining') }}
-            </DqButton>
-          </div>
-
-          <div class="page-header">
-            <h2 class="page-title">{{ $t('download.civitaiSearch') }}</h2>
-          </div>
-
-          <DqSurfaceCard class="studio-surface-card models-page__col-mb">
-            <div class="models-civit-search-row">
-              <DqInput
-                v-model="searchQuery"
-                :placeholder="$t('download.searchCivitai')"
-                clearable
-                @keyup.enter="searchCivitai"
-              >
-                <template #prefix>
-                  <DqIcon><search /></DqIcon>
-                </template>
-              </DqInput>
-              <DqSelect v-model="searchType" class="models-civit-search-type">
-                <DqOption label="LoRA" value="LORA" />
-                <DqOption label="Checkpoint" value="Checkpoint" />
-                <DqOption :label="$t('download.all')" value="LORA,Checkpoint" />
-              </DqSelect>
-              <DqButton
-                type="primary"
-                size="sm"
-                class="models-toolbar-btn models-toolbar-btn--primary"
-                :loading="searching"
-                @click="searchCivitai"
-              >
-                <DqIcon class="models-toolbar-btn__icon"><search /></DqIcon>
-                <span class="models-toolbar-btn__label">{{ $t('download.search') }}</span>
-              </DqButton>
-            </div>
-          </DqSurfaceCard>
-
-          <DqRow v-if="searchResults.length > 0" :gutter="16">
+        <DqSurfaceCard v-if="userLoras.length" class="studio-surface-card models-page__col-mb">
+          <DqRow :gutter="16">
             <DqCol
-              v-for="model in searchResults"
-              :key="model.id"
+              v-for="ul in userLoras"
+              :key="ul.id"
               :xs="24"
               :sm="12"
               :md="8"
               class="models-page__col-mb"
             >
-              <DqSurfaceCard class="civitai-card">
-                <div class="models-civit-card-inner">
-                  <div class="civitai-preview">
-                    <img
-                      v-if="
-                        getCivitaiPreviewUrl(model) &&
-                        !civitaiPreviewLoadFailed[String(model.id)]
-                      "
-                      :src="getCivitaiPreviewUrl(model)"
-                      loading="lazy"
-                      :alt="model.name"
-                      @error="onCivitaiPreviewError(model.id)"
-                    />
-                    <div
-                      v-else
-                      class="no-preview"
-                    >
-                      <DqIcon><picture-filled /></DqIcon>
-                    </div>
-                  </div>
-
-                  <div class="models-civit-side">
-                    <div class="civitai-name">{{ model.name }}</div>
-                    <div class="models-civit-meta">
-                      {{ model.type }} |
-                      {{ model.model_versions[0]?.base_model || 'Unknown' }}
-                    </div>
-                    <div class="models-civit-meta models-civit-meta--creator">
-                      {{
-                        model.creator?.username ||
-                        $tt('download.unknownCreator')
-                      }}
-                    </div>
-                    <div class="models-civit-tags-row">
-                      <DqTag
-                        v-if="model.nsfw"
-                       
-                        type="danger"
-                      >
-                        {{ $t('download.nsfwTag') }}
-                      </DqTag>
-                      <DqTag type="info">
-                        <DqIcon><download /></DqIcon>
-                        {{ formatNumber(model.stats?.downloadCount || 0) }}
-                      </DqTag>
-                    </div>
-                  </div>
+              <DqSurfaceCard class="user-lora-card">
+                <div class="user-lora-card__name">{{ ul.name }}</div>
+                <div class="user-lora-card__meta">
+                  {{ ul.base_model }} · {{ ul.id }}
                 </div>
-
-                <div class="models-civit-footer-actions">
-                  <DqSelect
-                    v-model="selectedVersions[model.id]"
-                   
-                    class="models-civit-version-select"
-                    :placeholder="$t('download.selectVersion')"
+                <div v-if="ul.created_at" class="user-lora-card__meta user-lora-card__meta--muted">
+                  {{ formatUserLoraDate(ul.created_at) }}
+                </div>
+                <div class="user-lora-card__actions">
+                  <DqButton size="sm" type="primary" @click="verifyUserLora(ul)">
+                    {{ $t('loraTrain.verifyGenerate') }}
+                  </DqButton>
+                  <DqButton
+                    v-if="ul.task_id"
+                    size="sm"
+                    type="secondary"
+                    @click="openTrainingRun(ul.task_id)"
                   >
-                    <DqOption
-                      v-for="v in model.model_versions"
-                      :key="v.id"
-                      :label="v.name"
-                      :value="v.id"
-                    />
-                  </DqSelect>
-                  <DqButton size="sm"
-                    class="model-ver-btn model-ver-btn--download"
-                    :loading="downloadingLoras[model.id]"
-                    @click="downloadCivitaiModel(model)"
-                  >
-                    <DqIcon class="model-ver-btn__icon"><download /></DqIcon>
-                    <span class="model-ver-btn__label">{{ $t('download.download_') }}</span>
+                    {{ $t('loraTrain.viewTrainingRun') }}
+                  </DqButton>
+                  <DqButton size="sm" type="danger" @click="deleteUserLora(ul)">
+                    {{ $t('common.delete') }}
                   </DqButton>
                 </div>
               </DqSurfaceCard>
             </DqCol>
           </DqRow>
-
-          <DqEmpty
-            v-else-if="!searching && hasSearched"
-            :description="$t('download.noResults')"
-          />
+        </DqSurfaceCard>
+        <div v-else class="models-page__col-mb models-lora-empty">
+          <DqEmpty :description="$t('download.noUserLoras')" />
+          <DqButton type="primary" size="sm" @click="goToLoraTrain">
+            {{ $t('loraTrain.startTraining') }}
+          </DqButton>
         </div>
+      </div>
+
+      <!-- CivitAI search -->
+      <div v-if="activeCategory === 'civitai_search'">
+        <div class="page-header">
+          <h2 class="page-title">{{ $t('download.civitaiSearch') }}</h2>
+        </div>
+
+        <DqSurfaceCard class="studio-surface-card models-page__col-mb">
+          <div class="models-civit-search-row">
+            <DqInput
+              v-model="searchQuery"
+              :placeholder="$t('download.searchCivitai')"
+              clearable
+              @keyup.enter="searchCivitai"
+            >
+              <template #prefix>
+                <DqIcon><search /></DqIcon>
+              </template>
+            </DqInput>
+            <DqSelect v-model="searchType" class="models-civit-search-type">
+              <DqOption label="LoRA" value="LORA" />
+              <DqOption label="Checkpoint" value="Checkpoint" />
+              <DqOption :label="$t('download.all')" value="LORA,Checkpoint" />
+            </DqSelect>
+            <DqButton
+              type="primary"
+              size="sm"
+              class="models-toolbar-btn models-toolbar-btn--primary"
+              :loading="searching"
+              @click="searchCivitai"
+            >
+              <DqIcon class="models-toolbar-btn__icon"><search /></DqIcon>
+              <span class="models-toolbar-btn__label">{{ $t('download.search') }}</span>
+            </DqButton>
+          </div>
+        </DqSurfaceCard>
+
+        <DqRow v-if="searchResults.length > 0" :gutter="16">
+          <DqCol
+            v-for="model in searchResults"
+            :key="model.id"
+            :xs="24"
+            :sm="12"
+            :md="8"
+            class="models-page__col-mb"
+          >
+            <DqSurfaceCard class="civitai-card">
+              <div class="models-civit-card-inner">
+                <div class="civitai-preview">
+                  <img
+                    v-if="
+                      getCivitaiPreviewUrl(model) &&
+                      !civitaiPreviewLoadFailed[String(model.id)]
+                    "
+                    :src="getCivitaiPreviewUrl(model)"
+                    loading="lazy"
+                    :alt="model.name"
+                    @error="onCivitaiPreviewError(model.id)"
+                  />
+                  <div
+                    v-else
+                    class="no-preview"
+                  >
+                    <DqIcon><picture-filled /></DqIcon>
+                  </div>
+                </div>
+
+                <div class="models-civit-side">
+                  <div class="civitai-name">{{ model.name }}</div>
+                  <div class="models-civit-meta">
+                    {{ model.type }} |
+                    {{ model.model_versions[0]?.base_model || 'Unknown' }}
+                  </div>
+                  <div class="models-civit-meta models-civit-meta--creator">
+                    {{
+                      model.creator?.username ||
+                      $tt('download.unknownCreator')
+                    }}
+                  </div>
+                  <div class="models-civit-tags-row">
+                    <DqTag
+                      v-if="model.nsfw"
+                     
+                      type="danger"
+                    >
+                      {{ $t('download.nsfwTag') }}
+                    </DqTag>
+                    <DqTag type="info">
+                      <DqIcon><download /></DqIcon>
+                      {{ formatNumber(model.stats?.downloadCount || 0) }}
+                    </DqTag>
+                  </div>
+                </div>
+              </div>
+
+              <div class="models-civit-footer-actions">
+                <DqSelect
+                  v-model="selectedVersions[model.id]"
+                 
+                  class="models-civit-version-select"
+                  :placeholder="$t('download.selectVersion')"
+                >
+                  <DqOption
+                    v-for="v in model.model_versions"
+                    :key="v.id"
+                    :label="v.name"
+                    :value="v.id"
+                  />
+                </DqSelect>
+                <DqButton size="sm"
+                  class="model-ver-btn model-ver-btn--download"
+                  :loading="downloadingLoras[model.id]"
+                  @click="downloadCivitaiModel(model)"
+                >
+                  <DqIcon class="model-ver-btn__icon"><download /></DqIcon>
+                  <span class="model-ver-btn__label">{{ $t('download.download_') }}</span>
+                </DqButton>
+              </div>
+            </DqSurfaceCard>
+          </DqCol>
+        </DqRow>
+
+        <DqEmpty
+          v-else-if="!searching && hasSearched"
+          :description="$t('download.noResults')"
+        />
       </div>
 
       <!-- Installed -->
@@ -867,7 +867,7 @@ async function deleteUserLora(ul: { id?: string; name?: string }) {
 }
 
 watch(activeCategory, (cat) => {
-  if (cat === 'loras') loadUserLoras();
+  if (cat === 'trained_loras') loadUserLoras();
 });
 
 async function loadDiskSpace() {
@@ -1454,7 +1454,7 @@ onMounted(() => {
   loadInstalled();
   loadDiskSpace();
   loadActiveDownloads();
-  if (activeCategory.value === 'loras') loadUserLoras();
+  if (activeCategory.value === 'trained_loras') loadUserLoras();
 });
 
 onUnmounted(() => {

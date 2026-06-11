@@ -442,7 +442,8 @@
     "generateLyrics": "AI Generate Lyrics",
     "generatingLyrics": "Generating lyrics...",
     "lyricsGenerated": "Lyrics generated",
-    "lyricsGenFailed": "Lyrics generation failed: {msg}"
+    "lyricsGenFailed": "Lyrics generation failed: {msg}",
+    "lyricsGenEmpty": "Model returned empty lyrics"
   },
   "create": {
     "title": "AI Image Creation",
@@ -1064,6 +1065,7 @@
     "failed": "Failed",
     "tasks": "Download Tasks",
     "downloadCenter": "Download Center",
+    "modelLibrary": "Model Library",
     "allModels": "All Models",
     "baseModels": "Base Models",
     "imageModels": "Image Models",

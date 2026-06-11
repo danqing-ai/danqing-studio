@@ -2289,9 +2289,21 @@ class BenchmarkMetadataTests(unittest.TestCase):
             "z-image-turbo must keep enable_thinking=true for tokenizer chat-template semantics",
         )
 
-    def test_z_image_turbo_no_lora_support(self) -> None:
+    def test_z_image_turbo_lora_support(self) -> None:
         turbo = _load_default_registry_expanded()["models"]["z-image-turbo"]
-        self.assertFalse(turbo["parameters"].get("lora_support", True))
+        self.assertTrue(turbo["parameters"].get("lora_support", False))
+
+    def test_z_image_lora_scope_base_turbo_compatible(self) -> None:
+        from backend.engine.families.z_image.weights import (
+            z_image_lora_base_compatible,
+            z_image_lora_scope_key,
+        )
+
+        self.assertEqual(z_image_lora_scope_key("z-image"), "z_image")
+        self.assertEqual(z_image_lora_scope_key("z-image-turbo"), "z_image")
+        self.assertTrue(z_image_lora_base_compatible("z-image-turbo", "z-image"))
+        self.assertTrue(z_image_lora_base_compatible("z-image", "z-image-turbo"))
+        self.assertFalse(z_image_lora_base_compatible("z-image-turbo", "flux1-dev"))
 
 
 class MemoryPolicyTests(unittest.TestCase):
@@ -2902,6 +2914,25 @@ class LLMServiceTests(unittest.TestCase):
         self.assertEqual(vision["model_id"], "qwen3-vl-4b-instruct")
         self.assertIsInstance(vision["name"], dict)
 
+    def test_normalize_app_llm_settings_uses_saved_defaults(self) -> None:
+        from backend.core.interfaces import AppSettings
+        from backend.core.model_registry import ModelRegistry
+        from backend.engine.llm.service import normalize_app_llm_settings, resolve_llm_model_id, resolve_vlm_model_id
+        from backend.utils.path_utils import PathResolver
+
+        root = Path(__file__).resolve().parents[1]
+        registry = ModelRegistry.load(root / "default_config" / "models_registry.json")
+
+        settings = AppSettings(
+            default_model_llm="qwen2.5-1.5b",
+            default_model_vlm="qwen2.5-vl-7b-instruct",
+        )
+        self.assertTrue(normalize_app_llm_settings(settings, registry))
+        self.assertEqual(settings.default_model_llm, "qwen3-4b-thinking-2507")
+        self.assertEqual(settings.default_model_vlm, "qwen3-vl-4b-instruct")
+        self.assertEqual(resolve_llm_model_id(settings, registry), settings.default_model_llm)
+        self.assertEqual(resolve_vlm_model_id(settings, registry), settings.default_model_vlm)
+
     def test_enhance_system_prompt_by_target_action(self) -> None:
         from backend.engine.llm.service import LLMService
 
@@ -2911,6 +2942,16 @@ class LLMServiceTests(unittest.TestCase):
 
     def test_sanitize_lyrics_strips_word_loops(self) -> None:
         from backend.engine.llm.lyrics_sanitize import sanitize_lyrics_output
+        from backend.engine.llm.service import LLMService
+
+        chinese = "[Verse 1]\n夏日海边\n浪花轻敲沙滩\n[Chorus]\n青春不散场"
+        self.assertTrue(LLMService._lyrics_quality_ok(chinese))
+        self.assertTrue(LLMService._lyrics_quality_ok("[Instrumental]"))
+        self.assertFalse(
+            LLMService._lyrics_quality_ok(
+                "Okay, let's write ACE-Step lyrics for this summer pop track."
+            )
+        )
 
         raw = """[Intro]
 The melody so soft yet so divine
@@ -2968,6 +3009,40 @@ Should not appear
         self.assertLessEqual(out.count("背景中"), 2)
         self.assertFalse(out.endswith("背景中背景中"))
         self.assertTrue(prompt_enhance_quality_ok(out))
+
+    def test_extract_final_llm_content_strips_thinking_blocks(self) -> None:
+        from backend.engine.llm.prompt_sanitize import (
+            extract_final_llm_content,
+            looks_like_reasoning_trace,
+            prompt_enhance_quality_ok,
+        )
+
+        think_open = "<" + "think" + ">"
+        think_close = "</" + "think" + ">"
+        tagged = (
+            f"{think_open}\nOkay, let's tackle this prompt rewrite request.\n{think_close}\n"
+            "杨紫，15岁，坐在阶梯教室听课，柔和自然光，写实摄影"
+        )
+        self.assertEqual(
+            extract_final_llm_content(tagged),
+            "杨紫，15岁，坐在阶梯教室听课，柔和自然光，写实摄影",
+        )
+        self.assertEqual(
+            extract_final_llm_content(f"{think_open}\nOnly reasoning, no answer"),
+            "",
+        )
+        self.assertTrue(
+            looks_like_reasoning_trace(
+                "Okay, let's tackle this prompt rewrite request. The user wants a Chinese-to-Chinese prompt."
+            )
+        )
+        self.assertFalse(
+            prompt_enhance_quality_ok(
+                "Okay, let's tackle this prompt rewrite request. The user wants a Chinese-to-Chinese prompt."
+            )
+        )
+
+    def test_generation_kwargs_uses_sampler(self) -> None:
         from backend.core.contracts import ChatCompletionRequest, ChatMessage
         from backend.engine.llm.service import LLMService
 
@@ -2997,7 +3072,7 @@ Should not appear
 
         svc = self._load_service()
         if not svc.is_available():
-            self.skipTest("qwen2.5-1.5b not installed in workspace")
+            self.skipTest("no LLM installed in workspace")
 
         result = svc.enhance_prompt(EnhanceRequest(prompt="一只橘猫"))
         self.assertTrue(result.enhanced_prompt.strip())
@@ -3842,6 +3917,26 @@ class LoraTrainingCropTests(unittest.TestCase):
             self.assertEqual((w, h), (512, 512))
             self.assertEqual(arr.shape[0], 512)
             self.assertEqual(arr.shape[1], 512)
+
+    def test_is_heif_payload_detects_apple_heic(self) -> None:
+        from backend.engine.training.dataset_store import _is_heif_payload
+
+        header = bytes.fromhex("000000186674797068656963")
+        self.assertTrue(_is_heif_payload(header + b"\x00" * 32))
+        self.assertFalse(_is_heif_payload(b"\x89PNG\r\n\x1a\n"))
+
+    def test_open_rgb_image_heic_misnamed_png(self) -> None:
+        heic_path = Path(
+            "/Users/nil.luo/Workspace/studio-workspace/datasets/"
+            "ds_6e173d161fb2ac33/images/20.HEIC.png"
+        )
+        if not heic_path.is_file():
+            self.skipTest("fixture HEIC dataset image not present")
+        from backend.engine.training.dataset_store import open_rgb_image
+
+        img = open_rgb_image(heic_path)
+        self.assertEqual(img.mode, "RGB")
+        self.assertGreater(img.size[0], 0)
 
     def test_portrait_resize_keeps_upper_region(self) -> None:
         from backend.engine.training.dataset_store import resize_rgb_image

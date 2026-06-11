@@ -62,10 +62,15 @@ export function useComposerLlm() {
     isGeneratingLyrics.value = true;
     try {
       const result = await api.gen.generateLyrics({ prompt });
+      const lyrics = (result.lyrics || '').trim();
+      if (!lyrics) {
+        toast.error($tt('audio.lyricsGenFailed', { msg: $tt('audio.lyricsGenEmpty') }));
+        return null;
+      }
       if (!options?.quietSuccess) {
         toast.success($tt('audio.lyricsGenerated'));
       }
-      return result.lyrics;
+      return lyrics;
     } catch (e) {
       const msg = (e as { response?: { data?: { detail?: string } }; message?: string })?.response?.data?.detail
         || (e as Error).message

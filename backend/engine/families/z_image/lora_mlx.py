@@ -5,12 +5,12 @@ from pathlib import Path
 from typing import Any, Callable, Sequence
 
 from backend.engine.common.bundle.lora_mlx import merge_lora_adapters_common
-from backend.engine.families.z_image.weights import remap_zimage_lora_keys
+from backend.engine.families.z_image.weights import remap_zimage_lora_keys, z_image_lora_scope_key
 from backend.engine.runtime._base import RuntimeContext
 
 
 def _base_model_scope_key(value: str) -> str:
-    return value.split(":", 1)[0].strip() if value else ""
+    return z_image_lora_scope_key(value)
 
 
 def _repair_indexed_zimage_weights(

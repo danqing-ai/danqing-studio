@@ -258,7 +258,11 @@ class SettingsService(ISettingsService):
                         or lora_base_key == model_base_key
                     )
                 else:
-                    ok = lora_base_key == "" or lora_base_key == model_base_key
+                    from backend.engine.families.z_image.weights import z_image_lora_base_compatible
+
+                    ok = lora_base_key == "" or z_image_lora_base_compatible(
+                        model_base_key, lora_base_key
+                    )
                 if not ok:
                     continue
             out.append(
@@ -279,9 +283,13 @@ class SettingsService(ISettingsService):
                 model_base_key = for_model.split(":", 1)[0].strip()
                 lora_base_key = lora_base.split(":", 1)[0].strip() if lora_base else ""
                 if lora_base_key and lora_base_key != model_base_key:
-                    if not (
-                        model_base_key.startswith("flux1") and lora_base_key.startswith("flux1")
-                    ):
+                    from backend.engine.families.z_image.weights import z_image_lora_base_compatible
+
+                    if model_base_key.startswith("flux1") and lora_base_key.startswith("flux1"):
+                        pass
+                    elif z_image_lora_base_compatible(model_base_key, lora_base_key):
+                        pass
+                    else:
                         continue
             local_path = str(ul.get("local_path") or "")
             if local_path:

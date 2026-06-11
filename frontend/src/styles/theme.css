@@ -1808,18 +1808,21 @@ body {
 }
 
 .models-civit-search-row {
- display: flex;
+ display: grid;
+ grid-template-columns: minmax(0, 1fr) auto auto;
  gap: 12px;
  align-items: stretch;
 }
 
 .models-civit-search-row .dq-input {
- flex: 1;
+ width: 100%;
  min-width: 0;
 }
 
 .models-civit-search-type {
- width: 150px;
+ width: 120px;
+ min-width: 120px;
+ max-width: 120px;
 }
 
 .models-civit-card-inner {

@@ -5,7 +5,7 @@
     :width="dialogWidth"
     center
     variant="glass"
-    :closable="media !== 'image'"
+    closable
     :destroy-on-close="media === 'video' || media === 'audio'"
     :class="[
       'gallery-preview-dialog',
@@ -14,6 +14,10 @@
       media === 'video' ? 'gallery-preview-dialog--video' : '',
     ]"
   >
+    <template v-if="media === 'image'" #header>
+      <span class="gallery-preview-header-fill" aria-hidden="true" />
+    </template>
+
     <div
       v-if="currentItem"
       ref="containerRef"
@@ -25,17 +29,6 @@
       }"
       tabindex="0"
     >
-      <DqIconButton
-        v-if="media === 'image'"
-        type="text"
-        size="sm"
-        class="gallery-preview-close"
-        :label="$t('gallery.close')"
-        @click="dialogVisible = false"
-      >
-        <DqIcon :size="16"><Close /></DqIcon>
-      </DqIconButton>
-
       <div
         class="gallery-preview-nav gallery-preview-nav--left"
         :class="{ 'is-disabled': !canGoPrev }"
@@ -133,7 +126,7 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue';
-import { ArrowLeft, ArrowRight, Close, CopyDocument } from '@danqing/dq-shell';
+import { ArrowLeft, ArrowRight, CopyDocument } from '@danqing/dq-shell';
 import { api } from '@/utils/api';
 import { $tt } from '@/utils/i18n';
 import { toast } from '@/utils/feedback';
@@ -372,20 +365,8 @@ onBeforeUnmount(() => {
   transform: none;
 }
 
-.gallery-preview-close {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  z-index: 12;
-  border-radius: 50%;
-  border: 0.5px solid var(--dq-glass-border);
-  background: var(--dq-glass-tooltip-bg);
-  -webkit-backdrop-filter: var(--dq-glass-blur-light);
-  backdrop-filter: var(--dq-glass-blur-light);
-}
-
-.gallery-preview-close:hover {
-  background: var(--dq-fill-on-glass-hover);
+.gallery-preview-header-fill {
+  flex: 1;
 }
 
 .gallery-preview-media {
