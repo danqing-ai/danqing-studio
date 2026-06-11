@@ -20,7 +20,8 @@ from backend.engine.config.model_configs import get_config_class
 from backend.engine.contracts import local_bundle_root
 from backend.engine.families.z_image.weights import remap_zimage_lora_keys
 from backend.engine.pipelines.image_model_load import load_image_transformer
-from backend.engine.training.dataset_store import load_training_pairs, resize_rgb_image
+from backend.engine.training.crop import prepare_training_rgb_image, resolve_training_resolution
+from backend.engine.training.dataset_store import load_training_pairs_unified
 from backend.engine.training.flux_dreambooth_mlx import _load_vae_encoder, _log, _progress, _save_adapter
 from backend.engine.training.lora_layers import (
     apply_lora_to_zimage_dit,
@@ -57,7 +58,9 @@ def _encode_dataset(
     pairs: list[tuple[Path, str]],
     vae: VAEEncoder,
     text_encoder: Any,
-    resolution: tuple[int, int],
+    base_model_id: str,
+    train_cfg: dict[str, Any],
+    preset: str | None,
     num_augmentations: int,
     exec_ctx: ExecutionContext,
 ) -> tuple[list[Any], list[Any]]:
@@ -77,8 +80,14 @@ def _encode_dataset(
     for img_path, prompt in pairs:
         cap = text_encoder.encode([prompt])
         mx.eval(cap)
-        for _ in range(num_augmentations):
-            arr = resize_rgb_image(img_path, resolution)
+        for aug_i in range(num_augmentations):
+            arr, _ = prepare_training_rgb_image(
+                img_path,
+                base_model_id,
+                train_cfg,
+                preset=preset,
+                augmentation_index=aug_i,
+            )
             nchw = mx.array(arr.transpose(2, 0, 1)[None].astype("float32"))
             n11 = nchw * 2.0 - 1.0
             z = vae.encode(n11)
@@ -113,12 +122,39 @@ def _training_loss(model: Any, x0: mx.array, cap: mx.array, ctx: Any) -> mx.arra
 
 def _validate_saved_lora(path: Path) -> None:
     from backend.engine.common.bundle.weights import load_safetensors
+    from backend.engine.config.model_configs import ZImageConfig
+    from backend.engine.families.z_image.transformer import ZImageTransformer
+    from backend.engine.runtime.mlx import MLXContext
+    from backend.engine.training.lora_layers import (
+        enumerate_zimage_lora_module_paths,
+        repair_indexed_lora_weights,
+    )
 
     flat = load_safetensors(str(path))
-    remapped = remap_zimage_lora_keys(flat)
+    weights = dict(flat)
+    if any(key.startswith("lora_") and ".lora_A." in key for key in weights):
+        config_path = path.parent / "lora_config.json"
+        lora_blocks = -1
+        if config_path.is_file():
+            lora_blocks = int(json.loads(config_path.read_text()).get("lora_blocks") or -1)
+        probe = ZImageTransformer(ZImageConfig(), MLXContext())
+        paths = enumerate_zimage_lora_module_paths(probe, lora_blocks=lora_blocks)
+        weights = repair_indexed_lora_weights(weights, module_paths=paths)
+    remapped = remap_zimage_lora_keys(weights)
     if not remapped:
         raise RuntimeError(
             f"Saved LoRA {path} has no remappable (lora_A, lora_B) pairs for Z-Image"
+        )
+    infer = ZImageTransformer(ZImageConfig(), MLXContext())
+    matched = sum(1 for tgt in remapped if f"{tgt}.weight" in infer._param_map)
+    if matched == 0:
+        raise RuntimeError(
+            f"Saved LoRA {path}: remapped {len(remapped)} groups but none match Z-Image DiT weights "
+            "(re-export with a current Studio build or retrain)."
+        )
+    if matched < len(remapped):
+        raise RuntimeError(
+            f"Saved LoRA {path}: only {matched}/{len(remapped)} groups match Z-Image DiT weights"
         )
 
 
@@ -205,8 +241,7 @@ def run_z_image_dreambooth_training(
     learning_rate = float(cfg.get("learning_rate") or 1e-4)
     grad_accumulate = int(cfg.get("grad_accumulate") or 4)
     warmup_steps = int(cfg.get("warmup_steps") or 100)
-    resolution_list = cfg.get("resolution") or [768, 768]
-    resolution = (int(resolution_list[0]), int(resolution_list[1]))
+    resolution = resolve_training_resolution(base_model_id, cfg, preset=request.preset)
     num_augmentations = int(cfg.get("num_augmentations") or 5)
     progress_prompt = (request.progress_prompt or "").strip()
     if not progress_prompt:
@@ -225,9 +260,14 @@ def run_z_image_dreambooth_training(
     adapter_dir = work_dir / "adapters"
     adapter_dir.mkdir(exist_ok=True)
 
-    pairs = load_training_pairs(project_root, request.dataset_id)
+    pairs, training_caption = load_training_pairs_unified(
+        project_root,
+        request.dataset_id,
+        progress_prompt=progress_prompt,
+    )
     if len(pairs) < 3:
         raise RuntimeError("Dataset must contain at least 3 images")
+    _log(exec_ctx, "info", f"DreamBooth caption: {training_caption!r}")
 
     config = get_config_class("z_image")()
     _log(exec_ctx, "info", "Loading VAE encoder and Z-Image text encoder …")
@@ -242,12 +282,19 @@ def run_z_image_dreambooth_training(
     vae_enc = _load_vae_encoder(ctx, bundle_root)
     text_encoder = _load_zimage_text_encoder(ctx, bundle_root, config)
 
+    _log(
+        exec_ctx,
+        "info",
+        f"Training crop {resolution[0]}×{resolution[1]} (portrait-biased cover, Z-Image VAE grid ÷8) …",
+    )
     latents, cap_feats = _encode_dataset(
         ctx=ctx,
         pairs=pairs,
         vae=vae_enc,
         text_encoder=text_encoder,
-        resolution=resolution,
+        base_model_id=base_model_id,
+        train_cfg=cfg,
+        preset=request.preset,
         num_augmentations=num_augmentations,
         exec_ctx=exec_ctx,
     )
@@ -334,7 +381,7 @@ def run_z_image_dreambooth_training(
         mx.eval(loss, train_module.parameters(), optimizer.state)
         losses.append(float(loss.item()))
 
-        if (i + 1) % 10 == 0:
+        if (i + 1) == 1 or (i + 1) % 10 == 0:
             avg = sum(losses) / len(losses)
             peak = mx.metal.get_peak_memory() / 1024**3
             _log(
@@ -417,9 +464,11 @@ def run_z_image_dreambooth_training(
     shutil.copy2(final_path, dest_file)
     lora_config = {
         "lora_rank": lora_rank,
+        "lora_blocks": lora_blocks,
         "base_model": base_model_id,
         "alpha": lora_rank,
         "trigger_word": "",
+        "training_caption": training_caption,
     }
     (dest_dir / "lora_config.json").write_text(json.dumps(lora_config, indent=2), encoding="utf-8")
 
@@ -441,4 +490,5 @@ def run_z_image_dreambooth_training(
         "user_lora_id": user_lora_id,
         "output_name": slug,
         "loss_history": loss_history,
+        "training_caption": training_caption,
     }

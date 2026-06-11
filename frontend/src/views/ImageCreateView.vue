@@ -24,6 +24,7 @@
         @toggle-selection-mode="toggleSelectionMode"
         @select-all="selectAllLoaded"
         @batch-delete="batchDeleteSelected"
+        @batch-train-lora="batchTrainLoraSelected"
         @clear-selection="clearSelection"
         @update:view-mode="onViewModeChange"
         @composer-restore="onCanvasComposerRestore"
@@ -49,6 +50,7 @@
         @toggle-select="toggleSelect"
         @select-all="selectAllLoaded"
         @batch-delete="batchDeleteSelected"
+        @batch-train-lora="batchTrainLoraSelected"
         @clear-selection="clearSelection"
       />
       <InfiniteCanvas
@@ -236,6 +238,10 @@ import { getImageSizeForModel, migrateLegacyImageLastSize, setImageSizeForModel 
 import { warnIfRiskyMemory } from '@/composables/memoryHint';
 import { useComposerLlm } from '@/composables/useComposerLlm';
 import { assetIdFromGalleryPath } from '@/utils/copilotHandoff';
+import {
+  assetIdsFromGalleryItems,
+  navigateToLoraTrainWithAssets,
+} from '@/utils/loraTrainHandoff';
 import { reconcileVersionPickerSelection } from '@/composables/useModelRegistryFilters';
 import { applyModelVersionFilters } from '@/utils/modelPickerFilters';
 import { previewDisplayCaption, truncateDisplayLabel } from '@/utils/assetDisplay';
@@ -916,6 +922,22 @@ const {
   batchDeleteSelected,
   clearSelection,
 } = useStudioGallery('image');
+
+function batchTrainLoraSelected() {
+  const selected = galleryItems.value.filter((item) => selectedPaths.value.has(item.path));
+  const assetIds = assetIdsFromGalleryItems(selected);
+  if (!assetIds.length) {
+    toast.warning($tt('loraTrain.needImageAssets'));
+    return;
+  }
+  const ok = navigateToLoraTrainWithAssets(router, assetIds, {
+    datasetName: $tt('loraTrain.galleryImportDataset'),
+  });
+  if (ok) {
+    clearSelection();
+    toast.success($tt('loraTrain.handoffStarted'));
+  }
+}
 
 async function addGalleryItemToCanvas(
   item: GalleryItem,

@@ -19,8 +19,9 @@ class V3TaskStore(IV3TaskStore):
         self._init_db()
 
     def _conn(self) -> sqlite3.Connection:
-        c = sqlite3.connect(str(self._db_path), check_same_thread=False)
+        c = sqlite3.connect(str(self._db_path), check_same_thread=False, timeout=30.0)
         c.row_factory = sqlite3.Row
+        c.execute("PRAGMA busy_timeout=30000")
         return c
 
     def _init_db(self) -> None:

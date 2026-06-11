@@ -4,26 +4,63 @@
     <aside class="lora-dataset-panel__list">
       <div class="lora-dataset-panel__list-head">
         <span class="lora-dataset-panel__list-title">{{ $t('loraTrain.datasetLibrary') }}</span>
-        <DqButton size="xs" type="primary" @click="showCreateDialog = true">
+        <DqButton size="xs" type="primary" @click="openCreateDialog">
           {{ $t('loraTrain.newDataset') }}
         </DqButton>
       </div>
 
-      <div v-if="datasets.length" class="lora-dataset-panel__list-scroll">
+      <p class="lora-dataset-panel__persist-note">{{ $t('loraTrain.datasetPersistNote') }}</p>
+
+      <DqInput
+        v-if="datasets.length > 3"
+        v-model="datasetSearch"
+        size="xs"
+        class="lora-dataset-panel__search"
+        :placeholder="$t('loraTrain.searchDatasets')"
+        clearable
+      />
+
+      <div v-if="filteredDatasets.length" class="lora-dataset-panel__list-scroll">
         <button
-          v-for="d in datasets"
+          v-for="d in filteredDatasets"
           :key="d.id"
           type="button"
           class="lora-dataset-panel__list-item"
-          :class="{ 'is-active': d.id === selectedId }"
+          :class="{ 'is-active': d.id === selectedId, 'is-ready': (d.image_count || 0) >= minImages }"
           @click="selectDataset(d.id)"
         >
-          <span class="lora-dataset-panel__list-name">{{ d.name }}</span>
-          <span class="lora-dataset-panel__list-meta">
-            {{ $t('loraTrain.imageCount', { count: d.image_count || 0 }) }}
+          <img
+            v-if="datasetCoverUrl(d)"
+            :src="datasetCoverUrl(d)"
+            alt=""
+            class="lora-dataset-panel__list-thumb"
+            loading="lazy"
+          />
+          <span v-else class="lora-dataset-panel__list-thumb lora-dataset-panel__list-thumb--empty" aria-hidden="true">
+            <DqIcon :size="16"><PictureFilled /></DqIcon>
+          </span>
+          <span class="lora-dataset-panel__list-body">
+            <span class="lora-dataset-panel__list-name">{{ d.name }}</span>
+            <span class="lora-dataset-panel__list-meta">
+              {{ $t('loraTrain.imageCount', { count: d.image_count || 0 }) }}
+              <DqTag
+                v-if="(d.image_count || 0) >= minImages"
+                size="small"
+                type="success"
+                effect="plain"
+                class="lora-dataset-panel__ready-tag"
+              >
+                {{ $t('loraTrain.datasetReady') }}
+              </DqTag>
+            </span>
           </span>
         </button>
       </div>
+      <DqEmpty
+        v-else-if="datasets.length"
+        :description="$t('loraTrain.noSearchResults')"
+        class="lora-dataset-panel__list-empty"
+      />
       <DqEmpty v-else :description="$t('loraTrain.noDatasets')" class="lora-dataset-panel__list-empty" />
 
       <div class="lora-dataset-panel__list-foot">
@@ -57,15 +94,17 @@
 
         <div
           class="lora-dataset-panel__dropzone"
-          :class="{ 'is-dragover': dragOver, 'is-disabled': !selectedId }"
+          :class="{ 'is-dragover': dragOver, 'is-disabled': !selectedId, 'is-uploading': uploading }"
           @dragover.prevent="dragOver = true"
           @dragleave.prevent="dragOver = false"
           @drop.prevent="onDropFiles"
           @click="openUploadPicker"
         >
           <DqIcon class="lora-dataset-panel__dropzone-icon" aria-hidden="true"><Upload /></DqIcon>
-          <p class="lora-dataset-panel__dropzone-title">{{ $t('loraTrain.dropzoneTitle') }}</p>
-          <p class="lora-dataset-panel__dropzone-hint">{{ $t('loraTrain.dropzoneHint') }}</p>
+          <p class="lora-dataset-panel__dropzone-title">
+            {{ uploading ? $t('loraTrain.uploading') : $t('loraTrain.dropzoneTitle') }}
+          </p>
+          <p v-if="!uploading" class="lora-dataset-panel__dropzone-hint">{{ $t('loraTrain.dropzoneHint') }}</p>
           <input
             ref="uploadInputRef"
             type="file"
@@ -88,6 +127,14 @@
             @click="runAutoCaption"
           >
             {{ $t('loraTrain.autoCaption') }}
+          </DqButton>
+          <DqButton
+            size="sm"
+            type="secondary"
+            :disabled="!selectedDataset?.images?.length || !defaultPrompt.trim()"
+            @click="applyDefaultToAll"
+          >
+            {{ $t('loraTrain.applyDefaultToAll') }}
           </DqButton>
         </div>
 
@@ -150,7 +197,7 @@
     >
       <div class="lora-dataset-panel__dialog-field">
         <label class="lora-dataset-panel__label">{{ $t('loraTrain.newDatasetName') }}</label>
-        <DqInput v-model="newDatasetName" :placeholder="$t('loraTrain.newDatasetDefault')" />
+        <DqInput v-model="newDatasetName" :placeholder="$t('loraTrain.newDatasetDefault')" @keyup.enter="createDataset" />
       </div>
       <template #footer>
         <DqButton size="sm" @click="showCreateDialog = false">{{ $t('common.cancel') }}</DqButton>
@@ -169,7 +216,21 @@
       <p class="lora-dataset-panel__import-hint">{{ $t('loraTrain.importGalleryHint') }}</p>
       <AssetPicker accept-kind="image" @pick="onGalleryPick" />
       <div v-if="pendingGalleryAssets.length" class="lora-dataset-panel__pending-tags">
-        <DqTag v-for="a in pendingGalleryAssets" :key="a" size="sm">{{ a }}</DqTag>
+        <span
+          v-for="a in pendingGalleryAssets"
+          :key="a"
+          class="lora-dataset-panel__pending-tag"
+        >
+          <span class="lora-dataset-panel__pending-tag-label">{{ a }}</span>
+          <DqIconButton
+            type="text"
+            size="xs"
+            :label="$t('common.delete')"
+            @click="removePendingAsset(a)"
+          >
+            <DqIcon :size="12"><Close /></DqIcon>
+          </DqIconButton>
+        </span>
       </div>
       <template #footer>
         <DqButton size="sm" @click="showGalleryImport = false">{{ $t('common.cancel') }}</DqButton>
@@ -190,7 +251,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Close, Upload } from '@danqing/dq-shell';
+import { Close, Upload, PictureFilled } from '@danqing/dq-shell';
 import { api } from '@/utils/api';
 import { toast, confirm } from '@/utils/feedback';
 import AssetPicker from '@/components/asset/AssetPicker.vue';
@@ -215,12 +276,14 @@ const { t } = useI18n();
 
 const minImages = MIN_IMAGES;
 const dragOver = ref(false);
+const uploading = ref(false);
 const importingDog6 = ref(false);
 const importingGallery = ref(false);
 const autoCaptioning = ref(false);
 const showCreateDialog = ref(false);
 const showGalleryImport = ref(false);
 const newDatasetName = ref('');
+const datasetSearch = ref('');
 const pendingGalleryAssets = ref<string[]>([]);
 const uploadInputRef = ref<HTMLInputElement | null>(null);
 const datasetNameEdit = ref('');
@@ -230,6 +293,19 @@ const selectedDataset = computed(() =>
 );
 
 const imageCount = computed(() => selectedDataset.value?.image_count || 0);
+
+const filteredDatasets = computed(() => {
+  const q = datasetSearch.value.trim().toLowerCase();
+  const sorted = [...props.datasets].sort((a, b) =>
+    String(b.updated_at || b.created_at || '').localeCompare(String(a.updated_at || a.created_at || ''))
+  );
+  if (!q) return sorted;
+  return sorted.filter(
+    (d) =>
+      String(d.name || '').toLowerCase().includes(q) ||
+      String(d.id || '').toLowerCase().includes(q)
+  );
+});
 
 watch(
   () => selectedDataset.value?.name,
@@ -262,6 +338,12 @@ function setCaption(file: string, value: string) {
 function datasetImageUrl(file: string): string {
   if (!props.selectedId || !file) return '';
   return api.loras.datasetImageUrl(props.selectedId, file);
+}
+
+function datasetCoverUrl(d: Record<string, any>): string {
+  const cover = d.cover_image || d.images?.[0]?.file;
+  if (!cover || !d.id) return '';
+  return api.loras.datasetImageUrl(d.id, cover);
 }
 
 function openUploadPicker() {
@@ -313,14 +395,48 @@ async function importDog6() {
   }
 }
 
+function openCreateDialog() {
+  newDatasetName.value = t('loraTrain.newDatasetDefault');
+  showCreateDialog.value = true;
+}
+
+function removePendingAsset(path: string) {
+  pendingGalleryAssets.value = pendingGalleryAssets.value.filter((p) => p !== path);
+}
+
+async function applyDefaultToAll() {
+  if (!props.selectedId || !props.defaultPrompt.trim()) return;
+  const prompt = props.defaultPrompt.trim();
+  const captions = (selectedDataset.value?.images || []).map((img: { file: string }) => ({
+    file: img.file,
+    prompt,
+  }));
+  if (!captions.length) return;
+  try {
+    const ds = (await api.loras.updateCaptions(props.selectedId, captions)) as Record<string, any>;
+    const next: Record<string, string> = {};
+    for (const img of ds.images || []) {
+      next[img.file] = img.prompt || prompt;
+    }
+    emit('update:captionEdits', next);
+    patchDatasets(props.datasets.map((d) => (d.id === props.selectedId ? { ...d, ...ds } : d)));
+    toast.success(t('loraTrain.applyDefaultDone'));
+  } catch (e: unknown) {
+    toast.error(apiErrorMessage(e));
+  }
+}
+
 async function uploadFiles(files: File[]) {
-  if (!files.length || !props.selectedId) return;
+  if (!files.length || !props.selectedId || uploading.value) return;
+  uploading.value = true;
   try {
     await api.loras.uploadImages(props.selectedId, files, props.defaultPrompt);
     await refreshDatasetDetail(props.selectedId);
     toast.success(t('loraTrain.uploadDone', { count: files.length }));
   } catch (e: unknown) {
     toast.error(apiErrorMessage(e));
+  } finally {
+    uploading.value = false;
   }
 }
 
@@ -457,18 +573,18 @@ defineExpose({
 .lora-dataset-panel {
   display: flex;
   gap: 16px;
-  min-height: 420px;
+  min-height: 380px;
 }
 
 .lora-dataset-panel__list {
-  width: 200px;
+  width: 248px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 12px;
-  border-radius: var(--radius-md);
-  background: var(--dq-fill-secondary);
+  padding: 14px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--dq-bg-base) 45%, var(--dq-fill-secondary));
   border: 0.5px solid var(--dq-border-subtle);
 }
 
@@ -485,6 +601,21 @@ defineExpose({
   letter-spacing: 0.02em;
 }
 
+.lora-dataset-panel__persist-note {
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--dq-label-tertiary);
+}
+
+.lora-dataset-panel__search {
+  width: 100%;
+}
+
+.lora-dataset-panel__ready-tag {
+  margin-left: 4px;
+}
+
 .lora-dataset-panel__list-scroll {
   flex: 1;
   min-height: 0;
@@ -496,9 +627,9 @@ defineExpose({
 
 .lora-dataset-panel__list-item {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
   width: 100%;
   padding: 8px 10px;
   border: 0.5px solid transparent;
@@ -507,6 +638,31 @@ defineExpose({
   cursor: pointer;
   text-align: left;
   transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.lora-dataset-panel__list-thumb {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  border: 0.5px solid var(--dq-border-subtle);
+  background: var(--dq-bg-base);
+}
+
+.lora-dataset-panel__list-thumb--empty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--dq-label-tertiary);
+}
+
+.lora-dataset-panel__list-body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
 }
 
 .lora-dataset-panel__list-item:hover {
@@ -518,6 +674,10 @@ defineExpose({
   border-color: color-mix(in srgb, var(--dq-accent) 35%, transparent);
 }
 
+.lora-dataset-panel__list-item.is-ready:not(.is-active) {
+  border-color: color-mix(in srgb, var(--dq-success) 25%, transparent);
+}
+
 .lora-dataset-panel__list-name {
   font-size: 13px;
   font-weight: 500;
@@ -526,6 +686,10 @@ defineExpose({
 }
 
 .lora-dataset-panel__list-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
   font-size: 11px;
   color: var(--dq-label-tertiary);
 }
@@ -591,6 +755,12 @@ defineExpose({
 .lora-dataset-panel__dropzone.is-disabled {
   opacity: 0.5;
   pointer-events: none;
+}
+
+.lora-dataset-panel__dropzone.is-uploading {
+  pointer-events: none;
+  border-style: solid;
+  border-color: var(--dq-accent);
 }
 
 .lora-dataset-panel__dropzone-icon {
@@ -679,6 +849,26 @@ defineExpose({
   flex-wrap: wrap;
   gap: 6px;
   margin-top: 12px;
+}
+
+.lora-dataset-panel__pending-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+  padding: 2px 4px 2px 8px;
+  border-radius: var(--radius-sm);
+  background: var(--dq-fill-secondary);
+  border: 0.5px solid var(--dq-border-subtle);
+  font-size: 11px;
+  color: var(--dq-label-secondary);
+}
+
+.lora-dataset-panel__pending-tag-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 200px;
 }
 
 .lora-dataset-panel__dialog-field {

@@ -1,6 +1,8 @@
 """Shared MLX LoRA merge skeleton for image transformer families."""
 from __future__ import annotations
 
+import json
+import re
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
@@ -33,6 +35,43 @@ def load_lora_flat_weights(bundle: Path, ctx: RuntimeContext) -> dict[str, Any]:
             out.update(ctx.load_weights(str(fp)))
         return out
     raise RuntimeError(f"LoRA path is not a file or directory: {bundle}")
+
+
+def read_lora_config(bundle: Path) -> dict[str, Any]:
+    """Read optional ``lora_config.json`` beside a LoRA safetensors file or directory."""
+    if bundle.is_file():
+        config_path = bundle.parent / "lora_config.json"
+    elif bundle.is_dir():
+        config_path = bundle / "lora_config.json"
+        if not config_path.is_file():
+            candidates = sorted(bundle.glob("*.safetensors"))
+            if len(candidates) == 1:
+                config_path = candidates[0].parent / "lora_config.json"
+    else:
+        return {}
+    if not config_path.is_file():
+        return {}
+    try:
+        with open(config_path, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _weights_use_indexed_lora_keys(weights: dict[str, Any]) -> bool:
+    return any(re.match(r"^lora_\d+\.lora_[AB]\.weight$", key) for key in weights)
+
+
+def _apply_config_alpha(
+    groups: dict[str, tuple[mx.array, mx.array, float]],
+    *,
+    config_alpha: float | None,
+) -> dict[str, tuple[mx.array, mx.array, float]]:
+    if config_alpha is None:
+        return groups
+    alpha = float(config_alpha)
+    return {key: (down, up, alpha) for key, (down, up, _) in groups.items()}
 
 
 def orient_lora_pair(
@@ -72,6 +111,7 @@ def merge_lora_adapters_common(
     remap_groups: Callable[[dict[str, Any]], dict[str, tuple[mx.array, mx.array, float]]],
     param_key_for_module: Callable[[str], str],
     base_model_scope_key: Callable[[str], str] | None = None,
+    repair_indexed_weights: Callable[[dict[str, Any], Any, dict[str, Any]], dict[str, Any]] | None = None,
     on_log: Callable[[str, str], None] | None = None,
 ) -> None:
     if not adapters:
@@ -132,11 +172,19 @@ def merge_lora_adapters_common(
                 f"for version {ver or 'default'})."
             )
         weights = load_lora_flat_weights(bundle, ctx)
+        lora_config = read_lora_config(bundle)
+        if repair_indexed_weights is not None and _weights_use_indexed_lora_keys(weights):
+            weights = repair_indexed_weights(weights, model, lora_config)
+            if on_log:
+                on_log("info", f"lora indexed key repair source={mid}")
         groups = remap_groups(weights)
         if not groups:
             raise RuntimeError(
                 f"LoRA {lora_id!r}: after key remap no (lora_down, lora_up) pairs were found."
             )
+        config_alpha = lora_config.get("lora_alpha", lora_config.get("alpha"))
+        if config_alpha is not None and not any(".alpha" in key.lower() for key in weights):
+            groups = _apply_config_alpha(groups, config_alpha=float(config_alpha))
         applied = 0
         for module_name, (down, up, alpha) in groups.items():
             wkey = param_key_for_module(module_name)

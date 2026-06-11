@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import itertools
+import json
 from collections import defaultdict, deque
 from datetime import datetime
 from pathlib import Path
@@ -166,7 +167,9 @@ class TaskScheduler:
         if st == "running":
             k = row.get("kind") or ""
             mid = row.get("model_id") or ""
-            if TK.is_image_kind(k):
+            if TK.is_lora_training_kind(k):
+                pass  # child worker polls DB for cancelled status
+            elif TK.is_image_kind(k):
                 await self._engines.get_image(mid).cancel(task_id)
             elif TK.is_video_kind(k):
                 await self._engines.get_video(mid).cancel(task_id)
@@ -196,7 +199,17 @@ class TaskScheduler:
         return self._tasks.get_logs(task_id, offset=offset, limit=limit)
 
     def get_progress_meta(self, task_id: str) -> dict[str, Any]:
-        return dict(self._progress_meta.get(task_id) or {})
+        meta = dict(self._progress_meta.get(task_id) or {})
+        if meta:
+            return meta
+        path = self._work_dir(task_id) / "training_progress.json"
+        if not path.is_file():
+            return {}
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return {}
+        return payload if isinstance(payload, dict) else {}
 
     def get_realtime_queue(self, task_id: str) -> asyncio.Queue | None:
         return self._realtime_queues.get(task_id)

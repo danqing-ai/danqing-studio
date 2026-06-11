@@ -48,6 +48,7 @@
       @toggle-selection-mode="$emit('toggle-selection-mode')"
       @select-all="$emit('select-all')"
       @batch-delete="$emit('batch-delete')"
+      @batch-train-lora="$emit('batch-train-lora')"
       @clear-selection="$emit('clear-selection')"
     />
     <StudioCanvasSessionControls
@@ -95,6 +96,7 @@ const emit = defineEmits<{
   (e: 'toggle-selection-mode'): void;
   (e: 'select-all'): void;
   (e: 'batch-delete'): void;
+  (e: 'batch-train-lora'): void;
   (e: 'clear-selection'): void;
   (e: 'update:viewMode', value: 'grid' | 'canvas'): void;
   (e: 'composer-restore', snapshot: Record<string, string>): void;

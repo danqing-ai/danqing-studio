@@ -153,7 +153,13 @@
           <DqDropdownItem command="ai-describe-text">
             {{ $t('canvas.aiDescribeTextOnly') }}
           </DqDropdownItem>
-          <DqDropdownItem divided command="download">
+            <DqDropdownItem
+              v-if="pageMedia === 'image' && isImage"
+              command="train-lora"
+            >
+              {{ $t('loraTrain.saveToDataset') }}
+            </DqDropdownItem>
+            <DqDropdownItem divided command="download">
             {{ $t('gallery.download') }}
           </DqDropdownItem>
         </DqDropdownMenu>

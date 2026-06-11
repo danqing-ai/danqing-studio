@@ -53,6 +53,7 @@ export const DQ_STORAGE = Object.freeze({
   CANVAS_COMPOSER_COLLAPSED_AUDIO: 'dq-studio.canvas.composerCollapsed.audio.v4',
   CANVAS_WORKSPACE_HINT: 'dq-studio.canvas.workspaceHint.v4',
   CANVAS_REGION_GUIDES: 'dq-studio.canvas.regionGuides.v4',
+  LORA_TRAIN_DRAFT: 'dq-studio.lora-train-draft.v4',
 } as const);
 
 export type StorageKey = (typeof DQ_STORAGE)[keyof typeof DQ_STORAGE];

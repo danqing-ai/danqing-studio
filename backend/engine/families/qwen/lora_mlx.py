@@ -13,6 +13,22 @@ def _base_model_scope_key(value: str) -> str:
     return value.split(":", 1)[0].strip() if value else ""
 
 
+def _repair_indexed_qwen_weights(
+    weights: dict[str, Any],
+    model: Any,
+    lora_config: dict[str, Any],
+) -> dict[str, Any]:
+    from backend.engine.training.lora_layers import (
+        enumerate_qwen_lora_module_paths,
+        repair_indexed_lora_weights,
+    )
+
+    raw_blocks = lora_config.get("lora_blocks")
+    lora_blocks = int(raw_blocks) if raw_blocks is not None else -1
+    paths = enumerate_qwen_lora_module_paths(model, lora_blocks=lora_blocks)
+    return repair_indexed_lora_weights(weights, module_paths=paths)
+
+
 def merge_qwen_image_lora_adapters(
     model: Any,
     adapters: Sequence[Any],
@@ -34,5 +50,6 @@ def merge_qwen_image_lora_adapters(
         remap_groups=remap_qwen_lora_keys,
         param_key_for_module=lambda module_name: f"dit.{module_name}.weight",
         base_model_scope_key=_base_model_scope_key,
+        repair_indexed_weights=_repair_indexed_qwen_weights,
         on_log=on_log,
     )

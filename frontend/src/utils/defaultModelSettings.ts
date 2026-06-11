@@ -2,7 +2,7 @@
 export function resolveDefaultModelRegistryKey(
   preferred: string,
   registry: Record<string, { media?: string; name?: string | { zh?: string; en?: string } }>,
-  media: 'image' | 'video' | 'audio',
+  media: 'image' | 'video' | 'audio' | 'llm',
 ): string | null {
   const dm = (preferred || '').trim();
   if (!dm || !registry || !Object.keys(registry).length) return null;

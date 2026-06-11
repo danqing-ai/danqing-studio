@@ -21,9 +21,11 @@ from backend.core.contracts import (
 from backend.core.interfaces import IPathResolver, ISettingsService
 from backend.engine.engine_registry import EngineRegistry
 from backend.engine.training import dataset_store
+from backend.engine.training.crop import presets_with_training_resolution, training_crop_policy
 from backend.engine.training.presets import (
     FLUX1_TRAIN_MIN_MEMORY_GB,
     PRESETS,
+    QWEN_IMAGE_PRESETS,
     TRAINABLE_BASE_MODELS,
     Z_IMAGE_PRESETS,
     train_min_memory_gb,
@@ -110,15 +112,16 @@ def patch_captions(dataset_id: str, body: DatasetCaptionUpdate):
         raise HTTPException(404, detail={"code": "not_found", "message": str(e)}) from e
 
 
-@router.delete("/datasets/{dataset_id}", status_code=204)
+@router.delete("/datasets/{dataset_id}", status_code=405)
 def delete_dataset(dataset_id: str):
-    root = _paths().get_project_root()
-    try:
-        dataset_store.delete_dataset(root, dataset_id)
-    except FileNotFoundError as e:
-        raise HTTPException(404, detail={"code": "not_found", "message": str(e)}) from e
-    except ValueError as e:
-        raise HTTPException(400, detail={"code": "invalid", "message": str(e)}) from e
+    """Whole-dataset delete is intentionally disabled — remove individual images only."""
+    raise HTTPException(
+        405,
+        detail={
+            "code": "dataset_delete_disabled",
+            "message": "Training datasets are persistent. Remove individual images instead.",
+        },
+    )
 
 
 @router.delete("/datasets/{dataset_id}/images/{file_path:path}")
@@ -224,6 +227,7 @@ def trainable_models():
     for mid in sorted(TRAINABLE_BASE_MODELS):
         cfg = registry.get(mid)
         status = detailed.get(mid, {})
+        crop = training_crop_policy(mid)
         items.append(
             {
                 "id": mid,
@@ -231,31 +235,19 @@ def trainable_models():
                 "ready": bool(status.get("ready")),
                 "trainable": mid in TRAINABLE_BASE_MODELS,
                 "phase": 1 if mid in TRAINABLE_BASE_MODELS else 2,
-            }
-        )
-    # Not trainable in this release
-    phase2 = (
-        ("z-image-turbo", "z-image-turbo", {"zh": "Z-Image Turbo", "en": "Z-Image Turbo"}),
-        ("qwen-image", "qwen-image", {"zh": "Qwen Image", "en": "Qwen Image"}),
-    )
-    for mid, registry_key, label in phase2:
-        cfg = registry.get(registry_key)
-        status = detailed.get(registry_key, {})
-        items.append(
-            {
-                "id": mid,
-                "name": (cfg.name if cfg else label) or label,
-                "ready": bool(status.get("ready")),
-                "trainable": False,
-                "phase": 2,
+                "training_crop": {
+                    "vae_scale": int(crop["vae_scale"]),
+                    "auto_crop": True,
+                },
             }
         )
     return {
         "items": items,
-        "presets": PRESETS,
+        "presets": presets_with_training_resolution("flux1-dev", PRESETS),
         "presets_by_model": {
-            "flux1-dev": PRESETS,
-            "z-image": Z_IMAGE_PRESETS,
+            "flux1-dev": presets_with_training_resolution("flux1-dev", PRESETS),
+            "z-image": presets_with_training_resolution("z-image", Z_IMAGE_PRESETS),
+            "qwen-image": presets_with_training_resolution("qwen-image", QWEN_IMAGE_PRESETS),
         },
     }
 

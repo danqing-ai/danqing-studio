@@ -2303,6 +2303,19 @@ class MemoryPolicyTests(unittest.TestCase):
         self.assertEqual(clamp_mlx_memory_limit_gb(999), 512)
         self.assertEqual(clamp_mlx_memory_limit_gb("bad", default=64), 64)
 
+    def test_resolve_lora_worker_memory_gb(self) -> None:
+        from backend.core.interfaces import AppSettings
+        from backend.engine.memory_policy import resolve_lora_worker_memory_gb
+
+        settings = AppSettings(mlx_memory_limit=120)
+        self.assertEqual(resolve_lora_worker_memory_gb(settings), 104)
+
+    def test_classify_sigkill_as_oom(self) -> None:
+        from backend.observability.error_codes import ErrorCode, classify_exception_message
+
+        msg = "LoRA worker exited without result (code=-9). stderr='' stdout=''"
+        self.assertEqual(classify_exception_message(msg), ErrorCode.OOM)
+
     def test_model_cache_single_slot(self) -> None:
         from backend.engine.cache import ModelCache
 
@@ -2879,14 +2892,14 @@ class LLMServiceTests(unittest.TestCase):
     def test_get_model_info_reads_registry_name(self) -> None:
         svc = self._load_service()
         info = svc.get_model_info()
-        self.assertEqual(info["model_id"], "qwen2.5-1.5b")
+        self.assertEqual(info["model_id"], "qwen3-4b-thinking-2507")
         self.assertIsInstance(info["name"], dict)
         self.assertIn("zh", info["name"])
         self.assertIn("en", info["name"])
         self.assertIsInstance(info["available"], bool)
 
         vision = svc.get_vision_model_info()
-        self.assertEqual(vision["model_id"], "qwen2.5-vl-7b-instruct")
+        self.assertEqual(vision["model_id"], "qwen3-vl-4b-instruct")
         self.assertIsInstance(vision["name"], dict)
 
     def test_enhance_system_prompt_by_target_action(self) -> None:
@@ -3675,6 +3688,9 @@ class LoraDatasetStoreTests(unittest.TestCase):
                 resolve_asset_path=resolve,
             )
             self.assertEqual(out["image_count"], 1)
+            self.assertTrue(out.get("cover_image"))
+            listed = dataset_store.list_datasets(root)
+            self.assertEqual(listed[0].get("cover_image"), out.get("cover_image"))
             rows = dataset_store.load_training_pairs(root, dataset_id)
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0][1], "A photo of sks")
@@ -3751,24 +3767,36 @@ class LoraDatasetStoreTests(unittest.TestCase):
 
 
 class LoraTrainingPresetsTests(unittest.TestCase):
-    def test_trainable_base_models_include_z_image(self) -> None:
+    def test_trainable_base_models_include_z_image_and_qwen(self) -> None:
         from backend.engine.training.presets import TRAINABLE_BASE_MODELS
 
         self.assertIn("z-image", TRAINABLE_BASE_MODELS)
+        self.assertIn("qwen-image", TRAINABLE_BASE_MODELS)
         self.assertIn("flux1-dev", TRAINABLE_BASE_MODELS)
         self.assertNotIn("z-image-turbo", TRAINABLE_BASE_MODELS)
 
     def test_resolve_preset_by_base_model(self) -> None:
+        from backend.engine.training.crop import resolve_training_resolution
         from backend.engine.training.presets import resolve_preset
 
         flux = resolve_preset("standard", base_model="flux1-dev")
         zimg = resolve_preset("standard", base_model="z-image")
+        qwen = resolve_preset("standard", base_model="qwen-image")
         self.assertEqual(flux["lora_rank"], 8)
         self.assertEqual(zimg["lora_rank"], 16)
-        self.assertEqual(zimg["resolution"], [768, 768])
+        self.assertEqual(qwen["lora_rank"], 16)
+        self.assertEqual(
+            resolve_training_resolution("z-image", zimg, preset="standard"),
+            (768, 768),
+        )
+        self.assertEqual(
+            resolve_training_resolution("qwen-image", qwen, preset="standard"),
+            (768, 768),
+        )
 
     def test_merge_training_request_config_keeps_preset(self) -> None:
         from backend.core.contracts import LoraTrainingRequest
+        from backend.engine.training.crop import resolve_training_resolution
         from backend.engine.training.presets import merge_training_request_config, resolve_preset
 
         preset = resolve_preset("quick", base_model="z-image")
@@ -3781,7 +3809,151 @@ class LoraTrainingPresetsTests(unittest.TestCase):
         cfg = merge_training_request_config(req, preset)
         self.assertEqual(cfg["iterations"], 400)
         self.assertEqual(cfg["lora_rank"], 8)
-        self.assertEqual(cfg["resolution"], [512, 512])
+        self.assertEqual(
+            resolve_training_resolution("z-image", cfg, preset="quick"),
+            (512, 512),
+        )
+
+
+class LoraTrainingCropTests(unittest.TestCase):
+    def test_align_resolution_to_vae_grid(self) -> None:
+        from backend.engine.training.crop import resolve_training_resolution
+
+        self.assertEqual(
+            resolve_training_resolution("qwen-image", {"resolution": [770, 770]}),
+            (768, 768),
+        )
+        self.assertEqual(
+            resolve_training_resolution("flux1-dev", {"resolution": [515, 515]}),
+            (512, 512),
+        )
+
+    def test_prepare_training_rgb_image_center_crop(self) -> None:
+        from backend.engine.training.crop import prepare_training_rgb_image
+        import tempfile
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "wide.png"
+            Image.new("RGB", (800, 400), color=(255, 0, 0)).save(path)
+            arr, (w, h) = prepare_training_rgb_image(
+                path, "z-image", {}, preset="quick"
+            )
+            self.assertEqual((w, h), (512, 512))
+            self.assertEqual(arr.shape[0], 512)
+            self.assertEqual(arr.shape[1], 512)
+
+    def test_portrait_resize_keeps_upper_region(self) -> None:
+        from backend.engine.training.dataset_store import resize_rgb_image
+        import tempfile
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "portrait.png"
+            img = Image.new("RGB", (600, 900))
+            for y in range(900):
+                for x in range(600):
+                    if y < 300:
+                        img.putpixel((x, y), (255, 0, 0))
+                    else:
+                        img.putpixel((x, y), (0, 0, 255))
+            img.save(path)
+            arr = resize_rgb_image(path, (512, 512))
+            self.assertEqual(arr.shape[:2], (512, 512))
+            red_rows = sum(1 for y in range(512) if arr[y, 256, 0] > 0.5)
+            self.assertGreater(red_rows, 80, "portrait crop should retain upper (face) region")
+
+    def test_resolve_dreambooth_caption_prefers_progress_prompt(self) -> None:
+        from backend.engine.training.dataset_store import resolve_dreambooth_caption
+        from pathlib import Path
+
+        pairs = [(Path("a.jpg"), "auto caption one"), (Path("b.jpg"), "auto caption two")]
+        cap = resolve_dreambooth_caption(
+            pairs,
+            progress_prompt="A photo of sks person",
+            dataset_meta={"default_prompt": "other"},
+        )
+        self.assertEqual(cap, "A photo of sks person")
+
+
+class QwenImageLoraExportTests(unittest.TestCase):
+    def test_collect_lora_safetensors_remaps_for_qwen_image(self) -> None:
+        from backend.engine.runtime.mlx import MLXContext
+        from backend.engine.config.model_configs import QwenImageConfig
+        from backend.engine.families.qwen.transformer import QwenImageTransformer
+        from backend.engine.families.qwen.weights import remap_qwen_lora_keys
+        from backend.engine.training.lora_layers import (
+            apply_lora_to_qwen_dit,
+            collect_lora_safetensors,
+            prepare_dit_for_lora_training,
+        )
+        from backend.engine.training.qwen_image_dreambooth_mlx import _validate_saved_lora
+        import mlx.core as mx
+        import tempfile
+        from pathlib import Path
+
+        ctx = MLXContext()
+        model = QwenImageTransformer(QwenImageConfig(), ctx)
+        _, train_module = prepare_dit_for_lora_training(
+            model,
+            apply_lora_to_qwen_dit,
+            rank=4,
+            lora_blocks=1,
+        )
+        from backend.engine.training.qwen_image_dreambooth_mlx import _strip_dit_lora_paths
+
+        _strip_dit_lora_paths(train_module)
+        weights = collect_lora_safetensors(train_module, rank=4)
+        weights.pop("lora_rank", None)
+        self.assertTrue(
+            any(k.startswith("transformer_blocks.") and ".lora_A.weight" in k for k in weights),
+            "expected DiT module paths in exported LoRA keys",
+        )
+        remapped = remap_qwen_lora_keys(weights)
+        self.assertGreater(len(remapped), 0)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "adapter.safetensors"
+            mx.save_safetensors(str(path), weights)
+            _validate_saved_lora(path, lora_blocks=1)
+
+
+class ZImageLoraExportTests(unittest.TestCase):
+    def test_collect_lora_safetensors_remaps_for_z_image(self) -> None:
+        from backend.engine.runtime.mlx import MLXContext
+        from backend.engine.config.model_configs import ZImageConfig
+        from backend.engine.families.z_image.transformer import ZImageTransformer
+        from backend.engine.families.z_image.weights import remap_zimage_lora_keys
+        from backend.engine.training.lora_layers import (
+            apply_lora_to_zimage_dit,
+            collect_lora_safetensors,
+            prepare_dit_for_lora_training,
+        )
+        from backend.engine.training.z_image_dreambooth_mlx import _validate_saved_lora
+        import mlx.core as mx
+        import tempfile
+        from pathlib import Path
+
+        ctx = MLXContext()
+        model = ZImageTransformer(ZImageConfig(), ctx)
+        _, train_module = prepare_dit_for_lora_training(
+            model,
+            apply_lora_to_zimage_dit,
+            rank=4,
+            lora_blocks=1,
+        )
+        weights = collect_lora_safetensors(train_module, rank=4)
+        weights.pop("lora_rank", None)
+        self.assertTrue(
+            any(k.startswith("layers.") and ".lora_A.weight" in k for k in weights),
+            "expected DiT module paths in exported LoRA keys",
+        )
+        remapped = remap_zimage_lora_keys(weights)
+        self.assertGreater(len(remapped), 0)
+        self.assertTrue(all("." in tgt for tgt in remapped))
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "adapter.safetensors"
+            mx.save_safetensors(str(path), weights)
+            _validate_saved_lora(path)
 
 
 if __name__ == "__main__":

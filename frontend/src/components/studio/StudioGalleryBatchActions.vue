@@ -11,6 +11,9 @@
         <DqIcon><Delete /></DqIcon>
         {{ $t('gallery.batchDelete') }}
       </DqButton>
+      <DqButton size="sm" type="secondary" @click="$emit('batch-train-lora')">
+        {{ $t('loraTrain.trainFromSelection') }}
+      </DqButton>
       <DqIconButton
         type="text"
         size="sm"
@@ -45,6 +48,7 @@ defineEmits<{
   (e: 'toggle-selection-mode'): void;
   (e: 'select-all'): void;
   (e: 'batch-delete'): void;
+  (e: 'batch-train-lora'): void;
   (e: 'clear-selection'): void;
 }>();
 </script>

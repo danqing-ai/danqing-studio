@@ -47,6 +47,15 @@
     <DqIconButton
       type="text"
       size="xs"
+      :label="$t('loraTrain.saveToDataset')"
+      @click="$emit('train-lora')"
+    >
+      <DqIcon :size="14"><MagicStick /></DqIcon>
+    </DqIconButton>
+    <span class="canvas-multi-toolbar__sep" />
+    <DqIconButton
+      type="text"
+      size="xs"
       :label="$t('canvas.removeFromCanvas')"
       @click="$emit('remove')"
     >
@@ -57,7 +66,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import { Delete } from '@danqing/dq-shell';
+import { Delete, MagicStick } from '@danqing/dq-shell';
 import { useI18n } from 'vue-i18n';
 import type { AlignMode, DistributeMode } from '@/utils/canvasGeometry';
 
@@ -73,6 +82,7 @@ defineEmits<{
   (e: 'distribute', mode: DistributeMode): void;
   (e: 'remove'): void;
   (e: 'snap-staging'): void;
+  (e: 'train-lora'): void;
 }>();
 
 const { t } = useI18n();

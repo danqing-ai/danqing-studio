@@ -141,9 +141,9 @@ def remap_zimage_lora_keys(lora_weights: dict, patch_size: int = 2) -> dict[str,
         if module not in groups:
             groups[module] = {}
         kl = key.lower()
-        if "lora_down" in kl or "lora_a." in key or "lora_a_weight" in key:
+        if "lora_down" in kl or "lora_a." in kl or "lora_a_weight" in kl:
             groups[module]["down"] = tensor
-        elif "lora_up" in kl or "lora_b." in key or "lora_b_weight" in key:
+        elif "lora_up" in kl or "lora_b." in kl or "lora_b_weight" in kl:
             groups[module]["up"] = tensor
 
     out: dict[str, tuple[Any, Any, float]] = {}

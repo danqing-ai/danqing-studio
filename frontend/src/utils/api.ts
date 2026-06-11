@@ -776,10 +776,6 @@ export const api = {
       return response.data;
     },
 
-    async deleteDataset(id: string): Promise<void> {
-      await client.delete(`/api/loras/datasets/${encodeURIComponent(id)}`);
-    },
-
     async uploadImages(datasetId: string, files: File[], defaultPrompt?: string): Promise<unknown> {
       const form = new FormData();
       for (const f of files) form.append('files', f);
@@ -872,8 +868,10 @@ export const api = {
       return response.data;
     },
 
-    async trainingRequirements(): Promise<unknown> {
-      const response = await client.get('/api/loras/training/requirements');
+    async trainingRequirements(baseModel?: string): Promise<unknown> {
+      const response = await client.get('/api/loras/training/requirements', {
+        params: baseModel ? { base_model: baseModel } : undefined,
+      });
       return response.data;
     },
 

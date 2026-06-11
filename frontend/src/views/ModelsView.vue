@@ -281,9 +281,20 @@
                   <div class="user-lora-card__meta">
                     {{ ul.base_model }} · {{ ul.id }}
                   </div>
+                  <div v-if="ul.created_at" class="user-lora-card__meta user-lora-card__meta--muted">
+                    {{ formatUserLoraDate(ul.created_at) }}
+                  </div>
                   <div class="user-lora-card__actions">
                     <DqButton size="sm" type="primary" @click="verifyUserLora(ul)">
                       {{ $t('loraTrain.verifyGenerate') }}
+                    </DqButton>
+                    <DqButton
+                      v-if="ul.task_id"
+                      size="sm"
+                      type="secondary"
+                      @click="openTrainingRun(ul.task_id)"
+                    >
+                      {{ $t('loraTrain.viewTrainingRun') }}
                     </DqButton>
                     <DqButton size="sm" type="danger" @click="deleteUserLora(ul)">
                       {{ $t('common.delete') }}
@@ -293,11 +304,12 @@
               </DqCol>
             </DqRow>
           </DqSurfaceCard>
-          <DqEmpty
-            v-else
-            class="models-page__col-mb"
-            :description="$t('download.noUserLoras')"
-          />
+          <div v-else class="models-page__col-mb models-lora-empty">
+            <DqEmpty :description="$t('download.noUserLoras')" />
+            <DqButton type="primary" size="sm" @click="goToLoraTrain">
+              {{ $t('loraTrain.startTraining') }}
+            </DqButton>
+          </div>
 
           <div class="page-header">
             <h2 class="page-title">{{ $t('download.civitaiSearch') }}</h2>
@@ -534,9 +546,11 @@
 // @ts-nocheck
 import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue';
 import { onBeforeRouteLeave, useRouter } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 import { toast, confirm } from '@/utils/feedback';
 import { api } from '@/utils/api';
 import { $tt, $mn, $md, $mvn } from '@/utils/i18n';
+import { openLoraTrainingRun } from '@/utils/loraTrainHandoff';
 import { useRegistryStore } from '@/stores/registry';
 import { DQ_STORAGE, consumeStringDraft, getItem, setItem } from '@/utils/storage';
 import ModelLicenseBadges from '@/components/model/ModelLicenseBadges.vue';
@@ -613,6 +627,7 @@ interface DiskSpaceData {
 const activeCategory = ref('all');
 const userLoras = ref<any[]>([]);
 const router = useRouter();
+const { locale } = useI18n();
 const modelRegistry = ref<Record<string, ModelConfig>>({});
 const modelsStatus = ref<Record<string, boolean>>({});
 const modelsDetailedStatus = ref<Record<string, any>>({});
@@ -805,12 +820,43 @@ function verifyUserLora(ul: { id?: string; base_model?: string }) {
   });
 }
 
+function formatUserLoraDate(raw: string): string {
+  try {
+    return new Date(raw).toLocaleString(locale.value === 'zh' ? 'zh-CN' : undefined, {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    });
+  } catch {
+    return String(raw);
+  }
+}
+
+function goToLoraTrain() {
+  void router.push({ name: 'lora_train' });
+}
+
+function openTrainingRun(taskId: string) {
+  openLoraTrainingRun(router, String(taskId || ''));
+}
+
 async function deleteUserLora(ul: { id?: string; name?: string }) {
-  const ok = await confirm({
-    title: $tt('download.deleteUserLoraTitle'),
-    message: $tt('download.deleteUserLoraMessage', { name: ul.name || ul.id }),
-  });
-  if (!ok) return;
+  try {
+    await confirm(
+      $tt('download.deleteUserLoraMessage', { name: ul.name || ul.id }),
+      $tt('download.deleteUserLoraTitle'),
+      {
+        confirmButtonText: $tt('download.deleteConfirmBtn'),
+        cancelButtonText: $tt('download.deleteCancelBtn'),
+        type: 'warning',
+      }
+    );
+  } catch (e) {
+    if (e !== 'cancel') {
+      console.error('Delete user LoRA confirm failed:', e);
+    }
+    return;
+  }
   try {
     await api.loras.deleteUserAdapter(String(ul.id), true);
     await loadUserLoras();
@@ -1415,3 +1461,39 @@ onUnmounted(() => {
   closeAllSSE();
 });
 </script>
+
+<style scoped>
+.models-lora-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0 24px;
+}
+
+.user-lora-card__name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--dq-label-primary);
+  margin-bottom: 4px;
+}
+
+.user-lora-card__meta {
+  font-size: 12px;
+  color: var(--dq-label-secondary);
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.user-lora-card__meta--muted {
+  color: var(--dq-label-tertiary);
+  font-size: 11px;
+}
+
+.user-lora-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+</style>

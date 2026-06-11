@@ -1,5 +1,5 @@
 <template>
-  <DqSurfaceCard class="copilot-page__workspace-card studio-surface-card lora-run-detail">
+  <div class="lora-run-detail">
     <div class="lora-run-detail__head">
       <DqButton size="sm" @click="$emit('back')">{{ $t('common.back') }}</DqButton>
       <div class="lora-run-detail__head-main">
@@ -9,21 +9,35 @@
     </div>
 
     <div v-if="task" class="lora-run-detail__status">
-      <DqTag :type="statusTagType">{{ task.status }}</DqTag>
+      <DqTag :type="statusTagType">{{ statusLabel }}</DqTag>
       <DqProgress :percentage="Math.round((task.progress || 0) * 100)" />
-      <p v-if="task.step != null" class="lora-run-detail__step-hint">
+      <p v-if="progressMessage" class="lora-run-detail__progress-msg">{{ progressMessage }}</p>
+      <p v-if="task.step != null && task.total != null" class="lora-run-detail__step-hint">
         {{ task.step }} / {{ task.total }}
+        <span v-if="task.eta_seconds != null">
+          · {{ $t('loraTrain.etaSeconds', { s: Math.max(0, Math.round(task.eta_seconds)) }) }}
+        </span>
       </p>
+      <p v-if="task.status === 'failed' && task.error" class="lora-run-detail__error">
+        {{ task.error }}
+      </p>
+    </div>
+
+    <div v-if="task && !isTerminal" class="lora-run-detail__queue-hint">
+      <p>{{ $t('loraTrain.runInBackgroundHint') }}</p>
+      <DqButton size="sm" type="secondary" @click="openGlobalTaskQueue">
+        {{ $t('loraTrain.openTaskQueue') }}
+      </DqButton>
     </div>
 
     <div v-if="artifacts?.loss_history?.length" class="lora-run-detail__section">
       <h4 class="lora-run-detail__section-title">{{ $t('loraTrain.lossCurve') }}</h4>
       <div class="lora-run-loss-bars">
         <div
-          v-for="pt in artifacts.loss_history"
+          v-for="pt in lossBars"
           :key="pt.step"
           class="lora-run-loss-bar"
-          :style="{ height: `${Math.min(100, pt.loss * 200)}px` }"
+          :style="{ height: `${pt.heightPct}%` }"
           :title="`step ${pt.step}: ${pt.loss}`"
         />
       </div>
@@ -72,15 +86,26 @@
       <DqButton type="primary" size="sm" @click="verifyGenerate">
         {{ $t('loraTrain.verifyGenerate') }}
       </DqButton>
+      <DqButton
+        v-if="registeredLoraId || verifyLoraId()"
+        size="sm"
+        type="secondary"
+        @click="openModelsUserLorasPage()"
+      >
+        {{ $t('loraTrain.viewInModels') }}
+      </DqButton>
     </div>
-  </DqSurfaceCard>
+  </div>
 </template>
 
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { useRouter } from 'vue-router';
 import { api } from '@/utils/api';
 import { toast } from '@/utils/feedback';
+import { openGlobalTaskQueue } from '@/utils/appEvents';
+import { openModelsUserLoras } from '@/utils/loraTrainHandoff';
 import TaskIdBadge from '@/components/studio/TaskIdBadge.vue';
 
 const props = defineProps<{ taskId: string }>();
@@ -90,13 +115,16 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const router = useRouter();
 const task = ref<any>(null);
 const artifacts = ref<any>(null);
+const progressMessage = ref('');
 const selectedCheckpoint = ref('');
 const registerName = ref('');
 const registering = ref(false);
 const registeredLoraId = ref('');
-let pollTimer: ReturnType<typeof setInterval> | null = null;
+let taskStream: EventSource | null = null;
+let lastArtifactRefresh = 0;
 
 const statusTagType = computed(() => {
   const s = task.value?.status;
@@ -106,21 +134,124 @@ const statusTagType = computed(() => {
   return 'info';
 });
 
+const isTerminal = computed(() => {
+  const s = task.value?.status;
+  return s === 'completed' || s === 'failed' || s === 'cancelled';
+});
+
+const statusLabel = computed(() => {
+  const s = task.value?.status;
+  if (!s) return '';
+  const key = `loraTrain.runStatus.${s}`;
+  const translated = t(key);
+  return translated !== key ? translated : s;
+});
+
+const lossBars = computed(() => {
+  const hist = artifacts.value?.loss_history;
+  if (!Array.isArray(hist) || !hist.length) return [];
+  const maxLoss = Math.max(...hist.map((p: { loss?: number }) => Number(p.loss) || 0), 1e-6);
+  return hist.map((pt: { step: number; loss: number }) => ({
+    step: pt.step,
+    loss: pt.loss,
+    heightPct: Math.max(4, (Number(pt.loss) / maxLoss) * 100),
+  }));
+});
+
+function mergeProgressDetail(row: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!row) return row;
+  const detail = row.progress_detail;
+  if (!detail || typeof detail !== 'object') return row;
+  const d = detail as Record<string, unknown>;
+  return {
+    ...row,
+    step: d.step ?? row.step,
+    total: d.total ?? row.total,
+    eta_seconds: d.eta_seconds ?? row.eta_seconds,
+  };
+}
+
+function applyProgressPayload(data: Record<string, unknown>) {
+  const patch: Record<string, unknown> = {};
+  if (typeof data.progress === 'number') patch.progress = data.progress;
+  if (data.step != null) patch.step = data.step;
+  if (data.total != null) patch.total = data.total;
+  if (data.eta_seconds != null) patch.eta_seconds = data.eta_seconds;
+  if (Object.keys(patch).length) {
+    patchTask({ status: 'running', ...patch });
+  }
+  const msg = data.message ?? data.phase;
+  if (msg != null && String(msg).trim()) {
+    progressMessage.value = String(msg);
+  }
+}
+
 function artifactUrl(name: string): string {
   return api.loras.artifactFileUrl(props.taskId, name);
 }
 
-async function refresh() {
-  task.value = await api.gen.getMediaTask(props.taskId);
+function patchTask(patch: Record<string, unknown>) {
+  task.value = { ...(task.value || {}), ...patch };
+}
+
+async function refreshArtifacts(force = false) {
+  const now = Date.now();
+  if (!force && now - lastArtifactRefresh < 8000) return;
+  lastArtifactRefresh = now;
   try {
-    artifacts.value = await api.loras.trainingArtifacts(props.taskId);
-    if (!selectedCheckpoint.value && artifacts.value?.checkpoints?.length) {
-      const finals = artifacts.value.checkpoints.filter((c: string) => c.includes('final'));
-      selectedCheckpoint.value = finals[finals.length - 1] || artifacts.value.checkpoints.at(-1);
+    const next = await api.loras.trainingArtifacts(props.taskId);
+    artifacts.value = next;
+    if (!selectedCheckpoint.value && (next as any)?.checkpoints?.length) {
+      const finals = (next as any).checkpoints.filter((c: string) => c.includes('final'));
+      selectedCheckpoint.value = finals[finals.length - 1] || (next as any).checkpoints.at(-1);
     }
   } catch {
-    artifacts.value = null;
+    if (force) artifacts.value = null;
   }
+}
+
+async function refreshTask() {
+  const row = (await api.gen.getMediaTask(props.taskId)) as Record<string, unknown>;
+  task.value = mergeProgressDetail(row);
+  const detail = row?.progress_detail as Record<string, unknown> | undefined;
+  if (detail?.message != null) {
+    progressMessage.value = String(detail.message);
+  } else if (detail?.phase != null) {
+    progressMessage.value = String(detail.phase);
+  }
+  await refreshArtifacts(true);
+}
+
+function closeStream() {
+  if (taskStream) {
+    try {
+      taskStream.close();
+    } catch {
+      /* ignore */
+    }
+    taskStream = null;
+  }
+}
+
+function startStream() {
+  closeStream();
+  taskStream = api.gen.streamMediaTask(props.taskId, {
+    onProgress: (data: any) => {
+      applyProgressPayload(data);
+      void refreshArtifacts(false);
+    },
+    onStatus: (data: any) => {
+      patchTask(data);
+    },
+    onDone: async (data: any) => {
+      patchTask({ status: data.status });
+      progressMessage.value = '';
+      await refreshTask();
+    },
+    onError: () => {
+      void refreshTask();
+    },
+  });
 }
 
 watch(
@@ -129,6 +260,16 @@ watch(
     if (id && !registeredLoraId.value) registeredLoraId.value = String(id);
   },
   { immediate: true }
+);
+
+watch(
+  () => props.taskId,
+  async () => {
+    progressMessage.value = '';
+    await refreshTask();
+    if (!isTerminal.value) startStream();
+    else closeStream();
+  }
 );
 
 function verifyLoraId(): string {
@@ -141,8 +282,14 @@ function verifyLoraId(): string {
 function verifyGenerate() {
   const meta = task.value?.result?.metadata?.training || {};
   const params = task.value?.params || {};
+  const caption = String(
+    meta.training_caption ||
+      params.progress_prompt ||
+      meta.progress_prompt ||
+      ''
+  ).trim();
   emit('verify', {
-    prompt: String(params.progress_prompt || meta.progress_prompt || ''),
+    prompt: caption,
     loraId: verifyLoraId(),
     baseModel: String(params.base_model || 'flux1-dev'),
   });
@@ -166,17 +313,34 @@ async function registerSelected() {
   }
 }
 
-onMounted(() => {
-  refresh();
-  pollTimer = setInterval(refresh, 4000);
+function openModelsUserLorasPage() {
+  openModelsUserLoras(router);
+}
+
+onMounted(async () => {
+  await refreshTask();
+  if (!isTerminal.value) startStream();
 });
 
 onUnmounted(() => {
-  if (pollTimer) clearInterval(pollTimer);
+  closeStream();
 });
 </script>
 
 <style scoped>
+.lora-run-detail {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px 22px;
+  border-radius: var(--dq-radius-group, 16px);
+  border: 0.5px solid color-mix(in srgb, var(--dq-border) 50%, transparent);
+  background: color-mix(in srgb, var(--dq-fill-secondary) 72%, var(--dq-bg-base));
+  overflow: auto;
+}
+
 .lora-run-detail :deep(.dq-surface-card__body) {
   display: flex;
   flex-direction: column;
@@ -210,10 +374,47 @@ onUnmounted(() => {
   gap: 8px;
 }
 
+.lora-run-detail__progress-msg {
+  margin: 0;
+  font-size: 12px;
+  color: var(--dq-label-secondary);
+  line-height: 1.4;
+}
+
 .lora-run-detail__step-hint {
   margin: 0;
   font-size: 12px;
   color: var(--dq-label-tertiary);
+}
+
+.lora-run-detail__error {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--dq-danger) 10%, var(--dq-fill-secondary));
+  border: 0.5px solid color-mix(in srgb, var(--dq-danger) 30%, transparent);
+  font-size: 12px;
+  color: var(--dq-label-primary);
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.lora-run-detail__queue-hint {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  background: var(--dq-fill-secondary);
+  border: 0.5px solid var(--dq-border-subtle);
+}
+
+.lora-run-detail__queue-hint p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--dq-label-secondary);
+  line-height: 1.45;
 }
 
 .lora-run-detail__section-title {
@@ -272,6 +473,9 @@ onUnmounted(() => {
 }
 
 .lora-run-detail__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
   padding-top: 4px;
   border-top: 0.5px solid var(--dq-border-subtle);
 }

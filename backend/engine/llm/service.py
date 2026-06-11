@@ -29,6 +29,7 @@ from backend.core.contracts import (
     EnhanceRequest,
     EnhanceResponse,
 )
+from backend.core.interfaces import AppSettings
 from backend.core.model_registry import ModelRegistry
 from backend.engine.llm.lyrics_sanitize import sanitize_lyrics_output
 from backend.engine.llm.prompt_sanitize import prompt_enhance_quality_ok, sanitize_enhanced_prompt
@@ -43,6 +44,27 @@ from backend.engine.llm.vision import (
 from backend.utils.path_utils import PathResolver
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_LLM_MODEL_ID = "qwen3-4b-thinking-2507"
+DEFAULT_VLM_MODEL_ID = "qwen3-vl-4b-instruct"
+
+
+def resolve_llm_model_id(settings: AppSettings, registry: ModelRegistry) -> str:
+    preferred = (getattr(settings, "default_model_llm", "") or "").strip()
+    if preferred:
+        if registry.get(preferred):
+            return preferred
+        logger.warning("Unknown default_model_llm %r; using %s", preferred, DEFAULT_LLM_MODEL_ID)
+    return DEFAULT_LLM_MODEL_ID
+
+
+def resolve_vlm_model_id(settings: AppSettings, registry: ModelRegistry) -> str:
+    preferred = (getattr(settings, "default_model_vlm", "") or "").strip()
+    if preferred:
+        if registry.get(preferred):
+            return preferred
+        logger.warning("Unknown default_model_vlm %r; using %s", preferred, DEFAULT_VLM_MODEL_ID)
+    return DEFAULT_VLM_MODEL_ID
 
 ENHANCE_IMAGE_SYSTEM_PROMPT = """You are a prompt engineer for AI image models (Flux, Z-Image, Qwen-Image).
 Rewrite the user's idea into one vivid, comma-separated description. Keep their subject, names, and intent.
@@ -132,14 +154,27 @@ class LLMService:
         self,
         model_registry: ModelRegistry,
         path_resolver: PathResolver,
-        default_model_id: str = "qwen2.5-1.5b",
-        vision_model_id: str = "qwen2.5-vl-7b-instruct",
+        default_model_id: str = DEFAULT_LLM_MODEL_ID,
+        vision_model_id: str = DEFAULT_VLM_MODEL_ID,
     ):
         self._registry = model_registry
         self._path_resolver = path_resolver
         self._model_id = default_model_id
         self._vision_model_id = vision_model_id
         self._generation_lock = threading.Lock()
+
+    def apply_model_settings(
+        self,
+        *,
+        default_model_id: str | None = None,
+        vision_model_id: str | None = None,
+    ) -> None:
+        if default_model_id:
+            self._registry.require(default_model_id)
+            self._model_id = default_model_id
+        if vision_model_id:
+            self._registry.require(vision_model_id)
+            self._vision_model_id = vision_model_id
 
     # ------------------------------------------------------------------
     # Public status
@@ -405,7 +440,7 @@ class LLMService:
         """Reverse-engineer a generation prompt from a reference image or video keyframe."""
         if not self.is_vision_available():
             raise RuntimeError(
-                "Vision model not available. Install Qwen2.5-VL and mlx-vlm via Models page."
+                "Vision model not available. Install a VLM from Models page and set Settings → Default VLM Model."
             )
         meta = asset_context.get("metadata") or {}
         metadata_hint = self._metadata_hint_lines(asset_context, meta)
@@ -434,7 +469,7 @@ class LLMService:
         """Answer a creative question about a reference image (style, palette, subject, etc.)."""
         if not self.is_vision_available():
             raise RuntimeError(
-                "Vision model not available. Install Qwen2.5-VL and mlx-vlm via Models page."
+                "Vision model not available. Install a VLM from Models page and set Settings → Default VLM Model."
             )
         meta = asset_context.get("metadata") or {}
         metadata_hint = self._metadata_hint_lines(asset_context, meta)

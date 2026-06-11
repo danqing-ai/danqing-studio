@@ -77,7 +77,16 @@ def classify_exception_message(message: str) -> ErrorCode:
         return ErrorCode.CANCELLED
     if "orphan" in m or "restarted while task" in m:
         return ErrorCode.ORPHAN_RECOVERY
-    if "out of memory" in m or "oom" in m or "memory" in m and "alloc" in m:
+    if (
+        "out of memory" in m
+        or "oom" in m
+        or "memory" in m
+        and "alloc" in m
+        or "sigkill" in m
+        or "code=-9" in m
+        or "exit code -9" in m
+        or "unified memory pressure" in m
+    ):
         return ErrorCode.OOM
     if "bundle" in m and ("missing" in m or "not ready" in m or "incomplete" in m):
         return ErrorCode.BUNDLE_NOT_READY

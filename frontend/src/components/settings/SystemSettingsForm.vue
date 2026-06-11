@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import type { ThemeId } from '@/utils/i18n';
+import { $mn } from '@/utils/i18n';
 import { canvasAutoAddEnabled, setCanvasAutoAdd } from '@/composables/useCanvasStore';
+import { useRegistryStore } from '@/stores/registry';
 
 const canvasAutoAddImage = ref(canvasAutoAddEnabled('image'));
 const canvasAutoAddVideo = ref(canvasAutoAddEnabled('video'));
@@ -52,6 +54,45 @@ const emit = defineEmits<{
   pickWorkspace: [];
   restoreModelRegistry: [];
 }>();
+
+const registryStore = useRegistryStore();
+
+onMounted(() => {
+  void registryStore.load();
+});
+
+function hasLlmChatAction(actions: unknown): boolean {
+  if (!actions || typeof actions !== 'object') return false;
+  const row = actions as Record<string, unknown>;
+  return row.chat != null || row.enhance != null;
+}
+
+function hasVlmDescribeAction(actions: unknown): boolean {
+  if (!actions || typeof actions !== 'object') return false;
+  return (actions as Record<string, unknown>).describe != null;
+}
+
+const llmModelOptions = computed(() => {
+  const models = registryStore.registry?.models || {};
+  return Object.entries(models)
+    .filter(([, cfg]) => cfg.media === 'llm' && hasLlmChatAction(cfg.actions))
+    .map(([id, cfg]) => ({
+      value: id,
+      label: $mn(cfg.name, id),
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+});
+
+const vlmModelOptions = computed(() => {
+  const models = registryStore.registry?.models || {};
+  return Object.entries(models)
+    .filter(([, cfg]) => cfg.media === 'llm' && hasVlmDescribeAction(cfg.actions))
+    .map(([id, cfg]) => ({
+      value: id,
+      label: $mn(cfg.name, id),
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+});
 </script>
 
 <template>
@@ -94,6 +135,46 @@ const emit = defineEmits<{
               <DqOption label="JPEG" value="jpg" />
               <DqOption label="WebP" value="webp" />
             </DqSelect>
+          </DqPrefRow>
+
+          <DqPrefRow :label="$t('settings.defaultLlmModel')" stacked>
+            <div class="settings-stacked-control">
+              <DqSelect
+                v-model="settings.default_model_llm"
+                class="settings-mac-value-control"
+                :placeholder="$t('settings.defaultLlmModelPlaceholder')"
+              >
+                <DqOption
+                  v-for="opt in llmModelOptions"
+                  :key="opt.value"
+                  :label="opt.label"
+                  :value="opt.value"
+                />
+              </DqSelect>
+              <p class="settings-form-hint settings-form-hint--below-control">
+                {{ $t('settings.defaultLlmModelDesc') }}
+              </p>
+            </div>
+          </DqPrefRow>
+
+          <DqPrefRow :label="$t('settings.defaultVlmModel')" stacked>
+            <div class="settings-stacked-control">
+              <DqSelect
+                v-model="settings.default_model_vlm"
+                class="settings-mac-value-control"
+                :placeholder="$t('settings.defaultVlmModelPlaceholder')"
+              >
+                <DqOption
+                  v-for="opt in vlmModelOptions"
+                  :key="opt.value"
+                  :label="opt.label"
+                  :value="opt.value"
+                />
+              </DqSelect>
+              <p class="settings-form-hint settings-form-hint--below-control">
+                {{ $t('settings.defaultVlmModelDesc') }}
+              </p>
+            </div>
           </DqPrefRow>
         </DqPrefPane>
       </section>

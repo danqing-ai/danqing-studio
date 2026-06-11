@@ -52,6 +52,12 @@ def list_datasets(workspace_root: Path) -> list[dict[str, Any]]:
 
 def _summarize_dataset(dataset_id: str, path: Path, meta: dict[str, Any]) -> dict[str, Any]:
     rows = _read_train_jsonl(path / "train.jsonl")
+    cover_image = ""
+    for row in rows:
+        img_rel = row.get("image") or ""
+        if img_rel and (path / img_rel).is_file():
+            cover_image = img_rel
+            break
     return {
         "id": dataset_id,
         "name": meta.get("name") or dataset_id,
@@ -60,6 +66,7 @@ def _summarize_dataset(dataset_id: str, path: Path, meta: dict[str, Any]) -> dic
         "default_prompt": meta.get("default_prompt") or "",
         "nsfw": bool(meta.get("nsfw", False)),
         "image_count": len(rows),
+        "cover_image": cover_image,
         "created_at": meta.get("created_at"),
         "updated_at": meta.get("updated_at"),
     }
@@ -358,10 +365,123 @@ def load_training_pairs(workspace_root: Path, dataset_id: str) -> list[tuple[Pat
     return pairs
 
 
-def resize_rgb_image(path: Path, resolution: tuple[int, int]) -> Any:
+def _dataset_meta(workspace_root: Path, dataset_id: str) -> dict[str, Any]:
+    path = _dataset_dir(datasets_root(workspace_root), dataset_id)
+    meta_path = path / "meta.json"
+    if not meta_path.is_file():
+        return {}
+    try:
+        data = json.loads(meta_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def resolve_dreambooth_caption(
+    pairs: list[tuple[Path, str]],
+    *,
+    progress_prompt: str,
+    dataset_meta: dict[str, Any],
+) -> str:
+    """Single caption for DreamBooth — must match inference / progress preview prompt."""
+    unified = (progress_prompt or "").strip()
+    if not unified:
+        unified = (dataset_meta.get("default_prompt") or "").strip()
+    if not unified:
+        trigger = (dataset_meta.get("trigger_word") or "").strip()
+        if trigger:
+            unified = f"A photo of {trigger}"
+    if not unified:
+        from collections import Counter
+
+        prompts = [str(p or "").strip() for _, p in pairs if str(p or "").strip()]
+        if prompts:
+            unified = Counter(prompts).most_common(1)[0][0]
+    if not unified:
+        unified = "a photo"
+    return unified
+
+
+def load_training_pairs_unified(
+    workspace_root: Path,
+    dataset_id: str,
+    *,
+    progress_prompt: str,
+) -> tuple[list[tuple[Path, str]], str]:
+    """Load image paths with one shared DreamBooth caption (identity + prompt binding)."""
+    pairs_raw = load_training_pairs(workspace_root, dataset_id)
+    if not pairs_raw:
+        return [], ""
+    meta = _dataset_meta(workspace_root, dataset_id)
+    caption = resolve_dreambooth_caption(
+        pairs_raw,
+        progress_prompt=progress_prompt,
+        dataset_meta=meta,
+    )
+    return [(path, caption) for path, _ in pairs_raw], caption
+
+
+def resize_rgb_image(
+    path: Path,
+    resolution: tuple[int, int],
+    *,
+    augmentation_index: int = 0,
+    resize_mode: str = "cover",
+) -> Any:
+    """Resize for LoRA training.
+
+    ``cover`` (default): scale-to-fill then crop. Portrait images keep the upper region
+    (face-first) instead of center crop, which often removed faces in the previous build.
+    Augmentations > 0 apply a small random crop jitter on the scaled image.
+    ``stretch``: legacy fit — squish to target (distorts but keeps full frame).
+    """
+    import math
+    import random
+
     import numpy as np
 
+    target_w, target_h = resolution
+    mode = (resize_mode or "cover").strip().lower()
     img = Image.open(path).convert("RGB")
-    img = img.resize(resolution, Image.LANCZOS)
-    arr = np.array(img).astype("float32") / 255.0
-    return arr
+    src_w, src_h = img.size
+
+    if mode == "stretch":
+        img = img.resize((target_w, target_h), Image.LANCZOS)
+        return np.array(img).astype("float32") / 255.0
+
+    if mode == "letterbox":
+        scale = min(target_h / src_h, target_w / src_w)
+        new_w = max(1, math.ceil(src_w * scale))
+        new_h = max(1, math.ceil(src_h * scale))
+        img = img.resize((new_w, new_h), Image.LANCZOS)
+        canvas = Image.new("RGB", (target_w, target_h), color=(127, 127, 127))
+        left = (target_w - new_w) // 2
+        top = (target_h - new_h) // 2
+        canvas.paste(img, (left, top))
+        return np.array(canvas).astype("float32") / 255.0
+
+    scale = max(target_h / src_h, target_w / src_w)
+    new_w = math.ceil(src_w * scale)
+    new_h = math.ceil(src_h * scale)
+    img = img.resize((new_w, new_h), Image.LANCZOS)
+
+    max_left = max(0, new_w - target_w)
+    max_top = max(0, new_h - target_h)
+    portrait = src_h > src_w * 1.05
+
+    if augmentation_index > 0 and (max_left > 0 or max_top > 0):
+        rng = random.Random(augmentation_index * 7919 + hash(str(path.resolve())) % 100_000)
+        if portrait:
+            top = rng.randint(0, max(max_top // 3, 0))
+        else:
+            top = rng.randint(0, max_top)
+        left = rng.randint(0, max_left)
+    elif portrait and max_top > 0:
+        top = max_top // 4
+        left = max_left // 2
+    else:
+        left = max_left // 2
+        top = max_top // 2
+
+    img = img.crop((left, top, left + target_w, top + target_h))
+    return np.array(img).astype("float32") / 255.0

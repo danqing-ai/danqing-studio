@@ -1,5 +1,5 @@
 """
-DanQingLoraTrainEngine — LoRA training (Flux.1-dev + Z-Image Base).
+DanQingLoraTrainEngine — LoRA training (Flux.1-dev + Z-Image Base + Qwen-Image).
 """
 from __future__ import annotations
 
@@ -8,9 +8,9 @@ from typing import Any, ClassVar
 from backend.core.contracts import EngineResult, ExecutionContext, LoraTrainingRequest, parse_model_version
 from backend.core.interfaces import IPathResolver
 from backend.core.lora_train_interface import ILoraTrainEngine
-from backend.engine.training.flux_dreambooth_mlx import run_flux_dreambooth_training
 from backend.engine.training.presets import TRAINABLE_BASE_MODELS
-from backend.engine.training.z_image_dreambooth_mlx import run_z_image_dreambooth_training
+from backend.engine.memory_policy import prepare_host_for_lora_worker
+from backend.engine.training.subprocess_runner import run_lora_training_subprocess
 
 
 class DanQingLoraTrainEngine(ILoraTrainEngine):
@@ -49,15 +49,12 @@ class DanQingLoraTrainEngine(ILoraTrainEngine):
         return rt
 
     async def train(self, request: LoraTrainingRequest, ctx: ExecutionContext) -> EngineResult:
-        import asyncio
-
         if not self.supports_base_model(request.base_model):
             mid = request.base_model.split(":", 1)[0]
             raise RuntimeError(
                 f"Base model {mid!r} is not supported for LoRA training in this release "
                 f"(trainable: {sorted(TRAINABLE_BASE_MODELS)})"
             )
-        runtime = self._resolve_mlx_runtime()
         mid, _ = parse_model_version(request.base_model)
         if mid == "z-image-turbo":
             raise RuntimeError(
@@ -66,22 +63,17 @@ class DanQingLoraTrainEngine(ILoraTrainEngine):
             )
         entry = self._registry.require(mid)
         family = str(getattr(entry, "family", ""))
-        if family == "flux1":
-            runner = run_flux_dreambooth_training
-        elif family == "z_image":
-            runner = run_z_image_dreambooth_training
-        else:
+        if family not in ("flux1", "z_image", "qwen_image"):
             raise RuntimeError(
                 f"Base model {mid!r} (family={family!r}) has no LoRA training runner"
             )
-        result = await asyncio.to_thread(
-            runner,
-            request,
-            ctx,
-            registry=self._registry,
-            project_root=self._paths.get_project_root(),
-            runtime=runtime,
-            path_resolver=self._paths,
+        worker_memory_gb = prepare_host_for_lora_worker(mlx_runtime=self._runtimes.get("mlx"))
+        result = await run_lora_training_subprocess(
+            runner_family=family,
+            request=request,
+            exec_ctx=ctx,
+            bootstrap_root=self._paths.get_bootstrap_root(),
+            worker_memory_gb=worker_memory_gb,
         )
         return EngineResult(
             primary_asset_id="",

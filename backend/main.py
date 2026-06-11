@@ -45,6 +45,7 @@ from backend.services.download_service import DownloadService
 from backend.scheduler.task_scheduler import TaskScheduler
 
 from backend.engine.llm import LLMService
+from backend.engine.llm.service import resolve_llm_model_id, resolve_vlm_model_id
 
 from backend.api.routes import (
     adapters, assets, audios, download, gallery, images, loras,
@@ -190,6 +191,8 @@ def _setup_dependencies():
     llm_service = LLMService(
         model_registry=model_registry,
         path_resolver=path_resolver,
+        default_model_id=resolve_llm_model_id(app_settings, model_registry),
+        vision_model_id=resolve_vlm_model_id(app_settings, model_registry),
     )
     container = get_container()
     container.register_instance(LLMService, llm_service)

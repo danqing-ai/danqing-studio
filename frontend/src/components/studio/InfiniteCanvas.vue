@@ -42,6 +42,7 @@
       @distribute="onDistribute"
       @snap-staging="onSnapStagingToSelection"
       @remove="onRemoveSelected"
+      @train-lora="onTrainLoraSelected"
     />
 
     <CanvasToolbar
@@ -159,11 +160,15 @@ import {
   navigateToCopilot,
   thumbnailUrlForAsset,
 } from '@/utils/copilotHandoff';
+import {
+  assetIdsFromGalleryPaths,
+  navigateToLoraTrainWithAssets,
+} from '@/utils/loraTrainHandoff';
 import { DQ_STORAGE, getItem, setItem } from '@/utils/storage';
 
 const router = useRouter();
 import { api } from '@/utils/api';
-import { previewUrlForGalleryItem } from '@/utils/canvasAssets';
+import { previewUrlForGalleryItem, isImageGalleryItem } from '@/utils/canvasAssets';
 import { rectIntersects, itemBounds, type AlignMode, type DistributeMode } from '@/utils/canvasGeometry';
 import type {
   GalleryItem,
@@ -477,6 +482,22 @@ function bindPayload(path: string, item: GalleryItem) {
   return { path, previewUrl: previewUrlForGalleryItem(item) };
 }
 
+function onTrainLoraSelected() {
+  const paths = selectedPaths.value.filter((path) => {
+    const item = galleryItem(path);
+    return item ? isImageGalleryItem(item) : path.startsWith('asset:');
+  });
+  const assetIds = assetIdsFromGalleryPaths(paths);
+  if (!assetIds.length) {
+    toast.warning($tt('loraTrain.needImageAssets'));
+    return;
+  }
+  const ok = navigateToLoraTrainWithAssets(router, assetIds, {
+    datasetName: $tt('loraTrain.canvasImportDataset'),
+  });
+  if (ok) toast.success($tt('loraTrain.handoffStarted'));
+}
+
 function onToolbarAction(action: string) {
   const path = primaryPath.value;
   const item = galleryItem(path);
@@ -634,6 +655,22 @@ function onToolbarAction(action: string) {
     case 'export-png':
       void onExportNodePng(path, item);
       break;
+    case 'train-lora': {
+      if (!isImageGalleryItem(item)) {
+        toast.warning($tt('loraTrain.needImageAssets'));
+        return;
+      }
+      const id = assetIdFromGalleryPath(path);
+      if (!id) {
+        toast.warning($tt('canvas.copilotNeedAsset'));
+        return;
+      }
+      const ok = navigateToLoraTrainWithAssets(router, [id], {
+        datasetName: $tt('loraTrain.canvasImportDataset'),
+      });
+      if (ok) toast.success($tt('loraTrain.handoffStarted'));
+      break;
+    }
     case 'retouch':
     case 'extend':
     case 'upscale':

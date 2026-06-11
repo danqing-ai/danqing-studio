@@ -9,7 +9,6 @@ PRESETS: dict[str, dict[str, Any]] = {
         "iterations": 300,
         "lora_rank": 4,
         "grad_accumulate": 4,
-        "resolution": [512, 512],
         "progress_every": 150,
         "checkpoint_every": 150,
     },
@@ -17,7 +16,6 @@ PRESETS: dict[str, dict[str, Any]] = {
         "iterations": 600,
         "lora_rank": 8,
         "grad_accumulate": 4,
-        "resolution": [512, 512],
         "progress_every": 300,
         "checkpoint_every": 300,
     },
@@ -25,7 +23,6 @@ PRESETS: dict[str, dict[str, Any]] = {
         "iterations": 1200,
         "lora_rank": 8,
         "grad_accumulate": 8,
-        "resolution": [512, 512],
         "progress_every": 600,
         "checkpoint_every": 600,
     },
@@ -33,14 +30,15 @@ PRESETS: dict[str, dict[str, Any]] = {
 
 FLUX1_TRAIN_MIN_MEMORY_GB = 50.0
 Z_IMAGE_TRAIN_MIN_MEMORY_GB = 48.0
-TRAINABLE_BASE_MODELS: frozenset[str] = frozenset({"flux1-dev", "z-image"})
+QWEN_IMAGE_TRAIN_MIN_MEMORY_GB = 52.0
+TRAINABLE_BASE_MODELS: frozenset[str] = frozenset({"flux1-dev", "z-image", "qwen-image"})
 
 Z_IMAGE_PRESETS: dict[str, dict[str, Any]] = {
     "quick": {
         "iterations": 400,
         "lora_rank": 8,
+        "lora_blocks": 12,
         "grad_accumulate": 4,
-        "resolution": [512, 512],
         "progress_every": 200,
         "checkpoint_every": 200,
         "learning_rate": 1e-4,
@@ -49,8 +47,8 @@ Z_IMAGE_PRESETS: dict[str, dict[str, Any]] = {
     "standard": {
         "iterations": 800,
         "lora_rank": 16,
+        "lora_blocks": 16,
         "grad_accumulate": 4,
-        "resolution": [768, 768],
         "progress_every": 400,
         "checkpoint_every": 400,
         "learning_rate": 1e-4,
@@ -59,12 +57,42 @@ Z_IMAGE_PRESETS: dict[str, dict[str, Any]] = {
     "quality": {
         "iterations": 1500,
         "lora_rank": 16,
+        "lora_blocks": 24,
         "grad_accumulate": 8,
-        "resolution": [768, 768],
         "progress_every": 500,
         "checkpoint_every": 500,
         "learning_rate": 5e-5,
         "guidance": 5.0,
+    },
+}
+
+QWEN_IMAGE_PRESETS: dict[str, dict[str, Any]] = {
+    "quick": {
+        "iterations": 400,
+        "lora_rank": 8,
+        "lora_blocks": 12,
+        "grad_accumulate": 4,
+        "progress_every": 200,
+        "checkpoint_every": 200,
+        "learning_rate": 1e-4,
+    },
+    "standard": {
+        "iterations": 800,
+        "lora_rank": 16,
+        "lora_blocks": 16,
+        "grad_accumulate": 4,
+        "progress_every": 400,
+        "checkpoint_every": 400,
+        "learning_rate": 1e-4,
+    },
+    "quality": {
+        "iterations": 1500,
+        "lora_rank": 16,
+        "lora_blocks": 24,
+        "grad_accumulate": 8,
+        "progress_every": 500,
+        "checkpoint_every": 500,
+        "learning_rate": 5e-5,
     },
 }
 
@@ -73,6 +101,8 @@ def train_min_memory_gb(base_model_id: str) -> float:
     mid = (base_model_id or "").split(":", 1)[0].strip()
     if mid == "z-image":
         return Z_IMAGE_TRAIN_MIN_MEMORY_GB
+    if mid == "qwen-image":
+        return QWEN_IMAGE_TRAIN_MIN_MEMORY_GB
     return FLUX1_TRAIN_MIN_MEMORY_GB
 
 
@@ -81,7 +111,12 @@ def resolve_preset(name: str | None, *, base_model: str = "flux1-dev") -> dict[s
     if key == "custom":
         return {}
     mid = (base_model or "").split(":", 1)[0].strip()
-    table = Z_IMAGE_PRESETS if mid == "z-image" else PRESETS
+    if mid == "z-image":
+        table = Z_IMAGE_PRESETS
+    elif mid == "qwen-image":
+        table = QWEN_IMAGE_PRESETS
+    else:
+        table = PRESETS
     if key not in table:
         raise ValueError(f"Unknown training preset {name!r}; choose quick|standard|quality|custom")
     return dict(table[key])
