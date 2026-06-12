@@ -185,8 +185,46 @@
                 <span v-if="activePresetDetail.learning_rate">
                   {{ $t('loraTrain.learningRate') }}: {{ activePresetDetail.learning_rate }}
                 </span>
+                <span v-if="activePresetDetail.optimizer">
+                  {{ $t('loraTrain.optimizer') }}: {{ activePresetDetail.optimizer }}
+                </span>
+                <span v-if="activePresetDetail.grad_checkpoint">
+                  {{ $t('loraTrain.gradCheckpoint') }}
+                </span>
+                <span v-if="activePresetDetail.val_split">
+                  {{ $t('loraTrain.summaryValSplit', { pct: Math.round(Number(activePresetDetail.val_split) * 100) }) }}
+                </span>
               </div>
             </div>
+
+            <div class="lora-train-page__optimization">
+              <div class="lora-train-page__optimization-head">
+                <span class="lora-train-page__label">{{ $t('loraTrain.optimization') }}</span>
+                <p class="lora-train-page__field-hint">{{ $t('loraTrain.optimizationDesc') }}</p>
+              </div>
+              <div class="lora-train-page__field-grid">
+                <div class="lora-train-page__field">
+                  <label class="lora-train-page__label">{{ $t('loraTrain.qloraBits') }}</label>
+                  <DqSelect v-model="form.qlora_bits">
+                    <DqOption :label="$t('loraTrain.qloraOff')" value="" />
+                    <DqOption :label="$t('loraTrain.qlora4')" value="4" />
+                    <DqOption :label="$t('loraTrain.qlora8')" value="8" />
+                  </DqSelect>
+                  <p class="lora-train-page__field-hint">{{ $t('loraTrain.qloraHint') }}</p>
+                </div>
+                <div class="lora-train-page__field lora-train-page__field--switch">
+                  <label class="lora-train-page__label">{{ $t('loraTrain.gradCheckpoint') }}</label>
+                  <DqSwitch v-model="form.grad_checkpoint" />
+                  <p class="lora-train-page__field-hint">{{ $t('loraTrain.gradCheckpointHint') }}</p>
+                </div>
+                <div class="lora-train-page__field lora-train-page__field--switch">
+                  <label class="lora-train-page__label">{{ $t('loraTrain.compileStep') }}</label>
+                  <DqSwitch v-model="form.compile_step" />
+                  <p class="lora-train-page__field-hint">{{ $t('loraTrain.compileStepHint') }}</p>
+                </div>
+              </div>
+            </div>
+
             <div class="lora-train-page__field">
               <label class="lora-train-page__label">{{ $t('loraTrain.progressPrompt') }}</label>
               <DqInput v-model="form.progress_prompt" type="textarea" :rows="3" />
@@ -197,19 +235,74 @@
               <DqInput v-model="form.output_name" :placeholder="$t('loraTrain.outputNamePlaceholder')" />
               <p class="lora-train-page__field-hint">{{ $t('loraTrain.outputNameDesc') }}</p>
             </div>
-            <details v-if="form.preset === 'custom'" class="lora-train-page__advanced">
-              <summary>{{ $t('loraTrain.advanced') }}</summary>
-              <div class="lora-train-page__field">
-                <label class="lora-train-page__label">{{ $t('loraTrain.iterations') }}</label>
-                <DqInput v-model.number="form.iterations" type="number" />
+            <details class="lora-train-page__advanced">
+              <summary>{{ form.preset === 'custom' ? $t('loraTrain.advanced') : $t('loraTrain.expertTuning') }}</summary>
+              <div class="lora-train-page__field-grid">
+                <div v-if="form.preset === 'custom'" class="lora-train-page__field">
+                  <label class="lora-train-page__label">{{ $t('loraTrain.iterations') }}</label>
+                  <DqInput v-model.number="form.iterations" type="number" />
+                </div>
+                <div v-if="form.preset === 'custom'" class="lora-train-page__field">
+                  <label class="lora-train-page__label">{{ $t('loraTrain.loraRank') }}</label>
+                  <DqInput v-model.number="form.lora_rank" type="number" />
+                </div>
+                <div v-if="form.preset === 'custom'" class="lora-train-page__field">
+                  <label class="lora-train-page__label">{{ $t('loraTrain.learningRate') }}</label>
+                  <DqInput v-model.number="form.learning_rate" type="number" step="0.00001" />
+                </div>
+                <div class="lora-train-page__field">
+                  <label class="lora-train-page__label">{{ $t('loraTrain.loraBlocks') }}</label>
+                  <DqInput v-model.number="form.lora_blocks" type="number" :placeholder="$t('loraTrain.usePresetDefault')" />
+                </div>
+                <div class="lora-train-page__field">
+                  <label class="lora-train-page__label">{{ $t('loraTrain.loraScale') }}</label>
+                  <DqInput v-model.number="form.lora_scale" type="number" step="1" />
+                </div>
+                <div class="lora-train-page__field">
+                  <label class="lora-train-page__label">{{ $t('loraTrain.loraDropout') }}</label>
+                  <DqInput v-model.number="form.lora_dropout" type="number" step="0.05" min="0" max="0.5" />
+                </div>
+                <div class="lora-train-page__field">
+                  <label class="lora-train-page__label">{{ $t('loraTrain.optimizer') }}</label>
+                  <DqSelect v-model="form.optimizer">
+                    <DqOption :label="$t('loraTrain.usePresetDefault')" value="" />
+                    <DqOption :label="$t('loraTrain.optimizerAdam')" value="adam" />
+                    <DqOption :label="$t('loraTrain.optimizerAdamw')" value="adamw" />
+                  </DqSelect>
+                </div>
+                <div class="lora-train-page__field">
+                  <label class="lora-train-page__label">{{ $t('loraTrain.weightDecay') }}</label>
+                  <DqInput v-model.number="form.weight_decay" type="number" step="0.01" />
+                </div>
+                <div class="lora-train-page__field">
+                  <label class="lora-train-page__label">{{ $t('loraTrain.valSplit') }}</label>
+                  <DqInput v-model.number="form.val_split" type="number" step="0.05" min="0" max="0.5" />
+                </div>
+                <div class="lora-train-page__field">
+                  <label class="lora-train-page__label">{{ $t('loraTrain.valEvery') }}</label>
+                  <DqInput v-model.number="form.val_every" type="number" />
+                </div>
               </div>
               <div class="lora-train-page__field">
-                <label class="lora-train-page__label">{{ $t('loraTrain.loraRank') }}</label>
-                <DqInput v-model.number="form.lora_rank" type="number" />
+                <label class="lora-train-page__label">{{ $t('loraTrain.loraModuleKeys') }}</label>
+                <DqInput
+                  v-model="form.lora_module_keys"
+                  :placeholder="$t('loraTrain.loraModuleKeysPlaceholder')"
+                />
               </div>
-              <div class="lora-train-page__field">
-                <label class="lora-train-page__label">{{ $t('loraTrain.learningRate') }}</label>
-                <DqInput v-model.number="form.learning_rate" type="number" step="0.00001" />
+              <div class="lora-train-page__resume-block">
+                <span class="lora-train-page__label">{{ $t('loraTrain.resumeTraining') }}</span>
+                <p class="lora-train-page__field-hint">{{ $t('loraTrain.resumeHint') }}</p>
+                <div class="lora-train-page__field-grid">
+                  <div class="lora-train-page__field">
+                    <label class="lora-train-page__label">{{ $t('loraTrain.resumeFromTask') }}</label>
+                    <DqInput v-model="form.resume_task_id" placeholder="tsk_…" />
+                  </div>
+                  <div class="lora-train-page__field">
+                    <label class="lora-train-page__label">{{ $t('loraTrain.resumeCheckpoint') }}</label>
+                    <DqInput v-model="form.resume_checkpoint" placeholder="0000300_adapters.safetensors" />
+                  </div>
+                </div>
               </div>
             </details>
           </div>
@@ -245,6 +338,14 @@
               <li><span>{{ $t('loraTrain.summaryPrompt') }}</span><strong>{{ form.progress_prompt }}</strong></li>
               <li v-if="form.output_name.trim()">
                 <span>{{ $t('loraTrain.summaryOutput') }}</span><strong>{{ form.output_name }}</strong>
+              </li>
+              <li v-if="confirmOptimizationSummary">
+                <span>{{ $t('loraTrain.summaryOptimization') }}</span>
+                <strong>{{ confirmOptimizationSummary }}</strong>
+              </li>
+              <li v-if="form.resume_task_id && form.resume_checkpoint">
+                <span>{{ $t('loraTrain.summaryResume') }}</span>
+                <strong>{{ form.resume_checkpoint }}</strong>
               </li>
             </ul>
           </div>
@@ -337,6 +438,19 @@ const form = reactive({
   iterations: null as number | null,
   lora_rank: null as number | null,
   learning_rate: null as number | null,
+  qlora_bits: '' as '' | '4' | '8',
+  grad_checkpoint: false,
+  compile_step: false,
+  lora_blocks: null as number | null,
+  lora_scale: null as number | null,
+  lora_dropout: null as number | null,
+  lora_module_keys: '',
+  optimizer: '' as '' | 'adam' | 'adamw',
+  weight_decay: null as number | null,
+  val_split: null as number | null,
+  val_every: null as number | null,
+  resume_task_id: '',
+  resume_checkpoint: '',
 });
 
 const selectedDataset = computed(() =>
@@ -355,6 +469,30 @@ const activePresetDetail = computed(() => {
 const confirmPreviewImages = computed(() =>
   (selectedDataset.value?.images || []).slice(0, 8)
 );
+
+const effectiveQloraBits = computed(() => {
+  if (form.qlora_bits === '4') return 4;
+  if (form.qlora_bits === '8') return 8;
+  return null;
+});
+
+const confirmOptimizationSummary = computed(() => {
+  const parts: string[] = [];
+  if (effectiveQloraBits.value) {
+    parts.push(t('loraTrain.summaryQlora', { bits: effectiveQloraBits.value }));
+  }
+  if (form.grad_checkpoint) {
+    parts.push(t('loraTrain.summaryGradCkpt'));
+  }
+  if (form.compile_step) {
+    parts.push(t('loraTrain.compileStep'));
+  }
+  const vs = form.val_split ?? (activePresetDetail.value?.val_split as number | undefined);
+  if (vs && Number(vs) > 0) {
+    parts.push(t('loraTrain.summaryValSplit', { pct: Math.round(Number(vs) * 100) }));
+  }
+  return parts.join(' · ');
+});
 
 const wizardSummary = computed(() => {
   const rows: Array<{ key: string; label: string; value: string }> = [];
@@ -470,11 +608,15 @@ function selectBase(m: any) {
   form.base_model = m.id;
 }
 
+function qloraBitsForApi(): number | null {
+  return effectiveQloraBits.value;
+}
+
 async function loadMeta() {
   const [modelsRes, dsRes, reqRes] = await Promise.all([
     api.loras.trainableModels(),
     api.loras.listDatasets(),
-    api.loras.trainingRequirements(form.base_model),
+    api.loras.trainingRequirements(form.base_model, qloraBitsForApi()),
   ]);
   trainableModels.value = (modelsRes as any).items || [];
   presetsByModel.value = (modelsRes as any).presets_by_model || {};
@@ -484,10 +626,65 @@ async function loadMeta() {
 
 async function refreshRequirements() {
   try {
-    requirements.value = await api.loras.trainingRequirements(form.base_model);
+    requirements.value = await api.loras.trainingRequirements(form.base_model, qloraBitsForApi());
   } catch {
     // ignore
   }
+}
+
+function applyPresetGradCheckpointDefault() {
+  if (form.preset === 'custom') return;
+  const cfg = modelPresets.value[form.preset] as Record<string, unknown> | undefined;
+  form.grad_checkpoint = Boolean(cfg?.grad_checkpoint);
+}
+
+function parseModuleKeys(raw: string): string[] | undefined {
+  const keys = raw
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return keys.length ? keys : undefined;
+}
+
+function buildTrainingBody(): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    base_model: form.base_model,
+    dataset_id: form.dataset_id,
+    progress_prompt: form.progress_prompt,
+    preset: form.preset,
+    output_name: form.output_name,
+    auto_register: true,
+  };
+
+  if (effectiveQloraBits.value) body.qlora_bits = effectiveQloraBits.value;
+  body.grad_checkpoint = form.grad_checkpoint;
+  if (form.compile_step) body.compile_step = true;
+
+  if (form.preset === 'custom') {
+    if (form.iterations) body.iterations = form.iterations;
+    if (form.lora_rank) body.lora_rank = form.lora_rank;
+    if (form.learning_rate) body.learning_rate = form.learning_rate;
+  }
+
+  if (form.lora_blocks != null && form.lora_blocks > 0) body.lora_blocks = form.lora_blocks;
+  if (form.lora_scale != null && form.lora_scale > 0) body.lora_scale = form.lora_scale;
+  if (form.lora_dropout != null && form.lora_dropout >= 0) body.lora_dropout = form.lora_dropout;
+  if (form.optimizer === 'adam' || form.optimizer === 'adamw') body.optimizer = form.optimizer;
+  if (form.weight_decay != null && form.weight_decay >= 0) body.weight_decay = form.weight_decay;
+  if (form.val_split != null && form.val_split >= 0) body.val_split = form.val_split;
+  if (form.val_every != null && form.val_every > 0) body.val_every = form.val_every;
+
+  const moduleKeys = parseModuleKeys(form.lora_module_keys);
+  if (moduleKeys) body.lora_module_keys = moduleKeys;
+
+  const resumeTask = form.resume_task_id.trim();
+  const resumeCk = form.resume_checkpoint.trim();
+  if (resumeTask && resumeCk) {
+    body.resume_task_id = resumeTask;
+    body.resume_checkpoint = resumeCk;
+  }
+
+  return body;
 }
 
 function restoreDraft() {
@@ -501,6 +698,19 @@ function restoreDraft() {
     if (draft.progress_prompt) form.progress_prompt = draft.progress_prompt;
     if (draft.default_prompt) form.default_prompt = draft.default_prompt;
     if (draft.output_name) form.output_name = draft.output_name;
+    if (draft.qlora_bits) form.qlora_bits = draft.qlora_bits as '' | '4' | '8';
+    if (typeof draft.grad_checkpoint === 'boolean') form.grad_checkpoint = draft.grad_checkpoint;
+    if (typeof draft.compile_step === 'boolean') form.compile_step = draft.compile_step;
+    if (draft.lora_blocks != null) form.lora_blocks = Number(draft.lora_blocks);
+    if (draft.lora_scale != null) form.lora_scale = Number(draft.lora_scale);
+    if (draft.lora_dropout != null) form.lora_dropout = Number(draft.lora_dropout);
+    if (draft.lora_module_keys) form.lora_module_keys = String(draft.lora_module_keys);
+    if (draft.optimizer) form.optimizer = draft.optimizer as '' | 'adam' | 'adamw';
+    if (draft.weight_decay != null) form.weight_decay = Number(draft.weight_decay);
+    if (draft.val_split != null) form.val_split = Number(draft.val_split);
+    if (draft.val_every != null) form.val_every = Number(draft.val_every);
+    if (draft.resume_task_id) form.resume_task_id = String(draft.resume_task_id);
+    if (draft.resume_checkpoint) form.resume_checkpoint = String(draft.resume_checkpoint);
     if (typeof draft.step === 'number' && draft.step >= 0 && draft.step <= 3) {
       step.value = Math.min(draft.step, maxReachableStep.value);
     }
@@ -519,6 +729,19 @@ function persistDraft() {
       progress_prompt: form.progress_prompt,
       default_prompt: form.default_prompt,
       output_name: form.output_name,
+      qlora_bits: form.qlora_bits,
+      grad_checkpoint: form.grad_checkpoint,
+      compile_step: form.compile_step,
+      lora_blocks: form.lora_blocks,
+      lora_scale: form.lora_scale,
+      lora_dropout: form.lora_dropout,
+      lora_module_keys: form.lora_module_keys,
+      optimizer: form.optimizer,
+      weight_decay: form.weight_decay,
+      val_split: form.val_split,
+      val_every: form.val_every,
+      resume_task_id: form.resume_task_id,
+      resume_checkpoint: form.resume_checkpoint,
       step: step.value,
     })
   );
@@ -606,6 +829,20 @@ function openRunFromQuery() {
   router.replace({ query: q });
 }
 
+function resumeFromRouteQuery() {
+  const taskId = String(route.query.resume_task || '').trim();
+  const checkpoint = String(route.query.resume_checkpoint || '').trim();
+  if (!taskId || !checkpoint) return;
+  form.resume_task_id = taskId;
+  form.resume_checkpoint = checkpoint;
+  step.value = Math.max(step.value, 2);
+  toast.success(t('loraTrain.resumeTraining'));
+  const q = { ...route.query };
+  delete q.resume_task;
+  delete q.resume_checkpoint;
+  router.replace({ query: q });
+}
+
 watch(step, (s) => {
   if (s === 2 && !form.progress_prompt.trim() && form.default_prompt.trim()) {
     form.progress_prompt = form.default_prompt.trim();
@@ -614,7 +851,27 @@ watch(step, (s) => {
 });
 
 watch(
-  () => [form.base_model, form.dataset_id, form.preset, form.progress_prompt, form.default_prompt, form.output_name],
+  () => [
+    form.base_model,
+    form.dataset_id,
+    form.preset,
+    form.progress_prompt,
+    form.default_prompt,
+    form.output_name,
+    form.qlora_bits,
+    form.grad_checkpoint,
+    form.compile_step,
+    form.lora_blocks,
+    form.lora_scale,
+    form.lora_dropout,
+    form.lora_module_keys,
+    form.optimizer,
+    form.weight_decay,
+    form.val_split,
+    form.val_every,
+    form.resume_task_id,
+    form.resume_checkpoint,
+  ],
   () => persistDraft()
 );
 
@@ -622,22 +879,18 @@ watch(() => form.base_model, () => {
   void refreshRequirements();
 });
 
+watch(() => form.qlora_bits, () => {
+  void refreshRequirements();
+});
+
+watch(() => form.preset, () => {
+  applyPresetGradCheckpointDefault();
+});
+
 async function submitTraining() {
   submitting.value = true;
   try {
-    const body: Record<string, unknown> = {
-      base_model: form.base_model,
-      dataset_id: form.dataset_id,
-      progress_prompt: form.progress_prompt,
-      preset: form.preset,
-      output_name: form.output_name,
-      auto_register: true,
-    };
-    if (form.preset === 'custom') {
-      if (form.iterations) body.iterations = form.iterations;
-      if (form.lora_rank) body.lora_rank = form.lora_rank;
-      if (form.learning_rate) body.learning_rate = form.learning_rate;
-    }
+    const body = buildTrainingBody();
     const res = await api.loras.submitTraining(body);
     const tid = taskIdFromSubmitResponse(res);
     toast.success(t('loraTrain.submitted'));
@@ -676,7 +929,9 @@ onMounted(async () => {
     if (!form.dataset_id && datasets.value.length === 1) {
       form.dataset_id = datasets.value[0].id;
     }
+    applyPresetGradCheckpointDefault();
     openRunFromQuery();
+    resumeFromRouteQuery();
     await importFromRouteQuery();
   } catch (e: unknown) {
     toast.error(apiErrorMessage(e));
@@ -1287,6 +1542,36 @@ onMounted(async () => {
   font-weight: 600;
   letter-spacing: 0.02em;
   color: var(--dq-label-secondary);
+}
+
+.lora-train-page__optimization {
+  margin: 16px 0;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 0.5px solid var(--dq-border-subtle);
+  background: color-mix(in srgb, var(--dq-bg-base) 55%, var(--dq-fill-secondary));
+}
+
+.lora-train-page__optimization-head {
+  margin-bottom: 12px;
+}
+
+.lora-train-page__field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px 16px;
+}
+
+.lora-train-page__field--switch {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.lora-train-page__resume-block {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 0.5px solid var(--dq-border-subtle);
 }
 
 .lora-train-page__advanced {

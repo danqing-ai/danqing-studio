@@ -868,9 +868,12 @@ export const api = {
       return response.data;
     },
 
-    async trainingRequirements(baseModel?: string): Promise<unknown> {
+    async trainingRequirements(baseModel?: string, qloraBits?: number | null): Promise<unknown> {
+      const params: Record<string, string | number> = {};
+      if (baseModel) params.base_model = baseModel;
+      if (qloraBits === 4 || qloraBits === 8) params.qlora_bits = qloraBits;
       const response = await client.get('/api/loras/training/requirements', {
-        params: baseModel ? { base_model: baseModel } : undefined,
+        params: Object.keys(params).length ? params : undefined,
       });
       return response.data;
     },

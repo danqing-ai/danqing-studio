@@ -22,13 +22,13 @@ from backend.core.interfaces import IPathResolver, ISettingsService
 from backend.engine.engine_registry import EngineRegistry
 from backend.engine.training import dataset_store
 from backend.engine.training.crop import presets_with_training_resolution, training_crop_policy
+from backend.engine.training.lora_train_runtime import train_min_memory_gb
 from backend.engine.training.presets import (
     FLUX1_TRAIN_MIN_MEMORY_GB,
     PRESETS,
     QWEN_IMAGE_PRESETS,
     TRAINABLE_BASE_MODELS,
     Z_IMAGE_PRESETS,
-    train_min_memory_gb,
 )
 from backend.engine.training.user_lora_registry import delete_user_lora, list_user_loras, register_user_lora
 from backend.persistence.asset_store import SQLiteAssetStore
@@ -252,14 +252,54 @@ def trainable_models():
     }
 
 
+def _resolve_resume_adapter(body: LoraTrainingRequest, sched: TaskScheduler) -> LoraTrainingRequest:
+    if body.resume_from:
+        return body
+    task_id = (body.resume_task_id or "").strip()
+    checkpoint = (body.resume_checkpoint or "").strip()
+    if not task_id and not checkpoint:
+        return body
+    if not task_id or not checkpoint:
+        raise HTTPException(
+            400,
+            detail={
+                "code": "invalid_resume",
+                "message": "resume_task_id and resume_checkpoint must both be set",
+            },
+        )
+    if ".." in checkpoint or "/" in checkpoint or "\\" in checkpoint:
+        raise HTTPException(
+            400,
+            detail={"code": "invalid_resume", "message": "resume_checkpoint must be a filename only"},
+        )
+    work = sched.task_work_dir(task_id)
+    path = work / "adapters" / checkpoint
+    if not path.is_file():
+        raise HTTPException(
+            404,
+            detail={
+                "code": "resume_not_found",
+                "message": f"Checkpoint not found: {checkpoint} for task {task_id}",
+            },
+        )
+    return body.model_copy(update={"resume_from": str(path)})
+
+
 @router.get("/training/requirements")
-def training_requirements(base_model: str = "flux1-dev"):
+def training_requirements(base_model: str = "flux1-dev", qlora_bits: Optional[int] = None):
+    if qlora_bits is not None and int(qlora_bits) not in (4, 8):
+        raise HTTPException(
+            400,
+            detail={"code": "invalid_qlora_bits", "message": "qlora_bits must be 4 or 8"},
+        )
     mem = get_memory_gb()
-    min_gb = train_min_memory_gb(base_model)
+    qbits = int(qlora_bits) if qlora_bits in (4, 8) else None
+    min_gb = train_min_memory_gb(base_model, qlora_bits=qbits)
     return {
         "min_memory_gb": min_gb,
         "detected_memory_gb": mem,
         "mlx_required": True,
+        "qlora_bits": qbits,
         "can_submit": mem <= 0 or mem >= min_gb - 2,
     }
 
@@ -270,8 +310,9 @@ async def submit_training(
     sched: TaskScheduler = Depends(get_task_scheduler),
     engines: EngineRegistry = Depends(get_engine_registry),
 ):
+    body = _resolve_resume_adapter(body, sched)
     mem = get_memory_gb()
-    min_gb = train_min_memory_gb(body.base_model)
+    min_gb = train_min_memory_gb(body.base_model, qlora_bits=body.qlora_bits)
     if mem > 0 and mem < min_gb - 2:
         raise HTTPException(
             409,

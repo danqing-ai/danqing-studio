@@ -340,6 +340,8 @@ class LoraTrainingRequest(BaseModel):
     val_every: Optional[int] = Field(None, ge=10)
     compile_step: Optional[bool] = None
     resume_from: Optional[str] = None
+    resume_task_id: Optional[str] = None
+    resume_checkpoint: Optional[str] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

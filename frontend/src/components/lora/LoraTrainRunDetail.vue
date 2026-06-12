@@ -38,7 +38,7 @@
           :key="pt.step"
           class="lora-run-loss-bar"
           :style="{ height: `${pt.heightPct}%` }"
-          :title="`step ${pt.step}: ${pt.loss}`"
+          :title="lossBarTitle(pt)"
         />
       </div>
     </div>
@@ -56,6 +56,17 @@
           <img :src="artifactUrl(name)" :alt="name" loading="lazy" />
         </a>
       </div>
+    </div>
+
+    <div
+      v-if="canResumeTraining"
+      class="lora-run-detail__section lora-run-detail__resume"
+    >
+      <h4 class="lora-run-detail__section-title">{{ $t('loraTrain.resumeTraining') }}</h4>
+      <p class="lora-run-detail__resume-hint">{{ $t('loraTrain.resumeHint') }}</p>
+      <DqButton size="sm" type="secondary" @click="resumeTraining">
+        {{ $t('loraTrain.resumeFromRun') }}
+      </DqButton>
     </div>
 
     <div
@@ -151,12 +162,41 @@ const lossBars = computed(() => {
   const hist = artifacts.value?.loss_history;
   if (!Array.isArray(hist) || !hist.length) return [];
   const maxLoss = Math.max(...hist.map((p: { loss?: number }) => Number(p.loss) || 0), 1e-6);
-  return hist.map((pt: { step: number; loss: number }) => ({
+  return hist.map((pt: { step: number; loss: number; val_loss?: number }) => ({
     step: pt.step,
     loss: pt.loss,
+    val_loss: pt.val_loss,
     heightPct: Math.max(4, (Number(pt.loss) / maxLoss) * 100),
   }));
 });
+
+const canResumeTraining = computed(() => {
+  const s = task.value?.status;
+  if (s !== 'failed' && s !== 'cancelled') return false;
+  return Array.isArray(artifacts.value?.checkpoints) && artifacts.value.checkpoints.length > 0;
+});
+
+function lossBarTitle(pt: { step: number; loss: number; val_loss?: number }): string {
+  const base = `step ${pt.step}: loss ${Number(pt.loss).toFixed(4)}`;
+  if (pt.val_loss != null && !Number.isNaN(Number(pt.val_loss))) {
+    return `${base}, val ${Number(pt.val_loss).toFixed(4)}`;
+  }
+  return base;
+}
+
+function resumeTraining() {
+  const checkpoints = artifacts.value?.checkpoints as string[] | undefined;
+  if (!checkpoints?.length) return;
+  const finals = checkpoints.filter((c) => c.includes('final'));
+  const ck = selectedCheckpoint.value || finals[finals.length - 1] || checkpoints[checkpoints.length - 1];
+  router.push({
+    name: 'lora_train',
+    query: {
+      resume_task: props.taskId,
+      resume_checkpoint: ck,
+    },
+  });
+}
 
 function mergeProgressDetail(row: Record<string, unknown> | null): Record<string, unknown> | null {
   if (!row) return row;
@@ -422,6 +462,13 @@ onUnmounted(() => {
   font-size: 13px;
   font-weight: 600;
   color: var(--dq-label-primary);
+}
+
+.lora-run-detail__resume-hint {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--dq-label-secondary);
+  line-height: 1.45;
 }
 
 .lora-run-gallery-grid {
