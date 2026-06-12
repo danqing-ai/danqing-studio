@@ -242,9 +242,9 @@ def run_flux_dreambooth_training(
 
     preset = resolve_preset(request.preset, base_model=request.base_model)
     cfg = merge_training_request_config(request, preset)
-    runtime = parse_lora_train_runtime_config(cfg, defaults=preset)
+    train_runtime = parse_lora_train_runtime_config(cfg, defaults=preset)
     mem_gb = get_memory_gb()
-    assert_training_memory(base_model_id, mem_gb, qlora_bits=runtime.qlora_bits)
+    assert_training_memory(base_model_id, mem_gb, qlora_bits=train_runtime.qlora_bits)
 
     resolution = resolve_training_resolution(base_model_id, cfg, preset=request.preset)
     progress_prompt = (request.progress_prompt or "").strip()
@@ -288,7 +288,7 @@ def run_flux_dreambooth_training(
         base_model_id=base_model_id,
         train_cfg=cfg,
         preset=request.preset,
-        num_augmentations=runtime.num_augmentations,
+        num_augmentations=train_runtime.num_augmentations,
         exec_ctx=exec_ctx,
     )
     del vae_enc
@@ -313,13 +313,13 @@ def run_flux_dreambooth_training(
         model,
         apply_lora_to_flux1_dit,
         list_lora_blocks_fn=list_flux1_lora_blocks,
-        rank=runtime.lora_rank,
-        lora_blocks=runtime.lora_blocks,
-        lora_scale=runtime.lora_scale,
-        lora_dropout=runtime.lora_dropout,
-        lora_module_keys=runtime.lora_module_keys,
-        qlora_bits=runtime.qlora_bits,
-        grad_checkpoint=runtime.grad_checkpoint,
+        rank=train_runtime.lora_rank,
+        lora_blocks=train_runtime.lora_blocks,
+        lora_scale=train_runtime.lora_scale,
+        lora_dropout=train_runtime.lora_dropout,
+        lora_module_keys=train_runtime.lora_module_keys,
+        qlora_bits=train_runtime.qlora_bits,
+        grad_checkpoint=train_runtime.grad_checkpoint,
     )
 
     xs = mx.concatenate(latents)
@@ -327,24 +327,24 @@ def run_flux_dreambooth_training(
     clip_all = mx.concatenate(clip_feats)
     mx.eval(xs, t5_all, clip_all)
     n_samples = len(latents)
-    guidance_val = runtime.guidance
+    guidance_val = train_runtime.guidance
 
-    train_pairs, val_pairs = split_train_val_indices(len(pairs), val_split=runtime.val_split)
+    train_pairs, val_pairs = split_train_val_indices(len(pairs), val_split=train_runtime.val_split)
     train_indices = [
-        pi * runtime.num_augmentations + aug
+        pi * train_runtime.num_augmentations + aug
         for pi in train_pairs
-        for aug in range(runtime.num_augmentations)
+        for aug in range(train_runtime.num_augmentations)
     ]
     val_indices = [
-        pi * runtime.num_augmentations + aug
+        pi * train_runtime.num_augmentations + aug
         for pi in val_pairs
-        for aug in range(runtime.num_augmentations)
+        for aug in range(train_runtime.num_augmentations)
     ]
 
     def sample_batch(indices: list[int]) -> tuple[Any, ...]:
         idx = indices[0]
         x0 = xs[idx : idx + 1]
-        cap_idx = idx // runtime.num_augmentations
+        cap_idx = idx // train_runtime.num_augmentations
         return (
             x0,
             t5_all[cap_idx : cap_idx + 1],
@@ -385,7 +385,7 @@ def run_flux_dreambooth_training(
             resolution=resolution,
             guidance=guidance_val,
             ctx=ctx,
-            steps=runtime.progress_steps,
+            steps=train_runtime.progress_steps,
         )
         out_png = work_dir / f"{step:07d}_progress.png"
         Image.fromarray(preview).save(out_png)
@@ -396,7 +396,7 @@ def run_flux_dreambooth_training(
         exec_ctx=exec_ctx,
         model=model,
         train_module=train_module,
-        runtime=runtime,
+        runtime=train_runtime,
         work_dir=work_dir,
         adapter_dir=adapter_dir,
         base_model_id=base_model_id,
@@ -410,15 +410,15 @@ def run_flux_dreambooth_training(
 
     final_path = adapter_dir / "final_adapters.safetensors"
     meta = {
-        "iteration": runtime.iterations,
-        "lora_rank": runtime.lora_rank,
+        "iteration": train_runtime.iterations,
+        "lora_rank": train_runtime.lora_rank,
         "base_model": base_model_id,
         "progress_prompt": progress_prompt,
-        "qlora_bits": runtime.qlora_bits,
+        "qlora_bits": train_runtime.qlora_bits,
     }
     from backend.engine.training.lora_layers import collect_lora_safetensors
 
-    weights = collect_lora_safetensors(train_module, rank=runtime.lora_rank)
+    weights = collect_lora_safetensors(train_module, rank=train_runtime.lora_rank)
     weights.pop("lora_rank", None)
     mx.save_safetensors(str(final_path), weights)
     final_path.with_suffix(".json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -434,9 +434,9 @@ def run_flux_dreambooth_training(
 
     shutil.copy2(final_path, dest_file)
     lora_config = {
-        "lora_rank": runtime.lora_rank,
+        "lora_rank": train_runtime.lora_rank,
         "base_model": base_model_id,
-        "alpha": runtime.lora_scale,
+        "alpha": train_runtime.lora_scale,
         "trigger_word": "",
         "training_caption": training_caption,
     }
@@ -449,7 +449,7 @@ def run_flux_dreambooth_training(
             name=output_name,
             base_model=base_model_id,
             local_path=f"models/Lora/{slug}",
-            lora_rank=runtime.lora_rank,
+            lora_rank=train_runtime.lora_rank,
             task_id=exec_ctx.task_id,
         )
         user_lora_id = entry_row["id"]
