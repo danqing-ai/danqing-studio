@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 
-from backend.engine.llm.prompt_sanitize import extract_final_llm_content, looks_like_reasoning_trace
+from backend.engine.llm.think_parse import extract_final_llm_content
 
 _SECTION_TAG = re.compile(r"^\[[^\]]+\]\s*$", re.IGNORECASE)
 _MAX_LINES = 36
@@ -37,9 +37,23 @@ def _line_is_degenerate(line: str) -> bool:
     return False
 
 
-def sanitize_lyrics_output(text: str) -> str:
+def _strip_lyrics_preamble(text: str) -> str:
+    """Keep from the first section tag onward."""
+    lines = (text or "").splitlines()
+    start = 0
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("[") and stripped.endswith("]"):
+            start = i
+            break
+    return "\n".join(lines[start:]).strip()
+
+
+def sanitize_lyrics_output(text: str, *, think_enabled: bool = False) -> str:
     """Trim ACE-Step lyrics after mlx-lm generation (repetition / runaway length)."""
-    raw = extract_final_llm_content(text)
+    raw = _strip_lyrics_preamble(extract_final_llm_content(text, think_enabled=think_enabled))
     if not raw:
         return raw
 

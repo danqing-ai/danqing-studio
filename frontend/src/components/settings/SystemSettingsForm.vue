@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import type { ThemeId } from '@/utils/i18n';
 import { $mn } from '@/utils/i18n';
 import { canvasAutoAddEnabled, setCanvasAutoAdd } from '@/composables/useCanvasStore';
@@ -71,6 +71,21 @@ function hasVlmDescribeAction(actions: unknown): boolean {
   if (!actions || typeof actions !== 'object') return false;
   return (actions as Record<string, unknown>).describe != null;
 }
+
+function llmSupportsThink(modelId: unknown): boolean {
+  return /thinking/i.test(String(modelId || '').trim());
+}
+
+const llmThinkSupported = computed(() => llmSupportsThink(props.settings.default_model_llm));
+
+watch(
+  () => props.settings.default_model_llm,
+  (modelId) => {
+    if (!llmSupportsThink(modelId)) {
+      props.settings.default_model_llm_think = false;
+    }
+  },
+);
 
 const llmModelOptions = computed(() => {
   const models = registryStore.registry?.models || {};
@@ -153,6 +168,19 @@ const vlmModelOptions = computed(() => {
               </DqSelect>
               <p class="settings-form-hint settings-form-hint--below-control">
                 {{ $t('settings.defaultLlmModelDesc') }}
+              </p>
+            </div>
+          </DqPrefRow>
+
+          <DqPrefRow
+            v-if="llmThinkSupported"
+            :label="$t('settings.defaultLlmThink')"
+            stacked
+          >
+            <div class="settings-stacked-control">
+              <DqSwitch v-model="settings.default_model_llm_think" />
+              <p class="settings-form-hint settings-form-hint--below-control">
+                {{ $t('settings.defaultLlmThinkDesc') }}
               </p>
             </div>
           </DqPrefRow>

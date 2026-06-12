@@ -2933,6 +2933,27 @@ class LLMServiceTests(unittest.TestCase):
         self.assertEqual(resolve_llm_model_id(settings, registry), settings.default_model_llm)
         self.assertEqual(resolve_vlm_model_id(settings, registry), settings.default_model_vlm)
 
+    def test_llm_think_mode_setting(self) -> None:
+        from backend.core.model_registry import ModelRegistry
+        from backend.engine.llm.service import LLMService
+        from backend.utils.path_utils import PathResolver
+
+        root = Path(__file__).resolve().parents[1]
+        registry = ModelRegistry.load(root / "default_config" / "models_registry.json")
+        svc = LLMService(
+            registry,
+            PathResolver(root),
+            default_model_id="qwen3-4b-thinking-2507",
+            llm_think_enabled=False,
+        )
+        self.assertFalse(svc.get_model_info()["think_enabled"])
+        self.assertTrue(svc.get_model_info()["think_supported"])
+        self.assertFalse(svc._resolve_enable_thinking(None))
+        svc.apply_model_settings(llm_think_enabled=True)
+        self.assertTrue(svc._resolve_enable_thinking(None))
+        svc.apply_model_settings(default_model_id="qwen3-4b-thinking-2507")
+        self.assertTrue(svc._llm_think_enabled)
+
     def test_enhance_system_prompt_by_target_action(self) -> None:
         from backend.engine.llm.service import LLMService
 
@@ -2943,6 +2964,22 @@ class LLMServiceTests(unittest.TestCase):
     def test_sanitize_lyrics_strips_word_loops(self) -> None:
         from backend.engine.llm.lyrics_sanitize import sanitize_lyrics_output
         from backend.engine.llm.service import LLMService
+        from backend.engine.llm.think_parse import extract_final_llm_content
+
+        think_open = "<" + "think" + ">"
+        think_close = "</" + "think" + ">"
+        planning = (
+            f"{think_open}\nWe are writing in Chinese wuxia lyrics.\n{think_close}\n"
+            "[Verse 1]\n剑气如虹破长空\n江湖夜雨十年灯\n[Chorus]\n侠骨柔情写春秋"
+        )
+        self.assertIn(
+            "[Verse 1]",
+            sanitize_lyrics_output(planning, think_enabled=True),
+        )
+        self.assertEqual(
+            extract_final_llm_content(f"{think_open}\nOnly reasoning, no answer", think_enabled=True),
+            "",
+        )
 
         chinese = "[Verse 1]\n夏日海边\n浪花轻敲沙滩\n[Chorus]\n青春不散场"
         self.assertTrue(LLMService._lyrics_quality_ok(chinese))
@@ -2950,6 +2987,11 @@ class LLMServiceTests(unittest.TestCase):
         self.assertFalse(
             LLMService._lyrics_quality_ok(
                 "Okay, let's write ACE-Step lyrics for this summer pop track."
+            )
+        )
+        self.assertFalse(
+            LLMService._lyrics_quality_ok(
+                "We are writing in Chinese. We'll structure [Verse 1] -> 2-4 lines"
             )
         )
 
@@ -3012,10 +3054,10 @@ Should not appear
 
     def test_extract_final_llm_content_strips_thinking_blocks(self) -> None:
         from backend.engine.llm.prompt_sanitize import (
-            extract_final_llm_content,
             looks_like_reasoning_trace,
             prompt_enhance_quality_ok,
         )
+        from backend.engine.llm.think_parse import extract_final_llm_content
 
         think_open = "<" + "think" + ">"
         think_close = "</" + "think" + ">"
@@ -3044,7 +3086,13 @@ Should not appear
 
     def test_generation_kwargs_uses_sampler(self) -> None:
         from backend.core.contracts import ChatCompletionRequest, ChatMessage
+        from backend.core.model_registry import ModelRegistry
         from backend.engine.llm.service import LLMService
+        from backend.utils.path_utils import PathResolver
+
+        root = Path(__file__).resolve().parents[1]
+        registry = ModelRegistry.load(root / "default_config" / "models_registry.json")
+        svc = LLMService(registry, PathResolver(root), default_model_id="qwen3-4b-thinking-2507")
 
         request = ChatCompletionRequest(
             messages=[ChatMessage(role="user", content="hi")],
@@ -3052,11 +3100,32 @@ Should not appear
             top_p=0.9,
             max_tokens=128,
         )
-        kwargs = LLMService._generation_kwargs(request)
+        kwargs = svc._generation_kwargs(request)
         self.assertEqual(kwargs["max_tokens"], 128)
         self.assertIn("sampler", kwargs)
         self.assertNotIn("temp", kwargs)
         self.assertTrue(callable(kwargs["sampler"]))
+
+        think_kwargs = svc._generation_kwargs(request, think_active=True)
+        self.assertGreater(think_kwargs["max_tokens"], 128)
+        self.assertLessEqual(think_kwargs["max_tokens"], 8192)
+
+    def test_think_mode_suffix_respects_settings(self) -> None:
+        from backend.core.model_registry import ModelRegistry
+        from backend.engine.llm.service import LLMService
+        from backend.utils.path_utils import PathResolver
+
+        root = Path(__file__).resolve().parents[1]
+        registry = ModelRegistry.load(root / "default_config" / "models_registry.json")
+        svc = LLMService(
+            registry,
+            PathResolver(root),
+            default_model_id="qwen3-4b-thinking-2507",
+            llm_think_enabled=True,
+        )
+        self.assertTrue(svc._apply_think_mode_to_text("hello").endswith("/think"))
+        svc.apply_model_settings(llm_think_enabled=False)
+        self.assertTrue(svc._apply_think_mode_to_text("hello").endswith("/no_think"))
 
     def test_coerce_vlm_output_text_handles_generation_result(self) -> None:
         from backend.engine.llm.vision import _coerce_vlm_output_text

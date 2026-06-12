@@ -3,17 +3,12 @@ from __future__ import annotations
 
 import re
 
+from backend.engine.llm.think_parse import extract_final_llm_content
+
 _SEGMENT_SPLIT = re.compile(r"[，,;；]\s*")
 _MAX_PROMPT_CHARS = 480
 _MAX_SEGMENTS = 24
 
-_THINK_BLOCK_RE = re.compile(
-    r"<(?:think|redacted_reasoning)>\s*(.*?)\s*</(?:think|redacted_reasoning)>",
-    re.IGNORECASE | re.DOTALL,
-)
-_THINK_END_RE = re.compile(r"</(?:think|redacted_reasoning)>", re.IGNORECASE)
-_THINK_START_RE = re.compile(r"<(?:think|redacted_reasoning)>\s*", re.IGNORECASE)
-_IM_END_RE = re.compile(r"<\|im_end\|>\s*$")
 _REASONING_PREFIX_RE = re.compile(
     r"^(?:okay|ok|sure|let['']s|let me|first[,]|the user|analyzing|i need to|i should|hmm|well)[,\s]",
     re.IGNORECASE,
@@ -105,30 +100,6 @@ def _has_degenerate_tail_repeat(text: str, *, min_repeats: int = 3) -> bool:
     return False
 
 
-def _strip_chat_special_tokens(text: str) -> str:
-    return _IM_END_RE.sub("", (text or "").strip()).strip()
-
-
-def extract_final_llm_content(text: str) -> str:
-    """Drop Qwen/DeepSeek-style thinking blocks; keep the final answer only."""
-    raw = (text or "").strip()
-    if not raw:
-        return raw
-
-    end_matches = list(_THINK_END_RE.finditer(raw))
-    if end_matches:
-        tail = raw[end_matches[-1].end() :].strip()
-        if tail:
-            return _strip_chat_special_tokens(tail)
-        return ""
-
-    if _THINK_START_RE.search(raw):
-        return ""
-
-    without_blocks = _THINK_BLOCK_RE.sub("", raw).strip()
-    return _strip_chat_special_tokens(without_blocks or raw)
-
-
 def looks_like_reasoning_trace(text: str) -> bool:
     """Heuristic guard against English chain-of-thought leaking into prompts."""
     t = (text or "").strip()
@@ -148,7 +119,12 @@ def looks_like_reasoning_trace(text: str) -> bool:
         "this raises",
         "the request involves",
         "analyzing the original",
+        "we are writing",
+        "we'll structure",
+        "as per the description",
     )
+    if sum(1 for marker in markers if marker in low) >= 1 and not _looks_chinese(t):
+        return True
     return sum(1 for marker in markers if marker in low) >= 2
 
 
@@ -181,9 +157,9 @@ def prompt_enhance_quality_ok(text: str) -> bool:
     return True
 
 
-def sanitize_enhanced_prompt(text: str) -> str:
+def sanitize_enhanced_prompt(text: str, *, think_enabled: bool = False) -> str:
     """Trim enhanced prompts after mlx-lm generation."""
-    raw = _strip_wrapping_quotes(extract_final_llm_content(text))
+    raw = _strip_wrapping_quotes(extract_final_llm_content(text, think_enabled=think_enabled))
     if not raw:
         return raw
 

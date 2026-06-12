@@ -1,41 +1,127 @@
 <template>
-  <div v-if="runs.length" class="lora-train-history">
-    <div class="lora-train-history__head">
-      <span class="lora-train-history__title">{{ $t('loraTrain.recentRuns') }}</span>
-      <DqButton size="xs" type="text" :loading="loading" @click="loadRuns">
-        {{ $t('loraTrain.refreshHistory') }}
-      </DqButton>
+  <div class="lora-train-history" :class="`lora-train-history--${variant}`">
+    <div v-if="!hideHeader" class="lora-train-history__head">
+      <div class="lora-train-history__head-main">
+        <span class="lora-train-history__title">{{ $t('loraTrain.recentRuns') }}</span>
+        <span v-if="variant === 'page' && runs.length" class="lora-train-history__count">
+          {{ runs.length }}
+        </span>
+      </div>
+      <div class="lora-train-history__head-actions">
+        <DqButton
+          v-if="showModelsLink"
+          size="xs"
+          type="text"
+          @click="emit('open-models')"
+        >
+          {{ $t('loraTrain.myLorasShort') }}
+        </DqButton>
+        <DqButton
+          v-if="!hideRefresh"
+          size="xs"
+          type="text"
+          :loading="loading"
+          @click="refresh()"
+        >
+          {{ $t('loraTrain.refreshHistory') }}
+        </DqButton>
+      </div>
     </div>
-    <div class="lora-train-history__list">
+
+    <div v-if="loading && !runs.length" class="lora-train-history__skeleton">
+      <div v-for="i in skeletonCount" :key="i" class="lora-train-history__skeleton-row" />
+    </div>
+
+    <DqEmpty
+      v-else-if="!loading && !runs.length"
+      :description="$t('loraTrain.noRecentRuns')"
+      class="lora-train-history__empty"
+    />
+
+    <div v-else class="lora-train-history__list">
       <button
         v-for="run in runs"
-        :key="run.id"
+        :key="runTaskId(run)"
         type="button"
         class="lora-train-history__item"
-        :class="{ 'is-active': run.id === activeId }"
-        @click="emit('select', run.id)"
+        :class="[
+          `is-${String(run.status || 'unknown')}`,
+          { 'is-active': runTaskId(run) === activeId },
+        ]"
+        @click="emit('select', runTaskId(run))"
       >
-        <DqTag size="small" :type="statusType(run.status)" effect="plain">
-          {{ statusLabel(run.status) }}
-        </DqTag>
-        <span class="lora-train-history__item-model">{{ runModel(run) }}</span>
-        <span class="lora-train-history__item-meta">{{ formatWhen(run) }}</span>
+        <span class="lora-train-history__status-bar" aria-hidden="true" />
+
+        <span class="lora-train-history__item-content">
+          <span class="lora-train-history__item-top">
+            <span class="lora-train-history__item-name">{{ runOutputName(run) }}</span>
+            <DqTag size="small" :type="statusType(String(run.status || ''))" effect="plain">
+              {{ statusLabel(String(run.status || '')) }}
+            </DqTag>
+            <DqTag
+              v-if="userLoraForRun(run)"
+              size="small"
+              type="success"
+              effect="plain"
+              class="lora-train-history__registered"
+            >
+              {{ $t('loraTrain.registeredBadge') }}
+            </DqTag>
+          </span>
+          <span class="lora-train-history__item-meta">
+            <span class="lora-train-history__base">{{ runBaseModel(run) }}</span>
+            <span class="lora-train-history__sep" aria-hidden="true">·</span>
+            <span class="lora-train-history__when">{{ formatWhen(run) }}</span>
+          </span>
+        </span>
+
+        <DqIcon v-if="variant === 'page'" class="lora-train-history__chevron" aria-hidden="true">
+          <arrow-right />
+        </DqIcon>
       </button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue';
+import { computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { api } from '@/utils/api';
+import { ArrowRight } from '@danqing/dq-shell';
+import {
+  runBaseModel,
+  runOutputName,
+  runTaskId,
+  useLoraTrainLibrary,
+} from '@/composables/useLoraTrainLibrary';
 
-defineProps<{ activeId?: string }>();
-const emit = defineEmits<{ (e: 'select', taskId: string): void }>();
+const props = withDefaults(
+  defineProps<{
+    activeId?: string;
+    showModelsLink?: boolean;
+    hideRefresh?: boolean;
+    hideHeader?: boolean;
+    variant?: 'sidebar' | 'page';
+    limit?: number;
+  }>(),
+  {
+    activeId: '',
+    showModelsLink: false,
+    hideRefresh: false,
+    hideHeader: false,
+    variant: 'sidebar',
+    limit: 12,
+  }
+);
+
+const emit = defineEmits<{
+  (e: 'select', taskId: string): void;
+  (e: 'open-models'): void;
+}>();
 
 const { t, locale } = useI18n();
-const runs = ref<Array<Record<string, any>>>([]);
-const loading = ref(false);
+const { runs, loading, refresh, userLoraForRun } = useLoraTrainLibrary();
+
+const skeletonCount = computed(() => (props.variant === 'page' ? 5 : 3));
 
 function statusType(status: string): string {
   if (status === 'completed') return 'success';
@@ -51,16 +137,11 @@ function statusLabel(status: string): string {
   return translated !== key ? translated : status;
 }
 
-function runModel(run: Record<string, any>): string {
-  const params = run.params || {};
-  return String(params.base_model || run.model || '—').split(':', 1)[0];
-}
-
-function formatWhen(run: Record<string, any>): string {
+function formatWhen(run: Record<string, unknown>): string {
   const raw = run.created_at || run.started_at || run.updated_at;
   if (!raw) return '';
   try {
-    return new Date(raw).toLocaleString(locale.value === 'zh' ? 'zh-CN' : undefined, {
+    return new Date(String(raw)).toLocaleString(locale.value === 'zh' ? 'zh-CN' : undefined, {
       month: 'short',
       day: 'numeric',
       hour: '2-digit',
@@ -71,34 +152,24 @@ function formatWhen(run: Record<string, any>): string {
   }
 }
 
-async function loadRuns() {
-  loading.value = true;
-  try {
-    const res = (await api.gen.listMediaTasks({
-      kind: 'lora.training',
-      limit: 8,
-    })) as { tasks?: Array<Record<string, any>> };
-    runs.value = res.tasks || [];
-  } catch {
-    runs.value = [];
-  } finally {
-    loading.value = false;
-  }
+function reload() {
+  return refresh({ limit: props.limit });
 }
 
 onMounted(() => {
-  void loadRuns();
+  void reload();
 });
 
-defineExpose({ loadRuns });
+defineExpose({
+  refresh: reload,
+});
 </script>
 
 <style scoped>
 .lora-train-history {
-  margin-top: 6px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 10px;
   min-height: 0;
 }
 
@@ -109,6 +180,20 @@ defineExpose({ loadRuns });
   gap: 8px;
 }
 
+.lora-train-history__head-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.lora-train-history__head-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
 .lora-train-history__title {
   font-size: 10px;
   font-weight: 600;
@@ -117,22 +202,85 @@ defineExpose({ loadRuns });
   color: var(--dq-label-tertiary);
 }
 
+.lora-train-history--page .lora-train-history__title {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--dq-label-primary);
+}
+
+.lora-train-history__count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--dq-label-secondary);
+  background: var(--dq-fill-tertiary);
+}
+
+.lora-train-history__empty {
+  padding: 8px 0;
+}
+
+.lora-train-history--page .lora-train-history__empty {
+  padding: 24px 0;
+}
+
+.lora-train-history__skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.lora-train-history__skeleton-row {
+  height: 52px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(
+    90deg,
+    var(--dq-fill-tertiary) 0%,
+    var(--dq-fill-secondary) 50%,
+    var(--dq-fill-tertiary) 100%
+  );
+  background-size: 200% 100%;
+  animation: lora-train-history-shimmer 1.2s ease-in-out infinite;
+}
+
+@keyframes lora-train-history-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+
 .lora-train-history__list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  max-height: 180px;
+  gap: 6px;
+  max-height: 220px;
   overflow-y: auto;
 }
 
-.lora-train-history__item {
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  align-items: center;
+.lora-train-history--page .lora-train-history__list {
+  max-height: none;
   gap: 8px;
+}
+
+.lora-train-history__item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   width: 100%;
-  padding: 7px 8px;
-  border: 0.5px solid transparent;
+  padding: 10px 12px;
+  border: 1px solid transparent;
   border-radius: var(--radius-sm);
   background: transparent;
   cursor: pointer;
@@ -140,24 +288,102 @@ defineExpose({ loadRuns });
   transition: background 0.15s ease, border-color 0.15s ease;
 }
 
+.lora-train-history--page .lora-train-history__item {
+  padding: 12px 14px;
+  border: 1px solid var(--dq-border-subtle);
+  border-radius: 12px;
+  background: var(--dq-fill-control);
+}
+
 .lora-train-history__item:hover {
   background: var(--dq-fill-tertiary);
+  border-color: color-mix(in srgb, var(--dq-accent) 22%, var(--dq-border-subtle));
+}
+
+.lora-train-history--page .lora-train-history__item:hover {
+  background: var(--dq-surface-inset-hover, var(--dq-fill-tertiary));
 }
 
 .lora-train-history__item.is-active {
   background: color-mix(in srgb, var(--dq-accent) 10%, var(--dq-fill-secondary));
-  border-color: color-mix(in srgb, var(--dq-accent) 30%, transparent);
+  border-color: color-mix(in srgb, var(--dq-accent) 35%, transparent);
 }
 
-.lora-train-history__item-model {
-  font-size: 12px;
-  font-weight: 500;
+.lora-train-history__status-bar {
+  flex-shrink: 0;
+  width: 3px;
+  align-self: stretch;
+  border-radius: 999px;
+  background: var(--dq-label-quaternary);
+}
+
+.lora-train-history__item.is-completed .lora-train-history__status-bar {
+  background: var(--dq-success);
+}
+
+.lora-train-history__item.is-failed .lora-train-history__status-bar {
+  background: var(--dq-danger);
+}
+
+.lora-train-history__item.is-running .lora-train-history__status-bar {
+  background: var(--dq-accent);
+}
+
+.lora-train-history__item.is-queued .lora-train-history__status-bar {
+  background: var(--dq-info, var(--dq-accent));
+}
+
+.lora-train-history__item-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.lora-train-history__item-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.lora-train-history__item-name {
+  font-size: 13px;
+  font-weight: 600;
   color: var(--dq-label-primary);
   word-break: break-word;
 }
 
+.lora-train-history--page .lora-train-history__item-name {
+  font-size: 14px;
+}
+
+.lora-train-history__registered {
+  flex-shrink: 0;
+}
+
 .lora-train-history__item-meta {
-  font-size: 10px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
   color: var(--dq-label-tertiary);
+}
+
+.lora-train-history__base {
+  color: var(--dq-label-secondary);
+}
+
+.lora-train-history__chevron {
+  flex-shrink: 0;
+  font-size: 14px;
+  color: var(--dq-label-quaternary);
+  transition: transform 0.15s ease, color 0.15s ease;
+}
+
+.lora-train-history__item:hover .lora-train-history__chevron {
+  color: var(--dq-accent);
+  transform: translateX(2px);
 }
 </style>

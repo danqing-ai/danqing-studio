@@ -49,7 +49,13 @@
 
       <details v-if="!activeRunId" class="lora-train-page__history-fold">
         <summary>{{ $t('loraTrain.recentRuns') }}</summary>
-        <LoraTrainHistory ref="historyRef" :active-id="activeRunId" @select="openRun" />
+        <LoraTrainHistory
+          ref="historyRef"
+          :active-id="activeRunId"
+          show-models-link
+          @select="openRun"
+          @open-models="openModelsUserLorasPage"
+        />
       </details>
 
       <div v-if="requirements" class="lora-train-page__mem">
@@ -290,6 +296,7 @@ import { getItem, setItem, DQ_STORAGE } from '@/utils/storage';
 import LoraTrainRunDetail from '@/components/lora/LoraTrainRunDetail.vue';
 import LoraDatasetPanel from '@/components/lora/LoraDatasetPanel.vue';
 import LoraTrainHistory from '@/components/lora/LoraTrainHistory.vue';
+import { openModelsUserLoras } from '@/utils/loraTrainHandoff';
 
 const { t } = useI18n();
 const router = useRouter();
@@ -429,7 +436,7 @@ function openRun(taskId: string) {
 
 function onRunBack() {
   activeRunId.value = '';
-  historyRef.value?.loadRuns();
+  historyRef.value?.refresh();
 }
 
 function modelDisplayName(m: any): string {
@@ -637,7 +644,7 @@ async function submitTraining() {
     openGlobalTaskQueue();
     if (tid) {
       activeRunId.value = tid;
-      historyRef.value?.loadRuns();
+      historyRef.value?.refresh();
     }
   } catch (e: any) {
     const msg = e?.response?.data?.detail?.message || e?.message || String(e);
@@ -645,6 +652,10 @@ async function submitTraining() {
   } finally {
     submitting.value = false;
   }
+}
+
+function openModelsUserLorasPage() {
+  openModelsUserLoras(router);
 }
 
 function onVerifyGenerate(payload: { prompt: string; loraId: string; baseModel: string }) {

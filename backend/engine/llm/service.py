@@ -33,11 +33,10 @@ from backend.core.interfaces import AppSettings
 from backend.core.model_registry import ModelEntry, ModelRegistry
 from backend.engine.llm.lyrics_sanitize import sanitize_lyrics_output
 from backend.engine.llm.prompt_sanitize import (
-    extract_final_llm_content,
-    looks_like_reasoning_trace,
     prompt_enhance_quality_ok,
     sanitize_enhanced_prompt,
 )
+from backend.engine.llm.think_parse import extract_final_llm_content
 from backend.engine.llm.vision import (
     IMAGE_TO_PROMPT_INSTRUCTION,
     VIDEO_FRAME_TO_PROMPT_INSTRUCTION,
@@ -180,7 +179,8 @@ Anti-loop (critical):
 - Do not reuse the same line or filler hook ("la la", "oh oh") more than once
 - After [Outro] lines, STOP — no extra sections or commentary
 
-Output ONLY lyrics with section tags. No title, quotes, or explanation.
+Output ONLY lyrics with section tags. No title, quotes, explanation, or planning.
+Do NOT describe what you will write. Start immediately with [Verse 1] or [Intro].
 
 Example (English):
 [Verse 1]
@@ -227,11 +227,13 @@ class LLMService:
         path_resolver: PathResolver,
         default_model_id: str = DEFAULT_LLM_MODEL_ID,
         vision_model_id: str = DEFAULT_VLM_MODEL_ID,
+        llm_think_enabled: bool = False,
     ):
         self._registry = model_registry
         self._path_resolver = path_resolver
         self._model_id = default_model_id
         self._vision_model_id = vision_model_id
+        self._llm_think_enabled = bool(llm_think_enabled)
         self._generation_lock = threading.Lock()
 
     def apply_model_settings(
@@ -239,6 +241,7 @@ class LLMService:
         *,
         default_model_id: str | None = None,
         vision_model_id: str | None = None,
+        llm_think_enabled: bool | None = None,
     ) -> None:
         if default_model_id is not None:
             coerced = _coerce_llm_model_id(default_model_id, self._registry)
@@ -248,6 +251,10 @@ class LLMService:
             coerced = _coerce_vlm_model_id(vision_model_id, self._registry)
             self._registry.require(coerced)
             self._vision_model_id = coerced
+        if llm_think_enabled is not None:
+            self._llm_think_enabled = bool(llm_think_enabled)
+        if not self._is_thinking_model(self._model_id):
+            self._llm_think_enabled = False
 
     # ------------------------------------------------------------------
     # Public status
@@ -260,6 +267,8 @@ class LLMService:
             "model_id": self._model_id,
             "name": self._registry_display_name(entry, self._model_id),
             "available": self.is_available(),
+            "think_supported": self._is_thinking_model(self._model_id),
+            "think_enabled": self._llm_think_enabled,
         }
 
     def get_vision_model_info(self) -> dict[str, Any]:
@@ -306,22 +315,25 @@ class LLMService:
         enable_thinking: bool | None = None,
     ) -> ChatCompletionResponse:
         """Run a single-turn non-streaming chat completion (sync, for asyncio.to_thread)."""
+        thinking = self._resolve_enable_thinking(enable_thinking)
+        think_active = self._think_is_active(thinking)
         with self._generation_lock:
             model, tokenizer = self._load_model()
             try:
+                messages = self._apply_think_mode_to_messages(request.messages)
                 prompt = self._build_chat_prompt(
                     tokenizer,
-                    request.messages,
-                    enable_thinking=enable_thinking,
+                    messages,
+                    enable_thinking=thinking,
                 )
                 result = mlx_lm.generate(
                     model,
                     tokenizer,
                     prompt=prompt,
                     verbose=False,
-                    **self._generation_kwargs(request),
+                    **self._generation_kwargs(request, think_active=think_active),
                 )
-                content = extract_final_llm_content(result)
+                content = extract_final_llm_content(result, think_enabled=think_active)
                 return self._format_response(content, request.model)
             finally:
                 self._unload_model(model, tokenizer)
@@ -337,10 +349,18 @@ class LLMService:
         with self._generation_lock:
             model, tokenizer = self._load_model()
             try:
-                prompt_text = self._build_chat_prompt(tokenizer, request.messages)
+                messages = self._apply_think_mode_to_messages(request.messages)
+                thinking = self._resolve_enable_thinking(None)
+                prompt_text = self._build_chat_prompt(
+                    tokenizer,
+                    messages,
+                    enable_thinking=thinking,
+                )
             except Exception:
                 self._unload_model(model, tokenizer)
                 raise
+
+        think_active = self._think_is_active(thinking)
 
         # Release the lock while streaming so other requests can queue.
         # The model stays loaded until we explicitly unload.
@@ -354,7 +374,7 @@ class LLMService:
                         model,
                         tokenizer,
                         prompt=prompt_text,
-                        **self._generation_kwargs(request),
+                        **self._generation_kwargs(request, think_active=think_active),
                     )
                 )
 
@@ -413,18 +433,18 @@ class LLMService:
         action = (request.target_action or "image_create").strip().lower()
         raw_prompt = (request.prompt or "").strip()
         user_content = raw_prompt
-        if self._model_prefers_no_think():
-            user_content = self._with_no_think_suffix(user_content)
         if action in ("image_create", "create", "image") and len(raw_prompt) >= 60:
             if any("\u4e00" <= ch <= "\u9fff" for ch in raw_prompt):
                 user_content += "\n\n（输入已够详细：只做轻微润色，禁止加长或重复用词。）"
             elif len(raw_prompt) >= 80:
                 user_content += "\n\n(Input is already detailed: light polish only; do not lengthen or repeat phrases.)"
+        user_content = self._apply_think_mode_to_text(user_content)
 
+        think_active = self._think_is_active(self._resolve_enable_thinking(None))
         attempts = (
-            (0.65, 200),
-            (0.45, 160),
-            (0.35, 140),
+            (0.65, self._token_budget(200, think_active)),
+            (0.45, self._token_budget(160, think_active)),
+            (0.35, self._token_budget(140, think_active)),
         )
         last_clean = ""
         for temperature, max_tokens in attempts:
@@ -439,13 +459,16 @@ class LLMService:
                 max_tokens=max_tokens,
                 stream=False,
             )
-            result = self.chat_completion(internal, enable_thinking=False)
-            cleaned = sanitize_enhanced_prompt(result.choices[0].message.content)
+            result = self.chat_completion(internal)
+            cleaned = sanitize_enhanced_prompt(
+                result.choices[0].message.content,
+                think_enabled=think_active,
+            )
             if prompt_enhance_quality_ok(cleaned):
                 return EnhanceResponse(enhanced_prompt=cleaned)
             last_clean = cleaned
 
-        fallback = sanitize_enhanced_prompt(raw_prompt)
+        fallback = sanitize_enhanced_prompt(raw_prompt, think_enabled=think_active)
         if prompt_enhance_quality_ok(last_clean):
             return EnhanceResponse(enhanced_prompt=last_clean)
         return EnhanceResponse(enhanced_prompt=fallback or last_clean)
@@ -476,7 +499,7 @@ class LLMService:
     @staticmethod
     def _lyrics_quality_ok(text: str) -> bool:
         cleaned = (text or "").strip()
-        if not cleaned or looks_like_reasoning_trace(cleaned):
+        if not cleaned:
             return False
 
         lines = [ln.strip() for ln in cleaned.splitlines() if ln.strip()]
@@ -485,6 +508,10 @@ class LLMService:
 
         if len(lines) == 1 and lines[0].lower().strip("[]") == "instrumental":
             return True
+
+        section_tags = [ln for ln in lines if ln.startswith("[") and ln.endswith("]")]
+        if not section_tags:
+            return False
 
         lyric_lines = [ln for ln in lines if not (ln.startswith("[") and ln.endswith("]"))]
         if not lyric_lines:
@@ -513,33 +540,26 @@ class LLMService:
             "\n\nWrite ACE-Step lyrics with section tags. "
             "Match the description language. End with [Outro] (or [Instrumental] if no vocals) and stop."
         )
-        if self._model_prefers_no_think():
-            user_msg = self._with_no_think_suffix(user_msg)
+        user_msg = self._apply_think_mode_to_text(user_msg)
 
+        think_active = self._think_is_active(self._resolve_enable_thinking(None))
         attempts = (
-            (0.65, 420),
-            (0.5, 360),
-            (0.4, 512),
+            (0.65, self._token_budget(420, think_active)),
+            (0.5, self._token_budget(360, think_active)),
+            (0.4, self._token_budget(512, think_active)),
         )
         last_raw = ""
-        best = ""
         for temp, max_tokens in attempts:
             result = self.chat_completion(
                 self._lyrics_chat_request(user_msg, temperature=temp, max_tokens=max_tokens),
-                enable_thinking=False,
             )
             last_raw = result.choices[0].message.content.strip()
-            cleaned = sanitize_lyrics_output(last_raw)
+            cleaned = sanitize_lyrics_output(last_raw, think_enabled=think_active)
             if self._lyrics_quality_ok(cleaned):
                 return cleaned
-            if cleaned and not looks_like_reasoning_trace(cleaned) and len(cleaned) > len(best):
-                best = cleaned
 
-        if best:
-            return best
-
-        fallback = sanitize_lyrics_output(last_raw)
-        if fallback and not looks_like_reasoning_trace(fallback):
+        fallback = sanitize_lyrics_output(last_raw, think_enabled=think_active)
+        if fallback and self._lyrics_quality_ok(fallback):
             return fallback
 
         raise RuntimeError(
@@ -684,8 +704,8 @@ class LLMService:
             max_tokens=256,
             stream=False,
         )
-        result = self.chat_completion(internal, enable_thinking=False)
-        return extract_final_llm_content(result.choices[0].message.content).strip()
+        result = self.chat_completion(internal)
+        return result.choices[0].message.content.strip()
 
     # ------------------------------------------------------------------
     # Model lifecycle (load-on-demand, release-immediately)
@@ -758,11 +778,18 @@ class LLMService:
         raw_name = entry.raw.get("name")
         return raw_name if raw_name is not None else fallback
 
-    @staticmethod
-    def _generation_kwargs(request: ChatCompletionRequest) -> dict[str, Any]:
+    def _generation_kwargs(
+        self,
+        request: ChatCompletionRequest,
+        *,
+        think_active: bool = False,
+    ) -> dict[str, Any]:
         """Sampling kwargs for mlx-lm >= 0.31 (``sampler`` instead of ``temp``)."""
+        max_tokens = request.max_tokens or 512
+        if think_active:
+            max_tokens = self._token_budget(max_tokens, True)
         return {
-            "max_tokens": request.max_tokens or 512,
+            "max_tokens": max_tokens,
             "sampler": make_sampler(
                 temp=request.temperature,
                 top_p=request.top_p,
@@ -770,11 +797,49 @@ class LLMService:
         }
 
     @staticmethod
+    def _token_budget(base: int, think_active: bool) -> int:
+        if not think_active:
+            return base
+        return min(max(base + 768, base * 3), 8192)
+
+    def _think_is_active(self, thinking: bool | None) -> bool:
+        return bool(thinking) if self._is_thinking_model(self._model_id) else False
+
+    @staticmethod
     def _is_thinking_model(model_id: str) -> bool:
         return "thinking" in (model_id or "").lower()
 
-    def _model_prefers_no_think(self) -> bool:
-        return self._is_thinking_model(self._model_id)
+    def _resolve_enable_thinking(self, override: bool | None) -> bool | None:
+        if not self._is_thinking_model(self._model_id):
+            return None
+        if override is not None:
+            return override
+        return self._llm_think_enabled
+
+    def _apply_think_mode_to_text(self, text: str) -> str:
+        if not self._is_thinking_model(self._model_id):
+            return text
+        if self._llm_think_enabled:
+            return self._with_think_suffix(text)
+        return self._with_no_think_suffix(text)
+
+    def _apply_think_mode_to_messages(self, messages: list[ChatMessage]) -> list[ChatMessage]:
+        if not self._is_thinking_model(self._model_id):
+            return messages
+        last_user = max((i for i, m in enumerate(messages) if m.role == "user"), default=-1)
+        if last_user < 0:
+            return messages
+        msg = messages[last_user]
+        new_content = (
+            self._with_think_suffix(msg.content)
+            if self._llm_think_enabled
+            else self._with_no_think_suffix(msg.content)
+        )
+        if new_content == msg.content:
+            return messages
+        patched = list(messages)
+        patched[last_user] = ChatMessage(role=msg.role, content=new_content)
+        return patched
 
     @staticmethod
     def _with_no_think_suffix(text: str) -> str:
@@ -782,6 +847,13 @@ class LLMService:
         if not body or "/no_think" in body or "/think" in body:
             return body
         return f"{body} /no_think"
+
+    @staticmethod
+    def _with_think_suffix(text: str) -> str:
+        body = (text or "").rstrip()
+        if not body or "/think" in body or "/no_think" in body:
+            return body
+        return f"{body} /think"
 
     @staticmethod
     def _build_chat_prompt(

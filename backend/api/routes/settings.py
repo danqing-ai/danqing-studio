@@ -29,6 +29,7 @@ class SettingsResponse(BaseModel):
     default_model_audio: str = ""
     default_model_llm: str = "qwen3-4b-thinking-2507"
     default_model_vlm: str = "qwen3-vl-4b-instruct"
+    default_model_llm_think: bool = False
     auto_save_prompts: bool
     output_format: str
     mlx_memory_limit: int
@@ -59,6 +60,7 @@ class SettingsUpdateRequest(BaseModel):
     default_model_audio: Optional[str] = None
     default_model_llm: Optional[str] = None
     default_model_vlm: Optional[str] = None
+    default_model_llm_think: Optional[bool] = None
     auto_save_prompts: Optional[bool] = None
     output_format: Optional[str] = None
     mlx_memory_limit: Optional[int] = None
@@ -147,7 +149,7 @@ def update_settings(request: SettingsUpdateRequest, req: Request):
         apply_memory_settings_from_container(settings)
         unload_model_cache_if_present()
 
-    llm_keys = {"default_model_llm", "default_model_vlm"}
+    llm_keys = {"default_model_llm", "default_model_vlm", "default_model_llm_think"}
     if llm_keys.intersection(payload.keys()):
         from backend.core.container import get_container
         from backend.engine.llm import LLMService
@@ -156,6 +158,7 @@ def update_settings(request: SettingsUpdateRequest, req: Request):
         llm_service.apply_model_settings(
             default_model_id=settings.default_model_llm,
             vision_model_id=settings.default_model_vlm,
+            llm_think_enabled=settings.default_model_llm_think,
         )
 
     return {"success": True, "restart_required": False}

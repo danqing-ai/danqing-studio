@@ -195,6 +195,7 @@ def _setup_dependencies():
         path_resolver=path_resolver,
         default_model_id=resolve_llm_model_id(app_settings, model_registry),
         vision_model_id=resolve_vlm_model_id(app_settings, model_registry),
+        llm_think_enabled=app_settings.default_model_llm_think,
     )
     container = get_container()
     container.register_instance(LLMService, llm_service)

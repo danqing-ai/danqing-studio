@@ -259,50 +259,44 @@
       </div>
 
       <!-- User-trained LoRAs -->
-      <div v-if="activeCategory === 'trained_loras'">
-        <div class="page-header">
+      <div v-if="activeCategory === 'trained_loras'" class="trained-loras-page">
+        <div class="page-header models-page__page-header">
           <h2 class="page-title">{{ $t('download.myTrainedLoras') }}</h2>
+          <div class="page-actions models-page__actions">
+            <DqButton
+              size="sm"
+              type="secondary"
+              :loading="userLorasRefreshing"
+              @click="refreshUserLoras"
+            >
+              {{ $t('loraTrain.refreshHistory') }}
+            </DqButton>
+            <DqButton type="primary" size="sm" @click="goToLoraTrain">
+              {{ $t('loraTrain.startTraining') }}
+            </DqButton>
+          </div>
         </div>
 
-        <DqSurfaceCard v-if="userLoras.length" class="studio-surface-card models-page__col-mb">
-          <DqRow :gutter="16">
-            <DqCol
-              v-for="ul in userLoras"
-              :key="ul.id"
-              :xs="24"
-              :sm="12"
-              :md="8"
-              class="models-page__col-mb"
-            >
-              <DqSurfaceCard class="user-lora-card">
-                <div class="user-lora-card__name">{{ ul.name }}</div>
-                <div class="user-lora-card__meta">
-                  {{ ul.base_model }} · {{ ul.id }}
-                </div>
-                <div v-if="ul.created_at" class="user-lora-card__meta user-lora-card__meta--muted">
-                  {{ formatUserLoraDate(ul.created_at) }}
-                </div>
-                <div class="user-lora-card__actions">
-                  <DqButton size="sm" type="primary" @click="verifyUserLora(ul)">
-                    {{ $t('loraTrain.verifyGenerate') }}
-                  </DqButton>
-                  <DqButton
-                    v-if="ul.task_id"
-                    size="sm"
-                    type="secondary"
-                    @click="openTrainingRun(ul.task_id)"
-                  >
-                    {{ $t('loraTrain.viewTrainingRun') }}
-                  </DqButton>
-                  <DqButton size="sm" type="danger" @click="deleteUserLora(ul)">
-                    {{ $t('common.delete') }}
-                  </DqButton>
-                </div>
-              </DqSurfaceCard>
-            </DqCol>
-          </DqRow>
-        </DqSurfaceCard>
-        <div v-else class="models-page__col-mb models-lora-empty">
+        <DqRow v-if="userLoras.length" :gutter="16" class="model-grid">
+          <DqCol
+            v-for="ul in userLoras"
+            :key="ul.id"
+            :xs="24"
+            :sm="12"
+            :md="8"
+            :lg="8"
+            class="models-page__col-mb"
+          >
+            <UserLoraCard
+              :lora="ul"
+              :base-model-label="userLoraBaseModelLabel(ul.base_model)"
+              @verify="verifyUserLora(ul)"
+              @view-run="openTrainingRun"
+              @delete="deleteUserLora(ul)"
+            />
+          </DqCol>
+        </DqRow>
+        <div v-else class="trained-loras-page__empty">
           <DqEmpty :description="$t('download.noUserLoras')" />
           <DqButton type="primary" size="sm" @click="goToLoraTrain">
             {{ $t('loraTrain.startTraining') }}
@@ -551,12 +545,14 @@ import { toast, confirm } from '@/utils/feedback';
 import { api } from '@/utils/api';
 import { $tt, $mn, $md, $mvn } from '@/utils/i18n';
 import { openLoraTrainingRun } from '@/utils/loraTrainHandoff';
+import { modelInitialsFromName } from '@/utils/modelInitials';
 import { useRegistryStore } from '@/stores/registry';
 import { DQ_STORAGE, consumeStringDraft, getItem, setItem } from '@/utils/storage';
 import ModelLicenseBadges from '@/components/model/ModelLicenseBadges.vue';
 import ModelPickerFilters from '@/components/model/ModelPickerFilters.vue';
 import ModelsImportDialog from '@/components/models/ModelsImportDialog.vue';
 import ModelsCategoryNav from '@/components/models/ModelsCategoryNav.vue';
+import UserLoraCard from '@/components/lora/UserLoraCard.vue';
 import ModelCardVersions from '@/components/models/ModelCardVersions.vue';
 import ModelLlmActionBadges from '@/components/models/ModelLlmActionBadges.vue';
 import ModelVersionSourceBadge from '@/components/models/ModelVersionSourceBadge.vue';
@@ -626,6 +622,7 @@ interface DiskSpaceData {
 
 const activeCategory = ref('all');
 const userLoras = ref<any[]>([]);
+const userLorasRefreshing = ref(false);
 const router = useRouter();
 const { locale } = useI18n();
 const modelRegistry = ref<Record<string, ModelConfig>>({});
@@ -810,6 +807,15 @@ async function loadUserLoras() {
   }
 }
 
+async function refreshUserLoras() {
+  userLorasRefreshing.value = true;
+  try {
+    await loadUserLoras();
+  } finally {
+    userLorasRefreshing.value = false;
+  }
+}
+
 function verifyUserLora(ul: { id?: string; base_model?: string }) {
   router.push({
     name: 'image_create',
@@ -820,16 +826,11 @@ function verifyUserLora(ul: { id?: string; base_model?: string }) {
   });
 }
 
-function formatUserLoraDate(raw: string): string {
-  try {
-    return new Date(raw).toLocaleString(locale.value === 'zh' ? 'zh-CN' : undefined, {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-    });
-  } catch {
-    return String(raw);
-  }
+function userLoraBaseModelLabel(modelId: string | undefined): string {
+  const id = String(modelId || '').trim();
+  if (!id) return '—';
+  const model = modelRegistry.value[id];
+  return model ? $mn(model, id) : id;
 }
 
 function goToLoraTrain() {
@@ -867,7 +868,7 @@ async function deleteUserLora(ul: { id?: string; name?: string }) {
 }
 
 watch(activeCategory, (cat) => {
-  if (cat === 'trained_loras') loadUserLoras();
+  if (cat === 'trained_loras') void refreshUserLoras();
 });
 
 async function loadDiskSpace() {
@@ -1396,22 +1397,7 @@ async function importLocalModel() {
 }
 
 function getModelInitials(model: ModelRow): string {
-  const name = $mn(model, model.id);
-  if (!name) return 'M';
-  const dashIndex = name.indexOf('-');
-  const spaceIndex = name.indexOf(' ');
-  let endIndex = -1;
-  if (dashIndex !== -1 && spaceIndex !== -1) {
-    endIndex = Math.min(dashIndex, spaceIndex);
-  } else if (dashIndex !== -1) {
-    endIndex = dashIndex;
-  } else if (spaceIndex !== -1) {
-    endIndex = spaceIndex;
-  }
-  if (endIndex !== -1) {
-    return name.slice(0, endIndex);
-  }
-  return name.slice(0, 3);
+  return modelInitialsFromName($mn(model, model.id), 'M');
 }
 
 function getModelTypeTagType(type: string): string {
@@ -1454,7 +1440,7 @@ onMounted(() => {
   loadInstalled();
   loadDiskSpace();
   loadActiveDownloads();
-  if (activeCategory.value === 'trained_loras') loadUserLoras();
+  if (activeCategory.value === 'trained_loras') void refreshUserLoras();
 });
 
 onUnmounted(() => {
@@ -1463,37 +1449,11 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
-.models-lora-empty {
+.trained-loras-page__empty {
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: 12px;
   padding: 12px 0 24px;
-}
-
-.user-lora-card__name {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--dq-label-primary);
-  margin-bottom: 4px;
-}
-
-.user-lora-card__meta {
-  font-size: 12px;
-  color: var(--dq-label-secondary);
-  line-height: 1.4;
-  word-break: break-word;
-}
-
-.user-lora-card__meta--muted {
-  color: var(--dq-label-tertiary);
-  font-size: 11px;
-}
-
-.user-lora-card__actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 12px;
 }
 </style>
