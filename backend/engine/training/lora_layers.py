@@ -13,13 +13,19 @@ class LoRALinear(nn.Module):
     """Low-rank adapter wrapping a frozen ``nn.Linear``."""
 
     @staticmethod
-    def from_base(linear: nn.Linear, r: int = 8, scale: float = 1.0) -> "LoRALinear":
+    def from_base(
+        linear: nn.Linear,
+        r: int = 8,
+        scale: float = 1.0,
+        dropout: float = 0.0,
+    ) -> "LoRALinear":
         output_dims, input_dims = linear.weight.shape
         lora_lin = LoRALinear(
             input_dims=input_dims,
             output_dims=output_dims,
             r=r,
             scale=scale,
+            dropout=dropout,
         )
         lora_lin.linear = linear
         linear.freeze()
@@ -32,10 +38,12 @@ class LoRALinear(nn.Module):
         r: int = 8,
         scale: float = 1.0,
         bias: bool = False,
+        dropout: float = 0.0,
     ):
         super().__init__()
         self.linear = nn.Linear(input_dims, output_dims, bias=bias)
         self.scale = scale
+        self.dropout = float(dropout)
         init_scale = 1 / math.sqrt(input_dims)
         self.lora_a = mx.random.uniform(
             low=-init_scale,
@@ -47,35 +55,86 @@ class LoRALinear(nn.Module):
     def __call__(self, x: mx.array) -> mx.array:
         y = self.linear(x)
         z = (x @ self.lora_a) @ self.lora_b
+        if self.dropout > 0:
+            z = mx.dropout(z, self.dropout)
         return y + (self.scale * z).astype(x.dtype)
 
 
-def _apply_lora_recursive(module: Any, rank: int) -> None:
-    if isinstance(module, nn.Linear) and not isinstance(module, LoRALinear):
+def _match_lora_module_key(attr_name: str, module_keys: list[str] | None) -> bool:
+    if not module_keys:
+        return True
+    return any(attr_name == k or attr_name.endswith(f".{k}") or k in attr_name for k in module_keys)
+
+
+def _is_trainable_base_linear(module: Any) -> bool:
+    return isinstance(module, nn.Linear) and not isinstance(module, LoRALinear)
+
+
+def _apply_lora_recursive(
+    module: Any,
+    rank: int,
+    *,
+    scale: float = 1.0,
+    dropout: float = 0.0,
+    module_keys: list[str] | None = None,
+) -> None:
+    if _is_trainable_base_linear(module):
         return
     if isinstance(module, list):
         for i, item in enumerate(module):
-            if isinstance(item, nn.Linear) and not isinstance(item, LoRALinear):
-                module[i] = LoRALinear.from_base(item, rank)
+            if _is_trainable_base_linear(item):
+                if not module_keys:
+                    module[i] = LoRALinear.from_base(
+                        item,
+                        r=rank,
+                        scale=scale,
+                        dropout=dropout,
+                    )
             else:
-                _apply_lora_recursive(item, rank)
+                _apply_lora_recursive(
+                    item,
+                    rank,
+                    scale=scale,
+                    dropout=dropout,
+                    module_keys=module_keys,
+                )
         return
     if isinstance(module, nn.Module) and not isinstance(module, LoRALinear):
         for name, child in module.children().items():
-            if isinstance(child, nn.Linear) and not isinstance(child, LoRALinear):
-                setattr(module, name, LoRALinear.from_base(child, r=rank))
+            if _is_trainable_base_linear(child) and _match_lora_module_key(name, module_keys):
+                setattr(
+                    module,
+                    name,
+                    LoRALinear.from_base(child, r=rank, scale=scale, dropout=dropout),
+                )
             else:
-                _apply_lora_recursive(child, rank)
+                _apply_lora_recursive(
+                    child,
+                    rank,
+                    scale=scale,
+                    dropout=dropout,
+                    module_keys=module_keys,
+                )
         return
     if not hasattr(module, "__dict__"):
         return
     for name, val in list(vars(module).items()):
         if name.startswith("_"):
             continue
-        if isinstance(val, nn.Linear) and not isinstance(val, LoRALinear):
-            setattr(module, name, LoRALinear.from_base(val, r=rank))
+        if _is_trainable_base_linear(val) and _match_lora_module_key(name, module_keys):
+            setattr(
+                module,
+                name,
+                LoRALinear.from_base(val, r=rank, scale=scale, dropout=dropout),
+            )
         else:
-            _apply_lora_recursive(val, rank)
+            _apply_lora_recursive(
+                val,
+                rank,
+                scale=scale,
+                dropout=dropout,
+                module_keys=module_keys,
+            )
 
 
 def _dit_inner(model: Any) -> Any:
@@ -153,8 +212,111 @@ def freeze_dit_base_weights(model: Any) -> None:
     for node in _walk_dit_nodes(_dit_inner(model)):
         if isinstance(node, LoRALinear):
             continue
-        if isinstance(node, nn.Linear):
+        if isinstance(node, nn.Module) and hasattr(node, "freeze"):
             node.freeze()
+
+
+def _is_quantized_linear(module: Any) -> bool:
+    cls_name = type(module).__name__
+    return cls_name == "QuantizedLinear" or "Quantized" in cls_name
+
+
+def quantize_frozen_dit_linears(model: Any, *, bits: int, group_size: int = 64) -> int:
+    """QLoRA: quantize frozen base linears (including inside ``LoRALinear``)."""
+    if bits not in (4, 8):
+        raise RuntimeError(f"quantize_frozen_dit_linears bits must be 4 or 8 (got {bits})")
+    replacements: list[tuple[Any, str, nn.Linear]] = []
+
+    def visit(obj: Any, parent: Any | None = None, key: str | None = None) -> None:
+        if isinstance(obj, LoRALinear):
+            if isinstance(obj.linear, nn.Linear) and not _is_quantized_linear(obj.linear):
+                replacements.append((obj, "linear", obj.linear))
+            return
+        if isinstance(obj, nn.Linear) and not isinstance(obj, LoRALinear):
+            if parent is not None and key is not None and not _is_quantized_linear(obj):
+                replacements.append((parent, key, obj))
+            return
+        if isinstance(obj, list):
+            for item in obj:
+                visit(item)
+            return
+        if isinstance(obj, nn.Module) and not isinstance(obj, LoRALinear):
+            for name, child in obj.children().items():
+                visit(child, obj, name)
+            return
+        if not hasattr(obj, "__dict__"):
+            return
+        for name, val in vars(obj).items():
+            if name.startswith("_"):
+                continue
+            visit(val, obj, name)
+
+    visit(_dit_inner(model))
+    count = 0
+    for parent, key, linear in replacements:
+        q = linear.to_quantized(bits=bits, group_size=group_size)
+        q.freeze()
+        setattr(parent, key, q)
+        count += 1
+    return count
+
+
+def grad_checkpoint(layer: Any) -> None:
+    """Enable gradient checkpointing for all instances of *layer*'s type."""
+    layer_cls = type(layer)
+    if getattr(layer_cls, "_dq_grad_checkpoint", False):
+        return
+    fn = layer_cls.__call__
+
+    def checkpointed_fn(model: Any, *args: Any, **kwargs: Any) -> Any:
+        def inner_fn(params: Any, *inner_args: Any, **inner_kwargs: Any) -> Any:
+            model.update(params)
+            return fn(model, *inner_args, **inner_kwargs)
+
+        return mx.checkpoint(inner_fn)(model.trainable_parameters(), *args, **kwargs)
+
+    checkpointed_fn._dq_grad_checkpoint = True  # type: ignore[attr-defined]
+    layer_cls.__call__ = checkpointed_fn
+
+
+def enable_grad_checkpointing_on_blocks(blocks: list[Any]) -> None:
+    seen: set[type] = set()
+    for block in blocks:
+        cls = type(block)
+        if cls in seen:
+            continue
+        seen.add(cls)
+        grad_checkpoint(block)
+
+
+def list_flux1_lora_blocks(model: Any, *, lora_blocks: int) -> list[Any]:
+    dit = getattr(model, "_inner", model)
+    joint = list(dit.transformer_blocks)
+    single = list(dit.single_transformer_blocks)
+    all_blocks = list(reversed(joint + single))
+    n = len(all_blocks) if lora_blocks < 0 else min(lora_blocks, len(all_blocks))
+    return all_blocks[:n]
+
+
+def list_zimage_lora_blocks(model: Any, *, lora_blocks: int) -> list[Any]:
+    dit = getattr(model, "_inner", model)
+    all_blocks: list[Any] = []
+    for layer in reversed(list(dit.layers)):
+        all_blocks.append(layer)
+    for layer in reversed(list(dit.noise_refiner)):
+        all_blocks.append(layer)
+    for layer in reversed(list(dit.context_refiner)):
+        all_blocks.append(layer)
+    n = len(all_blocks) if lora_blocks < 0 else min(lora_blocks, len(all_blocks))
+    return all_blocks[:n]
+
+
+def list_qwen_lora_blocks(model: Any, *, lora_blocks: int) -> list[Any]:
+    dit = getattr(model, "_inner", model)
+    inner = getattr(dit, "dit", dit)
+    all_blocks = list(reversed(list(inner.transformer_blocks)))
+    n = len(all_blocks) if lora_blocks < 0 else min(lora_blocks, len(all_blocks))
+    return all_blocks[:n]
 
 
 class DiTLoRATrainModule(nn.Module):
@@ -176,23 +338,63 @@ def build_lora_train_module(model: Any) -> DiTLoRATrainModule:
     return DiTLoRATrainModule(model, iter_lora_linears_with_paths(model))
 
 
-def prepare_dit_for_lora_training(model: Any, apply_lora_fn: Any, **lora_kw: Any) -> tuple[Any, DiTLoRATrainModule]:
-    apply_lora_fn(model, **lora_kw)
+def prepare_dit_for_lora_training(
+    model: Any,
+    apply_lora_fn: Any,
+    *,
+    list_lora_blocks_fn: Any | None = None,
+    **lora_kw: Any,
+) -> tuple[Any, DiTLoRATrainModule]:
+    rank = int(lora_kw.get("rank", lora_kw.get("lora_rank", 8)))
+    lora_blocks = int(lora_kw.get("lora_blocks", -1))
+    lora_scale = float(lora_kw.get("scale", lora_kw.get("lora_scale", rank)))
+    lora_dropout = float(lora_kw.get("dropout", lora_kw.get("lora_dropout", 0.0)))
+    module_keys = lora_kw.get("module_keys", lora_kw.get("lora_module_keys"))
+    qlora_bits = lora_kw.get("qlora_bits")
+    grad_checkpoint = bool(lora_kw.get("grad_checkpoint") or False)
+
+    apply_lora_fn(
+        model,
+        rank=rank,
+        lora_blocks=lora_blocks,
+        scale=lora_scale,
+        dropout=lora_dropout,
+        module_keys=module_keys,
+    )
     freeze_dit_base_weights(model)
+    if qlora_bits in (4, 8):
+        n_q = quantize_frozen_dit_linears(model, bits=int(qlora_bits))
+        if n_q == 0:
+            raise RuntimeError("QLoRA requested but no quantizable Linear layers were found on DiT")
+    if grad_checkpoint:
+        if list_lora_blocks_fn is None:
+            raise RuntimeError("grad_checkpoint requires list_lora_blocks_fn for this DiT family")
+        enable_grad_checkpointing_on_blocks(list_lora_blocks_fn(model, lora_blocks=lora_blocks))
     train_module = build_lora_train_module(model)
     mx.eval(train_module.parameters())
     return model, train_module
 
 
-def apply_lora_to_flux1_dit(model: Any, *, rank: int, lora_blocks: int) -> None:
+def apply_lora_to_flux1_dit(
+    model: Any,
+    *,
+    rank: int,
+    lora_blocks: int,
+    scale: float | None = None,
+    dropout: float = 0.0,
+    module_keys: list[str] | None = None,
+) -> None:
     """Replace Linear layers in the last ``lora_blocks`` joint+single blocks with LoRA."""
+    lora_scale = float(rank if scale is None else scale)
     dit = getattr(model, "_inner", model)
-    joint = list(dit.transformer_blocks)
-    single = list(dit.single_transformer_blocks)
-    all_blocks = list(reversed(joint + single))
-    n = len(all_blocks) if lora_blocks < 0 else min(lora_blocks, len(all_blocks))
-    for block in all_blocks[:n]:
-        _apply_lora_recursive(block, rank)
+    for block in list_flux1_lora_blocks(model, lora_blocks=lora_blocks):
+        _apply_lora_recursive(
+            block,
+            rank,
+            scale=lora_scale,
+            dropout=dropout,
+            module_keys=module_keys,
+        )
     if hasattr(dit, "_build_param_map"):
         dit._build_param_map()
     if hasattr(model, "_inner") and hasattr(dit, "_param_map"):
@@ -274,14 +476,27 @@ def enumerate_qwen_lora_module_paths(model: Any, *, lora_blocks: int) -> list[st
     ]
 
 
-def apply_lora_to_qwen_dit(model: Any, *, rank: int, lora_blocks: int) -> None:
+def apply_lora_to_qwen_dit(
+    model: Any,
+    *,
+    rank: int,
+    lora_blocks: int,
+    scale: float | None = None,
+    dropout: float = 0.0,
+    module_keys: list[str] | None = None,
+) -> None:
     """Replace Linear layers in the last ``lora_blocks`` Qwen-Image DiT blocks with LoRA."""
+    lora_scale = float(rank if scale is None else scale)
     dit = getattr(model, "_inner", model)
     inner = getattr(dit, "dit", dit)
-    all_blocks = list(reversed(list(inner.transformer_blocks)))
-    n = len(all_blocks) if lora_blocks < 0 else min(lora_blocks, len(all_blocks))
-    for block in all_blocks[:n]:
-        _apply_lora_recursive(block, rank)
+    for block in list_qwen_lora_blocks(model, lora_blocks=lora_blocks):
+        _apply_lora_recursive(
+            block,
+            rank,
+            scale=lora_scale,
+            dropout=dropout,
+            module_keys=module_keys,
+        )
     if hasattr(inner, "_build_param_map"):
         inner._build_param_map()
     if hasattr(dit, "_build_param_map"):
@@ -290,19 +505,26 @@ def apply_lora_to_qwen_dit(model: Any, *, rank: int, lora_blocks: int) -> None:
         model._param_map = dit._param_map
 
 
-def apply_lora_to_zimage_dit(model: Any, *, rank: int, lora_blocks: int) -> None:
+def apply_lora_to_zimage_dit(
+    model: Any,
+    *,
+    rank: int,
+    lora_blocks: int,
+    scale: float | None = None,
+    dropout: float = 0.0,
+    module_keys: list[str] | None = None,
+) -> None:
     """Replace Linear layers in the last ``lora_blocks`` Z-Image DiT blocks with LoRA."""
+    lora_scale = float(rank if scale is None else scale)
     dit = getattr(model, "_inner", model)
-    all_blocks: list[Any] = []
-    for layer in reversed(list(dit.layers)):
-        all_blocks.append(layer)
-    for layer in reversed(list(dit.noise_refiner)):
-        all_blocks.append(layer)
-    for layer in reversed(list(dit.context_refiner)):
-        all_blocks.append(layer)
-    n = len(all_blocks) if lora_blocks < 0 else min(lora_blocks, len(all_blocks))
-    for block in all_blocks[:n]:
-        _apply_lora_recursive(block, rank)
+    for block in list_zimage_lora_blocks(model, lora_blocks=lora_blocks):
+        _apply_lora_recursive(
+            block,
+            rank,
+            scale=lora_scale,
+            dropout=dropout,
+            module_keys=module_keys,
+        )
     if hasattr(dit, "_build_param_map"):
         dit._build_param_map()
     if hasattr(model, "_inner") and hasattr(dit, "_param_map"):
@@ -320,6 +542,30 @@ def scale_grad_tree(tree: Any, divisor: float) -> Any:
     from mlx.utils import tree_map
 
     return tree_map(lambda g: g / divisor, tree)
+
+
+def load_lora_into_train_module(model: Any, adapter_path: Any, *, rank: int) -> None:
+    """Load exported adapter weights into ``DiTLoRATrainModule`` trainable tensors."""
+    from pathlib import Path
+
+    from mlx.utils import tree_unflatten
+
+    from backend.engine.common.bundle.weights import load_safetensors
+
+    flat_file = load_safetensors(str(adapter_path))
+    paths = getattr(model, "_lora_paths", None)
+    if not paths:
+        raise RuntimeError("load_lora_into_train_module requires DiTLoRATrainModule with _lora_paths")
+    updates: dict[str, mx.array] = {}
+    for idx, path in enumerate(paths):
+        a_key = f"{path}.lora_A.weight"
+        b_key = f"{path}.lora_B.weight"
+        if a_key not in flat_file or b_key not in flat_file:
+            raise RuntimeError(f"Resume adapter missing LoRA pair for {path!r}")
+        updates[f"lora_{idx}.lora_a"] = flat_file[a_key].T
+        updates[f"lora_{idx}.lora_b"] = flat_file[b_key].T
+    model.update(tree_unflatten(list(updates.items())))
+    mx.eval(model.parameters())
 
 
 def collect_lora_safetensors(model: Any, *, rank: int) -> dict[str, mx.array]:

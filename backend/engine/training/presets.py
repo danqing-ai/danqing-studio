@@ -11,6 +11,8 @@ PRESETS: dict[str, dict[str, Any]] = {
         "grad_accumulate": 4,
         "progress_every": 150,
         "checkpoint_every": 150,
+        "grad_checkpoint": True,
+        "optimizer": "adamw",
     },
     "standard": {
         "iterations": 600,
@@ -18,6 +20,9 @@ PRESETS: dict[str, dict[str, Any]] = {
         "grad_accumulate": 4,
         "progress_every": 300,
         "checkpoint_every": 300,
+        "optimizer": "adamw",
+        "val_split": 0.1,
+        "val_every": 100,
     },
     "quality": {
         "iterations": 1200,
@@ -43,6 +48,8 @@ Z_IMAGE_PRESETS: dict[str, dict[str, Any]] = {
         "checkpoint_every": 200,
         "learning_rate": 1e-4,
         "guidance": 5.0,
+        "grad_checkpoint": True,
+        "optimizer": "adamw",
     },
     "standard": {
         "iterations": 800,
@@ -53,6 +60,9 @@ Z_IMAGE_PRESETS: dict[str, dict[str, Any]] = {
         "checkpoint_every": 400,
         "learning_rate": 1e-4,
         "guidance": 5.0,
+        "optimizer": "adamw",
+        "val_split": 0.1,
+        "val_every": 100,
     },
     "quality": {
         "iterations": 1500,
@@ -75,6 +85,8 @@ QWEN_IMAGE_PRESETS: dict[str, dict[str, Any]] = {
         "progress_every": 200,
         "checkpoint_every": 200,
         "learning_rate": 1e-4,
+        "grad_checkpoint": True,
+        "optimizer": "adamw",
     },
     "standard": {
         "iterations": 800,
@@ -84,6 +96,9 @@ QWEN_IMAGE_PRESETS: dict[str, dict[str, Any]] = {
         "progress_every": 400,
         "checkpoint_every": 400,
         "learning_rate": 1e-4,
+        "optimizer": "adamw",
+        "val_split": 0.1,
+        "val_every": 100,
     },
     "quality": {
         "iterations": 1500,

@@ -3910,6 +3910,55 @@ class LoraDatasetStoreTests(unittest.TestCase):
                 dataset_store.get_dataset(root, dataset_id)
 
 
+class LoraTrainRuntimeTests(unittest.TestCase):
+    def test_train_min_memory_gb_qlora_lowers_threshold(self) -> None:
+        from backend.engine.training.lora_train_runtime import train_min_memory_gb
+
+        dense = train_min_memory_gb("flux1-dev")
+        qlora4 = train_min_memory_gb("flux1-dev", qlora_bits=4)
+        self.assertLess(qlora4, dense)
+
+    def test_split_train_val_indices(self) -> None:
+        from backend.engine.training.lora_train_runtime import split_train_val_indices
+
+        train, val = split_train_val_indices(10, val_split=0.2)
+        self.assertEqual(len(train) + len(val), 10)
+        self.assertGreaterEqual(len(val), 1)
+        self.assertGreaterEqual(len(train), 2)
+
+    def test_parse_lora_train_runtime_config(self) -> None:
+        from backend.engine.training.lora_train_runtime import parse_lora_train_runtime_config
+
+        cfg = parse_lora_train_runtime_config(
+            {"qlora_bits": 4, "optimizer": "adamw", "lora_scale": 16.0},
+            defaults={"lora_rank": 8, "iterations": 100},
+        )
+        self.assertEqual(cfg.qlora_bits, 4)
+        self.assertEqual(cfg.optimizer_name, "adamw")
+        self.assertEqual(cfg.lora_scale, 16.0)
+
+    def test_lora_module_keys_limit_injection(self) -> None:
+        from backend.engine.runtime.mlx import MLXContext
+        from backend.engine.config.model_configs import ZImageConfig
+        from backend.engine.families.z_image.transformer import ZImageTransformer
+        from backend.engine.training.lora_layers import (
+            apply_lora_to_zimage_dit,
+            iter_lora_linears,
+        )
+
+        ctx = MLXContext()
+        model = ZImageTransformer(ZImageConfig(), ctx)
+        apply_lora_to_zimage_dit(
+            model,
+            rank=4,
+            lora_blocks=1,
+            module_keys=["to_q", "to_k"],
+        )
+        all_layers = iter_lora_linears(model)
+        self.assertGreater(len(all_layers), 0)
+        self.assertLess(len(all_layers), 40)
+
+
 class LoraTrainingPresetsTests(unittest.TestCase):
     def test_trainable_base_models_include_z_image_and_qwen(self) -> None:
         from backend.engine.training.presets import TRAINABLE_BASE_MODELS
