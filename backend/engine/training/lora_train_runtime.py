@@ -18,6 +18,7 @@ from backend.engine.training.presets import (
 )
 
 OptimizerName = Literal["adam", "adamw"]
+TrainType = Literal["lora", "dora"]
 
 _QLORA_MIN_MEMORY_GB: dict[int, dict[str, float]] = {
     4: {
@@ -58,6 +59,12 @@ class LoraTrainRuntimeConfig:
     compile_step: bool
     resume_from: str | None
     weight_decay: float
+    train_type: TrainType
+    min_snr_gamma: float
+    class_prompt: str | None
+    prior_loss_weight: float
+    early_stop_patience: int
+    fuse_adapters: bool
 
 
 def _model_id(base_model: str) -> str:
@@ -116,14 +123,29 @@ def parse_lora_train_runtime_config(cfg: dict[str, Any], *, defaults: dict[str, 
     if opt not in ("adam", "adamw"):
         raise RuntimeError(f"optimizer must be 'adam' or 'adamw' (got {opt!r})")
 
+    train_type = str(merged.get("train_type") or "lora").strip().lower()
+    if train_type not in ("lora", "dora"):
+        raise RuntimeError(f"train_type must be 'lora' or 'dora' (got {train_type!r})")
+
+    class_prompt_raw = merged.get("class_prompt")
+    class_prompt: str | None = None
+    if class_prompt_raw is not None:
+        class_prompt = str(class_prompt_raw).strip() or None
+
+    iterations = int(merged.get("iterations", 600))
+    grad_accumulate = int(merged.get("grad_accumulate") or 4)
+    opt_steps = max(1, iterations // max(1, grad_accumulate))
+    warmup_raw = int(merged.get("warmup_steps") or 100)
+    warmup_steps = min(warmup_raw, max(1, opt_steps // 4))
+
     return LoraTrainRuntimeConfig(
-        iterations=int(merged.get("iterations", 600)),
+        iterations=iterations,
         batch_size=int(merged.get("batch_size", 1)),
         lora_rank=lora_rank,
         lora_blocks=int(merged.get("lora_blocks") if merged.get("lora_blocks") is not None else -1),
         learning_rate=float(merged.get("learning_rate") or 1e-4),
-        grad_accumulate=int(merged.get("grad_accumulate") or 4),
-        warmup_steps=int(merged.get("warmup_steps") or 100),
+        grad_accumulate=grad_accumulate,
+        warmup_steps=warmup_steps,
         progress_every=int(merged.get("progress_every") or 300),
         progress_steps=int(merged.get("progress_steps") or 20),
         checkpoint_every=int(merged.get("checkpoint_every") or 300),
@@ -140,6 +162,12 @@ def parse_lora_train_runtime_config(cfg: dict[str, Any], *, defaults: dict[str, 
         compile_step=bool(merged.get("compile_step") or False),
         resume_from=resume_from,
         weight_decay=float(merged.get("weight_decay") or 0.01),
+        train_type=train_type,  # type: ignore[assignment]
+        min_snr_gamma=float(merged.get("min_snr_gamma") or 0.0),
+        class_prompt=class_prompt,
+        prior_loss_weight=float(merged.get("prior_loss_weight") or 0.0),
+        early_stop_patience=int(merged.get("early_stop_patience") or 0),
+        fuse_adapters=bool(merged.get("fuse_adapters") or False),
     )
 
 
@@ -155,11 +183,60 @@ def build_optimizer(
     return optim.Adam(learning_rate=learning_rate)
 
 
-def configure_mlx_training_memory() -> None:
+def peak_memory_gb() -> float:
     try:
-        mx.set_wired_limit(mx.device_info()["max_recommended_working_set_size"])
+        return float(mx.get_peak_memory()) / 1024**3
+    except Exception:
+        return 0.0
+
+
+def active_memory_gb() -> float:
+    try:
+        return float(mx.get_active_memory()) / 1024**3
+    except Exception:
+        return 0.0
+
+
+def reset_peak_memory() -> None:
+    try:
+        mx.reset_peak_memory()
     except Exception:
         pass
+
+
+def configure_mlx_training_memory(*, mlx_ctx: Any | None = None) -> None:
+    """Apply worker/API MLX cap. Do not raise wired limit to device max (causes Metal OOM)."""
+    import os
+
+    gb: int | None = None
+    raw = os.environ.get("DANQING_MLX_MEMORY_LIMIT_GB", "").strip()
+    if raw:
+        try:
+            gb = int(raw)
+        except ValueError:
+            gb = None
+    if gb is None and mlx_ctx is not None:
+        gb = int(getattr(mlx_ctx, "memory_limit_gb", 0) or getattr(mlx_ctx, "_memory_limit_gb", 0) or 0) or None
+    if gb is None:
+        return
+    try:
+        byte_limit = int(gb) * 1024**3
+        mx.set_memory_limit(byte_limit)
+        mx.set_wired_limit(int(byte_limit * 0.9))
+    except Exception:
+        pass
+
+
+def clear_mlx_training_cache(mlx_ctx: Any | None = None) -> None:
+    try:
+        mx.clear_cache()
+    except Exception:
+        pass
+    if mlx_ctx is not None and hasattr(mlx_ctx, "clear_cache"):
+        try:
+            mlx_ctx.clear_cache()
+        except Exception:
+            pass
 
 
 def adapter_meta_path(adapter_path: Path) -> Path:

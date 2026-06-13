@@ -18,9 +18,13 @@ from backend.engine.training.training_log import training_log, training_progress
 from backend.engine.training.lora_layers import add_grad_trees, scale_grad_tree
 from backend.engine.training.lora_train_runtime import (
     LoraTrainRuntimeConfig,
+    active_memory_gb,
     build_optimizer,
+    clear_mlx_training_cache,
     configure_mlx_training_memory,
     load_training_checkpoint,
+    peak_memory_gb,
+    reset_peak_memory,
     save_training_checkpoint,
 )
 
@@ -40,8 +44,11 @@ def run_dit_lora_train_loop(
     val_indices: list[int],
     loss_fn: Callable[..., mx.array],
     on_progress_preview: Callable[[int], None] | None = None,
-) -> list[dict[str, float]]:
-    configure_mlx_training_memory()
+    mlx_ctx: Any | None = None,
+) -> tuple[list[dict[str, float]], Path | None]:
+    configure_mlx_training_memory(mlx_ctx=mlx_ctx)
+    clear_mlx_training_cache(mlx_ctx)
+    reset_peak_memory()
 
     warmup = optim.linear_schedule(0, runtime.learning_rate, runtime.warmup_steps)
     cosine = optim.cosine_decay(
@@ -104,14 +111,18 @@ def run_dit_lora_train_loop(
         exec_ctx,
         "info",
         f"Training {runtime.iterations} iterations "
-        f"(rank={runtime.lora_rank}, qlora={runtime.qlora_bits}, "
-        f"grad_ckpt={runtime.grad_checkpoint}, opt={runtime.optimizer_name}) …",
+        f"(rank={runtime.lora_rank}, type={runtime.train_type}, qlora={runtime.qlora_bits}, "
+        f"grad_ckpt={runtime.grad_checkpoint}, min_snr={runtime.min_snr_gamma}, "
+        f"prior_w={runtime.prior_loss_weight}, opt={runtime.optimizer_name}) …",
     )
 
     accum_grads: Any | None = None
     losses: list[float] = []
     tic = time.time()
-    opt_step = start_iter // runtime.grad_accumulate
+    log_every = max(1, min(10, runtime.iterations // 30 or 1))
+    best_val: float | None = None
+    best_path: Path | None = None
+    stale_val = 0
 
     for i in range(start_iter, runtime.iterations):
         exec_ctx.cancel_token.raise_if_cancelled()
@@ -120,17 +131,20 @@ def run_dit_lora_train_loop(
         do_update = (i + 1) % runtime.grad_accumulate == 0
         loss, accum_grads = step_fn(batch_args, accum_grads, do_update)
         if do_update:
-            opt_step += 1
-        mx.eval(loss, train_module.parameters(), optimizer.state)
-        losses.append(float(loss.item()))
+            mx.eval(train_module.parameters(), optimizer.state)
+        mx.eval(loss)
+        loss_val = float(loss.item())
+        losses.append(loss_val)
 
-        if (i + 1) == start_iter + 1 or (i + 1) % 10 == 0:
+        if (i + 1) == start_iter + 1 or (i + 1) % log_every == 0:
             avg = sum(losses) / len(losses)
-            peak = mx.metal.get_peak_memory() / 1024**3
+            peak = peak_memory_gb()
+            active = active_memory_gb()
             training_log(
                 exec_ctx,
                 "info",
-                f"Iter {i + 1}/{runtime.iterations} loss={avg:.4f} peak_mem={peak:.1f}GB "
+                f"Iter {i + 1}/{runtime.iterations} loss={avg:.4f} "
+                f"active_mem={active:.1f}GB peak_mem={peak:.1f}GB "
                 f"it/s={len(losses) / max(time.time() - tic, 1e-6):.2f}",
             )
             row: dict[str, float] = {"step": float(i + 1), "loss": avg}
@@ -141,16 +155,52 @@ def run_dit_lora_train_loop(
                     vloss = loss_fn(*vbatch)
                     mx.eval(vloss)
                     val_losses.append(float(vloss.item()))
+                    clear_mlx_training_cache(mlx_ctx)
                 if val_losses:
                     val_avg = sum(val_losses) / len(val_losses)
                     row["val_loss"] = val_avg
                     training_log(exec_ctx, "info", f"Val loss={val_avg:.4f} ({len(val_indices)} samples)")
+                    if best_val is None or val_avg < best_val:
+                        best_val = val_avg
+                        stale_val = 0
+                        best_path = adapter_dir / "best_adapters.safetensors"
+                        meta = {
+                            "iteration": i + 1,
+                            "lora_rank": runtime.lora_rank,
+                            "base_model": base_model_id,
+                            "val_loss": val_avg,
+                            "train_type": runtime.train_type,
+                        }
+                        save_training_checkpoint(
+                            best_path,
+                            train_module,
+                            optimizer,
+                            rank=runtime.lora_rank,
+                            meta=meta,
+                        )
+                        training_log(exec_ctx, "info", f"New best val loss; saved {best_path.name}")
+                    else:
+                        stale_val += 1
             loss_history.append(row)
             loss_path.write_text(json.dumps(loss_history), encoding="utf-8")
             losses = []
             tic = time.time()
 
-        training_progress(exec_ctx, step=i + 1, total=runtime.iterations, loss=float(loss.item()))
+            if (
+                runtime.early_stop_patience > 0
+                and val_indices
+                and runtime.val_every > 0
+                and stale_val >= runtime.early_stop_patience
+                and best_val is not None
+            ):
+                training_log(
+                    exec_ctx,
+                    "info",
+                    f"Early stop: val loss did not improve for {stale_val} eval cycles",
+                )
+                break
+
+        training_progress(exec_ctx, step=i + 1, total=runtime.iterations, loss=loss_val)
 
         if on_progress_preview and (i + 1) % runtime.progress_every == 0:
             try:
@@ -165,6 +215,7 @@ def run_dit_lora_train_loop(
                 "lora_rank": runtime.lora_rank,
                 "base_model": base_model_id,
                 "qlora_bits": runtime.qlora_bits,
+                "train_type": runtime.train_type,
             }
             save_training_checkpoint(
                 ckpt,
@@ -174,4 +225,4 @@ def run_dit_lora_train_loop(
                 meta=meta,
             )
 
-    return loss_history
+    return loss_history, best_path

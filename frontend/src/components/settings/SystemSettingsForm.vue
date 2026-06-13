@@ -72,6 +72,14 @@ function hasVlmDescribeAction(actions: unknown): boolean {
   return (actions as Record<string, unknown>).describe != null;
 }
 
+function isLlmCategory(category: unknown): boolean {
+  return category === 'llm_models';
+}
+
+function isVlmCategory(category: unknown): boolean {
+  return category === 'vlm_models';
+}
+
 function llmSupportsThink(modelId: unknown): boolean {
   return /thinking/i.test(String(modelId || '').trim());
 }
@@ -90,10 +98,10 @@ watch(
 const llmModelOptions = computed(() => {
   const models = registryStore.registry?.models || {};
   return Object.entries(models)
-    .filter(([, cfg]) => cfg.media === 'llm' && hasLlmChatAction(cfg.actions))
+    .filter(([, cfg]) => cfg.media === 'llm' && isLlmCategory(cfg.category) && hasLlmChatAction(cfg.actions))
     .map(([id, cfg]) => ({
       value: id,
-      label: $mn(cfg.name, id),
+      label: $mn(cfg, id),
     }))
     .sort((a, b) => a.label.localeCompare(b.label));
 });
@@ -101,10 +109,10 @@ const llmModelOptions = computed(() => {
 const vlmModelOptions = computed(() => {
   const models = registryStore.registry?.models || {};
   return Object.entries(models)
-    .filter(([, cfg]) => cfg.media === 'llm' && hasVlmDescribeAction(cfg.actions))
+    .filter(([, cfg]) => cfg.media === 'llm' && isVlmCategory(cfg.category) && hasVlmDescribeAction(cfg.actions))
     .map(([id, cfg]) => ({
       value: id,
-      label: $mn(cfg.name, id),
+      label: $mn(cfg, id),
     }))
     .sort((a, b) => a.label.localeCompare(b.label));
 });
@@ -152,24 +160,19 @@ const vlmModelOptions = computed(() => {
             </DqSelect>
           </DqPrefRow>
 
-          <DqPrefRow :label="$t('settings.defaultLlmModel')" stacked>
-            <div class="settings-stacked-control">
-              <DqSelect
-                v-model="settings.default_model_llm"
-                class="settings-mac-value-control"
-                :placeholder="$t('settings.defaultLlmModelPlaceholder')"
-              >
-                <DqOption
-                  v-for="opt in llmModelOptions"
-                  :key="opt.value"
-                  :label="opt.label"
-                  :value="opt.value"
-                />
-              </DqSelect>
-              <p class="settings-form-hint settings-form-hint--below-control">
-                {{ $t('settings.defaultLlmModelDesc') }}
-              </p>
-            </div>
+          <DqPrefRow :label="$t('settings.defaultLlmModel')">
+            <DqSelect
+              v-model="settings.default_model_llm"
+              class="settings-mac-value-control"
+              :placeholder="$t('settings.defaultLlmModelPlaceholder')"
+            >
+              <DqOption
+                v-for="opt in llmModelOptions"
+                :key="opt.value"
+                :label="opt.label"
+                :value="opt.value"
+              />
+            </DqSelect>
           </DqPrefRow>
 
           <DqPrefRow
@@ -185,24 +188,19 @@ const vlmModelOptions = computed(() => {
             </div>
           </DqPrefRow>
 
-          <DqPrefRow :label="$t('settings.defaultVlmModel')" stacked>
-            <div class="settings-stacked-control">
-              <DqSelect
-                v-model="settings.default_model_vlm"
-                class="settings-mac-value-control"
-                :placeholder="$t('settings.defaultVlmModelPlaceholder')"
-              >
-                <DqOption
-                  v-for="opt in vlmModelOptions"
-                  :key="opt.value"
-                  :label="opt.label"
-                  :value="opt.value"
-                />
-              </DqSelect>
-              <p class="settings-form-hint settings-form-hint--below-control">
-                {{ $t('settings.defaultVlmModelDesc') }}
-              </p>
-            </div>
+          <DqPrefRow :label="$t('settings.defaultVlmModel')">
+            <DqSelect
+              v-model="settings.default_model_vlm"
+              class="settings-mac-value-control"
+              :placeholder="$t('settings.defaultVlmModelPlaceholder')"
+            >
+              <DqOption
+                v-for="opt in vlmModelOptions"
+                :key="opt.value"
+                :label="opt.label"
+                :value="opt.value"
+              />
+            </DqSelect>
           </DqPrefRow>
         </DqPrefPane>
       </section>

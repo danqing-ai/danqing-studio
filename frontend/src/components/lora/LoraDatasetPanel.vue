@@ -1,6 +1,6 @@
 <template>
   <div class="lora-dataset-panel">
-    <!-- Left: persistent dataset library (no whole-dataset delete) -->
+    <!-- Left: persistent dataset library -->
     <aside class="lora-dataset-panel__list">
       <div class="lora-dataset-panel__list-head">
         <span class="lora-dataset-panel__list-title">{{ $t('loraTrain.datasetLibrary') }}</span>
@@ -54,6 +54,16 @@
               </DqTag>
             </span>
           </span>
+          <DqIconButton
+            type="text"
+            size="xs"
+            class="lora-dataset-panel__list-delete"
+            :label="$t('loraTrain.deleteDataset')"
+            :disabled="deletingDataset"
+            @click.stop="deleteDataset(d.id, d.name)"
+          >
+            <DqIcon :size="14"><Delete /></DqIcon>
+          </DqIconButton>
         </button>
       </div>
       <DqEmpty
@@ -83,14 +93,45 @@
               @blur="saveDatasetName"
             />
           </div>
-          <DqTag
-            size="small"
-            :type="imageCount >= minImages ? 'success' : 'warning'"
-            effect="plain"
-          >
-            {{ $t('loraTrain.datasetProgress', { current: imageCount, min: minImages }) }}
-          </DqTag>
+          <div class="lora-dataset-panel__workspace-head-actions">
+            <DqTag
+              size="small"
+              :type="imageCount >= minImages ? 'success' : 'warning'"
+              effect="plain"
+            >
+              {{ $t('loraTrain.datasetProgress', { current: imageCount, min: minImages }) }}
+            </DqTag>
+            <DqButton
+              size="xs"
+              type="danger"
+              :loading="deletingDataset"
+              @click="deleteDataset(selectedId, selectedDataset?.name || selectedId)"
+            >
+              {{ $t('loraTrain.deleteDataset') }}
+            </DqButton>
+          </div>
         </div>
+
+        <div class="lora-dataset-panel__kind-row">
+          <label class="lora-dataset-panel__label">{{ $t('loraTrain.datasetKind') }}</label>
+          <DqSelect v-model="datasetKindEdit" size="sm" class="lora-dataset-panel__kind-select" @change="saveDatasetKind">
+            <DqOption :label="$t('loraTrain.datasetKindConcept')" value="concept" />
+            <DqOption :label="$t('loraTrain.datasetKindStyle')" value="style" />
+          </DqSelect>
+          <p class="lora-dataset-panel__field-hint">{{ $t('loraTrain.datasetKindDesc') }}</p>
+        </div>
+
+        <LoraQualityHints
+          v-if="datasetHealth"
+          :report="datasetHealth"
+          mode="dataset"
+          :vision-available="visionAvailable"
+          :vlm-loading="datasetVlmLoading"
+          :dataset-audit-kind="datasetKindEdit"
+          hide-vlm-desc
+          class="lora-dataset-panel__health"
+          @run-vlm="$emit('run-dataset-vlm')"
+        />
 
         <div
           class="lora-dataset-panel__dropzone"
@@ -138,19 +179,37 @@
           </DqButton>
         </div>
 
+        <div v-if="hasVlmMarks" class="lora-dataset-panel__vlm-legend">
+          <span class="lora-dataset-panel__vlm-legend-label">{{ $t('loraTrain.quality.vlmMarkLegend') }}</span>
+          <span class="lora-dataset-panel__vlm-legend-item is-good">{{ $t('loraTrain.quality.vlmMarkGood') }}</span>
+          <span class="lora-dataset-panel__vlm-legend-item is-fair">{{ $t('loraTrain.quality.vlmMarkFair') }}</span>
+          <span class="lora-dataset-panel__vlm-legend-item is-poor">{{ $t('loraTrain.quality.vlmMarkPoor') }}</span>
+        </div>
+
         <div v-if="selectedDataset?.images?.length" class="lora-dataset-panel__grid">
           <div
             v-for="img in selectedDataset.images"
             :key="img.file"
             class="lora-dataset-panel__cell"
           >
-            <div class="lora-dataset-panel__cell-media">
+            <div
+              class="lora-dataset-panel__cell-media"
+              :class="vlmMediaClass(img.file)"
+            >
               <img
                 v-if="datasetImageUrl(img.file)"
                 :src="datasetImageUrl(img.file)"
                 :alt="img.file"
                 loading="lazy"
               />
+              <span
+                v-if="vlmMark(img.file)"
+                class="lora-dataset-panel__vlm-mark"
+                :class="`is-${vlmMark(img.file)!.level}`"
+                :title="vlmMarkTitle(img.file)"
+              >
+                {{ vlmMark(img.file)!.scoreText }}
+              </span>
               <DqIconButton
                 type="text"
                 size="xs"
@@ -251,10 +310,17 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { Close, Upload, PictureFilled } from '@danqing/dq-shell';
+import { Close, Upload, PictureFilled, Delete } from '@danqing/dq-shell';
 import { api } from '@/utils/api';
 import { toast, confirm } from '@/utils/feedback';
 import AssetPicker from '@/components/asset/AssetPicker.vue';
+import LoraQualityHints from '@/components/lora/LoraQualityHints.vue';
+import type { LoraDatasetHealthReport, VlmImageSample } from '@/utils/loraQuality';
+import {
+  buildVlmSampleMap,
+  lookupVlmSample,
+  vlmScoreLevel,
+} from '@/utils/loraQuality';
 
 const MIN_IMAGES = 3;
 
@@ -263,6 +329,9 @@ const props = defineProps<{
   datasets: Array<Record<string, any>>;
   defaultPrompt: string;
   captionEdits: Record<string, string>;
+  datasetHealth?: LoraDatasetHealthReport | null;
+  visionAvailable?: boolean;
+  datasetVlmLoading?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -270,6 +339,7 @@ const emit = defineEmits<{
   (e: 'update:defaultPrompt', value: string): void;
   (e: 'update:captionEdits', value: Record<string, string>): void;
   (e: 'datasets-changed', datasets: Array<Record<string, any>>): void;
+  (e: 'run-dataset-vlm'): void;
 }>();
 
 const { t } = useI18n();
@@ -280,6 +350,7 @@ const uploading = ref(false);
 const importingDog6 = ref(false);
 const importingGallery = ref(false);
 const autoCaptioning = ref(false);
+const deletingDataset = ref(false);
 const showCreateDialog = ref(false);
 const showGalleryImport = ref(false);
 const newDatasetName = ref('');
@@ -287,12 +358,52 @@ const datasetSearch = ref('');
 const pendingGalleryAssets = ref<string[]>([]);
 const uploadInputRef = ref<HTMLInputElement | null>(null);
 const datasetNameEdit = ref('');
+const datasetKindEdit = ref<'concept' | 'style'>('concept');
 
 const selectedDataset = computed(() =>
   props.datasets.find((d) => d.id === props.selectedId)
 );
 
 const imageCount = computed(() => selectedDataset.value?.image_count || 0);
+
+const vlmSampleMap = computed(() => {
+  if (!props.datasetHealth?.vlm_audited) return new Map<string, VlmImageSample>();
+  return buildVlmSampleMap(props.datasetHealth.vlm?.samples as VlmImageSample[] | undefined);
+});
+
+const hasVlmMarks = computed(() => props.datasetHealth?.vlm_audited && vlmSampleMap.value.size > 0);
+
+function vlmMark(file: string): { level: 'good' | 'fair' | 'poor'; scoreText: string } | null {
+  const sample = lookupVlmSample(vlmSampleMap.value, file);
+  if (!sample || sample.score == null) return null;
+  const level = vlmScoreLevel(sample.score);
+  if (!level) return null;
+  return { level, scoreText: `${Number(sample.score)}/5` };
+}
+
+function vlmMarkTitle(file: string): string {
+  const sample = lookupVlmSample(vlmSampleMap.value, file);
+  if (!sample) return '';
+  const parts: string[] = [];
+  if (sample.score != null) {
+    parts.push(t('loraTrain.quality.vlmMarkTitleScore', { score: Number(sample.score) }));
+  }
+  if (sample.reason) parts.push(sample.reason);
+  if (sample.issues?.length) {
+    parts.push(t('loraTrain.quality.vlmMarkTitleIssues', { issues: sample.issues.join(', ') }));
+  }
+  return parts.join(' — ');
+}
+
+function vlmMediaClass(file: string): Record<string, boolean> {
+  const mark = vlmMark(file);
+  if (!mark) return {};
+  return {
+    'is-vlm-good': mark.level === 'good',
+    'is-vlm-fair': mark.level === 'fair',
+    'is-vlm-poor': mark.level === 'poor',
+  };
+}
 
 const filteredDatasets = computed(() => {
   const q = datasetSearch.value.trim().toLowerCase();
@@ -311,6 +422,14 @@ watch(
   () => selectedDataset.value?.name,
   (name) => {
     datasetNameEdit.value = name || '';
+  },
+  { immediate: true }
+);
+
+watch(
+  () => selectedDataset.value?.kind,
+  (kind) => {
+    datasetKindEdit.value = kind === 'style' ? 'style' : 'concept';
   },
   { immediate: true }
 );
@@ -519,7 +638,25 @@ async function patchDefaultPrompt() {
   await api.loras.patchDataset(props.selectedId, {
     name: datasetNameEdit.value.trim() || selectedDataset.value?.name || '',
     default_prompt: props.defaultPrompt,
+    kind: datasetKindEdit.value,
   });
+}
+
+async function saveDatasetKind() {
+  if (!props.selectedId) return;
+  const kind = datasetKindEdit.value;
+  if (kind !== 'concept' && kind !== 'style') return;
+  if (kind === (selectedDataset.value?.kind || 'concept')) return;
+  try {
+    const ds = (await api.loras.patchDataset(props.selectedId, {
+      name: datasetNameEdit.value.trim() || selectedDataset.value?.name || '',
+      default_prompt: props.defaultPrompt,
+      kind,
+    })) as Record<string, any>;
+    patchDatasets(props.datasets.map((d) => (d.id === props.selectedId ? { ...d, ...ds } : d)));
+  } catch (e: unknown) {
+    toast.error(apiErrorMessage(e));
+  }
 }
 
 async function saveDatasetName() {
@@ -530,6 +667,7 @@ async function saveDatasetName() {
     const ds = (await api.loras.patchDataset(props.selectedId, {
       name,
       default_prompt: props.defaultPrompt,
+      kind: datasetKindEdit.value,
     })) as Record<string, any>;
     patchDatasets(props.datasets.map((d) => (d.id === props.selectedId ? { ...d, ...ds } : d)));
   } catch (e: unknown) {
@@ -557,6 +695,36 @@ async function removeImage(file: string) {
     toast.success(t('loraTrain.removeImageDone'));
   } catch (e: unknown) {
     toast.error(apiErrorMessage(e));
+  }
+}
+
+async function deleteDataset(id: string, name?: string) {
+  const datasetId = (id || '').trim();
+  if (!datasetId || deletingDataset.value) return;
+  const label = (name || datasetId).trim();
+  try {
+    await confirm(
+      t('loraTrain.deleteDatasetConfirm', { name: label }),
+      t('loraTrain.deleteDataset'),
+      { type: 'warning' }
+    );
+  } catch {
+    return;
+  }
+  deletingDataset.value = true;
+  try {
+    await api.loras.deleteDataset(datasetId);
+    const next = props.datasets.filter((d) => d.id !== datasetId);
+    patchDatasets(next);
+    if (props.selectedId === datasetId) {
+      emit('update:selectedId', next[0]?.id || '');
+      emit('update:captionEdits', {});
+    }
+    toast.success(t('loraTrain.deleteDatasetDone'));
+  } catch (e: unknown) {
+    toast.error(apiErrorMessage(e));
+  } finally {
+    deletingDataset.value = false;
   }
 }
 
@@ -640,6 +808,17 @@ defineExpose({
   transition: background 0.15s ease, border-color 0.15s ease;
 }
 
+.lora-dataset-panel__list-delete {
+  flex-shrink: 0;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.lora-dataset-panel__list-item:hover .lora-dataset-panel__list-delete,
+.lora-dataset-panel__list-item.is-active .lora-dataset-panel__list-delete {
+  opacity: 1;
+}
+
 .lora-dataset-panel__list-thumb {
   width: 36px;
   height: 36px;
@@ -712,12 +891,41 @@ defineExpose({
   gap: 14px;
 }
 
+.lora-dataset-panel__kind-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 280px;
+}
+
+.lora-dataset-panel__kind-select {
+  width: 100%;
+}
+
+.lora-dataset-panel__field-hint {
+  margin: 0;
+  font-size: 11px;
+  color: var(--dq-label-tertiary);
+  line-height: 1.4;
+}
+
+.lora-dataset-panel__health {
+  margin-top: -4px;
+}
+
 .lora-dataset-panel__workspace-head {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
   justify-content: space-between;
   gap: 10px;
+}
+
+.lora-dataset-panel__workspace-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 
 .lora-dataset-panel__name-row {
@@ -809,6 +1017,79 @@ defineExpose({
   border-radius: var(--radius-md);
   border: 0.5px solid var(--dq-border);
   background: var(--dq-bg-base);
+}
+
+.lora-dataset-panel__cell-media.is-vlm-good img {
+  border: 2px solid color-mix(in srgb, var(--dq-success) 70%, var(--dq-border));
+}
+
+.lora-dataset-panel__cell-media.is-vlm-fair img {
+  border: 2px solid color-mix(in srgb, var(--dq-warning, #e6a23c) 75%, var(--dq-border));
+}
+
+.lora-dataset-panel__cell-media.is-vlm-poor img {
+  border: 2px solid color-mix(in srgb, var(--dq-danger) 75%, var(--dq-border));
+}
+
+.lora-dataset-panel__vlm-mark {
+  position: absolute;
+  left: 4px;
+  bottom: 4px;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: #fff;
+  pointer-events: none;
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--dq-bg-base) 35%, transparent);
+}
+
+.lora-dataset-panel__vlm-mark.is-good {
+  background: color-mix(in srgb, var(--dq-success) 88%, #000);
+}
+
+.lora-dataset-panel__vlm-mark.is-fair {
+  background: color-mix(in srgb, var(--dq-warning, #c9922c) 92%, #000);
+}
+
+.lora-dataset-panel__vlm-mark.is-poor {
+  background: color-mix(in srgb, var(--dq-danger) 90%, #000);
+}
+
+.lora-dataset-panel__vlm-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--dq-label-tertiary);
+}
+
+.lora-dataset-panel__vlm-legend-label {
+  font-weight: 500;
+  color: var(--dq-label-secondary);
+}
+
+.lora-dataset-panel__vlm-legend-item {
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--dq-border-subtle);
+}
+
+.lora-dataset-panel__vlm-legend-item.is-good {
+  border-color: color-mix(in srgb, var(--dq-success) 45%, transparent);
+  color: var(--dq-success);
+}
+
+.lora-dataset-panel__vlm-legend-item.is-fair {
+  border-color: color-mix(in srgb, var(--dq-warning, #c9922c) 45%, transparent);
+  color: var(--dq-warning, var(--dq-label-primary));
+}
+
+.lora-dataset-panel__vlm-legend-item.is-poor {
+  border-color: color-mix(in srgb, var(--dq-danger) 45%, transparent);
+  color: var(--dq-danger);
 }
 
 .lora-dataset-panel__cell-remove {

@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 
-from backend.api.deps import get_model_registry
+from backend.api.deps import get_model_registry as get_typed_model_registry
 from backend.core.container import get_container
 from backend.core.interfaces import ISettingsService, AppSettings, ModelConfig, IPresetStore, IPathResolver
 from backend.core.i18n import t, resolve_locale
@@ -107,7 +107,7 @@ def get_settings():
     """Get settings"""
     service = get_settings_service()
     settings = service.get_settings()
-    registry = get_model_registry()
+    registry = get_typed_model_registry()
     if normalize_app_llm_settings(settings, registry):
         service.update_settings(settings)
     return SettingsResponse(**settings.__dict__)
@@ -134,7 +134,7 @@ def update_settings(request: SettingsUpdateRequest, req: Request):
         if value is not None:
             setattr(settings, key, value)
 
-    registry = get_model_registry()
+    registry = get_typed_model_registry()
     normalize_app_llm_settings(settings, registry)
 
     service.update_settings(settings)
@@ -343,7 +343,7 @@ def install_environment():
 
 
 @router.get("/registry")
-def get_model_registry():
+def get_settings_model_registry():
     """Get model registry"""
     service = get_settings_service()
     registry = service.get_model_registry()

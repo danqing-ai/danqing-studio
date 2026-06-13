@@ -26,6 +26,13 @@ from backend.engine.training.lora_layers import (
     prepare_dit_for_lora_training,
     repair_indexed_lora_weights,
 )
+from backend.engine.training.dit_training_loss import (
+    combine_instance_prior_loss,
+    flow_match_mse,
+    make_prior_latent,
+    sample_noisy_latent,
+)
+from backend.engine.training.latent_cache import LatentCache
 from backend.engine.training.lora_train_loop import run_dit_lora_train_loop
 from backend.engine.training.lora_train_runtime import (
     assert_training_memory,
@@ -81,8 +88,9 @@ def _encode_qwen_vae(
     return packed.astype(ctx.bfloat16())
 
 
-def _encode_dataset(
+def _encode_dataset_to_cache(
     *,
+    cache: LatentCache,
     ctx: Any,
     pairs: list[tuple[Path, str]],
     bundle_root: Path,
@@ -93,23 +101,22 @@ def _encode_dataset(
     preset: str | None,
     resolution: tuple[int, int],
     num_augmentations: int,
+    dataset_id: str,
     exec_ctx: ExecutionContext,
-) -> tuple[list[Any], list[Any], list[Any]]:
-    latents: list[Any] = []
-    txt_feats: list[Any] = []
-    txt_masks: list[Any] = []
+    class_prompt: str | None,
+) -> int:
     w, h = resolution[0], resolution[1]
     total_samples = len(pairs) * num_augmentations
-    _log(exec_ctx, "info", f"Encoding {len(pairs)} images × {num_augmentations} augmentations …")
-    _progress(
-        exec_ctx,
-        step=0,
-        total=1,
-        message=f"Encoding 0/{total_samples} samples …",
-        phase="encoding",
-        progress=0.02,
+    cache.begin(
+        dataset_id=dataset_id,
+        n_pairs=len(pairs),
+        num_augmentations=num_augmentations,
+        resolution=resolution,
+        family="qwen_image",
+        tensor_keys=["latent", "txt", "txt_mask"],
     )
-    done = 0
+    _log(exec_ctx, "info", f"Encoding {len(pairs)} images × {num_augmentations} augmentations …")
+    sample_idx = 0
     for img_path, prompt in pairs:
         txt, mask = text_encoder.encode([prompt])
         mx.eval(txt, mask)
@@ -131,21 +138,23 @@ def _encode_dataset(
                 height_px=h,
                 width_px=w,
             )
-            latents.append(z)
-            txt_feats.append(txt)
-            txt_masks.append(mask)
-            done += 1
-            if done == total_samples or done % max(1, total_samples // 8) == 0:
-                frac = 0.02 + 0.08 * (done / max(total_samples, 1))
+            cache.write_sample(sample_idx, {"latent": z[0], "txt": txt, "txt_mask": mask})
+            sample_idx += 1
+            if sample_idx == total_samples or sample_idx % max(1, total_samples // 8) == 0:
+                frac = 0.02 + 0.08 * (sample_idx / max(total_samples, 1))
                 _progress(
                     exec_ctx,
                     step=0,
                     total=1,
-                    message=f"Encoding {done}/{total_samples} samples …",
+                    message=f"Encoding {sample_idx}/{total_samples} samples …",
                     phase="encoding",
                     progress=frac,
                 )
-    return latents, txt_feats, txt_masks
+    if class_prompt:
+        txtp, maskp = text_encoder.encode([class_prompt])
+        mx.eval(txtp, maskp)
+        cache.write_prior({"txt": txtp, "txt_mask": maskp})
+    return cache.finalize()
 
 
 def _training_loss(
@@ -157,13 +166,12 @@ def _training_loss(
     image_height: int,
     image_width: int,
     ctx: Any,
+    min_snr_gamma: float = 0.0,
+    prior_txt: mx.array | None = None,
+    prior_mask: mx.array | None = None,
+    prior_loss_weight: float = 0.0,
 ) -> mx.array:
-    b = x0.shape[0]
-    t = mx.random.uniform(shape=(b,), dtype=ctx.float32())
-    eps = mx.random.normal(x0.shape, dtype=ctx.bfloat16())
-    sigma = mx.reshape(t, (b, 1, 1, 1)).astype(ctx.bfloat16())
-    x_t = (1.0 - sigma) * x0 + sigma * eps
-    x_t = mx.stop_gradient(x_t)
+    x_t, eps, t = sample_noisy_latent(x0, ctx)
     pred = model(
         x_t,
         timestep=0,
@@ -173,7 +181,25 @@ def _training_loss(
         image_height=image_height,
         image_width=image_width,
     )
-    return mx.mean(mx.square(pred + x0 - eps))
+    b = x0.shape[0]
+    sigma = mx.reshape(t, (b,) + (1,) * (x0.ndim - 1)).astype(ctx.bfloat16())
+    inst = flow_match_mse(pred, x0, eps, sigma=sigma, min_snr_gamma=min_snr_gamma)
+    if prior_txt is None or prior_mask is None or prior_loss_weight <= 0:
+        return inst
+    x0p = make_prior_latent(x0, ctx)
+    x_tp, epsp, tp = sample_noisy_latent(x0p, ctx)
+    predp = model(
+        x_tp,
+        timestep=0,
+        txt_embeds=prior_txt,
+        sigmas=tp,
+        encoder_hidden_states_mask=prior_mask,
+        image_height=image_height,
+        image_width=image_width,
+    )
+    sigmap = mx.reshape(tp, (b,) + (1,) * (x0.ndim - 1)).astype(ctx.bfloat16())
+    prior = flow_match_mse(predp, x0p, epsp, sigma=sigmap, min_snr_gamma=min_snr_gamma)
+    return combine_instance_prior_loss(inst, prior, prior_loss_weight=prior_loss_weight)
 
 
 def _strip_dit_lora_paths(train_module: Any) -> None:
@@ -240,20 +266,19 @@ def _generate_progress_image(
     image_seq_len = lh * lw
     sched = FlowMatchEulerScheduler(num_train_timesteps=1000, shift=1.0, ctx=ctx)
     sched.set_timesteps(steps, mu=sched._compute_empirical_mu(image_seq_len, steps))
-    for i, t in enumerate(sched._timesteps):
-        t_val = float(np.asarray(t).reshape(-1)[0]) if hasattr(t, "shape") else float(t)
-        sigmas = mx.array([t_val], dtype=ctx.float32())
+    sigma_schedule = sched._sigmas
+    for i, _t in enumerate(sched._timesteps):
         pred = model(
             latents,
             timestep=i,
             txt_embeds=txt,
-            sigmas=sigmas,
+            sigmas=sigma_schedule,
             encoder_hidden_states_mask=mask,
             image_height=h,
             image_width=w,
             scheduler_timesteps=sched._timesteps,
         )
-        latents = sched.step(pred, t, latents)
+        latents = sched.step(pred, i, latents)
         mx.eval(latents)
     z = qwen_unpack_latents_nchw(ctx, latents)
     vae = QwenVAE()
@@ -350,19 +375,37 @@ def run_qwen_image_dreambooth_training(
         "info",
         f"Training crop {resolution[0]}×{resolution[1]} (portrait-biased cover, Qwen-Image VAE grid ÷16) …",
     )
-    latents, txt_feats, txt_masks = _encode_dataset(
-        ctx=ctx,
-        pairs=pairs,
-        bundle_root=bundle_root,
-        project_root=project_root,
-        text_encoder=text_encoder,
-        base_model_id=base_model_id,
-        train_cfg=cfg,
-        preset=request.preset,
-        resolution=resolution,
+    latent_cache = LatentCache(work_dir)
+    class_prompt = train_runtime.class_prompt
+    if train_runtime.prior_loss_weight > 0 and not class_prompt:
+        class_prompt = "a photo"
+    if latent_cache.is_valid(
+        dataset_id=request.dataset_id,
+        n_pairs=len(pairs),
         num_augmentations=train_runtime.num_augmentations,
-        exec_ctx=exec_ctx,
-    )
+        resolution=resolution,
+        family="qwen_image",
+        n_samples=len(pairs) * train_runtime.num_augmentations,
+    ):
+        _log(exec_ctx, "info", "Reusing cached latents from work_dir/latent_cache …")
+        n_samples = len(pairs) * train_runtime.num_augmentations
+    else:
+        n_samples = _encode_dataset_to_cache(
+            cache=latent_cache,
+            ctx=ctx,
+            pairs=pairs,
+            bundle_root=bundle_root,
+            project_root=project_root,
+            text_encoder=text_encoder,
+            base_model_id=base_model_id,
+            train_cfg=cfg,
+            preset=request.preset,
+            resolution=resolution,
+            num_augmentations=train_runtime.num_augmentations,
+            dataset_id=request.dataset_id,
+            exec_ctx=exec_ctx,
+            class_prompt=class_prompt if train_runtime.prior_loss_weight > 0 else None,
+        )
     text_encoder.release_weights()
     ctx.clear_cache()
 
@@ -399,16 +442,20 @@ def run_qwen_image_dreambooth_training(
         lora_module_keys=train_runtime.lora_module_keys,
         qlora_bits=train_runtime.qlora_bits,
         grad_checkpoint=train_runtime.grad_checkpoint,
+        train_type=train_runtime.train_type,
     )
     _strip_dit_lora_paths(train_module)
 
-    xs = mx.concatenate(latents)
-    if txt_feats:
-        mx.eval(xs, *txt_feats, *txt_masks)
-    else:
-        mx.eval(xs)
-    n_samples = len(latents)
     img_h, img_w = resolution[1], resolution[0]
+    prior_txt: Any | None = None
+    prior_mask: Any | None = None
+    if train_runtime.prior_loss_weight > 0:
+        try:
+            prior_data = latent_cache.load_prior()
+            prior_txt = prior_data["txt"]
+            prior_mask = prior_data["txt_mask"]
+        except RuntimeError:
+            _log(exec_ctx, "warning", "Prior preservation requested but prior cache missing; disabled")
 
     train_pairs, val_pairs = split_train_val_indices(len(pairs), val_split=train_runtime.val_split)
     train_indices = [
@@ -422,19 +469,26 @@ def run_qwen_image_dreambooth_training(
         for aug in range(train_runtime.num_augmentations)
     ]
 
+    _log(exec_ctx, "info", f"Loading {n_samples} cached latents into memory …")
+    qwen_samples = latent_cache.materialize_qwen(n_samples)
+    mx.eval(*[t for sample in qwen_samples for t in sample])
+
     def sample_batch(indices: list[int]) -> tuple[Any, ...]:
-        idx = indices[0]
-        return (xs[idx : idx + 1], txt_feats[idx], txt_masks[idx])
+        return qwen_samples[indices[0]]
 
     def loss_fn(x0: mx.array, txt: mx.array, mask: mx.array) -> mx.array:
         return _training_loss(
-            model,
+            train_module,
             x0,
             txt,
             mask,
             image_height=img_h,
             image_width=img_w,
             ctx=ctx,
+            min_snr_gamma=train_runtime.min_snr_gamma,
+            prior_txt=prior_txt,
+            prior_mask=prior_mask,
+            prior_loss_weight=train_runtime.prior_loss_weight if prior_txt is not None else 0.0,
         )
 
     def preview_at(step: int) -> None:
@@ -459,7 +513,7 @@ def run_qwen_image_dreambooth_training(
         te.release_weights()
         ctx.clear_cache()
 
-    loss_history = run_dit_lora_train_loop(
+    loss_history, best_path = run_dit_lora_train_loop(
         exec_ctx=exec_ctx,
         model=model,
         train_module=train_module,
@@ -473,17 +527,37 @@ def run_qwen_image_dreambooth_training(
         val_indices=val_indices,
         loss_fn=loss_fn,
         on_progress_preview=preview_at,
+        mlx_ctx=ctx,
     )
 
     final_path = adapter_dir / "final_adapters.safetensors"
-    meta = {
-        "iteration": train_runtime.iterations,
-        "lora_rank": train_runtime.lora_rank,
-        "base_model": base_model_id,
-        "progress_prompt": progress_prompt,
-        "qlora_bits": train_runtime.qlora_bits,
-    }
-    _save_adapter(final_path, train_module, train_runtime.lora_rank, meta)
+    if best_path is not None and best_path.is_file():
+        final_path.write_bytes(best_path.read_bytes())
+        best_meta = adapter_dir / "best_adapters.json"
+        if best_meta.is_file():
+            final_path.with_suffix(".json").write_text(
+                best_meta.read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+    else:
+        meta = {
+            "iteration": train_runtime.iterations,
+            "lora_rank": train_runtime.lora_rank,
+            "base_model": base_model_id,
+            "progress_prompt": progress_prompt,
+            "qlora_bits": train_runtime.qlora_bits,
+            "train_type": train_runtime.train_type,
+        }
+        _save_adapter(final_path, train_module, train_runtime.lora_rank, meta)
+    if train_runtime.fuse_adapters:
+        from backend.engine.training.lora_layers import collect_fused_adapter_deltas
+
+        fused_path = adapter_dir / "fused_adapters.safetensors"
+        mx.save_safetensors(str(fused_path), collect_fused_adapter_deltas(train_module))
+        fused_path.with_suffix(".json").write_text(
+            json.dumps({"format": "dense_delta", "base_model": base_model_id}, indent=2),
+            encoding="utf-8",
+        )
     _validate_saved_lora(final_path, lora_blocks=train_runtime.lora_blocks)
 
     output_name = (request.output_name or f"{base_model_id}-{request.dataset_id}").strip()

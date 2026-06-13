@@ -43,6 +43,16 @@
       </div>
     </div>
 
+    <LoraQualityHints
+      v-if="task?.status === 'completed' && artifacts?.quality"
+      :report="artifacts.quality"
+      mode="training"
+      :vision-available="visionAvailable"
+      :vlm-loading="trainingVlmLoading"
+      class="lora-run-detail__quality"
+      @run-vlm="runTrainingVlmAudit"
+    />
+
     <div v-if="artifacts?.progress_images?.length" class="lora-run-detail__section">
       <h4 class="lora-run-detail__section-title">{{ $t('loraTrain.progressGallery') }}</h4>
       <div class="lora-run-gallery-grid">
@@ -118,6 +128,8 @@ import { toast } from '@/utils/feedback';
 import { openGlobalTaskQueue } from '@/utils/appEvents';
 import { openModelsUserLoras } from '@/utils/loraTrainHandoff';
 import TaskIdBadge from '@/components/studio/TaskIdBadge.vue';
+import LoraQualityHints from '@/components/lora/LoraQualityHints.vue';
+import type { LoraTrainingQualityReport } from '@/utils/loraQuality';
 
 const props = defineProps<{ taskId: string }>();
 const emit = defineEmits<{
@@ -134,6 +146,8 @@ const selectedCheckpoint = ref('');
 const registerName = ref('');
 const registering = ref(false);
 const registeredLoraId = ref('');
+const visionAvailable = ref(false);
+const trainingVlmLoading = ref(false);
 let taskStream: EventSource | null = null;
 let lastArtifactRefresh = 0;
 
@@ -241,12 +255,46 @@ async function refreshArtifacts(force = false) {
   try {
     const next = await api.loras.trainingArtifacts(props.taskId);
     artifacts.value = next;
+    if ((next as any)?.vision_available != null) {
+      visionAvailable.value = Boolean((next as any).vision_available);
+    }
     if (!selectedCheckpoint.value && (next as any)?.checkpoints?.length) {
       const finals = (next as any).checkpoints.filter((c: string) => c.includes('final'));
       selectedCheckpoint.value = finals[finals.length - 1] || (next as any).checkpoints.at(-1);
     }
   } catch {
     if (force) artifacts.value = null;
+  }
+}
+
+async function refreshVisionAvailability() {
+  try {
+    const info = await api.chat.getLLMModelInfo();
+    visionAvailable.value = Boolean(info?.vision?.available);
+  } catch {
+    visionAvailable.value = false;
+  }
+}
+
+async function runTrainingVlmAudit() {
+  if (trainingVlmLoading.value) return;
+  trainingVlmLoading.value = true;
+  try {
+    const quality = (await api.loras.trainingQualityVlm(props.taskId)) as LoraTrainingQualityReport;
+    artifacts.value = { ...(artifacts.value || {}), quality };
+    toast.success(t('loraTrain.quality.vlmAuditDone'));
+  } catch (e: unknown) {
+    const err = e as { response?: { data?: { detail?: { message?: string } | string } }; message?: string };
+    const detail = err?.response?.data?.detail;
+    const msg =
+      detail && typeof detail === 'object' && detail.message
+        ? detail.message
+        : typeof detail === 'string'
+          ? detail
+          : err?.message || String(e);
+    toast.error(msg);
+  } finally {
+    trainingVlmLoading.value = false;
   }
 }
 
@@ -358,7 +406,7 @@ function openModelsUserLorasPage() {
 }
 
 onMounted(async () => {
-  await refreshTask();
+  await Promise.all([refreshTask(), refreshVisionAvailability()]);
   if (!isTerminal.value) startStream();
 });
 
@@ -462,6 +510,10 @@ onUnmounted(() => {
   font-size: 13px;
   font-weight: 600;
   color: var(--dq-label-primary);
+}
+
+.lora-run-detail__quality {
+  margin: 4px 0 8px;
 }
 
 .lora-run-detail__resume-hint {

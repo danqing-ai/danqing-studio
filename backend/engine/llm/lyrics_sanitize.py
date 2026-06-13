@@ -6,6 +6,8 @@ import re
 from backend.engine.llm.think_parse import extract_final_llm_content
 
 _SECTION_TAG = re.compile(r"^\[[^\]]+\]\s*$", re.IGNORECASE)
+_CHARS_ANNOTATION_RE = re.compile(r"\s*\(\d+\s*chars?\)", re.IGNORECASE)
+_EN_TRANSLATION_SUFFIX_RE = re.compile(r'\s*[-–—]\s*["\'].+["\']\s*$')
 _MAX_LINES = 36
 _MAX_LINE_CHARS = 120
 _MAX_LINE_WORDS = 16
@@ -35,6 +37,38 @@ def _line_is_degenerate(line: str) -> bool:
     if len(words) > _MAX_LINE_WORDS:
         return True
     return False
+
+
+def lyric_line_has_annotations(line: str) -> bool:
+    stripped = (line or "").strip()
+    if not stripped:
+        return False
+    return bool(
+        _CHARS_ANNOTATION_RE.search(stripped) or _EN_TRANSLATION_SUFFIX_RE.search(stripped)
+    )
+
+
+def _clean_lyric_line(line: str) -> str | None:
+    """Keep singable text only; drop char counts and inline translations."""
+    stripped = (line or "").strip()
+    if not stripped:
+        return None
+    cleaned = _CHARS_ANNOTATION_RE.sub("", stripped)
+    cleaned = _EN_TRANSLATION_SUFFIX_RE.sub("", cleaned).strip()
+    if not cleaned:
+        return None
+    if cleaned.startswith('"') and cleaned.endswith('"'):
+        return None
+    if cleaned.startswith("'") and cleaned.endswith("'"):
+        return None
+    if lyric_line_has_annotations(cleaned):
+        return None
+    return cleaned
+
+
+def _strip_trailing_section_tags(lines: list[str]) -> None:
+    while lines and _SECTION_TAG.match(lines[-1]):
+        lines.pop()
 
 
 def _strip_lyrics_preamble(text: str) -> str:
@@ -82,12 +116,15 @@ def sanitize_lyrics_output(text: str, *, think_enabled: bool = False) -> str:
                 outro_body_lines = 0
             continue
 
-        cleaned = _truncate_word_loop(stripped)
-        if not cleaned or _line_is_degenerate(cleaned):
+        truncated = _truncate_word_loop(stripped)
+        cleaned = _clean_lyric_line(truncated)
+        if not cleaned:
+            continue
+        if _line_is_degenerate(cleaned):
             break
 
         out.append(cleaned)
-        if len(cleaned.split()) < len(stripped.split()):
+        if truncated != stripped:
             break
         if outro_tag_seen:
             outro_body_lines += 1
@@ -96,5 +133,6 @@ def sanitize_lyrics_output(text: str, *, think_enabled: bool = False) -> str:
 
     while out and out[-1] == "":
         out.pop()
+    _strip_trailing_section_tags(out)
 
     return "\n".join(out).strip()

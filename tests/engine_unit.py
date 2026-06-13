@@ -3011,6 +3011,33 @@ Should not appear
         self.assertNotIn("divine divine divine", out)
         self.assertNotIn("Should not appear", out)
 
+        annotated = """[Verse 1]
+青峰云海间 (5 chars) - "Green peaks, cloud sea"
+古剑映寒月 (6 chars) - "Ancient sword reflects cold moon"
+[Chorus]
+我辈当如龙 (6 chars) - "We should be like dragons"
+[Verse 2]
+"""
+        cleaned = sanitize_lyrics_output(annotated)
+        self.assertIn("[Verse 1]", cleaned)
+        self.assertIn("青峰云海间", cleaned)
+        self.assertNotIn("chars)", cleaned)
+        self.assertNotIn("Green peaks", cleaned)
+        self.assertNotIn("[Verse 2]", cleaned)
+        self.assertTrue(LLMService._lyrics_quality_ok(cleaned))
+
+    def test_build_lyrics_user_message_markdown(self) -> None:
+        from backend.engine.llm.service import LLMService
+
+        msg = LLMService._build_lyrics_user_message("武侠电子，苍劲男声", "epic orchestral")
+        self.assertIn("## Music description", msg)
+        self.assertIn("武侠电子", msg)
+        self.assertIn("## Style", msg)
+        self.assertIn("epic orchestral", msg)
+
+        plain = LLMService._build_lyrics_user_message("summer pop")
+        self.assertNotIn("## Style", plain)
+
     def test_sanitize_enhanced_prompt_strips_comma_loops(self) -> None:
         from backend.engine.llm.prompt_sanitize import (
             prompt_enhance_quality_ok,
@@ -3083,6 +3110,26 @@ Should not appear
                 "Okay, let's tackle this prompt rewrite request. The user wants a Chinese-to-Chinese prompt."
             )
         )
+
+    def test_generate_lyrics_forces_no_think_mode(self) -> None:
+        from backend.engine.llm.service import LLMService
+
+        svc = self._load_service()
+        svc.apply_model_settings(llm_think_enabled=True)
+        calls: list[tuple[bool | None, str]] = []
+
+        def capture(_request, enable_thinking=None):
+            calls.append((enable_thinking, _request.messages[-1].content))
+            raise RuntimeError("stop-after-capture")
+
+        svc.chat_completion = capture  # type: ignore[method-assign]
+        with self.assertRaises(RuntimeError):
+            svc.generate_lyrics("夏日流行，海边青春")
+        self.assertGreaterEqual(len(calls), 1)
+        for enable_thinking, user_content in calls:
+            self.assertIs(enable_thinking, False)
+            self.assertIn("/no_think", user_content)
+            self.assertNotIn("/think", user_content)
 
     def test_generation_kwargs_uses_sampler(self) -> None:
         from backend.core.contracts import ChatCompletionRequest, ChatMessage
@@ -3910,6 +3957,160 @@ class LoraDatasetStoreTests(unittest.TestCase):
                 dataset_store.get_dataset(root, dataset_id)
 
 
+class LoraQualityTests(unittest.TestCase):
+    def test_parse_vlm_audit_output(self) -> None:
+        from backend.engine.training.lora_quality_vlm import parse_vlm_audit_output
+
+        text = "SCORE: 2\nISSUES: blurry,small_face\nREASON: Face is tiny and soft."
+        parsed = parse_vlm_audit_output(text)
+        self.assertEqual(parsed["score"], 2.0)
+        self.assertIn("blurry", parsed["issues"])
+        self.assertIn("small_face", parsed["issues"])
+
+    def test_merge_vlm_hints_downgrades_level(self) -> None:
+        from backend.engine.training.lora_quality_vlm import merge_vlm_hints
+
+        base = {"level": "good", "score": 90, "hints": []}
+        vlm = {
+            "hints": [{"code": "vlm_low_portrait_score", "severity": "error", "params": {}, "source": "vlm"}],
+            "avg_score": 2.0,
+            "samples": [],
+        }
+        merged = merge_vlm_hints(base, vlm)
+        self.assertEqual(merged["level"], "poor")
+
+    def test_build_dataset_audit_instruction_style(self) -> None:
+        from backend.engine.training.lora_quality_vlm import build_dataset_audit_instruction
+
+        style = build_dataset_audit_instruction("style")
+        concept = build_dataset_audit_instruction("concept")
+        self.assertIn("style", style.lower())
+        self.assertIn("face", concept.lower())
+
+    def test_resolve_audit_paths_all_images(self) -> None:
+        from backend.engine.training.lora_quality_vlm import resolve_audit_paths
+
+        paths = [Path(f"img_{i}.jpg") for i in range(12)]
+        picked, truncated = resolve_audit_paths(paths, max_samples=0)
+        self.assertEqual(len(picked), 12)
+        self.assertFalse(truncated)
+
+    def test_compile_dataset_vlm_report(self) -> None:
+        from backend.engine.training.lora_quality_vlm import compile_dataset_vlm_report
+
+        paths = [Path("a.jpg"), Path("b.jpg")]
+        texts = [
+            "SCORE: 2\nISSUES: blurry,small_face\nREASON: Face too small.",
+            "SCORE: 4\nISSUES: good\nREASON: Clear portrait.",
+        ]
+        report = compile_dataset_vlm_report(paths, texts)
+        self.assertIn("hints", report)
+        self.assertEqual(len(report["samples"]), 2)
+
+    def test_prepare_image_for_vlm_downscales(self) -> None:
+        from PIL import Image
+
+        from backend.engine.llm.vision import prepare_image_for_vlm
+
+        with tempfile.TemporaryDirectory() as tmp:
+            big = Path(tmp) / "big.jpg"
+            Image.new("RGB", (2000, 3000), color=(10, 20, 30)).save(big, format="JPEG")
+            use_path, is_temp = prepare_image_for_vlm(big, max_edge=768)
+            try:
+                with Image.open(use_path) as img:
+                    self.assertLessEqual(min(img.size), 768)
+            finally:
+                if is_temp:
+                    use_path.unlink(missing_ok=True)
+
+    def _add_jpeg(self, root: Path, dataset_id: str, name: str, size: tuple[int, int]) -> None:
+        from PIL import Image
+
+        from backend.engine.training import dataset_store
+
+        path = dataset_store.datasets_root(root) / dataset_id / "images" / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", size, color=(128, 64, 32)).save(path, format="JPEG")
+
+    def test_analyze_dataset_health_good(self) -> None:
+        from backend.engine.training import dataset_store
+        from backend.engine.training.lora_quality import analyze_dataset_health
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ds = dataset_store.create_dataset(root, name="good-set", default_prompt="A photo of sks")
+            dataset_id = ds["id"]
+            for i in range(12):
+                self._add_jpeg(root, dataset_id, f"img_{i:02d}.jpg", (1080, 1440))
+            rows = [
+                {"image": f"images/img_{i:02d}.jpg", "prompt": "A photo of sks"}
+                for i in range(12)
+            ]
+            jsonl = dataset_store.datasets_root(root) / dataset_id / "train.jsonl"
+            jsonl.write_text(
+                "\n".join(
+                    __import__("json").dumps({"image": r["image"], "prompt": r["prompt"]})
+                    for r in rows
+                ),
+                encoding="utf-8",
+            )
+            report = analyze_dataset_health(root, dataset_id)
+            self.assertEqual(report["level"], "good")
+            self.assertGreaterEqual(int(report["stats"]["median_short_edge"]), 1080)
+
+    def test_analyze_dataset_health_poor_small_images(self) -> None:
+        from backend.engine.training import dataset_store
+        from backend.engine.training.lora_quality import analyze_dataset_health
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ds = dataset_store.create_dataset(root, name="cyq-like", default_prompt="A photo of sks")
+            dataset_id = ds["id"]
+            for i in range(6):
+                self._add_jpeg(root, dataset_id, f"tiny_{i}.jpg", (320, 320))
+            rows = [
+                {"image": f"images/tiny_{i}.jpg", "prompt": "A photo of sks"} for i in range(6)
+            ]
+            jsonl = dataset_store.datasets_root(root) / dataset_id / "train.jsonl"
+            jsonl.write_text(
+                "\n".join(
+                    __import__("json").dumps({"image": r["image"], "prompt": r["prompt"]})
+                    for r in rows
+                ),
+                encoding="utf-8",
+            )
+            report = analyze_dataset_health(root, dataset_id)
+            self.assertIn(report["level"], ("fair", "poor"))
+            codes = {h["code"] for h in report["hints"]}
+            self.assertTrue(codes & {"many_small_512", "many_small_600", "low_resolution_median"})
+
+    def test_analyze_training_quality_high_initial_loss(self) -> None:
+        from backend.engine.training.lora_quality import analyze_training_quality
+
+        loss_history = [
+            {"step": 10, "loss": 0.52},
+            {"step": 20, "loss": 0.41},
+            {"step": 30, "loss": 0.35},
+        ]
+        report = analyze_training_quality(loss_history)
+        self.assertIn(report["level"], ("fair", "poor"))
+        codes = {h["code"] for h in report["hints"]}
+        self.assertIn("high_initial_loss", codes)
+
+    def test_analyze_training_quality_healthy(self) -> None:
+        from backend.engine.training.lora_quality import analyze_training_quality
+
+        loss_history = [
+            {"step": 10, "loss": 0.30},
+            {"step": 100, "loss": 0.12},
+            {"step": 200, "loss": 0.08},
+        ]
+        report = analyze_training_quality(loss_history)
+        self.assertEqual(report["level"], "good")
+        codes = {h["code"] for h in report["hints"]}
+        self.assertIn("training_healthy", codes)
+
+
 class LoraTrainRuntimeTests(unittest.TestCase):
     def test_train_min_memory_gb_qlora_lowers_threshold(self) -> None:
         from backend.engine.training.lora_train_runtime import train_min_memory_gb
@@ -3930,12 +4131,89 @@ class LoraTrainRuntimeTests(unittest.TestCase):
         from backend.engine.training.lora_train_runtime import parse_lora_train_runtime_config
 
         cfg = parse_lora_train_runtime_config(
-            {"qlora_bits": 4, "optimizer": "adamw", "lora_scale": 16.0},
+            {
+                "qlora_bits": 4,
+                "optimizer": "adamw",
+                "lora_scale": 16.0,
+                "train_type": "dora",
+                "min_snr_gamma": 5.0,
+                "prior_loss_weight": 1.0,
+                "early_stop_patience": 3,
+                "fuse_adapters": True,
+            },
             defaults={"lora_rank": 8, "iterations": 100},
         )
         self.assertEqual(cfg.qlora_bits, 4)
         self.assertEqual(cfg.optimizer_name, "adamw")
         self.assertEqual(cfg.lora_scale, 16.0)
+        self.assertEqual(cfg.train_type, "dora")
+        self.assertEqual(cfg.min_snr_gamma, 5.0)
+        self.assertEqual(cfg.prior_loss_weight, 1.0)
+        self.assertEqual(cfg.early_stop_patience, 3)
+        self.assertTrue(cfg.fuse_adapters)
+
+    def test_latent_cache_fingerprint(self) -> None:
+        from backend.engine.training.latent_cache import LatentCache
+
+        cache = LatentCache("/tmp/dq_lora_test")
+        cache.begin(
+            dataset_id="ds_test",
+            n_pairs=3,
+            num_augmentations=5,
+            resolution=(768, 768),
+            family="z_image",
+            tensor_keys=["latent", "cap"],
+        )
+        self.assertEqual(cache._manifest["n_samples"], 0)
+
+    def test_latent_cache_restores_batch_dim(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        import mlx.core as mx
+
+        from backend.engine.training.latent_cache import LatentCache
+
+        with tempfile.TemporaryDirectory() as td:
+            cache = LatentCache(Path(td))
+            cache.begin(
+                dataset_id="ds_batch",
+                n_pairs=1,
+                num_augmentations=1,
+                resolution=(512, 512),
+                family="z_image",
+                tensor_keys=["latent", "cap"],
+            )
+            latent = mx.zeros((16, 64, 64), dtype=mx.bfloat16)
+            cap = mx.zeros((1, 8, 2560), dtype=mx.bfloat16)
+            cache.write_sample(0, {"latent": latent, "cap": cap})
+            cache.finalize()
+
+            x0, loaded_cap = cache.sample_z_image(0)
+            self.assertEqual(tuple(x0.shape), (1, 16, 64, 64))
+            self.assertEqual(tuple(loaded_cap.shape), (1, 8, 2560))
+
+    def test_min_snr_weight_disabled(self) -> None:
+        import mlx.core as mx
+        from backend.engine.training.dit_training_loss import min_snr_weight
+
+        sigma = mx.array([0.5])
+        w = min_snr_weight(sigma, 0.0)
+        self.assertEqual(float(w.item()), 1.0)
+
+    def test_load_lora_train_config_json(self) -> None:
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from backend.engine.training.lora_train_config import load_lora_train_config_file
+
+        with tempfile.TemporaryDirectory() as td:
+            path = Path(td) / "train.json"
+            path.write_text(json.dumps({"qlora_bits": 4, "grad_checkpoint": True}), encoding="utf-8")
+            cfg = load_lora_train_config_file(path)
+            self.assertEqual(cfg["qlora_bits"], 4)
+            self.assertTrue(cfg["grad_checkpoint"])
 
     def test_lora_module_keys_limit_injection(self) -> None:
         from backend.engine.runtime.mlx import MLXContext

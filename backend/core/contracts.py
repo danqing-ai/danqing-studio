@@ -342,6 +342,12 @@ class LoraTrainingRequest(BaseModel):
     resume_from: Optional[str] = None
     resume_task_id: Optional[str] = None
     resume_checkpoint: Optional[str] = None
+    train_type: Optional[Literal["lora", "dora"]] = None
+    min_snr_gamma: Optional[float] = Field(None, ge=0)
+    class_prompt: Optional[str] = None
+    prior_loss_weight: Optional[float] = Field(None, ge=0)
+    early_stop_patience: Optional[int] = Field(None, ge=0)
+    fuse_adapters: Optional[bool] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -372,6 +378,11 @@ class DatasetImportAssetsRequest(BaseModel):
 
 class DatasetAutoCaptionRequest(BaseModel):
     files: list[str] = Field(default_factory=list)
+
+
+class DatasetHealthVlmRequest(BaseModel):
+    max_samples: int = Field(0, ge=0, le=64)
+    audit_kind: Optional[Literal["concept", "style"]] = None
 
 
 class LoraRegisterRequest(BaseModel):

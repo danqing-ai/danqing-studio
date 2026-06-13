@@ -148,10 +148,14 @@
               :datasets="datasets"
               :default-prompt="form.default_prompt"
               :caption-edits="captionEdits"
+              :dataset-health="datasetHealth"
+              :vision-available="visionAvailable"
+              :dataset-vlm-loading="datasetVlmLoading"
               @update:selected-id="form.dataset_id = $event"
               @update:default-prompt="form.default_prompt = $event"
               @update:caption-edits="onCaptionEditsUpdate"
-              @datasets-changed="datasets = $event"
+              @datasets-changed="onDatasetsChanged"
+              @run-dataset-vlm="runDatasetVlmAudit"
             />
           </div>
 
@@ -197,6 +201,49 @@
               </div>
             </div>
 
+            <div v-if="form.preset === 'custom'" class="lora-train-page__custom-block">
+              <DqAlert type="info" :closable="false" :title="$t('loraTrain.customGuideTitle')">
+                <p class="lora-train-page__custom-guide-text">{{ $t('loraTrain.customGuideBody') }}</p>
+                <ul class="lora-train-page__custom-guide-list">
+                  <li>{{ $t('loraTrain.customGuideTip1') }}</li>
+                  <li>{{ $t('loraTrain.customGuideTip2') }}</li>
+                  <li>{{ $t('loraTrain.customGuideTip3') }}</li>
+                  <li>{{ $t('loraTrain.customGuideTip4') }}</li>
+                </ul>
+              </DqAlert>
+              <div class="lora-train-page__field-grid">
+                <div class="lora-train-page__field">
+                  <label class="lora-train-page__label">{{ $t('loraTrain.iterations') }}</label>
+                  <DqInput v-model.number="form.iterations" type="number" min="50" />
+                  <p class="lora-train-page__field-hint">{{ $t('loraTrain.customIterationsHint') }}</p>
+                </div>
+                <div class="lora-train-page__field">
+                  <label class="lora-train-page__label">{{ $t('loraTrain.loraRank') }}</label>
+                  <DqInput v-model.number="form.lora_rank" type="number" min="1" max="64" />
+                  <p class="lora-train-page__field-hint">{{ $t('loraTrain.customRankHint') }}</p>
+                </div>
+                <div class="lora-train-page__field">
+                  <label class="lora-train-page__label">{{ $t('loraTrain.learningRate') }}</label>
+                  <DqInput v-model.number="form.learning_rate" type="number" step="0.00001" />
+                </div>
+                <div class="lora-train-page__field">
+                  <label class="lora-train-page__label">{{ $t('loraTrain.resolutionEdge') }}</label>
+                  <DqInput v-model.number="form.resolution_edge" type="number" min="256" max="1024" step="8" />
+                  <p class="lora-train-page__field-hint">{{ $t('loraTrain.customResolutionHint') }}</p>
+                </div>
+                <div class="lora-train-page__field">
+                  <label class="lora-train-page__label">{{ $t('loraTrain.progressSteps') }}</label>
+                  <DqInput v-model.number="form.progress_steps" type="number" min="4" max="100" />
+                  <p class="lora-train-page__field-hint">{{ $t('loraTrain.progressStepsHint') }}</p>
+                </div>
+                <div class="lora-train-page__field">
+                  <label class="lora-train-page__label">{{ $t('loraTrain.minSnrGamma') }}</label>
+                  <DqInput v-model.number="form.min_snr_gamma" type="number" step="1" min="0" />
+                  <p class="lora-train-page__field-hint">{{ $t('loraTrain.customMinSnrHint') }}</p>
+                </div>
+              </div>
+            </div>
+
             <div class="lora-train-page__optimization">
               <div class="lora-train-page__optimization-head">
                 <span class="lora-train-page__label">{{ $t('loraTrain.optimization') }}</span>
@@ -229,6 +276,18 @@
               <label class="lora-train-page__label">{{ $t('loraTrain.progressPrompt') }}</label>
               <DqInput v-model="form.progress_prompt" type="textarea" :rows="3" />
               <p class="lora-train-page__field-hint">{{ $t('loraTrain.progressPromptDesc') }}</p>
+              <DqAlert
+                v-if="promptCaptionMismatch"
+                type="warning"
+                :closable="false"
+                class="lora-train-page__prompt-warn"
+                :title="$t('loraTrain.promptMismatchTitle')"
+              >
+                <p>{{ $t('loraTrain.promptMismatchBody', { dataset: effectiveDatasetCaption, progress: form.progress_prompt.trim() }) }}</p>
+                <DqButton size="xs" type="secondary" @click="syncProgressPromptFromDataset">
+                  {{ $t('loraTrain.promptMismatchSync') }}
+                </DqButton>
+              </DqAlert>
             </div>
             <div class="lora-train-page__field">
               <label class="lora-train-page__label">{{ $t('loraTrain.outputName') }}</label>
@@ -238,18 +297,6 @@
             <details class="lora-train-page__advanced">
               <summary>{{ form.preset === 'custom' ? $t('loraTrain.advanced') : $t('loraTrain.expertTuning') }}</summary>
               <div class="lora-train-page__field-grid">
-                <div v-if="form.preset === 'custom'" class="lora-train-page__field">
-                  <label class="lora-train-page__label">{{ $t('loraTrain.iterations') }}</label>
-                  <DqInput v-model.number="form.iterations" type="number" />
-                </div>
-                <div v-if="form.preset === 'custom'" class="lora-train-page__field">
-                  <label class="lora-train-page__label">{{ $t('loraTrain.loraRank') }}</label>
-                  <DqInput v-model.number="form.lora_rank" type="number" />
-                </div>
-                <div v-if="form.preset === 'custom'" class="lora-train-page__field">
-                  <label class="lora-train-page__label">{{ $t('loraTrain.learningRate') }}</label>
-                  <DqInput v-model.number="form.learning_rate" type="number" step="0.00001" />
-                </div>
                 <div class="lora-train-page__field">
                   <label class="lora-train-page__label">{{ $t('loraTrain.loraBlocks') }}</label>
                   <DqInput v-model.number="form.lora_blocks" type="number" :placeholder="$t('loraTrain.usePresetDefault')" />
@@ -282,6 +329,34 @@
                   <label class="lora-train-page__label">{{ $t('loraTrain.valEvery') }}</label>
                   <DqInput v-model.number="form.val_every" type="number" />
                 </div>
+                <div class="lora-train-page__field">
+                  <label class="lora-train-page__label">{{ $t('loraTrain.trainType') }}</label>
+                  <DqSelect v-model="form.train_type">
+                    <DqOption :label="$t('loraTrain.usePresetDefault')" value="" />
+                    <DqOption label="LoRA" value="lora" />
+                    <DqOption label="DoRA" value="dora" />
+                  </DqSelect>
+                </div>
+                <div class="lora-train-page__field">
+                  <label class="lora-train-page__label">{{ $t('loraTrain.minSnrGamma') }}</label>
+                  <DqInput v-model.number="form.min_snr_gamma" type="number" step="1" min="0" />
+                </div>
+                <div class="lora-train-page__field">
+                  <label class="lora-train-page__label">{{ $t('loraTrain.priorLossWeight') }}</label>
+                  <DqInput v-model.number="form.prior_loss_weight" type="number" step="0.1" min="0" />
+                </div>
+                <div class="lora-train-page__field">
+                  <label class="lora-train-page__label">{{ $t('loraTrain.earlyStopPatience') }}</label>
+                  <DqInput v-model.number="form.early_stop_patience" type="number" min="0" />
+                </div>
+                <div class="lora-train-page__field lora-train-page__field--switch">
+                  <label class="lora-train-page__label">{{ $t('loraTrain.fuseAdapters') }}</label>
+                  <DqSwitch v-model="form.fuse_adapters" />
+                </div>
+              </div>
+              <div class="lora-train-page__field">
+                <label class="lora-train-page__label">{{ $t('loraTrain.classPrompt') }}</label>
+                <DqInput v-model="form.class_prompt" :placeholder="$t('loraTrain.classPromptPlaceholder')" />
               </div>
               <div class="lora-train-page__field">
                 <label class="lora-train-page__label">{{ $t('loraTrain.loraModuleKeys') }}</label>
@@ -310,6 +385,16 @@
           <!-- Step 4: confirm -->
           <div v-show="step === 3" class="lora-train-page__panel">
             <p class="lora-train-page__confirm-intro">{{ $t('loraTrain.confirmIntro') }}</p>
+            <LoraQualityHints
+              v-if="datasetHealth"
+              :report="datasetHealth"
+              mode="dataset"
+              :vision-available="visionAvailable"
+              :vlm-loading="datasetVlmLoading"
+              :dataset-audit-kind="selectedDataset?.kind === 'style' ? 'style' : 'concept'"
+              class="lora-train-page__confirm-health"
+              @run-vlm="runDatasetVlmAudit"
+            />
             <div v-if="confirmPreviewImages.length" class="lora-train-page__confirm-preview">
               <span class="lora-train-page__confirm-preview-label">{{ $t('loraTrain.confirmPreview') }}</span>
               <div class="lora-train-page__confirm-preview-grid">
@@ -336,6 +421,10 @@
               </li>
               <li><span>{{ $t('loraTrain.summaryPreset') }}</span><strong>{{ $t(`loraTrain.preset.${form.preset}`) }}</strong></li>
               <li><span>{{ $t('loraTrain.summaryPrompt') }}</span><strong>{{ form.progress_prompt }}</strong></li>
+              <li v-if="effectiveDatasetCaption && effectiveDatasetCaption !== form.progress_prompt.trim()">
+                <span>{{ $t('loraTrain.summaryDatasetCaption') }}</span>
+                <strong>{{ effectiveDatasetCaption }}</strong>
+              </li>
               <li v-if="form.output_name.trim()">
                 <span>{{ $t('loraTrain.summaryOutput') }}</span><strong>{{ form.output_name }}</strong>
               </li>
@@ -397,7 +486,9 @@ import { getItem, setItem, DQ_STORAGE } from '@/utils/storage';
 import LoraTrainRunDetail from '@/components/lora/LoraTrainRunDetail.vue';
 import LoraDatasetPanel from '@/components/lora/LoraDatasetPanel.vue';
 import LoraTrainHistory from '@/components/lora/LoraTrainHistory.vue';
+import LoraQualityHints from '@/components/lora/LoraQualityHints.vue';
 import { openModelsUserLoras } from '@/utils/loraTrainHandoff';
+import type { LoraDatasetHealthReport } from '@/utils/loraQuality';
 
 const { t } = useI18n();
 const router = useRouter();
@@ -408,6 +499,9 @@ const submitting = ref(false);
 const activeRunId = ref('');
 const trainableModels = ref<any[]>([]);
 const datasets = ref<any[]>([]);
+const datasetHealth = ref<LoraDatasetHealthReport | null>(null);
+const datasetVlmLoading = ref(false);
+const visionAvailable = ref(false);
 const requirements = ref<any>(null);
 const presetsByModel = ref<Record<string, Record<string, Record<string, unknown>>>>({});
 const captionEdits = reactive<Record<string, string>>({});
@@ -438,6 +532,8 @@ const form = reactive({
   iterations: null as number | null,
   lora_rank: null as number | null,
   learning_rate: null as number | null,
+  resolution_edge: null as number | null,
+  progress_steps: null as number | null,
   qlora_bits: '' as '' | '4' | '8',
   grad_checkpoint: false,
   compile_step: false,
@@ -451,6 +547,12 @@ const form = reactive({
   val_every: null as number | null,
   resume_task_id: '',
   resume_checkpoint: '',
+  train_type: '' as '' | 'lora' | 'dora',
+  min_snr_gamma: null as number | null,
+  class_prompt: '',
+  prior_loss_weight: null as number | null,
+  early_stop_patience: null as number | null,
+  fuse_adapters: false,
 });
 
 const selectedDataset = computed(() =>
@@ -469,6 +571,24 @@ const activePresetDetail = computed(() => {
 const confirmPreviewImages = computed(() =>
   (selectedDataset.value?.images || []).slice(0, 8)
 );
+
+const effectiveDatasetCaption = computed(() => {
+  const fromMeta = String(selectedDataset.value?.default_prompt || '').trim();
+  if (fromMeta) return fromMeta;
+  return form.default_prompt.trim();
+});
+
+const promptCaptionMismatch = computed(() => {
+  const progress = form.progress_prompt.trim();
+  const datasetCaption = effectiveDatasetCaption.value;
+  if (!progress || !datasetCaption) return false;
+  return progress !== datasetCaption;
+});
+
+function syncProgressPromptFromDataset() {
+  const caption = effectiveDatasetCaption.value;
+  if (caption) form.progress_prompt = caption;
+}
 
 const effectiveQloraBits = computed(() => {
   if (form.qlora_bits === '4') return 4;
@@ -603,6 +723,52 @@ function onCaptionEditsUpdate(next: Record<string, string>) {
   Object.assign(captionEdits, next);
 }
 
+async function refreshDatasetHealth(id?: string) {
+  const dsId = (id || form.dataset_id || '').trim();
+  if (!dsId) {
+    datasetHealth.value = null;
+    return;
+  }
+  try {
+    datasetHealth.value = (await api.loras.datasetHealth(dsId)) as LoraDatasetHealthReport;
+    if (datasetHealth.value?.vision_available != null) {
+      visionAvailable.value = Boolean(datasetHealth.value.vision_available);
+    }
+  } catch {
+    datasetHealth.value = null;
+  }
+}
+
+async function refreshVisionAvailability() {
+  try {
+    const info = await api.chat.getLLMModelInfo();
+    visionAvailable.value = Boolean(info?.vision?.available);
+  } catch {
+    visionAvailable.value = false;
+  }
+}
+
+async function runDatasetVlmAudit() {
+  if (!form.dataset_id || datasetVlmLoading.value) return;
+  datasetVlmLoading.value = true;
+  try {
+    const kind = selectedDataset.value?.kind === 'style' ? 'style' : 'concept';
+    datasetHealth.value = (await api.loras.datasetHealthVlm(form.dataset_id, {
+      auditKind: kind,
+    })) as LoraDatasetHealthReport;
+    toast.success(t('loraTrain.quality.vlmAuditDone'));
+  } catch (e: unknown) {
+    toast.error(apiErrorMessage(e));
+  } finally {
+    datasetVlmLoading.value = false;
+  }
+}
+
+function onDatasetsChanged(next: any[]) {
+  datasets.value = next;
+  void refreshDatasetHealth();
+}
+
 function selectBase(m: any) {
   if (!m.trainable || !m.ready) return;
   form.base_model = m.id;
@@ -632,10 +798,36 @@ async function refreshRequirements() {
   }
 }
 
-function applyPresetGradCheckpointDefault() {
+function applyPresetTrainingDefaults() {
   if (form.preset === 'custom') return;
   const cfg = modelPresets.value[form.preset] as Record<string, unknown> | undefined;
   form.grad_checkpoint = Boolean(cfg?.grad_checkpoint);
+  if (cfg && Object.prototype.hasOwnProperty.call(cfg, 'min_snr_gamma')) {
+    form.min_snr_gamma = Number(cfg.min_snr_gamma) || 0;
+  } else {
+    form.min_snr_gamma = null;
+  }
+  if (cfg && Object.prototype.hasOwnProperty.call(cfg, 'lora_blocks')) {
+    form.lora_blocks = Number(cfg.lora_blocks) || null;
+  } else {
+    form.lora_blocks = null;
+  }
+}
+
+function applyCustomDefaultsFromQuick() {
+  const quick = modelPresets.value.quick as Record<string, unknown> | undefined;
+  if (!quick) return;
+  if (form.iterations == null) form.iterations = Number(quick.iterations) || 400;
+  if (form.lora_rank == null) form.lora_rank = Number(quick.lora_rank) || 8;
+  if (form.learning_rate == null) form.learning_rate = Number(quick.learning_rate) || 0.0001;
+  const res = quick.resolution as number[] | undefined;
+  if (form.resolution_edge == null) form.resolution_edge = Number(res?.[0]) || 512;
+  if (form.progress_steps == null) form.progress_steps = 20;
+  if (form.min_snr_gamma == null) form.min_snr_gamma = 5;
+  if (form.lora_blocks == null && quick.lora_blocks != null) {
+    form.lora_blocks = Number(quick.lora_blocks);
+  }
+  form.grad_checkpoint = true;
 }
 
 function parseModuleKeys(raw: string): string[] | undefined {
@@ -664,9 +856,18 @@ function buildTrainingBody(): Record<string, unknown> {
     if (form.iterations) body.iterations = form.iterations;
     if (form.lora_rank) body.lora_rank = form.lora_rank;
     if (form.learning_rate) body.learning_rate = form.learning_rate;
+    const edge = Number(form.resolution_edge);
+    if (edge >= 256) body.resolution = [edge, edge];
+    if (form.progress_steps != null && form.progress_steps >= 4) {
+      body.progress_steps = form.progress_steps;
+    }
+    if (form.lora_blocks != null && form.lora_blocks > 0) body.lora_blocks = form.lora_blocks;
+  } else if (form.lora_blocks != null && form.lora_blocks > 0) {
+    const presetBlocks = Number((modelPresets.value[form.preset] as Record<string, unknown> | undefined)?.lora_blocks);
+    if (!presetBlocks || form.lora_blocks !== presetBlocks) {
+      body.lora_blocks = form.lora_blocks;
+    }
   }
-
-  if (form.lora_blocks != null && form.lora_blocks > 0) body.lora_blocks = form.lora_blocks;
   if (form.lora_scale != null && form.lora_scale > 0) body.lora_scale = form.lora_scale;
   if (form.lora_dropout != null && form.lora_dropout >= 0) body.lora_dropout = form.lora_dropout;
   if (form.optimizer === 'adam' || form.optimizer === 'adamw') body.optimizer = form.optimizer;
@@ -684,6 +885,19 @@ function buildTrainingBody(): Record<string, unknown> {
     body.resume_checkpoint = resumeCk;
   }
 
+  if (form.train_type === 'lora' || form.train_type === 'dora') body.train_type = form.train_type;
+  if (form.preset === 'custom' || form.preset === 'standard' || form.preset === 'quality') {
+    if (form.min_snr_gamma != null && form.min_snr_gamma >= 0) body.min_snr_gamma = form.min_snr_gamma;
+  }
+  if (form.class_prompt.trim()) body.class_prompt = form.class_prompt.trim();
+  if (form.prior_loss_weight != null && form.prior_loss_weight >= 0) {
+    body.prior_loss_weight = form.prior_loss_weight;
+  }
+  if (form.early_stop_patience != null && form.early_stop_patience > 0) {
+    body.early_stop_patience = form.early_stop_patience;
+  }
+  if (form.fuse_adapters) body.fuse_adapters = true;
+
   return body;
 }
 
@@ -698,6 +912,11 @@ function restoreDraft() {
     if (draft.progress_prompt) form.progress_prompt = draft.progress_prompt;
     if (draft.default_prompt) form.default_prompt = draft.default_prompt;
     if (draft.output_name) form.output_name = draft.output_name;
+    if (draft.iterations != null) form.iterations = Number(draft.iterations);
+    if (draft.lora_rank != null) form.lora_rank = Number(draft.lora_rank);
+    if (draft.learning_rate != null) form.learning_rate = Number(draft.learning_rate);
+    if (draft.resolution_edge != null) form.resolution_edge = Number(draft.resolution_edge);
+    if (draft.progress_steps != null) form.progress_steps = Number(draft.progress_steps);
     if (draft.qlora_bits) form.qlora_bits = draft.qlora_bits as '' | '4' | '8';
     if (typeof draft.grad_checkpoint === 'boolean') form.grad_checkpoint = draft.grad_checkpoint;
     if (typeof draft.compile_step === 'boolean') form.compile_step = draft.compile_step;
@@ -711,6 +930,12 @@ function restoreDraft() {
     if (draft.val_every != null) form.val_every = Number(draft.val_every);
     if (draft.resume_task_id) form.resume_task_id = String(draft.resume_task_id);
     if (draft.resume_checkpoint) form.resume_checkpoint = String(draft.resume_checkpoint);
+    if (draft.train_type) form.train_type = draft.train_type as '' | 'lora' | 'dora';
+    if (draft.min_snr_gamma != null) form.min_snr_gamma = Number(draft.min_snr_gamma);
+    if (draft.class_prompt) form.class_prompt = String(draft.class_prompt);
+    if (draft.prior_loss_weight != null) form.prior_loss_weight = Number(draft.prior_loss_weight);
+    if (draft.early_stop_patience != null) form.early_stop_patience = Number(draft.early_stop_patience);
+    if (typeof draft.fuse_adapters === 'boolean') form.fuse_adapters = draft.fuse_adapters;
     if (typeof draft.step === 'number' && draft.step >= 0 && draft.step <= 3) {
       step.value = Math.min(draft.step, maxReachableStep.value);
     }
@@ -729,6 +954,11 @@ function persistDraft() {
       progress_prompt: form.progress_prompt,
       default_prompt: form.default_prompt,
       output_name: form.output_name,
+      iterations: form.iterations,
+      lora_rank: form.lora_rank,
+      learning_rate: form.learning_rate,
+      resolution_edge: form.resolution_edge,
+      progress_steps: form.progress_steps,
       qlora_bits: form.qlora_bits,
       grad_checkpoint: form.grad_checkpoint,
       compile_step: form.compile_step,
@@ -742,6 +972,12 @@ function persistDraft() {
       val_every: form.val_every,
       resume_task_id: form.resume_task_id,
       resume_checkpoint: form.resume_checkpoint,
+      train_type: form.train_type,
+      min_snr_gamma: form.min_snr_gamma,
+      class_prompt: form.class_prompt,
+      prior_loss_weight: form.prior_loss_weight,
+      early_stop_patience: form.early_stop_patience,
+      fuse_adapters: form.fuse_adapters,
       step: step.value,
     })
   );
@@ -750,7 +986,11 @@ function persistDraft() {
 watch(
   () => form.dataset_id,
   async (id) => {
-    if (!id) return;
+    if (!id) {
+      datasetHealth.value = null;
+      return;
+    }
+    void refreshDatasetHealth(id);
     try {
       const ds = await api.loras.getDataset(id);
       Object.keys(captionEdits).forEach((k) => delete captionEdits[k]);
@@ -810,6 +1050,7 @@ async function importFromRouteQuery() {
     }
     step.value = 1;
     toast.success(t('loraTrain.galleryImported'));
+    await refreshDatasetHealth(form.dataset_id);
     const q = { ...route.query };
     delete q.import;
     delete q.dataset_name;
@@ -858,6 +1099,11 @@ watch(
     form.progress_prompt,
     form.default_prompt,
     form.output_name,
+    form.iterations,
+    form.lora_rank,
+    form.learning_rate,
+    form.resolution_edge,
+    form.progress_steps,
     form.qlora_bits,
     form.grad_checkpoint,
     form.compile_step,
@@ -883,8 +1129,9 @@ watch(() => form.qlora_bits, () => {
   void refreshRequirements();
 });
 
-watch(() => form.preset, () => {
-  applyPresetGradCheckpointDefault();
+watch(() => form.preset, (preset) => {
+  applyPresetTrainingDefaults();
+  if (preset === 'custom') applyCustomDefaultsFromQuick();
 });
 
 async function submitTraining() {
@@ -924,15 +1171,19 @@ function onVerifyGenerate(payload: { prompt: string; loraId: string; baseModel: 
 
 onMounted(async () => {
   try {
-    await loadMeta();
+    await Promise.all([loadMeta(), refreshVisionAvailability()]);
     restoreDraft();
     if (!form.dataset_id && datasets.value.length === 1) {
       form.dataset_id = datasets.value[0].id;
     }
-    applyPresetGradCheckpointDefault();
+    applyPresetTrainingDefaults();
+    if (form.preset === 'custom') applyCustomDefaultsFromQuick();
     openRunFromQuery();
     resumeFromRouteQuery();
     await importFromRouteQuery();
+    if (form.dataset_id) {
+      await refreshDatasetHealth(form.dataset_id);
+    }
   } catch (e: unknown) {
     toast.error(apiErrorMessage(e));
   }
@@ -1495,6 +1746,42 @@ onMounted(async () => {
   border: 0.5px solid var(--dq-border-subtle);
 }
 
+.lora-train-page__custom-block {
+  margin-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.lora-train-page__custom-guide-text {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dq-label-secondary);
+}
+
+.lora-train-page__custom-guide-list {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--dq-label-secondary);
+}
+
+.lora-train-page__custom-guide-list li {
+  margin-bottom: 4px;
+}
+
+.lora-train-page__prompt-warn {
+  margin-top: 10px;
+}
+
+.lora-train-page__prompt-warn p {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .lora-train-page__preset-detail-label {
   display: block;
   font-size: 11px;
@@ -1528,6 +1815,10 @@ onMounted(async () => {
   font-size: 13px;
   color: var(--dq-label-secondary);
   line-height: 1.5;
+}
+
+.lora-train-page__confirm-health {
+  margin-bottom: 14px;
 }
 
 .lora-train-page__field {

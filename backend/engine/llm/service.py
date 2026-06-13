@@ -31,7 +31,7 @@ from backend.core.contracts import (
 )
 from backend.core.interfaces import AppSettings
 from backend.core.model_registry import ModelEntry, ModelRegistry
-from backend.engine.llm.lyrics_sanitize import sanitize_lyrics_output
+from backend.engine.llm.lyrics_sanitize import lyric_line_has_annotations, sanitize_lyrics_output
 from backend.engine.llm.prompt_sanitize import (
     prompt_enhance_quality_ok,
     sanitize_enhanced_prompt,
@@ -161,28 +161,30 @@ vocal style, and emotional arc. Match the user's language when the input is Chin
 Keep it concise: one short paragraph. Never repeat the same phrase or word. No filler loops.
 Output ONLY the enhanced brief text, without explanation or quotation marks."""
 
-LYRICS_SYSTEM_PROMPT = """You write singable lyrics for ACE-Step music generation.
+LYRICS_SYSTEM_PROMPT = """# ACE-Step lyrics
 
-Format:
-- Section tags on their own line: [Intro], [Verse], [Verse 1], [Chorus], [Bridge], [Outro]
-- 2–4 short lines per section; use only sections that fit a ~30–90s song
-- Typical flow: [Verse 1] → [Chorus] → [Verse 2] → [Chorus] → [Outro] (skip optional sections when unnecessary)
-- If the description asks for instrumental or no vocals: output only `[Instrumental]` and stop
+Reply with **only** a lyric script. No title, planning, markdown fences, or text before/after the script.
 
-Line rules:
-- English: 4–10 words per line, one complete sung phrase
-- Chinese: 5–12 characters per line, natural rhythm, each line self-contained
-- Match the language and theme of the music description
+Infer structure and language from the examples below. Match the music description language (Chinese description → Chinese example shape; English → English shape). Use the instrumental example when the request has no vocals.
 
-Anti-loop (critical):
-- Never repeat a word twice in a row
-- Do not reuse the same line or filler hook ("la la", "oh oh") more than once
-- After [Outro] lines, STOP — no extra sections or commentary
+## Vocal · Chinese
 
-Output ONLY lyrics with section tags. No title, quotes, explanation, or planning.
-Do NOT describe what you will write. Start immediately with [Verse 1] or [Intro].
+```
+[Verse 1]
+清晨的风吹过旧街角
+你的笑容还在心头绕
 
-Example (English):
+[Chorus]
+我们是今夜的星光
+照亮这片无尽的天
+
+[Outro]
+慢慢沉入安静的夜
+```
+
+## Vocal · English
+
+```
 [Verse 1]
 Walking down the empty street at dawn
 City lights fading one by one
@@ -193,18 +195,24 @@ Shining through the endless sky
 
 [Outro]
 Fade into the quiet night
+```
 
-Example (Chinese):
+## Instrumental
+
+```
+[Instrumental]
+```
+
+## Counter-example (invalid — never resemble this)
+
+```
 [Verse 1]
-清晨的风吹过旧街角
-你的笑容还在心头绕
-
+青峰云海间 (5 chars) - "Green peaks, cloud sea"
+Here is the chorus:
 [Chorus]
-我们是今夜的星光
-照亮这片无尽的天
-
-[Outro]
-慢慢沉入安静的夜"""
+We are the stars tonight
+```
+"""
 
 DESCRIBE_NODE_SYSTEM_PROMPT = """You are a creative studio assistant writing short notes on canvas nodes.
 Given metadata about a generated asset (title, prompt, model, dimensions, lineage), write a concise note (2-4 sentences)
@@ -524,6 +532,8 @@ class LLMService:
             return False
 
         for ln in lyric_lines:
+            if lyric_line_has_annotations(ln):
+                return False
             words = ln.split()
             if len(words) >= 6 and len(set(w.lower() for w in words)) / len(words) < 0.35:
                 return False
@@ -531,34 +541,34 @@ class LLMService:
                 return False
         return True
 
+    @staticmethod
+    def _build_lyrics_user_message(prompt: str, style: str | None = None) -> str:
+        parts = ["## Music description", (prompt or "").strip()]
+        if (style or "").strip():
+            parts.extend(["", "## Style", style.strip()])
+        return "\n".join(parts)
+
     def generate_lyrics(self, prompt: str, style: str | None = None) -> str:
         """Generate ACE-Step formatted lyrics from a music description."""
-        user_msg = f"Music description: {prompt}"
-        if style:
-            user_msg += f"\nStyle/Genre: {style}"
-        user_msg += (
-            "\n\nWrite ACE-Step lyrics with section tags. "
-            "Match the description language. End with [Outro] (or [Instrumental] if no vocals) and stop."
-        )
-        user_msg = self._apply_think_mode_to_text(user_msg)
+        user_msg = self._with_no_think_suffix(self._build_lyrics_user_message(prompt, style))
 
-        think_active = self._think_is_active(self._resolve_enable_thinking(None))
         attempts = (
-            (0.65, self._token_budget(420, think_active)),
-            (0.5, self._token_budget(360, think_active)),
-            (0.4, self._token_budget(512, think_active)),
+            (0.65, 420),
+            (0.5, 360),
+            (0.4, 512),
         )
         last_raw = ""
         for temp, max_tokens in attempts:
             result = self.chat_completion(
                 self._lyrics_chat_request(user_msg, temperature=temp, max_tokens=max_tokens),
+                enable_thinking=False,
             )
             last_raw = result.choices[0].message.content.strip()
-            cleaned = sanitize_lyrics_output(last_raw, think_enabled=think_active)
+            cleaned = sanitize_lyrics_output(last_raw, think_enabled=False)
             if self._lyrics_quality_ok(cleaned):
                 return cleaned
 
-        fallback = sanitize_lyrics_output(last_raw, think_enabled=think_active)
+        fallback = sanitize_lyrics_output(last_raw, think_enabled=False)
         if fallback and self._lyrics_quality_ok(fallback):
             return fallback
 
