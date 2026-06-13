@@ -329,6 +329,25 @@ class LoraTrainingRequest(BaseModel):
     progress_steps: Optional[int] = Field(None, ge=4, le=100)
     checkpoint_every: Optional[int] = Field(None, ge=10)
     guidance: Optional[float] = Field(None, ge=0)
+    qlora_bits: Optional[int] = Field(None, description="4 or 8 for QLoRA base weights")
+    grad_checkpoint: Optional[bool] = None
+    lora_scale: Optional[float] = Field(None, gt=0)
+    lora_dropout: Optional[float] = Field(None, ge=0, le=0.5)
+    lora_module_keys: Optional[list[str]] = None
+    optimizer: Optional[Literal["adam", "adamw"]] = None
+    weight_decay: Optional[float] = Field(None, ge=0)
+    val_split: Optional[float] = Field(None, ge=0, le=0.5)
+    val_every: Optional[int] = Field(None, ge=10)
+    compile_step: Optional[bool] = None
+    resume_from: Optional[str] = None
+    resume_task_id: Optional[str] = None
+    resume_checkpoint: Optional[str] = None
+    train_type: Optional[Literal["lora", "dora"]] = None
+    min_snr_gamma: Optional[float] = Field(None, ge=0)
+    class_prompt: Optional[str] = None
+    prior_loss_weight: Optional[float] = Field(None, ge=0)
+    early_stop_patience: Optional[int] = Field(None, ge=0)
+    fuse_adapters: Optional[bool] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -359,6 +378,11 @@ class DatasetImportAssetsRequest(BaseModel):
 
 class DatasetAutoCaptionRequest(BaseModel):
     files: list[str] = Field(default_factory=list)
+
+
+class DatasetHealthVlmRequest(BaseModel):
+    max_samples: int = Field(0, ge=0, le=64)
+    audit_kind: Optional[Literal["concept", "style"]] = None
 
 
 class LoraRegisterRequest(BaseModel):

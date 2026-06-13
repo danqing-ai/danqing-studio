@@ -67,6 +67,7 @@
             'video_models',
             'music_models',
             'llm_models',
+            'vlm_models',
             'controlnets',
             'upscalers',
             'tools',
@@ -90,6 +91,7 @@
                 'video_models',
                 'music_models',
                 'llm_models',
+                'vlm_models',
                 'controlnets',
                 'upscalers',
                 'tools',
@@ -206,12 +208,6 @@
                     :source="modelCardSource(model)"
                   />
                 </div>
-
-                <ModelLlmActionBadges
-                  v-if="model.media === 'llm' || model.category === 'llm_models'"
-                  :media="model.media"
-                  :actions="model.actions"
-                />
 
                 <div
                   v-if="model.size || model.base_model"
@@ -554,7 +550,6 @@ import ModelsImportDialog from '@/components/models/ModelsImportDialog.vue';
 import ModelsCategoryNav from '@/components/models/ModelsCategoryNav.vue';
 import UserLoraCard from '@/components/lora/UserLoraCard.vue';
 import ModelCardVersions from '@/components/models/ModelCardVersions.vue';
-import ModelLlmActionBadges from '@/components/models/ModelLlmActionBadges.vue';
 import ModelVersionSourceBadge from '@/components/models/ModelVersionSourceBadge.vue';
 import { uniformDownloadSource } from '@/utils/modelVersionLayout';
 import { formatDownloadDisplayName } from '@/utils/registryLabel';
@@ -669,6 +664,7 @@ const categoryPageIcon = computed(() => {
     video_models: 'VideoCamera',
     music_models: 'Headset',
     llm_models: 'Document',
+    vlm_models: 'PictureFilled',
     controlnets: 'Aim',
     upscalers: 'ZoomIn',
     tools: 'Tools',
@@ -684,6 +680,7 @@ const categoryTitleText = computed(() => {
     video_models: $tt('download.videoModels'),
     music_models: $tt('download.audioModels'),
     llm_models: $tt('download.llmModels'),
+    vlm_models: $tt('download.vlmModels'),
     controlnets: $tt('download.controlNet'),
     upscalers: $tt('download.upscalers'),
     tools: $tt('download.tools'),

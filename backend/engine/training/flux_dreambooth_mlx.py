@@ -3,17 +3,14 @@
 from __future__ import annotations
 
 import json
-import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import mlx.core as mx
-import mlx.nn as nn
-import mlx.optimizers as optim
 import numpy as np
 from PIL import Image
 
-from backend.core.contracts import ExecutionContext, LoraTrainingRequest, ProgressEvent, LogEvent
+from backend.core.contracts import ExecutionContext, LoraTrainingRequest
 from backend.engine._transformer_registry import get_transformer_class
 from backend.engine.common.codecs.vae import VAEEncoder, infer_latent_channels, prepare_vae_encoder_weight_items
 from backend.engine.config.model_configs import get_config_class
@@ -24,18 +21,31 @@ from backend.engine.pipelines.image_model_load import load_image_transformer
 from backend.engine.training.crop import prepare_training_rgb_image, resolve_training_resolution
 from backend.engine.training.dataset_store import load_training_pairs_unified
 from backend.engine.training.lora_layers import (
-    add_grad_trees,
     apply_lora_to_flux1_dit,
-    collect_lora_safetensors,
+    list_flux1_lora_blocks,
     prepare_dit_for_lora_training,
-    scale_grad_tree,
+)
+from backend.engine.training.dit_training_loss import (
+    combine_instance_prior_loss,
+    flow_match_mse,
+    make_prior_latent,
+    sample_noisy_latent,
+)
+from backend.engine.training.latent_cache import LatentCache
+from backend.engine.training.lora_train_loop import run_dit_lora_train_loop
+from backend.engine.training.lora_train_runtime import (
+    assert_training_memory,
+    parse_lora_train_runtime_config,
+    save_training_checkpoint,
+    split_train_val_indices,
 )
 from backend.engine.training.presets import merge_training_request_config, resolve_preset
+from backend.engine.training.training_log import training_log, training_progress
 from backend.engine.training.user_lora_registry import register_user_lora
 
 
 def _log(ctx: ExecutionContext, level: str, message: str) -> None:
-    ctx.on_log(LogEvent(level=level, message=message))  # type: ignore[arg-type]
+    training_log(ctx, level, message)
 
 
 def _progress(
@@ -48,16 +58,14 @@ def _progress(
     phase: str = "training",
     progress: float | None = None,
 ) -> None:
-    meta = f" loss={loss:.4f}" if loss is not None else ""
-    frac = progress if progress is not None else min(1.0, step / max(total, 1))
-    ctx.on_progress(
-        ProgressEvent(
-            progress=frac,
-            step=step if phase == "training" else None,
-            total=total if phase == "training" else None,
-            message=(message or f"Training iteration {step}/{total}") + meta,
-            phase=phase,
-        )
+    training_progress(
+        ctx,
+        step=step,
+        total=total,
+        message=message,
+        loss=loss,
+        phase=phase,
+        progress=progress,
     )
 
 
@@ -83,8 +91,9 @@ def _load_vae_encoder(ctx: Any, bundle_root: Path) -> VAEEncoder:
     return enc
 
 
-def _encode_dataset(
+def _encode_dataset_to_cache(
     *,
+    cache: LatentCache,
     ctx: Any,
     pairs: list[tuple[Path, str]],
     vae: VAEEncoder,
@@ -93,15 +102,24 @@ def _encode_dataset(
     train_cfg: dict[str, Any],
     preset: str | None,
     num_augmentations: int,
+    dataset_id: str,
+    resolution: tuple[int, int],
     exec_ctx: ExecutionContext,
-) -> tuple[list[Any], list[Any], list[Any]]:
-    latents: list[Any] = []
-    t5_feats: list[Any] = []
-    clip_feats: list[Any] = []
+    class_prompt: str | None,
+) -> int:
+    cache.begin(
+        dataset_id=dataset_id,
+        n_pairs=len(pairs),
+        num_augmentations=num_augmentations,
+        resolution=resolution,
+        family="flux1",
+        tensor_keys=["latent", "t5", "clip"],
+    )
     _log(exec_ctx, "info", f"Encoding {len(pairs)} images × {num_augmentations} augmentations …")
-    import mlx.core as mx
-
+    sample_idx = 0
     for img_path, prompt in pairs:
+        t5, pooled = text_encoder.encode([prompt])
+        mx.eval(t5, pooled)
         for aug_i in range(num_augmentations):
             arr, _ = prepare_training_rgb_image(
                 img_path,
@@ -110,18 +128,20 @@ def _encode_dataset(
                 preset=preset,
                 augmentation_index=aug_i,
             )
-            # NCHW [0,1] → [-1,1]
             nchw = mx.array(arr.transpose(2, 0, 1)[None].astype("float32"))
             n11 = nchw * 2.0 - 1.0
             z = vae.encode(n11)
             if getattr(z, "ndim", 0) == 5:
                 z = z[:, :, 0, :, :]
-            latents.append(z.astype(ctx.bfloat16()))
-            t5, pooled = text_encoder.encode([prompt])
-            mx.eval(z, t5, pooled)
-            t5_feats.append(t5)
-            clip_feats.append(pooled)
-    return latents, t5_feats, clip_feats
+            z = z.astype(ctx.bfloat16())
+            mx.eval(z)
+            cache.write_sample(sample_idx, {"latent": z[0], "t5": t5, "clip": pooled})
+            sample_idx += 1
+    if class_prompt:
+        t5p, pooledp = text_encoder.encode([class_prompt])
+        mx.eval(t5p, pooledp)
+        cache.write_prior({"t5": t5p, "clip": pooledp})
+    return cache.finalize()
 
 
 def _training_loss(
@@ -131,13 +151,13 @@ def _training_loss(
     clip_pooled: mx.array,
     guidance: mx.array,
     ctx: Any,
+    *,
+    min_snr_gamma: float = 0.0,
+    prior_t5: mx.array | None = None,
+    prior_clip: mx.array | None = None,
+    prior_loss_weight: float = 0.0,
 ) -> mx.array:
-    b = x0.shape[0]
-    t = mx.random.uniform(shape=(b,), dtype=ctx.float32())
-    eps = mx.random.normal(x0.shape, dtype=ctx.bfloat16())
-    sigma = mx.reshape(t, (b, 1, 1, 1)).astype(ctx.bfloat16())
-    x_t = (1.0 - sigma) * x0 + sigma * eps
-    x_t = mx.stop_gradient(x_t)
+    x_t, eps, t = sample_noisy_latent(x0, ctx)
     pred = model(
         x_t,
         timestep=0,
@@ -146,12 +166,33 @@ def _training_loss(
         sigmas=t,
         guidance_scale=float(guidance[0]),
     )
-    return mx.mean(mx.square(pred + x0 - eps))
+    b = x0.shape[0]
+    sigma = mx.reshape(t, (b,) + (1,) * (x0.ndim - 1)).astype(ctx.bfloat16())
+    inst = flow_match_mse(pred, x0, eps, sigma=sigma, min_snr_gamma=min_snr_gamma)
+    if prior_t5 is None or prior_clip is None or prior_loss_weight <= 0:
+        return inst
+    x0p = make_prior_latent(x0, ctx)
+    x_tp, epsp, tp = sample_noisy_latent(x0p, ctx)
+    predp = model(
+        x_tp,
+        timestep=0,
+        txt_embeds=prior_t5,
+        pooled_embeds=prior_clip,
+        sigmas=tp,
+        guidance_scale=float(guidance[0]),
+    )
+    sigmap = mx.reshape(tp, (b,) + (1,) * (x0.ndim - 1)).astype(ctx.bfloat16())
+    prior = flow_match_mse(predp, x0p, epsp, sigma=sigmap, min_snr_gamma=min_snr_gamma)
+    return combine_instance_prior_loss(inst, prior, prior_loss_weight=prior_loss_weight)
 
 
-def _save_adapter(path: Path, model: Any, rank: int, meta: dict[str, Any]) -> None:
+def _save_adapter(path: Path, model: Any, rank: int, meta: dict[str, Any], optimizer: Any = None) -> None:
+    if optimizer is not None:
+        save_training_checkpoint(path, model, optimizer, rank=rank, meta=meta)
+        return
+    from backend.engine.training.lora_layers import collect_lora_safetensors
+
     weights = collect_lora_safetensors(model, rank=rank)
-    # Drop scalar helper before safetensors
     weights.pop("lora_rank", None)
     mx.save_safetensors(str(path), weights)
     path.with_suffix(".json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -189,19 +230,19 @@ def _generate_progress_image(
     mx.eval(latents, t5, pooled)
     sched = FlowMatchEulerScheduler(num_train_timesteps=1000, shift=1.0, ctx=ctx)
     sched.set_timesteps(steps, mu=1.0)
-    for i, t in enumerate(sched._timesteps):
-        t_val = float(np.asarray(t).reshape(-1)[0]) if hasattr(t, "shape") else float(t)
-        sigmas = mx.array([t_val], dtype=ctx.float32())
+    sigma_schedule = sched._sigmas
+    for i, _t in enumerate(sched._timesteps):
+        t_val = float(np.asarray(sched._timesteps[i]).reshape(-1)[0])
         pred = model(
             latents,
             timestep=i,
             txt_embeds=t5,
             pooled_embeds=pooled,
-            sigmas=sigmas,
+            sigmas=sigma_schedule,
             guidance_scale=guidance,
-            timestep_embed_value=t_val * 1000.0,
+            timestep_embed_value=t_val,
         )
-        latents = sched.step(pred, t, latents)
+        latents = sched.step(pred, i, latents)
         mx.eval(latents)
     # Decode with VAE decoder stub — use simple linear map for preview if full decode heavy
     from backend.engine.common.codecs.vae.decoder import VAEDecoder
@@ -228,13 +269,6 @@ def run_flux_dreambooth_training(
 
     from backend.utils.path_utils import get_memory_gb
 
-    mem_gb = get_memory_gb()
-    if mem_gb > 0 and mem_gb < 48:
-        raise RuntimeError(
-            f"Flux.1 LoRA training requires ~50GB unified memory (detected {mem_gb:.0f}GB). "
-            "Reduce resolution/lora_blocks or wait for QLoRA support."
-        )
-
     base_model_id, version_key = request.base_model.split(":", 1) if ":" in request.base_model else (request.base_model, "")
     entry = registry.require(base_model_id)
     if str(getattr(entry, "family", "")) != "flux1":
@@ -244,22 +278,14 @@ def run_flux_dreambooth_training(
 
     preset = resolve_preset(request.preset, base_model=request.base_model)
     cfg = merge_training_request_config(request, preset)
-    iterations = int(cfg.get("iterations", 600))
-    batch_size = int(cfg.get("batch_size", 1))
-    lora_rank = int(cfg.get("lora_rank", 8))
-    lora_blocks = int(cfg.get("lora_blocks") if cfg.get("lora_blocks") is not None else -1)
-    learning_rate = float(cfg.get("learning_rate") or 1e-4)
-    grad_accumulate = int(cfg.get("grad_accumulate") or 4)
-    warmup_steps = int(cfg.get("warmup_steps") or 100)
+    train_runtime = parse_lora_train_runtime_config(cfg, defaults=preset)
+    mem_gb = get_memory_gb()
+    assert_training_memory(base_model_id, mem_gb, qlora_bits=train_runtime.qlora_bits)
+
     resolution = resolve_training_resolution(base_model_id, cfg, preset=request.preset)
-    num_augmentations = int(cfg.get("num_augmentations") or 5)
     progress_prompt = (request.progress_prompt or "").strip()
     if not progress_prompt:
         raise RuntimeError("progress_prompt is required for LoRA training")
-    progress_every = int(cfg.get("progress_every") or 300)
-    progress_steps = int(cfg.get("progress_steps") or 20)
-    checkpoint_every = int(cfg.get("checkpoint_every") or 300)
-    guidance = float(cfg.get("guidance") or 4.0)
 
     ctx = runtime
     bundle_root = local_bundle_root(project_root, entry, version_key or None)
@@ -290,17 +316,36 @@ def run_flux_dreambooth_training(
         "info",
         f"Training crop {resolution[0]}×{resolution[1]} (portrait-biased cover, Flux VAE grid ÷8) …",
     )
-    latents, t5_feats, clip_feats = _encode_dataset(
-        ctx=ctx,
-        pairs=pairs,
-        vae=vae_enc,
-        text_encoder=text_encoder,
-        base_model_id=base_model_id,
-        train_cfg=cfg,
-        preset=request.preset,
-        num_augmentations=num_augmentations,
-        exec_ctx=exec_ctx,
-    )
+    latent_cache = LatentCache(work_dir)
+    class_prompt = train_runtime.class_prompt
+    if train_runtime.prior_loss_weight > 0 and not class_prompt:
+        class_prompt = "a photo"
+    if latent_cache.is_valid(
+        dataset_id=request.dataset_id,
+        n_pairs=len(pairs),
+        num_augmentations=train_runtime.num_augmentations,
+        resolution=resolution,
+        family="flux1",
+        n_samples=len(pairs) * train_runtime.num_augmentations,
+    ):
+        _log(exec_ctx, "info", "Reusing cached latents from work_dir/latent_cache …")
+        n_samples = len(pairs) * train_runtime.num_augmentations
+    else:
+        n_samples = _encode_dataset_to_cache(
+            cache=latent_cache,
+            ctx=ctx,
+            pairs=pairs,
+            vae=vae_enc,
+            text_encoder=text_encoder,
+            base_model_id=base_model_id,
+            train_cfg=cfg,
+            preset=request.preset,
+            num_augmentations=train_runtime.num_augmentations,
+            dataset_id=request.dataset_id,
+            resolution=resolution,
+            exec_ctx=exec_ctx,
+            class_prompt=class_prompt if train_runtime.prior_loss_weight > 0 else None,
+        )
     del vae_enc
     text_encoder.release_weights()
     ctx.clear_cache()
@@ -322,125 +367,140 @@ def run_flux_dreambooth_training(
     model, train_module = prepare_dit_for_lora_training(
         model,
         apply_lora_to_flux1_dit,
-        rank=lora_rank,
-        lora_blocks=lora_blocks,
+        list_lora_blocks_fn=list_flux1_lora_blocks,
+        rank=train_runtime.lora_rank,
+        lora_blocks=train_runtime.lora_blocks,
+        lora_scale=train_runtime.lora_scale,
+        lora_dropout=train_runtime.lora_dropout,
+        lora_module_keys=train_runtime.lora_module_keys,
+        qlora_bits=train_runtime.qlora_bits,
+        grad_checkpoint=train_runtime.grad_checkpoint,
+        train_type=train_runtime.train_type,
     )
 
-    warmup = optim.linear_schedule(0, learning_rate, warmup_steps)
-    cosine = optim.cosine_decay(learning_rate, max(1, iterations // grad_accumulate))
-    lr_schedule = optim.join_schedules([warmup, cosine], [warmup_steps])
-    optimizer = optim.Adam(learning_rate=lr_schedule)
+    guidance_val = train_runtime.guidance
+    prior_t5: Any | None = None
+    prior_clip: Any | None = None
+    if train_runtime.prior_loss_weight > 0:
+        try:
+            prior_data = latent_cache.load_prior()
+            prior_t5 = prior_data["t5"]
+            prior_clip = prior_data["clip"]
+        except RuntimeError:
+            _log(exec_ctx, "warning", "Prior preservation requested but prior cache missing; disabled")
 
-    xs = mx.concatenate(latents)
-    t5_all = mx.concatenate(t5_feats)
-    clip_all = mx.concatenate(clip_feats)
-    mx.eval(xs, t5_all, clip_all)
-    n_samples = len(latents)
-    guidance_val = guidance
+    train_pairs, val_pairs = split_train_val_indices(len(pairs), val_split=train_runtime.val_split)
+    train_indices = [
+        pi * train_runtime.num_augmentations + aug
+        for pi in train_pairs
+        for aug in range(train_runtime.num_augmentations)
+    ]
+    val_indices = [
+        pi * train_runtime.num_augmentations + aug
+        for pi in val_pairs
+        for aug in range(train_runtime.num_augmentations)
+    ]
 
-    loss_history: list[dict[str, float]] = []
-    (work_dir / "loss_history.json").write_text("[]", encoding="utf-8")
+    _log(exec_ctx, "info", f"Loading {n_samples} cached latents into memory …")
+    flux_samples = latent_cache.materialize_flux(n_samples)
+    mx.eval(*[t for sample in flux_samples for t in sample])
 
-    loss_and_grad = nn.value_and_grad(
-        train_module,
-        lambda x0, t5, clip_p: _training_loss(
-            model,
+    def sample_batch(indices: list[int]) -> tuple[Any, ...]:
+        return flux_samples[indices[0]]
+
+    def loss_fn(x0: mx.array, t5: mx.array, clip_p: mx.array) -> mx.array:
+        return _training_loss(
+            train_module,
             x0,
             t5,
             clip_p,
             mx.full((x0.shape[0],), guidance_val, dtype=ctx.bfloat16()),
             ctx,
-        ),
+            min_snr_gamma=train_runtime.min_snr_gamma,
+            prior_t5=prior_t5,
+            prior_clip=prior_clip,
+            prior_loss_weight=train_runtime.prior_loss_weight
+            if prior_t5 is not None
+            else 0.0,
+        )
+
+    def preview_at(step: int) -> None:
+        _log(exec_ctx, "info", f"Generating progress preview at step {step} …")
+        from backend.engine.common.codecs.vae import load_vae_weight_dict, read_vae_dir_config
+        from backend.engine.common.codecs.vae.decoder import create_loaded_vae_decoder
+
+        vae_dir = bundle_root / "vae"
+        vae_cfg, _, _ = read_vae_dir_config(vae_dir)
+        vae_weights = load_vae_weight_dict(ctx, vae_dir)
+        preview_latent, _, _ = flux_samples[0]
+        dec, _, _, _ = create_loaded_vae_decoder(
+            ctx,
+            preview_latent,
+            vae_weights,
+            float(vae_cfg.get("scaling_factor", 1.0)),
+            float(vae_cfg.get("shift_factor", 0.0)),
+        )
+        te = Flux1TextEncoder(ctx, bundle_root)
+        preview = _generate_progress_image(
+            model=train_module,
+            vae_dec=dec,
+            text_encoder=te,
+            prompt=progress_prompt,
+            resolution=resolution,
+            guidance=guidance_val,
+            ctx=ctx,
+            steps=train_runtime.progress_steps,
+        )
+        out_png = work_dir / f"{step:07d}_progress.png"
+        Image.fromarray(preview).save(out_png)
+        te.release_weights()
+        ctx.clear_cache()
+
+    loss_history, best_path = run_dit_lora_train_loop(
+        exec_ctx=exec_ctx,
+        model=model,
+        train_module=train_module,
+        runtime=train_runtime,
+        work_dir=work_dir,
+        adapter_dir=adapter_dir,
+        base_model_id=base_model_id,
+        n_samples=n_samples,
+        sample_batch=sample_batch,
+        train_indices=train_indices,
+        val_indices=val_indices,
+        loss_fn=loss_fn,
+        on_progress_preview=preview_at,
+        mlx_ctx=ctx,
     )
 
-    _log(exec_ctx, "info", f"Training {iterations} iterations (rank={lora_rank}, batch={batch_size}) …")
-    accum_grads: dict | None = None
-    losses: list[float] = []
-    tic = time.time()
-
-    for i in range(iterations):
-        exec_ctx.cancel_token.raise_if_cancelled()
-        idx = int(mx.random.randint(0, n_samples, (1,)).item())
-        x0 = xs[idx : idx + 1]
-        cap_idx = idx // num_augmentations
-        t5 = t5_all[cap_idx : cap_idx + 1]
-        clip_p = clip_all[cap_idx : cap_idx + 1]
-        loss, grads = loss_and_grad(x0, t5, clip_p)
-        if accum_grads is None:
-            accum_grads = grads
-        else:
-            accum_grads = add_grad_trees(accum_grads, grads)
-        if (i + 1) % grad_accumulate == 0:
-            scaled = scale_grad_tree(accum_grads, grad_accumulate)
-            optimizer.update(train_module, scaled)
-            accum_grads = None
-        mx.eval(loss, train_module.parameters(), optimizer.state)
-        losses.append(float(loss.item()))
-
-        if (i + 1) % 10 == 0:
-            avg = sum(losses) / len(losses)
-            peak = mx.metal.get_peak_memory() / 1024**3
-            _log(
-                exec_ctx,
-                "info",
-                f"Iter {i + 1}/{iterations} loss={avg:.4f} peak_mem={peak:.1f}GB it/s={10 / max(time.time() - tic, 1e-6):.2f}",
-            )
-            loss_history.append({"step": i + 1, "loss": avg})
-            (work_dir / "loss_history.json").write_text(
-                json.dumps(loss_history), encoding="utf-8"
-            )
-            losses = []
-            tic = time.time()
-
-        _progress(exec_ctx, step=i + 1, total=iterations, loss=float(loss.item()))
-
-        if (i + 1) % progress_every == 0:
-            _log(exec_ctx, "info", f"Generating progress preview at step {i + 1} …")
-            try:
-                from backend.engine.common.codecs.vae import load_vae_weight_dict, read_vae_dir_config
-                from backend.engine.common.codecs.vae.decoder import create_loaded_vae_decoder
-
-                vae_dir = bundle_root / "vae"
-                vae_cfg, _, _ = read_vae_dir_config(vae_dir)
-                vae_weights = load_vae_weight_dict(ctx, vae_dir)
-                dec, _, _, _ = create_loaded_vae_decoder(
-                    ctx,
-                    xs[0:1],
-                    vae_weights,
-                    float(vae_cfg.get("scaling_factor", 1.0)),
-                    float(vae_cfg.get("shift_factor", 0.0)),
-                )
-                te = Flux1TextEncoder(ctx, bundle_root)
-                preview = _generate_progress_image(
-                    model=model,
-                    vae_dec=dec,
-                    text_encoder=te,
-                    prompt=progress_prompt,
-                    resolution=resolution,
-                    guidance=guidance,
-                    ctx=ctx,
-                    steps=progress_steps,
-                )
-                out_png = work_dir / f"{i + 1:07d}_progress.png"
-                Image.fromarray(preview).save(out_png)
-                te.release_weights()
-                ctx.clear_cache()
-            except Exception as e:
-                _log(exec_ctx, "warning", f"Progress preview failed: {e}")
-
-        if (i + 1) % checkpoint_every == 0:
-            ckpt = adapter_dir / f"{i + 1:07d}_adapters.safetensors"
-            meta = {"iteration": i + 1, "lora_rank": lora_rank, "base_model": base_model_id}
-            _save_adapter(ckpt, train_module, lora_rank, meta)
-
     final_path = adapter_dir / "final_adapters.safetensors"
-    meta = {
-        "iteration": iterations,
-        "lora_rank": lora_rank,
-        "base_model": base_model_id,
-        "progress_prompt": progress_prompt,
-    }
-    _save_adapter(final_path, train_module, lora_rank, meta)
+    if best_path is not None and best_path.is_file():
+        final_path.write_bytes(best_path.read_bytes())
+        best_meta = adapter_dir / "best_adapters.json"
+        if best_meta.is_file():
+            final_path.with_suffix(".json").write_text(
+                best_meta.read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+    else:
+        meta = {
+            "iteration": train_runtime.iterations,
+            "lora_rank": train_runtime.lora_rank,
+            "base_model": base_model_id,
+            "progress_prompt": progress_prompt,
+            "qlora_bits": train_runtime.qlora_bits,
+            "train_type": train_runtime.train_type,
+        }
+        _save_adapter(final_path, train_module, train_runtime.lora_rank, meta)
+    if train_runtime.fuse_adapters:
+        from backend.engine.training.lora_layers import collect_fused_adapter_deltas
+
+        fused_path = adapter_dir / "fused_adapters.safetensors"
+        mx.save_safetensors(str(fused_path), collect_fused_adapter_deltas(train_module))
+        fused_path.with_suffix(".json").write_text(
+            json.dumps({"format": "dense_delta", "base_model": base_model_id}, indent=2),
+            encoding="utf-8",
+        )
     _validate_saved_lora(final_path, ctx)
 
     output_name = (request.output_name or f"{base_model_id}-{request.dataset_id}").strip()
@@ -453,9 +513,9 @@ def run_flux_dreambooth_training(
 
     shutil.copy2(final_path, dest_file)
     lora_config = {
-        "lora_rank": lora_rank,
+        "lora_rank": train_runtime.lora_rank,
         "base_model": base_model_id,
-        "alpha": lora_rank,
+        "alpha": train_runtime.lora_scale,
         "trigger_word": "",
         "training_caption": training_caption,
     }
@@ -468,7 +528,7 @@ def run_flux_dreambooth_training(
             name=output_name,
             base_model=base_model_id,
             local_path=f"models/Lora/{slug}",
-            lora_rank=lora_rank,
+            lora_rank=train_runtime.lora_rank,
             task_id=exec_ctx.task_id,
         )
         user_lora_id = entry_row["id"]

@@ -178,7 +178,12 @@ def merge_lora_adapters_common(
             if on_log:
                 on_log("info", f"lora indexed key repair source={mid}")
         groups = remap_groups(weights)
-        if not groups:
+        dense_deltas = {
+            k[: -len(".delta.weight")]: v
+            for k, v in weights.items()
+            if k.endswith(".delta.weight")
+        }
+        if not groups and not dense_deltas:
             raise RuntimeError(
                 f"LoRA {lora_id!r}: after key remap no (lora_down, lora_up) pairs were found."
             )
@@ -186,6 +191,14 @@ def merge_lora_adapters_common(
         if config_alpha is not None and not any(".alpha" in key.lower() for key in weights):
             groups = _apply_config_alpha(groups, config_alpha=float(config_alpha))
         applied = 0
+        for module_name, delta in dense_deltas.items():
+            wkey = param_key_for_module(module_name)
+            if wkey not in model._param_map:
+                continue
+            param = model._param_map[wkey]
+            scaled = float(strength) * delta.astype(mx.float32)
+            param[:] = (param.astype(mx.float32) + scaled).astype(param.dtype)
+            applied += 1
         for module_name, (down, up, alpha) in groups.items():
             wkey = param_key_for_module(module_name)
             if wkey not in model._param_map:

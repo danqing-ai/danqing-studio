@@ -28,6 +28,14 @@ def _worker_exit_error(*, returncode: int | None, stderr: bytes | None, stdout: 
             "or reduce mlx_memory_limit in Settings. "
             f"stderr={tail!r} stdout={out!r}"
         )
+    if returncode == -6 or "Insufficient Memory" in tail or "OutOfMemory" in tail:
+        return RuntimeError(
+            "LoRA training ran out of unified GPU memory (Metal OOM). "
+            "Enable QLoRA 4-bit and gradient checkpointing in training settings, "
+            "use preset quick, lower resolution/lora_blocks/lora_rank, close other GPU apps, "
+            "or reduce mlx_memory_limit in Settings. "
+            f"stderr={tail!r} stdout={out!r}"
+        )
     return RuntimeError(
         f"LoRA worker exited without result (code={code}). stderr={tail!r} stdout={out!r}"
     )

@@ -53,6 +53,7 @@ const entries = computed<NavEntry[]>(() => [
   { kind: 'item', id: 'video_models', icon: VideoCamera, label: t('download.videoModels') },
   { kind: 'item', id: 'music_models', icon: Headset, label: t('download.audioModels') },
   { kind: 'item', id: 'llm_models', icon: Document, label: t('download.llmModels') },
+  { kind: 'item', id: 'vlm_models', icon: PictureFilled, label: t('download.vlmModels') },
   { kind: 'item', id: 'controlnets', icon: Aim, label: t('download.controlNet') },
   { kind: 'item', id: 'upscalers', icon: ZoomIn, label: t('download.upscalers') },
   { kind: 'item', id: 'tools', icon: Tools, label: t('download.tools') },

@@ -14,6 +14,7 @@ from backend.core.contracts import (
     DatasetAutoCaptionRequest,
     DatasetCreateRequest,
     DatasetCaptionUpdate,
+    DatasetHealthVlmRequest,
     DatasetImportAssetsRequest,
     LoraRegisterRequest,
     LoraTrainingRequest,
@@ -22,13 +23,13 @@ from backend.core.interfaces import IPathResolver, ISettingsService
 from backend.engine.engine_registry import EngineRegistry
 from backend.engine.training import dataset_store
 from backend.engine.training.crop import presets_with_training_resolution, training_crop_policy
+from backend.engine.training.lora_train_runtime import train_min_memory_gb
 from backend.engine.training.presets import (
     FLUX1_TRAIN_MIN_MEMORY_GB,
     PRESETS,
     QWEN_IMAGE_PRESETS,
     TRAINABLE_BASE_MODELS,
     Z_IMAGE_PRESETS,
-    train_min_memory_gb,
 )
 from backend.engine.training.user_lora_registry import delete_user_lora, list_user_loras, register_user_lora
 from backend.persistence.asset_store import SQLiteAssetStore
@@ -68,6 +69,96 @@ def get_dataset(dataset_id: str):
         return dataset_store.get_dataset(root, dataset_id)
     except FileNotFoundError as e:
         raise HTTPException(404, detail={"code": "not_found", "message": str(e)}) from e
+
+
+@router.get("/datasets/{dataset_id}/health")
+def dataset_health(dataset_id: str):
+    root = _paths().get_project_root()
+    try:
+        from backend.engine.training.lora_quality import analyze_dataset_health
+
+        report = analyze_dataset_health(root, dataset_id)
+        report["vision_available"] = get_llm_service().is_vision_available()
+        return report
+    except FileNotFoundError as e:
+        raise HTTPException(404, detail={"code": "not_found", "message": str(e)}) from e
+
+
+@router.post("/datasets/{dataset_id}/health/vlm")
+async def dataset_health_vlm(dataset_id: str, body: DatasetHealthVlmRequest | None = None):
+    service = get_llm_service()
+    if not service.is_available():
+        raise HTTPException(
+            503,
+            detail={"code": "llm_unavailable", "message": "LLM model not installed. Install via Models page."},
+        )
+    if not service.is_vision_available():
+        raise HTTPException(
+            503,
+            detail={"code": "vision_unavailable", "message": "Vision model not available for VLM audit."},
+        )
+
+    root = _paths().get_project_root()
+    max_samples = body.max_samples if body else 0
+    audit_kind_override = body.audit_kind if body else None
+    try:
+        from backend.core.container import get_container
+        from backend.engine.llm.vlm_subprocess import run_vlm_audit_subprocess
+        from backend.engine.memory_policy import prepare_host_for_vlm_audit
+        from backend.engine.training import dataset_store
+        from backend.engine.training.lora_quality import analyze_dataset_health
+        from backend.engine.training.lora_quality_vlm import (
+            build_dataset_audit_instruction,
+            collect_dataset_image_paths,
+            compile_dataset_vlm_report,
+            merge_vlm_hints,
+            resolve_audit_paths,
+            resolve_dataset_audit_kind,
+        )
+
+        base = analyze_dataset_health(root, dataset_id)
+        audit_kind = resolve_dataset_audit_kind(root, dataset_id, audit_kind_override)
+        paths = collect_dataset_image_paths(root, dataset_id)
+        if not paths:
+            raise HTTPException(400, detail={"code": "invalid", "message": "No readable images to audit"})
+        audit_paths, truncated = resolve_audit_paths(paths, max_samples=max_samples)
+        dataset_root = dataset_store.datasets_root(root) / dataset_id
+        file_keys = [
+            str(p.relative_to(dataset_root)) if p.is_relative_to(dataset_root) else p.name
+            for p in audit_paths
+        ]
+        model_dir = service._resolve_vision_model_path()
+        mlx_runtime = None
+        try:
+            runtimes = get_container().try_resolve_named("gpu_runtimes") or {}
+            if isinstance(runtimes, dict):
+                mlx_runtime = runtimes.get("mlx")
+        except Exception:
+            mlx_runtime = None
+        worker_mem = prepare_host_for_vlm_audit(mlx_runtime=mlx_runtime)
+        texts = await run_vlm_audit_subprocess(
+            image_paths=audit_paths,
+            model_dir=model_dir,
+            instruction=build_dataset_audit_instruction(audit_kind),
+            worker_memory_gb=worker_mem,
+        )
+        vlm = compile_dataset_vlm_report(
+            audit_paths,
+            texts,
+            file_keys=file_keys,
+            audit_kind=audit_kind,
+            truncated=truncated,
+            total_images=len(paths),
+        )
+        merged = merge_vlm_hints(base, vlm)
+        merged["vision_available"] = True
+        merged["vlm_audited"] = True
+        merged["audit_kind"] = audit_kind
+        return merged
+    except FileNotFoundError as e:
+        raise HTTPException(404, detail={"code": "not_found", "message": str(e)}) from e
+    except RuntimeError as e:
+        raise HTTPException(503, detail={"code": "vlm_audit_failed", "message": str(e)}) from e
 
 
 @router.patch("/datasets/{dataset_id}")
@@ -112,16 +203,15 @@ def patch_captions(dataset_id: str, body: DatasetCaptionUpdate):
         raise HTTPException(404, detail={"code": "not_found", "message": str(e)}) from e
 
 
-@router.delete("/datasets/{dataset_id}", status_code=405)
+@router.delete("/datasets/{dataset_id}", status_code=204)
 def delete_dataset(dataset_id: str):
-    """Whole-dataset delete is intentionally disabled — remove individual images only."""
-    raise HTTPException(
-        405,
-        detail={
-            "code": "dataset_delete_disabled",
-            "message": "Training datasets are persistent. Remove individual images instead.",
-        },
-    )
+    root = _paths().get_project_root()
+    try:
+        dataset_store.delete_dataset(root, dataset_id)
+    except FileNotFoundError as e:
+        raise HTTPException(404, detail={"code": "not_found", "message": str(e)}) from e
+    except ValueError as e:
+        raise HTTPException(400, detail={"code": "invalid", "message": str(e)}) from e
 
 
 @router.delete("/datasets/{dataset_id}/images/{file_path:path}")
@@ -252,14 +342,54 @@ def trainable_models():
     }
 
 
+def _resolve_resume_adapter(body: LoraTrainingRequest, sched: TaskScheduler) -> LoraTrainingRequest:
+    if body.resume_from:
+        return body
+    task_id = (body.resume_task_id or "").strip()
+    checkpoint = (body.resume_checkpoint or "").strip()
+    if not task_id and not checkpoint:
+        return body
+    if not task_id or not checkpoint:
+        raise HTTPException(
+            400,
+            detail={
+                "code": "invalid_resume",
+                "message": "resume_task_id and resume_checkpoint must both be set",
+            },
+        )
+    if ".." in checkpoint or "/" in checkpoint or "\\" in checkpoint:
+        raise HTTPException(
+            400,
+            detail={"code": "invalid_resume", "message": "resume_checkpoint must be a filename only"},
+        )
+    work = sched.task_work_dir(task_id)
+    path = work / "adapters" / checkpoint
+    if not path.is_file():
+        raise HTTPException(
+            404,
+            detail={
+                "code": "resume_not_found",
+                "message": f"Checkpoint not found: {checkpoint} for task {task_id}",
+            },
+        )
+    return body.model_copy(update={"resume_from": str(path)})
+
+
 @router.get("/training/requirements")
-def training_requirements(base_model: str = "flux1-dev"):
+def training_requirements(base_model: str = "flux1-dev", qlora_bits: Optional[int] = None):
+    if qlora_bits is not None and int(qlora_bits) not in (4, 8):
+        raise HTTPException(
+            400,
+            detail={"code": "invalid_qlora_bits", "message": "qlora_bits must be 4 or 8"},
+        )
     mem = get_memory_gb()
-    min_gb = train_min_memory_gb(base_model)
+    qbits = int(qlora_bits) if qlora_bits in (4, 8) else None
+    min_gb = train_min_memory_gb(base_model, qlora_bits=qbits)
     return {
         "min_memory_gb": min_gb,
         "detected_memory_gb": mem,
         "mlx_required": True,
+        "qlora_bits": qbits,
         "can_submit": mem <= 0 or mem >= min_gb - 2,
     }
 
@@ -270,8 +400,9 @@ async def submit_training(
     sched: TaskScheduler = Depends(get_task_scheduler),
     engines: EngineRegistry = Depends(get_engine_registry),
 ):
+    body = _resolve_resume_adapter(body, sched)
     mem = get_memory_gb()
-    min_gb = train_min_memory_gb(body.base_model)
+    min_gb = train_min_memory_gb(body.base_model, qlora_bits=body.qlora_bits)
     if mem > 0 and mem < min_gb - 2:
         raise HTTPException(
             409,
@@ -341,11 +472,130 @@ def training_artifacts(task_id: str, sched: TaskScheduler = Depends(get_task_sch
         import json
 
         loss_history = json.loads(loss_path.read_text(encoding="utf-8"))
+
+    quality = None
+    vision_available = get_llm_service().is_vision_available()
+    if loss_history:
+        from backend.engine.training.lora_quality import analyze_dataset_health, analyze_training_quality
+
+        task_row = sched.get_task(task_id) or {}
+        params = task_row.get("params") or {}
+        dataset_id = str(params.get("dataset_id") or "").strip()
+        dataset_health = None
+        if dataset_id:
+            root = _paths().get_project_root()
+            try:
+                dataset_health = analyze_dataset_health(root, dataset_id)
+            except FileNotFoundError:
+                dataset_health = None
+        quality = analyze_training_quality(loss_history, dataset_health=dataset_health)
+        if quality is not None:
+            quality["vision_available"] = vision_available
+
     return {
         "progress_images": [p.name for p in progress_images],
         "checkpoints": [p.name for p in checkpoints],
         "loss_history": loss_history,
+        "quality": quality,
+        "vision_available": vision_available,
     }
+
+
+@router.post("/trainings/{task_id}/quality/vlm")
+async def training_quality_vlm(task_id: str, sched: TaskScheduler = Depends(get_task_scheduler)):
+    import json
+
+    service = get_llm_service()
+    if not service.is_available():
+        raise HTTPException(
+            503,
+            detail={"code": "llm_unavailable", "message": "LLM model not installed. Install via Models page."},
+        )
+    if not service.is_vision_available():
+        raise HTTPException(
+            503,
+            detail={"code": "vision_unavailable", "message": "Vision model not available for VLM audit."},
+        )
+
+    work = sched.task_work_dir(task_id)
+    if not work.is_dir():
+        raise HTTPException(404, detail={"code": "not_found", "message": "task work dir not found"})
+
+    progress_paths = sorted(work.glob("*_progress.png"))
+    if not progress_paths:
+        raise HTTPException(
+            400,
+            detail={"code": "invalid", "message": "No progress preview images to audit"},
+        )
+
+    loss_path = work / "loss_history.json"
+    loss_history: list[dict[str, Any]] = []
+    if loss_path.is_file():
+        loss_history = json.loads(loss_path.read_text(encoding="utf-8"))
+
+    from backend.engine.training.lora_quality import analyze_dataset_health, analyze_training_quality
+    from backend.engine.training.lora_quality_vlm import (
+        build_progress_audit_instruction,
+        compile_progress_vlm_report,
+        merge_vlm_hints,
+        pick_progress_preview_paths,
+        resolve_dataset_audit_kind,
+    )
+    from backend.core.container import get_container
+    from backend.engine.llm.vlm_subprocess import run_vlm_audit_subprocess
+    from backend.engine.memory_policy import prepare_host_for_vlm_audit
+
+    task_row = sched.get_task(task_id) or {}
+    params = task_row.get("params") or {}
+    progress_prompt = str(params.get("progress_prompt") or "")
+    dataset_id = str(params.get("dataset_id") or "").strip()
+    dataset_health = None
+    if dataset_id:
+        root = _paths().get_project_root()
+        try:
+            dataset_health = analyze_dataset_health(root, dataset_id)
+        except FileNotFoundError:
+            dataset_health = None
+
+    base_quality = analyze_training_quality(loss_history, dataset_health=dataset_health) if loss_history else {
+        "level": "fair",
+        "score": 50,
+        "metrics": {"steps_logged": 0},
+        "hints": [],
+        "dataset_health": dataset_health,
+    }
+
+    audit_kind = "concept"
+    if dataset_id:
+        root = _paths().get_project_root()
+        audit_kind = resolve_dataset_audit_kind(root, dataset_id)
+
+    try:
+        sample_paths = pick_progress_preview_paths(progress_paths)
+        instruction = build_progress_audit_instruction(progress_prompt, audit_kind=audit_kind)
+        model_dir = service._resolve_vision_model_path()
+        mlx_runtime = None
+        try:
+            runtimes = get_container().try_resolve_named("gpu_runtimes") or {}
+            if isinstance(runtimes, dict):
+                mlx_runtime = runtimes.get("mlx")
+        except Exception:
+            mlx_runtime = None
+        worker_mem = prepare_host_for_vlm_audit(mlx_runtime=mlx_runtime)
+        texts = await run_vlm_audit_subprocess(
+            image_paths=sample_paths,
+            model_dir=model_dir,
+            instruction=instruction,
+            worker_memory_gb=worker_mem,
+        )
+        vlm = compile_progress_vlm_report(sample_paths, texts, audit_kind=audit_kind)
+        merged = merge_vlm_hints(base_quality, vlm)
+        merged["vision_available"] = True
+        merged["vlm_audited"] = True
+        merged["audit_kind"] = audit_kind
+        return merged
+    except RuntimeError as e:
+        raise HTTPException(503, detail={"code": "vlm_audit_failed", "message": str(e)}) from e
 
 
 @router.get("/user-adapters")

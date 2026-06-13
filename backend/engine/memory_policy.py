@@ -136,11 +136,33 @@ def resolve_lora_worker_memory_gb(
     return max(48, int(limit) - max(8, int(parent_reserve_gb)))
 
 
+def prepare_host_for_vlm_audit(*, mlx_runtime: Any | None = None) -> int:
+    """Unload DiT cache in the API process before spawning an isolated VLM worker."""
+    unload_model_cache_if_present()
+    if mlx_runtime is not None and hasattr(mlx_runtime, "clear_cache"):
+        mlx_runtime.clear_cache()
+    else:
+        from backend.engine.memory_policy_mlx import clear_mlx_cache
+
+        clear_mlx_cache()
+    try:
+        from backend.core.container import get_container
+
+        cfg = get_container().try_resolve_named("config_store")
+        settings = cfg.load() if cfg is not None else AppSettings()
+    except Exception:
+        settings = AppSettings()
+    limit = resolve_mlx_memory_limit_gb(settings)
+    return max(32, int(limit) - 32)
+
+
 def prepare_host_for_lora_worker(*, mlx_runtime: Any | None = None) -> int:
     """Unload cached models in the API process before spawning the LoRA worker."""
     unload_model_cache_if_present()
     if mlx_runtime is not None and hasattr(mlx_runtime, "clear_cache"):
         mlx_runtime.clear_cache()
     else:
+        from backend.engine.memory_policy_mlx import clear_mlx_cache
+
         clear_mlx_cache()
     return resolve_lora_worker_memory_gb()

@@ -98,12 +98,22 @@
     },
     "llm_models": {
       "name": {
-        "zh": "LLM 语言模型",
-        "en": "LLM Models"
+        "zh": "大语言模型",
+        "en": "LLM"
       },
       "description": {
-        "zh": "大语言模型，用于提示词增强、对话等",
-        "en": "LLMs for prompt enhancement and conversation"
+        "zh": "文本大语言模型",
+        "en": "Text large language models"
+      }
+    },
+    "vlm_models": {
+      "name": {
+        "zh": "视觉语言模型",
+        "en": "VLM"
+      },
+      "description": {
+        "zh": "视觉语言模型",
+        "en": "Vision-language models"
       }
     }
   },
@@ -288,24 +298,6 @@
       "hooks": [],
       "encoder_type": "gemma"
     },
-    "qwen2": {
-      "paradigm": "diffusion",
-      "media": [
-        "image"
-      ],
-      "backends": [
-        "mlx"
-      ]
-    },
-    "qwen2_vl": {
-      "paradigm": "diffusion",
-      "media": [
-        "image"
-      ],
-      "backends": [
-        "mlx"
-      ]
-    },
     "qwen_image": {
       "paradigm": "diffusion",
       "media": [
@@ -378,8 +370,8 @@
       "catalog": {
         "media": "llm",
         "description": {
-          "zh": "通义千问 3 4B 思考版，强化推理与提示词增强；4-bit 量化约 2.5GB。",
-          "en": "Qwen3 4B Thinking with enhanced reasoning for chat and prompt enhancement; ~2.5GB at 4-bit."
+          "zh": "通义千问 3 4B 思考版，强化链式推理；4-bit 量化约 2.5GB。",
+          "en": "Qwen3 4B Thinking with extended reasoning; ~2.5GB at 4-bit."
         },
         "category": "llm_models",
         "commercial_use_allowed": true,
@@ -444,10 +436,10 @@
       "catalog": {
         "media": "llm",
         "description": {
-          "zh": "通义千问 3 视觉语言模型，用于画布节点 AI 看图写笔记；4-bit 量化约 3GB。",
-          "en": "Qwen3 vision-language model for canvas node AI notes; ~3GB at 4-bit."
+          "zh": "通义千问 3 视觉语言模型，支持图文理解；4-bit 量化约 3GB。",
+          "en": "Qwen3 vision-language model for image-text understanding; ~3GB at 4-bit."
         },
-        "category": "llm_models",
+        "category": "vlm_models",
         "commercial_use_allowed": true,
         "source": "modelscope",
         "name": {

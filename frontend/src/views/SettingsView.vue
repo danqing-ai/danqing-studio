@@ -351,7 +351,7 @@ const saveSettings = async () => {
     });
     toast.success($tt('settings.saved'));
   } catch (e) {
-    toast.error($tt('settings.saveFailed'));
+    toast.error(extractApiError(e) || $tt('settings.saveFailed'));
   }
 };
 

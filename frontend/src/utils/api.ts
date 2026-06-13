@@ -771,9 +771,33 @@ export const api = {
       return response.data;
     },
 
+    async datasetHealth(id: string): Promise<unknown> {
+      const response = await client.get(`/api/loras/datasets/${encodeURIComponent(id)}/health`);
+      return response.data;
+    },
+
+    async datasetHealthVlm(
+      id: string,
+      opts?: { maxSamples?: number; auditKind?: 'concept' | 'style' }
+    ): Promise<unknown> {
+      const response = await client.post(
+        `/api/loras/datasets/${encodeURIComponent(id)}/health/vlm`,
+        {
+          max_samples: opts?.maxSamples ?? 0,
+          audit_kind: opts?.auditKind,
+        },
+        { timeout: LONG_REQUEST_TIMEOUT_MS }
+      );
+      return response.data;
+    },
+
     async patchDataset(id: string, body: Record<string, unknown>): Promise<unknown> {
       const response = await client.patch(`/api/loras/datasets/${encodeURIComponent(id)}`, body);
       return response.data;
+    },
+
+    async deleteDataset(id: string): Promise<void> {
+      await client.delete(`/api/loras/datasets/${encodeURIComponent(id)}`);
     },
 
     async uploadImages(datasetId: string, files: File[], defaultPrompt?: string): Promise<unknown> {
@@ -868,9 +892,12 @@ export const api = {
       return response.data;
     },
 
-    async trainingRequirements(baseModel?: string): Promise<unknown> {
+    async trainingRequirements(baseModel?: string, qloraBits?: number | null): Promise<unknown> {
+      const params: Record<string, string | number> = {};
+      if (baseModel) params.base_model = baseModel;
+      if (qloraBits === 4 || qloraBits === 8) params.qlora_bits = qloraBits;
       const response = await client.get('/api/loras/training/requirements', {
-        params: baseModel ? { base_model: baseModel } : undefined,
+        params: Object.keys(params).length ? params : undefined,
       });
       return response.data;
     },
@@ -882,6 +909,15 @@ export const api = {
 
     async trainingArtifacts(taskId: string): Promise<unknown> {
       const response = await client.get(`/api/loras/trainings/${encodeURIComponent(taskId)}/artifacts`);
+      return response.data;
+    },
+
+    async trainingQualityVlm(taskId: string): Promise<unknown> {
+      const response = await client.post(
+        `/api/loras/trainings/${encodeURIComponent(taskId)}/quality/vlm`,
+        undefined,
+        { timeout: LONG_REQUEST_TIMEOUT_MS }
+      );
       return response.data;
     },
 
