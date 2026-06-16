@@ -7,18 +7,18 @@ from typing import Any
 PRESETS: dict[str, dict[str, Any]] = {
     "quick": {
         "iterations": 300,
-        "lora_rank": 4,
-        "lora_blocks": 8,
-        "grad_accumulate": 1,
+        "lora_rank": 16,
+        "lora_blocks": 16,
+        "grad_accumulate": 4,
         "warmup_steps": 25,
         "progress_every": 150,
         "checkpoint_every": 150,
-        "optimizer": "adam",
-        "min_snr_gamma": 0.0,
+        "optimizer": "adamw",
+        "min_snr_gamma": 5.0,
     },
     "standard": {
         "iterations": 600,
-        "lora_rank": 8,
+        "lora_rank": 16,
         "grad_accumulate": 4,
         "progress_every": 300,
         "checkpoint_every": 300,
@@ -31,7 +31,7 @@ PRESETS: dict[str, dict[str, Any]] = {
     },
     "quality": {
         "iterations": 1200,
-        "lora_rank": 8,
+        "lora_rank": 16,
         "grad_accumulate": 8,
         "progress_every": 600,
         "checkpoint_every": 600,
@@ -41,12 +41,14 @@ PRESETS: dict[str, dict[str, Any]] = {
 FLUX1_TRAIN_MIN_MEMORY_GB = 50.0
 Z_IMAGE_TRAIN_MIN_MEMORY_GB = 48.0
 QWEN_IMAGE_TRAIN_MIN_MEMORY_GB = 52.0
-TRAINABLE_BASE_MODELS: frozenset[str] = frozenset({"flux1-dev", "z-image", "qwen-image"})
+TRAINABLE_BASE_MODELS: frozenset[str] = frozenset(
+    {"flux1-dev", "z-image", "z-image-turbo", "qwen-image"}
+)
 
 Z_IMAGE_PRESETS: dict[str, dict[str, Any]] = {
     "quick": {
-        "iterations": 400,
-        "lora_rank": 8,
+        "iterations": 600,
+        "lora_rank": 16,
         "lora_blocks": 12,
         "grad_accumulate": 4,
         "progress_every": 200,
@@ -54,9 +56,12 @@ Z_IMAGE_PRESETS: dict[str, dict[str, Any]] = {
         "learning_rate": 1e-4,
         "guidance": 5.0,
         "optimizer": "adamw",
+        "min_snr_gamma": 5.0,
+        "val_split": 0.1,
+        "val_every": 100,
     },
     "standard": {
-        "iterations": 800,
+        "iterations": 1200,
         "lora_rank": 16,
         "lora_blocks": 16,
         "grad_accumulate": 4,
@@ -71,7 +76,7 @@ Z_IMAGE_PRESETS: dict[str, dict[str, Any]] = {
         "val_every": 100,
     },
     "quality": {
-        "iterations": 1500,
+        "iterations": 2000,
         "lora_rank": 16,
         "lora_blocks": 24,
         "grad_accumulate": 8,
@@ -79,13 +84,15 @@ Z_IMAGE_PRESETS: dict[str, dict[str, Any]] = {
         "checkpoint_every": 500,
         "learning_rate": 5e-5,
         "guidance": 5.0,
+        "val_split": 0.1,
+        "val_every": 100,
     },
 }
 
 QWEN_IMAGE_PRESETS: dict[str, dict[str, Any]] = {
     "quick": {
         "iterations": 400,
-        "lora_rank": 8,
+        "lora_rank": 16,
         "lora_blocks": 12,
         "grad_accumulate": 4,
         "progress_every": 200,
@@ -93,6 +100,7 @@ QWEN_IMAGE_PRESETS: dict[str, dict[str, Any]] = {
         "learning_rate": 1e-4,
         "grad_checkpoint": True,
         "optimizer": "adamw",
+        "min_snr_gamma": 5.0,
     },
     "standard": {
         "iterations": 800,
@@ -120,10 +128,60 @@ QWEN_IMAGE_PRESETS: dict[str, dict[str, Any]] = {
     },
 }
 
+Z_IMAGE_TURBO_MFLUX_CORE: dict[str, Any] = {
+    "lora_rank": 16,
+    "lora_blocks": 16,
+    "learning_rate": 1e-4,
+    "grad_checkpoint": True,
+    "guidance": 0.0,
+    "progress_steps": 9,
+    "turbo_infer_steps": 9,
+    "timestep_low": 1,
+    "timestep_high": 9,
+    "timestep_bias": "uniform",
+    "optimizer": "adamw",
+    "min_snr_gamma": 5.0,
+    "prior_loss_weight": 0.0,
+}
+
+Z_IMAGE_TURBO_PRESETS: dict[str, dict[str, Any]] = {
+    "quick": {
+        **Z_IMAGE_TURBO_MFLUX_CORE,
+        "iterations": 800,
+        "grad_accumulate": 4,
+        "progress_every": 200,
+        "checkpoint_every": 200,
+        "val_split": 0.1,
+        "val_every": 100,
+    },
+    "standard": {
+        **Z_IMAGE_TURBO_MFLUX_CORE,
+        "iterations": 1200,
+        "grad_accumulate": 4,
+        "progress_every": 400,
+        "checkpoint_every": 400,
+        "val_split": 0.1,
+        "val_every": 100,
+    },
+    "quality": {
+        **Z_IMAGE_TURBO_MFLUX_CORE,
+        "iterations": 2000,
+        "grad_accumulate": 8,
+        "progress_every": 500,
+        "checkpoint_every": 500,
+        "val_split": 0.1,
+        "val_every": 100,
+    },
+}
+
+Z_IMAGE_TURBO_PRESET_ALIASES: dict[str, str] = {
+    "mflux": "standard",
+}
+
 
 def train_min_memory_gb(base_model_id: str) -> float:
     mid = (base_model_id or "").split(":", 1)[0].strip()
-    if mid == "z-image":
+    if mid in ("z-image", "z-image-turbo"):
         return Z_IMAGE_TRAIN_MIN_MEMORY_GB
     if mid == "qwen-image":
         return QWEN_IMAGE_TRAIN_MIN_MEMORY_GB
@@ -135,14 +193,19 @@ def resolve_preset(name: str | None, *, base_model: str = "flux1-dev") -> dict[s
     if key == "custom":
         return {}
     mid = (base_model or "").split(":", 1)[0].strip()
-    if mid == "z-image":
+    if mid == "z-image-turbo":
+        table = Z_IMAGE_TURBO_PRESETS
+        key = Z_IMAGE_TURBO_PRESET_ALIASES.get(key, key)
+    elif mid == "z-image":
         table = Z_IMAGE_PRESETS
     elif mid == "qwen-image":
         table = QWEN_IMAGE_PRESETS
     else:
         table = PRESETS
     if key not in table:
-        raise ValueError(f"Unknown training preset {name!r}; choose quick|standard|quality|custom")
+        raise ValueError(
+            f"Unknown training preset {name!r}; choose quick|standard|quality|custom"
+        )
     return dict(table[key])
 
 
@@ -155,6 +218,7 @@ _TRAINING_REQUEST_EXCLUDE = frozenset(
         "auto_register",
         "priority",
         "metadata",
+        "caption_mode",
     }
 )
 

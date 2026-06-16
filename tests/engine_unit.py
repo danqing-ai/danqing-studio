@@ -43,6 +43,181 @@ class StructuralGuideTests(unittest.TestCase):
         self.assertIsNone(companion_lora_id("flux-redux"))
 
 
+class ZImageEnhancementTests(unittest.TestCase):
+    def test_lemica_schedules(self) -> None:
+        from backend.engine.families.z_image.transformer_mlx import lemica_compute_steps
+
+        medium = lemica_compute_steps("medium", 8)
+        self.assertIsNotNone(medium)
+        assert medium is not None
+        self.assertEqual(len(medium), 8)
+        self.assertEqual(sum(1 for x in medium if x), 6)
+        self.assertIsNone(lemica_compute_steps("none", 8))
+
+    def test_z_image_structural_infer_and_augment(self) -> None:
+        from backend.engine.families.z_image.structural import infer_guide_type
+
+        self.assertEqual(
+            infer_guide_type("z-image-turbo-fun-controlnet-union"),
+            "auto",
+        )
+
+    def test_remap_zimage_control_keys(self) -> None:
+        from backend.engine.families.z_image.weights import remap_zimage_control_weights
+
+        out = remap_zimage_control_weights(
+            {"control_all_x_embedder.2-1.weight": "t", "layers.0.weight": "skip"}
+        )
+        self.assertIn("control_x_embedder.weight", out)
+        self.assertNotIn("layers.0.weight", out)
+
+    def test_structural_guide_inpaint_pair_validation(self) -> None:
+        from backend.core.contracts import StructuralGuide
+        from pydantic import ValidationError
+
+        with self.assertRaises(ValidationError):
+            StructuralGuide(asset_id="a1", inpaint_source_asset_id="s1")
+        ok = StructuralGuide(
+            asset_id="a1",
+            inpaint_source_asset_id="s1",
+            inpaint_mask_asset_id="m1",
+        )
+        self.assertEqual(ok.inpaint_source_asset_id, "s1")
+
+    def test_z_image_weighted_sum_merge_numpy(self) -> None:
+        import numpy as np
+
+        from backend.engine.tools.z_image_merge import weighted_sum_merge
+
+        class _Ctx:
+            pass
+
+        wa = {"w": np.array([1.0, 0.0], dtype=np.float32)}
+        wb = {"w": np.array([0.0, 1.0], dtype=np.float32)}
+        out = weighted_sum_merge(wa, wb, alpha=0.5, ctx=_Ctx())
+        np.testing.assert_allclose(out["w"], [0.5, 0.5], rtol=1e-5)
+
+    def test_esrgan_weight_remap(self) -> None:
+        from backend.engine.families.esrgan.weights import remap_esrgan_weights
+
+        out = remap_esrgan_weights({"body.0.rdb1.conv1.weight": "t", "conv_first.weight": "x"})
+        self.assertIn("body_0.rdb1.conv1.weight", out)
+        self.assertEqual(out["conv_first.weight"], "x")
+
+    def test_esrgan_find_weight_nested(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        import mlx.core as mx
+
+        from backend.engine.families.esrgan.stem_mlx import _find_esrgan_weight_file, validate_esrgan_bundle
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            nested = root / "mlx-community" / "Real-ESRGAN-x4plus"
+            nested.mkdir(parents=True)
+            sf = nested / "model.safetensors"
+            mx.save_safetensors(str(sf), {"conv_first.weight": mx.zeros((1,))})
+            found = _find_esrgan_weight_file(root)
+            self.assertEqual(found.name, "model.safetensors")
+            validate_esrgan_bundle(root)
+
+    def test_validate_esrgan_bundle_missing(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from backend.engine.families.esrgan.stem_mlx import validate_esrgan_bundle
+
+        with tempfile.TemporaryDirectory() as td:
+            with self.assertRaises(RuntimeError):
+                validate_esrgan_bundle(Path(td))
+
+    def test_merged_model_id_slug(self) -> None:
+        from backend.engine.tools.user_merged_model_registry import merged_model_id_from_output_name
+
+        self.assertEqual(merged_model_id_from_output_name("MyBlend_v2"), "z-image-merged-myblend-v2")
+
+    def test_image_edit_request_z_image_enhancements(self) -> None:
+        from backend.core.contracts import ImageEditRequest, LatentRefineSpec, StructuralGuide
+
+        req = ImageEditRequest(
+            model="z-image-turbo:fp16",
+            operation="rewrite",
+            source_asset_id="ast_src",
+            prompt="test",
+            structural_guide=StructuralGuide(
+                asset_id="ast_ctrl",
+                model_id="z-image-turbo-fun-controlnet-union",
+                type="auto",
+            ),
+            lemica_mode="medium",
+            latent_refine=LatentRefineSpec(scale=1.5, denoise_strength=0.35),
+        )
+        self.assertEqual(req.lemica_mode, "medium")
+        self.assertEqual(req.latent_refine.scale, 1.5)
+
+    def test_register_merged_z_image_model(self) -> None:
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from backend.core.model_registry import ModelRegistry
+        from backend.engine.tools.user_merged_model_registry import (
+            list_user_merged_models,
+            register_merged_z_image_model,
+        )
+
+        template = {
+            "catalog": {
+                "media": "image",
+                "name": {"zh": "Z-Image-Turbo", "en": "Z-Image-Turbo"},
+                "engine": "danqing-image",
+                "type": "diffusion",
+                "category": "base_models",
+            },
+            "runtime": {
+                "family": "z_image",
+                "backends": ["mlx", "cuda"],
+                "overrides": {"supports_guidance": False},
+            },
+            "actions": {"create": {}},
+            "ui": {"extends": "image_dit_standard"},
+            "distribution": {
+                "versions": {
+                    "fp16": {"local_path": "models/Image/z-image-turbo-fp16", "default": True},
+                }
+            },
+        }
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            cfg = root / "config"
+            cfg.mkdir()
+            reg_path = cfg / "models_registry.json"
+            reg_path.write_text(
+                json.dumps({"schema_version": 3, "models": {"z-image-turbo": template}}),
+                encoding="utf-8",
+            )
+            manifest = {"merge_method": "weighted_sum", "alpha": 0.5}
+            row = register_merged_z_image_model(
+                registry_path=reg_path,
+                config_dir=cfg,
+                output_name="demo-blend",
+                local_path="models/Image/demo-blend-fp16",
+                template_model_id="z-image-turbo",
+                merge_manifest=manifest,
+                task_id="tsk_test",
+            )
+            self.assertEqual(row["id"], "z-image-merged-demo-blend")
+            self.assertEqual(len(list_user_merged_models(cfg)), 1)
+            reg = ModelRegistry.load(reg_path)
+            entry = reg.require("z-image-merged-demo-blend")
+            self.assertEqual(entry.family, "z_image")
+            ver = entry.raw.get("versions") or {}
+            self.assertEqual(ver["fp16"]["local_path"], "models/Image/demo-blend-fp16")
+            reg.reload()
+            self.assertIsNotNone(reg.get("z-image-merged-demo-blend"))
+
+
 class ImageCliGenerateTests(unittest.TestCase):
     def test_structural_guide_requires_control_asset(self) -> None:
         from backend.cli.image_cli import generate
@@ -4007,6 +4182,207 @@ class LoraQualityTests(unittest.TestCase):
         self.assertIn("hints", report)
         self.assertEqual(len(report["samples"]), 2)
 
+    def test_portrait_heuristic_penalizes_landscape_full_body(self) -> None:
+        from PIL import Image
+
+        from backend.engine.training.portrait_lora_suitability import analyze_portrait_training_image
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "wide.jpg"
+            Image.new("RGB", (1600, 900), color=(180, 140, 120)).save(path, format="JPEG")
+            result = analyze_portrait_training_image(path)
+            self.assertLess(result["score_1_5"], 3.0)
+            self.assertIn("landscape_framing", result["issues"])
+
+    def test_portrait_heuristic_good_close_portrait(self) -> None:
+        from PIL import Image, ImageDraw
+
+        from backend.engine.training.portrait_lora_suitability import analyze_portrait_training_image
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "portrait.jpg"
+            img = Image.new("RGB", (1080, 1440), color=(200, 180, 170))
+            draw = ImageDraw.Draw(img)
+            draw.ellipse((340, 220, 740, 720), fill=(240, 210, 190))
+            draw.ellipse((430, 380, 520, 470), fill=(40, 40, 40))
+            draw.ellipse((560, 380, 650, 470), fill=(40, 40, 40))
+            img.save(path, format="JPEG")
+            result = analyze_portrait_training_image(path)
+            self.assertGreaterEqual(result["score_1_5"], 3.0)
+
+    def test_compile_portrait_dataset_audit_merges_vlm_and_heuristic(self) -> None:
+        from PIL import Image
+
+        from backend.engine.training.lora_quality_vlm import compile_portrait_dataset_audit
+
+        with tempfile.TemporaryDirectory() as tmp:
+            good = Path(tmp) / "good.jpg"
+            bad = Path(tmp) / "bad.jpg"
+            Image.new("RGB", (1080, 1440), color=(128, 64, 32)).save(good, format="JPEG")
+            Image.new("RGB", (1600, 900), color=(64, 32, 16)).save(bad, format="JPEG")
+            texts = ["SCORE: 5\nISSUES: good\nREASON: Perfect portrait."]
+            report = compile_portrait_dataset_audit(
+                [good, bad],
+                [good],
+                texts,
+                all_file_keys=["good.jpg", "bad.jpg"],
+                vlm_file_keys=["good.jpg"],
+            )
+            self.assertEqual(len(report["samples"]), 2)
+            by_file = {s["file"]: s for s in report["samples"]}
+            self.assertLess(by_file["bad.jpg"]["score"], 3.0)
+            self.assertIsNotNone(by_file["good.jpg"].get("vlm_score"))
+            self.assertIsNotNone(by_file["bad.jpg"].get("heuristic_score"))
+
+    def test_merge_vlm_and_heuristic_takes_minimum(self) -> None:
+        from backend.engine.training.portrait_lora_suitability import merge_vlm_and_heuristic_sample
+
+        merged = merge_vlm_and_heuristic_sample(
+            file_key="a.jpg",
+            vlm_parsed={"score": 5.0, "issues": ["good"], "reason": "VLM says great"},
+            heuristic={"score_1_5": 2.0, "issues": ["tiny_face_in_crop"], "reason": "Face tiny"},
+        )
+        self.assertEqual(merged["score"], 2.0)
+        self.assertIn("tiny_face_in_crop", merged["issues"])
+        self.assertFalse(merged["suitable_for_training"])
+
+    def test_compose_person_caption_cjk(self) -> None:
+        from backend.engine.training.lora_auto_caption import compose_person_caption
+
+        self.assertEqual(
+            compose_person_caption("杨紫", "半身照，白色衬衫，室内"),
+            "杨紫，半身照，白色衬衫，室内",
+        )
+
+    def test_compose_person_caption_english(self) -> None:
+        from backend.engine.training.lora_auto_caption import compose_person_caption
+
+        self.assertEqual(
+            compose_person_caption("cyq", "bust portrait, red dress, outdoor"),
+            "cyq, bust portrait, red dress, outdoor",
+        )
+
+    def test_resolve_lora_subject_name_prefers_name_over_legacy_template(self) -> None:
+        from backend.engine.training.lora_auto_caption import resolve_lora_subject_name
+
+        self.assertEqual(
+            resolve_lora_subject_name(
+                {
+                    "default_prompt": "A photo of sks person",
+                    "trigger_word": "",
+                    "name": "陈钰琪",
+                }
+            ),
+            "陈钰琪",
+        )
+        self.assertEqual(
+            resolve_lora_subject_name({"default_prompt": "杨紫", "trigger_word": "", "name": "dataset-1"}),
+            "杨紫",
+        )
+
+    def test_caption_dataset_image_concept_prefixes_subject(self) -> None:
+        from pathlib import Path
+
+        from backend.engine.training.lora_auto_caption import caption_dataset_image
+
+        def fake_analyze(_path: Path, _instruction: str) -> str:
+            self.assertIn("杨紫", _instruction)
+            return "半身照，白色连衣裙，自然光"
+
+        caption = caption_dataset_image(
+            Path("x.jpg"),
+            Path("/tmp/vlm"),
+            audit_kind="concept",
+            subject_name="杨紫",
+            analyze_fn=fake_analyze,
+        )
+        self.assertEqual(caption, "杨紫，半身照，白色连衣裙，自然光")
+
+    def test_normalize_scene_caption_rejects_exclamation_garbage(self) -> None:
+        from backend.engine.training.lora_auto_caption import compose_person_caption, normalize_scene_caption
+
+        raw = "!" * 80
+        self.assertEqual(normalize_scene_caption(raw), "")
+        self.assertEqual(compose_person_caption("陈钰琪", raw), "陈钰琪")
+
+    def test_caption_dataset_image_retries_after_garbage_vlm_output(self) -> None:
+        from pathlib import Path
+
+        from backend.engine.training.lora_auto_caption import caption_dataset_image
+
+        calls: list[str] = []
+
+        def fake_analyze(_path: Path, _instruction: str) -> str:
+            calls.append(_instruction)
+            if len(calls) == 1:
+                return "!" * 100
+            return "半身照，白色衬衫，室内"
+
+        caption = caption_dataset_image(
+            Path("x.jpg"),
+            Path("/tmp/vlm"),
+            audit_kind="concept",
+            subject_name="陈钰琪",
+            analyze_fn=fake_analyze,
+        )
+        self.assertEqual(caption, "陈钰琪，半身照，白色衬衫，室内")
+        self.assertEqual(len(calls), 2)
+
+    def test_caption_dataset_images_batch_retries_garbage_in_second_pass(self) -> None:
+        from pathlib import Path
+
+        from backend.engine.training.lora_auto_caption import caption_dataset_images_batch
+
+        calls: list[tuple[str, int]] = []
+
+        def fake_batch(image_paths: list[Path], instruction: str, max_tokens=128, temperature=0.2) -> list[str]:
+            calls.append((instruction, len(image_paths)))
+            if len(calls) == 1:
+                return ["!" * 80, "半身照，红色连衣裙"]
+            return ["半身照，白色衬衫"]
+
+        caps = caption_dataset_images_batch(
+            [Path("a.jpg"), Path("b.jpg")],
+            Path("/tmp/vlm"),
+            audit_kind="concept",
+            subject_name="陈钰琪",
+            batch_analyze_fn=fake_batch,
+        )
+        self.assertEqual(caps[0], "陈钰琪，半身照，白色衬衫")
+        self.assertEqual(caps[1], "陈钰琪，半身照，红色连衣裙")
+        self.assertEqual(len(calls), 2)
+
+    def test_vlm_audit_worker_lora_caption_mode(self) -> None:
+        from backend.engine.llm.vlm_audit_worker import run_job
+
+        import backend.engine.training.lora_auto_caption as mod
+
+        original = mod.caption_dataset_images_batch
+        mod.caption_dataset_images_batch = lambda paths, model_dir, **kw: ["陈钰琪，半身照"]
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                model_dir = Path(tmp)
+                out = run_job(
+                    {
+                        "mode": "lora_caption",
+                        "image_paths": [str(Path(tmp) / "a.jpg")],
+                        "model_dir": str(model_dir),
+                        "audit_kind": "concept",
+                        "subject_name": "陈钰琪",
+                    }
+                )
+        finally:
+            mod.caption_dataset_images_batch = original
+        self.assertEqual(out["captions"], ["陈钰琪，半身照"])
+
+    def test_create_dataset_defaults_prompt_to_name(self) -> None:
+        from backend.engine.training import dataset_store
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ds = dataset_store.create_dataset(root, name="杨紫", kind="concept")
+            self.assertEqual(ds.get("default_prompt"), "杨紫")
+
     def test_prepare_image_for_vlm_downscales(self) -> None:
         from PIL import Image
 
@@ -4152,6 +4528,15 @@ class LoraTrainRuntimeTests(unittest.TestCase):
         self.assertEqual(cfg.early_stop_patience, 3)
         self.assertTrue(cfg.fuse_adapters)
 
+    def test_parse_lora_train_runtime_config_default_scale(self) -> None:
+        from backend.engine.training.lora_train_runtime import (
+            DEFAULT_LORA_SCALE,
+            parse_lora_train_runtime_config,
+        )
+
+        cfg = parse_lora_train_runtime_config({}, defaults={"lora_rank": 16, "iterations": 100})
+        self.assertEqual(cfg.lora_scale, DEFAULT_LORA_SCALE)
+
     def test_latent_cache_fingerprint(self) -> None:
         from backend.engine.training.latent_cache import LatentCache
 
@@ -4244,7 +4629,7 @@ class LoraTrainingPresetsTests(unittest.TestCase):
         self.assertIn("z-image", TRAINABLE_BASE_MODELS)
         self.assertIn("qwen-image", TRAINABLE_BASE_MODELS)
         self.assertIn("flux1-dev", TRAINABLE_BASE_MODELS)
-        self.assertNotIn("z-image-turbo", TRAINABLE_BASE_MODELS)
+        self.assertIn("z-image-turbo", TRAINABLE_BASE_MODELS)
 
     def test_resolve_preset_by_base_model(self) -> None:
         from backend.engine.training.crop import resolve_training_resolution
@@ -4252,18 +4637,44 @@ class LoraTrainingPresetsTests(unittest.TestCase):
 
         flux = resolve_preset("standard", base_model="flux1-dev")
         zimg = resolve_preset("standard", base_model="z-image")
+        zturbo = resolve_preset("standard", base_model="z-image-turbo")
         qwen = resolve_preset("standard", base_model="qwen-image")
-        self.assertEqual(flux["lora_rank"], 8)
+        self.assertEqual(flux["lora_rank"], 16)
         self.assertEqual(zimg["lora_rank"], 16)
+        self.assertEqual(zturbo["lora_rank"], 16)
+        self.assertEqual(zturbo["guidance"], 0.0)
+        self.assertEqual(zturbo["timestep_low"], 1)
+        self.assertEqual(zturbo["timestep_high"], 9)
+        self.assertEqual(zturbo["timestep_bias"], "uniform")
+        self.assertEqual(zturbo["min_snr_gamma"], 5.0)
+        self.assertEqual(zturbo["turbo_infer_steps"], 9)
+        self.assertNotIn("lora_module_keys", zturbo)
+        self.assertEqual(zturbo["val_split"], 0.1)
+        self.assertEqual(zturbo["val_every"], 100)
+        self.assertEqual(zturbo["prior_loss_weight"], 0.0)
         self.assertEqual(qwen["lora_rank"], 16)
         self.assertEqual(
+            resolve_training_resolution("z-image-turbo", zturbo, preset="standard"),
+            (512, 512),
+        )
+        self.assertEqual(
             resolve_training_resolution("z-image", zimg, preset="standard"),
-            (768, 768),
+            (512, 512),
         )
         self.assertEqual(
             resolve_training_resolution("qwen-image", qwen, preset="standard"),
-            (768, 768),
+            (512, 512),
         )
+
+    def test_z_image_turbo_standard_preset_mflux_aligned(self) -> None:
+        from backend.engine.training.presets import resolve_preset
+
+        turbo = resolve_preset("standard", base_model="z-image-turbo")
+        self.assertEqual(turbo["lora_rank"], 16)
+        self.assertNotIn("lora_module_keys", turbo)
+        self.assertEqual(turbo["timestep_low"], 1)
+        self.assertEqual(turbo["learning_rate"], 1e-4)
+        self.assertEqual(resolve_preset("mflux", base_model="z-image-turbo"), turbo)
 
     def test_merge_training_request_config_keeps_preset(self) -> None:
         from backend.core.contracts import LoraTrainingRequest
@@ -4278,12 +4689,147 @@ class LoraTrainingPresetsTests(unittest.TestCase):
             preset="quick",
         )
         cfg = merge_training_request_config(req, preset)
-        self.assertEqual(cfg["iterations"], 400)
-        self.assertEqual(cfg["lora_rank"], 8)
+        self.assertEqual(cfg["iterations"], 600)
+        self.assertEqual(cfg["lora_rank"], 16)
         self.assertEqual(
             resolve_training_resolution("z-image", cfg, preset="quick"),
             (512, 512),
         )
+
+
+class ZImageTurboTrainingTests(unittest.TestCase):
+    def test_turbo_training_sigmas_band(self) -> None:
+        from backend.engine.runtime.mlx import MLXContext
+        from backend.engine.training.dit_training_loss import sample_noisy_latent_turbo, turbo_training_sigmas
+
+        ctx = MLXContext()
+        sigmas = turbo_training_sigmas(ctx, infer_steps=9, width=768, height=1280)
+        self.assertEqual(int(sigmas.shape[0]), 9)
+        x0 = ctx.zeros((1, 16, 96, 48), dtype=ctx.bfloat16())
+        x_t, eps, t = sample_noisy_latent_turbo(
+            x0,
+            ctx,
+            infer_steps=9,
+            timestep_low=4,
+            timestep_high=9,
+            width=768,
+            height=1280,
+        )
+        self.assertEqual(x_t.shape, x0.shape)
+        self.assertEqual(eps.shape, x0.shape)
+        self.assertEqual(t.shape[0], 1)
+
+    def test_turbo_low_bias_prefers_low_sigma(self) -> None:
+        import mlx.core as mx
+
+        from backend.engine.runtime.mlx import MLXContext
+        from backend.engine.training.dit_training_loss import sample_noisy_latent_turbo
+
+        ctx = MLXContext()
+        x0 = ctx.zeros((256, 16, 96, 48), dtype=ctx.bfloat16())
+        _, _, t_low = sample_noisy_latent_turbo(
+            x0,
+            ctx,
+            infer_steps=8,
+            timestep_low=5,
+            timestep_high=8,
+            width=768,
+            height=1280,
+            timestep_bias="low",
+        )
+        _, _, t_uni = sample_noisy_latent_turbo(
+            x0,
+            ctx,
+            infer_steps=8,
+            timestep_low=5,
+            timestep_high=8,
+            width=768,
+            height=1280,
+            timestep_bias="uniform",
+        )
+        self.assertLess(float(mx.mean(t_low)), float(mx.mean(t_uni)))
+
+    def test_apply_lora_recursive_wraps_matching_linears(self) -> None:
+        import mlx.nn as nn
+
+        from backend.engine.training.lora_layers import (
+            _apply_lora_recursive,
+            iter_lora_linears_with_paths,
+            LoRALinear,
+        )
+
+        class Block:
+            def __init__(self):
+                self.to_q = nn.Linear(8, 4, bias=False)
+                self.to_k = nn.Linear(8, 4, bias=False)
+
+        block = Block()
+        _apply_lora_recursive(
+            block,
+            rank=4,
+            module_keys=["to_q", "to_k"],
+            adapter_cls=LoRALinear,
+        )
+        self.assertIsInstance(block.to_q, LoRALinear)
+        self.assertIsInstance(block.to_k, LoRALinear)
+
+    def test_training_assistant_factors_shape_and_forward(self) -> None:
+        import mlx.core as mx
+        import mlx.nn as nn
+
+        from backend.engine.training.lora_layers import LoRALinear
+
+        in_d, out_d, rank = 256, 1024, 32
+        down = mx.random.normal((rank, in_d))
+        up = mx.random.normal((out_d, rank))
+        base = nn.Linear(in_d, out_d, bias=False)
+        lora = LoRALinear.from_base(base, r=4)
+        lora.attach_frozen_assistant(down, up, alpha=float(rank))
+        self.assertEqual(tuple(lora.assistant_lora_a.shape), (in_d, rank))
+        self.assertEqual(tuple(lora.assistant_lora_b.shape), (rank, out_d))
+        x = mx.random.normal((1, in_d))
+        out = lora._assistant_contribution(x)
+        self.assertEqual(tuple(out.shape), (1, out_d))
+
+    def test_training_assistant_does_not_mutate_base_weight(self) -> None:
+        import mlx.core as mx
+        import mlx.nn as nn
+
+        from backend.engine.training.lora_layers import LoRALinear
+
+        base = nn.Linear(8, 4)
+        base.weight = mx.ones((4, 8))
+        lora = LoRALinear.from_base(base, r=4, scale=1.0)
+        w_before = mx.array(lora.linear.weight)
+        lora.assistant_lora_a = mx.ones((8, 2)) * 0.01
+        lora.assistant_lora_b = mx.ones((2, 4)) * 0.01
+        lora.assistant_scale = 0.5
+        lora.assistant_enabled = True
+        self.assertTrue(mx.allclose(lora.linear.weight, w_before))
+        x = mx.ones((1, 8))
+        with_assistant = lora(x)
+        lora.assistant_enabled = False
+        without_assistant = lora(x)
+        self.assertFalse(mx.allclose(with_assistant, without_assistant))
+
+    def test_training_adapter_path_prefers_local(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from backend.engine.training.z_image_turbo_adapter import (
+            LOCAL_ADAPTER_REL,
+            TRAINING_ADAPTER_FILE,
+            resolve_zimage_turbo_training_adapter_path,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            local = root / LOCAL_ADAPTER_REL
+            local.parent.mkdir(parents=True, exist_ok=True)
+            local.write_bytes(b"not-a-real-safetensors")
+            resolved = resolve_zimage_turbo_training_adapter_path(root)
+            self.assertEqual(resolved, local)
+            self.assertEqual(resolved.name, TRAINING_ADAPTER_FILE)
 
 
 class LoraTrainingCropTests(unittest.TestCase):
@@ -4366,8 +4912,35 @@ class LoraTrainingCropTests(unittest.TestCase):
         )
         self.assertEqual(cap, "A photo of sks person")
 
+    def test_resolve_dreambooth_caption_injects_trigger_word(self) -> None:
+        from backend.engine.training.dataset_store import resolve_dreambooth_caption
+        from pathlib import Path
 
-class QwenImageLoraExportTests(unittest.TestCase):
+        pairs = [(Path("a.jpg"), "caption")]
+        cap = resolve_dreambooth_caption(
+            pairs,
+            progress_prompt="a beautiful portrait",
+            dataset_meta={"trigger_word": "sks"},
+        )
+        self.assertIn("sks", cap.lower())
+        self.assertIn("beautiful portrait", cap)
+
+    def test_resolve_per_image_captions_keeps_row_text(self) -> None:
+        from backend.engine.training.dataset_store import resolve_per_image_captions
+        from pathlib import Path
+
+        pairs = [
+            (Path("a.jpg"), "陈钰琪，白色连衣裙"),
+            (Path("b.jpg"), "陈钰琪，古装"),
+        ]
+        out = resolve_per_image_captions(
+            pairs,
+            progress_prompt="陈钰琪",
+            dataset_meta={"trigger_word": "", "default_prompt": "陈钰琪"},
+        )
+        self.assertEqual(out[0][1], "陈钰琪，白色连衣裙")
+        self.assertEqual(out[1][1], "陈钰琪，古装")
+
     def test_collect_lora_safetensors_remaps_for_qwen_image(self) -> None:
         from backend.engine.runtime.mlx import MLXContext
         from backend.engine.config.model_configs import QwenImageConfig
