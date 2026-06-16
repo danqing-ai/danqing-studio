@@ -14,7 +14,7 @@ from backend.core.contracts import (
     ImageEditRequest,
     work_title_metadata,
 )
-from backend.engine._transformer_registry import attach_image_edit_extra_cond
+from backend.engine._transformer_registry import attach_image_edit_extra_cond, attach_image_conditioning, augment_image_inference_request
 from backend.engine.contracts import FamilyRuntimeContract
 from backend.engine.inference.image_denoise import run_image_denoise
 from backend.engine.pipelines.image_run_common import (
@@ -92,6 +92,8 @@ class ImageEditRunContext(MediaRunContext):
     lh_edit: int
     lw_edit: int
     edit_conditioning_concat: bool
+    structural_output_meta: dict[str, Any] | None
+    structural_cleanup: Callable[[], None] | None = None
     on_progress: Callable | None = None
     on_log: Callable | None = None
 
@@ -178,6 +180,8 @@ def build_image_edit_rewrite_context(
     if ctx_exec.cancel_token.is_cancelled():
         return None
 
+    request = augment_image_inference_request(request, pipeline.ctx)
+
     with phase_cm("encode"):
         pil, w, h = load_edit_source_rgb(pipeline, ctx_exec, request.source_asset_id)
         validate_edit_vae_latent_grid(
@@ -242,6 +246,48 @@ def build_image_edit_rewrite_context(
             extra_cond = attach_image_edit_extra_cond(
                 family, extra_cond, reference_latent, height=h, width=w
             )
+
+        structural_cleanup: Callable[[], None] | None = None
+        structural_output_meta: dict[str, Any] | None = None
+        try:
+            extra_cond, structural_cleanup = attach_image_conditioning(
+                pipeline,
+                request=request,
+                family=family,
+                model=model,
+                entry=entry,
+                version_key=version_key,
+                extra_cond=extra_cond,
+                width=w,
+                height=h,
+                ctx_exec=ctx_exec,
+                on_log=on_log,
+            )
+        except Exception:
+            if structural_cleanup is not None:
+                structural_cleanup()
+            raise
+
+        lemica_mode = getattr(request, "lemica_mode", None)
+        if lemica_mode and str(lemica_mode).strip().lower() not in ("", "none", "off"):
+            from backend.engine.common.mlx_only import require_mlx_if_option_active
+
+            require_mlx_if_option_active(
+                pipeline.ctx,
+                feature="lemica_mode",
+                option=lemica_mode,
+            )
+            extra_cond = dict(extra_cond)
+            extra_cond["lemica_mode"] = str(lemica_mode).strip().lower()
+
+        guide = getattr(request, "structural_guide", None)
+        if guide is not None:
+            structural_output_meta = {
+                "structural_guide_model": (getattr(guide, "model_id", None) or "").strip(),
+                "structural_guide_type": getattr(guide, "type", None) or "",
+                "structural_guide_weight": float(guide.weight),
+                "structural_guide_asset_id": guide.asset_id,
+            }
 
     with phase_cm("schedule"):
         scheduled = schedule_image_run(
@@ -348,6 +394,8 @@ def build_image_edit_rewrite_context(
         lh_edit=lh_edit,
         lw_edit=lw_edit,
         edit_conditioning_concat=edit_conditioning_concat,
+        structural_output_meta=structural_output_meta,
+        structural_cleanup=structural_cleanup,
         on_progress=on_progress,
         on_log=on_log,
     )
@@ -425,6 +473,23 @@ def execute_image_edit_denoise(ctx: ImageEditRunContext) -> Any | None:
 def decode_image_edit_latents(ctx: ImageEditRunContext, latents: Any) -> Any:
     from PIL import Image
 
+    from backend.engine.families.z_image.latent_refine import apply_latent_refine_if_requested
+
+    latents = apply_latent_refine_if_requested(
+        ctx.pipeline,
+        latents,
+        request=ctx.request,
+        entry=ctx.entry,
+        version_key=ctx.version_key,
+        model=ctx.model,
+        timesteps=ctx.timesteps,
+        sigmas=ctx.sigmas,
+        txt_embeds=ctx.txt_embeds,
+        neg_embeds=ctx.neg_embeds,
+        guidance=ctx.guidance,
+        extra_cond=ctx.extra_cond,
+        on_log=ctx.on_log,
+    )
     pipeline_graph_step("decode_vae", ctx.on_log)
     image = image_vae_decode(
         ctx.pipeline,
@@ -467,6 +532,8 @@ def persist_image_edit(
         "operation": ctx.request.operation,
         "source_fidelity": ctx.fidelity,
     }
+    if ctx.structural_output_meta:
+        meta.update(ctx.structural_output_meta)
     meta.update(work_title_metadata(ctx.request.title))
     return str(out_path), meta
 

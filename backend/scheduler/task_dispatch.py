@@ -14,6 +14,7 @@ from backend.core.contracts import (
     VideoEditRequest,
     VideoGenerationRequest,
     VideoUpscaleRequest,
+    ZImageMergeRequest,
 )
 import backend.core.task_kinds as TK
 
@@ -35,6 +36,7 @@ TASK_DISPATCH: dict[str, TaskDispatchSpec] = {
     TK.AUDIO_GENERATION: TaskDispatchSpec(AudioGenerationRequest, "get_audio", "generate"),
     TK.AUDIO_EDIT: TaskDispatchSpec(AudioEditRequest, "get_audio", "edit"),
     TK.LORA_TRAINING: TaskDispatchSpec(LoraTrainingRequest, "get_lora_train", "train"),
+    TK.TOOLS_Z_IMAGE_MERGE: TaskDispatchSpec(ZImageMergeRequest, "get_tools", "merge_z_image"),
 }
 
 

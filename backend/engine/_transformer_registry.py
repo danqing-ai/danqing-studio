@@ -361,7 +361,7 @@ def encode_image_text_conditioning(
 # request field → (module, augment_fn) — run when field is present on request
 _IMAGE_REQUEST_AUGMENTS: tuple[tuple[str, tuple[str, str]], ...] = (
     ("structural_guide", (
-        "backend.engine.families.flux1.structural",
+        "backend.engine.pipelines.structural_guide_dispatch",
         "augment_request_for_structural_guide",
     )),
 )
@@ -369,7 +369,7 @@ _IMAGE_REQUEST_AUGMENTS: tuple[tuple[str, tuple[str, str]], ...] = (
 # request field → (module, attach_fn) — conditioning before denoise
 _IMAGE_CONDITIONING: tuple[tuple[str, tuple[str, str]], ...] = (
     ("structural_guide", (
-        "backend.engine.families.flux1.structural",
+        "backend.engine.pipelines.structural_guide_dispatch",
         "attach_structural_conditioning",
     )),
 )
@@ -386,6 +386,10 @@ def augment_image_generation_request(request: Any, ctx: Any) -> Any:
         fn = getattr(importlib.import_module(entry[0]), entry[1])
         out = fn(out, ctx)
     return out
+
+
+# Shared by create + rewrite img2img (structural companion LoRA, etc.)
+augment_image_inference_request = augment_image_generation_request
 
 
 def attach_image_conditioning(

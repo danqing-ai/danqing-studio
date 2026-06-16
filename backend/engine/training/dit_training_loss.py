@@ -6,6 +6,8 @@ from typing import Any, Callable
 
 import mlx.core as mx
 
+CLASS_PRIOR_LATENT_COUNT = 16
+
 
 def min_snr_weight(sigma: mx.array, gamma: float) -> mx.array:
     """Per-sample SNR weight for linear flow-matching with x_t = (1-σ)x0 + σε."""
@@ -44,6 +46,77 @@ def sample_noisy_latent(x0: mx.array, ctx: Any) -> tuple[mx.array, mx.array, mx.
     return x_t, eps, t
 
 
+def turbo_training_sigmas(
+    ctx: Any,
+    *,
+    infer_steps: int,
+    width: int,
+    height: int,
+) -> mx.array:
+    """Inference sigmas for Z-Image-Turbo (LinearScheduler + sigma shift)."""
+    from backend.engine.common.ops.schedulers import LinearScheduler
+
+    sched = LinearScheduler(num_train_timesteps=1000, ctx=ctx)
+    sched.set_timesteps(
+        int(infer_steps),
+        image_width=int(width),
+        image_height=int(height),
+        requires_sigma_shift=True,
+    )
+    return sched._sigmas[:-1]
+
+
+def _sample_turbo_band_indices(
+    batch: int,
+    band_size: int,
+    *,
+    bias: str,
+) -> mx.array:
+    """Pick indices into a sigma band; low bias favors final (low-σ) denoise steps."""
+    if band_size <= 1:
+        return mx.zeros((batch,), dtype=mx.int32)
+    u = mx.random.uniform(shape=(batch,))
+    mode = (bias or "uniform").strip().lower()
+    if mode == "low":
+        u = mx.sqrt(u)
+    elif mode == "high":
+        u = mx.square(u)
+    idx = mx.floor(u * float(band_size)).astype(mx.int32)
+    return mx.clip(idx, 0, band_size - 1)
+
+
+def sample_noisy_latent_turbo(
+    x0: mx.array,
+    ctx: Any,
+    *,
+    infer_steps: int,
+    timestep_low: int,
+    timestep_high: int,
+    width: int,
+    height: int,
+    timestep_bias: str = "uniform",
+) -> tuple[mx.array, mx.array, mx.array]:
+    """Sample noise levels within the Turbo inference step band (mflux-style)."""
+    sigmas = turbo_training_sigmas(
+        ctx,
+        infer_steps=infer_steps,
+        width=width,
+        height=height,
+    )
+    n = int(sigmas.shape[0])
+    lo = max(0, min(int(timestep_low) - 1, n - 1))
+    hi = max(lo, min(int(timestep_high) - 1, n - 1))
+    band = sigmas[lo : hi + 1]
+    b = x0.shape[0]
+    idx = _sample_turbo_band_indices(b, int(band.shape[0]), bias=timestep_bias)
+    t = band[idx]
+    eps = mx.random.normal(x0.shape, dtype=ctx.bfloat16())
+    sigma = mx.reshape(t, (b,) + (1,) * (x0.ndim - 1)).astype(ctx.bfloat16())
+    x_t = (1.0 - sigma) * x0 + sigma * eps
+    x_t = mx.stop_gradient(x_t)
+    return x_t, eps, t
+
+
 def combine_instance_prior_loss(
     instance_loss: mx.array,
     prior_loss: mx.array | None,
@@ -56,8 +129,43 @@ def combine_instance_prior_loss(
 
 
 def make_prior_latent(x0: mx.array, ctx: Any) -> mx.array:
-    """DreamBooth-style prior: sample x0 from the latent prior (standard normal)."""
+    """Fallback prior x0: standard normal (used when class latents are unavailable)."""
     return mx.random.normal(x0.shape, dtype=ctx.bfloat16())
+
+
+def sample_prior_latent(
+    x0: mx.array,
+    ctx: Any,
+    *,
+    prior_latents: mx.array | None = None,
+) -> mx.array:
+    """DreamBooth prior x0: sample from cached class latents when available."""
+    if prior_latents is not None and int(prior_latents.shape[0]) > 0:
+        import random
+
+        n = int(prior_latents.shape[0])
+        idx = random.randrange(n)
+        latent = prior_latents[idx]
+        if latent.ndim == 3:
+            latent = latent[None]
+        if latent.shape[0] != x0.shape[0]:
+            latent = mx.broadcast_to(latent, x0.shape)
+        return latent.astype(ctx.bfloat16())
+    return make_prior_latent(x0, ctx)
+
+
+def merge_prior_cache_tensors(
+    cache: Any,
+    tensors: dict[str, mx.array],
+    *,
+    name: str = "prior",
+) -> None:
+    try:
+        existing = cache.load_prior(name=name)
+    except RuntimeError:
+        existing = {}
+    merged = {**existing, **tensors}
+    cache.write_prior(merged, name=name)
 
 
 def wrap_loss_with_prior(

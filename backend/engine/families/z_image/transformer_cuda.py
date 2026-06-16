@@ -520,6 +520,15 @@ class ZImageDiTCuda(TransformerBase, nn.Module):
         """Z-Image reference CFG convention: eps_c + g * (eps_c - eps_u)."""
         return noise_cond + guidance * (noise_cond - noise_uncond)
 
+    def before_denoise(self, latents, timesteps, sigmas, **cond):
+        from backend.engine.common.mlx_only import require_mlx_if_option_active
+
+        lemica = cond.get("lemica_mode")
+        if lemica is None:
+            lemica = getattr(self.config, "lemica_mode", None)
+        require_mlx_if_option_active(self.ctx, feature="lemica_mode", option=lemica)
+        return super().before_denoise(latents, timesteps, sigmas, **cond)
+
     def forward(
         self,
         latents,

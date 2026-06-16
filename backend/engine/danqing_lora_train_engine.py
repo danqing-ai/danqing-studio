@@ -1,5 +1,5 @@
 """
-DanQingLoraTrainEngine — LoRA training (Flux.1-dev + Z-Image Base + Qwen-Image).
+DanQingLoraTrainEngine — LoRA training (Flux.1-dev + Z-Image Base/Turbo + Qwen-Image).
 """
 from __future__ import annotations
 
@@ -56,11 +56,6 @@ class DanQingLoraTrainEngine(ILoraTrainEngine):
                 f"(trainable: {sorted(TRAINABLE_BASE_MODELS)})"
             )
         mid, _ = parse_model_version(request.base_model)
-        if mid == "z-image-turbo":
-            raise RuntimeError(
-                "LoRA training supports Z-Image Base (z-image) only; "
-                "z-image-turbo is distilled and not trainable."
-            )
         entry = self._registry.require(mid)
         family = str(getattr(entry, "family", ""))
         if family not in ("flux1", "z_image", "qwen_image"):

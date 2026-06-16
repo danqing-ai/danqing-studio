@@ -210,6 +210,18 @@ def build_create_run_context(
             structural_cleanup()
         raise
 
+    lemica_mode = getattr(request, "lemica_mode", None)
+    if lemica_mode and str(lemica_mode).strip().lower() not in ("", "none", "off"):
+        from backend.engine.common.mlx_only import require_mlx_if_option_active
+
+        require_mlx_if_option_active(
+            pipeline.ctx,
+            feature="lemica_mode",
+            option=lemica_mode,
+        )
+        extra_cond = dict(extra_cond)
+        extra_cond["lemica_mode"] = str(lemica_mode).strip().lower()
+
     with phase_cm("schedule"):
         scheduled = schedule_image_run(
             pipeline,
@@ -477,6 +489,23 @@ def execute_create_denoise(
 
 def decode_create_latents(ctx: ImageCreateRunContext, latents: Any) -> Any:
     """VAE decode only (no filesystem write)."""
+    from backend.engine.families.z_image.latent_refine import apply_latent_refine_if_requested
+
+    latents = apply_latent_refine_if_requested(
+        ctx.pipeline,
+        latents,
+        request=ctx.request,
+        entry=ctx.entry,
+        version_key=ctx.version_key,
+        model=ctx.model,
+        timesteps=ctx.timesteps,
+        sigmas=ctx.sigmas,
+        txt_embeds=ctx.txt_embeds,
+        neg_embeds=ctx.neg_embeds,
+        guidance=ctx.guidance,
+        extra_cond=ctx.extra_cond,
+        on_log=ctx.on_log,
+    )
     pipeline_graph_step("decode_vae", ctx.on_log)
     return image_vae_decode(
         ctx.pipeline,

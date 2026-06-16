@@ -10,12 +10,37 @@ from typing import Any
 
 
 def run_job(job: dict[str, Any]) -> dict[str, Any]:
-    from backend.engine.llm.vision import analyze_image_files_batch
-
+    mode = str(job.get("mode") or "audit").strip().lower()
     image_paths = [Path(p) for p in job.get("image_paths") or []]
     if not image_paths:
-        raise RuntimeError("VLM audit job has no image_paths")
+        raise RuntimeError("VLM worker job has no image_paths")
     model_dir = Path(str(job.get("model_dir") or ""))
+    if not model_dir.is_dir():
+        raise RuntimeError(f"VLM model_dir not found: {model_dir}")
+
+    if mode == "lora_caption":
+        from backend.engine.training.lora_auto_caption import caption_dataset_images_batch
+
+        captions = caption_dataset_images_batch(
+            image_paths,
+            model_dir,
+            audit_kind=str(job.get("audit_kind") or "concept"),
+            subject_name=str(job.get("subject_name") or ""),
+        )
+        return {"captions": captions}
+
+    if mode == "face_anchor":
+        from backend.engine.training.lora_auto_caption import generate_face_anchor
+
+        face_anchor = generate_face_anchor(
+            image_paths,
+            model_dir,
+            subject_name=str(job.get("subject_name") or ""),
+        )
+        return {"face_anchor": face_anchor}
+
+    from backend.engine.llm.vision import analyze_image_files_batch
+
     instruction = str(job.get("instruction") or "").strip()
     if not instruction:
         raise RuntimeError("VLM audit job missing instruction")

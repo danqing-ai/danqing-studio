@@ -97,3 +97,8 @@ class ModelRegistry:
 
     def all(self) -> dict[str, ModelEntry]:
         return dict(self._models)
+
+    def reload(self) -> None:
+        """Re-read ``models_registry.json`` in place (shared singleton stays valid for engines)."""
+        fresh = ModelRegistry.load(self._path)
+        self._models = fresh._models

@@ -134,6 +134,12 @@ def run_dit_lora_train_loop(
             mx.eval(train_module.parameters(), optimizer.state)
         mx.eval(loss)
         loss_val = float(loss.item())
+        if not __import__("math").isfinite(loss_val):
+            raise RuntimeError(
+                f"LoRA training loss is non-finite at iteration {i + 1}: {loss_val!r}. "
+                f"Turbo full-module training is numerically sensitive — use preset defaults "
+                "(prior_loss_weight=0, grad_checkpoint=true, learning_rate≤5e-5)."
+            )
         losses.append(loss_val)
 
         if (i + 1) == start_iter + 1 or (i + 1) % log_every == 0:

@@ -27,6 +27,7 @@ TaskKind = Literal[
     "audio.generation",
     "audio.edit",
     "lora.training",
+    "tools.z_image_merge",
 ]
 
 
@@ -43,8 +44,29 @@ class AdapterRef(BaseModel):
 class StructuralGuide(BaseModel):
     asset_id: str
     model_id: str = ""
-    type: Literal["canny", "depth", "pose", "redux"] = "canny"
+    type: Literal[
+        "canny", "depth", "pose", "hed", "mlsd", "scribble", "gray", "auto", "redux",
+    ] = "canny"
     weight: float = Field(0.8, ge=0.0, le=2.0)
+    inpaint_source_asset_id: Optional[str] = None
+    inpaint_mask_asset_id: Optional[str] = None
+
+    @model_validator(mode="after")
+    def _inpaint_pair(self) -> "StructuralGuide":
+        src = (self.inpaint_source_asset_id or "").strip()
+        msk = (self.inpaint_mask_asset_id or "").strip()
+        if bool(src) ^ bool(msk):
+            raise ValueError(
+                "structural_guide.inpaint_source_asset_id and inpaint_mask_asset_id must both be set for inpaint mode"
+            )
+        return self
+
+
+class LatentRefineSpec(BaseModel):
+    scale: float = Field(1.0, ge=1.0, le=4.0)
+    denoise_strength: float = Field(0.35, ge=0.0, le=1.0)
+    hires_steps: int = Field(0, ge=0, le=20)
+    interpolation: Literal["nearest", "linear", "cubic"] = "linear"
 
 
 class StyleGuide(BaseModel):
@@ -72,6 +94,8 @@ class ImageGenerationRequest(BaseModel):
     adapters: list[AdapterRef] = Field(default_factory=list)
     structural_guide: Optional[StructuralGuide] = None
     style_guide: Optional[StyleGuide] = None
+    lemica_mode: Optional[str] = None
+    latent_refine: Optional[LatentRefineSpec] = None
     priority: Literal["normal", "high"] = "normal"
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -98,6 +122,9 @@ class ImageEditRequest(BaseModel):
     guidance: Optional[float] = None
     scheduler: Optional[str] = None
     adapters: list[AdapterRef] = Field(default_factory=list)
+    structural_guide: Optional[StructuralGuide] = None
+    lemica_mode: Optional[str] = None
+    latent_refine: Optional[LatentRefineSpec] = None
     priority: Literal["normal", "high"] = "normal"
     metadata: dict[str, Any] = Field(default_factory=dict)
     # operation=rewrite: reference=full-image img2img; instruct=instruction-based edit (currently only flux1-kontext / text_editing). None=use legacy auto rules.
@@ -304,6 +331,20 @@ class VisualAnalyzeResponse(BaseModel):
     vision_used: bool = False
 
 
+# ----- Tools (offline model ops) -----
+
+
+class ZImageMergeRequest(BaseModel):
+    model_a: str
+    model_b: str
+    model_c: Optional[str] = None
+    method: Literal["weighted_sum", "add_difference"] = "weighted_sum"
+    alpha: float = Field(0.5, ge=0.0, le=1.0)
+    output_name: str
+    auto_register: bool = True
+    priority: Literal["normal", "high"] = "normal"
+
+
 # ----- LoRA training -----
 
 
@@ -331,7 +372,8 @@ class LoraTrainingRequest(BaseModel):
     guidance: Optional[float] = Field(None, ge=0)
     qlora_bits: Optional[int] = Field(None, description="4 or 8 for QLoRA base weights")
     grad_checkpoint: Optional[bool] = None
-    lora_scale: Optional[float] = Field(None, gt=0)
+    lora_scale: Optional[float] = Field(None, gt=0, description="Legacy: prefer lora_alpha")
+    lora_alpha: Optional[int] = Field(None, gt=0, description="LoRA alpha (alpha/rank = effective scale)")
     lora_dropout: Optional[float] = Field(None, ge=0, le=0.5)
     lora_module_keys: Optional[list[str]] = None
     optimizer: Optional[Literal["adam", "adamw"]] = None
@@ -348,6 +390,7 @@ class LoraTrainingRequest(BaseModel):
     prior_loss_weight: Optional[float] = Field(None, ge=0)
     early_stop_patience: Optional[int] = Field(None, ge=0)
     fuse_adapters: Optional[bool] = None
+    caption_mode: Optional[Literal["unified", "per_image"]] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

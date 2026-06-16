@@ -716,18 +716,7 @@ class WanFlowUniPCScheduler(Scheduler):
         sigma_t = self._sigmas_float[i + 1] if i + 1 < len(self._sigmas_float) else 0.0
         is_final_step = (sigma_t == 0.0)
 
-        # On final step, skip corrector and directly return x0
-        # Corrector can introduce instability when sigma is very small
-        use_corrector = (
-            not is_final_step
-            and self._use_corrector
-            and i > 0
-            and (i - 1) not in self._disable_corrector
-            and self._last_sample is not None
-        )
-        if use_corrector:
-            latents = self._uni_c_bh2(x0, self._last_sample, latents, self._this_order)
-
+        # Update model outputs cache
         for k in range(self._solver_order - 1):
             self._model_outputs[k] = self._model_outputs[k + 1]
         self._model_outputs[-1] = x0
@@ -738,11 +727,23 @@ class WanFlowUniPCScheduler(Scheduler):
             this_order = self._solver_order
         self._this_order = min(this_order, self._lower_order_nums + 1)
 
-        # On final step, return x0 directly without predictor
+        # On final step (sigma_t = 0), skip corrector and predictor, return x0 directly
+        # At sigma=0, we've reached the target distribution; x0 is the denoised result
         if is_final_step:
-            self._last_sample = latents
+            if self._lower_order_nums < self._solver_order:
+                self._lower_order_nums += 1
             self._step_index += 1
             return x0
+
+        # Apply corrector (multi-step correction) if enabled and conditions met
+        use_corrector = (
+            self._use_corrector
+            and i > 0
+            and (i - 1) not in self._disable_corrector
+            and self._last_sample is not None
+        )
+        if use_corrector:
+            latents = self._uni_c_bh2(x0, self._last_sample, latents, self._this_order)
 
         self._last_sample = latents
         x_next = self._uni_p_bh2(x0, latents, self._this_order)

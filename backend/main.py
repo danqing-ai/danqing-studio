@@ -49,7 +49,7 @@ from backend.engine.llm.service import normalize_app_llm_settings, resolve_llm_m
 
 from backend.api.routes import (
     adapters, assets, audios, download, gallery, images, loras,
-    models, presets, queue, registry, settings, system, tasks, videos,
+    models, presets, queue, registry, settings, system, tasks, tools, videos,
 )
 
 
@@ -133,6 +133,7 @@ def create_app() -> FastAPI:
     app.include_router(presets.router)
     app.include_router(adapters.router)
     app.include_router(loras.router)
+    app.include_router(tools.router)
     app.include_router(system.router)
     app.include_router(gallery.router)
     app.include_router(download.router)
@@ -181,11 +182,15 @@ def _setup_dependencies():
         path_resolver, model_registry, runtimes, model_cache=shared_cache,
     )
     from backend.engine.danqing_lora_train_engine import DanQingLoraTrainEngine
+    from backend.engine.danqing_tools_engine import DanQingToolsEngine
 
     danqing_audio = DanQingAudioEngine(
         path_resolver, model_registry, runtimes, model_cache=shared_cache,
     )
     danqing_lora_train = DanQingLoraTrainEngine(
+        path_resolver, model_registry, runtimes,
+    )
+    danqing_tools = DanQingToolsEngine(
         path_resolver, model_registry, runtimes,
     )
 
@@ -205,6 +210,7 @@ def _setup_dependencies():
     engine_registry.register(danqing_video)
     engine_registry.register(danqing_audio)
     engine_registry.register_lora_train(danqing_lora_train)
+    engine_registry.register_tools(danqing_tools)
     _logger.info("DanQing engines registered: image=%s video=%s audio=%s",
                  danqing_image.is_available(), danqing_video.is_available(), danqing_audio.is_available())
 

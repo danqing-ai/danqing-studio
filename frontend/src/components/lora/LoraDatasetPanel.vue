@@ -178,6 +178,9 @@
             {{ $t('loraTrain.applyDefaultToAll') }}
           </DqButton>
         </div>
+        <p v-if="selectedDataset?.images?.length" class="lora-dataset-panel__field-hint">
+          {{ $t('loraTrain.autoCaptionDesc') }}
+        </p>
 
         <div v-if="hasVlmMarks" class="lora-dataset-panel__vlm-legend">
           <span class="lora-dataset-panel__vlm-legend-label">{{ $t('loraTrain.quality.vlmMarkLegend') }}</span>
@@ -386,7 +389,23 @@ function vlmMarkTitle(file: string): string {
   if (!sample) return '';
   const parts: string[] = [];
   if (sample.score != null) {
-    parts.push(t('loraTrain.quality.vlmMarkTitleScore', { score: Number(sample.score) }));
+    const vlm = sample.vlm_score;
+    const heuristic = sample.heuristic_score;
+    if (
+      vlm != null &&
+      heuristic != null &&
+      Math.abs(Number(vlm) - Number(heuristic)) > 0.05
+    ) {
+      parts.push(
+        t('loraTrain.quality.vlmMarkTitleVlmHeuristic', {
+          vlm: Number(vlm),
+          heuristic: Number(heuristic),
+        })
+      );
+      parts.push(t('loraTrain.quality.vlmMarkTitleScore', { score: Number(sample.score) }));
+    } else {
+      parts.push(t('loraTrain.quality.vlmMarkTitleScore', { score: Number(sample.score) }));
+    }
   }
   if (sample.reason) parts.push(sample.reason);
   if (sample.issues?.length) {
@@ -483,11 +502,17 @@ async function refreshDatasetDetail(id: string) {
 async function createDataset() {
   const name = newDatasetName.value.trim();
   if (!name) return;
+  const kind = datasetKindEdit.value;
+  const defaultPrompt = kind === 'concept' ? name : props.defaultPrompt.trim();
   try {
     const ds = (await api.loras.createDataset({
       name,
-      default_prompt: props.defaultPrompt,
+      kind,
+      default_prompt: defaultPrompt,
     })) as Record<string, any>;
+    if (kind === 'concept' && defaultPrompt) {
+      emit('update:defaultPrompt', defaultPrompt);
+    }
     patchDatasets([ds, ...props.datasets]);
     emit('update:selectedId', ds.id);
     showCreateDialog.value = false;

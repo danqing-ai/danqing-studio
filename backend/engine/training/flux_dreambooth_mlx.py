@@ -19,17 +19,19 @@ from backend.engine.families.flux1.flux1_dual_mlx import Flux1TextEncoder
 from backend.engine.families.flux1.weights import remap_flux1_lora_keys
 from backend.engine.pipelines.image_model_load import load_image_transformer
 from backend.engine.training.crop import prepare_training_rgb_image, resolve_training_resolution
-from backend.engine.training.dataset_store import load_training_pairs_unified
+from backend.engine.training.dataset_store import _dataset_meta, load_training_pairs_unified
 from backend.engine.training.lora_layers import (
     apply_lora_to_flux1_dit,
     list_flux1_lora_blocks,
     prepare_dit_for_lora_training,
 )
 from backend.engine.training.dit_training_loss import (
+    CLASS_PRIOR_LATENT_COUNT,
     combine_instance_prior_loss,
     flow_match_mse,
-    make_prior_latent,
+    merge_prior_cache_tensors,
     sample_noisy_latent,
+    sample_prior_latent,
 )
 from backend.engine.training.latent_cache import LatentCache
 from backend.engine.training.lora_train_loop import run_dit_lora_train_loop
@@ -106,6 +108,8 @@ def _encode_dataset_to_cache(
     resolution: tuple[int, int],
     exec_ctx: ExecutionContext,
     class_prompt: str | None,
+    caption_mode: str = "",
+    face_anchor: str = "",
 ) -> int:
     cache.begin(
         dataset_id=dataset_id,
@@ -114,6 +118,8 @@ def _encode_dataset_to_cache(
         resolution=resolution,
         family="flux1",
         tensor_keys=["latent", "t5", "clip"],
+        caption_mode=caption_mode,
+        face_anchor=face_anchor,
     )
     _log(exec_ctx, "info", f"Encoding {len(pairs)} images × {num_augmentations} augmentations …")
     sample_idx = 0
@@ -155,6 +161,7 @@ def _training_loss(
     min_snr_gamma: float = 0.0,
     prior_t5: mx.array | None = None,
     prior_clip: mx.array | None = None,
+    prior_latents: mx.array | None = None,
     prior_loss_weight: float = 0.0,
 ) -> mx.array:
     x_t, eps, t = sample_noisy_latent(x0, ctx)
@@ -171,7 +178,7 @@ def _training_loss(
     inst = flow_match_mse(pred, x0, eps, sigma=sigma, min_snr_gamma=min_snr_gamma)
     if prior_t5 is None or prior_clip is None or prior_loss_weight <= 0:
         return inst
-    x0p = make_prior_latent(x0, ctx)
+    x0p = sample_prior_latent(x0, ctx, prior_latents=prior_latents)
     x_tp, epsp, tp = sample_noisy_latent(x0p, ctx)
     predp = model(
         x_tp,
@@ -198,29 +205,54 @@ def _save_adapter(path: Path, model: Any, rank: int, meta: dict[str, Any], optim
     path.with_suffix(".json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _validate_saved_lora(path: Path, ctx: Any) -> None:
+def _validate_saved_lora(path: Path, *, lora_blocks: int = -1) -> None:
     from backend.engine.common.bundle.weights import load_safetensors
+    from backend.engine.config.model_configs import Flux1Config
+    from backend.engine.families.flux1.transformer import Flux1Transformer
+    from backend.engine.runtime.mlx import MLXContext
+    from backend.engine.training.lora_layers import (
+        enumerate_flux1_lora_module_paths,
+        repair_indexed_lora_weights,
+    )
 
     flat = load_safetensors(str(path))
-    remapped = remap_flux1_lora_keys(flat)
+    weights = dict(flat)
+    if any(key.startswith("lora_") and ".lora_A." in key for key in weights):
+        config_path = path.parent / "lora_config.json"
+        blocks = lora_blocks
+        if blocks == -1 and config_path.is_file():
+            blocks = int(json.loads(config_path.read_text()).get("lora_blocks") or -1)
+        probe = Flux1Transformer(Flux1Config(), MLXContext())
+        paths = enumerate_flux1_lora_module_paths(probe, lora_blocks=blocks)
+        weights = repair_indexed_lora_weights(weights, module_paths=paths)
+    remapped = remap_flux1_lora_keys(weights)
     if not remapped:
         raise RuntimeError(
             f"Saved LoRA {path} has no remappable (lora_down, lora_up) pairs for Flux.1"
         )
+    infer = Flux1Transformer(Flux1Config(), MLXContext())
+    matched = sum(1 for tgt in remapped if f"{tgt}.weight" in infer._param_map)
+    if matched == 0:
+        raise RuntimeError(
+            f"Saved LoRA {path}: remapped {len(remapped)} groups but none match Flux.1 DiT weights "
+            "(re-export with a current Studio build or retrain)."
+        )
+    if matched < len(remapped):
+        raise RuntimeError(
+            f"Saved LoRA {path}: only {matched}/{len(remapped)} groups match Flux.1 DiT weights"
+        )
 
 
-def _generate_progress_image(
+def _denoise_latents_for_prompt(
     *,
     model: Any,
-    vae_dec: Any,
     text_encoder: Flux1TextEncoder,
     prompt: str,
     resolution: tuple[int, int],
     guidance: float,
     ctx: Any,
     steps: int = 20,
-) -> np.ndarray:
-    """Quick sampling for training progress preview."""
+) -> mx.array:
     from backend.engine.common.ops.schedulers import FlowMatchEulerScheduler
 
     w, h = resolution
@@ -244,11 +276,76 @@ def _generate_progress_image(
         )
         latents = sched.step(pred, i, latents)
         mx.eval(latents)
-    # Decode with VAE decoder stub — use simple linear map for preview if full decode heavy
-    from backend.engine.common.codecs.vae.decoder import VAEDecoder
+    return latents
 
-    dec = vae_dec
-    img = dec.forward(latents)
+
+def _ensure_flux_class_prior_latents(
+    *,
+    latent_cache: LatentCache,
+    model: Any,
+    bundle_root: Path,
+    class_prompt: str,
+    resolution: tuple[int, int],
+    guidance: float,
+    ctx: Any,
+    exec_ctx: ExecutionContext,
+) -> mx.array | None:
+    try:
+        prior_data = latent_cache.load_prior()
+        if "prior_latents" in prior_data:
+            return prior_data["prior_latents"]
+    except RuntimeError:
+        pass
+
+    _log(
+        exec_ctx,
+        "info",
+        f"Generating {CLASS_PRIOR_LATENT_COUNT} class prior latents for {class_prompt!r} …",
+    )
+    text_encoder = Flux1TextEncoder(ctx, bundle_root)
+    latents_list: list[mx.array] = []
+    for seed in range(CLASS_PRIOR_LATENT_COUNT):
+        mx.random.seed(seed + 17)
+        z = _denoise_latents_for_prompt(
+            model=model,
+            text_encoder=text_encoder,
+            prompt=class_prompt,
+            resolution=resolution,
+            guidance=guidance,
+            ctx=ctx,
+            steps=20,
+        )
+        latents_list.append(z[0])
+    prior_latents = mx.stack(latents_list)
+    mx.eval(prior_latents)
+    merge_prior_cache_tensors(latent_cache, {"prior_latents": prior_latents})
+    text_encoder.release_weights()
+    ctx.clear_cache()
+    return prior_latents
+
+
+def _generate_progress_image(
+    *,
+    model: Any,
+    vae_dec: Any,
+    text_encoder: Flux1TextEncoder,
+    prompt: str,
+    resolution: tuple[int, int],
+    guidance: float,
+    ctx: Any,
+    steps: int = 20,
+) -> np.ndarray:
+    """Quick sampling for training progress preview."""
+    latents = _denoise_latents_for_prompt(
+        model=model,
+        text_encoder=text_encoder,
+        prompt=prompt,
+        resolution=resolution,
+        guidance=guidance,
+        ctx=ctx,
+        steps=steps,
+    )
+    img = vae_dec.forward(latents)
     mx.eval(img)
     arr = np.asarray(img[0].transpose(1, 2, 0), dtype=np.float32)
     arr = np.clip((arr + 1.0) * 0.5, 0, 1)
@@ -301,10 +398,21 @@ def run_flux_dreambooth_training(
         project_root,
         request.dataset_id,
         progress_prompt=progress_prompt,
+        caption_mode=getattr(request, "caption_mode", None),
     )
     if len(pairs) < 3:
         raise RuntimeError("Dataset must contain at least 3 images")
     _log(exec_ctx, "info", f"DreamBooth caption: {training_caption!r}")
+    resolved_caption_mode = "per_image" if len({str(p or "").strip() for _, p in pairs}) > 1 else "unified"
+    _log(exec_ctx, "info", f"Caption mode: {resolved_caption_mode} ({len(pairs)} images)")
+
+    # Face anchor: consistent facial-feature descriptor injected into a fraction of captions
+    ds_meta = _dataset_meta(project_root, request.dataset_id)
+    face_anchor = (ds_meta.get("face_anchor") or "").strip()
+    if face_anchor:
+        always = len(pairs) <= 5
+        injected = len(pairs) if always else sum(1 for i in range(len(pairs)) if i % 2 == 0)
+        _log(exec_ctx, "info", f"Face anchor: {face_anchor!r} (injected into {injected}/{len(pairs)} captions)")
 
     config = get_config_class("flux1")()
     _log(exec_ctx, "info", "Loading VAE encoder and text encoders …")
@@ -327,6 +435,8 @@ def run_flux_dreambooth_training(
         resolution=resolution,
         family="flux1",
         n_samples=len(pairs) * train_runtime.num_augmentations,
+        caption_mode=resolved_caption_mode,
+        face_anchor=face_anchor,
     ):
         _log(exec_ctx, "info", "Reusing cached latents from work_dir/latent_cache …")
         n_samples = len(pairs) * train_runtime.num_augmentations
@@ -345,6 +455,8 @@ def run_flux_dreambooth_training(
             resolution=resolution,
             exec_ctx=exec_ctx,
             class_prompt=class_prompt if train_runtime.prior_loss_weight > 0 else None,
+            caption_mode=resolved_caption_mode,
+            face_anchor=face_anchor,
         )
     del vae_enc
     text_encoder.release_weights()
@@ -363,6 +475,20 @@ def run_flux_dreambooth_training(
     )
     if model is None:
         raise RuntimeError("Failed to load Flux.1 transformer from bundle")
+
+    guidance_val = train_runtime.guidance
+    prior_latents: Any | None = None
+    if train_runtime.prior_loss_weight > 0 and class_prompt:
+        prior_latents = _ensure_flux_class_prior_latents(
+            latent_cache=latent_cache,
+            model=model,
+            bundle_root=bundle_root,
+            class_prompt=class_prompt,
+            resolution=resolution,
+            guidance=guidance_val,
+            ctx=ctx,
+            exec_ctx=exec_ctx,
+        )
 
     model, train_module = prepare_dit_for_lora_training(
         model,
@@ -401,12 +527,10 @@ def run_flux_dreambooth_training(
         for aug in range(train_runtime.num_augmentations)
     ]
 
-    _log(exec_ctx, "info", f"Loading {n_samples} cached latents into memory …")
-    flux_samples = latent_cache.materialize_flux(n_samples)
-    mx.eval(*[t for sample in flux_samples for t in sample])
+    _log(exec_ctx, "info", f"Streaming {n_samples} cached latents from disk …")
 
     def sample_batch(indices: list[int]) -> tuple[Any, ...]:
-        return flux_samples[indices[0]]
+        return latent_cache.sample_flux(indices[0])
 
     def loss_fn(x0: mx.array, t5: mx.array, clip_p: mx.array) -> mx.array:
         return _training_loss(
@@ -419,6 +543,7 @@ def run_flux_dreambooth_training(
             min_snr_gamma=train_runtime.min_snr_gamma,
             prior_t5=prior_t5,
             prior_clip=prior_clip,
+            prior_latents=prior_latents,
             prior_loss_weight=train_runtime.prior_loss_weight
             if prior_t5 is not None
             else 0.0,
@@ -432,7 +557,7 @@ def run_flux_dreambooth_training(
         vae_dir = bundle_root / "vae"
         vae_cfg, _, _ = read_vae_dir_config(vae_dir)
         vae_weights = load_vae_weight_dict(ctx, vae_dir)
-        preview_latent, _, _ = flux_samples[0]
+        preview_latent, _, _ = latent_cache.sample_flux(0)
         dec, _, _, _ = create_loaded_vae_decoder(
             ctx,
             preview_latent,
@@ -501,7 +626,7 @@ def run_flux_dreambooth_training(
             json.dumps({"format": "dense_delta", "base_model": base_model_id}, indent=2),
             encoding="utf-8",
         )
-    _validate_saved_lora(final_path, ctx)
+    _validate_saved_lora(final_path, lora_blocks=train_runtime.lora_blocks)
 
     output_name = (request.output_name or f"{base_model_id}-{request.dataset_id}").strip()
     slug = "".join(c if c.isalnum() or c in "-_" else "-" for c in output_name)[:64]
@@ -515,7 +640,7 @@ def run_flux_dreambooth_training(
     lora_config = {
         "lora_rank": train_runtime.lora_rank,
         "base_model": base_model_id,
-        "alpha": train_runtime.lora_scale,
+        "alpha": train_runtime.lora_alpha,
         "trigger_word": "",
         "training_caption": training_caption,
     }

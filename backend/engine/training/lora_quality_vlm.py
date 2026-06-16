@@ -13,11 +13,15 @@ AuditKind = Literal["concept", "style"]
 
 MAX_VLM_DATASET_IMAGES = 48
 
-_CONCEPT_DATASET_AUDIT_INSTRUCTION = """You audit ONE image for DreamBooth **person/concept** LoRA training (a specific face or subject).
-Focus on: single clear subject, face size, sharpness, framing, occlusion — NOT art style keywords.
+_CONCEPT_DATASET_AUDIT_INSTRUCTION = """You audit ONE image for DreamBooth **person/face** LoRA training at **512×512 cover crop**.
+Score harshly — attractive photos can still be useless for face LoRA if the face is tiny after crop.
+
+Score 1-2 when: full-body/distant shot, landscape/wide framing with small face, short edge under ~800px, multiple people, heavy blur/occlusion/watermark.
+Score 4-5 only for: single person, face large and sharp (bust/headshot/close portrait).
+
 Output EXACTLY this format (no markdown, no extra lines):
 SCORE: 1-5
-ISSUES: comma-separated tags from blurry,small_face,multiple_people,heavy_occlusion,wrong_framing,low_detail,watermark,text_overlay,good
+ISSUES: comma-separated tags from blurry,small_face,tiny_face_in_crop,landscape_framing,full_body,low_resolution,multiple_people,heavy_occlusion,wrong_framing,low_detail,watermark,text_overlay,good
 REASON: one concise sentence (use Chinese if the photo is Chinese-centric)"""
 
 _STYLE_DATASET_AUDIT_INSTRUCTION = """You audit ONE image for DreamBooth **style** LoRA training (artistic look, rendering, palette — NOT a specific person's identity).
@@ -132,30 +136,134 @@ def compile_dataset_vlm_report(
     total_images: int = 0,
 ) -> dict[str, Any]:
     """Build dataset VLM audit dict from subprocess batch texts."""
-    samples: list[dict[str, Any]] = []
-    issue_counts: dict[str, int] = {}
-    scores: list[float] = []
     keys = file_keys or [p.name for p in sample_paths]
+    vlm_by_key: dict[str, dict[str, Any]] = {}
     for idx, (path, raw) in enumerate(zip(sample_paths, texts, strict=False)):
         parsed = parse_vlm_audit_output(raw)
-        parsed["file"] = keys[idx] if idx < len(keys) else path.name
-        samples.append(parsed)
-        if parsed.get("score") is not None:
-            scores.append(float(parsed["score"]))
-        for tag in parsed.get("issues") or []:
+        key = keys[idx] if idx < len(keys) else path.name
+        vlm_by_key[key] = parsed
+    return _finalize_dataset_audit_report(
+        vlm_by_key=vlm_by_key,
+        audit_kind=audit_kind,
+        truncated=truncated,
+        vlm_sample_count=len(sample_paths),
+        total_images=total_images or len(sample_paths),
+    )
+
+
+def compile_portrait_dataset_audit(
+    all_paths: list[Path],
+    vlm_paths: list[Path],
+    vlm_texts: list[str],
+    *,
+    all_file_keys: list[str] | None = None,
+    vlm_file_keys: list[str] | None = None,
+    audit_kind: str = "concept",
+    truncated: bool = False,
+    total_images: int = 0,
+    training_resolution: tuple[int, int] = (512, 512),
+) -> dict[str, Any]:
+    """VLM on ``vlm_paths`` plus pixel heuristics on every ``all_paths`` (concept only)."""
+    if audit_kind != "concept":
+        keys = vlm_file_keys or [p.name for p in vlm_paths]
+        return compile_dataset_vlm_report(
+            vlm_paths,
+            vlm_texts,
+            file_keys=keys,
+            audit_kind=audit_kind,
+            truncated=truncated,
+            total_images=total_images or len(all_paths),
+        )
+
+    from backend.engine.training.portrait_lora_suitability import (
+        analyze_portrait_training_image,
+        merge_vlm_and_heuristic_sample,
+    )
+
+    all_keys = all_file_keys or [p.name for p in all_paths]
+    vlm_keys = vlm_file_keys or [p.name for p in vlm_paths]
+    vlm_by_key: dict[str, dict[str, Any]] = {}
+    for idx, (path, raw) in enumerate(zip(vlm_paths, vlm_texts, strict=False)):
+        key = vlm_keys[idx] if idx < len(vlm_keys) else path.name
+        vlm_by_key[key] = parse_vlm_audit_output(raw)
+
+    heuristic_by_key: dict[str, dict[str, Any]] = {}
+    for path, key in zip(all_paths, all_keys, strict=False):
+        heuristic_by_key[key] = analyze_portrait_training_image(
+            path,
+            training_resolution=training_resolution,
+        )
+
+    merged_by_key: dict[str, dict[str, Any]] = {}
+    for key in all_keys:
+        merged_by_key[key] = merge_vlm_and_heuristic_sample(
+            file_key=key,
+            vlm_parsed=vlm_by_key.get(key),
+            heuristic=heuristic_by_key.get(key),
+        )
+
+    return _finalize_dataset_audit_report(
+        vlm_by_key=merged_by_key,
+        audit_kind=audit_kind,
+        truncated=truncated,
+        vlm_sample_count=len(vlm_paths),
+        total_images=total_images or len(all_paths),
+        heuristic_scored_count=len(all_paths),
+    )
+
+
+def _finalize_dataset_audit_report(
+    *,
+    vlm_by_key: dict[str, dict[str, Any]],
+    audit_kind: str,
+    truncated: bool,
+    vlm_sample_count: int,
+    total_images: int,
+    heuristic_scored_count: int = 0,
+) -> dict[str, Any]:
+    samples = list(vlm_by_key.values())
+    issue_counts: dict[str, int] = {}
+    scores: list[float] = []
+    unsuitable = 0
+    for sample in samples:
+        score = sample.get("score")
+        if score is not None:
+            scores.append(float(score))
+            if float(score) < 3.0:
+                unsuitable += 1
+        for tag in sample.get("issues") or []:
             issue_counts[tag] = issue_counts.get(tag, 0) + 1
-    hints = _dataset_vlm_hints(samples, scores, issue_counts, audit_kind=audit_kind)
-    if truncated and total_images > len(sample_paths):
+
+    hints = _dataset_vlm_hints(
+        samples,
+        scores,
+        issue_counts,
+        audit_kind=audit_kind,
+        unsuitable_count=unsuitable,
+        total_scored=len(samples),
+    )
+    if truncated and total_images > vlm_sample_count:
         hints.insert(
             0,
             _hint(
                 "vlm_truncated",
                 "warning",
-                audited=len(sample_paths),
+                audited=vlm_sample_count,
                 total=total_images,
                 cap=MAX_VLM_DATASET_IMAGES,
             ),
         )
+    if heuristic_scored_count > vlm_sample_count and audit_kind == "concept":
+        hints.insert(
+            1 if truncated and total_images > vlm_sample_count else 0,
+            _hint(
+                "vlm_heuristic_all_images",
+                "info",
+                heuristic_count=heuristic_scored_count,
+                vlm_count=vlm_sample_count,
+            ),
+        )
+
     avg_score = sum(scores) / len(scores) if scores else None
     return {
         "audit_kind": audit_kind,
@@ -163,6 +271,9 @@ def compile_dataset_vlm_report(
         "avg_score": round(avg_score, 2) if avg_score is not None else None,
         "hints": hints,
         "audited_count": len(samples),
+        "vlm_sample_count": vlm_sample_count,
+        "heuristic_scored_count": heuristic_scored_count or len(samples),
+        "unsuitable_count": unsuitable,
     }
 
 
@@ -238,6 +349,8 @@ def _dataset_vlm_hints(
     issue_counts: dict[str, int],
     *,
     audit_kind: str = "concept",
+    unsuitable_count: int = 0,
+    total_scored: int = 0,
 ) -> list[dict[str, Any]]:
     hints: list[dict[str, Any]] = []
     if not samples:
@@ -262,7 +375,28 @@ def _dataset_vlm_hints(
                 hints.append(_hint("vlm_good_portrait_score", "info", avg=round(avg, 1), count=len(scores)))
 
     style_error_tags = {"inconsistent_style", "off_theme", "cluttered", "noisy"}
-    concept_error_tags = {"small_face", "multiple_people", "heavy_occlusion", "low_detail"}
+    concept_error_tags = {
+        "small_face",
+        "tiny_face_in_crop",
+        "landscape_framing",
+        "full_body",
+        "low_resolution",
+        "multiple_people",
+        "heavy_occlusion",
+        "low_detail",
+        "face_soft_in_crop",
+    }
+
+    if audit_kind == "concept" and total_scored > 0 and unsuitable_count > 0:
+        severity: Severity = "error" if unsuitable_count >= max(2, total_scored // 4) else "warning"
+        hints.append(
+            _hint(
+                "vlm_training_unsuitable",
+                severity,
+                count=unsuitable_count,
+                total=total_scored,
+            )
+        )
 
     for tag, count in sorted(issue_counts.items(), key=lambda x: -x[1]):
         code = f"vlm_{tag}"
@@ -308,9 +442,7 @@ def audit_progress_previews_with_vlm(
     if len(sorted_paths) > 1:
         picks.append(sorted_paths[-1])
 
-    instruction = _PROGRESS_AUDIT_INSTRUCTION.format(
-        progress_prompt=(progress_prompt or "A photo of subject").strip()
-    )
+    instruction = build_progress_audit_instruction(progress_prompt, audit_kind="concept")
     samples: list[dict[str, Any]] = []
     scores: list[float] = []
     issue_counts: dict[str, int] = {}

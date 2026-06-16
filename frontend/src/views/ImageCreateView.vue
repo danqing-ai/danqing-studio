@@ -91,6 +91,8 @@
         :show-negative-prompt="!!currentModelConfig?.parameters?.negative_prompt_support"
         :reference-image="referenceImage"
         :control-image="controlImage"
+        :inpaint-source-image="inpaintSourceImage"
+        :inpaint-mask-image="inpaintMaskImage"
         :mode="imageMode"
         :mode-options="imageModeOptions"
         :current-model-config="currentModelConfig"
@@ -103,6 +105,10 @@
         @remove-reference="removeReferenceImage"
         @pick-control="openAssetPicker('control')"
         @remove-control="removeControlImage"
+        @pick-inpaint-source="openAssetPicker('inpaint_source')"
+        @remove-inpaint-source="removeInpaintSourceImage"
+        @pick-inpaint-mask="openAssetPicker('inpaint_mask')"
+        @remove-inpaint-mask="removeInpaintMaskImage"
         @model-change="onModelVersionChange"
         @reset-defaults="resetToDefaults"
         @enhance="onEnhancePrompt"
@@ -267,12 +273,11 @@ import {
 import { previewUrlForGalleryItem } from '@/utils/canvasAssets';
 import { useStudioGallery } from '@/composables/useStudioGallery';
 import {
+  appendZImageEnhancementFields,
   applyControlNetRegistryDefaults,
-  buildStructuralGuidePayload,
   fillModelRegistryDefaultsPatch,
   isFillControlNet,
   isControlNetHostRuntimeAvailable,
-  isFluxStructuralBaseModel,
   pickDefaultStructuralControlNet,
   resolveControlAssetId,
   useCompatibleControlNets,
@@ -335,6 +340,9 @@ const params = reactive<Record<string, unknown>>({
   img2img: false,
   controlnet: '',
   controlnet_strength: 0.8,
+  lemica_mode: 'none',
+  latent_refine_scale: 1.0,
+  latent_refine_denoise: 0.35,
   scheduler: 'flow_match_euler_discrete',
   upscale_scale: 2,
   upscale_denoise: 0.3,
@@ -650,16 +658,27 @@ function shouldAutoAddToCanvas(): boolean {
 
 const referenceImage = ref<{ previewUrl: string; path: string; assetId?: string } | null>(null);
 const controlImage = ref<{ previewUrl: string; path: string; assetId?: string } | null>(null);
+const inpaintSourceImage = ref<{ previewUrl: string; path: string; assetId?: string } | null>(null);
+const inpaintMaskImage = ref<{ previewUrl: string; path: string; assetId?: string } | null>(null);
 const showAssetPicker = ref(false);
-const assetPickerMode = ref<'reference' | 'control'>('reference');
+const assetPickerMode = ref<'reference' | 'control' | 'inpaint_source' | 'inpaint_mask'>('reference');
 
-function openAssetPicker(mode: 'reference' | 'control') {
+function openAssetPicker(mode: 'reference' | 'control' | 'inpaint_source' | 'inpaint_mask') {
   assetPickerMode.value = mode;
   showAssetPicker.value = true;
 }
 
 function assetIdFromPickPath(path: string): string | undefined {
   return path.startsWith('asset:') ? path.slice('asset:'.length) : undefined;
+}
+
+function resolveInpaintAssetId(
+  ref: { path: string; assetId?: string } | null,
+): string {
+  if (!ref) return '';
+  if (ref.assetId) return ref.assetId;
+  if (ref.path.startsWith('asset:')) return ref.path.slice('asset:'.length);
+  return '';
 }
 
 function onReferencePick({ path, previewUrl }: { path: string; previewUrl: string }) {
@@ -675,14 +694,42 @@ function onControlPick({ path, previewUrl }: { path: string; previewUrl: string 
   syncCanvasControlOverlay(path);
 }
 
+function onInpaintSourcePick({ path, previewUrl }: { path: string; previewUrl: string }) {
+  if (!path.startsWith('asset:')) {
+    toast.warning($tt('canvas.controlImageAssetRequired'));
+    return;
+  }
+  inpaintSourceImage.value = { path, previewUrl, assetId: assetIdFromPickPath(path) };
+  showAssetPicker.value = false;
+}
+
+function onInpaintMaskPick({ path, previewUrl }: { path: string; previewUrl: string }) {
+  if (!path.startsWith('asset:')) {
+    toast.warning($tt('canvas.controlImageAssetRequired'));
+    return;
+  }
+  inpaintMaskImage.value = { path, previewUrl, assetId: assetIdFromPickPath(path) };
+  showAssetPicker.value = false;
+}
+
 function onAssetPickerPick(payload: { path: string; previewUrl: string }) {
   if (assetPickerMode.value === 'control') onControlPick(payload);
+  else if (assetPickerMode.value === 'inpaint_source') onInpaintSourcePick(payload);
+  else if (assetPickerMode.value === 'inpaint_mask') onInpaintMaskPick(payload);
   else onReferencePick(payload);
 }
 
 function removeControlImage() {
   controlImage.value = null;
   syncCanvasControlOverlay(null);
+}
+
+function removeInpaintSourceImage() {
+  inpaintSourceImage.value = null;
+}
+
+function removeInpaintMaskImage() {
+  inpaintMaskImage.value = null;
 }
 
 function onCanvasUseAsRef(payload: { path: string; previewUrl: string; quiet?: boolean }) {
@@ -958,7 +1005,7 @@ async function addGalleryItemToCanvas(
 
 watch(() => params.model, (modelKey) => {
   if (modelKey) loadCompatibleAdapters(String(modelKey));
-  if (params.controlnet && !isFluxStructuralBaseModel(String(modelKey || ''))) {
+  if (params.controlnet && !supportsStructuralGuideBaseModel(String(modelKey || ''))) {
     params.controlnet = '';
     controlImage.value = null;
     syncCanvasControlOverlay(null);
@@ -1627,6 +1674,23 @@ const startGeneration = async () => {
         metadata: { ...meta },
         priority: 'normal',
       };
+      const inpSrc = resolveInpaintAssetId(inpaintSourceImage.value);
+      const inpMsk = resolveInpaintAssetId(inpaintMaskImage.value);
+      const editEnh = appendZImageEnhancementFields(editBody, {
+        controlnet: String(params.controlnet || ''),
+        controlAssetId: control_asset_id,
+        controlnetStrength: Number(params.controlnet_strength) || 0.8,
+        inpaintSourceId: inpSrc,
+        inpaintMaskId: inpMsk,
+        lemicaMode: String(params.lemica_mode || 'none'),
+        latentRefineScale: Number(params.latent_refine_scale),
+        latentRefineDenoise: Number(params.latent_refine_denoise),
+      });
+      if (!editEnh.ok) {
+        toast.error($tt('create.inpaintPairRequired'));
+        generating.value = false;
+        return;
+      }
       submitRes = await api.gen.createImageEdit(editBody);
     } else {
       // Text-to-image
@@ -1644,12 +1708,22 @@ const startGeneration = async () => {
         metadata: { ...meta },
         priority: 'normal',
       };
-      if (control_asset_id && params.controlnet) {
-        genBody.structural_guide = buildStructuralGuidePayload(
-          String(params.controlnet),
-          control_asset_id,
-          Number(params.controlnet_strength) || 0.8,
-        );
+      const inpSrc = resolveInpaintAssetId(inpaintSourceImage.value);
+      const inpMsk = resolveInpaintAssetId(inpaintMaskImage.value);
+      const genEnh = appendZImageEnhancementFields(genBody, {
+        controlnet: String(params.controlnet || ''),
+        controlAssetId: control_asset_id,
+        controlnetStrength: Number(params.controlnet_strength) || 0.8,
+        inpaintSourceId: inpSrc,
+        inpaintMaskId: inpMsk,
+        lemicaMode: String(params.lemica_mode || 'none'),
+        latentRefineScale: Number(params.latent_refine_scale),
+        latentRefineDenoise: Number(params.latent_refine_denoise),
+      });
+      if (!genEnh.ok) {
+        toast.error($tt('create.inpaintPairRequired'));
+        generating.value = false;
+        return;
       }
       submitRes = await api.gen.createImageGeneration(genBody);
     }
@@ -2174,6 +2248,7 @@ async function onUpscaleSubmit() {
       source_asset_id,
       scale: upscaleParams.upscale_scale,
       denoise: upscaleParams.upscale_denoise,
+      tile_size: upscaleParams.upscale_tile,
       metadata: buildCanvasMeta(),
       priority: 'normal',
     });

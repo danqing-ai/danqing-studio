@@ -926,6 +926,31 @@ export const api = {
     },
   },
 
+  tools: {
+    async submitZImageMerge(body: Record<string, unknown>): Promise<unknown> {
+      const response = await client.post('/api/tools/z-image/merge', body);
+      return response.data;
+    },
+
+    async listZImageMergeModels(): Promise<{ models: Array<{ id: string; name: unknown }>; mlx_available: boolean }> {
+      const response = await client.get('/api/tools/z-image/merge/models');
+      return response.data;
+    },
+
+    async listUserMergedZImageModels(): Promise<{
+      items: Array<{
+        id: string;
+        name: string;
+        local_path: string;
+        template_model?: string;
+        created_at?: string;
+      }>;
+    }> {
+      const response = await client.get('/api/tools/z-image/merge/merged');
+      return response.data;
+    },
+  },
+
   audios: {
     async listGenerations(): Promise<unknown> {
       const response = await client.get('/api/audios/generations');

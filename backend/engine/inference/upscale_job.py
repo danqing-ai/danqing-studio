@@ -29,6 +29,7 @@ def run_upscale_job(ctx: Any) -> dict[str, Any]:
             "output_png": ctx.out_path,
             "on_log": _log,
             "pipeline": ctx.upscale_pipeline,
+            "tile_size": int(getattr(ctx.request, "tile_size", 0) or 0),
         },
     )
     with inference_span(ctx.exec_ctx, "job_paradigm"):

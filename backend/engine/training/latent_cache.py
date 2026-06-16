@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import mlx.core as mx
 
@@ -30,8 +30,10 @@ def _fingerprint(
     num_augmentations: int,
     resolution: tuple[int, int],
     family: str,
+    caption_mode: str = "",
+    face_anchor: str = "",
 ) -> str:
-    raw = f"{dataset_id}|{n_pairs}|{num_augmentations}|{resolution[0]}x{resolution[1]}|{family}"
+    raw = f"{dataset_id}|{n_pairs}|{num_augmentations}|{resolution[0]}x{resolution[1]}|{family}|{caption_mode}|{face_anchor}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
@@ -49,6 +51,8 @@ class LatentCache:
         resolution: tuple[int, int],
         family: str,
         n_samples: int,
+        caption_mode: str = "",
+        face_anchor: str = "",
     ) -> bool:
         if not self.manifest_path.is_file():
             return False
@@ -64,6 +68,8 @@ class LatentCache:
             num_augmentations=num_augmentations,
             resolution=resolution,
             family=family,
+            caption_mode=caption_mode,
+            face_anchor=face_anchor,
         )
         if manifest.get("fingerprint") != fp:
             return False
@@ -83,6 +89,8 @@ class LatentCache:
         resolution: tuple[int, int],
         family: str,
         tensor_keys: list[str],
+        caption_mode: str = "",
+        face_anchor: str = "",
     ) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
         self._tensor_keys = list(tensor_keys)
@@ -95,11 +103,15 @@ class LatentCache:
                 num_augmentations=num_augmentations,
                 resolution=resolution,
                 family=family,
+                caption_mode=caption_mode,
+                face_anchor=face_anchor,
             ),
             "family": family,
             "n_pairs": n_pairs,
             "num_augmentations": num_augmentations,
             "resolution": list(resolution),
+            "caption_mode": caption_mode,
+            "face_anchor": face_anchor,
             "tensor_keys": tensor_keys,
             "n_samples": 0,
         }
@@ -165,26 +177,3 @@ class LatentCache:
     def write_prior(self, tensors: dict[str, mx.array], *, name: str = "prior") -> None:
         self.root.mkdir(parents=True, exist_ok=True)
         mx.save_safetensors(str(self.root / f"{name}.safetensors"), tensors)
-
-
-def reuse_or_encode(
-    *,
-    cache: LatentCache,
-    dataset_id: str,
-    n_pairs: int,
-    num_augmentations: int,
-    resolution: tuple[int, int],
-    family: str,
-    encode_fn: Callable[[], int],
-) -> int:
-    n_samples = n_pairs * num_augmentations
-    if cache.is_valid(
-        dataset_id=dataset_id,
-        n_pairs=n_pairs,
-        num_augmentations=num_augmentations,
-        resolution=resolution,
-        family=family,
-        n_samples=n_samples,
-    ):
-        return n_samples
-    return int(encode_fn())

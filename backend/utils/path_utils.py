@@ -162,6 +162,19 @@ def get_system_info() -> dict:
     return info
 
 
+def _darwin_memsize_gb() -> float:
+    try:
+        result = subprocess.run(
+            ["sysctl", "-n", "hw.memsize"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return int(result.stdout.strip()) / (1024**3)
+    except Exception:
+        return 0.0
+
+
 def get_memory_gb() -> float:
     """获取系统内存大小（GB）"""
     try:
@@ -170,17 +183,13 @@ def get_memory_gb() -> float:
         return psutil.virtual_memory().total / (1024**3)
     except ImportError:
         if platform.system() == "Darwin":
-            try:
-                result = subprocess.run(
-                    ["sysctl", "-n", "hw.memsize"],
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
-                return int(result.stdout.strip()) / (1024**3)
-            except Exception:
-                return 0
-        return 0
+            return _darwin_memsize_gb()
+        return 0.0
+    except (RuntimeError, OSError):
+        # psutil on macOS 15+/26+ can fail: host_statistics64(HOST_VM_INFO64) …
+        if platform.system() == "Darwin":
+            return _darwin_memsize_gb()
+        return 0.0
 
 
 def get_memory_usage_gb() -> tuple[float, float]:

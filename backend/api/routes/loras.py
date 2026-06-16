@@ -30,6 +30,7 @@ from backend.engine.training.presets import (
     QWEN_IMAGE_PRESETS,
     TRAINABLE_BASE_MODELS,
     Z_IMAGE_PRESETS,
+    Z_IMAGE_TURBO_PRESETS,
 )
 from backend.engine.training.user_lora_registry import delete_user_lora, list_user_loras, register_user_lora
 from backend.persistence.asset_store import SQLiteAssetStore
@@ -110,7 +111,7 @@ async def dataset_health_vlm(dataset_id: str, body: DatasetHealthVlmRequest | No
         from backend.engine.training.lora_quality_vlm import (
             build_dataset_audit_instruction,
             collect_dataset_image_paths,
-            compile_dataset_vlm_report,
+            compile_portrait_dataset_audit,
             merge_vlm_hints,
             resolve_audit_paths,
             resolve_dataset_audit_kind,
@@ -127,6 +128,10 @@ async def dataset_health_vlm(dataset_id: str, body: DatasetHealthVlmRequest | No
             str(p.relative_to(dataset_root)) if p.is_relative_to(dataset_root) else p.name
             for p in audit_paths
         ]
+        all_file_keys = [
+            str(p.relative_to(dataset_root)) if p.is_relative_to(dataset_root) else p.name
+            for p in paths
+        ]
         model_dir = service._resolve_vision_model_path()
         mlx_runtime = None
         try:
@@ -142,10 +147,12 @@ async def dataset_health_vlm(dataset_id: str, body: DatasetHealthVlmRequest | No
             instruction=build_dataset_audit_instruction(audit_kind),
             worker_memory_gb=worker_mem,
         )
-        vlm = compile_dataset_vlm_report(
+        vlm = compile_portrait_dataset_audit(
+            paths,
             audit_paths,
             texts,
-            file_keys=file_keys,
+            all_file_keys=all_file_keys,
+            vlm_file_keys=file_keys,
             audit_kind=audit_kind,
             truncated=truncated,
             total_images=len(paths),
@@ -250,9 +257,7 @@ async def auto_caption_dataset(
     dataset_id: str,
     body: DatasetAutoCaptionRequest,
 ):
-    """Generate captions for dataset images using the vision LLM (fail loud if unavailable)."""
-    import asyncio
-
+    """Generate captions for dataset images using the vision LLM (isolated subprocess)."""
     service = get_llm_service()
     if not service.is_available():
         raise HTTPException(
@@ -275,26 +280,73 @@ async def auto_caption_dataset(
         targets = [img for img in targets if img.get("file") in allow]
     if not targets:
         raise HTTPException(400, detail={"code": "invalid", "message": "No images to caption"})
-    captions: list[dict[str, str]] = []
+    audit_kind = str(ds.get("kind") or "concept").strip().lower()
+    if audit_kind not in ("concept", "style"):
+        audit_kind = "concept"
+    from backend.core.container import get_container
+    from backend.engine.llm.vlm_subprocess import run_face_anchor_subprocess, run_lora_caption_subprocess
+    from backend.engine.memory_policy import prepare_host_for_vlm_audit
+    from backend.engine.training.lora_auto_caption import resolve_lora_subject_name
+
+    meta = {
+        "name": ds.get("name") or "",
+        "kind": audit_kind,
+        "trigger_word": ds.get("trigger_word") or "",
+        "default_prompt": ds.get("default_prompt") or "",
+    }
+    subject_name = resolve_lora_subject_name(meta) if audit_kind == "concept" else ""
+    image_paths: list[Path] = []
+    file_keys: list[str] = []
     for img in targets:
         file_rel = str(img.get("file") or "")
         img_path = root / "datasets" / dataset_id / file_rel
         if not img_path.is_file():
             continue
-        ctx = {"id": dataset_id, "metadata": {"source": "lora_dataset", "file": file_rel}}
-        try:
-            prompt, _vision = await asyncio.to_thread(
-                service.image_to_prompt,
-                ctx,
-                image_path=img_path,
-                media="image",
-            )
-        except RuntimeError as e:
-            raise HTTPException(503, detail={"code": "caption_failed", "message": str(e)}) from e
-        captions.append({"file": file_rel, "prompt": prompt.strip()})
+        image_paths.append(img_path)
+        file_keys.append(file_rel)
+    if not image_paths:
+        raise HTTPException(400, detail={"code": "invalid", "message": "No readable images to caption"})
+
+    model_dir = service._resolve_vision_model_path()
+    mlx_runtime = None
+    try:
+        runtimes = get_container().try_resolve_named("gpu_runtimes") or {}
+        if isinstance(runtimes, dict):
+            mlx_runtime = runtimes.get("mlx")
+    except Exception:
+        mlx_runtime = None
+    worker_mem = prepare_host_for_vlm_audit(mlx_runtime=mlx_runtime)
+    try:
+        prompts = await run_lora_caption_subprocess(
+            image_paths=image_paths,
+            model_dir=model_dir,
+            audit_kind=audit_kind,
+            subject_name=subject_name,
+            worker_memory_gb=worker_mem,
+        )
+    except RuntimeError as e:
+        raise HTTPException(503, detail={"code": "caption_failed", "message": str(e)}) from e
+
+    captions = [{"file": file_key, "prompt": prompt.strip()} for file_key, prompt in zip(file_keys, prompts, strict=False)]
     if not captions:
         raise HTTPException(400, detail={"code": "invalid", "message": "Caption generation produced no results"})
-    return dataset_store.update_dataset_captions(root, dataset_id, captions)
+    result = dataset_store.update_dataset_captions(root, dataset_id, captions)
+
+    # For concept (person) LoRAs, auto-generate face_anchor from facial features
+    if audit_kind == "concept" and len(image_paths) >= 3:
+        try:
+            face_anchor = await run_face_anchor_subprocess(
+                image_paths=image_paths,
+                model_dir=model_dir,
+                subject_name=subject_name,
+                worker_memory_gb=worker_mem,
+            )
+            if face_anchor:
+                dataset_store.update_dataset_face_anchor(root, dataset_id, face_anchor)
+        except Exception:
+            pass  # face_anchor is optional; don't fail the whole caption flow
+
+    return result
 
 
 @router.post("/datasets/import-dog6", status_code=201)
@@ -337,6 +389,7 @@ def trainable_models():
         "presets_by_model": {
             "flux1-dev": presets_with_training_resolution("flux1-dev", PRESETS),
             "z-image": presets_with_training_resolution("z-image", Z_IMAGE_PRESETS),
+            "z-image-turbo": presets_with_training_resolution("z-image-turbo", Z_IMAGE_TURBO_PRESETS),
             "qwen-image": presets_with_training_resolution("qwen-image", QWEN_IMAGE_PRESETS),
         },
     }

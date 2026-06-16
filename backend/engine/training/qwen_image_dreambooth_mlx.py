@@ -17,7 +17,7 @@ from backend.engine.contracts import local_bundle_root
 from backend.engine.families.qwen.weights import remap_qwen_lora_keys
 from backend.engine.pipelines.image_model_load import load_image_transformer
 from backend.engine.training.crop import prepare_training_rgb_image, resolve_training_resolution
-from backend.engine.training.dataset_store import load_training_pairs_unified
+from backend.engine.training.dataset_store import _dataset_meta, load_training_pairs_unified
 from backend.engine.training.flux_dreambooth_mlx import _log, _progress, _save_adapter
 from backend.engine.training.lora_layers import (
     apply_lora_to_qwen_dit,
@@ -27,10 +27,12 @@ from backend.engine.training.lora_layers import (
     repair_indexed_lora_weights,
 )
 from backend.engine.training.dit_training_loss import (
+    CLASS_PRIOR_LATENT_COUNT,
     combine_instance_prior_loss,
     flow_match_mse,
-    make_prior_latent,
+    merge_prior_cache_tensors,
     sample_noisy_latent,
+    sample_prior_latent,
 )
 from backend.engine.training.latent_cache import LatentCache
 from backend.engine.training.lora_train_loop import run_dit_lora_train_loop
@@ -104,6 +106,8 @@ def _encode_dataset_to_cache(
     dataset_id: str,
     exec_ctx: ExecutionContext,
     class_prompt: str | None,
+    caption_mode: str = "",
+    face_anchor: str = "",
 ) -> int:
     w, h = resolution[0], resolution[1]
     total_samples = len(pairs) * num_augmentations
@@ -114,6 +118,8 @@ def _encode_dataset_to_cache(
         resolution=resolution,
         family="qwen_image",
         tensor_keys=["latent", "txt", "txt_mask"],
+        caption_mode=caption_mode,
+        face_anchor=face_anchor,
     )
     _log(exec_ctx, "info", f"Encoding {len(pairs)} images × {num_augmentations} augmentations …")
     sample_idx = 0
@@ -169,6 +175,7 @@ def _training_loss(
     min_snr_gamma: float = 0.0,
     prior_txt: mx.array | None = None,
     prior_mask: mx.array | None = None,
+    prior_latents: mx.array | None = None,
     prior_loss_weight: float = 0.0,
 ) -> mx.array:
     x_t, eps, t = sample_noisy_latent(x0, ctx)
@@ -186,7 +193,7 @@ def _training_loss(
     inst = flow_match_mse(pred, x0, eps, sigma=sigma, min_snr_gamma=min_snr_gamma)
     if prior_txt is None or prior_mask is None or prior_loss_weight <= 0:
         return inst
-    x0p = make_prior_latent(x0, ctx)
+    x0p = sample_prior_latent(x0, ctx, prior_latents=prior_latents)
     x_tp, epsp, tp = sample_noisy_latent(x0p, ctx)
     predp = model(
         x_tp,
@@ -243,20 +250,16 @@ def _validate_saved_lora(path: Path, *, lora_blocks: int) -> None:
         )
 
 
-def _generate_progress_image(
+def _denoise_latents_for_prompt(
     *,
     model: Any,
-    bundle_root: Path,
-    project_root: Path,
     text_encoder: Any,
     prompt: str,
     resolution: tuple[int, int],
     ctx: Any,
     steps: int = 20,
-) -> np.ndarray:
+) -> mx.array:
     from backend.engine.common.ops.schedulers import FlowMatchEulerScheduler
-    from backend.engine.families.qwen.vae import QwenVAE, apply_qwen_vae_weights_from_bundle
-    from backend.engine.vae_codec_registry import qwen_unpack_latents_nchw
 
     w, h = resolution
     lh, lw = h // 16, w // 16
@@ -280,6 +283,84 @@ def _generate_progress_image(
         )
         latents = sched.step(pred, i, latents)
         mx.eval(latents)
+    return latents
+
+
+def _ensure_qwen_class_prior_latents(
+    *,
+    latent_cache: LatentCache,
+    model: Any,
+    bundle_root: Path,
+    config: Any,
+    entry: Any,
+    version_key: str | None,
+    class_prompt: str,
+    resolution: tuple[int, int],
+    ctx: Any,
+    exec_ctx: ExecutionContext,
+) -> mx.array | None:
+    try:
+        prior_data = latent_cache.load_prior()
+        if "prior_latents" in prior_data:
+            return prior_data["prior_latents"]
+    except RuntimeError:
+        pass
+
+    _log(
+        exec_ctx,
+        "info",
+        f"Generating {CLASS_PRIOR_LATENT_COUNT} class prior latents for {class_prompt!r} …",
+    )
+    text_encoder = _load_qwen_text_encoder(
+        ctx,
+        bundle_root,
+        config,
+        entry=entry,
+        version_key=version_key,
+    )
+    latents_list: list[mx.array] = []
+    for seed in range(CLASS_PRIOR_LATENT_COUNT):
+        mx.random.seed(seed + 17)
+        z = _denoise_latents_for_prompt(
+            model=model,
+            text_encoder=text_encoder,
+            prompt=class_prompt,
+            resolution=resolution,
+            ctx=ctx,
+            steps=20,
+        )
+        latents_list.append(z[0])
+    prior_latents = mx.stack(latents_list)
+    mx.eval(prior_latents)
+    merge_prior_cache_tensors(latent_cache, {"prior_latents": prior_latents})
+    text_encoder.release_weights()
+    ctx.clear_cache()
+    return prior_latents
+
+
+def _generate_progress_image(
+    *,
+    model: Any,
+    bundle_root: Path,
+    project_root: Path,
+    text_encoder: Any,
+    prompt: str,
+    resolution: tuple[int, int],
+    ctx: Any,
+    steps: int = 20,
+) -> np.ndarray:
+    from backend.engine.families.qwen.vae import QwenVAE, apply_qwen_vae_weights_from_bundle
+    from backend.engine.vae_codec_registry import qwen_unpack_latents_nchw
+
+    w, h = resolution
+    latents = _denoise_latents_for_prompt(
+        model=model,
+        text_encoder=text_encoder,
+        prompt=prompt,
+        resolution=resolution,
+        ctx=ctx,
+        steps=steps,
+    )
     z = qwen_unpack_latents_nchw(ctx, latents)
     vae = QwenVAE()
     apply_qwen_vae_weights_from_bundle(vae, bundle_root, project_root=project_root)
@@ -347,10 +428,21 @@ def run_qwen_image_dreambooth_training(
         project_root,
         request.dataset_id,
         progress_prompt=progress_prompt,
+        caption_mode=getattr(request, "caption_mode", None),
     )
     if len(pairs) < 3:
         raise RuntimeError("Dataset must contain at least 3 images")
     _log(exec_ctx, "info", f"DreamBooth caption: {training_caption!r}")
+    resolved_caption_mode = "per_image" if len({str(p or "").strip() for _, p in pairs}) > 1 else "unified"
+    _log(exec_ctx, "info", f"Caption mode: {resolved_caption_mode} ({len(pairs)} images)")
+
+    # Face anchor: consistent facial-feature descriptor injected into a fraction of captions
+    ds_meta = _dataset_meta(project_root, request.dataset_id)
+    face_anchor = (ds_meta.get("face_anchor") or "").strip()
+    if face_anchor:
+        always = len(pairs) <= 5
+        injected = len(pairs) if always else sum(1 for i in range(len(pairs)) if i % 2 == 0)
+        _log(exec_ctx, "info", f"Face anchor: {face_anchor!r} (injected into {injected}/{len(pairs)} captions)")
 
     config = get_config_class("qwen_image")()
     _log(exec_ctx, "info", "Loading Qwen-Image text encoder …")
@@ -386,6 +478,8 @@ def run_qwen_image_dreambooth_training(
         resolution=resolution,
         family="qwen_image",
         n_samples=len(pairs) * train_runtime.num_augmentations,
+        caption_mode=resolved_caption_mode,
+        face_anchor=face_anchor,
     ):
         _log(exec_ctx, "info", "Reusing cached latents from work_dir/latent_cache …")
         n_samples = len(pairs) * train_runtime.num_augmentations
@@ -405,6 +499,8 @@ def run_qwen_image_dreambooth_training(
             dataset_id=request.dataset_id,
             exec_ctx=exec_ctx,
             class_prompt=class_prompt if train_runtime.prior_loss_weight > 0 else None,
+            caption_mode=resolved_caption_mode,
+            face_anchor=face_anchor,
         )
     text_encoder.release_weights()
     ctx.clear_cache()
@@ -430,6 +526,21 @@ def run_qwen_image_dreambooth_training(
     )
     if model is None:
         raise RuntimeError("Failed to load Qwen-Image transformer from bundle")
+
+    prior_latents: Any | None = None
+    if train_runtime.prior_loss_weight > 0 and class_prompt:
+        prior_latents = _ensure_qwen_class_prior_latents(
+            latent_cache=latent_cache,
+            model=model,
+            bundle_root=bundle_root,
+            config=config,
+            entry=entry,
+            version_key=version_key or None,
+            class_prompt=class_prompt,
+            resolution=resolution,
+            ctx=ctx,
+            exec_ctx=exec_ctx,
+        )
 
     model, train_module = prepare_dit_for_lora_training(
         model,
@@ -469,12 +580,10 @@ def run_qwen_image_dreambooth_training(
         for aug in range(train_runtime.num_augmentations)
     ]
 
-    _log(exec_ctx, "info", f"Loading {n_samples} cached latents into memory …")
-    qwen_samples = latent_cache.materialize_qwen(n_samples)
-    mx.eval(*[t for sample in qwen_samples for t in sample])
+    _log(exec_ctx, "info", f"Streaming {n_samples} cached latents from disk …")
 
     def sample_batch(indices: list[int]) -> tuple[Any, ...]:
-        return qwen_samples[indices[0]]
+        return latent_cache.sample_qwen(indices[0])
 
     def loss_fn(x0: mx.array, txt: mx.array, mask: mx.array) -> mx.array:
         return _training_loss(
@@ -488,6 +597,7 @@ def run_qwen_image_dreambooth_training(
             min_snr_gamma=train_runtime.min_snr_gamma,
             prior_txt=prior_txt,
             prior_mask=prior_mask,
+            prior_latents=prior_latents,
             prior_loss_weight=train_runtime.prior_loss_weight if prior_txt is not None else 0.0,
         )
 
@@ -500,7 +610,7 @@ def run_qwen_image_dreambooth_training(
             version_key=version_key or None,
         )
         preview = _generate_progress_image(
-            model=model,
+            model=train_module,
             bundle_root=bundle_root,
             project_root=project_root,
             text_encoder=te,
@@ -573,7 +683,7 @@ def run_qwen_image_dreambooth_training(
         "lora_rank": train_runtime.lora_rank,
         "lora_blocks": train_runtime.lora_blocks,
         "base_model": base_model_id,
-        "alpha": train_runtime.lora_scale,
+        "alpha": train_runtime.lora_alpha,
         "trigger_word": "",
         "training_caption": training_caption,
     }

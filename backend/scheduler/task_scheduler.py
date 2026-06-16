@@ -167,7 +167,7 @@ class TaskScheduler:
         if st == "running":
             k = row.get("kind") or ""
             mid = row.get("model_id") or ""
-            if TK.is_lora_training_kind(k):
+            if TK.is_lora_training_kind(k) or TK.is_tools_kind(k):
                 pass  # child worker polls DB for cancelled status
             elif TK.is_image_kind(k):
                 await self._engines.get_image(mid).cancel(task_id)

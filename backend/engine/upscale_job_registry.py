@@ -10,12 +10,20 @@ _UPSCALE_JOBS: dict[str, tuple[str, str]] = {
         "backend.engine.families.seedvr2.stem",
         "run_seedvr2_upscale",
     ),
+    "esrgan": (
+        "backend.engine.families.esrgan.stem",
+        "run_esrgan_upscale",
+    ),
 }
 
 _UPSCALE_PIPELINE_LOADERS: dict[str, tuple[str, str]] = {
     "seedvr2": (
         "backend.engine.families.seedvr2.stem",
         "load_seedvr2_upscale_pipeline",
+    ),
+    "esrgan": (
+        "backend.engine.families.esrgan.stem",
+        "load_esrgan_upscale_pipeline",
     ),
 }
 

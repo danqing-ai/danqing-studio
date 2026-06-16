@@ -9,6 +9,38 @@ import mlx.core as mx
 import mlx.nn as nn
 
 
+def _frozen_assistant_lora_factors(
+    down: mx.array,
+    up: mx.array,
+    *,
+    out_d: int,
+    in_d: int,
+    alpha: float,
+    strength: float = 1.0,
+    lora_id: str = "zimage-turbo-training-adapter",
+    wkey: str | None = None,
+) -> tuple[mx.array, mx.array, float]:
+    """Map ``orient_lora_pair`` layout to LoRALinear matmul factors ``(in, r)``, ``(r, out)``."""
+    from backend.engine.common.bundle.lora_mlx import orient_lora_pair
+
+    key = wkey or f"{lora_id}.weight"
+    d_orient, u_orient, rank = orient_lora_pair(
+        down,
+        up,
+        out_d=out_d,
+        in_d=in_d,
+        lora_id=lora_id,
+        wkey=key,
+    )
+    if rank <= 0:
+        raise RuntimeError(f"Frozen assistant LoRA: invalid rank for {key}.")
+    # orient_lora_pair: down [rank, in_d], up [out_d, rank]
+    lora_a = mx.transpose(d_orient, (1, 0))
+    lora_b = mx.transpose(u_orient, (1, 0))
+    scale = (float(alpha) / float(rank)) * float(strength)
+    return lora_a, lora_b, scale
+
+
 class LoRALinear(nn.Module):
     """Low-rank adapter wrapping a frozen ``nn.Linear``."""
 
@@ -51,13 +83,142 @@ class LoRALinear(nn.Module):
             shape=(input_dims, r),
         )
         self.lora_b = mx.zeros(shape=(r, output_dims))
+        self.assistant_lora_a: mx.array | None = None
+        self.assistant_lora_b: mx.array | None = None
+        self.assistant_dense: mx.array | None = None
+        self.assistant_scale = 1.0
+        self.assistant_enabled = False
+
+    def attach_frozen_assistant(
+        self,
+        down: mx.array,
+        up: mx.array,
+        alpha: float,
+        *,
+        strength: float = 1.0,
+        lora_id: str = "zimage-turbo-training-adapter",
+    ) -> None:
+        """Attach a frozen low-rank assistant path without mutating ``linear.weight``."""
+        out_d, in_d = int(self.linear.weight.shape[0]), int(self.linear.weight.shape[1])
+        lora_a, lora_b, scale = _frozen_assistant_lora_factors(
+            down,
+            up,
+            out_d=out_d,
+            in_d=in_d,
+            alpha=alpha,
+            strength=strength,
+            lora_id=lora_id,
+        )
+        self.assistant_lora_a = lora_a
+        self.assistant_lora_b = lora_b
+        self.assistant_dense = None
+        self.assistant_scale = scale
+        self.assistant_enabled = True
+
+    def attach_frozen_assistant_dense(self, delta: mx.array, *, strength: float = 1.0) -> None:
+        """Attach a frozen full-rank delta (``delta @ x``) without mutating ``linear.weight``."""
+        out_d, in_d = int(self.linear.weight.shape[0]), int(self.linear.weight.shape[1])
+        delta_f = delta.astype(mx.float32)
+        if tuple(delta_f.shape) != (out_d, in_d):
+            raise RuntimeError(
+                f"Frozen assistant dense delta shape {tuple(delta_f.shape)} "
+                f"does not match linear weight {(out_d, in_d)}"
+            )
+        self.assistant_dense = float(strength) * delta_f
+        self.assistant_lora_a = None
+        self.assistant_lora_b = None
+        self.assistant_scale = 1.0
+        self.assistant_enabled = True
+
+    def _assistant_contribution(self, x: mx.array) -> mx.array:
+        if self.assistant_dense is not None:
+            return x @ self.assistant_dense.T.astype(x.dtype)
+        if self.assistant_lora_a is None or self.assistant_lora_b is None:
+            raise RuntimeError("Frozen assistant LoRA tensors are missing")
+        z = (x @ self.assistant_lora_a) @ self.assistant_lora_b
+        return (self.assistant_scale * z).astype(x.dtype)
 
     def __call__(self, x: mx.array) -> mx.array:
         y = self.linear(x)
+        if self.assistant_enabled:
+            y = y + self._assistant_contribution(x)
         z = (x @ self.lora_a) @ self.lora_b
         if self.dropout > 0:
             z = mx.dropout(z, self.dropout)
         return y + (self.scale * z).astype(x.dtype)
+
+
+class FrozenAssistantLinear(nn.Module):
+    """Frozen ``nn.Linear`` with optional turbo training assistant (no trainable LoRA)."""
+
+    def __init__(self, linear: nn.Linear):
+        super().__init__()
+        self.linear = linear
+        linear.freeze()
+        self.assistant_lora_a: mx.array | None = None
+        self.assistant_lora_b: mx.array | None = None
+        self.assistant_dense: mx.array | None = None
+        self.assistant_scale = 1.0
+        self.assistant_enabled = False
+
+    @staticmethod
+    def wrap_linear(
+        linear: nn.Linear,
+        down: mx.array,
+        up: mx.array,
+        alpha: float,
+        *,
+        strength: float = 1.0,
+        lora_id: str = "zimage-turbo-training-adapter",
+    ) -> "FrozenAssistantLinear":
+        wrapped = FrozenAssistantLinear(linear)
+        out_d, in_d = int(linear.weight.shape[0]), int(linear.weight.shape[1])
+        lora_a, lora_b, scale = _frozen_assistant_lora_factors(
+            down,
+            up,
+            out_d=out_d,
+            in_d=in_d,
+            alpha=alpha,
+            strength=strength,
+            lora_id=lora_id,
+        )
+        wrapped.assistant_lora_a = lora_a
+        wrapped.assistant_lora_b = lora_b
+        wrapped.assistant_dense = None
+        wrapped.assistant_scale = scale
+        wrapped.assistant_enabled = True
+        return wrapped
+
+    @staticmethod
+    def wrap_linear_dense(linear: nn.Linear, delta: mx.array, *, strength: float = 1.0) -> "FrozenAssistantLinear":
+        wrapped = FrozenAssistantLinear(linear)
+        out_d, in_d = int(linear.weight.shape[0]), int(linear.weight.shape[1])
+        delta_f = delta.astype(mx.float32)
+        if tuple(delta_f.shape) != (out_d, in_d):
+            raise RuntimeError(
+                f"Frozen assistant dense delta shape {tuple(delta_f.shape)} "
+                f"does not match linear weight {(out_d, in_d)}"
+            )
+        wrapped.assistant_dense = float(strength) * delta_f
+        wrapped.assistant_lora_a = None
+        wrapped.assistant_lora_b = None
+        wrapped.assistant_scale = 1.0
+        wrapped.assistant_enabled = True
+        return wrapped
+
+    def _assistant_contribution(self, x: mx.array) -> mx.array:
+        if self.assistant_dense is not None:
+            return x @ self.assistant_dense.T.astype(x.dtype)
+        if self.assistant_lora_a is None or self.assistant_lora_b is None:
+            raise RuntimeError("Frozen assistant LoRA tensors are missing")
+        z = (x @ self.assistant_lora_a) @ self.assistant_lora_b
+        return (self.assistant_scale * z).astype(x.dtype)
+
+    def __call__(self, x: mx.array) -> mx.array:
+        y = self.linear(x)
+        if self.assistant_enabled:
+            y = y + self._assistant_contribution(x)
+        return y
 
 
 class DoRALinear(nn.Module):
@@ -120,18 +281,30 @@ class DoRALinear(nn.Module):
         return y
 
 
+def _is_frozen_assistant_linear(module: Any) -> bool:
+    return isinstance(module, FrozenAssistantLinear)
+
+
 def _is_adapter_linear(module: Any) -> bool:
     return isinstance(module, (LoRALinear, DoRALinear))
+
+
+def _is_leaf_linear(module: Any) -> bool:
+    return _is_adapter_linear(module) or _is_frozen_assistant_linear(module) or isinstance(module, nn.Linear)
 
 
 def _match_lora_module_key(attr_name: str, module_keys: list[str] | None) -> bool:
     if not module_keys:
         return True
-    return any(attr_name == k or attr_name.endswith(f".{k}") or k in attr_name for k in module_keys)
+    return any(attr_name == k or attr_name.endswith(f".{k}") for k in module_keys)
 
 
 def _is_trainable_base_linear(module: Any) -> bool:
-    return isinstance(module, nn.Linear) and not _is_adapter_linear(module)
+    return (
+        isinstance(module, nn.Linear)
+        and not _is_adapter_linear(module)
+        and not _is_frozen_assistant_linear(module)
+    )
 
 
 def _apply_lora_recursive(
@@ -165,7 +338,7 @@ def _apply_lora_recursive(
                     adapter_cls=adapter_cls,
                 )
         return
-    if isinstance(module, nn.Module) and not _is_adapter_linear(module):
+    if isinstance(module, nn.Module) and not _is_leaf_linear(module):
         for name, child in module.children().items():
             if _is_trainable_base_linear(child) and _match_lora_module_key(name, module_keys):
                 setattr(
@@ -210,14 +383,14 @@ def _dit_inner(model: Any) -> Any:
 
 
 def _walk_dit_nodes(root: Any) -> Any:
-    if _is_adapter_linear(root) or isinstance(root, nn.Linear):
+    if _is_leaf_linear(root):
         yield root
         return
     if isinstance(root, list):
         for item in root:
             yield from _walk_dit_nodes(item)
         return
-    if isinstance(root, nn.Module) and not _is_adapter_linear(root):
+    if isinstance(root, nn.Module) and not _is_leaf_linear(root):
         for child in root.children().values():
             yield from _walk_dit_nodes(child)
         return
@@ -229,6 +402,66 @@ def _walk_dit_nodes(root: Any) -> Any:
         yield from _walk_dit_nodes(val)
 
 
+def _resolve_parent_and_name(root: Any, path: str) -> tuple[Any, str]:
+    parts = path.split(".")
+    if not parts:
+        raise RuntimeError("Empty module path")
+    cur = root
+    for part in parts[:-1]:
+        if part.isdigit():
+            cur = cur[int(part)]
+        elif isinstance(cur, nn.Module):
+            cur = cur.children()[part]
+        else:
+            cur = getattr(cur, part)
+    return cur, parts[-1]
+
+
+def _replace_module_at_path(root: Any, path: str, module: Any) -> None:
+    parent, name = _resolve_parent_and_name(root, path)
+    if name.isdigit():
+        parent[int(name)] = module
+    else:
+        setattr(parent, name, module)
+
+
+def _walk_all_linear_paths(root: Any, prefix: str = "") -> list[tuple[Any, str]]:
+    """Collect ``(linear_layer, dit_param_prefix)`` for LoRA, assistant, and base Linear."""
+    found: list[tuple[Any, str]] = []
+
+    def visit(node: Any, path: str) -> None:
+        if _is_leaf_linear(node):
+            found.append((node, path.rstrip(".")))
+            return
+        if isinstance(node, list):
+            for i, item in enumerate(node):
+                child = f"{path}.{i}" if path else str(i)
+                visit(item, child)
+            return
+        if isinstance(node, nn.Module) and not _is_leaf_linear(node):
+            for name, child in node.children().items():
+                child_path = f"{path}.{name}" if path else name
+                visit(child, child_path)
+            return
+        if not hasattr(node, "__dict__"):
+            return
+        for name, val in vars(node).items():
+            if name.startswith("_"):
+                continue
+            child_path = f"{path}.{name}" if path else name
+            visit(val, child_path)
+
+    visit(root, prefix)
+    return found
+
+
+def set_training_assistant_enabled(layers: list[Any], *, enabled: bool) -> None:
+    """Toggle frozen turbo training assistants on attached layers."""
+    for layer in layers:
+        if isinstance(layer, (LoRALinear, FrozenAssistantLinear)):
+            layer.assistant_enabled = enabled
+
+
 def _walk_lora_paths(root: Any, prefix: str = "") -> list[tuple[Any, str]]:
     """Collect ``(adapter_layer, dit_param_prefix)`` in the same order as ``iter_lora_linears``."""
     found: list[tuple[Any, str]] = []
@@ -237,14 +470,14 @@ def _walk_lora_paths(root: Any, prefix: str = "") -> list[tuple[Any, str]]:
         if _is_adapter_linear(node):
             found.append((node, path.rstrip(".")))
             return
-        if isinstance(node, nn.Linear):
+        if isinstance(node, nn.Linear) or _is_frozen_assistant_linear(node):
             return
         if isinstance(node, list):
             for i, item in enumerate(node):
                 child = f"{path}.{i}" if path else str(i)
                 visit(item, child)
             return
-        if isinstance(node, nn.Module) and not _is_adapter_linear(node):
+        if isinstance(node, nn.Module) and not _is_adapter_linear(node) and not _is_frozen_assistant_linear(node):
             for name, child in node.children().items():
                 child_path = f"{path}.{name}" if path else name
                 visit(child, child_path)
@@ -415,12 +648,20 @@ def prepare_dit_for_lora_training(
 ) -> tuple[Any, DiTLoRATrainModule]:
     rank = int(lora_kw.get("rank", lora_kw.get("lora_rank", 8)))
     lora_blocks = int(lora_kw.get("lora_blocks", -1))
-    lora_scale = float(lora_kw.get("scale", lora_kw.get("lora_scale", rank)))
+    lora_scale = float(lora_kw.get("scale", lora_kw.get("lora_scale", 1.0)))
     lora_dropout = float(lora_kw.get("dropout", lora_kw.get("lora_dropout", 0.0)))
     module_keys = lora_kw.get("module_keys", lora_kw.get("lora_module_keys"))
     qlora_bits = lora_kw.get("qlora_bits")
     grad_checkpoint = bool(lora_kw.get("grad_checkpoint") or False)
     train_type = str(lora_kw.get("train_type") or "lora").strip().lower()
+
+    if train_type == "dora" and lora_dropout > 0:
+        import logging
+
+        logging.getLogger("danqing.lora").warning(
+            "DoRA ignores lora_dropout=%s; dropout applies only to LoRA adapters.",
+            lora_dropout,
+        )
 
     apply_lora_fn(
         model,
@@ -456,7 +697,7 @@ def apply_lora_to_flux1_dit(
     train_type: str = "lora",
 ) -> None:
     """Replace Linear layers in the last ``lora_blocks`` joint+single blocks with LoRA."""
-    lora_scale = float(rank if scale is None else scale)
+    lora_scale = float(1.0 if scale is None else scale)
     adapter_cls = DoRALinear if train_type == "dora" else LoRALinear
     dit = getattr(model, "_inner", model)
     for block in list_flux1_lora_blocks(model, lora_blocks=lora_blocks):
@@ -472,6 +713,25 @@ def apply_lora_to_flux1_dit(
         dit._build_param_map()
     if hasattr(model, "_inner") and hasattr(dit, "_param_map"):
         model._param_map = dit._param_map
+
+
+def enumerate_flux1_lora_module_paths(model: Any, *, lora_blocks: int) -> list[str]:
+    """DiT module paths in the same order as ``iter_lora_linears_with_paths`` (indexed export)."""
+    from backend.engine.config.model_configs import Flux1Config
+    from backend.engine.families.flux1.transformer import Flux1Transformer
+    from backend.engine.runtime.mlx import MLXContext
+
+    inner = getattr(model, "_inner", model)
+    ctx = getattr(inner, "ctx", None)
+    config = getattr(model, "config", None) or getattr(inner, "config", None)
+    if ctx is None or config is None:
+        ctx = MLXContext()
+        config = Flux1Config()
+        probe = Flux1Transformer(config, ctx)
+    else:
+        probe = Flux1Transformer(config, ctx)
+    apply_lora_to_flux1_dit(probe, rank=8, lora_blocks=lora_blocks)
+    return [path for _, path in iter_lora_linears_with_paths(probe)]
 
 
 def enumerate_zimage_lora_module_paths(model: Any, *, lora_blocks: int) -> list[str]:
@@ -560,7 +820,7 @@ def apply_lora_to_qwen_dit(
     train_type: str = "lora",
 ) -> None:
     """Replace Linear layers in the last ``lora_blocks`` Qwen-Image DiT blocks with LoRA."""
-    lora_scale = float(rank if scale is None else scale)
+    lora_scale = float(1.0 if scale is None else scale)
     adapter_cls = DoRALinear if train_type == "dora" else LoRALinear
     dit = getattr(model, "_inner", model)
     inner = getattr(dit, "dit", dit)
@@ -592,7 +852,7 @@ def apply_lora_to_zimage_dit(
     train_type: str = "lora",
 ) -> None:
     """Replace Linear layers in the last ``lora_blocks`` Z-Image DiT blocks with LoRA."""
-    lora_scale = float(rank if scale is None else scale)
+    lora_scale = float(1.0 if scale is None else scale)
     adapter_cls = DoRALinear if train_type == "dora" else LoRALinear
     dit = getattr(model, "_inner", model)
     for block in list_zimage_lora_blocks(model, lora_blocks=lora_blocks):
@@ -682,12 +942,22 @@ def collect_lora_safetensors(model: Any, *, rank: int) -> dict[str, mx.array]:
 
 
 def collect_fused_adapter_deltas(model: Any) -> dict[str, mx.array]:
-    """Export dense weight deltas (W_eff - W_base) for each adapter layer."""
+    """Export dense weight deltas (trainable LoRA + optional frozen turbo assistant)."""
     out: dict[str, mx.array] = {}
     for layer, path in iter_lora_linears_with_paths(model):
         base_w = layer.linear.weight
         if isinstance(layer, DoRALinear):
             eff = layer.effective_weight()
+        elif isinstance(layer, LoRALinear):
+            delta = (layer.lora_a @ layer.lora_b).T * layer.scale
+            if layer.assistant_enabled:
+                if layer.assistant_dense is not None:
+                    delta = delta + layer.assistant_dense.astype(mx.float32)
+                elif layer.assistant_lora_a is not None and layer.assistant_lora_b is not None:
+                    delta = delta + (
+                        (layer.assistant_lora_a @ layer.assistant_lora_b).T * layer.assistant_scale
+                    ).astype(mx.float32)
+            eff = base_w + delta.astype(base_w.dtype)
         else:
             eff = base_w + (layer.lora_a @ layer.lora_b).T * layer.scale
         mx.eval(eff, base_w)
@@ -695,17 +965,3 @@ def collect_fused_adapter_deltas(model: Any) -> dict[str, mx.array]:
     if not out:
         raise RuntimeError("No adapter layers found for fused export")
     return out
-
-
-def repair_indexed_lora_export(
-    flat: dict[str, Any],
-    model: Any,
-    *,
-    apply_lora_fn: Any,
-    rank: int,
-    lora_blocks: int,
-) -> dict[str, Any]:
-    """Rewrite legacy ``lora_{i}.lora_*`` exports to DiT module paths (same traversal order)."""
-    del apply_lora_fn, rank
-    paths = enumerate_zimage_lora_module_paths(model, lora_blocks=lora_blocks)
-    return repair_indexed_lora_weights(flat, module_paths=paths)

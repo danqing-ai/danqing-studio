@@ -17,8 +17,12 @@ export type LoraVlmSummary = {
 export type VlmImageSample = {
   file: string;
   score?: number | null;
+  vlm_score?: number | null;
+  heuristic_score?: number | null;
   reason?: string;
   issues?: string[];
+  source?: string;
+  suitable_for_training?: boolean;
 };
 
 export function vlmScoreLevel(score: number | null | undefined): 'good' | 'fair' | 'poor' | null {

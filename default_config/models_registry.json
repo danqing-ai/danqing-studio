@@ -331,6 +331,20 @@
       "vae_scale": 8,
       "hooks": []
     },
+    "esrgan": {
+      "paradigm": "job",
+      "media": [
+        "image"
+      ],
+      "backends": [
+        "mlx"
+      ],
+      "latent_layout": "nchw",
+      "cfg_mode": "none",
+      "latent_channels": 3,
+      "vae_scale": 1,
+      "hooks": []
+    },
     "wan": {
       "paradigm": "diffusion",
       "media": [
@@ -1964,8 +1978,8 @@
       "catalog": {
         "media": "image",
         "description": {
-          "zh": "通义 Z-Image-Turbo，6B 单流 DiT，8 步快速高质量出图；支持 LoRA（可与 Z-Image Base 训练的适配器互通）。",
-          "en": "Tongyi Z-Image-Turbo — 6B single-stream DiT, 8-step fast generation; LoRA supported (compatible with adapters trained on Z-Image Base)."
+          "zh": "通义 Z-Image-Turbo，6B 单流 DiT，8 步快速高质量出图；支持 LoRA（Turbo 训练需 de-distill 适配器；与 Z-Image Base 训练的适配器互通）。",
+          "en": "Tongyi Z-Image-Turbo — 6B single-stream DiT, 8-step fast generation; LoRA supported (train on Turbo with de-distill adapter; compatible with Z-Image Base adapters)."
         },
         "category": "base_models",
         "commercial_use_allowed": true,
@@ -2074,6 +2088,33 @@
               "flow_match_euler"
             ],
             "type": "enum"
+          },
+          "lemica_mode": {
+            "type": "enum",
+            "default": "none",
+            "options": [
+              "none",
+              "slow",
+              "medium",
+              "fast"
+            ],
+            "label": "LeMiCa 步间加速"
+          },
+          "latent_refine_scale": {
+            "type": "float",
+            "default": 1.0,
+            "min": 1.0,
+            "max": 2.0,
+            "step": 0.25,
+            "label": "Latent 放大倍率"
+          },
+          "latent_refine_denoise": {
+            "type": "float",
+            "default": 0.35,
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.05,
+            "label": "Latent refine 去噪强度"
           },
           "resolution_presets": {
             "default": "768x1280",
@@ -3663,6 +3704,74 @@
         }
       }
     },
+    "real-esrgan-x4plus": {
+      "catalog": {
+        "media": "image",
+        "description": {
+          "zh": "Real-ESRGAN x4plus 轻量像素超分（RRDBNet，MLX）。适合快速 2×/4× 放大，显存占用远低于 SeedVR2。",
+          "en": "Real-ESRGAN x4plus lightweight pixel upscaler (RRDBNet, MLX). Fast 2×/4× enlargement with much lower memory than SeedVR2."
+        },
+        "category": "upscalers",
+        "commercial_use_allowed": true,
+        "type": "upscaler",
+        "source": "modelscope",
+        "name": {
+          "zh": "Real-ESRGAN x4+",
+          "en": "Real-ESRGAN x4+"
+        },
+        "recommended": false,
+        "engine": "danqing-image"
+      },
+      "runtime": {
+        "family": "esrgan",
+        "backends": [
+          "mlx"
+        ]
+      },
+      "actions": {
+        "upscale": {}
+      },
+      "ui": {
+        "parameters": {
+          "scale_factor": {
+            "default": 4,
+            "options": [
+              2,
+              4
+            ],
+            "label": "放大倍数",
+            "type": "enum"
+          },
+          "tile_size": {
+            "default": 256,
+            "min": 0,
+            "max": 1024,
+            "label": "分块大小",
+            "type": "int"
+          }
+        }
+      },
+      "distribution": {
+        "versions": {
+          "fp16": {
+            "name": {
+              "zh": "FP16",
+              "en": "FP16"
+            },
+            "size": "34MB",
+            "default": true,
+            "source": "modelscope",
+            "repo_id": "mlx-community/Real-ESRGAN-x4plus",
+            "local_path": "models/Upscaler/real-esrgan-x4plus-fp16",
+            "source_type": "full",
+            "allow_patterns": [
+              "model.safetensors",
+              "config.json"
+            ]
+          }
+        }
+      }
+    },
     "seedvr2-video-7b": {
       "catalog": {
         "media": "video",
@@ -4108,6 +4217,85 @@
         },
         "dependencies": [
           "flux1-dev"
+        ]
+      }
+    },
+    "z-image-turbo-fun-controlnet-union": {
+      "catalog": {
+        "media": "image",
+        "description": {
+          "zh": "Z-Image-Turbo Fun ControlNet Union（Canny / Depth / Pose / HED / MLSD 等），需上传预处理控制图。",
+          "en": "Z-Image-Turbo Fun ControlNet Union (Canny, Depth, Pose, HED, MLSD, …); supply a preprocessed control image."
+        },
+        "category": "controlnets",
+        "commercial_use_allowed": true,
+        "type": "controlnet",
+        "source": "modelscope",
+        "name": {
+          "zh": "Z-Image-Turbo Fun ControlNet Union",
+          "en": "Z-Image-Turbo Fun ControlNet Union"
+        },
+        "recommended": false,
+        "base_model": "z-image-turbo",
+        "engine": "danqing-image"
+      },
+      "runtime": {
+        "family": "z_image",
+        "backends": [
+          "mlx"
+        ]
+      },
+      "actions": {
+        "create": {}
+      },
+      "ui": {
+        "parameters": {
+          "controlnet_strength": {
+            "default": 0.75,
+            "min": 0.0,
+            "max": 1.5,
+            "step": 0.05,
+            "label": "Control context scale",
+            "type": "float"
+          },
+          "steps": {
+            "default": 8,
+            "min": 1,
+            "max": 20,
+            "label": "步数",
+            "type": "int"
+          },
+          "guidance": {
+            "default": 0,
+            "min": 0.0,
+            "max": 0.0,
+            "label": "CFG引导",
+            "type": "float"
+          }
+        }
+      },
+      "distribution": {
+        "versions": {
+          "8steps": {
+            "name": {
+              "zh": "Union 2.1 8-step",
+              "en": "Union 2.1 8-step"
+            },
+            "size": "~8GB",
+            "default": true,
+            "source": "modelscope",
+            "repo_id": "PAI/Z-Image-Turbo-Fun-Controlnet-Union-2.1",
+            "local_path": "models/ControlNet/z-image-turbo-fun-controlnet-union-2.1-8steps",
+            "source_type": "full",
+            "allow_patterns": [
+              "Z-Image-Turbo-Fun-Controlnet-Union-2.1-*-8steps.safetensors",
+              "Z-Image-Turbo-Fun-Controlnet-Union-2.1-8steps.safetensors",
+              "README.md"
+            ]
+          }
+        },
+        "dependencies": [
+          "z-image-turbo"
         ]
       }
     },

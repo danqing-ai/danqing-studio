@@ -115,22 +115,27 @@ def _run_image_infer_persist(
     persist_fn: Callable[..., Any],
     decode_fn: Callable[..., Any] | None = None,
 ) -> tuple[str, dict[str, Any]] | None:
-    with phase_trace_span(resolved, "denoise"):
-        latents = infer_phase(
-            resolved,
-            {},
-            ScheduleState(ctx.scheduler, ctx.timesteps, ctx.sigmas, schedule_name),
-            runtime_ctx=pipeline.ctx,
-            pipeline=pipeline,
-            run_ctx=ctx,
-        )
-    if latents is None:
-        return None
-    if decode_fn is not None:
-        image = decode_fn(resolved, latents, edit_ctx=ctx)
-        emit_post_progress(ctx.on_progress, n_steps=len(ctx.timesteps), within_post=0.5)
-        return traced_persist(resolved, persist_fn, ctx, image)
-    return traced_persist(resolved, persist_fn, ctx, latents)
+    try:
+        with phase_trace_span(resolved, "denoise"):
+            latents = infer_phase(
+                resolved,
+                {},
+                ScheduleState(ctx.scheduler, ctx.timesteps, ctx.sigmas, schedule_name),
+                runtime_ctx=pipeline.ctx,
+                pipeline=pipeline,
+                run_ctx=ctx,
+            )
+        if latents is None:
+            return None
+        if decode_fn is not None:
+            image = decode_fn(resolved, latents, edit_ctx=ctx)
+            emit_post_progress(ctx.on_progress, n_steps=len(ctx.timesteps), within_post=0.5)
+            return traced_persist(resolved, persist_fn, ctx, image)
+        return traced_persist(resolved, persist_fn, ctx, latents)
+    finally:
+        cleanup = getattr(ctx, "structural_cleanup", None)
+        if cleanup is not None:
+            cleanup()
 
 
 def _run_video_denoise_phased(

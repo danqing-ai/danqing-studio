@@ -20,15 +20,19 @@ from backend.engine.training.presets import (
 OptimizerName = Literal["adam", "adamw"]
 TrainType = Literal["lora", "dora"]
 
+DEFAULT_LORA_ALPHA = None  # None means alpha = rank (scale = 1.0)
+
 _QLORA_MIN_MEMORY_GB: dict[int, dict[str, float]] = {
     4: {
         "flux1-dev": 36.0,
         "z-image": 34.0,
+        "z-image-turbo": 34.0,
         "qwen-image": 36.0,
     },
     8: {
         "flux1-dev": 42.0,
         "z-image": 40.0,
+        "z-image-turbo": 40.0,
         "qwen-image": 42.0,
     },
 }
@@ -39,6 +43,7 @@ class LoraTrainRuntimeConfig:
     iterations: int
     batch_size: int
     lora_rank: int
+    lora_alpha: int  # LoRA alpha; alpha/rank is the effective scale
     lora_blocks: int
     learning_rate: float
     grad_accumulate: int
@@ -50,7 +55,6 @@ class LoraTrainRuntimeConfig:
     num_augmentations: int
     qlora_bits: int | None
     grad_checkpoint: bool
-    lora_scale: float
     lora_dropout: float
     lora_module_keys: list[str] | None
     optimizer_name: OptimizerName
@@ -65,6 +69,15 @@ class LoraTrainRuntimeConfig:
     prior_loss_weight: float
     early_stop_patience: int
     fuse_adapters: bool
+    turbo_infer_steps: int
+    timestep_low: int
+    timestep_high: int
+    timestep_bias: str
+
+    @property
+    def lora_scale(self) -> float:
+        """Effective LoRA scale: alpha / rank."""
+        return float(self.lora_alpha) / float(self.lora_rank)
 
 
 def _model_id(base_model: str) -> str:
@@ -77,7 +90,7 @@ def train_min_memory_gb(base_model_id: str, *, qlora_bits: int | None = None) ->
         table = _QLORA_MIN_MEMORY_GB[qlora_bits]
         if mid in table:
             return table[mid]
-    if mid == "z-image":
+    if mid == "z-image" or mid == "z-image-turbo":
         return Z_IMAGE_TRAIN_MIN_MEMORY_GB
     if mid == "qwen-image":
         return QWEN_IMAGE_TRAIN_MIN_MEMORY_GB
@@ -86,7 +99,13 @@ def train_min_memory_gb(base_model_id: str, *, qlora_bits: int | None = None) ->
 
 def assert_training_memory(base_model_id: str, mem_gb: float, *, qlora_bits: int | None) -> None:
     min_mem = train_min_memory_gb(base_model_id, qlora_bits=qlora_bits)
-    if mem_gb > 0 and mem_gb < min_mem - 2:
+    if mem_gb <= 0:
+        raise RuntimeError(
+            f"Unable to detect unified memory. Cannot verify minimum "
+            f"{min_mem:.0f}GB requirement for {base_model_id!r} LoRA training. "
+            f"Set DANQING_MLX_MEMORY_LIMIT_GB explicitly or check your MLX installation."
+        )
+    if mem_gb < min_mem - 2:
         hint = (
             f"Enable qlora_bits=4 or 8, or reduce resolution/lora_blocks."
             if qlora_bits is None
@@ -116,8 +135,17 @@ def parse_lora_train_runtime_config(cfg: dict[str, Any], *, defaults: dict[str, 
         resume_from = str(resume_from).strip() or None
 
     lora_rank = int(merged.get("lora_rank", 8))
-    lora_scale_raw = merged.get("lora_scale")
-    lora_scale = float(lora_rank if lora_scale_raw is None else lora_scale_raw)
+    # lora_alpha defaults to lora_rank (alpha/rank = 1.0, same effective scale as before)
+    lora_alpha_raw = merged.get("lora_alpha")
+    if lora_alpha_raw is not None:
+        lora_alpha = int(lora_alpha_raw)
+    else:
+        # Legacy lora_scale field: if user set lora_scale explicitly, derive alpha from it
+        lora_scale_raw = merged.get("lora_scale")
+        if lora_scale_raw is not None:
+            lora_alpha = int(round(float(lora_scale_raw) * lora_rank))
+        else:
+            lora_alpha = lora_rank
 
     opt = str(merged.get("optimizer") or "adam").strip().lower()
     if opt not in ("adam", "adamw"):
@@ -142,6 +170,7 @@ def parse_lora_train_runtime_config(cfg: dict[str, Any], *, defaults: dict[str, 
         iterations=iterations,
         batch_size=int(merged.get("batch_size", 1)),
         lora_rank=lora_rank,
+        lora_alpha=lora_alpha,
         lora_blocks=int(merged.get("lora_blocks") if merged.get("lora_blocks") is not None else -1),
         learning_rate=float(merged.get("learning_rate") or 1e-4),
         grad_accumulate=grad_accumulate,
@@ -153,7 +182,6 @@ def parse_lora_train_runtime_config(cfg: dict[str, Any], *, defaults: dict[str, 
         num_augmentations=int(merged.get("num_augmentations") or 5),
         qlora_bits=qlora_bits,
         grad_checkpoint=bool(merged.get("grad_checkpoint") or False),
-        lora_scale=lora_scale,
         lora_dropout=float(merged.get("lora_dropout") or 0.0),
         lora_module_keys=module_keys,
         optimizer_name=opt,  # type: ignore[assignment]
@@ -168,6 +196,10 @@ def parse_lora_train_runtime_config(cfg: dict[str, Any], *, defaults: dict[str, 
         prior_loss_weight=float(merged.get("prior_loss_weight") or 0.0),
         early_stop_patience=int(merged.get("early_stop_patience") or 0),
         fuse_adapters=bool(merged.get("fuse_adapters") or False),
+        turbo_infer_steps=int(merged.get("turbo_infer_steps") or 9),
+        timestep_low=int(merged.get("timestep_low") or 4),
+        timestep_high=int(merged.get("timestep_high") or 9),
+        timestep_bias=str(merged.get("timestep_bias") or "uniform").strip().lower(),
     )
 
 
@@ -219,12 +251,16 @@ def configure_mlx_training_memory(*, mlx_ctx: Any | None = None) -> None:
         gb = int(getattr(mlx_ctx, "memory_limit_gb", 0) or getattr(mlx_ctx, "_memory_limit_gb", 0) or 0) or None
     if gb is None:
         return
+    import logging
+
     try:
         byte_limit = int(gb) * 1024**3
         mx.set_memory_limit(byte_limit)
         mx.set_wired_limit(int(byte_limit * 0.9))
-    except Exception:
-        pass
+    except Exception as e:
+        logging.getLogger("danqing.lora").warning(
+            "Failed to configure MLX memory limit (%dGB): %s", gb, e
+        )
 
 
 def clear_mlx_training_cache(mlx_ctx: Any | None = None) -> None:
@@ -244,7 +280,30 @@ def adapter_meta_path(adapter_path: Path) -> Path:
 
 
 def optimizer_state_path(adapter_path: Path) -> Path:
+    return adapter_path.with_name(f"{adapter_path.stem}_optimizer.safetensors")
+
+
+def _legacy_optimizer_state_path(adapter_path: Path) -> Path:
     return adapter_path.with_name(f"{adapter_path.stem}_optimizer.npz")
+
+
+def _save_optimizer_state(adapter_path: Path, optimizer: optim.Optimizer) -> None:
+    flat = dict(tree_flatten(optimizer.state))
+    if not flat:
+        return
+    dest = optimizer_state_path(adapter_path)
+    # mlx.savez accepts at most 1024 keyword args; full Z-Image Turbo LoRA exceeds that.
+    mx.save_safetensors(str(dest), flat)
+
+
+def _load_optimizer_state(adapter_path: Path, optimizer: optim.Optimizer) -> None:
+    for path in (optimizer_state_path(adapter_path), _legacy_optimizer_state_path(adapter_path)):
+        if not path.is_file():
+            continue
+        loaded = mx.load(str(path))
+        state = tree_unflatten(list(loaded.items()))
+        optimizer.state = state
+        return
 
 
 def save_training_checkpoint(
@@ -264,9 +323,7 @@ def save_training_checkpoint(
         __import__("json").dumps(meta, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
-    flat = dict(tree_flatten(optimizer.state))
-    if flat:
-        mx.savez(str(optimizer_state_path(adapter_path)), **flat)
+    _save_optimizer_state(adapter_path, optimizer)
 
 
 def load_training_checkpoint(
@@ -287,11 +344,8 @@ def load_training_checkpoint(
         meta = __import__("json").loads(meta_path.read_text(encoding="utf-8"))
         start_iter = int(meta.get("iteration") or 0)
 
-    opt_path = optimizer_state_path(adapter_path)
-    if opt_path.is_file():
-        loaded = mx.load(str(opt_path))
-        state = tree_unflatten(list(loaded.items()))
-        optimizer.state = state
+    _load_optimizer_state(adapter_path, optimizer)
+    if optimizer_state_path(adapter_path).is_file() or _legacy_optimizer_state_path(adapter_path).is_file():
         mx.eval(train_module.parameters(), optimizer.state)
     return start_iter
 

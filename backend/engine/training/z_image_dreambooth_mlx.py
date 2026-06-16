@@ -1,4 +1,4 @@
-"""Z-Image Base DreamBooth LoRA training on MLX."""
+"""Z-Image Base / Turbo DreamBooth LoRA training on MLX."""
 
 from __future__ import annotations
 
@@ -13,12 +13,12 @@ from PIL import Image
 from backend.core.contracts import ExecutionContext, LoraTrainingRequest, LogEvent, ProgressEvent
 from backend.engine._transformer_registry import _instantiate_image_text_encoder, get_text_encoder
 from backend.engine.common.codecs.vae import VAEEncoder, infer_latent_channels, prepare_vae_encoder_weight_items
-from backend.engine.config.model_configs import get_config_class
+from backend.engine.config.model_configs import apply_image_registry_config_overrides, get_config_class
 from backend.engine.contracts import local_bundle_root
 from backend.engine.families.z_image.weights import remap_zimage_lora_keys
 from backend.engine.pipelines.image_model_load import load_image_transformer
 from backend.engine.training.crop import prepare_training_rgb_image, resolve_training_resolution
-from backend.engine.training.dataset_store import load_training_pairs_unified
+from backend.engine.training.dataset_store import _dataset_meta, load_training_pairs_unified
 from backend.engine.training.flux_dreambooth_mlx import _load_vae_encoder, _log, _progress, _save_adapter
 from backend.engine.training.lora_layers import (
     apply_lora_to_zimage_dit,
@@ -26,10 +26,13 @@ from backend.engine.training.lora_layers import (
     prepare_dit_for_lora_training,
 )
 from backend.engine.training.dit_training_loss import (
+    CLASS_PRIOR_LATENT_COUNT,
     combine_instance_prior_loss,
     flow_match_mse,
-    make_prior_latent,
+    merge_prior_cache_tensors,
     sample_noisy_latent,
+    sample_noisy_latent_turbo,
+    sample_prior_latent,
 )
 from backend.engine.training.latent_cache import LatentCache
 from backend.engine.training.lora_train_loop import run_dit_lora_train_loop
@@ -41,8 +44,21 @@ from backend.engine.training.lora_train_runtime import (
 from backend.engine.training.presets import merge_training_request_config, resolve_preset
 from backend.engine.training.user_lora_registry import register_user_lora
 
-_Z_IMAGE_TRAINABLE_ID = "z-image"
-_Z_IMAGE_BLOCKED_IDS = frozenset({"z-image-turbo"})
+from backend.engine.training.z_image_turbo_adapter import (
+    install_zimage_turbo_training_assistant,
+    resolve_zimage_turbo_training_adapter_path,
+    TurboTrainingAssistantHandle,
+)
+
+_Z_IMAGE_TRAINABLE_IDS = frozenset({"z-image", "z-image-turbo"})
+
+
+def _model_id(base_model: str) -> str:
+    return (base_model or "").split(":", 1)[0].strip()
+
+
+def _is_zimage_turbo(base_model_id: str) -> bool:
+    return _model_id(base_model_id) == "z-image-turbo"
 
 
 def _load_zimage_text_encoder(ctx: Any, bundle_root: Path, config: Any) -> Any:
@@ -76,6 +92,8 @@ def _encode_dataset_to_cache(
     resolution: tuple[int, int],
     exec_ctx: ExecutionContext,
     class_prompt: str | None,
+    caption_mode: str = "",
+    face_anchor: str = "",
 ) -> int:
     total_samples = len(pairs) * num_augmentations
     cache.begin(
@@ -85,6 +103,8 @@ def _encode_dataset_to_cache(
         resolution=resolution,
         family="z_image",
         tensor_keys=["latent", "cap"],
+        caption_mode=caption_mode,
+        face_anchor=face_anchor,
     )
     _log(exec_ctx, "info", f"Encoding {len(pairs)} images × {num_augmentations} augmentations …")
     _progress(
@@ -141,17 +161,48 @@ def _training_loss(
     *,
     min_snr_gamma: float = 0.0,
     prior_cap: mx.array | None = None,
+    prior_latents: mx.array | None = None,
     prior_loss_weight: float = 0.0,
+    turbo: bool = False,
+    turbo_infer_steps: int = 9,
+    timestep_low: int = 4,
+    timestep_high: int = 9,
+    timestep_bias: str = "uniform",
+    resolution: tuple[int, int] = (512, 512),
 ) -> mx.array:
-    x_t, eps, t = sample_noisy_latent(x0, ctx)
+    if turbo:
+        x_t, eps, t = sample_noisy_latent_turbo(
+            x0,
+            ctx,
+            infer_steps=turbo_infer_steps,
+            timestep_low=timestep_low,
+            timestep_high=timestep_high,
+            width=resolution[0],
+            height=resolution[1],
+            timestep_bias=timestep_bias,
+        )
+    else:
+        x_t, eps, t = sample_noisy_latent(x0, ctx)
     pred = model(x_t, timestep=0, txt_embeds=cap, sigmas=t)
     b = x0.shape[0]
     sigma = mx.reshape(t, (b,) + (1,) * (x0.ndim - 1)).astype(ctx.bfloat16())
     inst = flow_match_mse(pred, x0, eps, sigma=sigma, min_snr_gamma=min_snr_gamma)
     if prior_cap is None or prior_loss_weight <= 0:
         return inst
-    x0p = make_prior_latent(x0, ctx)
-    x_tp, epsp, tp = sample_noisy_latent(x0p, ctx)
+    x0p = sample_prior_latent(x0, ctx, prior_latents=prior_latents)
+    if turbo:
+        x_tp, epsp, tp = sample_noisy_latent_turbo(
+            x0p,
+            ctx,
+            infer_steps=turbo_infer_steps,
+            timestep_low=timestep_low,
+            timestep_high=timestep_high,
+            width=resolution[0],
+            height=resolution[1],
+            timestep_bias=timestep_bias,
+        )
+    else:
+        x_tp, epsp, tp = sample_noisy_latent(x0p, ctx)
     predp = model(x_tp, timestep=0, txt_embeds=prior_cap, sigmas=tp)
     sigmap = mx.reshape(tp, (b,) + (1,) * (x0.ndim - 1)).astype(ctx.bfloat16())
     prior = flow_match_mse(predp, x0p, epsp, sigma=sigmap, min_snr_gamma=min_snr_gamma)
@@ -170,6 +221,19 @@ def _validate_saved_lora(path: Path) -> None:
 
     flat = load_safetensors(str(path))
     weights = dict(flat)
+    if any(key.endswith(".delta.weight") for key in weights):
+        infer = ZImageTransformer(ZImageConfig(), MLXContext())
+        dense_modules = [k[: -len(".delta.weight")] for k in weights if k.endswith(".delta.weight")]
+        matched = sum(1 for m in dense_modules if f"{m}.weight" in infer._param_map)
+        if matched == 0:
+            raise RuntimeError(
+                f"Saved LoRA {path}: dense deltas present but none match Z-Image DiT weights"
+            )
+        if matched < len(dense_modules):
+            raise RuntimeError(
+                f"Saved LoRA {path}: only {matched}/{len(dense_modules)} dense deltas match Z-Image DiT"
+            )
+        return
     if any(key.startswith("lora_") and ".lora_A." in key for key in weights):
         config_path = path.parent / "lora_config.json"
         lora_blocks = -1
@@ -196,6 +260,96 @@ def _validate_saved_lora(path: Path) -> None:
         )
 
 
+def _denoise_latents_for_prompt(
+    *,
+    model: Any,
+    text_encoder: Any,
+    prompt: str,
+    resolution: tuple[int, int],
+    ctx: Any,
+    steps: int = 20,
+    turbo: bool = False,
+) -> mx.array:
+    from backend.engine.common.ops.schedulers import FlowMatchEulerScheduler, LinearScheduler
+
+    w, h = resolution
+    lh, lw = h // 8, w // 8
+    latents = mx.random.normal((1, 16, lh, lw), dtype=ctx.bfloat16())
+    cap = text_encoder.encode([prompt])
+    mx.eval(latents, cap)
+    if turbo:
+        sched = LinearScheduler(num_train_timesteps=1000, ctx=ctx)
+        sched.set_timesteps(
+            steps,
+            image_width=w,
+            image_height=h,
+            requires_sigma_shift=True,
+        )
+        sigma_schedule = sched._sigmas
+    else:
+        image_seq_len = lh * lw
+        sched = FlowMatchEulerScheduler(num_train_timesteps=1000, shift=6.0, ctx=ctx)
+        sched.set_timesteps(
+            steps,
+            image_seq_len=image_seq_len,
+            scheduler_shift=6.0,
+            use_empirical_mu=False,
+        )
+        sigma_schedule = sched._sigmas
+    for i, _t in enumerate(sched._timesteps):
+        pred = model(latents, timestep=i, txt_embeds=cap, sigmas=sigma_schedule)
+        latents = sched.step(pred, i, latents)
+        mx.eval(latents)
+    return latents
+
+
+def _ensure_zimage_class_prior_latents(
+    *,
+    latent_cache: LatentCache,
+    model: Any,
+    bundle_root: Path,
+    config: Any,
+    class_prompt: str,
+    resolution: tuple[int, int],
+    ctx: Any,
+    exec_ctx: ExecutionContext,
+    turbo: bool = False,
+    turbo_steps: int = 8,
+) -> mx.array | None:
+    try:
+        prior_data = latent_cache.load_prior()
+        if "prior_latents" in prior_data:
+            return prior_data["prior_latents"]
+    except RuntimeError:
+        pass
+
+    _log(
+        exec_ctx,
+        "info",
+        f"Generating {CLASS_PRIOR_LATENT_COUNT} class prior latents for {class_prompt!r} …",
+    )
+    text_encoder = _load_zimage_text_encoder(ctx, bundle_root, config)
+    latents_list: list[mx.array] = []
+    for seed in range(CLASS_PRIOR_LATENT_COUNT):
+        mx.random.seed(seed + 17)
+        z = _denoise_latents_for_prompt(
+            model=model,
+            text_encoder=text_encoder,
+            prompt=class_prompt,
+            resolution=resolution,
+            ctx=ctx,
+            steps=turbo_steps if turbo else 20,
+            turbo=turbo,
+        )
+        latents_list.append(z[0])
+    prior_latents = mx.stack(latents_list)
+    mx.eval(prior_latents)
+    merge_prior_cache_tensors(latent_cache, {"prior_latents": prior_latents})
+    text_encoder.release_weights()
+    ctx.clear_cache()
+    return prior_latents
+
+
 def _generate_progress_image(
     *,
     model: Any,
@@ -205,28 +359,17 @@ def _generate_progress_image(
     resolution: tuple[int, int],
     ctx: Any,
     steps: int = 20,
+    turbo: bool = False,
 ) -> np.ndarray:
-    from backend.engine.common.ops.schedulers import FlowMatchEulerScheduler
-
-    w, h = resolution
-    lh, lw = h // 8, w // 8
-    latents = mx.random.normal((1, 16, lh, lw), dtype=ctx.bfloat16())
-    cap = text_encoder.encode([prompt])
-    mx.eval(latents, cap)
-    image_seq_len = lh * lw
-    # Z-Image Base uses static scheduler_shift (registry default 6.0), not Flux empirical μ.
-    sched = FlowMatchEulerScheduler(num_train_timesteps=1000, shift=6.0, ctx=ctx)
-    sched.set_timesteps(
-        steps,
-        image_seq_len=image_seq_len,
-        scheduler_shift=6.0,
-        use_empirical_mu=False,
+    latents = _denoise_latents_for_prompt(
+        model=model,
+        text_encoder=text_encoder,
+        prompt=prompt,
+        resolution=resolution,
+        ctx=ctx,
+        steps=steps,
+        turbo=turbo,
     )
-    sigma_schedule = sched._sigmas
-    for i, _t in enumerate(sched._timesteps):
-        pred = model(latents, timestep=i, txt_embeds=cap, sigmas=sigma_schedule)
-        latents = sched.step(pred, i, latents)
-        mx.eval(latents)
     img = vae_dec.forward(latents)
     mx.eval(img)
     arr = np.asarray(img[0].transpose(1, 2, 0), dtype=np.float32)
@@ -251,21 +394,18 @@ def run_z_image_dreambooth_training(
     base_model_id, version_key = (
         request.base_model.split(":", 1) if ":" in request.base_model else (request.base_model, "")
     )
-    if base_model_id in _Z_IMAGE_BLOCKED_IDS:
+    mid = _model_id(base_model_id)
+    if mid not in _Z_IMAGE_TRAINABLE_IDS:
         raise RuntimeError(
-            "LoRA training supports Z-Image Base (z-image) only; "
-            "z-image-turbo is distilled and not trainable."
+            f"LoRA training supports Z-Image Base/Turbo ({sorted(_Z_IMAGE_TRAINABLE_IDS)!r}) only "
+            f"(got {base_model_id!r})"
         )
+    is_turbo = _is_zimage_turbo(base_model_id)
 
-    entry = registry.require(base_model_id)
+    entry = registry.require(mid)
     if str(getattr(entry, "family", "")) != "z_image":
         raise RuntimeError(
             f"Z-Image training runner expects family z_image (model {base_model_id!r} is {entry.family!r})"
-        )
-    if base_model_id != _Z_IMAGE_TRAINABLE_ID:
-        raise RuntimeError(
-            f"LoRA training supports Z-Image Base ({_Z_IMAGE_TRAINABLE_ID!r}) only "
-            f"(got {base_model_id!r})"
         )
 
     preset = resolve_preset(request.preset, base_model=request.base_model)
@@ -293,12 +433,28 @@ def run_z_image_dreambooth_training(
         project_root,
         request.dataset_id,
         progress_prompt=progress_prompt,
+        caption_mode=getattr(request, "caption_mode", None),
     )
     if len(pairs) < 3:
         raise RuntimeError("Dataset must contain at least 3 images")
     _log(exec_ctx, "info", f"DreamBooth caption: {training_caption!r}")
 
+    # Resolve effective caption mode for latent cache fingerprint
+    resolved_caption_mode = "per_image" if len({str(p or "").strip() for _, p in pairs}) > 1 else "unified"
+    _log(exec_ctx, "info", f"Caption mode: {resolved_caption_mode} ({len(pairs)} images)")
+
+    # Face anchor: consistent facial-feature descriptor injected into a fraction of captions
+    ds_meta = _dataset_meta(project_root, request.dataset_id)
+    face_anchor = (ds_meta.get("face_anchor") or "").strip()
+    if face_anchor:
+        n_anchored = sum(1 for _, t in pairs if face_anchor in str(t or ""))
+        ratio = float(ds_meta.get("face_anchor_ratio", 0.5))
+        always = len(pairs) <= 5
+        injected = len(pairs) if always else sum(1 for i in range(len(pairs)) if i % 2 == 0)
+        _log(exec_ctx, "info", f"Face anchor: {face_anchor!r} (injected into {injected}/{len(pairs)} captions)")
+
     config = get_config_class("z_image")()
+    apply_image_registry_config_overrides(entry, config)
     _log(exec_ctx, "info", "Loading VAE encoder and Z-Image text encoder …")
     _progress(
         exec_ctx,
@@ -336,6 +492,8 @@ def run_z_image_dreambooth_training(
             resolution=resolution,
             exec_ctx=exec_ctx,
             class_prompt=class_prompt if train_runtime.prior_loss_weight > 0 else None,
+            caption_mode=resolved_caption_mode,
+            face_anchor=face_anchor,
         )
 
     if latent_cache.is_valid(
@@ -345,6 +503,8 @@ def run_z_image_dreambooth_training(
         resolution=resolution,
         family="z_image",
         n_samples=len(pairs) * train_runtime.num_augmentations,
+        caption_mode=resolved_caption_mode,
+        face_anchor=face_anchor,
     ):
         _log(exec_ctx, "info", "Reusing cached latents from work_dir/latent_cache …")
         n_samples = len(pairs) * train_runtime.num_augmentations
@@ -376,6 +536,8 @@ def run_z_image_dreambooth_training(
     if model is None:
         raise RuntimeError("Failed to load Z-Image transformer from bundle")
 
+    training_assistant: TurboTrainingAssistantHandle | None = None
+
     model, train_module = prepare_dit_for_lora_training(
         model,
         apply_lora_to_zimage_dit,
@@ -389,6 +551,46 @@ def run_z_image_dreambooth_training(
         grad_checkpoint=train_runtime.grad_checkpoint,
         train_type=train_runtime.train_type,
     )
+
+    if is_turbo:
+        from backend.engine.families.z_image.lora_mlx import _repair_indexed_zimage_weights
+
+        adapter_path = resolve_zimage_turbo_training_adapter_path(project_root)
+        _log(exec_ctx, "info", f"Loading Z-Image-Turbo training assistant from {adapter_path} …")
+        training_assistant = install_zimage_turbo_training_assistant(
+            model,
+            adapter_path,
+            ctx,
+            repair_indexed_weights=_repair_indexed_zimage_weights,
+        )
+        _log(
+            exec_ctx,
+            "info",
+            f"Training assistant attached ({training_assistant.count} layers; base DiT weights unchanged)",
+        )
+        _log(
+            exec_ctx,
+            "info",
+            "Turbo LoRA inference hint: linear scheduler, 8-9 steps, CFG=0, "
+            f"LoRA weight 0.7-0.85, FP16 base; training sigma band "
+            f"[{train_runtime.timestep_low}-{train_runtime.timestep_high}] "
+            f"modules={train_runtime.lora_module_keys or 'all'}",
+        )
+
+    prior_latents: Any | None = None
+    if train_runtime.prior_loss_weight > 0 and class_prompt:
+        prior_latents = _ensure_zimage_class_prior_latents(
+            latent_cache=latent_cache,
+            model=model,
+            bundle_root=bundle_root,
+            config=config,
+            class_prompt=class_prompt,
+            resolution=resolution,
+            ctx=ctx,
+            exec_ctx=exec_ctx,
+            turbo=is_turbo,
+            turbo_steps=train_runtime.progress_steps,
+        )
 
     prior_cap: Any | None = None
     if train_runtime.prior_loss_weight > 0:
@@ -410,12 +612,10 @@ def run_z_image_dreambooth_training(
         for aug in range(train_runtime.num_augmentations)
     ]
 
-    _log(exec_ctx, "info", f"Loading {n_samples} cached latents into memory …")
-    zimage_samples = latent_cache.materialize_z_image(n_samples)
-    mx.eval(*[t for sample in zimage_samples for t in sample])
+    _log(exec_ctx, "info", f"Streaming {n_samples} cached latents from disk …")
 
     def sample_batch(indices: list[int]) -> tuple[Any, ...]:
-        return zimage_samples[indices[0]]
+        return latent_cache.sample_z_image(indices[0])
 
     def loss_fn(x0: mx.array, cap: mx.array) -> mx.array:
         return _training_loss(
@@ -425,7 +625,14 @@ def run_z_image_dreambooth_training(
             ctx,
             min_snr_gamma=train_runtime.min_snr_gamma,
             prior_cap=prior_cap,
+            prior_latents=prior_latents,
             prior_loss_weight=train_runtime.prior_loss_weight if prior_cap is not None else 0.0,
+            turbo=is_turbo,
+            turbo_infer_steps=train_runtime.turbo_infer_steps,
+            timestep_low=train_runtime.timestep_low,
+            timestep_high=train_runtime.timestep_high,
+            timestep_bias=train_runtime.timestep_bias,
+            resolution=resolution,
         )
 
     def preview_at(step: int) -> None:
@@ -435,7 +642,7 @@ def run_z_image_dreambooth_training(
         vae_dir = bundle_root / "vae"
         vae_cfg, _, _ = read_vae_dir_config(vae_dir)
         vae_weights = load_vae_weight_dict(ctx, vae_dir)
-        preview_latent, _ = zimage_samples[0]
+        preview_latent, _ = latent_cache.sample_z_image(0)
         dec, _, _, _ = create_loaded_vae_decoder(
             ctx,
             preview_latent,
@@ -444,16 +651,23 @@ def run_z_image_dreambooth_training(
             float(vae_cfg.get("shift_factor", 0.0)),
         )
         te = _load_zimage_text_encoder(ctx, bundle_root, config)
-        preview = _generate_progress_image(
-            model=train_module,
-            vae_dec=dec,
-            text_encoder=te,
-            prompt=progress_prompt,
-            resolution=resolution,
-            ctx=ctx,
-            steps=train_runtime.progress_steps,
-        )
-        Image.fromarray(preview).save(work_dir / f"{step:07d}_progress.png")
+        if is_turbo and training_assistant is not None:
+            training_assistant.set_enabled(False)
+        try:
+            preview = _generate_progress_image(
+                model=train_module,
+                vae_dec=dec,
+                text_encoder=te,
+                prompt=progress_prompt,
+                resolution=resolution,
+                ctx=ctx,
+                steps=train_runtime.progress_steps,
+                turbo=is_turbo,
+            )
+            Image.fromarray(preview).save(work_dir / f"{step:07d}_progress.png")
+        finally:
+            if is_turbo and training_assistant is not None:
+                training_assistant.set_enabled(True)
         te.release_weights()
         ctx.clear_cache()
 
@@ -518,7 +732,7 @@ def run_z_image_dreambooth_training(
         "lora_rank": train_runtime.lora_rank,
         "lora_blocks": train_runtime.lora_blocks,
         "base_model": base_model_id,
-        "alpha": train_runtime.lora_scale,
+        "alpha": train_runtime.lora_alpha,
         "trigger_word": "",
         "training_caption": training_caption,
     }

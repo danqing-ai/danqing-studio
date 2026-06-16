@@ -83,6 +83,23 @@ def remap_zimage_weights(weights: dict, patch_size: int = 2) -> dict:
     return remapped
 
 
+def remap_zimage_control_weights(weights: dict, patch_size: int = 2) -> dict:
+    """Map diffusers Z-Image Fun ControlNet keys → DanQing ``ZImageControlRuntime`` flat keys."""
+    prefix_key = f"{patch_size}-1"
+    remapped: dict[str, Any] = {}
+    for key, tensor in weights.items():
+        if not key.startswith("control_"):
+            continue
+        new_key = key
+        new_key = new_key.replace(f"control_all_x_embedder.{prefix_key}", "control_x_embedder")
+        new_key = new_key.replace("attention_norm1.", "attn_norm1.")
+        new_key = new_key.replace("attention_norm2.", "attn_norm2.")
+        new_key = new_key.replace(".to_out.0.", ".to_out.")
+        new_key = new_key.replace(".adaLN_modulation.1.", ".adaLN_modulation.0.")
+        remapped[new_key] = tensor
+    return remapped
+
+
 def remap_zimage_lora_module_prefix(module: str, patch_size: int = 2) -> str:
     """Map a LoRA module path (from checkpoint keys) → DanQing ``ZImageTransformer`` parameter prefix.
 

@@ -435,6 +435,12 @@ def get_compatible_controlnets(model_name: str, scope: str | None = None):
         # Matching logic: FLUX models are compatible with all FLUX ControlNets
         if model_name.startswith("flux"):
             is_compatible = net_base == "" or net_base.startswith("flux")
+        elif model_name.startswith("z-image"):
+            is_compatible = (
+                net_base == ""
+                or net_base.startswith("z-image")
+                or net_base in ("z-image", "z-image-turbo")
+            )
         else:
             is_compatible = net_base == model_name
 

@@ -370,6 +370,71 @@
                       {{ $t('canvas.pickControlImage') }}
                     </DqButton>
                   </div>
+                  <template v-if="showZImageInpaintExtras">
+                    <p class="image-composer__control-hint image-composer__control-hint--sub">
+                      {{ $t('create.controlInpaintHint') }}
+                    </p>
+                    <div class="image-composer__control-image-row">
+                      <label>{{ $t('create.inpaintSource') }}</label>
+                      <div v-if="inpaintSourceImage" class="image-composer__ref-pill image-composer__ref-pill--compact">
+                        <img :src="inpaintSourceImage.previewUrl" alt="inpaint source" />
+                        <DqIconButton
+                          type="text"
+                          size="xs"
+                          :label="$t('common.delete')"
+                          @click="$emit('remove-inpaint-source')"
+                        >
+                          <DqIcon :size="10"><Close /></DqIcon>
+                        </DqIconButton>
+                      </div>
+                      <DqButton v-else size="xs" type="secondary" @click="$emit('pick-inpaint-source')">
+                        {{ $t('create.pickInpaintSource') }}
+                      </DqButton>
+                    </div>
+                    <div class="image-composer__control-image-row">
+                      <label>{{ $t('create.inpaintMask') }}</label>
+                      <div v-if="inpaintMaskImage" class="image-composer__ref-pill image-composer__ref-pill--compact">
+                        <img :src="inpaintMaskImage.previewUrl" alt="inpaint mask" />
+                        <DqIconButton
+                          type="text"
+                          size="xs"
+                          :label="$t('common.delete')"
+                          @click="$emit('remove-inpaint-mask')"
+                        >
+                          <DqIcon :size="10"><Close /></DqIcon>
+                        </DqIconButton>
+                      </div>
+                      <DqButton v-else size="xs" type="secondary" @click="$emit('pick-inpaint-mask')">
+                        {{ $t('create.pickInpaintMask') }}
+                      </DqButton>
+                    </div>
+                  </template>
+                </div>
+              </div>
+
+              <!-- Z-Image Turbo: LeMiCa + latent refine -->
+              <div v-if="showZImageTurboExtras" class="image-composer__advanced-row">
+                <div class="image-composer__field image-composer__field--full" style="flex-direction: column; align-items: flex-start; gap: 8px;">
+                  <div style="display: flex; align-items: center; gap: 10px; width: 100%;">
+                    <label>{{ $t('create.lemicaMode') }}</label>
+                    <DqSelect v-model="localParams.lemica_mode" size="small" style="flex: 1; max-width: 300px;">
+                      <DqOption value="none" :label="$t('create.lemicaOff')" />
+                      <DqOption value="slow" :label="$t('create.lemicaSlow')" />
+                      <DqOption value="medium" :label="$t('create.lemicaMedium')" />
+                      <DqOption value="fast" :label="$t('create.lemicaFast')" />
+                    </DqSelect>
+                  </div>
+                  <p class="image-composer__control-hint">{{ $t('create.lemicaHint') }}</p>
+                  <div style="display: flex; align-items: center; gap: 10px; width: 100%;">
+                    <label style="min-width: 100px;">{{ $t('create.latentRefineScale') }}</label>
+                    <DqSlider v-model="localParams.latent_refine_scale" :min="1" :max="2" :step="0.25" style="flex: 1;" />
+                    <span class="image-composer__field-val">{{ localParams.latent_refine_scale }}</span>
+                  </div>
+                  <div v-if="Number(localParams.latent_refine_scale) > 1" style="display: flex; align-items: center; gap: 10px; width: 100%;">
+                    <label style="min-width: 100px;">{{ $t('create.latentRefineDenoise') }}</label>
+                    <DqSlider v-model="localParams.latent_refine_denoise" :min="0" :max="1" :step="0.05" style="flex: 1;" />
+                    <span class="image-composer__field-val">{{ localParams.latent_refine_denoise }}</span>
+                  </div>
                 </div>
               </div>
 
@@ -408,6 +473,8 @@ import {
   controlNetReady,
   isCannyOrDepthControlNet,
   isReduxControlNet,
+  isZImageUnionControlNet,
+  isZImageStructuralBaseModel,
 } from '@/composables/useStructuralGuide';
 import {
   Close,
@@ -443,11 +510,16 @@ const props = defineProps<{
     lora_scale?: number;
     controlnet?: string;
     controlnet_strength?: number;
+    lemica_mode?: string;
+    latent_refine_scale?: number;
+    latent_refine_denoise?: number;
   };
   hasCustomParams: boolean;
   showNegativePrompt: boolean;
   referenceImage: { previewUrl: string; path: string } | null;
   controlImage?: { previewUrl: string; path: string } | null;
+  inpaintSourceImage?: { previewUrl: string; path: string } | null;
+  inpaintMaskImage?: { previewUrl: string; path: string } | null;
   /**
    * Optional mode selector. If provided, a segmented control is shown in the
    * toolbar for switching between text2img / img2img modes.
@@ -477,6 +549,10 @@ const emit = defineEmits<{
   (e: 'remove-reference'): void;
   (e: 'pick-control'): void;
   (e: 'remove-control'): void;
+  (e: 'pick-inpaint-source'): void;
+  (e: 'remove-inpaint-source'): void;
+  (e: 'pick-inpaint-mask'): void;
+  (e: 'remove-inpaint-mask'): void;
   (e: 'model-change', value: string): void;
   (e: 'reset-defaults'): void;
   (e: 'enhance', ctx?: { stylePositive?: string }): void;
@@ -513,10 +589,20 @@ function loraOptionLabel(l: Record<string, unknown>): string {
 
 const controlNetGuideHint = computed(() => {
   const key = String(localParams.value.controlnet || '').toLowerCase();
+  if (key.includes('z-image') && key.includes('union')) return $t('studio.controlnetZImageUnionHint');
   if (key.includes('fill')) return $t('studio.controlnetFillHint');
   if (key.includes('depth')) return $t('studio.controlnetDepthHint');
   if (key.includes('redux')) return $t('studio.controlnetReduxHint');
   return $t('studio.controlnetBundleHint');
+});
+
+const showZImageTurboExtras = computed(() =>
+  isZImageStructuralBaseModel(String(props.model || localParams.value.model || '')),
+);
+
+const showZImageInpaintExtras = computed(() => {
+  const key = String(localParams.value.controlnet || '');
+  return showZImageTurboExtras.value && isZImageUnionControlNet(key);
 });
 
 const controlNetStrengthLabel = computed(() => {
@@ -530,9 +616,13 @@ const controlNetRuntimeAvailable = computed(
   () => props.controlNetRuntimeAvailable !== false,
 );
 
-const showCompanionLoraHint = computed(() =>
-  isCannyOrDepthControlNet(String(localParams.value.controlnet || '')),
-);
+const showCompanionLoraHint = computed(() => {
+  const key = String(localParams.value.controlnet || '');
+  return (
+    isCannyOrDepthControlNet(key)
+    && !isZImageStructuralBaseModel(String(props.model || localParams.value.model || ''))
+  );
+});
 
 watch(
   () => localParams.value.controlnet,

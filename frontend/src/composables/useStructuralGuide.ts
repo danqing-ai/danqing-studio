@@ -2,7 +2,7 @@ import { ref, type Ref } from 'vue';
 import { api } from '@/utils/api';
 import { $mn } from '@/utils/i18n';
 
-export type StructuralGuideType = 'canny' | 'depth' | 'redux';
+export type StructuralGuideType = 'canny' | 'depth' | 'pose' | 'hed' | 'mlsd' | 'scribble' | 'gray' | 'auto' | 'redux';
 export type ControlNetScope = 'create' | 'retouch' | 'extend';
 
 /** Mirrors backend ``CONTROLNET_DECLARED_BACKENDS`` until CUDA batch lands. */
@@ -49,7 +49,13 @@ export type ControlImageRef = {
 export function inferStructuralGuideType(controlnetKey: string): StructuralGuideType {
   const k = String(controlnetKey || '').toLowerCase();
   if (k.includes('depth')) return 'depth';
+  if (k.includes('pose')) return 'pose';
+  if (k.includes('hed')) return 'hed';
+  if (k.includes('mlsd')) return 'mlsd';
+  if (k.includes('scribble')) return 'scribble';
+  if (k.includes('gray')) return 'gray';
   if (k.includes('redux')) return 'redux';
+  if (k.includes('z-image') && k.includes('union')) return 'auto';
   return 'canny';
 }
 
@@ -70,6 +76,20 @@ export function isFluxStructuralBaseModel(modelKey: string): boolean {
   return String(modelKey || '').toLowerCase().startsWith('flux1');
 }
 
+export function isZImageUnionControlNet(controlnetKey: string): boolean {
+  const k = String(controlnetKey || '').toLowerCase();
+  return k.includes('z-image') && k.includes('union');
+}
+
+export function isZImageStructuralBaseModel(modelKey: string): boolean {
+  const k = String(modelKey || '').toLowerCase();
+  return k === 'z-image' || k === 'z-image-turbo' || k.startsWith('z-image');
+}
+
+export function supportsStructuralGuideBaseModel(modelKey: string): boolean {
+  return isFluxStructuralBaseModel(modelKey) || isZImageStructuralBaseModel(modelKey);
+}
+
 export function controlNetDisplayName(n: Record<string, unknown>): string {
   return $mn(
     n as { name?: string | { zh?: string; en?: string }; name_en?: string },
@@ -88,13 +108,66 @@ export function buildStructuralGuidePayload(
   controlnetKey: string,
   assetId: string,
   strength: number,
+  inpaint?: { sourceAssetId?: string; maskAssetId?: string },
 ): Record<string, unknown> {
-  return {
+  const payload: Record<string, unknown> = {
     asset_id: assetId,
     model_id: controlnetKey,
     type: inferStructuralGuideType(controlnetKey),
     weight: Number(strength) || 0.8,
   };
+  const src = String(inpaint?.sourceAssetId || '').trim();
+  const msk = String(inpaint?.maskAssetId || '').trim();
+  if (src && msk) {
+    payload.inpaint_source_asset_id = src;
+    payload.inpaint_mask_asset_id = msk;
+  }
+  return payload;
+}
+
+/** Attach Z-Image / structural extras to create or rewrite request bodies. */
+export function appendZImageEnhancementFields(
+  body: Record<string, unknown>,
+  opts: {
+    controlnet?: string;
+    controlAssetId?: string | null;
+    controlnetStrength?: number;
+    inpaintSourceId?: string;
+    inpaintMaskId?: string;
+    lemicaMode?: string;
+    latentRefineScale?: number;
+    latentRefineDenoise?: number;
+  },
+): { ok: true } | { ok: false; code: 'inpaint_pair_required' } {
+  const controlnet = String(opts.controlnet || '');
+  const controlAssetId = String(opts.controlAssetId || '').trim();
+  if (controlAssetId && controlnet) {
+    const inpSrc = String(opts.inpaintSourceId || '').trim();
+    const inpMsk = String(opts.inpaintMaskId || '').trim();
+    if (Boolean(inpSrc) !== Boolean(inpMsk)) {
+      return { ok: false, code: 'inpaint_pair_required' };
+    }
+    body.structural_guide = buildStructuralGuidePayload(
+      controlnet,
+      controlAssetId,
+      Number(opts.controlnetStrength) || 0.8,
+      inpSrc && inpMsk ? { sourceAssetId: inpSrc, maskAssetId: inpMsk } : undefined,
+    );
+  }
+  const lemica = String(opts.lemicaMode || 'none');
+  if (lemica && lemica !== 'none') {
+    body.lemica_mode = lemica;
+  }
+  const refineScale = Number(opts.latentRefineScale);
+  if (Number.isFinite(refineScale) && refineScale > 1.0) {
+    body.latent_refine = {
+      scale: refineScale,
+      denoise_strength: Number(opts.latentRefineDenoise) || 0.35,
+      hires_steps: 0,
+      interpolation: 'linear',
+    };
+  }
+  return { ok: true };
 }
 
 export function fillModelRegistryDefaultsPatch(
@@ -203,8 +276,14 @@ export function validateStructuralGuideForCreate(opts: {
     return { ok: false, code: 'runtime_unavailable' };
   }
   if (isFillControlNet(key)) return { ok: false, code: 'fill_edit_only' };
-  if (!isFluxStructuralBaseModel(opts.baseModel)) return { ok: false, code: 'flux_only' };
-  if (opts.hasReferenceImage) return { ok: false, code: 'no_img2img' };
+  if (!supportsStructuralGuideBaseModel(opts.baseModel)) return { ok: false, code: 'flux_only' };
+  if (opts.hasReferenceImage) {
+    const zImg = isZImageStructuralBaseModel(opts.baseModel);
+    const zUnion = isZImageUnionControlNet(key);
+    if (!(zImg && zUnion)) {
+      return { ok: false, code: 'no_img2img' };
+    }
+  }
   if (!opts.hasControlImage) return { ok: false, code: 'missing_control_image' };
   const entry = opts.compatibleControlNets?.find((n) => String(n.key) === key);
   if (entry && !controlNetReady(entry)) return { ok: false, code: 'controlnet_not_ready' };

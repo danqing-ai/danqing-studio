@@ -234,7 +234,11 @@ class SchedulerSemanticsResolver:
         scheduler_meta = (request_metadata or {}).get("scheduler")
         scheduler_name = request_scheduler or scheduler_meta or scheduler_registry or "flow_match_euler"
 
-        image_seq_len = (height // 16) * (width // 16)
+        vae_scale = registry_scalar_default(entry, "vae_scale", None)
+        if vae_scale is None:
+            vae_scale = getattr(config, "vae_scale", 16)
+        vae_scale = max(1, int(vae_scale))
+        image_seq_len = (height // vae_scale) * (width // vae_scale)
         sched_extra: dict[str, Any] = {}
         mu = registry_scalar_default(entry, "scheduler_mu", None)
         if mu is not None:

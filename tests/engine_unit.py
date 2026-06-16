@@ -132,11 +132,6 @@ class ZImageEnhancementTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 validate_esrgan_bundle(Path(td))
 
-    def test_merged_model_id_slug(self) -> None:
-        from backend.engine.tools.user_merged_model_registry import merged_model_id_from_output_name
-
-        self.assertEqual(merged_model_id_from_output_name("MyBlend_v2"), "z-image-merged-myblend-v2")
-
     def test_image_edit_request_z_image_enhancements(self) -> None:
         from backend.core.contracts import ImageEditRequest, LatentRefineSpec, StructuralGuide
 
@@ -155,6 +150,45 @@ class ZImageEnhancementTests(unittest.TestCase):
         )
         self.assertEqual(req.lemica_mode, "medium")
         self.assertEqual(req.latent_refine.scale, 1.5)
+
+    def test_merged_model_id_slug(self) -> None:
+        from backend.engine.tools.user_merged_model_registry import merged_model_id_from_output_name
+
+        self.assertEqual(merged_model_id_from_output_name("MyBlend_v2"), "z-image-merged-myblend-v2")
+
+    def test_mlx_only_guard_cuda_raises(self) -> None:
+        from backend.engine.common.mlx_only import require_mlx_backend, require_mlx_if_option_active
+
+        class _CudaCtx:
+            backend = "cuda"
+
+        with self.assertRaises(RuntimeError) as ctx:
+            require_mlx_backend(_CudaCtx(), feature="lemica_mode")
+        self.assertIn("MLX-only", str(ctx.exception))
+
+        with self.assertRaises(RuntimeError):
+            require_mlx_if_option_active(_CudaCtx(), feature="lemica_mode", option="fast")
+
+        require_mlx_if_option_active(_CudaCtx(), feature="lemica_mode", option="none")
+
+    def test_esrgan_stem_cuda_placeholder(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from backend.engine.families.esrgan.stem_cuda import run_esrgan_upscale
+
+        with tempfile.TemporaryDirectory() as td:
+            with self.assertRaises(RuntimeError) as ctx:
+                run_esrgan_upscale(
+                    bundle_path=Path(td),
+                    model_key="real-esrgan-x4plus",
+                    source_image=Path(td) / "x.png",
+                    scale=4,
+                    softness=0.0,
+                    seed=0,
+                    output_png=Path(td) / "out.png",
+                )
+            self.assertIn("MLX-only", str(ctx.exception))
 
     def test_register_merged_z_image_model(self) -> None:
         import json

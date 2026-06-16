@@ -14,11 +14,15 @@ _MODEL_CROP: dict[str, dict[str, Any]] = {
     },
     "z-image": {
         "vae_scale": 8,
-        "preset_edge": {"quick": 512, "standard": 768, "quality": 768},
+        "preset_edge": {"quick": 512, "standard": 512, "quality": 512},
+    },
+    "z-image-turbo": {
+        "vae_scale": 8,
+        "preset_edge": {"quick": 512, "standard": 512, "quality": 512},
     },
     "qwen-image": {
         "vae_scale": 16,
-        "preset_edge": {"quick": 512, "standard": 768, "quality": 768},
+        "preset_edge": {"quick": 512, "standard": 512, "quality": 512},
     },
 }
 

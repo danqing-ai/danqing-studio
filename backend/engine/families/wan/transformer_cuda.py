@@ -472,8 +472,8 @@ class WanModelCUDA(TransformerBase):
         self._param_map["time_embedding.2.bias"] = self.time_embedding[1].bias
         self._param_map["time_projection.1.weight"] = self.time_projection.weight
         self._param_map["time_projection.1.bias"] = self.time_projection.bias
-        self._param_map["head.head.weight"] = self.head.weight
-        self._param_map["head.head.bias"] = self.head.bias
+        self._param_map["head.1.weight"] = self.head.weight
+        self._param_map["head.1.bias"] = self.head.bias
         self._param_map["head.modulation"] = self.head_modulation
         for i, blk in enumerate(self.blocks):
             prefix = f"blocks.{i}"

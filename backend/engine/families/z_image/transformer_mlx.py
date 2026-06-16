@@ -27,6 +27,43 @@ from backend.engine.common.ops.embeddings import (
 )
 from backend.engine.common.ops.norm import apply_scale_shift, unpack_modulation_4way
 
+# LeMiCa step schedules (training-free residual cache; ref: z-image-turbo-mlx / UnicomAI LeMiCa)
+LEMICA_SCHEDULES: dict[int, dict[str, tuple[int, ...]]] = {
+    8: {
+        "slow": (0, 1, 2, 3, 5, 6, 7),
+        "medium": (0, 1, 2, 4, 5, 7),
+        "fast": (0, 1, 2, 5, 7),
+    },
+    9: {
+        "slow": (0, 1, 2, 3, 5, 7, 8),
+        "medium": (0, 1, 2, 4, 6, 8),
+        "fast": (0, 1, 2, 5, 8),
+    },
+    28: {
+        "slow": tuple(range(22)) + (24, 26, 27),
+        "medium": tuple(range(20)) + (22, 24, 26, 27),
+        "fast": tuple(range(18)) + (20, 22, 25, 27),
+    },
+}
+
+
+def lemica_compute_steps(mode: str, num_steps: int) -> tuple[bool, ...] | None:
+    mode = (mode or "none").strip().lower()
+    if mode in ("", "none", "off"):
+        return None
+    table = LEMICA_SCHEDULES.get(int(num_steps))
+    if table is None:
+        for key in sorted(LEMICA_SCHEDULES.keys(), reverse=True):
+            if num_steps <= key:
+                table = LEMICA_SCHEDULES[key]
+                break
+    if table is None:
+        return None
+    steps = table.get(mode)
+    if steps is None:
+        raise RuntimeError(f"unknown lemica_mode={mode!r} for num_steps={num_steps}")
+    return tuple(i in steps for i in range(num_steps))
+
 # =========================================================================
 # RopeEmbedder — 复数频率 RoPE
 # =========================================================================
@@ -361,10 +398,35 @@ class ZImageDiTMLX(TransformerBase):
         self._param_map["cap_pad_token"] = self.cap_pad_token
         self._compiled_forward = None
         self._compiled_cfg_forward = None
+        self._control = None
+        self._control_context_scale = 1.0
+        self._lemica_bool_list: tuple[bool, ...] | None = None
+        self._lemica_step_counter = 0
+        self._lemica_previous_residual = None
 
     def after_load_weights(self, bundle_root=None) -> None:
         super().after_load_weights(bundle_root)
         self._refresh_compiled_forward()
+
+    def configure_lemica(self, mode: str, num_steps: int) -> None:
+        self.reset_lemica_state()
+        self._lemica_bool_list = lemica_compute_steps(mode, num_steps)
+
+    def reset_lemica_state(self) -> None:
+        self._lemica_step_counter = 0
+        self._lemica_previous_residual = None
+
+    def activate_z_image_control(self, flat_weights: dict[str, Any], *, context_scale: float = 0.75) -> None:
+        from backend.engine.families.z_image.control_mlx import ZImageControlRuntime
+
+        if self._control is None:
+            self._control = ZImageControlRuntime(self.config, self.ctx)
+        self._control.load_control_weights(flat_weights)
+        self._control_context_scale = float(context_scale)
+
+    def deactivate_z_image_control(self) -> None:
+        self._control = None
+        self._control_context_scale = 1.0
 
     def sanitize(self, weights: dict[str, Any]) -> dict[str, Any]:
         """Map diffusers-format Z-Image weight keys to DanQing engine keys."""
@@ -405,6 +467,15 @@ class ZImageDiTMLX(TransformerBase):
             self._compiled_cfg_forward = None
 
     def before_denoise(self, latents, timesteps, sigmas, **cond):
+        lemica_mode = cond.pop("lemica_mode", None)
+        if lemica_mode is None:
+            lemica_mode = getattr(self.config, "lemica_mode", "none")
+        if lemica_mode and str(lemica_mode).lower() not in ("none", "off", ""):
+            self.configure_lemica(str(lemica_mode), len(timesteps) if timesteps is not None else 0)
+        else:
+            self.reset_lemica_state()
+            self._lemica_bool_list = None
+
         if getattr(self.ctx, "backend", None) != "mlx":
             return latents, cond
         # Keep inference numerics aligned with reference path by default:
@@ -521,16 +592,28 @@ class ZImageDiTMLX(TransformerBase):
 
         cap_cache = conditioning.get("zimage_cap_cache")
         geo_cache = conditioning.get("zimage_geo_cache")
+        control_ctx = conditioning.get("zimage_control_context")
+        control_scale = float(conditioning.get("zimage_control_context_scale", self._control_context_scale))
         if cap_cache is not None and geo_cache is not None:
             cap_emb, cap_freqs, _ = cap_cache
             x_freqs, x_pad_mask, x_len, image_size, _ = geo_cache
             output = self._forward_from_caches(
                 latents_n, t, cap_emb, cap_freqs, x_freqs, x_pad_mask, x_len, image_size,
                 use_compile=True,
+                control_context=control_ctx,
+                control_context_scale=control_scale,
             )
         else:
             cap_feats = self._resolve_cap_feats(txt_embeds, conditioning)
-            output = self._forward_compute(latents_n, t, cap_feats)
+            output = self._forward_compute(
+                latents_n,
+                t,
+                cap_feats,
+                control_context=conditioning.get("zimage_control_context"),
+                control_context_scale=float(
+                    conditioning.get("zimage_control_context_scale", self._control_context_scale)
+                ),
+            )
 
         return self._reshape_output(-output, input_shape, input_ndim)
 
@@ -599,15 +682,37 @@ class ZImageDiTMLX(TransformerBase):
         image_size,
         *,
         use_compile: bool = False,
+        control_context=None,
+        control_context_scale: float = 1.0,
     ):
-        if use_compile and self._compiled_forward is not None:
+        if use_compile and self._compiled_forward is not None and control_context is None:
             tokens = self._compiled_forward(latents, t, cap_emb, cap_freqs, x_freqs, x_pad_mask, x_len)
         else:
-            tokens = self._forward_cached_compute(latents, t, cap_emb, cap_freqs, x_freqs, x_pad_mask, x_len)
+            tokens = self._forward_cached_compute(
+                latents,
+                t,
+                cap_emb,
+                cap_freqs,
+                x_freqs,
+                x_pad_mask,
+                x_len,
+                control_context=control_context,
+                control_context_scale=control_context_scale,
+            )
         return self._unpatchify(tokens, image_size)
 
     def _forward_cached_compute(
-        self, latents, t, cap_emb, cap_freqs, x_freqs, x_pad_mask, x_len,
+        self,
+        latents,
+        t,
+        cap_emb,
+        cap_freqs,
+        x_freqs,
+        x_pad_mask,
+        x_len,
+        *,
+        control_context=None,
+        control_context_scale: float = 1.0,
     ):
         ctx = self.ctx
         act = self._act_dtype
@@ -626,14 +731,60 @@ class ZImageDiTMLX(TransformerBase):
         x_emb = _apply_pad_token(ctx, x_emb, x_pad_mask, self.x_pad_token)
         x_emb = ctx.reshape(x_emb, (1, x_emb.shape[0], x_emb.shape[1]))
 
-        for layer in self.noise_refiner:
+        refiner_hints = None
+        refined_control = None
+        layer_hints = None
+        ctrl = self._control
+        c_scale = float(control_context_scale or self._control_context_scale)
+        if ctrl is not None and control_context is not None:
+            if control_context.ndim == 5:
+                control_n = control_context[0]
+            elif control_context.ndim == 4:
+                control_n = control_context
+            else:
+                raise RuntimeError(f"zimage_control_context expected 4D or 5D, got {control_context.shape}")
+            control_embed = ctrl.embed_control_context(
+                control_n,
+                t_emb,
+                x_pad_token=self.x_pad_token,
+                img_pad_mask=x_pad_mask,
+                img_freqs=x_freqs,
+            )
+            refiner_hints, refined_control = ctrl.forward_control_refiner(x_emb, control_embed, x_freqs, t_emb)
+
+        from backend.engine.families.z_image.control_mlx import apply_control_hint
+
+        for layer_idx, layer in enumerate(self.noise_refiner):
+            hint = ctrl.hint_for_refiner_layer(layer_idx, refiner_hints) if ctrl else None
             x_emb = layer.forward(x_emb, None, x_freqs, t_emb)
+            x_emb = apply_control_hint(x_emb, hint, c_scale, ctx)
 
         unified = ctx.concat([x_emb, cap_emb], axis=1)
         unified_freqs = ctx.concat([x_freqs, cap_freqs], axis=0)
 
-        for layer in self.layers:
-            unified = layer.forward(unified, None, unified_freqs, t_emb)
+        if ctrl is not None and refined_control is not None:
+            layer_hints = ctrl.forward_control_layers(unified, refined_control, cap_emb, unified_freqs, t_emb)
+
+        unified_before = unified
+        step_idx = self._lemica_step_counter
+        use_lemica_skip = (
+            self._lemica_bool_list is not None
+            and step_idx < len(self._lemica_bool_list)
+            and not self._lemica_bool_list[step_idx]
+            and self._lemica_previous_residual is not None
+        )
+        if use_lemica_skip:
+            unified = unified + self._lemica_previous_residual
+        else:
+            for layer_idx, layer in enumerate(self.layers):
+                hint = ctrl.hint_for_main_layer(layer_idx, layer_hints) if ctrl else None
+                unified = layer.forward(unified, None, unified_freqs, t_emb)
+                unified = apply_control_hint(unified, hint, c_scale, ctx)
+            if self._lemica_bool_list is not None:
+                self._lemica_previous_residual = unified - unified_before
+                ctx.eval(self._lemica_previous_residual)
+        if self._lemica_bool_list is not None:
+            self._lemica_step_counter += 1
 
         unified = self.final_layer.forward(unified, t_emb)
         return unified[0, :x_len]
@@ -684,40 +835,29 @@ class ZImageDiTMLX(TransformerBase):
 
         return x_freqs_cis, x_pad_mask, x_len, image_size, img_ori_len
 
-    def _forward_compute(self, latents, t, cap_feats):
-        ctx = self.ctx
-        t_emb = self.t_embedder.forward(ctx.mul(ctx.cast(t, ctx.float32()), self.t_scale))
-
-        x_emb, cap_emb, x_size, x_pos_ids, cap_pos_ids, x_pad_mask, cap_pad_mask = self._patchify(
-            image=latents, cap_feats=cap_feats,
+    def _forward_compute(
+        self,
+        latents,
+        t,
+        cap_feats,
+        *,
+        control_context=None,
+        control_context_scale: float = 1.0,
+    ):
+        cap_emb, cap_freqs, cap_pad_len = self._encode_cap_branch(cap_feats)
+        x_freqs, x_pad_mask, x_len, image_size, _ = self._encode_geo_cache(latents, cap_pad_len)
+        tokens = self._forward_cached_compute(
+            latents,
+            t,
+            cap_emb,
+            cap_freqs,
+            x_freqs,
+            x_pad_mask,
+            x_len,
+            control_context=control_context,
+            control_context_scale=control_context_scale,
         )
-
-        x_emb = self.x_embedder(x_emb)
-        x_emb = _apply_pad_token(ctx, x_emb, x_pad_mask, self.x_pad_token)
-        x_freqs_cis = self.rope.forward(x_pos_ids)
-        x_emb = ctx.reshape(x_emb, (1, x_emb.shape[0], x_emb.shape[1]))
-
-        for layer in self.noise_refiner:
-            x_emb = layer.forward(x_emb, None, x_freqs_cis, t_emb)
-
-        cap_emb = self.cap_norm(cap_emb)
-        cap_emb = self.cap_embedder(cap_emb)
-        cap_emb = _apply_pad_token(ctx, cap_emb, cap_pad_mask, self.cap_pad_token)
-        cap_freqs_cis = self.rope.forward(cap_pos_ids)
-        cap_emb = ctx.reshape(cap_emb, (1, cap_emb.shape[0], cap_emb.shape[1]))
-
-        for layer in self.context_refiner:
-            cap_emb = layer.forward(cap_emb, None, cap_freqs_cis)
-
-        x_len = x_emb.shape[1]
-        unified = ctx.concat([x_emb, cap_emb], axis=1)
-        unified_freqs = ctx.concat([x_freqs_cis, cap_freqs_cis], axis=0)
-
-        for layer in self.layers:
-            unified = layer.forward(unified, None, unified_freqs, t_emb)
-
-        unified = self.final_layer.forward(unified, t_emb)
-        return self._unpatchify(unified[0, :x_len], x_size)
+        return self._unpatchify(tokens, image_size)
 
     # ------------------------------------------------------------------
     # Patchify / Unpatchify

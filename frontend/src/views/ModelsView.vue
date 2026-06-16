@@ -147,6 +147,25 @@
           @cancel="importDialogVisible = false"
         />
 
+        <ZImageMergePanel
+          v-if="activeCategory === 'tools'"
+          class="models-page__merge-panel"
+          @merged-complete="refreshUserMergedModels"
+        />
+
+        <div
+          v-if="activeCategory === 'tools' && userMergedModels.length"
+          class="models-page__merged-list"
+        >
+          <h3 class="models-page__merged-title">{{ $t('tools.mergedModelsTitle') }}</h3>
+          <ul class="models-page__merged-items">
+            <li v-for="m in userMergedModels" :key="m.id" class="models-page__merged-item">
+              <span class="models-page__merged-name">{{ m.name || m.id }}</span>
+              <span class="models-page__merged-id">{{ m.id }}</span>
+            </li>
+          </ul>
+        </div>
+
         <!-- Model card grid -->
         <DqRow :gutter="16" class="model-grid model-grid--fluid">
           <DqCol
@@ -551,6 +570,7 @@ import ModelsCategoryNav from '@/components/models/ModelsCategoryNav.vue';
 import UserLoraCard from '@/components/lora/UserLoraCard.vue';
 import ModelCardVersions from '@/components/models/ModelCardVersions.vue';
 import ModelVersionSourceBadge from '@/components/models/ModelVersionSourceBadge.vue';
+import ZImageMergePanel from '@/components/tools/ZImageMergePanel.vue';
 import { uniformDownloadSource } from '@/utils/modelVersionLayout';
 import { formatDownloadDisplayName } from '@/utils/registryLabel';
 import { useModelRegistryFilters } from '@/composables/useModelRegistryFilters';
@@ -617,6 +637,7 @@ interface DiskSpaceData {
 
 const activeCategory = ref('all');
 const userLoras = ref<any[]>([]);
+const userMergedModels = ref<any[]>([]);
 const userLorasRefreshing = ref(false);
 const router = useRouter();
 const { locale } = useI18n();
@@ -866,7 +887,17 @@ async function deleteUserLora(ul: { id?: string; name?: string }) {
 
 watch(activeCategory, (cat) => {
   if (cat === 'trained_loras') void refreshUserLoras();
+  if (cat === 'tools') void refreshUserMergedModels();
 });
+
+async function refreshUserMergedModels() {
+  try {
+    const data = await api.tools.listUserMergedZImageModels();
+    userMergedModels.value = data.items || [];
+  } catch {
+    userMergedModels.value = [];
+  }
+}
 
 async function loadDiskSpace() {
   try {
@@ -1438,6 +1469,7 @@ onMounted(() => {
   loadDiskSpace();
   loadActiveDownloads();
   if (activeCategory.value === 'trained_loras') void refreshUserLoras();
+  if (activeCategory.value === 'tools') void refreshUserMergedModels();
 });
 
 onUnmounted(() => {
@@ -1446,6 +1478,42 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.models-page__merge-panel {
+  margin-bottom: 20px;
+}
+.models-page__merged-list {
+  margin-bottom: 20px;
+  padding: 12px 16px;
+  border: 1px solid var(--dq-border-subtle);
+  border-radius: var(--dq-radius-md, 8px);
+  background: var(--dq-surface-subtle, transparent);
+}
+.models-page__merged-title {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.models-page__merged-items {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.models-page__merged-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  font-size: 13px;
+  border-bottom: 1px solid var(--dq-border-subtle);
+}
+.models-page__merged-item:last-child {
+  border-bottom: none;
+}
+.models-page__merged-id {
+  color: var(--dq-text-secondary);
+  font-family: var(--dq-font-mono, monospace);
+  font-size: 12px;
+}
 .trained-loras-page__empty {
   display: flex;
   flex-direction: column;

@@ -174,6 +174,9 @@ class ZImageConfig:
     supports_guidance: bool = True    # Z-Image=True, Z-Image-Turbo=False
     requires_sigma_shift: bool = True
     supports_img2img: bool = False
+    supports_structural_guide: bool = True
+    supports_latent_refine: bool = True
+    lemica_mode: str = "none"
     encoder_type: str = "z_image"       # ZImageTextEncoder
     text_encoder_out_layers: Optional[tuple] = None  # flux2=(9,18,27), z_image=None
     enable_thinking: bool = True       # z_image uses True, flux2 uses False
@@ -356,6 +359,19 @@ class SeedVR2Config:
     scale_factor: int = 2            # upscale factor
     tile_size: int = 1024            # tiled super-resolution
     denoise_strength: float = 0.3    # default denoising strength
+
+
+@dataclass
+class EsrganConfig:
+    """Real-ESRGAN RRDBNet pixel upscaler (MLX)."""
+    netscale: int = 4
+    num_feat: int = 64
+    num_block: int = 23
+    num_grow_ch: int = 32
+    supports_guidance: bool = False
+    supports_img2img: bool = False
+    vae_scale: int = 1
+    default_tile: int = 256
 
 
 # =========================================================================
@@ -766,6 +782,7 @@ FAMILY_CONFIG_MAP: dict[str, type] = {
     "ernie_image": ErnieImageConfig,
     "cogview4": CogView4Config,
     "seedvr2": SeedVR2Config,
+    "esrgan": EsrganConfig,
     # Audio
     "diffrhythm": DiffRhythmConfig,
     "ace_step": AceStepConfig,
@@ -776,7 +793,7 @@ FAMILY_CONFIG_MAP: dict[str, type] = {
 }
 
 IMAGE_FAMILY_REUSE_CONTRACT = frozenset({
-    "flux1", "flux2", "z_image", "qwen_image", "ernie_image", "fibo", "cogview4", "seedvr2",
+    "flux1", "flux2", "z_image", "qwen_image", "ernie_image", "fibo", "cogview4", "seedvr2", "esrgan",
 })
 
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
-from backend.engine.common.bundle.lora_mlx import merge_lora_adapters_common
+from backend.engine.common.bundle.lora_mlx import adapter_id_weight, merge_lora_adapters_common
 from backend.engine.families.z_image.weights import remap_zimage_lora_keys, z_image_lora_scope_key
 from backend.engine.runtime._base import RuntimeContext
 
@@ -27,6 +27,36 @@ def _repair_indexed_zimage_weights(
     lora_blocks = int(raw_blocks) if raw_blocks is not None else -1
     paths = enumerate_zimage_lora_module_paths(model, lora_blocks=lora_blocks)
     return repair_indexed_lora_weights(weights, module_paths=paths)
+
+
+def _resolve_lora_bundle(
+    lora_id: str,
+    *,
+    project_root: Path,
+    registry: Any,
+) -> Path | None:
+    from backend.engine.common.bundle.lora_mlx import adapter_id_weight
+    from backend.core.contracts import parse_model_version
+    from backend.engine.contracts.pipeline_registry import local_bundle_root
+
+    mid, ver = parse_model_version(lora_id)
+    try:
+        entry = registry.require(mid)
+    except KeyError:
+        if str(lora_id).startswith("user-lora-"):
+            from backend.engine.training.user_lora_registry import (
+                get_user_lora,
+                resolve_user_lora_bundle,
+            )
+
+            config_dir = project_root / "config"
+            ul = get_user_lora(config_dir, lora_id)
+            if ul is None:
+                return None
+            return resolve_user_lora_bundle(project_root, config_dir, lora_id)
+        return None
+    bundle = local_bundle_root(project_root, entry, ver or None)
+    return bundle
 
 
 def merge_z_image_lora_adapters(
