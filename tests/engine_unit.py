@@ -3886,6 +3886,29 @@ class LoraDatasetStoreTests(unittest.TestCase):
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0][1], "A photo of sks")
 
+    def test_resolve_dataset_image_path_rejects_traversal(self) -> None:
+        from backend.engine.training import dataset_store
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ds = dataset_store.create_dataset(root, name="secure")
+            dataset_id = ds["id"]
+            img_dir = dataset_store.datasets_root(root) / dataset_id / "images"
+            img_dir.mkdir(parents=True, exist_ok=True)
+            sample = img_dir / "ok.png"
+            sample.write_bytes(
+                b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
+                b"\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xdb\x00\x00\x00\x00IEND\xaeB`\x82"
+            )
+            secret = root / "secret.txt"
+            secret.write_text("leak", encoding="utf-8")
+
+            resolved = dataset_store.resolve_dataset_image_path(root, dataset_id, "images/ok.png")
+            self.assertEqual(resolved, sample.resolve())
+
+            with self.assertRaises(ValueError):
+                dataset_store.resolve_dataset_image_path(root, dataset_id, "../../secret.txt")
+
     def test_user_lora_registry_delete(self) -> None:
         from backend.engine.training.user_lora_registry import (
             delete_user_lora,
@@ -4445,6 +4468,35 @@ class ZImageLoraExportTests(unittest.TestCase):
             path = Path(tmp) / "adapter.safetensors"
             mx.save_safetensors(str(path), weights)
             _validate_saved_lora(path)
+
+
+class LoraTrainExportTests(unittest.TestCase):
+    def test_adapter_needs_dense_export_for_dora(self) -> None:
+        from backend.engine.training.lora_train_export import (
+            adapter_needs_dense_export,
+            is_dense_delta_adapter,
+        )
+        from backend.engine.training.lora_train_runtime import parse_lora_train_runtime_config
+
+        dora_cfg = parse_lora_train_runtime_config(
+            {"train_type": "dora"},
+            defaults={"lora_rank": 8, "iterations": 10},
+        )
+        lora_cfg = parse_lora_train_runtime_config(
+            {"train_type": "lora"},
+            defaults={"lora_rank": 8, "iterations": 10},
+        )
+        self.assertTrue(adapter_needs_dense_export(dora_cfg))
+        self.assertFalse(adapter_needs_dense_export(lora_cfg))
+
+        fused_cfg = parse_lora_train_runtime_config(
+            {"fuse_adapters": True},
+            defaults={"lora_rank": 8, "iterations": 10},
+        )
+        self.assertTrue(adapter_needs_dense_export(fused_cfg))
+
+        self.assertTrue(is_dense_delta_adapter({"layers.0.attn.qkv.delta.weight": object()}))
+        self.assertFalse(is_dense_delta_adapter({"layers.0.attn.qkv.lora_A.weight": object()}))
 
 
 if __name__ == "__main__":

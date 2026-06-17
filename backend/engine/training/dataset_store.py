@@ -121,6 +121,32 @@ def _dataset_dir(root: Path, dataset_id: str) -> Path:
     return root / dataset_id
 
 
+def _validate_dataset_id(dataset_id: str) -> str:
+    dataset_id = (dataset_id or "").strip()
+    if not dataset_id or dataset_id.startswith("_") or "/" in dataset_id or "\\" in dataset_id:
+        raise ValueError(f"Invalid dataset id {dataset_id!r}")
+    return dataset_id
+
+
+def resolve_dataset_image_path(workspace_root: Path, dataset_id: str, file_rel: str) -> Path:
+    """Resolve a dataset-relative image path, rejecting traversal outside the dataset."""
+    dataset_id = _validate_dataset_id(dataset_id)
+    dataset_root = _dataset_dir(datasets_root(workspace_root), dataset_id).resolve()
+    if not dataset_root.is_dir():
+        raise FileNotFoundError(f"Dataset {dataset_id!r} not found")
+    rel = (file_rel or "").strip().replace("\\", "/")
+    if not rel or rel.startswith("/") or ".." in Path(rel).parts:
+        raise ValueError(f"Invalid dataset image path {file_rel!r}")
+    candidate = (dataset_root / rel).resolve()
+    try:
+        candidate.relative_to(dataset_root)
+    except ValueError as exc:
+        raise ValueError(f"Invalid dataset image path {file_rel!r}") from exc
+    if not candidate.is_file():
+        raise FileNotFoundError(f"Dataset image {file_rel!r} not found")
+    return candidate
+
+
 def new_dataset_id() -> str:
     return "ds_" + secrets.token_hex(8)
 
@@ -320,11 +346,12 @@ def update_dataset_captions(
 
 def remove_dataset_image(workspace_root: Path, dataset_id: str, file_rel: str) -> dict[str, Any]:
     path = _dataset_dir(datasets_root(workspace_root), dataset_id)
+    if not (path / "meta.json").is_file():
+        raise FileNotFoundError(f"Dataset {dataset_id!r} not found")
     rows = _read_train_jsonl(path / "train.jsonl")
     rows = [r for r in rows if r["image"] != file_rel]
-    img_path = path / file_rel
-    if img_path.is_file():
-        img_path.unlink()
+    img_path = resolve_dataset_image_path(workspace_root, dataset_id, file_rel)
+    img_path.unlink()
     _write_train_jsonl(path / "train.jsonl", rows)
     return get_dataset(workspace_root, dataset_id)
 
