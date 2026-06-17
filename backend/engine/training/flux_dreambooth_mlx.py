@@ -200,8 +200,11 @@ def _save_adapter(path: Path, model: Any, rank: int, meta: dict[str, Any], optim
 
 def _validate_saved_lora(path: Path, ctx: Any) -> None:
     from backend.engine.common.bundle.weights import load_safetensors
+    from backend.engine.training.lora_train_export import is_dense_delta_adapter
 
     flat = load_safetensors(str(path))
+    if is_dense_delta_adapter(flat):
+        return
     remapped = remap_flux1_lora_keys(flat)
     if not remapped:
         raise RuntimeError(
@@ -474,34 +477,36 @@ def run_flux_dreambooth_training(
     )
 
     final_path = adapter_dir / "final_adapters.safetensors"
+    export_meta = {
+        "iteration": train_runtime.iterations,
+        "lora_rank": train_runtime.lora_rank,
+        "base_model": base_model_id,
+        "progress_prompt": progress_prompt,
+        "qlora_bits": train_runtime.qlora_bits,
+        "train_type": train_runtime.train_type,
+    }
     if best_path is not None and best_path.is_file():
         final_path.write_bytes(best_path.read_bytes())
         best_meta = adapter_dir / "best_adapters.json"
         if best_meta.is_file():
-            final_path.with_suffix(".json").write_text(
-                best_meta.read_text(encoding="utf-8"),
-                encoding="utf-8",
-            )
+            export_meta = json.loads(best_meta.read_text(encoding="utf-8"))
     else:
-        meta = {
-            "iteration": train_runtime.iterations,
-            "lora_rank": train_runtime.lora_rank,
-            "base_model": base_model_id,
-            "progress_prompt": progress_prompt,
-            "qlora_bits": train_runtime.qlora_bits,
-            "train_type": train_runtime.train_type,
-        }
-        _save_adapter(final_path, train_module, train_runtime.lora_rank, meta)
-    if train_runtime.fuse_adapters:
-        from backend.engine.training.lora_layers import collect_fused_adapter_deltas
+        _save_adapter(final_path, train_module, train_runtime.lora_rank, export_meta)
 
-        fused_path = adapter_dir / "fused_adapters.safetensors"
-        mx.save_safetensors(str(fused_path), collect_fused_adapter_deltas(train_module))
-        fused_path.with_suffix(".json").write_text(
-            json.dumps({"format": "dense_delta", "base_model": base_model_id}, indent=2),
-            encoding="utf-8",
-        )
-    _validate_saved_lora(final_path, ctx)
+    from backend.engine.training.lora_train_export import export_registered_adapter
+
+    registered_path = export_registered_adapter(
+        adapter_dir=adapter_dir,
+        train_module=train_module,
+        train_runtime=train_runtime,
+        base_model_id=base_model_id,
+        final_path=final_path,
+        meta=export_meta,
+        save_adapter=lambda path: _save_adapter(
+            path, train_module, train_runtime.lora_rank, export_meta
+        ),
+    )
+    _validate_saved_lora(registered_path, ctx)
 
     output_name = (request.output_name or f"{base_model_id}-{request.dataset_id}").strip()
     slug = "".join(c if c.isalnum() or c in "-_" else "-" for c in output_name)[:64]
@@ -511,7 +516,7 @@ def run_flux_dreambooth_training(
     dest_file = dest_dir / "adapter.safetensors"
     import shutil
 
-    shutil.copy2(final_path, dest_file)
+    shutil.copy2(registered_path, dest_file)
     lora_config = {
         "lora_rank": train_runtime.lora_rank,
         "base_model": base_model_id,

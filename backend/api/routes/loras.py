@@ -438,9 +438,12 @@ def dataset_image_file(dataset_id: str, file_path: str):
     from fastapi.responses import FileResponse
 
     root = _paths().get_project_root()
-    path = root / "datasets" / dataset_id / file_path
-    if not path.is_file():
-        raise HTTPException(404, detail={"code": "not_found", "message": "image not found"})
+    try:
+        path = dataset_store.resolve_dataset_image_path(root, dataset_id, file_path)
+    except FileNotFoundError as e:
+        raise HTTPException(404, detail={"code": "not_found", "message": str(e)}) from e
+    except ValueError as e:
+        raise HTTPException(400, detail={"code": "invalid", "message": str(e)}) from e
     return FileResponse(path)
 
 
