@@ -470,23 +470,28 @@ class SQLiteAssetStore(IAssetStore):
             return False
         tp = self.get_thumbnail_path(asset_id)
 
-        # 2. File delete + DB delete inside lock (atomic operation)
+        # 2. DB delete inside lock; unlink files only after commit succeeds
         with self._lock:
-            try:
-                if p.exists():
-                    p.unlink()
-            except OSError:
-                pass
-            if tp:
-                try:
-                    if tp.exists():
-                        tp.unlink()
-                except OSError:
-                    pass
             conn = self._conn()
             cur = conn.execute("DELETE FROM assets WHERE id = ?", (asset_id,))
             conn.commit()
-            return cur.rowcount > 0
+            deleted = cur.rowcount > 0
+
+        if not deleted:
+            return False
+
+        try:
+            if p.exists():
+                p.unlink()
+        except OSError:
+            pass
+        if tp:
+            try:
+                if tp.exists():
+                    tp.unlink()
+            except OSError:
+                pass
+        return True
 
     def purge_generation_step_previews(self, task_id: str) -> int:
         """Remove ephemeral denoise-step previews wrongly registered as assets (legacy)."""
@@ -721,6 +726,7 @@ class SQLiteAssetStore(IAssetStore):
         """Batch delete assets, using explicit transaction to reduce lock holding time."""
         removed = []
         failed = []
+        files_to_unlink: list[tuple[Path, Path | None]] = []
         with self._lock:
             conn = self._conn()
             try:
@@ -731,17 +737,7 @@ class SQLiteAssetStore(IAssetStore):
                         tp = self.get_thumbnail_path(aid)
                         cur = conn.execute("DELETE FROM assets WHERE id = ?", (aid,))
                         if cur.rowcount > 0:
-                            try:
-                                if p.exists():
-                                    p.unlink()
-                            except OSError:
-                                pass
-                            if tp:
-                                try:
-                                    if tp.exists():
-                                        tp.unlink()
-                                except OSError:
-                                    pass
+                            files_to_unlink.append((p, tp))
                             removed.append(aid)
                         else:
                             failed.append(aid)
@@ -751,6 +747,19 @@ class SQLiteAssetStore(IAssetStore):
             except Exception:
                 conn.rollback()
                 raise
+
+        for p, tp in files_to_unlink:
+            try:
+                if p.exists():
+                    p.unlink()
+            except OSError:
+                pass
+            if tp:
+                try:
+                    if tp.exists():
+                        tp.unlink()
+                except OSError:
+                    pass
         return {"removed": removed, "failed": failed, "total": len(asset_ids)}
 
     def reconcile_disk_vs_db(self, *, dry_run: bool = True) -> dict[str, Any]:

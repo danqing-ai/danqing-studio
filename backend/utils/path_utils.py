@@ -114,6 +114,24 @@ class PathResolver(IPathResolver):
             return (self.get_models_dir() / text[len("models/") :]).resolve()
         return (self.get_project_root() / text).resolve()
 
+
+def resolve_path_under(base_dir: Path, relative: str) -> Path:
+    """Resolve a user-supplied relative path and ensure it stays under ``base_dir``."""
+    base = base_dir.resolve()
+    rel = (relative or "").strip().replace("\\", "/")
+    if not rel or rel.startswith("/"):
+        raise ValueError(f"invalid relative path: {relative!r}")
+    rel_path = Path(rel)
+    if rel_path.is_absolute() or ".." in rel_path.parts:
+        raise ValueError(f"path traversal not allowed: {relative!r}")
+    candidate = (base / rel_path).resolve()
+    try:
+        candidate.relative_to(base)
+    except ValueError as exc:
+        raise ValueError(f"path escapes {base}: {relative!r}") from exc
+    return candidate
+
+
 def get_system_info() -> dict:
     """获取系统信息"""
     info = {
