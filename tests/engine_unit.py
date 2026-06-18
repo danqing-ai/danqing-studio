@@ -1,6 +1,7 @@
 """Backend engine unit tests (no weights, no GPU)."""
 from __future__ import annotations
 
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -4445,6 +4446,76 @@ class ZImageLoraExportTests(unittest.TestCase):
             path = Path(tmp) / "adapter.safetensors"
             mx.save_safetensors(str(path), weights)
             _validate_saved_lora(path)
+
+
+class PathContainmentTests(unittest.TestCase):
+    def test_resolve_path_under_rejects_traversal(self) -> None:
+        from backend.utils.path_utils import resolve_path_under
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            safe = base / "images" / "a.jpg"
+            safe.parent.mkdir(parents=True)
+            safe.write_bytes(b"x")
+            resolved = resolve_path_under(base, "images/a.jpg")
+            self.assertEqual(resolved, safe.resolve())
+            with self.assertRaises(ValueError):
+                resolve_path_under(base, "../../etc/passwd")
+            with self.assertRaises(ValueError):
+                resolve_path_under(base, "images/../../secret.txt")
+
+
+class LoraDatasetPathTests(unittest.TestCase):
+    def test_remove_dataset_image_rejects_traversal(self) -> None:
+        from backend.engine.training import dataset_store
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ds_id = dataset_store.create_dataset(root, name="test")["id"]
+            secret = root / "secret.txt"
+            secret.write_text("keep", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                dataset_store.remove_dataset_image(root, ds_id, "../../secret.txt")
+            self.assertTrue(secret.is_file())
+
+
+class AssetStoreDeleteBatchTests(unittest.TestCase):
+    def test_delete_batch_keeps_files_when_commit_fails(self) -> None:
+        from unittest.mock import patch
+
+        from backend.persistence.asset_store import SQLiteAssetStore
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db_path = root / "studio.db"
+            assets_root = root / "assets"
+            assets_root.mkdir()
+            store = SQLiteAssetStore(db_path, assets_root)
+            asset_file = assets_root / "sample.png"
+            asset_file.write_bytes(b"png")
+            asset_id = "asset_test_1"
+            conn = store._conn()
+            conn.execute(
+                "INSERT INTO assets (id, kind, mime_type, file_path, created_at) VALUES (?, ?, ?, ?, ?)",
+                (asset_id, "image", "image/png", "sample.png", "2026-01-01T00:00:00Z"),
+            )
+            conn.commit()
+
+            real_commit = conn.commit
+
+            def fail_once() -> None:
+                if getattr(fail_once, "called", False):
+                    return real_commit()
+                fail_once.called = True
+                raise sqlite3.OperationalError("simulated commit failure")
+
+            with patch.object(conn, "commit", side_effect=fail_once):
+                with self.assertRaises(sqlite3.OperationalError):
+                    store.delete_batch([asset_id])
+
+            row = conn.execute("SELECT id FROM assets WHERE id = ?", (asset_id,)).fetchone()
+            self.assertIsNotNone(row)
+            self.assertTrue(asset_file.is_file())
 
 
 if __name__ == "__main__":
