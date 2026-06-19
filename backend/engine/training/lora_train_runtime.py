@@ -161,6 +161,12 @@ def parse_lora_train_runtime_config(cfg: dict[str, Any], *, defaults: dict[str, 
         class_prompt = str(class_prompt_raw).strip() or None
 
     iterations = int(merged.get("iterations", 600))
+    batch_size = int(merged.get("batch_size", 1))
+    if batch_size != 1:
+        raise RuntimeError(
+            "DiT LoRA training currently supports batch_size=1 only; use grad_accumulate "
+            "to increase the effective batch size."
+        )
     grad_accumulate = int(merged.get("grad_accumulate") or 4)
     opt_steps = max(1, iterations // max(1, grad_accumulate))
     warmup_raw = int(merged.get("warmup_steps") or 100)
@@ -168,7 +174,7 @@ def parse_lora_train_runtime_config(cfg: dict[str, Any], *, defaults: dict[str, 
 
     return LoraTrainRuntimeConfig(
         iterations=iterations,
-        batch_size=int(merged.get("batch_size", 1)),
+        batch_size=batch_size,
         lora_rank=lora_rank,
         lora_alpha=lora_alpha,
         lora_blocks=int(merged.get("lora_blocks") if merged.get("lora_blocks") is not None else -1),

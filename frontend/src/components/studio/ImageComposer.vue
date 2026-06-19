@@ -607,7 +607,7 @@ const controlNetGuideHint = computed(() => {
 });
 
 const showZImageTurboExtras = computed(() =>
-  isZImageStructuralBaseModel(String(props.model || localParams.value.model || '')),
+  isZImageStructuralBaseModel(String(props.model || '')),
 );
 
 const showZImageInpaintExtras = computed(() => {
@@ -630,7 +630,7 @@ const showCompanionLoraHint = computed(() => {
   const key = String(localParams.value.controlnet || '');
   return (
     isCannyOrDepthControlNet(key)
-    && !isZImageStructuralBaseModel(String(props.model || localParams.value.model || ''))
+    && !isZImageStructuralBaseModel(String(props.model || ''))
   );
 });
 

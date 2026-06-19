@@ -784,7 +784,7 @@ async function refreshDatasetHealth(id?: string) {
 
 async function refreshVisionAvailability() {
   try {
-    const info = await api.chat.getLLMModelInfo();
+    const info = await api.gen.getLLMModelInfo();
     visionAvailable.value = Boolean(info?.vision?.available);
   } catch {
     visionAvailable.value = false;
@@ -855,6 +855,11 @@ function applyPresetTrainingDefaults() {
   } else {
     form.lora_blocks = null;
   }
+  if (cfg && Object.prototype.hasOwnProperty.call(cfg, 'prior_loss_weight')) {
+    form.prior_loss_weight = Number(cfg.prior_loss_weight) || 0;
+  } else {
+    form.prior_loss_weight = null;
+  }
 }
 
 function applyCustomDefaultsFromQuick() {
@@ -886,6 +891,21 @@ function parseModuleKeys(raw: string): string[] | undefined {
   return keys.length ? keys : undefined;
 }
 
+function activePresetNumber(key: string): number | null {
+  if (form.preset === 'custom') return null;
+  const cfg = modelPresets.value[form.preset] as Record<string, unknown> | undefined;
+  if (!cfg || !Object.prototype.hasOwnProperty.call(cfg, key)) return null;
+  const value = Number(cfg[key]);
+  return Number.isFinite(value) ? value : null;
+}
+
+function shouldSendPresetNumberOverride(key: string, value: number | null): boolean {
+  if (value == null || !Number.isFinite(Number(value))) return false;
+  if (form.preset === 'custom') return true;
+  const presetValue = activePresetNumber(key);
+  return presetValue == null || Number(value) !== presetValue;
+}
+
 function buildTrainingBody(): Record<string, unknown> {
   const body: Record<string, unknown> = {
     base_model: form.base_model,
@@ -897,7 +917,16 @@ function buildTrainingBody(): Record<string, unknown> {
   };
 
   if (effectiveQloraBits.value) body.qlora_bits = effectiveQloraBits.value;
-  body.grad_checkpoint = form.grad_checkpoint;
+  if (form.preset === 'custom') {
+    body.grad_checkpoint = form.grad_checkpoint;
+  } else {
+    const presetGradCheckpoint = Boolean(
+      (modelPresets.value[form.preset] as Record<string, unknown> | undefined)?.grad_checkpoint
+    );
+    if (form.grad_checkpoint !== presetGradCheckpoint) {
+      body.grad_checkpoint = form.grad_checkpoint;
+    }
+  }
   if (form.compile_step) body.compile_step = true;
 
   if (form.preset === 'custom') {
@@ -945,10 +974,20 @@ function buildTrainingBody(): Record<string, unknown> {
 
   if (form.train_type === 'lora' || form.train_type === 'dora') body.train_type = form.train_type;
   if (form.preset === 'custom' || form.preset === 'standard' || form.preset === 'quality') {
-    if (form.min_snr_gamma != null && form.min_snr_gamma >= 0) body.min_snr_gamma = form.min_snr_gamma;
+    if (
+      form.min_snr_gamma != null
+      && form.min_snr_gamma >= 0
+      && shouldSendPresetNumberOverride('min_snr_gamma', form.min_snr_gamma)
+    ) {
+      body.min_snr_gamma = form.min_snr_gamma;
+    }
   }
   if (form.class_prompt.trim()) body.class_prompt = form.class_prompt.trim();
-  if (form.prior_loss_weight != null && form.prior_loss_weight >= 0) {
+  if (
+    form.prior_loss_weight != null
+    && form.prior_loss_weight >= 0
+    && shouldSendPresetNumberOverride('prior_loss_weight', form.prior_loss_weight)
+  ) {
     body.prior_loss_weight = form.prior_loss_weight;
   }
   if (form.early_stop_patience != null && form.early_stop_patience > 0) {

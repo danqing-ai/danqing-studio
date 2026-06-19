@@ -2800,16 +2800,17 @@ class BenchmarkMetadataTests(unittest.TestCase):
         turbo = _load_default_registry_expanded()["models"]["z-image-turbo"]
         self.assertTrue(turbo["parameters"].get("lora_support", False))
 
-    def test_z_image_lora_scope_base_turbo_compatible(self) -> None:
+    def test_z_image_lora_scope_requires_exact_base(self) -> None:
         from backend.engine.families.z_image.weights import (
             z_image_lora_base_compatible,
             z_image_lora_scope_key,
         )
 
-        self.assertEqual(z_image_lora_scope_key("z-image"), "z_image")
-        self.assertEqual(z_image_lora_scope_key("z-image-turbo"), "z_image")
-        self.assertTrue(z_image_lora_base_compatible("z-image-turbo", "z-image"))
-        self.assertTrue(z_image_lora_base_compatible("z-image", "z-image-turbo"))
+        self.assertEqual(z_image_lora_scope_key("z-image"), "z-image")
+        self.assertEqual(z_image_lora_scope_key("z-image-turbo"), "z-image-turbo")
+        self.assertFalse(z_image_lora_base_compatible("z-image-turbo", "z-image"))
+        self.assertFalse(z_image_lora_base_compatible("z-image", "z-image-turbo"))
+        self.assertTrue(z_image_lora_base_compatible("z-image-turbo", "z-image-turbo"))
         self.assertFalse(z_image_lora_base_compatible("z-image-turbo", "flux1-dev"))
 
 
@@ -5087,6 +5088,15 @@ class LoraTrainRuntimeTests(unittest.TestCase):
         cfg = parse_lora_train_runtime_config({}, defaults={"lora_rank": 16, "iterations": 100})
         self.assertEqual(cfg.lora_scale, DEFAULT_LORA_SCALE)
 
+    def test_parse_lora_train_runtime_config_rejects_batch_size_gt_one(self) -> None:
+        from backend.engine.training.lora_train_runtime import parse_lora_train_runtime_config
+
+        with self.assertRaisesRegex(RuntimeError, "batch_size=1"):
+            parse_lora_train_runtime_config(
+                {"batch_size": 2},
+                defaults={"lora_rank": 16, "iterations": 100},
+            )
+
     def test_latent_cache_fingerprint(self) -> None:
         from backend.engine.training.latent_cache import LatentCache
 
@@ -5191,6 +5201,8 @@ class LoraTrainingPresetsTests(unittest.TestCase):
         qwen = resolve_preset("standard", base_model="qwen-image")
         self.assertEqual(flux["lora_rank"], 16)
         self.assertEqual(zimg["lora_rank"], 16)
+        self.assertEqual(zimg["lora_blocks"], 24)
+        self.assertTrue(zimg["grad_checkpoint"])
         self.assertEqual(zturbo["lora_rank"], 16)
         self.assertEqual(zturbo["guidance"], 0.0)
         self.assertEqual(zturbo["timestep_low"], 1)

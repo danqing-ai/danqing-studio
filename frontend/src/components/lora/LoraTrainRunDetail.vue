@@ -269,7 +269,7 @@ async function refreshArtifacts(force = false) {
 
 async function refreshVisionAvailability() {
   try {
-    const info = await api.chat.getLLMModelInfo();
+    const info = await api.gen.getLLMModelInfo();
     visionAvailable.value = Boolean(info?.vision?.available);
   } catch {
     visionAvailable.value = false;

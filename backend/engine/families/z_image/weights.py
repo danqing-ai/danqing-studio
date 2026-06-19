@@ -3,23 +3,17 @@ from __future__ import annotations
 
 from typing import Any
 
-Z_IMAGE_LORA_MODEL_IDS = frozenset({"z-image", "z-image-turbo"})
-
-
 def z_image_lora_scope_key(value: str) -> str:
-    """Base and Turbo share one LoRA scope (same DiT ``_param_map``)."""
+    """LoRA scope is exact per base checkpoint, even when DiT module names match."""
     mid = value.split(":", 1)[0].strip() if value else ""
-    if mid in Z_IMAGE_LORA_MODEL_IDS:
-        return "z_image"
     return mid
 
 
 def z_image_lora_base_compatible(model_id: str, lora_base: str) -> bool:
     model_key = (model_id or "").split(":", 1)[0].strip()
     lora_key = (lora_base or "").split(":", 1)[0].strip()
-    if not lora_key or lora_key == model_key:
-        return True
-    return model_key in Z_IMAGE_LORA_MODEL_IDS and lora_key in Z_IMAGE_LORA_MODEL_IDS
+    return not lora_key or lora_key == model_key
+
 
 def remap_zimage_weights(weights: dict, patch_size: int = 2) -> dict:
     """Map diffusers-format Z-Image weight keys to DanQing engine keys.

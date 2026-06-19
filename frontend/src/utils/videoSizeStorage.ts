@@ -1,4 +1,4 @@
-import { DQ_STORAGE, removeItem, setItem } from '@/utils/storage';
+import { DQ_STORAGE, getItem, removeItem, setItem } from '@/utils/storage';
 
 type SizeMap = Record<string, string>;
 
