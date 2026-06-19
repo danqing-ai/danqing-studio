@@ -416,7 +416,8 @@ def resolve_dit_bundle(bundle_root: Path, *, dit_subdir: str | None = None) -> P
             return sub
         raise RuntimeError(
             f"ACE-Step DiT subdir {dit_subdir!r} not found under {root}. "
-            "Install the matching registry model version (shared VAE/text encoder bundle required)."
+            "Install the matching registry model version "
+            "(shared VAE/text encoder bundle + XL DiT checkpoint required)."
         )
     if (root / "model.safetensors").is_file() or (root / "model.safetensors.index.json").is_file():
         return root

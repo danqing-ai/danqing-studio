@@ -6916,7 +6916,23 @@
             "default": true,
             "repo_id": "ACE-Step/Ace-Step1.5",
             "local_path": "models/Audio/acestep-v15-xl-sft",
-            "source_type": "full"
+            "source_type": "full",
+            "bundle_repos": [
+              {
+                "repo_id": "ACE-Step/Ace-Step1.5",
+                "local_path": "models/Audio/acestep-v15-xl-sft",
+                "name": "ACE-Step 1.5 Shared",
+                "size": "11GB",
+                "source": "modelscope"
+              },
+              {
+                "repo_id": "ACE-Step/acestep-v15-xl-sft",
+                "local_path": "models/Audio/acestep-v15-xl-sft/acestep-v15-xl-sft",
+                "name": "XL SFT DiT",
+                "size": "9GB",
+                "source": "modelscope"
+              }
+            ]
           },
           "int8": {
             "name": {

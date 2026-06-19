@@ -1996,6 +1996,41 @@ class AceStepGenerationTests(unittest.TestCase):
         self.assertTrue(ace_step_lora_base_compatible("ace-step-xl-sft", "ace-step-xl-turbo"))
         self.assertFalse(ace_step_lora_base_compatible("ace-step-xl-sft", "flux1-dev"))
 
+    def test_ace_step_registry_bundle_repos(self) -> None:
+        from backend.core.bundle_repos import bundle_repos_from_version
+
+        models = _load_default_registry_expanded().get("models") or {}
+        ver = models["ace-step-xl-sft"]["versions"]["xl-sft"]
+        repos = bundle_repos_from_version(ver)
+        self.assertEqual(len(repos), 2)
+        self.assertEqual(repos[0]["repo_id"], "ACE-Step/Ace-Step1.5")
+        self.assertEqual(repos[0]["local_path"], "models/Audio/acestep-v15-xl-sft")
+        self.assertEqual(repos[1]["repo_id"], "ACE-Step/acestep-v15-xl-sft")
+        self.assertEqual(
+            repos[1]["local_path"],
+            "models/Audio/acestep-v15-xl-sft/acestep-v15-xl-sft",
+        )
+
+    def test_resolve_dit_bundle_requires_exact_model_subdir(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from backend.engine.families.ace_step.generation import resolve_dit_bundle
+
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle = Path(tmp)
+            turbo = bundle / "acestep-v15-turbo"
+            turbo.mkdir()
+            (turbo / "model.safetensors").write_bytes(b"")
+            with self.assertRaises(RuntimeError):
+                resolve_dit_bundle(bundle, dit_subdir="acestep-v15-xl-sft")
+
+            xl_sft = bundle / "acestep-v15-xl-sft"
+            xl_sft.mkdir()
+            (xl_sft / "model.safetensors.index.json").write_text("{}", encoding="utf-8")
+            resolved = resolve_dit_bundle(bundle, dit_subdir="acestep-v15-xl-sft")
+            self.assertEqual(resolved, xl_sft)
+
     def test_remap_ace_step_lora_keys_peft(self) -> None:
         import numpy as np
 
