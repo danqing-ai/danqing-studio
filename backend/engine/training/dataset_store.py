@@ -11,6 +11,8 @@ from typing import Any, Callable
 
 from PIL import Image
 
+from backend.utils.path_utils import resolve_path_under
+
 MIN_DATASET_IMAGES = 3
 
 _HEIF_OPENER_READY = False
@@ -322,7 +324,10 @@ def remove_dataset_image(workspace_root: Path, dataset_id: str, file_rel: str) -
     path = _dataset_dir(datasets_root(workspace_root), dataset_id)
     rows = _read_train_jsonl(path / "train.jsonl")
     rows = [r for r in rows if r["image"] != file_rel]
-    img_path = path / file_rel
+    try:
+        img_path = resolve_path_under(path, file_rel)
+    except ValueError as e:
+        raise ValueError(f"Invalid image path: {file_rel}") from e
     if img_path.is_file():
         img_path.unlink()
     _write_train_jsonl(path / "train.jsonl", rows)
