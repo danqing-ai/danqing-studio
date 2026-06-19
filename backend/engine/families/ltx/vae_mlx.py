@@ -479,10 +479,295 @@ class SpaceToDepthDownsample(nn.Module):
 
 # --- video_vae ---
 
+import itertools
+import os
+from dataclasses import dataclass, replace
+from typing import NamedTuple
+
 import mlx.core as mx
 import mlx.nn as nn
 import mlx.utils
 
+
+# --- tiling (VAE decode temporal/spatial blend) ---
+
+
+def _compute_trapezoidal_mask_1d(
+    length: int,
+    ramp_left: int,
+    ramp_right: int,
+    *,
+    left_starts_from_0: bool = False,
+) -> mx.array:
+    if length <= 0:
+        raise ValueError("Mask length must be positive.")
+    ramp_left = max(0, min(ramp_left, length))
+    ramp_right = max(0, min(ramp_right, length))
+    mask = mx.ones(length)
+    if ramp_left > 0:
+        interval_length = ramp_left + 1 if left_starts_from_0 else ramp_left + 2
+        fade_in = mx.linspace(0.0, 1.0, interval_length)[:-1]
+        if not left_starts_from_0:
+            fade_in = fade_in[1:]
+        mask = mx.concatenate([mask[:ramp_left] * fade_in, mask[ramp_left:]])
+    if ramp_right > 0:
+        fade_out = mx.linspace(1.0, 0.0, ramp_right + 2)[1:-1]
+        mask = mx.concatenate([mask[:-ramp_right], mask[-ramp_right:] * fade_out])
+    return mx.clip(mask, 0.0, 1.0)
+
+
+def _compute_rectangular_mask_1d(length: int, left_ramp: int, right_ramp: int) -> mx.array:
+    if length <= 0:
+        raise ValueError("Mask length must be positive.")
+    mask = mx.ones(length)
+    if left_ramp > 0:
+        mask = mx.concatenate([mx.zeros(left_ramp), mask[left_ramp:]])
+    if right_ramp > 0:
+        mask = mx.concatenate([mask[:-right_ramp], mx.zeros(right_ramp)])
+    return mask
+
+
+@dataclass(frozen=True)
+class _SpatialTilingConfig:
+    tile_size_in_pixels: int
+    tile_overlap_in_pixels: int = 0
+
+
+@dataclass(frozen=True)
+class _TemporalTilingConfig:
+    tile_size_in_frames: int
+    tile_overlap_in_frames: int = 0
+
+
+@dataclass(frozen=True)
+class _TilingConfig:
+    spatial_config: _SpatialTilingConfig | None = None
+    temporal_config: _TemporalTilingConfig | None = None
+
+
+@dataclass(frozen=True)
+class _DimensionIntervals:
+    starts: list[int]
+    ends: list[int]
+    left_ramps: list[int]
+    right_ramps: list[int]
+
+
+class _Tile(NamedTuple):
+    in_coords: tuple[slice, ...]
+    out_coords: tuple[slice, ...]
+    masks_1d: tuple[mx.array | None, ...]
+
+    @property
+    def blend_mask(self) -> mx.array:
+        num_dims = len(self.out_coords)
+        per_dimension_masks: list[mx.array] = []
+        for dim_idx in range(num_dims):
+            mask_1d = self.masks_1d[dim_idx]
+            view_shape = [1] * num_dims
+            if mask_1d is None:
+                view_shape[dim_idx] = 1
+                per_dimension_masks.append(mx.ones(1).reshape(*view_shape))
+                continue
+            view_shape[dim_idx] = mask_1d.shape[0]
+            per_dimension_masks.append(mask_1d.reshape(*view_shape))
+        combined_mask = per_dimension_masks[0]
+        for mask in per_dimension_masks[1:]:
+            combined_mask = combined_mask * mask
+        return combined_mask
+
+
+_SplitOperation = Callable[[int], _DimensionIntervals]
+_MappingOperation = Callable[[_DimensionIntervals], tuple[list[slice], list[mx.array | None]]]
+
+
+def _default_split_operation(length: int) -> _DimensionIntervals:
+    return _DimensionIntervals(starts=[0], ends=[length], left_ramps=[0], right_ramps=[0])
+
+
+def _default_mapping_operation(
+    _intervals: _DimensionIntervals,
+) -> tuple[list[slice], list[mx.array | None]]:
+    return [slice(0, None)], [None]
+
+
+def _create_tiles_from_intervals_and_mappers(
+    original_shape: tuple[int, ...],
+    dimension_intervals: tuple[_DimensionIntervals, ...],
+    mappers: list[_MappingOperation],
+) -> list[_Tile]:
+    full_dim_input_slices: list[list[slice]] = []
+    full_dim_output_slices: list[list[slice]] = []
+    full_dim_masks_1d: list[list[mx.array | None]] = []
+    for axis_index in range(len(original_shape)):
+        dim_intervals = dimension_intervals[axis_index]
+        input_slices = [slice(s, e) for s, e in zip(dim_intervals.starts, dim_intervals.ends, strict=True)]
+        output_slices, masks_1d = mappers[axis_index](dim_intervals)
+        full_dim_input_slices.append(input_slices)
+        full_dim_output_slices.append(output_slices)
+        full_dim_masks_1d.append(masks_1d)
+    tiles: list[_Tile] = []
+    for in_coord, out_coord, mask_1d in zip(
+        itertools.product(*full_dim_input_slices),
+        itertools.product(*full_dim_output_slices),
+        itertools.product(*full_dim_masks_1d),
+        strict=True,
+    ):
+        tiles.append(_Tile(in_coords=in_coord, out_coords=out_coord, masks_1d=mask_1d))
+    return tiles
+
+
+def _create_tiles(
+    tensor_shape: tuple[int, ...],
+    splitters: list[_SplitOperation],
+    mappers: list[_MappingOperation],
+) -> list[_Tile]:
+    intervals = tuple(splitter(length) for splitter, length in zip(splitters, tensor_shape, strict=True))
+    return _create_tiles_from_intervals_and_mappers(tensor_shape, intervals, mappers)
+
+
+def _split_with_symmetric_overlaps(size: int, overlap: int) -> _SplitOperation:
+    def split(dimension_size: int) -> _DimensionIntervals:
+        if dimension_size <= size:
+            return _default_split_operation(dimension_size)
+        amount = (dimension_size + size - 2 * overlap - 1) // (size - overlap)
+        starts = [i * (size - overlap) for i in range(amount)]
+        ends = [start + size for start in starts]
+        ends[-1] = dimension_size
+        left_ramps = [0] + [overlap] * (amount - 1)
+        right_ramps = [overlap] * (amount - 1) + [0]
+        return _DimensionIntervals(starts=starts, ends=ends, left_ramps=left_ramps, right_ramps=right_ramps)
+
+    return split
+
+
+def _split_temporal_latents(size: int, overlap: int) -> _SplitOperation:
+    non_causal_split = _split_with_symmetric_overlaps(size, overlap)
+
+    def split(dimension_size: int) -> _DimensionIntervals:
+        if dimension_size <= size:
+            return _default_split_operation(dimension_size)
+        intervals = non_causal_split(dimension_size)
+        starts = list(intervals.starts)
+        starts[1:] = [s - 1 for s in starts[1:]]
+        left_ramps = list(intervals.left_ramps)
+        left_ramps[1:] = [r + 1 for r in left_ramps[1:]]
+        return replace(intervals, starts=starts, left_ramps=left_ramps)
+
+    return split
+
+
+def _make_mapping_operation(
+    map_func: Callable[[int, int, int, int, int], tuple[slice, mx.array | None]],
+    scale: int,
+) -> _MappingOperation:
+    def map_op(intervals: _DimensionIntervals) -> tuple[list[slice], list[mx.array | None]]:
+        output_slices: list[slice] = []
+        masks_1d: list[mx.array | None] = []
+        for i in range(len(intervals.starts)):
+            output_slice, mask_1d = map_func(
+                intervals.starts[i],
+                intervals.ends[i],
+                intervals.left_ramps[i],
+                intervals.right_ramps[i],
+                scale,
+            )
+            output_slices.append(output_slice)
+            masks_1d.append(mask_1d)
+        return output_slices, masks_1d
+
+    return map_op
+
+
+def _map_temporal_interval_to_frame(
+    begin: int,
+    end: int,
+    left_ramp: int,
+    right_ramp: int,
+    scale: int,
+) -> tuple[slice, mx.array]:
+    start = begin * scale
+    stop = 1 + (end - 1) * scale
+    left_ramp_frames = 0 if left_ramp == 0 else 1 + (left_ramp - 1) * scale
+    right_ramp_frames = right_ramp * scale
+    mask_1d = _compute_trapezoidal_mask_1d(
+        stop - start, left_ramp_frames, right_ramp_frames, left_starts_from_0=True
+    )
+    return slice(start, stop), mask_1d
+
+
+def _map_spatial_interval_to_pixel(
+    begin: int,
+    end: int,
+    left_ramp: int,
+    right_ramp: int,
+    scale: int,
+) -> tuple[slice, mx.array]:
+    start = begin * scale
+    stop = end * scale
+    mask_1d = _compute_trapezoidal_mask_1d(stop - start, left_ramp * scale, right_ramp * scale)
+    return slice(start, stop), mask_1d
+
+
+_SCALE_TIME = 8
+_SCALE_HEIGHT = 32
+_SCALE_WIDTH = 32
+
+
+def _prepare_tiles_for_decoding(
+    latent_shape: tuple[int, ...],
+    tiling_config: _TilingConfig | None = None,
+) -> list[_Tile]:
+    ndim = len(latent_shape)
+    splitters: list[_SplitOperation] = [_default_split_operation] * ndim
+    mappers: list[_MappingOperation] = [_default_mapping_operation] * ndim
+    if tiling_config is not None and tiling_config.spatial_config is not None:
+        cfg = tiling_config.spatial_config
+        long_side = max(latent_shape[3], latent_shape[4])
+
+        def _enable_spatial_axis(axis_idx: int, factor: int) -> None:
+            tile_size = cfg.tile_size_in_pixels // factor
+            overlap = cfg.tile_overlap_in_pixels // factor
+            axis_length = latent_shape[axis_idx]
+            lower_threshold = max(2, overlap + 1)
+            adjusted_size = max(lower_threshold, round(tile_size * axis_length / long_side))
+            splitters[axis_idx] = _split_with_symmetric_overlaps(adjusted_size, overlap)
+            mappers[axis_idx] = _make_mapping_operation(_map_spatial_interval_to_pixel, scale=factor)
+
+        _enable_spatial_axis(3, _SCALE_HEIGHT)
+        _enable_spatial_axis(4, _SCALE_WIDTH)
+    if tiling_config is not None and tiling_config.temporal_config is not None:
+        cfg = tiling_config.temporal_config
+        tile_size = cfg.tile_size_in_frames // _SCALE_TIME
+        overlap = cfg.tile_overlap_in_frames // _SCALE_TIME
+        splitters[2] = _split_temporal_latents(tile_size, overlap)
+        mappers[2] = _make_mapping_operation(_map_temporal_interval_to_frame, scale=_SCALE_TIME)
+    return _create_tiles(latent_shape, splitters, mappers)
+
+
+def _compute_decode_tiling(
+    latent_shape: tuple[int, ...],
+    frame_rate: float = 24.0,
+) -> _TilingConfig | None:
+    """Return tiling config when full VAE decode exceeds memory budget, else None."""
+    peak_budget_gb = float(os.environ.get("LTX2_VAE_DECODE_BUDGET_GB", "8.0"))
+    _, _, f_lat, h_lat, w_lat = latent_shape
+    budget_bytes = int(peak_budget_gb * 1024**3)
+    block3_bytes_per_lat_frame = 512 * 4 * (h_lat * 4) * (w_lat * 4) * 2
+    if block3_bytes_per_lat_frame * f_lat <= budget_bytes:
+        return None
+    max_lat_frames = max(2, budget_bytes // block3_bytes_per_lat_frame)
+    tile_frames = max(16, max_lat_frames * 8)
+    one_second_frames = max(8, (int(frame_rate) // 8) * 8)
+    overlap = min(one_second_frames, (tile_frames // 32) * 8)
+    if overlap >= tile_frames:
+        raise RuntimeError(f"LTX VAE decode tiling overlap {overlap} >= tile_frames {tile_frames}")
+    return _TilingConfig(
+        temporal_config=_TemporalTilingConfig(
+            tile_size_in_frames=tile_frames,
+            tile_overlap_in_frames=overlap,
+        )
+    )
 
 
 def _add_at(buffer: mx.array, coords: tuple[slice, ...], values: mx.array) -> mx.array:
@@ -496,14 +781,14 @@ def _add_at(buffer: mx.array, coords: tuple[slice, ...], values: mx.array) -> mx
     return buffer
 
 
-def _group_tiles_by_temporal_slice(tiles: list[Tile]) -> list[list[Tile]]:
+def _group_tiles_by_temporal_slice(tiles: list[_Tile]) -> list[list[_Tile]]:
     """Group tiles by their temporal output slice."""
     if not tiles:
         return []
 
-    groups: list[list[Tile]] = []
+    groups: list[list[_Tile]] = []
     current_slice = tiles[0].out_coords[2]
-    current_group: list[Tile] = []
+    current_group: list[_Tile] = []
 
     for tile in tiles:
         tile_slice = tile.out_coords[2]
@@ -671,10 +956,91 @@ class LTX23VideoDecoder(nn.Module):
         # BFHWC -> BCFHW, restored to caller's dtype.
         return x.transpose(0, 4, 1, 2, 3).astype(output_dtype)
 
-    def tiled_decode(self, latent: mx.array, tiling_config=None) -> Iterator[mx.array]:
-        pixels = self.decode(latent)
-        _eval(pixels)
-        yield pixels
+    def tiled_decode(
+        self,
+        latent: mx.array,
+        tiling_config: _TilingConfig | None = None,
+    ) -> Iterator[mx.array]:
+        if tiling_config is None:
+            pixels = self.decode(latent)
+            _eval(pixels)
+            yield pixels
+            return
+
+        tiles = _prepare_tiles_for_decoding(latent.shape, tiling_config)
+        temporal_groups = _group_tiles_by_temporal_slice(tiles)
+        _, _, _f_lat, h_lat, w_lat = latent.shape
+        out_h = h_lat * 32
+        out_w = w_lat * 32
+
+        previous_chunk: mx.array | None = None
+        previous_weights: mx.array | None = None
+        previous_temporal_slice: slice | None = None
+
+        for temporal_group_tiles in temporal_groups:
+            curr_temporal_slice = temporal_group_tiles[0].out_coords[2]
+            temporal_len = curr_temporal_slice.stop - curr_temporal_slice.start
+            buffer = mx.zeros((latent.shape[0], 3, temporal_len, out_h, out_w))
+            weights = mx.zeros_like(buffer)
+
+            for tile in temporal_group_tiles:
+                decoded_tile = self.decode(latent[tile.in_coords], _materialize_stages=True)
+                _eval(decoded_tile)
+                mask = tile.blend_mask
+                temporal_offset = tile.out_coords[2].start - curr_temporal_slice.start
+                expected_temporal_len = tile.out_coords[2].stop - tile.out_coords[2].start
+                decoded_temporal_len = decoded_tile.shape[2]
+                actual_temporal_len = min(
+                    expected_temporal_len, decoded_temporal_len, buffer.shape[2] - temporal_offset
+                )
+                chunk_coords = (
+                    slice(None),
+                    slice(None),
+                    slice(temporal_offset, temporal_offset + actual_temporal_len),
+                    tile.out_coords[3],
+                    tile.out_coords[4],
+                )
+                decoded_slice = decoded_tile[:, :, :actual_temporal_len, :, :]
+                mask_slice = mask[:, :, :actual_temporal_len, :, :] if mask.shape[2] > 1 else mask
+                buffer = _add_at(buffer, chunk_coords, decoded_slice * mask_slice)
+                weights = _add_at(weights, chunk_coords, mask_slice)
+                _eval(buffer, weights)
+                del decoded_tile, mask, decoded_slice, mask_slice
+
+            if previous_chunk is not None and previous_temporal_slice is not None:
+                if previous_temporal_slice.stop > curr_temporal_slice.start:
+                    overlap_len = previous_temporal_slice.stop - curr_temporal_slice.start
+                    prev_overlap_start = curr_temporal_slice.start - previous_temporal_slice.start
+                    prev_overlap = previous_chunk[:, :, prev_overlap_start:, :, :]
+                    prev_w_overlap = previous_weights[:, :, prev_overlap_start:, :, :]
+                    curr_overlap = buffer[:, :, :overlap_len, :, :]
+                    curr_w_overlap = weights[:, :, :overlap_len, :, :]
+                    merged = prev_overlap + curr_overlap
+                    merged_w = prev_w_overlap + curr_w_overlap
+                    previous_chunk = mx.concatenate(
+                        [previous_chunk[:, :, :prev_overlap_start, :, :], merged], axis=2
+                    )
+                    previous_weights = mx.concatenate(
+                        [previous_weights[:, :, :prev_overlap_start, :, :], merged_w], axis=2
+                    )
+                    buffer = mx.concatenate([merged, buffer[:, :, overlap_len:, :, :]], axis=2)
+                    weights = mx.concatenate([merged_w, weights[:, :, overlap_len:, :, :]], axis=2)
+                yield_len = curr_temporal_slice.start - previous_temporal_slice.start
+                if yield_len > 0:
+                    safe_weights = mx.maximum(previous_weights, 1e-8)
+                    chunk = (previous_chunk / safe_weights)[:, :, :yield_len, :, :]
+                    _eval(chunk)
+                    yield chunk
+
+            previous_chunk = buffer
+            previous_weights = weights
+            previous_temporal_slice = curr_temporal_slice
+
+        if previous_chunk is not None and previous_weights is not None:
+            safe_weights = mx.maximum(previous_weights, 1e-8)
+            chunk = previous_chunk / safe_weights
+            _eval(chunk)
+            yield chunk
 
     def decode_and_stream(
         self,
@@ -1237,7 +1603,7 @@ class LTX23LatentUpsampler(nn.Module):
         return x.transpose(0, 4, 1, 2, 3)
 
     @classmethod
-    def from_config(cls, config: dict[str, Any]) -> LatentUpsampler:
+    def from_config(cls, config: dict[str, Any]) -> "LTX23LatentUpsampler":
         """Create the right upsampler variant from an embedded config dict.
 
         Expected config keys (from embedded_config.json):
@@ -1468,8 +1834,8 @@ class AudioMidBlock(nn.Module):
         return x
 
 
-class PerChannelStatistics(nn.Module):
-    """Per-channel normalization statistics loaded from weights.
+class AudioPerChannelStatistics(nn.Module):
+    """Per-channel normalization statistics for audio VAE (loaded from weights).
 
     Safetensors keys have underscore prefix: ``_mean_of_means``, ``_std_of_means``.
     MLX treats underscore-prefixed attrs as private, so we use public names
@@ -1517,7 +1883,7 @@ class LTX23AudioDecoder(nn.Module):
         self.conv_out = WrappedConv2d(128, 2, 3, padding=1, causal=True)
 
         # Per-channel normalization for latent denormalization
-        self.per_channel_statistics = PerChannelStatistics(128)
+        self.per_channel_statistics = AudioPerChannelStatistics(128)
 
     def decode(self, latent: mx.array) -> mx.array:
         """Decode audio latent to mel spectrogram.
@@ -2261,12 +2627,28 @@ _audio_decoder_cache: dict[str, LTX23AudioDecoder] = {}
 _vocoder_cache: dict[str, LTX23Vocoder] = {}
 
 
+def _remap_video_decoder_keys(weights: dict[str, mx.array]) -> dict[str, mx.array]:
+    """Normalize per-channel stat keys (dgrauet ``mean``/``std`` vs legacy ``_*`` names)."""
+    out: dict[str, mx.array] = {}
+    for k, v in weights.items():
+        nk = k
+        nk = nk.replace("per_channel_statistics._mean_of_means", "per_channel_statistics.mean")
+        nk = nk.replace("per_channel_statistics._std_of_means", "per_channel_statistics.std")
+        nk = nk.replace("per_channel_statistics.mean_of_means", "per_channel_statistics.mean")
+        nk = nk.replace("per_channel_statistics.std_of_means", "per_channel_statistics.std")
+        out[nk] = v
+    return out
+
+
 def load_ltx23_video_decoder(bundle_root: Path, *, load_fn: Any | None = None) -> LTX23VideoDecoder:
     key = str(bundle_root.resolve())
     if key in _decoder_cache:
         return _decoder_cache[key]
     dec = LTX23VideoDecoder(causal=False, spatial_padding_mode="zeros")
-    dec.load_weights(list(_load_bundle_weights(bundle_root, "vae_decoder.safetensors", "vae_decoder.", load_fn).items()))
+    raw = _remap_video_decoder_keys(
+        _load_bundle_weights(bundle_root, "vae_decoder.safetensors", "vae_decoder.", load_fn)
+    )
+    dec.load_weights(list(raw.items()), strict=False)
     _decoder_cache[key] = dec
     return dec
 
@@ -2281,15 +2663,72 @@ def load_ltx23_video_encoder(bundle_root: Path, *, load_fn: Any | None = None) -
     return enc
 
 
+def _strip_shared_weight_prefix(weights: dict[str, mx.array]) -> dict[str, mx.array]:
+    """Drop a single outer key prefix when every tensor shares it (dgrauet upscaler shards)."""
+    if not weights:
+        return weights
+    prefixes = {k.split(".", 1)[0] for k in weights if "." in k}
+    if len(prefixes) != 1:
+        return weights
+    prefix = f"{next(iter(prefixes))}."
+    return {k[len(prefix):] if k.startswith(prefix) else k: v for k, v in weights.items()}
+
+
+def _load_upsampler_config(config_path: Path) -> dict[str, Any]:
+    import json
+
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        raise RuntimeError(f"LTX 2.3 upsampler config unreadable: {config_path}: {e}") from e
+    if isinstance(data, dict) and isinstance(data.get("config"), dict):
+        return data["config"]
+    if isinstance(data, dict):
+        return data
+    raise RuntimeError(f"LTX 2.3 upsampler config must be a JSON object: {config_path}")
+
+
+_UPSAMPLER_WEIGHT_CANDIDATES: dict[str, tuple[str, ...]] = {
+    "spatial_x2": (
+        "latent_upsampler.safetensors",
+        "spatial_upscaler_x2_v1_1.safetensors",
+    ),
+    "spatial_x1_5": (
+        "latent_upsampler_x1_5.safetensors",
+        "spatial_upscaler_x1_5_v1_0.safetensors",
+    ),
+    "temporal_x2": (
+        "latent_upsampler_temporal_x2.safetensors",
+        "temporal_upscaler_x2_v1_0.safetensors",
+    ),
+}
+
+
+def _resolve_upsampler_weight_path(bundle_root: Path, variant: str) -> Path:
+    """Resolve latent upsampler shard (diffusers names vs dgrauet / mlx-forge bundles)."""
+    candidates = _UPSAMPLER_WEIGHT_CANDIDATES.get(variant, _UPSAMPLER_WEIGHT_CANDIDATES["spatial_x2"])
+    for fname in candidates:
+        path = bundle_root / fname
+        if path.is_file():
+            return path
+    tried = ", ".join(str(bundle_root / fname) for fname in candidates)
+    raise RuntimeError(
+        f"LTX 2.3 upsampler weights missing for variant={variant!r}; tried: {tried}"
+    )
+
+
 def load_ltx23_latent_upsampler(bundle_root: Path, *, variant: str = "spatial_x2", load_fn: Any | None = None) -> LTX23LatentUpsampler:
     key = f"{bundle_root.resolve()}:{variant}"
     if key in _upsampler_cache:
         return _upsampler_cache[key]
-    fname = {"spatial_x2": "latent_upsampler.safetensors", "spatial_x1_5": "latent_upsampler_x1_5.safetensors", "temporal_x2": "latent_upsampler_temporal_x2.safetensors"}.get(variant, "latent_upsampler.safetensors")
-    if not (bundle_root / fname).is_file():
-        raise RuntimeError(f"LTX 2.3 upsampler weights missing: {bundle_root / fname}")
-    up = LTX23LatentUpsampler()
-    up.load_weights(list(_load_bundle_weights(bundle_root, fname, "", load_fn).items()))
+    path = _resolve_upsampler_weight_path(bundle_root, variant)
+    config_path = path.with_name(f"{path.stem}_config.json")
+    if config_path.is_file():
+        up = LTX23LatentUpsampler.from_config(_load_upsampler_config(config_path))
+    else:
+        up = LTX23LatentUpsampler()
+    raw = _strip_shared_weight_prefix(_load_bundle_weights(bundle_root, path.name, "", load_fn))
+    up.load_weights(list(raw.items()), strict=False)
     _upsampler_cache[key] = up
     return up
 
@@ -2304,7 +2743,7 @@ def load_ltx23_audio_decoder(bundle_root: Path, *, load_fn: Any | None = None) -
     for k, v in raw.items():
         if k.startswith("per_channel_statistics."):
             weights[k] = v
-    dec.load_weights(list(_remap_audio_keys(weights).items()))
+    dec.load_weights(list(_remap_audio_keys(weights).items()), strict=False)
     _audio_decoder_cache[key] = dec
     return dec
 

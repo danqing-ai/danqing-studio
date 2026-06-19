@@ -28,6 +28,16 @@ def validate_v3_document(data: dict[str, Any]) -> list[str]:
         if not isinstance(raw, dict):
             errors.append(f"Model {model_id!r}: entry must be an object")
             continue
+        catalog = raw.get("catalog")
+        if isinstance(catalog, dict):
+            for field in ("successor", "distilled_from", "distilled_variant"):
+                value = catalog.get(field)
+                if value is None:
+                    continue
+                if not isinstance(value, str) or not value.strip():
+                    errors.append(f"Model {model_id!r}: catalog.{field} must be a non-empty string")
+                elif value.strip() == model_id:
+                    errors.append(f"Model {model_id!r}: catalog.{field} must not point to itself")
         runtime = raw.get("runtime")
         if not isinstance(runtime, dict):
             errors.append(f"Model {model_id!r}: missing runtime object")

@@ -208,7 +208,9 @@ import { applyPromptDraft, consumePromptDraft } from '@/utils/promptApply';
 import { usePromptApplyOffer } from '@/composables/usePromptApplyOffer';
 import {
   buildResolutionSizeOptions,
+  loadImageNaturalSize,
   parseSizeValue,
+  pickClosestResolutionPreset,
   pickResolutionForModel,
 } from '@/utils/registryParamSchema';
 import {
@@ -797,6 +799,7 @@ function onStartAssetPick(payload: { path: string; previewUrl: string }) {
     if (viewMode.value === 'canvas') {
       syncCanvasOverlay('start_frame', payload.path);
     }
+    void syncResolutionForStartImage(payload.previewUrl || '');
   }
   showAssetPicker.value = false;
 }
@@ -806,6 +809,7 @@ function onCanvasUseAsStartFrame(payload: { path: string; previewUrl: string; qu
   startImageSrc.value = payload.previewUrl || '';
   startImagePath.value = payload.path;
   syncCanvasOverlay('start_frame', payload.path);
+  void syncResolutionForStartImage(payload.previewUrl || '');
   if (!payload.quiet) toast.success($tt('canvas.startFrameBound'));
 }
 
@@ -1127,6 +1131,21 @@ function applySelectedSize(val: string) {
   if (!parsed) return;
   params.width = parsed.width;
   params.height = parsed.height;
+}
+
+async function syncResolutionForStartImage(previewUrl: string) {
+  if (videoWorkMode.value !== 'animate' || !previewUrl) return;
+  const options = sizeOptions.value;
+  if (!options.length) return;
+  try {
+    const { width, height } = await loadImageNaturalSize(previewUrl);
+    const pick = pickClosestResolutionPreset(options, width, height);
+    if (!pick) return;
+    if (selectedSize.value !== pick) selectedSize.value = pick;
+    else applySelectedSize(pick);
+  } catch {
+    // keep current resolution when preview cannot be measured
+  }
 }
 
 function syncResolutionForModel(modelId?: string, opts?: { ignoreSaved?: boolean }) {

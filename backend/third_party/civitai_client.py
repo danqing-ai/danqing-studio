@@ -144,6 +144,47 @@ class CivitAIClient:
         except aiohttp.ClientError as e:
             raise Exception(f"CivitAI network request failed: {e}")
 
+    async def get_model_version(self, version_id: int) -> CivitAIModelVersion:
+        """Get a single model version (files + download URLs)."""
+        session = await self._get_session()
+
+        try:
+            async with session.get(f"{self.BASE_URL}/model-versions/{version_id}") as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    raise Exception(f"CivitAI API error {resp.status}: {text}")
+
+                data = await resp.json()
+                files = []
+                for f in data.get("files", []):
+                    files.append(
+                        CivitAIFile(
+                            name=f.get("name", ""),
+                            download_url=f.get("downloadUrl", ""),
+                            size_kb=f.get("sizeKB", 0.0),
+                            format=f.get("metadata", {}).get("format", ""),
+                            pickle_scan_result=f.get("pickleScanResult", ""),
+                            virus_scan_result=f.get("virusScanResult", ""),
+                            scanned_at=f.get("scannedAt"),
+                            primary=f.get("primary", False),
+                        )
+                    )
+                return CivitAIModelVersion(
+                    id=data.get("id", 0),
+                    name=data.get("name", ""),
+                    description=data.get("description", ""),
+                    download_url=data.get("downloadUrl", ""),
+                    trained_words=data.get("trainedWords", []),
+                    base_model=data.get("baseModel", ""),
+                    files=files,
+                    created_at=data.get("createdAt"),
+                    stats=data.get("stats", {}),
+                    images=data.get("images", []),
+                )
+
+        except aiohttp.ClientError as e:
+            raise Exception(f"CivitAI network request failed: {e}")
+
     def _parse_model(self, data: Dict[str, Any]) -> CivitAIModel:
         """Parse model data returned by API"""
         versions = []

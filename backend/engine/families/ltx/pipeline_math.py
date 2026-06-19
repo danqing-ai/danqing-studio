@@ -187,9 +187,29 @@ def ltx2_dynamic_schedule(
     return sigmas.tolist()
 
 
-# ---------------------------------------------------------------------------
-# Latent shape / token counts / positions
-# ---------------------------------------------------------------------------
+def ltx2_schedule(
+    steps: int,
+    num_tokens: int,
+    *,
+    base_shift: float = 0.95,
+    max_shift: float = 2.05,
+    base_tokens: int = 1024,
+    max_tokens: int = 4096,
+    stretch: bool = True,
+    terminal: float = 0.1,
+) -> list[float]:
+    """LTX-2 dev stage-1 sigma schedule (dgrauet / mlx-forge reference)."""
+    return ltx2_dynamic_schedule(
+        steps,
+        num_tokens,
+        base_shift=base_shift,
+        max_shift=max_shift,
+        base_tokens=base_tokens,
+        max_tokens=max_tokens,
+        stretch=stretch,
+        terminal=terminal,
+    )
+
 
 def compute_video_latent_shape(
     num_frames: int,
@@ -391,6 +411,7 @@ def create_noised_state(
     sigma: float = 1.0,
     initial_latent: Any | None = None,
     dtype: Any | None = None,
+    legacy_scalar_blend: bool = False,
 ) -> LatentState:
     """Build a noised ``LatentState``: init → conditionings → mask-aware noise."""
     if dtype is None:
@@ -407,6 +428,23 @@ def create_noised_state(
         denoise_mask=ctx.ones((base_shape[0], base_shape[1], 1), dtype=dtype),
         positions=positions,
     )
+
+    if legacy_scalar_blend:
+        from backend.engine.runtime.mlx_runtime import set_random_seed
+
+        set_random_seed(getattr(ctx, "set_random_seed", None), seed)
+        noise = ctx.randn(state.clean_latent.shape, dtype=dtype)
+        blended = noise * sigma + state.clean_latent * (1.0 - sigma)
+        state = LatentState(
+            latent=blended,
+            clean_latent=state.clean_latent,
+            denoise_mask=state.denoise_mask,
+            positions=state.positions,
+            attention_mask=state.attention_mask,
+        )
+        if conditionings and spatial_dims is not None:
+            state = apply_conditioning(ctx, state, conditionings, spatial_dims)
+        return state
 
     if conditionings and spatial_dims is not None:
         state = apply_conditioning(ctx, state, conditionings, spatial_dims)
@@ -455,3 +493,102 @@ def create_initial_ltx_state(
         clean_latent=ctx.zeros(shape, dtype=ctx.float32()),
         denoise_mask=ctx.ones((b, 1, f, 1, 1), dtype=ctx.float32()),
     )
+
+
+# ---------------------------------------------------------------------------
+# Dev guidance (CFG / STG / modality — ported from LTX-2.3 reference)
+# ---------------------------------------------------------------------------
+
+DEFAULT_LTX_IMAGE_CRF = 33
+_DEFAULT_STG_BLOCKS = (28,)
+
+
+@dataclass(frozen=True)
+class MultiModalGuiderParams:
+    cfg_scale: float = 1.0
+    stg_scale: float = 0.0
+    stg_blocks: tuple[int, ...] = ()
+    rescale_scale: float = 0.0
+    modality_scale: float = 1.0
+    skip_step: int = 0
+
+
+@dataclass(frozen=True)
+class MultiModalGuider:
+    params: MultiModalGuiderParams
+    negative_context: Any | None = None
+
+    def calculate(
+        self,
+        cond: Any,
+        uncond_text: Any | float,
+        uncond_perturbed: Any | float,
+        uncond_modality: Any | float,
+    ) -> Any:
+        pred = (
+            cond
+            + (self.params.cfg_scale - 1) * (cond - uncond_text)
+            + self.params.stg_scale * (cond - uncond_perturbed)
+            + (self.params.modality_scale - 1) * (cond - uncond_modality)
+        )
+        if self.params.rescale_scale != 0:
+            import mlx.core as mx
+
+            factor = mx.sqrt(mx.var(cond)) / (mx.sqrt(mx.var(pred)) + 1e-8)
+            factor = self.params.rescale_scale * factor + (1 - self.params.rescale_scale)
+            pred = pred * factor
+        return pred
+
+    def do_unconditional_generation(self) -> bool:
+        return not math.isclose(self.params.cfg_scale, 1.0)
+
+    def do_perturbed_generation(self) -> bool:
+        return not math.isclose(self.params.stg_scale, 0.0)
+
+    def do_isolated_modality_generation(self) -> bool:
+        return not math.isclose(self.params.modality_scale, 1.0)
+
+    def should_skip_step(self, step: int) -> bool:
+        if self.params.skip_step == 0:
+            return False
+        return step % (self.params.skip_step + 1) != 0
+
+
+@dataclass(frozen=True)
+class MultiModalGuiderFactory:
+    negative_context: Any | None = None
+    _params: MultiModalGuiderParams = MultiModalGuiderParams()
+
+    @classmethod
+    def constant(
+        cls,
+        params: MultiModalGuiderParams,
+        *,
+        negative_context: Any | None = None,
+    ) -> MultiModalGuiderFactory:
+        return cls(negative_context=negative_context, _params=params)
+
+    def build_from_sigma(self, sigma: float | Any) -> MultiModalGuider:
+        del sigma
+        return MultiModalGuider(params=self._params, negative_context=self.negative_context)
+
+
+def ltx_dev_video_guider_params(cfg_scale: float, *, stg_scale: float = 1.0) -> MultiModalGuiderParams:
+    return MultiModalGuiderParams(
+        cfg_scale=float(cfg_scale),
+        stg_scale=float(stg_scale),
+        stg_blocks=_DEFAULT_STG_BLOCKS,
+        rescale_scale=0.7,
+        modality_scale=3.0,
+    )
+
+
+def ltx_dev_audio_guider_params(*, stg_scale: float = 1.0) -> MultiModalGuiderParams:
+    return MultiModalGuiderParams(
+        cfg_scale=7.0,
+        stg_scale=float(stg_scale),
+        stg_blocks=_DEFAULT_STG_BLOCKS,
+        rescale_scale=0.7,
+        modality_scale=3.0,
+    )
+

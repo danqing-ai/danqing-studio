@@ -195,6 +195,7 @@ def _apply_video_i2v_source(
     h: int,
     entry: Any,
     version_key: str | None,
+    bundle_root: Path | None,
 ) -> Any:
     if not request.source_asset_id:
         return latents
@@ -218,6 +219,16 @@ def _apply_video_i2v_source(
     )
     if vae_latent is None:
         raise RuntimeError(video_i2v_encode_failure_message(config))
+    if (
+        str(getattr(config, "video_i2v_style", "")) == "hunyuan"
+        and bundle_root is not None
+        and bundle_root.is_dir()
+    ):
+        from backend.engine.families.hunyuan.image_encoder_mlx import encode_hunyuan_image_embeds
+
+        extra_cond["image_embeds"] = encode_hunyuan_image_embeds(
+            pipeline.ctx, src_img, bundle_root,
+        )
     return video_apply_i2v_conditioning(
         config,
         pipeline.ctx,
@@ -360,6 +371,7 @@ def build_video_create_run_context(
             h=h,
             entry=entry,
             version_key=version_key,
+            bundle_root=bundle_root,
         )
 
     extra_cond["_pipeline_fps"] = float(fps)

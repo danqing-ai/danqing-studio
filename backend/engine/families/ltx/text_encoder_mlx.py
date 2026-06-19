@@ -9,7 +9,7 @@ import logging
 import math
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import mlx.core as mx
 import mlx.nn as nn
@@ -103,9 +103,10 @@ class _ConnectorAttention(nn.Module):
             k = _apply_rope_split(k, rope_cos, rope_sin)
         attn = (q @ k.transpose(0, 1, 3, 2)) * self.scale
         attn = mx.softmax(attn, axis=-1)
-        out = (attn @ v).transpose(0, 2, 1, 3).reshape(b, n, self.num_heads * self.head_dim)
+        out = attn @ v
         gate = 2.0 * mx.sigmoid(self.to_gate_logits(x))
         out = out * gate.transpose(0, 2, 1)[:, :, :, None]
+        out = out.transpose(0, 2, 1, 3).reshape(b, n, self.num_heads * self.head_dim)
         return self.to_out[0](out)
 
 
@@ -346,6 +347,15 @@ class _GemmaLanguageModel:
         return all_states
 
 
+def _remap_connector_bundle_keys(weights: dict[str, Any]) -> dict[str, Any]:
+    """Map dgrauet / mlx-forge connector FF keys to ``_ConnectorFF`` Linear names."""
+    out: dict[str, Any] = {}
+    for key, tensor in weights.items():
+        nk = key.replace(".ff.net.0.proj.", ".ff.net.0.")
+        out[nk] = tensor
+    return out
+
+
 def _load_connector_weights(bundle_root: Path, load_fn: Any | None) -> dict[str, mx.array]:
     path = bundle_root / "connector.safetensors"
     if not path.is_file():
@@ -355,7 +365,7 @@ def _load_connector_weights(bundle_root: Path, load_fn: Any | None) -> dict[str,
     prefix = "connector."
     for k, v in raw.items():
         out[k[len(prefix):] if k.startswith(prefix) else k] = v
-    return out
+    return _remap_connector_bundle_keys(out)
 
 
 class LTX23GemmaEncoder:
@@ -371,13 +381,13 @@ class LTX23GemmaEncoder:
         self.bundle_root = Path(bundle_root)
         self.config = config or LTXConfig()
         self.gemma_model_id = str(getattr(self.config, "gemma_model_id", None) or _DEFAULT_GEMMA)
-        self._gemma: _GemmaLanguageModel | None = None
-        self._extractor: _GemmaFeaturesExtractor | None = None
+        self._gemma: Any | None = None
+        self._extractor: Any | None = None
 
     def _max_length(self) -> int:
         return int(os.environ.get("LTX2_GEMMA_MAX_LENGTH", str(_DEFAULT_MAX_LENGTH)))
 
-    def load(self) -> None:
+    def load(self, on_log: Callable[[str, str], None] | None = None) -> None:
         if getattr(self.ctx, "backend", None) != "mlx":
             raise RuntimeError(
                 f"LTX 2.3 Gemma encoder requires MLX runtime (got {getattr(self.ctx, 'backend', None)!r})"
@@ -386,15 +396,38 @@ class LTX23GemmaEncoder:
             raise RuntimeError(f"LTX 2.3 bundle directory not found: {self.bundle_root}")
 
         if self._gemma is None:
-            self._gemma = _GemmaLanguageModel()
-            logger.info("Loading LTX Gemma from %s", self.gemma_model_id)
+            from ltx_core_mlx.text_encoders.gemma.encoders.base_encoder import GemmaLanguageModel
+
+            self._gemma = GemmaLanguageModel()
+            msg = (
+                f"LTX 2.3 loading Gemma text encoder ({self.gemma_model_id}); "
+                "first run may download from HuggingFace (~7GB) and take several minutes"
+            )
+            logger.info(msg)
+            if on_log:
+                on_log("info", msg)
             self._gemma.load(self.gemma_model_id)
+            if on_log:
+                on_log("info", "LTX 2.3 Gemma text encoder ready")
 
         if self._extractor is None:
-            self._extractor = _GemmaFeaturesExtractor()
-            weights = _load_connector_weights(self.bundle_root, getattr(self.ctx, "load_weights", None))
-            self._extractor.connector.load_weights(list(weights.items()))
-            _materialize(self._extractor.connector.learnable_registers)
+            from ltx_core_mlx.text_encoders.gemma.feature_extractor import GemmaFeaturesExtractorV2
+            from ltx_core_mlx.utils.weights import load_split_safetensors
+
+            if on_log:
+                on_log("info", "LTX 2.3 loading connector weights")
+            self._extractor = GemmaFeaturesExtractorV2()
+            connector_weights = load_split_safetensors(
+                self.bundle_root / "connector.safetensors",
+                prefix="connector.",
+            )
+            self._extractor.connector.load_weights(list(connector_weights.items()))
+            _materialize(
+                self._extractor.connector.video_embeddings_connector.learnable_registers,
+                self._extractor.connector.audio_embeddings_connector.learnable_registers,
+            )
+            if on_log:
+                on_log("info", "LTX 2.3 connector ready")
 
     def free(self) -> None:
         self._gemma = None
@@ -402,26 +435,35 @@ class LTX23GemmaEncoder:
         if hasattr(self.ctx, "clear_cache"):
             self.ctx.clear_cache()
 
-    def encode(self, prompt: str) -> tuple[mx.array, mx.array]:
+    def encode(
+        self,
+        prompt: str,
+        on_log: Callable[[str, str], None] | None = None,
+    ) -> tuple[mx.array, mx.array]:
         """Encode prompt → ``(video_embeds, audio_embeds)`` each ``(1, seq, dim)``."""
-        self.load()
+        self.load(on_log=on_log)
         assert self._gemma is not None and self._extractor is not None
+        if on_log:
+            on_log("info", "LTX 2.3 encoding prompt with Gemma")
         max_len = self._max_length()
         token_ids, attention_mask = self._gemma.tokenize(prompt, max_len)
         hidden_states = self._gemma.get_all_hidden_states(token_ids, attention_mask=attention_mask)
         video, audio = self._extractor(hidden_states, attention_mask=attention_mask)
         _materialize(video, audio)
+        if on_log:
+            on_log("info", "LTX 2.3 prompt encoding done")
         return video, audio
 
     def encode_with_negative(
         self,
         prompt: str,
         negative_prompt: str | None = None,
+        on_log: Callable[[str, str], None] | None = None,
     ) -> tuple[tuple[mx.array, mx.array], tuple[mx.array, mx.array]]:
         """Return ``((pos_video, pos_audio), (neg_video, neg_audio))`` for CFG."""
         from backend.engine.families.ltx.pipeline_math import DEFAULT_NEGATIVE_PROMPT
 
         neg = negative_prompt if negative_prompt is not None else DEFAULT_NEGATIVE_PROMPT
-        pos = self.encode(prompt)
-        neg_emb = self.encode(neg)
+        pos = self.encode(prompt, on_log=on_log)
+        neg_emb = self.encode(neg, on_log=on_log)
         return pos, neg_emb

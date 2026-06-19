@@ -11,11 +11,14 @@ from typing import Any
 MANIFEST_FILENAME = "bundle.manifest.json"
 SCHEMA_VERSION = 1
 LORA_REGISTRY_CATEGORY = "loras"
+CONTROLNET_REGISTRY_CATEGORY = "controlnets"
 
 # ACE-Step DiT lives at bundle root or under acestep-v15-*/ (see ace_step.generation.resolve_dit_bundle).
 _ACE_STEP_DIT_SUBDIRS = frozenset(
     {
         "acestep-v15-xl-sft",
+        "acestep-v15-xl-turbo",
+        "acestep-v15-xl-base",
         "acestep-v15-sft",
         "acestep-v15-turbo",
         "acestep-v15-base",
@@ -35,6 +38,16 @@ def _ace_step_dit_safetensors(rel_lower: str, name_lower: str) -> bool:
 def is_registry_lora_category(category: str | None) -> bool:
     """True for registry ``catalog.category=loras`` rows (single-file adapter bundles)."""
     return (category or "").strip().lower() == LORA_REGISTRY_CATEGORY
+
+
+def is_registry_controlnet_category(category: str | None) -> bool:
+    """True for registry ``catalog.category=controlnets`` rows (ControlNet adapter bundles)."""
+    return (category or "").strip().lower() == CONTROLNET_REGISTRY_CATEGORY
+
+
+def skips_full_family_bundle_contract(category: str | None) -> bool:
+    """LoRA / ControlNet registry rows ship a single adapter weight bundle, not a full family stack."""
+    return is_registry_lora_category(category) or is_registry_controlnet_category(category)
 
 
 @dataclass(frozen=True)
@@ -77,6 +90,10 @@ FAMILY_BUNDLE_CONTRACTS: dict[str, FamilyBundleContract] = {
         required=frozenset({"transformer", "vae"}),
         optional=frozenset({"tokenizer"}),
     ),
+    "esrgan": FamilyBundleContract(
+        required=frozenset({"transformer"}),
+        optional=frozenset(),
+    ),
     "ltx": FamilyBundleContract(
         required=frozenset({"transformer", "text_encoder", "vae"}),
         optional=frozenset({"tokenizer"}),
@@ -87,7 +104,7 @@ FAMILY_BUNDLE_CONTRACTS: dict[str, FamilyBundleContract] = {
     ),
     "hunyuan": FamilyBundleContract(
         required=frozenset({"transformer", "text_encoder", "vae"}),
-        optional=frozenset({"tokenizer"}),
+        optional=frozenset({"tokenizer", "image_encoder"}),
     ),
     "ace_step": FamilyBundleContract(
         required=frozenset({"transformer", "vae"}),
@@ -135,6 +152,7 @@ def scan_components(bundle_root: Path) -> dict[str, list[str]]:
         "text_encoder": [],
         "vae": [],
         "tokenizer": [],
+        "image_encoder": [],
     }
 
     for path in sorted(bundle_root.rglob("*")):
@@ -167,6 +185,11 @@ def scan_components(bundle_root: Path) -> dict[str, list[str]]:
         if "text_encoder" in rel_lower or name_lower.startswith("text_encoder"):
             if suffix_lower in weight_suffixes:
                 components["text_encoder"].append(_rel_path(bundle_root, path))
+            continue
+
+        if "image_encoder" in rel_lower or name_lower.startswith("image_encoder"):
+            if suffix_lower in weight_suffixes:
+                components["image_encoder"].append(_rel_path(bundle_root, path))
             continue
 
         if "/vae/" in f"/{rel_lower}/" or rel_lower.startswith("vae/") or name_lower.startswith("vae."):

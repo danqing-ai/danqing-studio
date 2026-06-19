@@ -95,45 +95,41 @@ DESCRIPTION_OVERRIDES: dict[str, dict[str, str]] = {
         "zh": "ACE-Step-1.5 XL SFT，4B DiT 解码器，高质量音乐生成。",
         "en": "ACE-Step-1.5 XL SFT; 4B DiT decoder for high-quality music generation.",
     },
-    "realism-lora-nsfw": {
+    "realism-lora": {
         "zh": "适用于 FLUX.1-dev；真实感增强 LoRA，提升人物细节。",
         "en": "For FLUX.1-dev; realism enhancement LoRA for finer portrait detail.",
     },
-    "miasweet-nsfw-lora": {
-        "zh": "适用于 FLUX.1-dev；NSFW LoRA，触发词：miasweet。",
-        "en": "For FLUX.1-dev; NSFW LoRA. Trigger word: miasweet.",
+    "awportraitcn-hf": {
+        "zh": "面向中国人像审美训练的 FLUX.1-dev LoRA；棚拍、时尚与室内外写真，肤质细腻自然。建议权重 0.9–1.0。",
+        "en": "FLUX.1-dev portrait LoRA tuned for Chinese aesthetics; studio, fashion, and outdoor portraits. Weight 0.9–1.0 recommended.",
     },
-    "bbw-style": {
-        "zh": "适用于 FLUX.2 Klein 9B 的风格 LoRA。",
-        "en": "Style LoRA for FLUX.2 Klein 9B.",
+    "awportraitcn2-hf": {
+        "zh": "AWPortrait CN 升级版；更广的东方美学与全年龄段面谱，场景与民族服饰响应更好。适用于 FLUX.1-dev，建议权重 0.9–1.0。",
+        "en": "Upgraded AWPortrait CN with broader Eastern aesthetics and age coverage; better scenes and ethnic costumes. For FLUX.1-dev; weight 0.9–1.0.",
     },
-    "lyza": {
-        "zh": "Lyza 风格 LoRA。",
-        "en": "Lyza style LoRA.",
+    "awportrait-z": {
+        "zh": "基于 Z-Image 的东方人像美颜 LoRA；降噪、改善光比与面孔多样性。适用于 Z-Image-Turbo（与 Z-Image Base 适配器互通）；建议权重 0.8。",
+        "en": "Z-Image portrait-beauty LoRA: reduced grain, improved lighting, and face diversity. For Z-Image-Turbo (compatible with Z-Image Base adapters). Weight 0.8 recommended.",
     },
-    "flux-uncensored-enhanceaiteam-v2-ms": {
-        "zh": "enhanceaiteam Flux Uncensored V2 LoRA；适用于 FLUX.1-dev，成人向，请遵守法律与许可。",
-        "en": "enhanceaiteam Flux Uncensored V2 LoRA for FLUX.1-dev; adult content—comply with law and licenses.",
+    "awportrait-fl-hf": {
+        "zh": "时尚摄影向 FLUX.1-dev LoRA；构图与肤质更细腻写实，适合人像与服装大片。建议权重 0.9。",
+        "en": "Fashion-photography FLUX.1-dev LoRA with finer composition and realistic skin. Weight 0.9 recommended.",
     },
-    "flux-uncensored-ryouko-v2-ms": {
-        "zh": "Uncensored V2 社区变体 LoRA；适用于 FLUX.1-dev，成人向。",
-        "en": "Uncensored V2 community variant LoRA for FLUX.1-dev; adult content.",
+    "flux1-dev-lora-add-details-hf": {
+        "zh": "FLUX.1-dev 真实质感增强 LoRA；自然肤质与细节，无固定触发词，建议权重 1.0（可为负向微调）。",
+        "en": "FLUX.1-dev realism/detail LoRA for natural skin; no trigger words. Weight 1.0 recommended (can go negative).",
     },
-    "flux-uncensored-lustlyai-v1-ms": {
-        "zh": "Lustly.ai NSFW/Uncensored LoRA；适用于 FLUX.1-dev。",
-        "en": "Lustly.ai NSFW/uncensored LoRA for FLUX.1-dev.",
+    "flux-asian-portrait-hf": {
+        "zh": "FLUX.1-dev 亚洲女性写实肖像 LoRA；触发词 1girl，建议权重 0.6–1.0。",
+        "en": "FLUX.1-dev realistic Asian female portrait LoRA. Trigger: 1girl. Weight 0.6–1.0.",
     },
-    "flux-uncensored-enhanceaiteam-v1-hf": {
-        "zh": "enhanceaiteam Flux Uncensored V1 LoRA；适用于 FLUX.1-dev，成人向。",
-        "en": "enhanceaiteam Flux Uncensored V1 LoRA for FLUX.1-dev; adult content.",
+    "flux2-klein-asian-real-hf": {
+        "zh": "FLUX.2 Klein 9B 亚洲青年写实人像 LoRA；动漫/插画转真人或文生图均可。触发词如 realistic style of a young Asian girl，建议权重 0.6–1.0。",
+        "en": "FLUX.2 Klein 9B Asian photoreal portrait LoRA for T2I or anime-to-real. Trigger e.g. realistic style of a young Asian girl. Weight 0.6–1.0.",
     },
-    "flux-uncensored-enhanceaiteam-v2-hf": {
-        "zh": "enhanceaiteam Uncensored V2 LoRA；与 V2 系列同源，适用于 FLUX.1-dev。",
-        "en": "enhanceaiteam Uncensored V2 LoRA; same series as V2, for FLUX.1-dev.",
-    },
-    "flux-uncensored-the1ian-hf": {
-        "zh": "the1ian Flux Uncensored LoRA；适用于 FLUX.1-dev，成人向。",
-        "en": "the1ian Flux Uncensored LoRA for FLUX.1-dev; adult content.",
+    "starface-z-image-turbo-ms": {
+        "zh": "StarFace 中国高颜值气质人像 LoRA，绑定 Z-Image-Turbo 快速出图；建议权重 0.6–0.8。",
+        "en": "StarFace Chinese portrait LoRA for Z-Image-Turbo fast generation. Weight 0.6–0.8 recommended.",
     },
     "flux1-dev-lora-antiblur": {
         "zh": "LiblibAI 去糊/清晰增强 LoRA，适用于 FLUX.1-dev。",
@@ -199,6 +195,10 @@ DESCRIPTION_OVERRIDES: dict[str, dict[str, str]] = {
         "zh": "HunyuanVideo 1.5 图生视频蒸馏版，步数更少。",
         "en": "HunyuanVideo 1.5 distilled image-to-video; fewer steps.",
     },
+    "hunyuan-video-1.5-t2v-step-distill": {
+        "zh": "HunyuanVideo 1.5 文生视频蒸馏版，步数更少。",
+        "en": "HunyuanVideo 1.5 distilled text-to-video; fewer steps.",
+    },
     "hunyuan-video-1.5-1080p-sr": {
         "zh": "HunyuanVideo 1.5 超分修复，1080p 超分变体。",
         "en": "HunyuanVideo 1.5 super-resolution; 1080p SR variant.",
@@ -214,29 +214,37 @@ DESCRIPTION_OVERRIDES: dict[str, dict[str, str]] = {
 }
 
 NAME_OVERRIDES: dict[str, dict[str, str]] = {
-    "flux-uncensored-enhanceaiteam-v2-ms": {
-        "zh": "Flux Uncensored V2",
-        "en": "Flux Uncensored V2",
+    "awportraitcn-hf": {
+        "zh": "AWPortrait CN",
+        "en": "AWPortrait CN",
     },
-    "flux-uncensored-ryouko-v2-ms": {
-        "zh": "Flux Uncensored V2 Ryouko",
-        "en": "Flux Uncensored V2 Ryouko",
+    "awportraitcn2-hf": {
+        "zh": "AWPortrait CN2",
+        "en": "AWPortrait CN2",
     },
-    "flux-uncensored-lustlyai-v1-ms": {
-        "zh": "Lustly.ai Uncensored NSFW v1",
-        "en": "Lustly.ai Uncensored NSFW v1",
+    "awportrait-z": {
+        "zh": "AWPortrait Z",
+        "en": "AWPortrait Z",
     },
-    "flux-uncensored-enhanceaiteam-v1-hf": {
-        "zh": "Flux Uncensored V1",
-        "en": "Flux Uncensored V1",
+    "awportrait-fl-hf": {
+        "zh": "AWPortrait FL",
+        "en": "AWPortrait FL",
     },
-    "flux-uncensored-enhanceaiteam-v2-hf": {
-        "zh": "Flux Uncensored V2",
-        "en": "Flux Uncensored V2",
+    "flux1-dev-lora-add-details-hf": {
+        "zh": "FLUX.1-dev Add Details",
+        "en": "FLUX.1-dev Add Details",
     },
-    "flux-uncensored-the1ian-hf": {
-        "zh": "Flux Uncensored the1ian",
-        "en": "Flux Uncensored the1ian",
+    "flux-asian-portrait-hf": {
+        "zh": "Asian Portrait (FLUX.1)",
+        "en": "Asian Portrait (FLUX.1)",
+    },
+    "flux2-klein-asian-real-hf": {
+        "zh": "Klein 9B Asian Real",
+        "en": "Klein 9B Asian Real",
+    },
+    "starface-z-image-turbo-ms": {
+        "zh": "StarFace (Z-Image Turbo)",
+        "en": "StarFace (Z-Image Turbo)",
     },
     "starface-z-image-ms": {
         "zh": "StarFace (Z-Image)",

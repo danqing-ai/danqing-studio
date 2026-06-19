@@ -1,6 +1,6 @@
 """
 API routes - download related
-Supports model download, LoRA download, CivitAI search, progress SSE
+Supports model download, LoRA search/download, progress SSE
 """
 
 import asyncio
@@ -13,7 +13,7 @@ from typing import List, Optional
 from backend.core.container import get_container
 from backend.core.interfaces import IDownloadService, ISettingsService, DownloadProgress, ConversionTask
 from backend.core.i18n import t, resolve_locale
-from backend.third_party.civitai_client import CivitAIClient
+from backend.services.lora_search import list_lora_base_models, search_loras
 
 router = APIRouter(prefix="/api/download", tags=["download"])
 
@@ -39,16 +39,48 @@ class DownloadProgressResponse(BaseModel):
     filename: str
 
 
-class CivitAIModelResponse(BaseModel):
-    id: int
+class DownloadLoraHubRequest(BaseModel):
+    source: str
+    repo_id: Optional[str] = None
+    filename: Optional[str] = None
+    url: Optional[str] = None
+    civitai_version_id: Optional[int] = None
+    base_model: Optional[str] = None
+    display_name: Optional[str] = None
+
+
+class LoraSearchItemResponse(BaseModel):
+    id: str
+    source: str
     name: str
-    description: str
-    type: str
-    nsfw: bool
-    tags: List[str]
-    creator: dict
-    stats: dict
-    model_versions: List[dict]
+    description: str = ""
+    preview_url: str = ""
+    base_model_label: str = ""
+    hub_base_model: str = ""
+    tags: List[str] = []
+    downloads: int = 0
+    likes: int = 0
+    nsfw: bool = False
+    creator: str = ""
+    repo_id: str = ""
+    filename: str = ""
+    download_url: str = ""
+    civitai_model_id: Optional[int] = None
+    civitai_version_id: Optional[int] = None
+    versions: List[dict] = []
+
+
+class LoraSearchResponse(BaseModel):
+    items: List[LoraSearchItemResponse]
+    query: str = ""
+    browse_queries: List[str] = []
+    next_cursor: Optional[str] = None
+    errors: dict = {}
+
+
+class LoraBaseModelResponse(BaseModel):
+    id: str
+    name: str
 
 
 def get_download_service():
@@ -289,123 +321,108 @@ async def list_downloads():
     return result
 
 
-# ===== CivitAI search routes =====
+@router.post("/lora/hub", response_model=DownloadProgressResponse)
+async def download_lora_from_hub(request: DownloadLoraHubRequest):
+    """Download LoRA from Hugging Face, ModelScope, CivitAI, or direct URL."""
+    service = get_download_service()
 
-class CivitAISearchResponse(BaseModel):
-    items: List[CivitAIModelResponse]
-    next_cursor: Optional[str] = None
-    prev_cursor: Optional[str] = None
+    progress_queue: asyncio.Queue = asyncio.Queue()
+
+    async def on_progress(progress: DownloadProgress):
+        await progress_queue.put(progress)
+
+    async def do_download():
+        try:
+            await service.download_lora_from_hub(
+                request.source,
+                repo_id=request.repo_id,
+                filename=request.filename,
+                url=request.url,
+                civitai_version_id=request.civitai_version_id,
+                base_model=request.base_model,
+                display_name=request.display_name,
+                progress_callback=on_progress,
+            )
+        except Exception as e:
+            await progress_queue.put(
+                DownloadProgress(
+                    task_id="",
+                    status="failed",
+                    progress=0,
+                    error_message=str(e),
+                    filename=request.filename or request.repo_id or "",
+                )
+            )
+
+    asyncio.create_task(do_download())
+    first_progress = await progress_queue.get()
+    task_id = first_progress.task_id
+    await progress_queue.put(first_progress)
+
+    return DownloadProgressResponse(
+        task_id=task_id,
+        status="running",
+        progress=0,
+        total_size=0,
+        downloaded_size=0,
+        speed="",
+        error_message="",
+        filename=first_progress.filename,
+    )
 
 
-@router.get("/civitai/search", response_model=CivitAISearchResponse)
-async def search_civitai(
+@router.get("/lora/base-models", response_model=List[LoraBaseModelResponse])
+async def list_lora_base_models_route(req: Request = None):
+    """List registry base models that support LoRA adapters."""
+    locale = resolve_locale(req.headers.get("Accept-Language")) if req else "zh"
+    service = get_download_service()
+    registry = service.get_registry_models()
+    rows = list_lora_base_models(registry, locale=locale)
+    return [LoraBaseModelResponse(**row) for row in rows]
+
+
+@router.get("/lora/search", response_model=LoraSearchResponse)
+async def search_lora_models(
+    req: Request,
     q: str = Query("", description="Search keyword"),
-    types: str = Query("LORA", description="Model type, comma-separated e.g. LORA,Checkpoint"),
-    limit: int = Query(20, ge=1, le=100),
+    base_model: str = Query(..., description="Registry base model id"),
+    source: str = Query("all", description="all | modelscope | huggingface | civitai"),
+    limit: int = Query(500, ge=1, le=500),
     page: int = Query(1, ge=1),
-    cursor: Optional[str] = Query(None, description="Pagination cursor (used during search)"),
-    sort: str = Query("Highest Rated", description="Sort method")
+    cursor: Optional[str] = Query(None, description="CivitAI pagination cursor"),
 ):
-    """Search CivitAI models (no NSFW filtering)"""
+    """Search LoRAs for a selected base model across ModelScope, Hugging Face, and CivitAI."""
     settings = get_settings_service().get_settings()
-    client = CivitAIClient(api_key=settings.civitai_token or None)
+    service = get_download_service()
+    nsfw = True if (settings.civitai_token and settings.nsfw_enabled) else None
+    locale = resolve_locale(req.headers.get("Accept-Language"))
 
     try:
-        type_list = [t.strip() for t in types.split(",")] if types else ["LORA"]
-        result = await client.search(
+        result = await search_loras(
             query=q,
-            types=type_list,
+            base_model_id=base_model,
+            source=source,
             limit=limit,
             page=page,
             cursor=cursor,
-            sort=sort,
-            nsfw=True if (settings.civitai_token and settings.nsfw_enabled) else None
+            hf_token=settings.huggingface_token or None,
+            civitai_token=settings.civitai_token or None,
+            nsfw=nsfw,
+            registry=service.get_registry_models(),
         )
+    except Exception as e:
+        raise HTTPException(
+            status_code=502,
+            detail=t("error.lora_search_failed", locale, msg=str(e)),
+        ) from e
 
-        models = result["items"]
-        metadata = result["metadata"]
-
-        return CivitAISearchResponse(
-            items=[
-                CivitAIModelResponse(
-                    id=m.id,
-                    name=m.name,
-                    description=m.description,
-                    type=m.type,
-                    nsfw=m.nsfw,
-                    tags=m.tags,
-                    creator=m.creator,
-                    stats=m.stats,
-                    model_versions=[
-                        {
-                            "id": v.id,
-                            "name": v.name,
-                            "base_model": v.base_model,
-                            "download_url": v.download_url,
-                            "trained_words": v.trained_words,
-                            "files": [
-                                {
-                                    "name": f.name,
-                                    "download_url": f.download_url,
-                                    "size_kb": f.size_kb,
-                                    "format": f.format,
-                                    "primary": f.primary
-                                }
-                                for f in v.files
-                            ]
-                        }
-                        for v in m.model_versions
-                    ]
-                )
-                for m in models
-            ],
-            next_cursor=metadata.get("nextCursor"),
-            prev_cursor=metadata.get("prevCursor")
-        )
-    finally:
-        await client.close()
-
-
-@router.get("/civitai/model/{model_id}", response_model=CivitAIModelResponse)
-async def get_civitai_model(model_id: int):
-    """Get CivitAI model details"""
-    settings = get_settings_service().get_settings()
-    client = CivitAIClient(api_key=settings.civitai_token or None)
-
-    try:
-        model = await client.get_model(model_id)
-        return CivitAIModelResponse(
-            id=model.id,
-            name=model.name,
-            description=model.description,
-            type=model.type,
-            nsfw=model.nsfw,
-            tags=model.tags,
-            creator=model.creator,
-            stats=model.stats,
-            model_versions=[
-                {
-                    "id": v.id,
-                    "name": v.name,
-                    "base_model": v.base_model,
-                    "download_url": v.download_url,
-                    "trained_words": v.trained_words,
-                    "files": [
-                        {
-                            "name": f.name,
-                            "download_url": f.download_url,
-                            "size_kb": f.size_kb,
-                            "format": f.format,
-                            "primary": f.primary
-                        }
-                        for f in v.files
-                    ]
-                }
-                for v in model.model_versions
-            ]
-        )
-    finally:
-        await client.close()
+    return LoraSearchResponse(
+        items=[LoraSearchItemResponse(**item) for item in result.get("items") or []],
+        query=result.get("query") or "",
+        browse_queries=result.get("browse_queries") or [],
+        next_cursor=result.get("next_cursor"),
+        errors=result.get("errors") or {},
+    )
 
 
 # ===== Model conversion (generate quantized version) =====

@@ -36,6 +36,7 @@ def run_video_denoise(
 ) -> Any | None:
     ctx = pipeline.ctx
     cfg_strategy = resolve_cfg_strategy(model, config, ctx)
+    use_meanflow = bool(getattr(config, "use_meanflow", False))
     builder = VideoStepKwargsBuilder(
         ctx=ctx,
         model=model,
@@ -45,6 +46,8 @@ def run_video_denoise(
         rope_kw=rope_kw,
         sigmas=sigmas,
         timestep_embed_schedule=timestep_embed_schedule,
+        timesteps=timesteps,
+        use_meanflow=use_meanflow,
     )
 
     n_steps = len(timesteps)

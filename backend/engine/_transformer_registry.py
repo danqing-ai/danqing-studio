@@ -60,6 +60,10 @@ _IMAGE_LORA_MERGE = {
     "qwen_image": ("backend.engine.families.qwen.lora_mlx", "merge_qwen_image_lora_adapters"),
 }
 
+_AUDIO_LORA_MERGE = {
+    "ace_step": ("backend.engine.families.ace_step.lora_mlx", "merge_ace_step_lora_adapters"),
+}
+
 _IMAGE_EDIT_EXTRA_COND = {
     "fibo": ("backend.engine.families.fibo.vae_mlx", "attach_edit_conditioning_extra"),
 }
@@ -85,6 +89,15 @@ def get_image_lora_merge(family: str):
     import importlib
 
     entry = _IMAGE_LORA_MERGE.get(family)
+    if entry is None:
+        return None
+    return getattr(importlib.import_module(entry[0]), entry[1])
+
+
+def get_audio_lora_merge(family: str):
+    import importlib
+
+    entry = _AUDIO_LORA_MERGE.get(family)
     if entry is None:
         return None
     return getattr(importlib.import_module(entry[0]), entry[1])
@@ -118,6 +131,35 @@ def merge_image_lora_adapters(
         on_log=on_log,
     )
     merge_fn(**kwargs)
+
+
+def merge_audio_lora_adapters(
+    *,
+    family: str,
+    model: Any,
+    adapters: list[Any],
+    base_model_id: str,
+    project_root: Path,
+    registry: Any,
+    ctx: Any,
+    on_log: Any | None = None,
+) -> None:
+    merge_fn = get_audio_lora_merge(family)
+    if merge_fn is None:
+        supported = ", ".join(sorted(_AUDIO_LORA_MERGE.keys()))
+        raise RuntimeError(
+            "LoRA adapters require in-engine merging; supported audio families are "
+            f"{supported} (this model is family={family!r}). Remove adapters or switch model."
+        )
+    merge_fn(
+        model=model,
+        adapters=adapters,
+        base_model_id=base_model_id,
+        project_root=project_root,
+        registry=registry,
+        ctx=ctx,
+        on_log=on_log,
+    )
 
 
 def attach_image_edit_extra_cond(

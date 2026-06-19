@@ -326,13 +326,14 @@ class MLXContext(RuntimeContext):
 
     def interpolate(self, x: Any, scale_factor: float | tuple, mode: str = "bilinear") -> Any:
         if mode == "bilinear" and x.ndim == 4:
-            B, C, H, W = x.shape
             if isinstance(scale_factor, (int, float)):
                 sf = float(scale_factor)
+                sf_tuple = (sf, sf)
             else:
-                sf = float(scale_factor[0])
-            new_H, new_W = int(H * sf), int(W * sf)
-            return mx.image.resize(x, (new_H, new_W))
+                sf_tuple = (float(scale_factor[0]), float(scale_factor[1]))
+            x_hwc = mx.transpose(x, (0, 2, 3, 1))
+            y_hwc = nn.Upsample(scale_factor=sf_tuple, mode="linear")(x_hwc)
+            return mx.transpose(y_hwc, (0, 3, 1, 2))
         raise NotImplementedError(f"interpolate mode={mode} ndim={x.ndim} not supported for MLX")
 
     # ------------------------------------------------------------------

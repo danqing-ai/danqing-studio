@@ -23,7 +23,7 @@ from backend.core.bundle_repos import (
     version_primary_local_path,
 )
 from backend.core.install_hooks import install_hooks_from_version, run_install_hooks
-from backend.core.bundle_manifest import is_registry_lora_category, write_bundle_manifest
+from backend.core.bundle_manifest import skips_full_family_bundle_contract, write_bundle_manifest
 from backend.core.interfaces import (
     IDownloadService, IPathResolver, IConfigStore,
     DownloadTask, DownloadProgress, TaskStatus, ConversionTask
@@ -63,7 +63,10 @@ class DownloadService(IDownloadService):
             civitai_token = settings.civitai_token or None
 
         # Initialize downloaders
-        self._http_downloader = HTTPDownloader(civitai_token=civitai_token)
+        self._http_downloader = HTTPDownloader(
+            civitai_token=civitai_token,
+            huggingface_token=hf_token,
+        )
         self._cancelled_downloads: set = set()
         self._token = hf_token
 
@@ -295,7 +298,7 @@ class DownloadService(IDownloadService):
         config = self.get_model_download_config(model_name) or {}
         family = str(config.get("family") or "").strip()
         category = str(config.get("category") or "").strip()
-        if family and target.is_dir() and not is_registry_lora_category(category):
+        if family and target.is_dir() and not skips_full_family_bundle_contract(category):
             try:
                 manifest_path = write_bundle_manifest(
                     target,
@@ -972,6 +975,129 @@ class DownloadService(IDownloadService):
             task.error_message = str(e)
             self._persist_downloads()
             raise
+
+    async def download_lora_from_hub(
+        self,
+        source: str,
+        *,
+        repo_id: Optional[str] = None,
+        filename: Optional[str] = None,
+        url: Optional[str] = None,
+        civitai_version_id: Optional[int] = None,
+        base_model: Optional[str] = None,
+        display_name: Optional[str] = None,
+        progress_callback: Optional[Callable[[DownloadProgress], None]] = None,
+        existing_task_id: Optional[str] = None,
+    ) -> str:
+        """Download a remote LoRA from Hugging Face, ModelScope, CivitAI, or direct URL."""
+        from backend.services.lora_search import (
+            resolve_huggingface_lora_filename,
+            resolve_huggingface_lora_url,
+            resolve_modelscope_lora_filename,
+            resolve_modelscope_lora_url,
+        )
+        from backend.third_party.civitai_client import CivitAIClient
+
+        src = (source or "").strip().lower()
+        download_url = (url or "").strip()
+        target_name = (filename or "").strip()
+
+        if src == "civitai":
+            if not download_url and civitai_version_id:
+                client = CivitAIClient(api_key=self._http_downloader._civitai_token)
+                try:
+                    version = await client.get_model_version(civitai_version_id)
+                    primary = next((f for f in version.files if f.primary), version.files[0] if version.files else None)
+                    if not primary:
+                        raise RuntimeError("CivitAI version has no downloadable file")
+                    download_url = primary.download_url
+                    target_name = target_name or primary.name or f"civitai-{civitai_version_id}.safetensors"
+                finally:
+                    await client.close()
+        elif src == "huggingface":
+            if not repo_id:
+                raise ValueError("repo_id is required for Hugging Face LoRA download")
+            if not target_name:
+                target_name = await resolve_huggingface_lora_filename(
+                    repo_id, hf_token=self._token
+                )
+            if not download_url:
+                download_url = resolve_huggingface_lora_url(repo_id, target_name)
+        elif src == "modelscope":
+            if not repo_id:
+                raise ValueError("repo_id is required for ModelScope LoRA download")
+            if not target_name:
+                target_name = resolve_modelscope_lora_filename(repo_id)
+            if not download_url:
+                download_url = resolve_modelscope_lora_url(repo_id, target_name)
+        elif src in ("http", "url"):
+            if not download_url:
+                raise ValueError("url is required for direct LoRA download")
+        else:
+            raise ValueError(f"Unsupported LoRA download source: {source}")
+
+        if not download_url:
+            raise RuntimeError("Could not resolve LoRA download URL")
+        if not target_name:
+            target_name = download_url.rsplit("/", 1)[-1].split("?")[0] or "lora.safetensors"
+        if not target_name.endswith(".safetensors"):
+            target_name = f"{target_name}.safetensors"
+
+        result_path = await self.download_lora(
+            download_url,
+            target_name,
+            progress_callback=progress_callback,
+            existing_task_id=existing_task_id,
+        )
+        if base_model:
+            self._register_remote_lora(
+                result_path,
+                base_model=base_model,
+                display_name=display_name or repo_id or target_name,
+                repo_id=repo_id or "",
+                remote_hub_source=src,
+            )
+        return result_path
+
+    def _register_remote_lora(
+        self,
+        absolute_path: str,
+        *,
+        base_model: str,
+        display_name: str,
+        repo_id: str,
+        remote_hub_source: str,
+    ) -> None:
+        from backend.engine.training.user_lora_registry import list_user_loras, register_user_lora
+
+        project_root = self._path_resolver.get_project_root()
+        config_dir = self._path_resolver.get_workspace_config_dir()
+        path = Path(absolute_path)
+        try:
+            rel = path.relative_to(project_root)
+        except ValueError:
+            rel = Path("models/Lora") / path.name
+        local_path = str(rel).replace("\\", "/")
+
+        for item in list_user_loras(config_dir):
+            if str(item.get("local_path") or "") == local_path:
+                return
+            if repo_id and str(item.get("repo_id") or "") == repo_id and str(item.get("base_model") or "") == base_model:
+                return
+
+        register_user_lora(
+            config_dir,
+            name=display_name.strip() or path.stem,
+            base_model=base_model.split(":", 1)[0].strip(),
+            local_path=local_path,
+            source="remote_download",
+            repo_id=repo_id,
+            remote_hub_source=remote_hub_source,
+        )
+
+    def get_registry_models(self) -> Dict[str, Any]:
+        """Expanded registry ``models`` map for download/search helpers."""
+        return self._load_registry()
 
     def list_downloads(self) -> List[DownloadTask]:
         """List all download tasks."""

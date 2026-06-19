@@ -137,8 +137,16 @@ defineExpose({ scrollToTop, canvasRef, layoutRef });
   max-width: 1400px;
   margin: 0 auto;
   width: 100%;
+  min-width: 0;
   padding: 10px 20px;
   box-sizing: border-box;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.studio-filter-bar__inner::-webkit-scrollbar {
+  display: none;
 }
 
 .studio-canvas-area {

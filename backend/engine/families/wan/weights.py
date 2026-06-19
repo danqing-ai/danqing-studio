@@ -56,6 +56,8 @@ def remap_wan_weights(weights: dict) -> dict:
         new_key = new_key.replace(".ffn.2.weight", ".ffn.layer_2.weight")
         new_key = new_key.replace(".ffn.2.bias", ".ffn.layer_2.bias")
         new_key = new_key.replace(".norm_q.weight", ".norm_q.weight")
+        # Official Wan ``Head`` module: ``head.head`` linear → flat ``head.1`` (see ``_param_map``).
+        new_key = new_key.replace("head.head.", "head.1.")
         new_key, tensor = _patch_embedding_weight_to_linear(new_key, tensor)
         remapped[new_key] = tensor
     return remapped

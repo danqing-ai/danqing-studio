@@ -183,8 +183,18 @@ export const api = {
       return response.data;
     },
 
-    async civitaiSearch(params: Record<string, unknown>): Promise<unknown> {
-      const response = await client.get('/api/download/civitai/search', { params });
+    async searchLoras(params: Record<string, unknown>): Promise<unknown> {
+      const response = await client.get('/api/download/lora/search', { params });
+      return response.data;
+    },
+
+    async listLoraBaseModels(): Promise<unknown> {
+      const response = await client.get('/api/download/lora/base-models');
+      return response.data;
+    },
+
+    async startLoraHubDownload(body: Record<string, unknown>): Promise<unknown> {
+      const response = await client.post('/api/download/lora/hub', body);
       return response.data;
     },
 
@@ -861,6 +871,11 @@ export const api = {
 
     async listUserAdapters(): Promise<unknown> {
       const response = await client.get('/api/loras/user-adapters');
+      return response.data;
+    },
+
+    async listDownloadedAdapters(): Promise<unknown> {
+      const response = await client.get('/api/loras/downloaded-adapters');
       return response.data;
     },
 

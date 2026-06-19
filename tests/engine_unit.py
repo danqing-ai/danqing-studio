@@ -151,6 +151,51 @@ class ZImageEnhancementTests(unittest.TestCase):
         self.assertEqual(req.lemica_mode, "medium")
         self.assertEqual(req.latent_refine.scale, 1.5)
 
+    def test_latent_refine_reads_entry_family_not_runtime(self) -> None:
+        from unittest.mock import patch
+
+        from backend.core.contracts import LatentRefineSpec
+        from backend.engine.families.z_image.latent_refine import apply_latent_refine_if_requested
+
+        entry = SimpleNamespace(family="z_image")
+        request = SimpleNamespace(
+            latent_refine=LatentRefineSpec(scale=1.5, denoise_strength=0.35),
+            seed=0,
+        )
+        latents = SimpleNamespace(shape=(16, 1, 96, 60), ndim=4)
+
+        with patch(
+            "backend.engine.common.mlx_only.require_mlx_backend",
+            side_effect=RuntimeError("family_check_passed"),
+        ):
+            with self.assertRaises(RuntimeError) as ctx:
+                apply_latent_refine_if_requested(
+                    pipeline=SimpleNamespace(ctx=SimpleNamespace(backend="mlx")),
+                    latents=latents,
+                    request=request,
+                    entry=entry,
+                    version_key="fp16",
+                    model=None,
+                    timesteps=[],
+                    sigmas=None,
+                    txt_embeds=None,
+                    neg_embeds=None,
+                    guidance=0.0,
+                    extra_cond={},
+                )
+        self.assertEqual(str(ctx.exception), "family_check_passed")
+
+    def test_latent_refine_resize_uses_mlx_nn_upsample(self) -> None:
+        import mlx.core as mx
+
+        from backend.engine.families.z_image.latent_refine import _resize_latent_nchw
+        from backend.engine.runtime.mlx import MLXContext
+
+        ctx = MLXContext()
+        latents = mx.random.normal((16, 1, 96, 60))
+        out = _resize_latent_nchw(ctx, latents, 144, 90, mode="linear")
+        self.assertEqual(tuple(out.shape), (16, 1, 144, 90))
+
     def test_merged_model_id_slug(self) -> None:
         from backend.engine.tools.user_merged_model_registry import merged_model_id_from_output_name
 
@@ -881,6 +926,46 @@ class LtxWeightTests(unittest.TestCase):
 
         self.assertEqual(LTXTransformer.__name__, "LTXTransformer")
 
+    def test_ltx_timestep_embedder_callable(self) -> None:
+        import mlx.core as mx
+
+        from backend.engine.families.ltx.transformer_mlx import LTX23AdaLayerNormSingle
+
+        adaln = LTX23AdaLayerNormSingle(4096, num_params=9, timestep_dim=256)
+        t_emb = mx.zeros((1, 256))
+        params, embedded = adaln(t_emb)
+        self.assertEqual(tuple(params.shape), (1, 9 * 4096))
+        self.assertEqual(tuple(embedded.shape), (1, 4096))
+
+    def test_ltx_upsampler_weight_path_dgrauet_bundle(self) -> None:
+        from tests.benchmark.registry_utils import resolve_benchmark_data_root
+
+        from backend.engine.families.ltx.vae_mlx import _resolve_upsampler_weight_path
+
+        bundle = resolve_benchmark_data_root() / "models/Video/ltx-2.3-distilled-mlx-q4"
+        if not bundle.is_dir():
+            return
+        path = _resolve_upsampler_weight_path(bundle, "spatial_x2")
+        self.assertEqual(path.name, "spatial_upscaler_x2_v1_1.safetensors")
+
+        from backend.engine.families.ltx.vae_mlx import load_ltx23_latent_upsampler
+        from backend.engine.runtime.mlx import MLXContext
+
+        ctx = MLXContext()
+        up = load_ltx23_latent_upsampler(bundle, load_fn=ctx.load_weights)
+        self.assertEqual(up.mid_channels, 1024)
+
+    def test_ltx_video_decoder_per_channel_stats(self) -> None:
+        import mlx.nn as nn
+
+        from backend.engine.families.ltx.vae_mlx import LTX23VideoDecoder
+
+        dec = LTX23VideoDecoder(causal=False, spatial_padding_mode="zeros")
+        stats = dec.per_channel_statistics.parameters()
+        self.assertIn("mean", stats)
+        self.assertIn("std", stats)
+        self.assertNotIn("mean_of_means", stats)
+
 
 class ZImageCudaTests(unittest.TestCase):
     def test_transformer_dispatch_mlx(self) -> None:
@@ -1179,6 +1264,77 @@ class DiTBackendDispatchTests(unittest.TestCase):
         model = LTXTransformer(LTXConfig(), MLXContext())
         self.assertIsInstance(model._inner, LTXMLX)
 
+    def test_ltx_distilled_stage1_steps_floor(self) -> None:
+        from backend.engine.families.ltx.generation_mlx import _resolve_distilled_stage1_steps
+
+        logs: list[tuple[str, str]] = []
+
+        def _on_log(level: str, msg: str) -> None:
+            logs.append((level, msg))
+
+        self.assertEqual(_resolve_distilled_stage1_steps(4, on_log=_on_log), 8)
+        self.assertTrue(any(lvl == "warning" for lvl, _ in logs))
+        self.assertEqual(_resolve_distilled_stage1_steps(10, on_log=_on_log), 10)
+
+    def test_ltx_dev_guider_defaults_match_reference(self) -> None:
+        from backend.engine.families.ltx.pipeline_math import (
+            ltx2_schedule,
+            ltx_dev_audio_guider_params,
+            ltx_dev_video_guider_params,
+        )
+
+        video = ltx_dev_video_guider_params(3.0)
+        self.assertEqual(video.cfg_scale, 3.0)
+        self.assertEqual(video.stg_scale, 1.0)
+        self.assertEqual(video.modality_scale, 3.0)
+        self.assertEqual(video.stg_blocks, (28,))
+
+        audio = ltx_dev_audio_guider_params()
+        self.assertEqual(audio.cfg_scale, 7.0)
+
+        sigmas = ltx2_schedule(28, 1024)
+        self.assertEqual(len(sigmas), 29)
+        self.assertEqual(sigmas[0], 1.0)
+        self.assertEqual(sigmas[-1], 0.0)
+
+    def test_ltx_denoise_loop_emits_progress(self) -> None:
+        from unittest.mock import MagicMock
+
+        import mlx.core as mx
+
+        from backend.engine.families.ltx.generation_mlx import _denoise_loop
+        from backend.engine.families.ltx.pipeline_math import LatentState
+        from backend.engine.runtime.mlx import MLXContext
+
+        ctx = MLXContext()
+        model = MagicMock()
+        latent = mx.zeros((1, 4, 128), dtype=mx.bfloat16)
+        model.return_value = (latent, latent)
+        state = LatentState(
+            latent=latent,
+            clean_latent=latent,
+            denoise_mask=mx.ones((1, 4, 1), dtype=mx.bfloat16),
+            positions=None,
+        )
+        progress_calls: list[tuple[int, int]] = []
+
+        def _on_progress(p, step, total, _msg=None, _phase=None):
+            progress_calls.append((int(step), int(total)))
+
+        _denoise_loop(
+            ctx,
+            model,
+            state,
+            state,
+            latent,
+            latent,
+            [1.0, 0.5, 0.0],
+            on_progress=_on_progress,
+            progress_step_offset=0,
+            progress_total_steps=2,
+        )
+        self.assertEqual(progress_calls, [(1, 2), (2, 2)])
+
     def test_ltx_dispatch_cuda_fail_loud(self) -> None:
         from backend.engine.config.model_configs import LTXConfig
         from backend.engine.families.ltx.transformer import LTXTransformer
@@ -1415,7 +1571,7 @@ class AceStepGenerationTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             bundle = Path(tmp)
-            dit = bundle / "acestep-v15-turbo"
+            dit = bundle / "acestep-v15-xl-turbo"
             dit.mkdir()
             (dit / "config.json").write_text(
                 json.dumps({"is_turbo": True}),
@@ -1423,10 +1579,10 @@ class AceStepGenerationTests(unittest.TestCase):
             )
             (dit / "model.safetensors").write_bytes(b"")
 
-            self.assertTrue(resolve_bundle_is_turbo(bundle))
+            self.assertTrue(resolve_bundle_is_turbo(bundle, dit_subdir="acestep-v15-xl-turbo"))
 
             req = AudioGenerationRequest(
-                model="ace-step-xl-sft",
+                model="ace-step-xl-turbo",
                 prompt="piano",
                 lyrics="[verse]\n月光洒在窗前",
                 duration=10,
@@ -1454,7 +1610,7 @@ class AceStepGenerationTests(unittest.TestCase):
             from pathlib import Path
 
             bundle = Path(tmp)
-            dit = bundle / "acestep-v15-turbo"
+            dit = bundle / "acestep-v15-xl-sft"
             dit.mkdir()
             (dit / "config.json").write_text("{}", encoding="utf-8")
             (dit / "model.safetensors").write_bytes(b"")
@@ -1503,7 +1659,7 @@ class AceStepGenerationTests(unittest.TestCase):
             from pathlib import Path
 
             bundle = Path(tmp)
-            dit = bundle / "acestep-v15-turbo"
+            dit = bundle / "acestep-v15-xl-sft"
             dit.mkdir()
             (dit / "config.json").write_text("{}", encoding="utf-8")
             (dit / "model.safetensors").write_bytes(b"")
@@ -1827,6 +1983,44 @@ class AceStepGenerationTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             get_audio_prepare_request("unknown_audio_family")
 
+    def test_ace_step_dit_subdir_for_model(self) -> None:
+        from backend.engine.families.ace_step.weights import ace_step_dit_subdir_for_model
+
+        self.assertEqual(ace_step_dit_subdir_for_model("ace-step-xl-sft"), "acestep-v15-xl-sft")
+        self.assertEqual(ace_step_dit_subdir_for_model("ace-step-xl-sft:int8"), "acestep-v15-xl-sft")
+        self.assertIsNone(ace_step_dit_subdir_for_model("unknown-model"))
+
+    def test_ace_step_lora_base_compatible(self) -> None:
+        from backend.engine.families.ace_step.weights import ace_step_lora_base_compatible
+
+        self.assertTrue(ace_step_lora_base_compatible("ace-step-xl-sft", "ace-step-xl-turbo"))
+        self.assertFalse(ace_step_lora_base_compatible("ace-step-xl-sft", "flux1-dev"))
+
+    def test_remap_ace_step_lora_keys_peft(self) -> None:
+        import numpy as np
+
+        from backend.engine.families.ace_step.weights import remap_ace_step_lora_keys
+
+        weights = {
+            "base_model.model.layers.0.self_attn.q_proj.lora_A.weight": np.zeros((4, 8), dtype=np.float32),
+            "base_model.model.layers.0.self_attn.q_proj.lora_B.weight": np.zeros((16, 4), dtype=np.float32),
+            "base_model.model.layers.0.self_attn.q_proj.alpha": np.array(64.0, dtype=np.float32),
+        }
+        groups = remap_ace_step_lora_keys(weights)
+        self.assertIn("layers.0.self_attn.q_proj", groups)
+        down, up, alpha = groups["layers.0.self_attn.q_proj"]
+        self.assertEqual(tuple(down.shape), (4, 8))
+        self.assertEqual(tuple(up.shape), (16, 4))
+        self.assertEqual(alpha, 64.0)
+
+    def test_merge_audio_lora_registry(self) -> None:
+        from backend.engine._transformer_registry import get_audio_lora_merge
+
+        merge_fn = get_audio_lora_merge("ace_step")
+        self.assertIsNotNone(merge_fn)
+        self.assertTrue(callable(merge_fn))
+        self.assertIsNone(get_audio_lora_merge("diffrhythm"))
+
 
 class RegistrySeedTests(unittest.TestCase):
     def test_seed_workspace_config_copies_registry_once(self) -> None:
@@ -1976,6 +2170,22 @@ class HunyuanWeightTests(unittest.TestCase):
         self.assertTrue(hasattr(WanModelMLX, "after_load_weights"))
         self.assertTrue(hasattr(WanModelMLX, "invalidate_text_cache"))
 
+    def test_remap_wan_weights_head_head_linear(self) -> None:
+        from backend.engine.families.wan.weights import remap_wan_weights
+
+        out = remap_wan_weights(
+            {
+                "head.head.weight": "w",
+                "head.head.bias": "b",
+                "head.modulation": "m",
+                "blocks.0.self_attn.q.weight": "q",
+            }
+        )
+        self.assertEqual(out["head.1.weight"], "w")
+        self.assertEqual(out["head.1.bias"], "b")
+        self.assertEqual(out["head.modulation"], "m")
+        self.assertEqual(out["blocks.0.self_attn.q.weight"], "q")
+
     def test_wan_t2v_skips_expand_timesteps(self) -> None:
         """T2V must not set wan_expand_timesteps (scalar adaLN); I2V requires it."""
         import mlx.core as mx
@@ -2123,6 +2333,50 @@ class HunyuanWeightTests(unittest.TestCase):
         self.assertLess(float(mx.max(mx.abs(patchify(x, 2) - p))), 1e-5)
         self.assertLess(float(mx.max(mx.abs(x - u))), 1e-5)
 
+    def test_wan_vae_encode_decode_roundtrip(self) -> None:
+        """MLX Wan 2.2 VAE must decode with per-frame causal cache (not full-volume)."""
+        from pathlib import Path
+
+        import mlx.core as mx
+        import numpy as np
+
+        from backend.engine.families.wan.vae_mlx import (
+            _vae_cache,
+            decode_wan_vae_latents,
+            encode_wan_vae_image,
+        )
+        from backend.engine.runtime.mlx import MLXContext
+        from tests.benchmark.registry_utils import resolve_benchmark_data_root
+
+        bundle = resolve_benchmark_data_root() / "models/Video/wan-2.2-ti2v-5b-original"
+        if not bundle.is_dir():
+            self.skipTest("Wan TI2V bundle not installed for VAE roundtrip test")
+
+        _vae_cache.clear()
+        ctx = MLXContext()
+        rng = np.random.default_rng(0)
+        chw = mx.array(rng.standard_normal((3, 64, 64), dtype=np.float32) * 0.25)
+        z = encode_wan_vae_image(ctx, chw, bundle)
+        z_vol = mx.concatenate(
+            [
+                z,
+                mx.zeros(
+                    (1, int(z.shape[1]), 2, int(z.shape[3]), int(z.shape[4])),
+                    dtype=z.dtype,
+                ),
+            ],
+            axis=2,
+        )
+        pixels = decode_wan_vae_latents(ctx, z_vol, bundle)
+        mx.eval(pixels)
+        self.assertEqual(int(pixels.shape[0]), 1)
+        self.assertEqual(int(pixels.shape[1]), 3)
+        self.assertGreater(int(pixels.shape[2]), 1)
+        self.assertLess(float(mx.max(mx.abs(pixels))), 1.01)
+        self.assertGreater(float(mx.std(pixels)), 0.01)
+        # Frame 1+ must not collapse (Resample used to mis-flatten b/t).
+        self.assertGreater(float(mx.std(pixels[:, :, 1])), 0.05)
+
     def test_extract_glyph_texts(self) -> None:
         from backend.engine.families.hunyuan.text_encoder import extract_glyph_texts
 
@@ -2142,16 +2396,24 @@ class HunyuanWeightTests(unittest.TestCase):
         self.assertIn("hunyuan-video-1.5-480p-t2v", models)
         self.assertEqual(models["hunyuan-video-1.5-480p-t2v"]["family"], "hunyuan")
         self.assertIn("hunyuan-video-1.5-i2v-step-distill", models)
-        distill = models["hunyuan-video-1.5-i2v-step-distill"]["parameters"]
-        self.assertFalse(distill.get("supports_guidance"))
-        self.assertFalse(distill.get("negative_prompt_support"))
-        self.assertNotIn("guide_scale", distill)
+        self.assertIn("hunyuan-video-1.5-t2v-step-distill", models)
+        for mid in (
+            "hunyuan-video-1.5-i2v-step-distill",
+            "hunyuan-video-1.5-t2v-step-distill",
+        ):
+            distill = models[mid]["parameters"]
+            self.assertFalse(distill.get("supports_guidance"), msg=mid)
+            self.assertTrue(distill.get("step_distill"), msg=mid)
+            self.assertFalse(distill.get("negative_prompt_support"), msg=mid)
+            self.assertNotIn("guide_scale", distill, msg=mid)
+        self.assertIn("animate", models["hunyuan-video-1.5-i2v-step-distill"].get("actions") or {})
+        self.assertIn("create", models["hunyuan-video-1.5-t2v-step-distill"].get("actions") or {})
 
     def test_hunyuan_sr_scheduler_sigmas(self) -> None:
         import mlx.core as mx
 
         from backend.engine.common.ops.schedulers import FlowMatchEulerScheduler
-        from backend.engine.families.hunyuan.sr_mlx import _configure_step_distill_scheduler
+        from backend.engine.families.hunyuan.sr_mlx import configure_hunyuan_step_distill_timesteps
 
         class _Ctx:
             @staticmethod
@@ -2172,7 +2434,7 @@ class HunyuanWeightTests(unittest.TestCase):
 
         ctx = _Ctx()
         sched = FlowMatchEulerScheduler(ctx=ctx)
-        timesteps = _configure_step_distill_scheduler(ctx, sched, 6)
+        timesteps = configure_hunyuan_step_distill_timesteps(ctx, sched, 6)
         self.assertEqual(int(timesteps.shape[0]), 6)
 
     def test_hunyuan_registry_modelscope_repos(self) -> None:
@@ -2183,6 +2445,7 @@ class HunyuanWeightTests(unittest.TestCase):
             "hunyuan-video-1.5-480p-t2v",
             "hunyuan-video-1.5-480p-i2v",
             "hunyuan-video-1.5-i2v-step-distill",
+            "hunyuan-video-1.5-t2v-step-distill",
             "hunyuan-video-1.5-1080p-sr",
         ):
             m = models[mid]
@@ -2762,6 +3025,18 @@ class BundleManifestTests(unittest.TestCase):
             )
             assert_bundle_ready_for_family(root, family="ace_step", model_id="ace-step-xl-sft")
 
+    def test_assert_bundle_ready_esrgan_single_safetensors(self) -> None:
+        from backend.core.bundle_manifest import assert_bundle_ready_for_family, scan_components
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "model.safetensors").write_bytes(b"x")
+            (root / "config.json").write_text("{}", encoding="utf-8")
+
+            components = scan_components(root)
+            self.assertIn("transformer", components)
+            assert_bundle_ready_for_family(root, family="esrgan", model_id="real-esrgan-x4plus")
+
     def test_t5_encoder_bundle_paths_flux_layout(self) -> None:
         from backend.engine.common.bundle.layout import t5_encoder_bundle_paths
 
@@ -2805,12 +3080,21 @@ class BundleManifestTests(unittest.TestCase):
             self.assertIn("text_encoder", status["missing"])
 
     def test_lora_registry_category_skips_full_bundle_contract(self) -> None:
-        from backend.core.bundle_manifest import is_registry_lora_category
+        from backend.core.bundle_manifest import (
+            is_registry_controlnet_category,
+            is_registry_lora_category,
+            skips_full_family_bundle_contract,
+        )
         from backend.core.interfaces import ModelConfig
         from backend.services.services import SettingsService
 
         self.assertTrue(is_registry_lora_category("loras"))
         self.assertFalse(is_registry_lora_category("base_models"))
+        self.assertTrue(is_registry_controlnet_category("controlnets"))
+        self.assertFalse(is_registry_controlnet_category("base_models"))
+        self.assertTrue(skips_full_family_bundle_contract("loras"))
+        self.assertTrue(skips_full_family_bundle_contract("controlnets"))
+        self.assertFalse(skips_full_family_bundle_contract("base_models"))
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2846,7 +3130,60 @@ class BundleManifestTests(unittest.TestCase):
             category = config.category or ""
             family = config.family or ""
             components = None
-            if SettingsService._path_has_bundle_weights(model_dir) and family and category != "loras":
+            if (
+                SettingsService._path_has_bundle_weights(model_dir)
+                and family
+                and not skips_full_family_bundle_contract(category)
+            ):
+                from backend.core.bundle_manifest import bundle_component_status
+
+                components = bundle_component_status(model_dir, family=family)
+            self.assertIsNone(components)
+
+    def test_controlnet_registry_category_skips_full_bundle_contract(self) -> None:
+        from backend.core.bundle_manifest import skips_full_family_bundle_contract
+        from backend.core.interfaces import ModelConfig
+        from backend.services.services import SettingsService
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cn_dir = root / "models" / "ControlNet" / "test-controlnet-8steps"
+            cn_dir.mkdir(parents=True)
+            (cn_dir / "controlnet.safetensors").write_bytes(b"x")
+
+            config = ModelConfig(
+                engine="danqing-image",
+                type="controlnet",
+                name={"zh": "Test ControlNet", "en": "Test ControlNet"},
+                category="controlnets",
+                family="z_image",
+                versions={
+                    "8steps": {
+                        "local_path": "models/ControlNet/test-controlnet-8steps",
+                    }
+                },
+            )
+
+            class _Resolver:
+                def resolve_registry_local_path(self, local_path: str) -> Path:
+                    return (root / local_path).resolve()
+
+            svc = SettingsService.__new__(SettingsService)
+            svc._path_resolver = _Resolver()
+            model_dir = svc._resolve_registry_version_bundle_dir(
+                "test-controlnet", "8steps", config.versions["8steps"]
+            )
+            self.assertTrue(model_dir.exists())
+            self.assertTrue(SettingsService._path_has_bundle_weights(model_dir))
+
+            category = config.category or ""
+            family = config.family or ""
+            components = None
+            if (
+                SettingsService._path_has_bundle_weights(model_dir)
+                and family
+                and not skips_full_family_bundle_contract(category)
+            ):
                 from backend.core.bundle_manifest import bundle_component_status
 
                 components = bundle_component_status(model_dir, family=family)
@@ -3438,6 +3775,55 @@ class QuantizedInferenceModeTests(unittest.TestCase):
         self.assertEqual(mode.bits, 4)
         self.assertEqual(mode.cache_suffix(), ":q4")
 
+    def test_read_affine_quant_bits_from_quantize_config(self) -> None:
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from backend.engine.common.bundle.safetensors_affine_quant import (
+            read_affine_quant_bits_from_quantize_config,
+            read_affine_quant_group_size_from_quantize_config,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "quantize_config.json").write_text(
+                json.dumps({"quantization": {"bits": 4, "group_size": 64}}),
+                encoding="utf-8",
+            )
+            self.assertEqual(read_affine_quant_bits_from_quantize_config(root), 4)
+            self.assertEqual(read_affine_quant_group_size_from_quantize_config(root), 64)
+
+    def test_resolve_quantized_group_size_from_registry(self) -> None:
+        from backend.engine.common.bundle.quant_inference import resolve_inference_weight_mode
+
+        entry = type(
+            "E",
+            (),
+            {
+                "raw": {
+                    "versions": {
+                        "mlx-q4": {
+                            "quantization": {
+                                "bits": 4,
+                                "scheme": "mlx_affine",
+                                "group_size": 64,
+                            },
+                        }
+                    }
+                }
+            },
+        )()
+        mode = resolve_inference_weight_mode(
+            entry,
+            "mlx-q4",
+            type("C", (), {"backend": "mlx"})(),
+            weight_keys=frozenset({"blocks.0.weight", "blocks.0.scales"}),
+        )
+        self.assertEqual(mode.kind, "quantized")
+        self.assertEqual(mode.bits, 4)
+        self.assertEqual(mode.group_size, 64)
+
     def test_quantized_inference_rejects_non_mlx_backend(self) -> None:
         from backend.engine.common.bundle.quant_inference import resolve_inference_weight_mode
 
@@ -3703,6 +4089,33 @@ class InferenceLayerTests(unittest.TestCase):
         )
         self.assertEqual(out, "refined(min=0.12)")
 
+    def test_batched_cfg_skips_when_no_uncond_embeds(self) -> None:
+        from backend.engine.inference.cfg_strategies import BatchedCfgStrategy
+
+        class _Model:
+            def __init__(self) -> None:
+                self.calls: list[str] = []
+
+            def __call__(self, latents, t, **kwargs):
+                self.calls.append("forward")
+                return "single"
+
+            def predict_noise_cfg(self, *args, **kwargs):
+                raise AssertionError("batched CFG should not run without uncond txt_embeds")
+
+        model = _Model()
+        strat = BatchedCfgStrategy()
+        out = strat.predict_noise(
+            model,
+            "latents",
+            0.5,
+            cond_kwargs={"txt_embeds": "pos"},
+            uncond_kwargs=None,
+            guidance=1.0,
+        )
+        self.assertEqual(out, "single")
+        self.assertEqual(model.calls, ["forward"])
+
     def test_diffusion_inference_passes_cfg_renorm(self) -> None:
         from backend.engine.inference._protocols import InferenceBundle
         from backend.engine.inference.diffusion import DiffusionInference
@@ -3897,6 +4310,55 @@ class InferenceLayerTests(unittest.TestCase):
             )
         self.assertIn("step_distill", str(ctx.exception))
 
+    def test_ltx_connector_bundle_key_remap(self) -> None:
+        import mlx.core as mx
+
+        from backend.engine.families.ltx.text_encoder_mlx import (
+            _GemmaFeaturesExtractor,
+            _load_connector_weights,
+            _materialize,
+            _remap_connector_bundle_keys,
+        )
+        from tests.benchmark.registry_utils import resolve_benchmark_data_root
+
+        src_key = "audio_embeddings_connector.transformer_1d_blocks.0.ff.net.0.proj.weight"
+        dst_key = "audio_embeddings_connector.transformer_1d_blocks.0.ff.net.0.weight"
+        remapped = _remap_connector_bundle_keys({src_key: mx.zeros((4, 8))})
+        self.assertIn(dst_key, remapped)
+        self.assertNotIn(src_key, remapped)
+
+        bundle = resolve_benchmark_data_root() / "models/Video/ltx-2.3-distilled-mlx-q4"
+        if not (bundle / "connector.safetensors").is_file():
+            return
+
+        from backend.engine.runtime.mlx import MLXContext
+
+        ctx = MLXContext()
+        weights = _load_connector_weights(bundle, ctx.load_weights)
+        ext = _GemmaFeaturesExtractor()
+        ext.connector.load_weights(list(weights.items()))
+        conn = ext.connector
+        _materialize(
+            conn.video_embeddings_connector.learnable_registers,
+            conn.audio_embeddings_connector.learnable_registers,
+        )
+
+    def test_ltx_connector_attention_output_rank(self) -> None:
+        import mlx.core as mx
+
+        from backend.engine.families.ltx.text_encoder_mlx import _ConnectorAttention
+
+        attn = _ConnectorAttention(dim=4096, num_heads=32, head_dim=128)
+        x = mx.zeros((1, 16, 4096))
+        seq = 16
+        inner = 4096
+        num_heads = 32
+        head_dim_half = inner // (2 * num_heads)
+        cos_f = mx.zeros((1, num_heads, seq, head_dim_half))
+        sin_f = mx.zeros((1, num_heads, seq, head_dim_half))
+        out = attn(x, cos_f, sin_f)
+        self.assertEqual(tuple(out.shape), (1, 16, 4096))
+
     def test_attach_image_conditioning_noop_without_guide(self) -> None:
         from types import SimpleNamespace
 
@@ -4018,6 +4480,25 @@ class ArchitectureWrapUpTests(unittest.TestCase):
         )
         self.assertEqual(resolve_video_upscale_kind(seed_entry, "fp16"), "seedvr2_spatiotemporal")
         self.assertIsNotNone(get_video_upscale_runner("seedvr2_spatiotemporal"))
+
+    def test_video_hunyuan_step_distill_flag(self) -> None:
+        from types import SimpleNamespace
+
+        from backend.engine.contracts import (
+            video_uses_hunyuan_step_distill_timesteps,
+        )
+
+        cfg = SimpleNamespace(video_i2v_style="hunyuan")
+        self.assertTrue(
+            video_uses_hunyuan_step_distill_timesteps(
+                cfg, step_distill=True, scheduler_default="flow_match_euler",
+            )
+        )
+        self.assertFalse(
+            video_uses_hunyuan_step_distill_timesteps(
+                cfg, step_distill=False, scheduler_default="flow_match_euler",
+            )
+        )
 
     def test_video_ltx_distilled_flag(self) -> None:
         from types import SimpleNamespace
@@ -5052,6 +5533,35 @@ class ZImageLoraExportTests(unittest.TestCase):
             path = Path(tmp) / "adapter.safetensors"
             mx.save_safetensors(str(path), weights)
             _validate_saved_lora(path)
+
+
+class LoraSearchQueryTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        import json
+        from pathlib import Path
+
+        raw = json.loads(Path("default_config/models_registry.json").read_text())
+        cls.registry = raw.get("models") or raw
+
+    def test_build_search_query_keeps_user_keywords(self) -> None:
+        from backend.services.lora_search import build_search_query
+
+        self.assertEqual(
+            build_search_query(self.registry, "z-image-turbo", "StarFace"),
+            "StarFace",
+        )
+
+    def test_build_search_query_uses_registry_terms(self) -> None:
+        from backend.services.lora_search import build_search_query, resolve_lora_browse_queries
+
+        queries = resolve_lora_browse_queries(self.registry, "z-image-turbo")
+        self.assertIn("Z-Image-Turbo lora", queries)
+        self.assertIn("z-image lora", queries)
+        self.assertEqual(
+            build_search_query(self.registry, "z-image-turbo", ""),
+            queries[0],
+        )
 
 
 if __name__ == "__main__":

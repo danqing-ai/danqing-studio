@@ -489,6 +489,18 @@ def decode_image_edit_latents(ctx: ImageEditRunContext, latents: Any) -> Any:
         guidance=ctx.guidance,
         extra_cond=ctx.extra_cond,
         on_log=ctx.on_log,
+        scheduler=ctx.scheduler,
+        config=ctx.config,
+        runtime_contract=ctx.runtime_contract,
+        semantics=ctx.semantics,
+        exec_ctx=ctx.exec_ctx,
+        encoder_type=ctx.encoder_type,
+        sched_ts=ctx.sched_ts,
+        timestep_embed_schedule=ctx.timestep_embed_schedule,
+        pooled_embeds=ctx.pooled_embeds,
+        neg_pooled_embeds=ctx.neg_pooled_embeds,
+        txt_attn_mask=ctx.txt_attn_mask,
+        neg_attn_mask=ctx.neg_attn_mask,
     )
     pipeline_graph_step("decode_vae", ctx.on_log)
     image = image_vae_decode(

@@ -28,7 +28,7 @@
   <div class="studio-gallery-filters__spacer" />
 
   <div
-    v-if="viewMode && supportsCanvas !== false"
+    v-if="viewMode && supportsCanvas !== false && !(selectedCount ?? 0)"
     class="studio-gallery-filters__view-mode"
     :aria-label="$t('gallery.viewMode')"
   >
@@ -128,9 +128,8 @@ function onViewModeChange(mode: 'grid' | 'canvas') {
 .studio-gallery-filters__actions {
   display: flex;
   align-items: center;
-  flex: 0 0 240px;
-  min-width: 200px;
-  max-width: 320px;
+  flex: 0 0 auto;
+  flex-shrink: 0;
   justify-content: flex-end;
 }
 

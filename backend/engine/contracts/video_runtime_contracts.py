@@ -297,6 +297,12 @@ def video_i2v_encode_failure_message(config: Any) -> str:
             "Ensure the model bundle includes LTX Video VAE encoder weights "
             "(vae/ or vae_decoder.safetensors) under the bundle root."
         )
+    if style == "hunyuan":
+        return (
+            "HunyuanVideo image-to-video (animate) failed to VAE-encode the source image. "
+            "Ensure the model bundle includes vae/ weights and image_encoder/ SigLIP "
+            "vision weights under the bundle root."
+        )
     return (
         "Image-to-video (animate) requires encoding the first RGB frame into "
         "video latents. DanQing does not yet implement the Lightricks "
@@ -365,6 +371,31 @@ def video_uses_ltx_distilled_timesteps(
         and scheduler_default == "flow_match_euler"
         and str(getattr(config, "video_i2v_style", "")) == "ltx23"
     )
+
+
+def video_uses_hunyuan_step_distill_timesteps(
+    config: Any,
+    *,
+    step_distill: bool,
+    scheduler_default: str,
+) -> bool:
+    return bool(
+        step_distill
+        and scheduler_default == "flow_match_euler"
+        and str(getattr(config, "video_i2v_style", "")) == "hunyuan"
+    )
+
+
+def video_apply_hunyuan_step_distill_scheduler_timesteps(
+    ctx: Any,
+    scheduler: Any,
+    *,
+    steps: int,
+) -> Any:
+    """Apply HunyuanVideo-1.5 distilled linspace sigmas (I2V step-distill + SR)."""
+    from backend.engine.families.hunyuan.sr_mlx import configure_hunyuan_step_distill_timesteps
+
+    return configure_hunyuan_step_distill_timesteps(ctx, scheduler, steps)
 
 
 def video_apply_ltx_distilled_scheduler_timesteps(

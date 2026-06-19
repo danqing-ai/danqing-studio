@@ -107,7 +107,12 @@ class AceStepMlxGenerator:
         from transformers import AutoConfig, AutoTokenizer
 
         bundle = self._bundle_root
-        dit_bundle = resolve_dit_bundle(bundle)
+        dit_subdir = None
+        if self._registry_entry is not None:
+            from backend.engine.families.ace_step.weights import ace_step_dit_subdir_for_model
+
+            dit_subdir = ace_step_dit_subdir_for_model(str(getattr(self._registry_entry, "id", "") or ""))
+        dit_bundle = resolve_dit_bundle(bundle, dit_subdir=dit_subdir)
         cfg_path = dit_bundle / "config.json"
         if not cfg_path.is_file():
             raise RuntimeError(f"ACE-Step config.json missing under {dit_bundle}")

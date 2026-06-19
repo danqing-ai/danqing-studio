@@ -405,18 +405,34 @@ def diffusion_retry_seed(base_seed: int, attempt: int) -> int:
     return mixed or 1
 
 
-def resolve_dit_bundle(bundle_root: Path) -> Path:
+def resolve_dit_bundle(bundle_root: Path, *, dit_subdir: str | None = None) -> Path:
     root = Path(bundle_root)
+    if dit_subdir:
+        sub = root / dit_subdir
+        if sub.is_dir() and (
+            (sub / "model.safetensors").is_file()
+            or (sub / "model.safetensors.index.json").is_file()
+        ):
+            return sub
+        raise RuntimeError(
+            f"ACE-Step DiT subdir {dit_subdir!r} not found under {root}. "
+            "Install the matching registry model version (shared VAE/text encoder bundle required)."
+        )
     if (root / "model.safetensors").is_file() or (root / "model.safetensors.index.json").is_file():
         return root
     for sub_name in (
         "acestep-v15-xl-sft",
+        "acestep-v15-xl-turbo",
+        "acestep-v15-xl-base",
         "acestep-v15-sft",
         "acestep-v15-turbo",
         "acestep-v15-base",
     ):
         sub = root / sub_name
-        if sub.is_dir() and (sub / "model.safetensors").is_file():
+        if sub.is_dir() and (
+            (sub / "model.safetensors").is_file()
+            or (sub / "model.safetensors.index.json").is_file()
+        ):
             return sub
     raise RuntimeError(
         f"No ACE-Step DiT checkpoint (model.safetensors) under {root}. "
@@ -543,7 +559,7 @@ def create_ace_step_generator(
     if backend == "cuda":
         from backend.engine.families.ace_step.generation_cuda import AceStepCudaGenerator
 
-        return AceStepCudaGenerator(ctx, bundle_root)
+        return AceStepCudaGenerator(ctx, bundle_root, entry=entry, version_key=version_key)
     raise RuntimeError(
         f"ACE-Step audio requires mlx or cuda runtime (got {backend!r})"
     )
@@ -611,9 +627,9 @@ def vocal_lyrics_required_message() -> str:
     return vocal_lyrics_required_error()
 
 
-def resolve_bundle_is_turbo(bundle_root: Path) -> bool:
+def resolve_bundle_is_turbo(bundle_root: Path, *, dit_subdir: str | None = None) -> bool:
     """Read ``is_turbo`` from installed DiT ``config.json`` (authoritative over static defaults)."""
-    dit = resolve_dit_bundle(bundle_root)
+    dit = resolve_dit_bundle(bundle_root, dit_subdir=dit_subdir)
     cfg_path = dit / "config.json"
     if not cfg_path.is_file():
         return False
@@ -717,7 +733,10 @@ def prepare_music_request(
     if vocal_tpl_log:
         events.append(("info", vocal_tpl_log))
 
-    is_turbo = resolve_bundle_is_turbo(bundle_root)
+    from backend.engine.families.ace_step.weights import ace_step_dit_subdir_for_model
+
+    dit_subdir = ace_step_dit_subdir_for_model(request.model)
+    is_turbo = resolve_bundle_is_turbo(bundle_root, dit_subdir=dit_subdir)
     steps = request.steps or config.default_infer_steps
     shift = float(config.default_shift)
     if is_turbo:
@@ -772,7 +791,10 @@ def run_cover_edit(
     """ACE-Step cover: reference waveform + prompt/lyrics → new waveform(s)."""
     import random
 
-    is_turbo = resolve_bundle_is_turbo(bundle_root)
+    from backend.engine.families.ace_step.weights import ace_step_dit_subdir_for_model
+
+    dit_subdir = ace_step_dit_subdir_for_model(request.model)
+    is_turbo = resolve_bundle_is_turbo(bundle_root, dit_subdir=dit_subdir)
     shift = float(config.turbo_shift if is_turbo else config.default_shift)
     ref_wf = load_reference_waveform(source_path)
     seed = (

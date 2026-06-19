@@ -101,7 +101,8 @@ def resolve_inference_weight_mode(
             f"quantization_level={bundle_affine_bits}."
         )
 
-    return WeightInferenceMode(kind="quantized", bits=int(bits))
+    group_size = int(quant.get("group_size") or 64)
+    return WeightInferenceMode(kind="quantized", bits=int(bits), group_size=group_size)
 
 
 def resolve_component_inference_weight_mode(

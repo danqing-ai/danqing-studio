@@ -158,6 +158,8 @@ class VideoStepKwargsBuilder:
         sigmas: Any | None,
         timestep_embed_schedule: list[float] | None,
         timestep_offset: int = 0,
+        timesteps: Any | None = None,
+        use_meanflow: bool = False,
     ) -> None:
         self._ctx = ctx
         self._model = model
@@ -168,6 +170,8 @@ class VideoStepKwargsBuilder:
         self._sigmas = sigmas
         self._timestep_embed_schedule = timestep_embed_schedule
         self._timestep_offset = timestep_offset
+        self._timesteps = timesteps
+        self._use_meanflow = use_meanflow
 
     def _resolve_timestep_embed_value(self, step_idx: int, fallback: float | None) -> float | None:
         return _resolve_timestep_embed_value(
@@ -214,6 +218,13 @@ class VideoStepKwargsBuilder:
                     seq_len,
                     ec.get("wan_i2v_mask"),
                 )
+        if self._use_meanflow and self._timesteps is not None:
+            n = len(self._timesteps)
+            if step_idx >= n - 1:
+                t_r = 0.0
+            else:
+                t_r = float(self._timesteps[step_idx + 1])
+            kw["timestep_r"] = self._ctx.array([t_r], dtype=self._ctx.float32())
         return kw
 
     # -- public API -------------------------------------------------------

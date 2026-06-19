@@ -1,7 +1,9 @@
-"""LTX 2.3 two-stage T2V/I2V generation — pure in-repo MLX orchestration."""
+"""LTX 2.3 two-stage T2V/I2V generation — in-repo MLX orchestration (dgrauet reference)."""
 from __future__ import annotations
 
 import math
+import re
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -13,10 +15,12 @@ from PIL import Image
 from backend.engine.runtime.mlx_runtime import run_eval
 from backend.engine.config.model_configs import LTXConfig
 from backend.engine.families.ltx.pipeline_math import (
+    DEFAULT_LTX_IMAGE_CRF,
     DISTILLED_SIGMAS,
     STAGE_2_SIGMAS,
     AudioPatchifier,
     LatentState,
+    MultiModalGuiderFactory,
     VideoConditionByLatentIndex,
     VideoLatentPatchifier,
     apply_denoise_mask,
@@ -25,16 +29,33 @@ from backend.engine.families.ltx.pipeline_math import (
     compute_video_latent_shape,
     compute_video_positions,
     create_noised_state,
-    ltx2_dynamic_schedule,
+    ltx2_schedule,
+    ltx_dev_audio_guider_params,
+    ltx_dev_video_guider_params,
 )
 from backend.engine.families.ltx.text_encoder_mlx import LTX23GemmaEncoder
 from backend.engine.families.ltx.transformer_mlx import LTX23X0Model, load_ltx23_x0_model
 from backend.engine.families.ltx.vae import decode_ltx23_av_to_mp4
 from backend.engine.families.ltx.vae_mlx import load_ltx23_latent_upsampler, load_ltx23_video_encoder
+from backend.engine.pipelines.pipeline_progress import emit_denoise_progress, emit_post_progress
 from backend.engine.runtime._base import RuntimeContext
+from backend.utils.video_sr_ffmpeg import require_ffmpeg
 
 _DEFAULT_CFG = 3.0
-_DEFAULT_AUDIO_CFG = 7.0
+_DISTILLED_STAGE1_FULL = 8
+
+
+def _resolve_distilled_stage1_steps(steps: int, *, on_log: Callable[[str, str], None] | None) -> int:
+    requested = max(1, int(steps))
+    if requested >= _DISTILLED_STAGE1_FULL:
+        return requested
+    if on_log:
+        on_log(
+            "warning",
+            f"LTX distilled stage1_steps={requested} is below required {_DISTILLED_STAGE1_FULL}; "
+            f"using full stage-1 schedule (stage-2 adds 3 refine steps)",
+        )
+    return _DISTILLED_STAGE1_FULL
 
 
 @dataclass
@@ -67,6 +88,139 @@ def _per_token_timesteps(ctx: RuntimeContext, sigma: float, denoise_mask: mx.arr
     return (denoise_mask * sigma).squeeze(-1)
 
 
+def _is_ltx_core_x0(model: Any) -> bool:
+    return type(model).__name__ == "X0Model" and "ltx_core_mlx" in (type(model).__module__ or "")
+
+
+def _parse_ffmpeg_size(stderr: str) -> tuple[int, int] | None:
+    match = re.search(r",\s*(\d{2,5})x(\d{2,5})", stderr)
+    if match:
+        return int(match.group(1)), int(match.group(2))
+    return None
+
+
+def _encode_single_frame_h264(image_array: np.ndarray, crf: float) -> bytes:
+    if image_array.dtype != np.uint8:
+        image_array = image_array.astype(np.uint8)
+    height, width, _ = image_array.shape
+    pad_w = width + (width & 1)
+    pad_h = height + (height & 1)
+    if (pad_w, pad_h) != (width, height):
+        padded = np.zeros((pad_h, pad_w, 3), dtype=np.uint8)
+        padded[:height, :width, :] = image_array
+        image_array = padded
+    ffmpeg = require_ffmpeg()
+    cmd = [
+        ffmpeg,
+        "-y",
+        "-f",
+        "rawvideo",
+        "-pix_fmt",
+        "rgb24",
+        "-s",
+        f"{pad_w}x{pad_h}",
+        "-r",
+        "1",
+        "-i",
+        "pipe:0",
+        "-c:v",
+        "libx264",
+        "-preset",
+        "veryfast",
+        "-crf",
+        str(int(crf)),
+        "-frames:v",
+        "1",
+        "-f",
+        "mp4",
+        "-movflags",
+        "frag_keyframe+empty_moov",
+        "pipe:1",
+    ]
+    proc = subprocess.run(cmd, input=image_array.tobytes(), capture_output=True, timeout=60)
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"LTX I2V H.264 preprocess failed: {proc.stderr.decode(errors='ignore')}"
+        )
+    return proc.stdout
+
+
+def _decode_single_frame_h264(data: bytes) -> np.ndarray:
+    ffmpeg = require_ffmpeg()
+    probe = subprocess.run(
+        [ffmpeg, "-i", "pipe:0", "-f", "null", "-"],
+        input=data,
+        capture_output=True,
+        timeout=30,
+    )
+    size = _parse_ffmpeg_size(probe.stderr.decode(errors="ignore"))
+    if size is None:
+        raise RuntimeError("LTX I2V H.264 preprocess: could not probe frame size")
+    width, height = size
+    proc = subprocess.run(
+        [
+            ffmpeg,
+            "-i",
+            "pipe:0",
+            "-frames:v",
+            "1",
+            "-pix_fmt",
+            "rgb24",
+            "-f",
+            "rawvideo",
+            "pipe:1",
+        ],
+        input=data,
+        capture_output=True,
+        timeout=60,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"LTX I2V H.264 decode failed: {proc.stderr.decode(errors='ignore')}"
+        )
+    return np.frombuffer(proc.stdout, dtype=np.uint8).reshape(height, width, 3).copy()
+
+
+def _preprocess_i2v_image(image: np.ndarray, crf: float) -> np.ndarray:
+    if crf <= 0:
+        return image
+    h, w, _ = image.shape
+    encoded = _encode_single_frame_h264(image, crf)
+    decoded = _decode_single_frame_h264(encoded)
+    if decoded.shape[0] != h or decoded.shape[1] != w:
+        decoded = decoded[:h, :w, :]
+    return decoded
+
+
+def _resize_and_center_crop(image: Image.Image, height: int, width: int) -> Image.Image:
+    src_w, src_h = image.size
+    scale = max(height / src_h, width / src_w)
+    new_h = math.ceil(src_h * scale)
+    new_w = math.ceil(src_w * scale)
+    image = image.resize((new_w, new_h), Image.LANCZOS)
+    crop_left = (new_w - width) // 2
+    crop_top = (new_h - height) // 2
+    return image.crop((crop_left, crop_top, crop_left + width, crop_top + height))
+
+
+def _load_i2v_image_tensor(
+    image_path: str,
+    height: int,
+    width: int,
+    ctx: RuntimeContext,
+    *,
+    crf: int = DEFAULT_LTX_IMAGE_CRF,
+) -> mx.array:
+    """I2V image path aligned with dgrauet reference (H.264 CRF round-trip)."""
+    arr = np.asarray(Image.open(image_path).convert("RGB"), dtype=np.uint8)
+    arr = _preprocess_i2v_image(arr, float(crf))
+    image = _resize_and_center_crop(Image.fromarray(arr, mode="RGB"), height, width)
+    f = np.asarray(image, dtype=np.float32) / 255.0
+    f = f * 2.0 - 1.0
+    tensor = ctx.array(f).transpose(2, 0, 1)[None, ...]
+    return tensor.astype(ctx.bfloat16())
+
+
 def _denoise_loop(
     ctx: RuntimeContext,
     model: LTX23X0Model,
@@ -75,13 +229,20 @@ def _denoise_loop(
     video_text_embeds: mx.array,
     audio_text_embeds: mx.array,
     sigmas: list[float],
+    *,
+    on_progress: Callable[..., None] | None = None,
+    progress_step_offset: int = 0,
+    progress_total_steps: int = 1,
+    on_log: Callable[[str, str], None] | None = None,
+    progress_label: str = "denoise",
 ) -> _DenoiseOutput:
     video_x = video_state.latent
     audio_x = audio_state.latent
     video_uniform = _is_uniform_mask(video_state.denoise_mask)
     audio_uniform = _is_uniform_mask(audio_state.denoise_mask)
+    n_steps = max(1, len(sigmas) - 1)
 
-    for sigma, sigma_next in zip(sigmas[:-1], sigmas[1:]):
+    for step_idx, (sigma, sigma_next) in enumerate(zip(sigmas[:-1], sigmas[1:])):
         sigma_arr = ctx.array([sigma], dtype=ctx.bfloat16())
         b = int(video_x.shape[0])
         call_kwargs: dict[str, Any] = dict(
@@ -101,85 +262,156 @@ def _denoise_loop(
         video_x0, audio_x0 = model(**call_kwargs)
         video_x0 = apply_denoise_mask(ctx, video_x0, video_state.clean_latent, video_state.denoise_mask)
         audio_x0 = apply_denoise_mask(ctx, audio_x0, audio_state.clean_latent, audio_state.denoise_mask)
-
         video_x = _euler_step(video_x, video_x0, sigma, sigma_next)
         audio_x = _euler_step(audio_x, audio_x0, sigma, sigma_next)
         _materialize(ctx, video_x, audio_x)
 
+        step_1based = progress_step_offset + step_idx + 1
+        emit_denoise_progress(on_progress, step_1based, progress_total_steps)
+        if on_log:
+            on_log(
+                "info",
+                f"{progress_label} step {step_1based}/{progress_total_steps} "
+                f"(stage σ {step_idx + 1}/{n_steps})",
+            )
+
     return _DenoiseOutput(video_latent=video_x, audio_latent=audio_x)
 
 
-def _guided_denoise_loop(
+def _multimodal_guided_denoise_loop(
     ctx: RuntimeContext,
     model: LTX23X0Model,
     video_state: LatentState,
     audio_state: LatentState,
     video_text_embeds: mx.array,
     audio_text_embeds: mx.array,
-    neg_video_embeds: mx.array,
-    neg_audio_embeds: mx.array,
+    video_guider_factory: MultiModalGuiderFactory,
+    audio_guider_factory: MultiModalGuiderFactory,
     sigmas: list[float],
     *,
-    video_cfg: float,
-    audio_cfg: float,
+    on_progress: Callable[..., None] | None = None,
+    progress_step_offset: int = 0,
+    progress_total_steps: int = 1,
+    on_log: Callable[[str, str], None] | None = None,
 ) -> _DenoiseOutput:
+    """Dev stage-1 denoise with CFG + STG + modality guidance (dgrauet reference)."""
+    if not _is_ltx_core_x0(model):
+        raise RuntimeError(
+            "LTX 2.3 dev guidance requires the quantized dgrauet DiT (ltx_core_mlx X0Model); "
+            "select an mlx-q4/q8/bf16 bundle version."
+        )
+
+    from ltx_core_mlx.guidance.perturbations import (
+        BatchedPerturbationConfig,
+        Perturbation,
+        PerturbationConfig,
+        PerturbationType,
+    )
+
     video_x = video_state.latent
     audio_x = audio_state.latent
     video_uniform = _is_uniform_mask(video_state.denoise_mask)
     audio_uniform = _is_uniform_mask(audio_state.denoise_mask)
+    n_steps = max(1, len(sigmas) - 1)
 
-    for sigma, sigma_next in zip(sigmas[:-1], sigmas[1:]):
+    for step_idx, (sigma, sigma_next) in enumerate(zip(sigmas[:-1], sigmas[1:])):
+        video_guider = video_guider_factory.build_from_sigma(sigma)
+        audio_guider = audio_guider_factory.build_from_sigma(sigma)
         sigma_arr = ctx.array([sigma], dtype=ctx.bfloat16())
         b = int(video_x.shape[0])
 
-        def _predict(v_embeds: mx.array, a_embeds: mx.array) -> tuple[mx.array, mx.array]:
-            call_kwargs: dict[str, Any] = dict(
-                video_latent=video_x,
-                audio_latent=audio_x,
-                sigma=ctx.broadcast_to(sigma_arr, (b,)),
-                video_text_embeds=v_embeds,
-                audio_text_embeds=a_embeds,
-                video_positions=video_state.positions,
-                audio_positions=audio_state.positions,
-            )
-            if not video_uniform:
-                call_kwargs["video_timesteps"] = _per_token_timesteps(ctx, sigma, video_state.denoise_mask)
-            if not audio_uniform:
-                call_kwargs["audio_timesteps"] = _per_token_timesteps(ctx, sigma, audio_state.denoise_mask)
-            v_x0, a_x0 = model(**call_kwargs)
+        base_kwargs: dict[str, Any] = dict(
+            video_latent=video_x,
+            audio_latent=audio_x,
+            sigma=ctx.broadcast_to(sigma_arr, (b,)),
+            video_positions=video_state.positions,
+            audio_positions=audio_state.positions,
+        )
+        if not video_uniform:
+            base_kwargs["video_timesteps"] = _per_token_timesteps(ctx, sigma, video_state.denoise_mask)
+        if not audio_uniform:
+            base_kwargs["audio_timesteps"] = _per_token_timesteps(ctx, sigma, audio_state.denoise_mask)
+
+        def _predict(v_embeds: mx.array, a_embeds: mx.array, perturbations=None) -> tuple[mx.array, mx.array]:
+            kw = {
+                **base_kwargs,
+                "video_text_embeds": v_embeds,
+                "audio_text_embeds": a_embeds,
+            }
+            if perturbations is not None:
+                kw["perturbations"] = perturbations
+            v_x0, a_x0 = model(**kw)
             v_x0 = apply_denoise_mask(ctx, v_x0, video_state.clean_latent, video_state.denoise_mask)
             a_x0 = apply_denoise_mask(ctx, a_x0, audio_state.clean_latent, audio_state.denoise_mask)
             return v_x0, a_x0
 
-        pos_v, pos_a = _predict(video_text_embeds, audio_text_embeds)
-        neg_v, neg_a = _predict(neg_video_embeds, neg_audio_embeds)
-        video_x0 = neg_v + video_cfg * (pos_v - neg_v)
-        audio_x0 = neg_a + audio_cfg * (pos_a - neg_a)
+        cond_v, cond_a = _predict(video_text_embeds, audio_text_embeds)
+
+        neg_v: mx.array | float = 0.0
+        neg_a: mx.array | float = 0.0
+        if video_guider.do_unconditional_generation() or audio_guider.do_unconditional_generation():
+            neg_v_embeds = (
+                video_guider.negative_context if video_guider.negative_context is not None else video_text_embeds
+            )
+            neg_a_embeds = (
+                audio_guider.negative_context if audio_guider.negative_context is not None else audio_text_embeds
+            )
+            neg_v, neg_a = _predict(neg_v_embeds, neg_a_embeds)
+
+        ptb_v: mx.array | float = 0.0
+        ptb_a: mx.array | float = 0.0
+        if video_guider.do_perturbed_generation() or audio_guider.do_perturbed_generation():
+            perturbations: list[Perturbation] = []
+            if video_guider.do_perturbed_generation():
+                perturbations.append(
+                    Perturbation(
+                        type=PerturbationType.SKIP_VIDEO_SELF_ATTN,
+                        blocks=list(video_guider.params.stg_blocks),
+                    )
+                )
+            if audio_guider.do_perturbed_generation():
+                perturbations.append(
+                    Perturbation(
+                        type=PerturbationType.SKIP_AUDIO_SELF_ATTN,
+                        blocks=list(audio_guider.params.stg_blocks),
+                    )
+                )
+            batched = BatchedPerturbationConfig(
+                perturbations=[PerturbationConfig(perturbations=perturbations)] * b
+            )
+            ptb_v, ptb_a = _predict(video_text_embeds, audio_text_embeds, perturbations=batched)
+
+        mod_v: mx.array | float = 0.0
+        mod_a: mx.array | float = 0.0
+        if video_guider.do_isolated_modality_generation() or audio_guider.do_isolated_modality_generation():
+            mod_list = [
+                Perturbation(type=PerturbationType.SKIP_A2V_CROSS_ATTN, blocks=None),
+                Perturbation(type=PerturbationType.SKIP_V2A_CROSS_ATTN, blocks=None),
+            ]
+            batched = BatchedPerturbationConfig(
+                perturbations=[PerturbationConfig(perturbations=mod_list)] * b
+            )
+            mod_v, mod_a = _predict(video_text_embeds, audio_text_embeds, perturbations=batched)
+
+        video_x0 = video_guider.calculate(cond_v, neg_v, ptb_v, mod_v)
+        audio_x0 = audio_guider.calculate(cond_a, neg_a, ptb_a, mod_a)
+        video_x0 = apply_denoise_mask(ctx, video_x0, video_state.clean_latent, video_state.denoise_mask)
+        audio_x0 = apply_denoise_mask(ctx, audio_x0, audio_state.clean_latent, audio_state.denoise_mask)
 
         video_x = _euler_step(video_x, video_x0, sigma, sigma_next)
         audio_x = _euler_step(audio_x, audio_x0, sigma, sigma_next)
         _materialize(ctx, video_x, audio_x)
 
+        step_1based = progress_step_offset + step_idx + 1
+        emit_denoise_progress(on_progress, step_1based, progress_total_steps)
+        if on_log:
+            on_log(
+                "info",
+                f"denoise step {step_1based}/{progress_total_steps} "
+                f"(dev stage1 σ {step_idx + 1}/{n_steps})",
+            )
+
     return _DenoiseOutput(video_latent=video_x, audio_latent=audio_x)
-
-
-def _resize_and_center_crop(image: Image.Image, height: int, width: int) -> Image.Image:
-    src_w, src_h = image.size
-    scale = max(height / src_h, width / src_w)
-    new_h = math.ceil(src_h * scale)
-    new_w = math.ceil(src_w * scale)
-    image = image.resize((new_w, new_h), Image.LANCZOS)
-    crop_left = (new_w - width) // 2
-    crop_top = (new_h - height) // 2
-    return image.crop((crop_left, crop_top, crop_left + width, crop_top + height))
-
-
-def _load_image_tensor(image_path: str, height: int, width: int, ctx: RuntimeContext) -> mx.array:
-    image = _resize_and_center_crop(Image.open(image_path).convert("RGB"), height, width)
-    arr = np.asarray(image, dtype=np.float32) / 255.0
-    arr = arr * 2.0 - 1.0
-    tensor = ctx.array(arr).transpose(2, 0, 1)[None, ...]
-    return tensor.astype(ctx.bfloat16())
 
 
 def _i2v_conditionings(
@@ -188,18 +420,16 @@ def _i2v_conditionings(
     *,
     enc_h: int,
     enc_w: int,
-    bundle_root: Path,
-    load_fn: Any | None,
+    video_encoder: Any,
 ) -> list[VideoConditionByLatentIndex]:
-    pixels = _load_image_tensor(image_path, enc_h, enc_w, ctx)
+    pixels = _load_i2v_image_tensor(image_path, enc_h, enc_w, ctx)
     pixels = ctx.expand_dims(pixels, axis=2)
-    encoder = load_ltx23_video_encoder(bundle_root, load_fn=load_fn)
-    latent = encoder.encode(pixels)
+    latent = video_encoder.encode(pixels)
     return [VideoConditionByLatentIndex(latent=latent, frame_idx=0, strength=1.0)]
 
 
 class LTX23MlxGenerator:
-    """In-repo two-stage LTX 2.3 T2V/I2V generator (MLX only)."""
+    """In-repo two-stage LTX 2.3 T2V/I2V generator (MLX, dgrauet algorithm)."""
 
     def __init__(
         self,
@@ -230,15 +460,19 @@ class LTX23MlxGenerator:
             on_log(level, message)
 
     def _weight_stem(self, *, step_distill: bool, stage2_dev_refine: bool) -> str:
-        if step_distill:
-            return "transformer-distilled"
-        if stage2_dev_refine:
+        if step_distill or stage2_dev_refine:
             return "transformer-distilled"
         return "transformer-dev"
 
-    def _load_dit(self, *, step_distill: bool, stage2_dev_refine: bool = False) -> LTX23X0Model:
+    def _load_dit(
+        self,
+        *,
+        step_distill: bool,
+        stage2_dev_refine: bool = False,
+        on_log: Callable[[str, str], None] | None = None,
+    ) -> LTX23X0Model:
         stem = self._weight_stem(step_distill=step_distill, stage2_dev_refine=stage2_dev_refine)
-        self._log(None, "info", f"Loading LTX 2.3 transformer: {stem}")
+        self._log(on_log, "info", f"Loading LTX 2.3 transformer: {stem}")
         self._dit = load_ltx23_x0_model(
             self.ctx,
             self.bundle_root,
@@ -254,13 +488,14 @@ class LTX23MlxGenerator:
         prompt: str,
         *,
         step_distill: bool,
+        on_log: Callable[[str, str], None] | None = None,
     ) -> tuple[tuple[mx.array, mx.array], tuple[mx.array, mx.array] | None]:
         if self._encoder is None:
             self._encoder = LTX23GemmaEncoder(self.ctx, self.bundle_root, self.config)
         if step_distill:
-            pos = self._encoder.encode(prompt)
+            pos = self._encoder.encode(prompt, on_log=on_log)
             return pos, None
-        pos, neg = self._encoder.encode_with_negative(prompt)
+        pos, neg = self._encoder.encode_with_negative(prompt, on_log=on_log)
         return pos, neg
 
     def _generate_two_stage(
@@ -278,18 +513,20 @@ class LTX23MlxGenerator:
         step_distill: bool,
         image_path: str | None,
         on_log: Callable[[str, str], None] | None,
+        on_progress: Callable[..., None] | None = None,
     ) -> tuple[mx.array, mx.array]:
         ctx = self.ctx
         load_fn = getattr(ctx, "load_weights", None)
         low_memory = bool(getattr(self.config, "ltx_low_memory", True))
 
-        (video_embeds, audio_embeds), neg = self._encode_prompts(prompt, step_distill=step_distill)
+        (video_embeds, audio_embeds), neg = self._encode_prompts(
+            prompt, step_distill=step_distill, on_log=on_log
+        )
         _materialize(ctx, video_embeds, audio_embeds)
+        neg_video = neg_audio = None
         if neg is not None:
             neg_video, neg_audio = neg
             _materialize(ctx, neg_video, neg_audio)
-        else:
-            neg_video = neg_audio = None
 
         if low_memory and self._encoder is not None:
             self._encoder.free()
@@ -301,19 +538,24 @@ class LTX23MlxGenerator:
         video_shape = (1, f_lat * h_half * w_half, 128)
         audio_t = compute_audio_token_count(num_frames, frame_rate=fps)
         audio_shape = (1, audio_t, 128)
+        num_tokens = f_lat * h_half * w_half
 
         video_positions_1 = compute_video_positions(ctx, f_lat, h_half, w_half, frame_rate=fps)
         audio_positions = compute_audio_positions(ctx, audio_t)
 
+        if image_path and self._video_encoder is None:
+            self._video_encoder = load_ltx23_video_encoder(self.bundle_root, load_fn=load_fn)
+
         conditionings_1: list[VideoConditionByLatentIndex] = []
         if image_path:
+            if self._video_encoder is None:
+                raise RuntimeError("LTX I2V requires video encoder but load failed")
             conditionings_1 = _i2v_conditionings(
                 ctx,
                 image_path,
-                enc_h=h_half * 32,
-                enc_w=w_half * 32,
-                bundle_root=self.bundle_root,
-                load_fn=load_fn,
+                enc_h=half_h * 32,
+                enc_w=half_w * 32,
+                video_encoder=self._video_encoder,
             )
 
         video_state = create_noised_state(
@@ -324,6 +566,7 @@ class LTX23MlxGenerator:
             positions=video_positions_1,
             seed=seed,
             sigma=1.0,
+            legacy_scalar_blend=True,
         )
         audio_state = create_noised_state(
             ctx,
@@ -333,39 +576,66 @@ class LTX23MlxGenerator:
             positions=audio_positions,
             seed=seed + 1,
             sigma=1.0,
+            legacy_scalar_blend=True,
         )
 
         if step_distill:
             sigmas_1 = DISTILLED_SIGMAS[: stage1_steps + 1]
         else:
-            sigmas_1 = ltx2_dynamic_schedule(stage1_steps, f_lat * h_half * w_half)
+            sigmas_1 = ltx2_schedule(stage1_steps, num_tokens)
 
-        model = self._load_dit(step_distill=step_distill)
-        self._log(on_log, "info", f"LTX 2.3 stage 1 denoise steps={len(sigmas_1) - 1} at {half_w}x{half_h}")
+        stage1_denoise_steps = max(1, len(sigmas_1) - 1)
+        stage2_denoise_steps = max(1, stage2_steps)
+        total_denoise_steps = stage1_denoise_steps + stage2_denoise_steps
 
-        if step_distill or neg_video is None:
+        model = self._load_dit(step_distill=step_distill, on_log=on_log)
+        self._log(on_log, "info", f"LTX 2.3 stage 1 denoise steps={stage1_denoise_steps} at {half_w}x{half_h}")
+
+        if step_distill:
             output_1 = _denoise_loop(
-                ctx, model, video_state, audio_state, video_embeds, audio_embeds, sigmas_1,
-            )
-        else:
-            output_1 = _guided_denoise_loop(
                 ctx,
                 model,
                 video_state,
                 audio_state,
                 video_embeds,
-                audio_text_embeds=audio_embeds,
-                neg_video_embeds=neg_video,
-                neg_audio_embeds=neg_audio,
-                sigmas=sigmas_1,
-                video_cfg=float(guidance if guidance > 0 else _DEFAULT_CFG),
-                audio_cfg=_DEFAULT_AUDIO_CFG,
+                audio_embeds,
+                sigmas_1,
+                on_progress=on_progress,
+                progress_step_offset=0,
+                progress_total_steps=total_denoise_steps,
+                on_log=on_log,
+                progress_label="denoise stage1",
+            )
+        else:
+            cfg_scale = float(guidance if guidance > 0 else _DEFAULT_CFG)
+            video_factory = MultiModalGuiderFactory.constant(
+                ltx_dev_video_guider_params(cfg_scale),
+                negative_context=neg_video,
+            )
+            audio_factory = MultiModalGuiderFactory.constant(ltx_dev_audio_guider_params())
+            output_1 = _multimodal_guided_denoise_loop(
+                ctx,
+                model,
+                video_state,
+                audio_state,
+                video_embeds,
+                audio_embeds,
+                video_factory,
+                audio_factory,
+                sigmas_1,
+                on_progress=on_progress,
+                progress_step_offset=0,
+                progress_total_steps=total_denoise_steps,
+                on_log=on_log,
             )
 
         if low_memory:
             _clear_cache(ctx)
 
-        gen_tokens_1 = output_1.video_latent[:, : f_lat * h_half * w_half, :]
+        if not step_distill:
+            model = self._load_dit(step_distill=False, stage2_dev_refine=True, on_log=on_log)
+
+        gen_tokens_1 = output_1.video_latent[:, :num_tokens, :]
         video_half = self._video_patchifier.unpatchify(gen_tokens_1, (f_lat, h_half, w_half), ctx)
 
         if self._video_encoder is None:
@@ -387,23 +657,25 @@ class LTX23MlxGenerator:
 
         conditionings_2: list[VideoConditionByLatentIndex] = []
         if image_path:
+            if self._video_encoder is None:
+                raise RuntimeError("LTX I2V requires video encoder but load failed")
             conditionings_2 = _i2v_conditionings(
                 ctx,
                 image_path,
                 enc_h=h_full * 32,
                 enc_w=w_full * 32,
-                bundle_root=self.bundle_root,
-                load_fn=load_fn,
+                video_encoder=self._video_encoder,
             )
 
         if low_memory:
             self._video_encoder = None
             self._upsampler = None
-            self._dit = None
+            if step_distill:
+                self._dit = None
             _clear_cache(ctx)
 
-        if not step_distill:
-            model = self._load_dit(step_distill=False, stage2_dev_refine=True)
+        if step_distill and self._dit is None:
+            model = self._load_dit(step_distill=True, on_log=on_log)
 
         video_tokens, _ = self._video_patchifier.patchify(video_upscaled, ctx)
         sigmas_2 = STAGE_2_SIGMAS[: stage2_steps + 1]
@@ -419,6 +691,7 @@ class LTX23MlxGenerator:
             seed=seed + 2,
             sigma=start_sigma,
             initial_latent=video_tokens,
+            legacy_scalar_blend=True,
         )
         audio_state_2 = create_noised_state(
             ctx,
@@ -429,14 +702,23 @@ class LTX23MlxGenerator:
             seed=seed + 2,
             sigma=start_sigma,
             initial_latent=output_1.audio_latent,
+            legacy_scalar_blend=False,
         )
 
-        if model is None:
-            model = self._load_dit(step_distill=step_distill)
-
-        self._log(on_log, "info", f"LTX 2.3 stage 2 denoise steps={len(sigmas_2) - 1} at {w_full}x{h_full}")
+        self._log(on_log, "info", f"LTX 2.3 stage 2 denoise steps={stage2_denoise_steps} at {w_full}x{h_full}")
         output_2 = _denoise_loop(
-            ctx, model, video_state_2, audio_state_2, video_embeds, audio_embeds, sigmas_2,
+            ctx,
+            model,
+            video_state_2,
+            audio_state_2,
+            video_embeds,
+            audio_embeds,
+            sigmas_2,
+            on_progress=on_progress,
+            progress_step_offset=stage1_denoise_steps,
+            progress_total_steps=total_denoise_steps,
+            on_log=on_log,
+            progress_label="denoise stage2",
         )
 
         if low_memory:
@@ -463,6 +745,7 @@ class LTX23MlxGenerator:
         step_distill: bool,
         image_path: str | None,
         on_log: Callable[[str, str], None] | None,
+        on_progress: Callable[..., None] | None = None,
     ) -> str:
         if getattr(self.ctx, "backend", None) != "mlx":
             raise RuntimeError(
@@ -470,7 +753,11 @@ class LTX23MlxGenerator:
             )
 
         stage2_steps = int(getattr(self.config, "ltx_stage2_steps", 3) or 3)
-        stage1_steps = max(1, int(steps))
+        stage1_steps = (
+            _resolve_distilled_stage1_steps(steps, on_log=on_log)
+            if step_distill
+            else max(1, int(steps))
+        )
         mode = "distilled" if step_distill else "dev"
         i2v = "i2v" if image_path else "t2v"
         self._log(
@@ -504,9 +791,13 @@ class LTX23MlxGenerator:
             step_distill=bool(step_distill),
             image_path=image_path,
             on_log=on_log,
+            on_progress=on_progress,
         )
 
         _materialize(self.ctx, video_latent, audio_latent)
+        stage2_steps_int = int(getattr(self.config, "ltx_stage2_steps", 3) or 3)
+        total_steps = max(1, stage1_steps + stage2_steps_int)
+        emit_post_progress(on_progress, n_steps=total_steps, within_post=0.2)
         self._log(on_log, "info", f"LTX 2.3 decode+mux → {output_path}")
 
         def _decode_log(msg: str) -> None:

@@ -11,6 +11,7 @@ function readStoredBool(key: StorageKey, fallback: boolean): boolean {
 export interface ModelRegistryFilterDefaults {
   installedOnly?: boolean;
   commercialOnly?: boolean;
+  currentModelsOnly?: boolean;
 }
 
 export function useModelRegistryFilters(defaults: ModelRegistryFilterDefaults = {}) {
@@ -20,11 +21,15 @@ export function useModelRegistryFilters(defaults: ModelRegistryFilterDefaults = 
   const commercialOnly = ref(
     readStoredBool(DQ_STORAGE.MODEL_FILTER_COMMERCIAL, defaults.commercialOnly ?? false),
   );
+  const currentModelsOnly = ref(
+    readStoredBool(DQ_STORAGE.MODEL_FILTER_CURRENT_ONLY, defaults.currentModelsOnly ?? false),
+  );
 
   watch(installedOnly, (v) => setItem(DQ_STORAGE.MODEL_FILTER_INSTALLED, v ? '1' : '0'));
   watch(commercialOnly, (v) => setItem(DQ_STORAGE.MODEL_FILTER_COMMERCIAL, v ? '1' : '0'));
+  watch(currentModelsOnly, (v) => setItem(DQ_STORAGE.MODEL_FILTER_CURRENT_ONLY, v ? '1' : '0'));
 
-  return { installedOnly, commercialOnly };
+  return { installedOnly, commercialOnly, currentModelsOnly };
 }
 
 export interface VersionPickerFields {

@@ -45,6 +45,8 @@ def register_user_lora(
     nsfw: bool = False,
     task_id: str = "",
     source: str = "user_trained",
+    repo_id: str = "",
+    remote_hub_source: str = "",
 ) -> dict[str, Any]:
     path = user_loras_path(config_dir)
     data = _load(path)
@@ -62,6 +64,10 @@ def register_user_lora(
         "task_id": task_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
+    if repo_id:
+        entry["repo_id"] = repo_id
+    if remote_hub_source:
+        entry["remote_hub_source"] = remote_hub_source
     items.insert(0, entry)
     data["items"] = items
     _save(path, data)

@@ -655,6 +655,32 @@ async def training_quality_vlm(task_id: str, sched: TaskScheduler = Depends(get_
 def list_user_adapters():
     paths = _paths()
     items = list_user_loras(paths.get_workspace_config_dir())
+    items = [
+        ul for ul in items
+        if str(ul.get("source") or "user_trained") == "user_trained"
+    ]
+    out: list[dict[str, Any]] = []
+    for ul in items:
+        local_path = str(ul.get("local_path") or "")
+        resolved = paths.resolve_registry_local_path(local_path) if local_path else None
+        out.append(
+            {
+                **ul,
+                "installed": bool(resolved and (resolved.is_file() or resolved.is_dir())),
+            }
+        )
+    return {"items": out}
+
+
+@router.get("/downloaded-adapters")
+def list_downloaded_adapters():
+    """LoRAs fetched via model-library remote search (``source=remote_download``)."""
+    paths = _paths()
+    items = list_user_loras(paths.get_workspace_config_dir())
+    items = [
+        ul for ul in items
+        if str(ul.get("source") or "") == "remote_download"
+    ]
     out: list[dict[str, Any]] = []
     for ul in items:
         local_path = str(ul.get("local_path") or "")

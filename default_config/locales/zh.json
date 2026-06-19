@@ -37,7 +37,8 @@
     "model_profile_required": "引擎缺少模型「{name}」的专用配置（已禁止套用其他模型的默认配置）。请在引擎配置中补全该模型。",
     "workspace_path_required": "请选择工作区目录",
     "workspace_not_empty": "目标目录必须为空：{path}",
-    "workspace_use_apply_endpoint": "请通过「应用工作区」流程更换目录（设置页保存时会自动迁移）"
+    "workspace_use_apply_endpoint": "请通过「应用工作区」流程更换目录（设置页保存时会自动迁移）",
+    "lora_search_failed": "LoRA 搜索失败: {msg}"
   },
   "log": {
     "generating_step": "生成中... 步骤 {step}/{total}",

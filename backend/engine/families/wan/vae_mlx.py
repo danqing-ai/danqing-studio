@@ -24,6 +24,12 @@ logger = logging.getLogger(__name__)
 
 CACHE_T = 2
 
+
+def _vae_feat_snapshot(x: mx.array) -> mx.array:
+    """Detached copy for causal ``feat_cache`` entries (official ``Tensor.clone()``)."""
+    return mx.stop_gradient(x + 0.0)
+
+
 # Official Wan2.2 VAE latent mean / std (48-dim).
 _WAN22_VAE_MEAN = [
     -0.2289, -0.0052, -0.1323, -0.2339, -0.2799, 0.0174, 0.1838, 0.1557,
@@ -78,6 +84,20 @@ def _pad_ncthw(x: mx.array, *, pad_t: int, pad_h: int, pad_w: int) -> mx.array:
             (pad_w, pad_w),
         ],
     )
+
+
+def _flatten_bt_ncthw(x: mx.array) -> mx.array:
+    """``rearrange(x, 'b c t h w -> (b t) c h w')`` — not equivalent to naive ``reshape``."""
+    b, c, t, h, w = x.shape
+    x = mx.transpose(x, (0, 2, 1, 3, 4))
+    return mx.reshape(x, (b * t, c, h, w))
+
+
+def _unflatten_bt_ncthw(x_bt: mx.array, *, b: int, t: int) -> mx.array:
+    """``rearrange(x, '(b t) c h w -> b c t h w', t=t)``."""
+    _, c, h, w = x_bt.shape
+    x = mx.reshape(x_bt, (b, t, c, h, w))
+    return mx.transpose(x, (0, 2, 1, 3, 4))
 
 
 def _l2_normalize(x: mx.array, axis: int) -> mx.array:
@@ -217,7 +237,7 @@ class Resample(nn.Module):
                         x = self.time_conv(x)
                     else:
                         x = self.time_conv(x, feat_cache[idx])
-                    feat_cache[idx] = cache_x
+                    feat_cache[idx] = _vae_feat_snapshot(cache_x)
                     feat_idx[0] += 1
                     x = mx.reshape(x, (b, 2, c, t, h, w))
                     x = mx.stack((x[:, 0], x[:, 1]), axis=3)
@@ -240,7 +260,7 @@ class Resample(nn.Module):
                 x = mx.stack((stream0, stream1), axis=3)
                 x = mx.reshape(x, (b, c, t * 2, h, w))
         t = int(x.shape[2])
-        x_bt = mx.reshape(x, (b * t, c, h, w))
+        x_bt = _flatten_bt_ncthw(x)
         mode_tag = self.resample[0]
         if mode_tag in ("upsample2d", "upsample3d"):
             x_bt = _upsample_nearest_2d_nchw(x_bt)
@@ -248,18 +268,18 @@ class Resample(nn.Module):
             x_bt = _zero_pad2d_nchw(x_bt, 0, 1, 0, 1)
         x_bt = _nhwc_to_nchw(self.resample_conv(_nchw_to_nhwc(x_bt)))
         h2, w2 = int(x_bt.shape[2]), int(x_bt.shape[3])
-        x = mx.reshape(x_bt, (b, c, t, h2, w2))
+        x = _unflatten_bt_ncthw(x_bt, b=b, t=t)
 
         if self.mode == "downsample3d":
             if feat_cache is not None:
                 idx = feat_idx[0]
                 if feat_cache[idx] is None:
-                    feat_cache[idx] = x
+                    feat_cache[idx] = _vae_feat_snapshot(x)
                     feat_idx[0] += 1
                 else:
                     cache_x = x[:, :, -1:, :, :]
                     x = self.time_conv(mx.concatenate([feat_cache[idx][:, :, -1:, :, :], x], axis=2))
-                    feat_cache[idx] = cache_x
+                    feat_cache[idx] = _vae_feat_snapshot(cache_x)
                     feat_idx[0] += 1
         return x
 
@@ -294,7 +314,7 @@ class ResidualBlock(nn.Module):
                         axis=2,
                     )
                 x = layer(x, feat_cache[idx])
-                feat_cache[idx] = cache_x
+                feat_cache[idx] = _vae_feat_snapshot(cache_x)
                 feat_idx[0] += 1
             elif isinstance(layer, (WanVAERMSNorm, CausalConv3d)):
                 x = layer(x)
@@ -311,7 +331,7 @@ class AttentionBlock(nn.Module):
     def __call__(self, x: mx.array) -> mx.array:
         identity = x
         b, c, t, h, w = x.shape
-        x_bt = mx.reshape(x, (b * t, c, h, w))
+        x_bt = _flatten_bt_ncthw(x)
         x_bt = self.norm(x_bt)
         qkv = self.to_qkv(_nchw_to_nhwc(x_bt))
         qkv = mx.reshape(qkv, (b * t, h * w, 3, c))
@@ -321,9 +341,12 @@ class AttentionBlock(nn.Module):
         k = mx.reshape(k, (b * t, 1, h * w, c))
         v = mx.reshape(v, (b * t, 1, h * w, c))
         attn = scaled_dot_product_attention_bhsd_mx(mx, q, k, v, scale=(c ** -0.5))
+        # Match official: squeeze head, ``(B, HW, C) -> (B, C, H, W)``.
+        attn = mx.squeeze(attn, axis=1)
+        attn = mx.transpose(attn, (0, 2, 1))
         attn = mx.reshape(attn, (b * t, c, h, w))
         out = self.proj(_nchw_to_nhwc(attn))
-        out = mx.reshape(_nhwc_to_nchw(out), (b, c, t, h, w))
+        out = _unflatten_bt_ncthw(_nhwc_to_nchw(out), b=b, t=t)
         return out + identity
 
 
@@ -502,7 +525,7 @@ class UpResidualBlock(nn.Module):
         feat_idx: list[int] | None = None,
         first_chunk: bool = False,
     ) -> mx.array:
-        x_main = x
+        x_main = _vae_feat_snapshot(x)
         for module in self.blocks:
             if isinstance(module, Resample):
                 x_main = module(x_main, feat_cache, feat_idx, first_chunk)
@@ -566,7 +589,7 @@ class Encoder3d(nn.Module):
                     axis=2,
                 )
             x = self.conv1(x, feat_cache[idx])
-            feat_cache[idx] = cache_x
+            feat_cache[idx] = _vae_feat_snapshot(cache_x)
             feat_idx[0] += 1
         else:
             x = self.conv1(x)
@@ -591,7 +614,7 @@ class Encoder3d(nn.Module):
                     axis=2,
                 )
             x = self.head_conv(x, feat_cache[idx])
-            feat_cache[idx] = cache_x
+            feat_cache[idx] = _vae_feat_snapshot(cache_x)
             feat_idx[0] += 1
         else:
             x = self.head_conv(x)
@@ -650,7 +673,7 @@ class Decoder3d(nn.Module):
                     axis=2,
                 )
             x = self.conv1(x, feat_cache[idx])
-            feat_cache[idx] = cache_x
+            feat_cache[idx] = _vae_feat_snapshot(cache_x)
             feat_idx[0] += 1
         else:
             x = self.conv1(x)
@@ -680,7 +703,7 @@ class Decoder3d(nn.Module):
                     axis=2,
                 )
             x = self.head_conv(x, feat_cache[idx])
-            feat_cache[idx] = cache_x
+            feat_cache[idx] = _vae_feat_snapshot(cache_x)
             feat_idx[0] += 1
         else:
             x = self.head_conv(x)
@@ -771,15 +794,31 @@ class WanVAE(nn.Module):
         scale: tuple[mx.array, mx.array],
         on_stage: Callable[[float], None] | None = None,
     ) -> mx.array:
-        """Decode full latent volume at once (matches official Wan2.2 VAE)."""
+        """Decode latent volume with per-frame causal cache (official ``WanVAE_.decode``)."""
         self.clear_cache()
         mean, inv_std = scale
         z = z / inv_std + mean
         if on_stage is not None:
             on_stage(0.05)
         x = self.conv2(z)
-        # Full-sequence decode: no feat_cache; first_chunk=True throughout.
-        out = self.decoder(x, None, [0], first_chunk=True)
+        iter_t = int(z.shape[2])
+        out: mx.array | None = None
+        for i in range(iter_t):
+            self._conv_idx = [0]
+            chunk = x[:, :, i : i + 1, :, :]
+            if i == 0:
+                part = self.decoder(
+                    chunk, self._feat_map, self._conv_idx, first_chunk=True,
+                )
+            else:
+                part = self.decoder(
+                    chunk, self._feat_map, self._conv_idx, first_chunk=False,
+                )
+            out = part if out is None else mx.concatenate([out, part], axis=2)
+            if on_stage is not None and iter_t > 0:
+                on_stage(0.05 + 0.9 * float(i + 1) / float(iter_t))
+        if out is None:
+            raise RuntimeError("Wan VAE decode received empty latent volume")
         out = unpatchify(out, 2)
         if on_stage is not None:
             on_stage(1.0)

@@ -258,6 +258,47 @@ export function pickResolutionForModel(
   return options[0]?.value ?? null;
 }
 
+/** Match animate start-frame aspect ratio to the closest registry preset (by AR, then scale). */
+export function pickClosestResolutionPreset(
+  options: ResolutionSizeOption[],
+  sourceWidth: number,
+  sourceHeight: number,
+): string | null {
+  if (!options.length || sourceWidth <= 0 || sourceHeight <= 0) return null;
+  const targetAr = sourceWidth / sourceHeight;
+  let bestValue: string | null = null;
+  let bestScore = Infinity;
+  for (const opt of options) {
+    const parsed = parseSizeValue(opt.value);
+    if (!parsed) continue;
+    const ar = parsed.width / parsed.height;
+    const arDiff = Math.abs(Math.log(ar) - Math.log(targetAr));
+    const scale = Math.max(
+      parsed.width / sourceWidth,
+      parsed.height / sourceHeight,
+      sourceWidth / parsed.width,
+      sourceHeight / parsed.height,
+    );
+    const score = arDiff * 2 + Math.log(Math.max(scale, 1));
+    if (score < bestScore) {
+      bestScore = score;
+      bestValue = opt.value;
+    }
+  }
+  return bestValue;
+}
+
+export function loadImageNaturalSize(url: string): Promise<{ width: number; height: number }> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      resolve({ width: img.naturalWidth, height: img.naturalHeight });
+    };
+    img.onerror = () => reject(new Error('failed to load image dimensions'));
+    img.src = url;
+  });
+}
+
 export function scalarKeysForForm(normalized: Record<string, NormalizedParamSpec>): string[] {
   const pair = resolutionPair(normalized);
   const skip = new Set<string>();

@@ -25,7 +25,7 @@ from backend.engine._transformer_registry import (
 from backend.engine.config.model_configs import get_config_class
 from backend.engine.families._audio_backbone import plugin_audio_generator_if_ready
 from backend.engine.inference.audio_waveform import run_audio_waveform
-from backend.engine.pipelines.audio_model_load import load_audio_generator
+from backend.engine.pipelines.audio_run_common import load_audio_generator_for_request
 from backend.engine.pipelines.audio_persist import (
     ACE_STEP_SAMPLE_RATE,
     persist_audio_create_assets,
@@ -111,13 +111,18 @@ def build_audio_create_run_context(
         )
         generator = plugin_audio_generator_if_ready(plugin)
         if generator is None:
-            generator = load_audio_generator(
-                ctx=pipeline.ctx,
+
+            def _on_log(level: str, message: str) -> None:
+                exec_ctx.on_log(LogEvent(level=level, message=message))
+
+            generator = load_audio_generator_for_request(
+                pipeline,
                 family=family,
                 bundle_root=bundle_root,
                 entry=entry,
                 version_key=version_key,
-                model_cache=pipeline._cache,
+                request=request,
+                on_log=_on_log,
             )
 
     steps = prepared.steps

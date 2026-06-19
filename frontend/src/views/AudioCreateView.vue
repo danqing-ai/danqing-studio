@@ -89,6 +89,7 @@
         :show-cover-fidelity="audioWorkTab === 'cover'"
         :reference-media="coverReferenceMedia"
         :current-model-config="advancedParamModelConfig"
+        :compatible-loras="compatibleLoras"
         @generate="onAudioComposerGenerate"
         @pick-reference="onPickCoverSource"
         @remove-reference="clearCoverSource"
@@ -233,11 +234,13 @@ const params = reactive({
   bpm: null as number | null,
   key_scale: '',
   time_signature: '',
-  steps: 8,
+  steps: 50,
   guidance: 3.0,
   seed: null as number | null,
   n: 1,
   audio_format: 'wav',
+  lora: '',
+  lora_scale: 0.8,
 });
 
 const coverParams = reactive({
@@ -314,14 +317,34 @@ const supportsNegativePrompt = computed(() => {
 
 const hasCustomParams = computed(() => {
   const p = currentModelConfig.value?.parameters || {};
-  const stepsDef = p.steps?.default ?? 8;
+  const stepsDef = p.steps?.default ?? 50;
   const guidanceDef = p.guidance?.default ?? 3.0;
   const durationDef = p.duration?.default ?? 30;
   const formatDef = (p.audio_formats && p.audio_formats[0]) || audioFormats.value[0] || 'wav';
   return params.steps !== stepsDef || params.guidance !== guidanceDef
     || params.seed !== null || params.n !== 1 || params.duration !== durationDef
-    || params.audio_format !== formatDef;
+    || params.audio_format !== formatDef
+    || !!params.lora;
 });
+
+const compatibleLoras = ref<Record<string, unknown>[]>([]);
+
+async function loadCompatibleAdapters(modelKey: string) {
+  if (!modelKey) {
+    compatibleLoras.value = [];
+    return;
+  }
+  try {
+    const loras = await api.settings.getCompatibleLoras(modelKey);
+    compatibleLoras.value = (loras as Record<string, unknown>[]) || [];
+    if (params.lora && !compatibleLoras.value.some((l) => String(l.id) === String(params.lora))) {
+      params.lora = '';
+    }
+  } catch (e) {
+    console.error('Failed to load compatible adapters:', e);
+    compatibleLoras.value = [];
+  }
+}
 
 // ---- Registry-driven capability flags ----
 const supportsBpm = computed(() => currentModelConfig.value?.parameters?.supports_bpm === true);
@@ -474,6 +497,8 @@ function applyAudioComposerParams(val: Record<string, unknown>) {
   params.time_signature = val.time_signature as string;
   params.vocal_language = val.vocal_language as string;
   params.vocal_type = val.vocal_type as string;
+  params.lora = String(val.lora || '');
+  params.lora_scale = Number(val.lora_scale) || 0.8;
   coverParams.source_fidelity = (val.source_fidelity as number) ?? 1.0;
 }
 
@@ -564,6 +589,8 @@ function applyDefaults(modelConfig: any) {
   params.time_signature = '';
   params.vocal_language = '';
   params.vocal_type = '';
+  params.lora = '';
+  params.lora_scale = 0.8;
   if (p.supports_instrumental === false) {
     params.instrumental = false;
   }
@@ -584,6 +611,7 @@ function onModelChange(val: string) {
   params.model = vk ? mk + ':' + vk : mk;
   const mc = modelRegistry.value[mk];
   applyDefaults(mc);
+  loadCompatibleAdapters(mk);
   loadPromptDraft();
   // 保存到当前模式
   setItem(getAudioModeStorageKey(audioWorkTab.value), val);
@@ -996,6 +1024,10 @@ async function startGeneration() {
 
   try {
     persistComposerSnapshot();
+    const adapters: Array<{ id: string; weight: number }> = [];
+    if (params.lora) {
+      adapters.push({ id: String(params.lora), weight: Number(params.lora_scale) || 0.8 });
+    }
     const body = {
       model: params.model,
       title: String(params.title || '').trim(),
@@ -1018,6 +1050,7 @@ async function startGeneration() {
       seed: params.seed ?? null,
       n: params.n ?? 1,
       audio_format: params.audio_format || 'wav',
+      adapters,
       metadata: buildCanvasMeta(),
     };
 

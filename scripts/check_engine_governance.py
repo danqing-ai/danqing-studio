@@ -77,7 +77,12 @@ HUNYUAN_REQUIRED_IDS = (
     "hunyuan-video-1.5-480p-t2v",
     "hunyuan-video-1.5-480p-i2v",
     "hunyuan-video-1.5-i2v-step-distill",
+    "hunyuan-video-1.5-t2v-step-distill",
     "hunyuan-video-1.5-1080p-sr",
+)
+HUNYUAN_STEP_DISTILL_IDS = (
+    "hunyuan-video-1.5-i2v-step-distill",
+    "hunyuan-video-1.5-t2v-step-distill",
 )
 HUNYUAN_REPO_ID = "Tencent-Hunyuan/HunyuanVideo-1.5"
 MAX_FAMILY_UNITS = 8
@@ -473,16 +478,24 @@ def check_registry() -> list[str]:
             if "google/byt5-small" not in repo_ids:
                 failures.append(f"{mid}: bundle_repos must include google/byt5-small")
 
-    mid = "hunyuan-video-1.5-i2v-step-distill"
-    model = models.get(mid)
-    if isinstance(model, dict):
+    for mid in HUNYUAN_STEP_DISTILL_IDS:
+        model = models.get(mid)
+        if not isinstance(model, dict):
+            continue
         params = model.get("parameters", {})
         if params.get("supports_guidance") is not False:
             failures.append(f"{mid}: parameters.supports_guidance must be false")
+        if not params.get("step_distill"):
+            failures.append(f"{mid}: parameters.step_distill must be true")
         if params.get("negative_prompt_support") is not False:
             failures.append(f"{mid}: parameters.negative_prompt_support must be false")
         if "guide_scale" in params:
             failures.append(f"{mid}: parameters.guide_scale must not be present")
+        actions = model.get("actions") or {}
+        if mid.endswith("i2v-step-distill") and "animate" not in actions:
+            failures.append(f"{mid}: actions must include animate")
+        if mid.endswith("t2v-step-distill") and "create" not in actions:
+            failures.append(f"{mid}: actions must include create")
 
     mid = "hunyuan-video-1.5-1080p-sr"
     model = models.get(mid)
@@ -490,6 +503,81 @@ def check_registry() -> list[str]:
         params = model.get("parameters", {})
         if not params.get("vae_spatial_tiling"):
             failures.append(f"{mid}: parameters.vae_spatial_tiling must be true")
+
+    successor_edges: dict[str, str] = {}
+    for mid, model in models.items():
+        if not isinstance(model, dict):
+            continue
+        successor = model.get("successor")
+        if successor is None:
+            continue
+        if not isinstance(successor, str) or not successor.strip():
+            failures.append(f"{mid}: successor must be a non-empty string")
+            continue
+        target = successor.strip()
+        if target == mid:
+            failures.append(f"{mid}: successor must not point to itself")
+            continue
+        if target not in models:
+            failures.append(f"{mid}: successor {target!r} is not in models registry")
+            continue
+        successor_edges[mid] = target
+
+    for mid, target in successor_edges.items():
+        seen = {mid}
+        cursor = target
+        while cursor in successor_edges:
+            if cursor in seen:
+                failures.append(f"{mid}: successor chain contains a cycle")
+                break
+            seen.add(cursor)
+            cursor = successor_edges[cursor]
+
+    distilled_from_edges: dict[str, str] = {}
+    for mid, model in models.items():
+        if not isinstance(model, dict):
+            continue
+        for field in ("distilled_from", "distilled_variant"):
+            value = model.get(field)
+            if value is None:
+                continue
+            if not isinstance(value, str) or not value.strip():
+                failures.append(f"{mid}: {field} must be a non-empty string")
+                continue
+            target = value.strip()
+            if target == mid:
+                failures.append(f"{mid}: {field} must not point to itself")
+                continue
+            if target not in models:
+                failures.append(f"{mid}: {field} {target!r} is not in models registry")
+                continue
+            if field == "distilled_from":
+                distilled_from_edges[mid] = target
+
+        base_id = model.get("distilled_from")
+        variant_id = model.get("distilled_variant")
+        if isinstance(base_id, str) and base_id.strip() and isinstance(variant_id, str) and variant_id.strip():
+            failures.append(f"{mid}: cannot set both distilled_from and distilled_variant")
+
+    for mid, base_id in distilled_from_edges.items():
+        variant = models.get(base_id, {}).get("distilled_variant")
+        if isinstance(variant, str) and variant.strip() and variant.strip() != mid:
+            failures.append(
+                f"{mid}: distilled_from {base_id!r} has distilled_variant {variant.strip()!r} (expected {mid!r})"
+            )
+
+    for mid, model in models.items():
+        if not isinstance(model, dict):
+            continue
+        variant_id = model.get("distilled_variant")
+        if not isinstance(variant_id, str) or not variant_id.strip():
+            continue
+        target = variant_id.strip()
+        back_ref = models.get(target, {}).get("distilled_from")
+        if isinstance(back_ref, str) and back_ref.strip() and back_ref.strip() != mid:
+            failures.append(
+                f"{mid}: distilled_variant {target!r} has distilled_from {back_ref.strip()!r} (expected {mid!r})"
+            )
 
     return failures
 

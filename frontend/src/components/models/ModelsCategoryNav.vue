@@ -29,6 +29,7 @@ const emit = defineEmits<{
 const { t } = useI18n();
 
 type NavEntry =
+  | { kind: 'section'; label: string }
   | { kind: 'divider' }
   | {
       kind: 'item';
@@ -49,18 +50,23 @@ const entries = computed<NavEntry[]>(() => [
     count: props.totalModelCount,
     badgeType: 'info',
   },
+  { kind: 'section', label: t('models.navBaseModels') },
   { kind: 'item', id: 'image_models', icon: PictureFilled, label: t('download.imageModels') },
   { kind: 'item', id: 'video_models', icon: VideoCamera, label: t('download.videoModels') },
   { kind: 'item', id: 'music_models', icon: Headset, label: t('download.audioModels') },
   { kind: 'item', id: 'llm_models', icon: Document, label: t('download.llmModels') },
   { kind: 'item', id: 'vlm_models', icon: PictureFilled, label: t('download.vlmModels') },
+  { kind: 'section', label: t('models.navAdapters') },
   { kind: 'item', id: 'controlnets', icon: Aim, label: t('download.controlNet') },
   { kind: 'item', id: 'upscalers', icon: ZoomIn, label: t('download.upscalers') },
-  { kind: 'item', id: 'tools', icon: Tools, label: t('download.tools') },
   { kind: 'item', id: 'loras', icon: MagicStick, label: t('download.loraModels') },
+  { kind: 'item', id: 'lora_search', icon: Search, label: t('download.loraSearch') },
+  { kind: 'item', id: 'downloaded_loras', icon: Download, label: t('download.downloadedLoras') },
   { kind: 'item', id: 'trained_loras', icon: 'Wand2', label: t('download.myTrainedLoras') },
-  { kind: 'item', id: 'civitai_search', icon: Search, label: t('download.civitaiSearch') },
+  { kind: 'section', label: t('models.navTools') },
+  { kind: 'item', id: 'tools', icon: Tools, label: t('download.tools') },
   { kind: 'divider' },
+  { kind: 'section', label: t('models.navStatus') },
   {
     kind: 'item',
     id: 'downloading',
@@ -75,8 +81,11 @@ const entries = computed<NavEntry[]>(() => [
 
 <template>
   <nav class="dq-download-menu models-page__menu" role="navigation" :aria-label="$t('download.modelLibrary')">
-    <template v-for="(entry, idx) in entries" :key="entry.kind === 'divider' ? `div-${idx}` : entry.id">
+    <template v-for="(entry, idx) in entries" :key="entry.kind === 'divider' ? `div-${idx}` : entry.kind === 'section' ? `sec-${idx}-${entry.label}` : entry.id">
       <hr v-if="entry.kind === 'divider'" class="models-page__menu-divider" />
+      <div v-else-if="entry.kind === 'section'" class="models-page__menu-section">
+        {{ entry.label }}
+      </div>
       <button
         v-else
         type="button"

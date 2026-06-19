@@ -16,6 +16,9 @@
       <div v-if="lora.trigger_word" class="model-card-desc">
         {{ $t('loraTrain.triggerWord') }}: {{ lora.trigger_word }}
       </div>
+      <div v-else-if="lora.repo_id" class="model-card-desc" :title="lora.repo_id">
+        {{ lora.repo_id }}
+      </div>
       <div v-else-if="formattedDate" class="model-card-desc">
         {{ formattedDate }}
       </div>
@@ -24,6 +27,9 @@
         <DqTag size="small" type="info" effect="plain">{{ displayBaseModel }}</DqTag>
         <DqTag v-if="lora.lora_rank" size="small" type="success" effect="plain">
           Rank {{ lora.lora_rank }}
+        </DqTag>
+        <DqTag v-if="hubSourceLabel" size="small" type="warning" effect="plain">
+          {{ hubSourceLabel }}
         </DqTag>
       </div>
 
@@ -65,6 +71,9 @@ export interface UserLoraItem {
   lora_rank?: number;
   task_id?: string;
   created_at?: string;
+  repo_id?: string;
+  remote_hub_source?: string;
+  local_path?: string;
 }
 
 const props = defineProps<{
@@ -78,7 +87,15 @@ const emit = defineEmits<{
   (e: 'delete'): void;
 }>();
 
-const { locale } = useI18n();
+const { locale, t } = useI18n();
+
+const hubSourceLabel = computed(() => {
+  const src = String(props.lora.remote_hub_source || '').trim();
+  if (src === 'modelscope') return t('download.sourceModelscope');
+  if (src === 'huggingface') return t('download.sourceHuggingface');
+  if (src === 'civitai') return t('download.sourceCivitai');
+  return '';
+});
 
 const displayBaseModel = computed(
   () => props.baseModelLabel || String(props.lora.base_model || '').trim() || '—'

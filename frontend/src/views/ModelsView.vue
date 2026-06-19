@@ -113,6 +113,7 @@
             <ModelPickerFilters
               v-model:installed-only="modelFilterInstalledOnly"
               v-model:commercial-only="modelFilterCommercialOnly"
+              v-model:current-models-only="modelFilterCurrentModelsOnly"
             />
           </div>
           <div class="page-actions models-page__actions">
@@ -228,6 +229,17 @@
                   />
                 </div>
 
+                <ModelCatalogRelation
+                  v-if="modelDistilledRelation(model)"
+                  v-bind="modelDistilledRelation(model)!"
+                  @navigate="focusRelatedModel"
+                />
+                <ModelCatalogRelation
+                  v-if="modelSuccessorRelation(model)"
+                  v-bind="modelSuccessorRelation(model)!"
+                  @navigate="focusRelatedModel"
+                />
+
                 <div
                   v-if="model.size || model.base_model"
                   class="model-card-meta"
@@ -271,6 +283,52 @@
           v-if="filteredModels.length === 0"
           :description="$t('download.noModelsInCategory')"
         />
+      </div>
+
+      <!-- Downloaded LoRAs (remote search) -->
+      <div v-if="activeCategory === 'downloaded_loras'" class="trained-loras-page">
+        <div class="page-header models-page__page-header">
+          <h2 class="page-title">{{ $t('download.downloadedLoras') }}</h2>
+          <div class="page-actions models-page__actions">
+            <DqButton
+              size="sm"
+              type="secondary"
+              :loading="downloadedLorasRefreshing"
+              @click="refreshDownloadedLoras"
+            >
+              {{ $t('gallery.refresh') }}
+            </DqButton>
+            <DqButton type="primary" size="sm" @click="activeCategory = 'lora_search'">
+              {{ $t('download.loraSearch') }}
+            </DqButton>
+          </div>
+        </div>
+        <p class="models-page__section-hint">{{ $t('download.downloadedLorasHint') }}</p>
+
+        <DqRow v-if="downloadedLoras.length" :gutter="16" class="model-grid">
+          <DqCol
+            v-for="ul in downloadedLoras"
+            :key="ul.id"
+            :xs="24"
+            :sm="12"
+            :md="8"
+            :lg="8"
+            class="models-page__col-mb"
+          >
+            <UserLoraCard
+              :lora="ul"
+              :base-model-label="userLoraBaseModelLabel(ul.base_model)"
+              @verify="verifyUserLora(ul)"
+              @delete="deleteDownloadedLora(ul)"
+            />
+          </DqCol>
+        </DqRow>
+        <div v-else class="trained-loras-page__empty">
+          <DqEmpty :description="$t('download.noDownloadedLoras')" />
+          <DqButton type="primary" size="sm" @click="activeCategory = 'lora_search'">
+            {{ $t('download.loraSearch') }}
+          </DqButton>
+        </div>
       </div>
 
       <!-- User-trained LoRAs -->
@@ -319,133 +377,13 @@
         </div>
       </div>
 
-      <!-- CivitAI search -->
-      <div v-if="activeCategory === 'civitai_search'">
-        <div class="page-header">
-          <h2 class="page-title">{{ $t('download.civitaiSearch') }}</h2>
-        </div>
+      <!-- LoRA remote search (list view, separate from registry cards) -->
+      <LoraSearchPanel
+        v-if="activeCategory === 'lora_search'"
+        :connect-progress="connectProgressSSE"
+      />
 
-        <DqSurfaceCard class="studio-surface-card models-page__col-mb">
-          <div class="models-civit-search-row">
-            <DqInput
-              v-model="searchQuery"
-              :placeholder="$t('download.searchCivitai')"
-              clearable
-              @keyup.enter="searchCivitai"
-            >
-              <template #prefix>
-                <DqIcon><search /></DqIcon>
-              </template>
-            </DqInput>
-            <DqSelect v-model="searchType" class="models-civit-search-type">
-              <DqOption label="LoRA" value="LORA" />
-              <DqOption label="Checkpoint" value="Checkpoint" />
-              <DqOption :label="$t('download.all')" value="LORA,Checkpoint" />
-            </DqSelect>
-            <DqButton
-              type="primary"
-              size="sm"
-              class="models-toolbar-btn models-toolbar-btn--primary"
-              :loading="searching"
-              @click="searchCivitai"
-            >
-              <DqIcon class="models-toolbar-btn__icon"><search /></DqIcon>
-              <span class="models-toolbar-btn__label">{{ $t('download.search') }}</span>
-            </DqButton>
-          </div>
-        </DqSurfaceCard>
-
-        <DqRow v-if="searchResults.length > 0" :gutter="16">
-          <DqCol
-            v-for="model in searchResults"
-            :key="model.id"
-            :xs="24"
-            :sm="12"
-            :md="8"
-            class="models-page__col-mb"
-          >
-            <DqSurfaceCard class="civitai-card">
-              <div class="models-civit-card-inner">
-                <div class="civitai-preview">
-                  <img
-                    v-if="
-                      getCivitaiPreviewUrl(model) &&
-                      !civitaiPreviewLoadFailed[String(model.id)]
-                    "
-                    :src="getCivitaiPreviewUrl(model)"
-                    loading="lazy"
-                    :alt="model.name"
-                    @error="onCivitaiPreviewError(model.id)"
-                  />
-                  <div
-                    v-else
-                    class="no-preview"
-                  >
-                    <DqIcon><picture-filled /></DqIcon>
-                  </div>
-                </div>
-
-                <div class="models-civit-side">
-                  <div class="civitai-name">{{ model.name }}</div>
-                  <div class="models-civit-meta">
-                    {{ model.type }} |
-                    {{ model.model_versions[0]?.base_model || 'Unknown' }}
-                  </div>
-                  <div class="models-civit-meta models-civit-meta--creator">
-                    {{
-                      model.creator?.username ||
-                      $tt('download.unknownCreator')
-                    }}
-                  </div>
-                  <div class="models-civit-tags-row">
-                    <DqTag
-                      v-if="model.nsfw"
-                     
-                      type="danger"
-                    >
-                      {{ $t('download.nsfwTag') }}
-                    </DqTag>
-                    <DqTag type="info">
-                      <DqIcon><download /></DqIcon>
-                      {{ formatNumber(model.stats?.downloadCount || 0) }}
-                    </DqTag>
-                  </div>
-                </div>
-              </div>
-
-              <div class="models-civit-footer-actions">
-                <DqSelect
-                  v-model="selectedVersions[model.id]"
-                 
-                  class="models-civit-version-select"
-                  :placeholder="$t('download.selectVersion')"
-                >
-                  <DqOption
-                    v-for="v in model.model_versions"
-                    :key="v.id"
-                    :label="v.name"
-                    :value="v.id"
-                  />
-                </DqSelect>
-                <DqButton size="sm"
-                  class="model-ver-btn model-ver-btn--download"
-                  :loading="downloadingLoras[model.id]"
-                  @click="downloadCivitaiModel(model)"
-                >
-                  <DqIcon class="model-ver-btn__icon"><download /></DqIcon>
-                  <span class="model-ver-btn__label">{{ $t('download.download_') }}</span>
-                </DqButton>
-              </div>
-            </DqSurfaceCard>
-          </DqCol>
-        </DqRow>
-
-        <DqEmpty
-          v-else-if="!searching && hasSearched"
-          :description="$t('download.noResults')"
-        />
-      </div>
-
+      <!-- CivitAI search removed — use LoRA category search panel -->
       <!-- Installed -->
       <div v-if="activeCategory === 'installed'">
         <div class="page-header">
@@ -564,9 +502,11 @@ import { modelInitialsFromName } from '@/utils/modelInitials';
 import { useRegistryStore } from '@/stores/registry';
 import { DQ_STORAGE, consumeStringDraft, getItem, setItem } from '@/utils/storage';
 import ModelLicenseBadges from '@/components/model/ModelLicenseBadges.vue';
+import ModelCatalogRelation from '@/components/model/ModelCatalogRelation.vue';
 import ModelPickerFilters from '@/components/model/ModelPickerFilters.vue';
 import ModelsImportDialog from '@/components/models/ModelsImportDialog.vue';
 import ModelsCategoryNav from '@/components/models/ModelsCategoryNav.vue';
+import LoraSearchPanel from '@/components/models/LoraSearchPanel.vue';
 import UserLoraCard from '@/components/lora/UserLoraCard.vue';
 import ModelCardVersions from '@/components/models/ModelCardVersions.vue';
 import ModelVersionSourceBadge from '@/components/models/ModelVersionSourceBadge.vue';
@@ -599,6 +539,9 @@ interface ModelConfig {
   base_model?: string;
   recommended?: boolean;
   commercial_use_allowed?: boolean | null;
+  successor?: string;
+  distilled_from?: string;
+  distilled_variant?: string;
   dependencies?: string[];
   versions?: Record<string, ModelVersion>;
   ready?: boolean;
@@ -637,8 +580,10 @@ interface DiskSpaceData {
 
 const activeCategory = ref('all');
 const userLoras = ref<any[]>([]);
+const downloadedLoras = ref<any[]>([]);
 const userMergedModels = ref<any[]>([]);
 const userLorasRefreshing = ref(false);
+const downloadedLorasRefreshing = ref(false);
 const router = useRouter();
 const { locale } = useI18n();
 const modelRegistry = ref<Record<string, ModelConfig>>({});
@@ -646,25 +591,15 @@ const modelsStatus = ref<Record<string, boolean>>({});
 const modelsDetailedStatus = ref<Record<string, any>>({});
 const categories = ref<Record<string, any>>({});
 const filterQuery = ref('');
-const { installedOnly: modelFilterInstalledOnly, commercialOnly: modelFilterCommercialOnly } =
+const { installedOnly: modelFilterInstalledOnly, commercialOnly: modelFilterCommercialOnly, currentModelsOnly: modelFilterCurrentModelsOnly } =
   useModelRegistryFilters();
 const refreshing = ref(false);
 
 const registryStore = useRegistryStore();
 
 const downloadingModels = ref<Record<string, boolean>>({});
-const downloadingLoras = ref<Record<string, boolean>>({});
 const activeDownloads = ref<Record<string, DownloadItem>>({});
-const selectedVersions = ref<Record<string, string>>({});
 const sseConnections = ref<Record<string, EventSource>>({});
-
-const searchQuery = ref('');
-const searchType = ref('LORA');
-const searching = ref(false);
-const searchResults = ref<any[]>([]);
-const hasSearched = ref(false);
-/** CivitAI 缩略图加载失败时切到占位，避免对 img 写内联 style */
-const civitaiPreviewLoadFailed = ref<Record<string, boolean>>({});
 
 const installedModels = ref<any[]>([]);
 const diskSpace = ref<DiskSpaceData | null>(null);
@@ -690,6 +625,7 @@ const categoryPageIcon = computed(() => {
     upscalers: 'ZoomIn',
     tools: 'Tools',
     loras: 'MagicStick',
+    lora_search: 'Search',
   };
   return icons[activeCategory.value] ?? null;
 });
@@ -706,14 +642,72 @@ const categoryTitleText = computed(() => {
     upscalers: $tt('download.upscalers'),
     tools: $tt('download.tools'),
     loras: $tt('download.loraModels'),
+    lora_search: $tt('download.loraSearch'),
   };
   return titles[activeCategory.value] || $tt('download.title');
 });
 
 function modelSearchBlob(m: ModelRow): string {
-  const n = $mn(m, m.id);
-  const d = $md(m, '');
-  return `${n} ${d}`.toLowerCase();
+  const parts = [$mn(m, m.id), $md(m, '')];
+  for (const relId of [m.successor, m.distilled_from, m.distilled_variant]) {
+    if (!relId) continue;
+    const target = modelRegistry.value[relId];
+    if (target) parts.push($mn(target, relId));
+  }
+  return parts.join(' ').toLowerCase();
+}
+
+function relatedModelName(modelId?: string): string {
+  if (!modelId) return '';
+  const target = modelRegistry.value[modelId];
+  return target ? $mn(target, modelId) : modelId;
+}
+
+interface CatalogRelationProps {
+  roleLabel: string;
+  navLabel: string;
+  targetName: string;
+  targetId: string;
+  roleTagType?: 'info' | 'success' | 'warning';
+}
+
+function modelDistilledRelation(model: ModelRow): CatalogRelationProps | null {
+  if (model.distilled_from) {
+    return {
+      roleLabel: $tt('download.modelRoleDistilled'),
+      navLabel: $tt('download.viewBaseModel'),
+      targetName: relatedModelName(model.distilled_from),
+      targetId: model.distilled_from,
+      roleTagType: 'warning',
+    };
+  }
+  if (model.distilled_variant) {
+    return {
+      roleLabel: $tt('download.modelRoleBase'),
+      navLabel: $tt('download.viewDistilledVariant'),
+      targetName: relatedModelName(model.distilled_variant),
+      targetId: model.distilled_variant,
+      roleTagType: 'success',
+    };
+  }
+  return null;
+}
+
+function modelSuccessorRelation(model: ModelRow): CatalogRelationProps | null {
+  const sid = model.successor;
+  if (!sid) return null;
+  return {
+    roleLabel: $tt('download.successorBadge'),
+    navLabel: $tt('download.viewSuccessor'),
+    targetName: relatedModelName(sid),
+    targetId: sid,
+    roleTagType: 'info',
+  };
+}
+
+function focusRelatedModel(modelId: string): void {
+  if (!modelId) return;
+  filterQuery.value = relatedModelName(modelId) || modelId;
 }
 
 const filteredModels = computed(() => {
@@ -745,6 +739,7 @@ const filteredModels = computed(() => {
       !modelPassesRegistryFilters(model, {
         installedOnly: modelFilterInstalledOnly.value,
         commercialOnly: modelFilterCommercialOnly.value,
+        currentModelsOnly: modelFilterCurrentModelsOnly.value,
       })
     ) {
       continue;
@@ -755,6 +750,9 @@ const filteredModels = computed(() => {
 
   return list.sort((a, b) => {
     if (a.recommended !== b.recommended) return a.recommended ? -1 : 1;
+    const aLegacy = a.successor ? 1 : 0;
+    const bLegacy = b.successor ? 1 : 0;
+    if (aLegacy !== bLegacy) return aLegacy - bLegacy;
     return $mn(a, a.id).localeCompare($mn(b, b.id));
   });
 });
@@ -816,6 +814,24 @@ async function loadInstalled() {
   }
 }
 
+async function loadDownloadedLoras() {
+  try {
+    const res = (await api.loras.listDownloadedAdapters()) as { items?: any[] };
+    downloadedLoras.value = res.items || [];
+  } catch {
+    downloadedLoras.value = [];
+  }
+}
+
+async function refreshDownloadedLoras() {
+  downloadedLorasRefreshing.value = true;
+  try {
+    await loadDownloadedLoras();
+  } finally {
+    downloadedLorasRefreshing.value = false;
+  }
+}
+
 async function loadUserLoras() {
   try {
     const res = (await api.loras.listUserAdapters()) as { items?: any[] };
@@ -859,6 +875,30 @@ function openTrainingRun(taskId: string) {
   openLoraTrainingRun(router, String(taskId || ''));
 }
 
+async function deleteDownloadedLora(ul: { id?: string; name?: string }) {
+  try {
+    await confirm(
+      $tt('download.deleteDownloadedLoraMessage', { name: ul.name || ul.id }),
+      $tt('download.deleteDownloadedLoraTitle'),
+      {
+        confirmButtonText: $tt('download.deleteConfirmBtn'),
+        cancelButtonText: $tt('download.deleteCancelBtn'),
+        type: 'warning',
+      }
+    );
+  } catch (e) {
+    if (e !== 'cancel') console.error('Delete downloaded LoRA confirm failed:', e);
+    return;
+  }
+  try {
+    await api.loras.deleteUserAdapter(String(ul.id), true);
+    await loadDownloadedLoras();
+    toast.success($tt('download.downloadedLoraDeleted'));
+  } catch (e: any) {
+    toast.error(e?.message || String(e));
+  }
+}
+
 async function deleteUserLora(ul: { id?: string; name?: string }) {
   try {
     await confirm(
@@ -887,6 +927,7 @@ async function deleteUserLora(ul: { id?: string; name?: string }) {
 
 watch(activeCategory, (cat) => {
   if (cat === 'trained_loras') void refreshUserLoras();
+  if (cat === 'downloaded_loras') void refreshDownloadedLoras();
   if (cat === 'tools') void refreshUserMergedModels();
 });
 
@@ -1158,6 +1199,7 @@ function connectProgressSSE(
         }, 2000);
         toast.success($tt('download.downloadComplete', { name }));
         refreshStatus();
+        void loadDownloadedLoras();
       } else if (data.status === 'failed') {
         eventSource.close();
         delete sseConnections.value[taskId];
@@ -1301,85 +1343,7 @@ async function deleteDownload(taskId: string) {
   }
 }
 
-/* ───── CivitAI ───── */
-
-function getCivitaiPreviewUrl(model: any): string {
-  return model?.model_versions?.[0]?.images?.[0]?.url || '';
-}
-
-function onCivitaiPreviewError(modelId: string | number) {
-  const key = String(modelId);
-  civitaiPreviewLoadFailed.value = {
-    ...civitaiPreviewLoadFailed.value,
-    [key]: true,
-  };
-}
-
-async function searchCivitai() {
-  if (searching.value) return;
-  searching.value = true;
-  hasSearched.value = true;
-  civitaiPreviewLoadFailed.value = {};
-
-  try {
-    const data = await api.download.civitaiSearch({
-      q: searchQuery.value,
-      types: searchType.value,
-      limit: '20',
-    });
-    const models = Array.isArray(data) ? data : (data as any).items || [];
-    searchResults.value = models;
-
-    models.forEach((model: any) => {
-      if (model.model_versions.length > 0 && !selectedVersions.value[model.id]) {
-        selectedVersions.value[model.id] = model.model_versions[0].id;
-      }
-    });
-  } catch (e) {
-    console.error('Search failed:', e);
-    toast.error($tt('download.searchFailed'));
-  } finally {
-    searching.value = false;
-  }
-}
-
-async function downloadCivitaiModel(model: any) {
-  const versionId = selectedVersions.value[model.id];
-  if (!versionId) {
-    toast.warning($tt('download.selectVersionWarn'));
-    return;
-  }
-
-  const version = model.model_versions.find((v: any) => v.id === versionId);
-  if (!version || !version.files.length) {
-    toast.error($tt('download.noDownloadableFile'));
-    return;
-  }
-
-  const primaryFile = version.files.find((f: any) => f.primary) || version.files[0];
-  downloadingLoras.value[model.id] = true;
-
-  try {
-    const data = (await api.download.startLoraDownload(
-      primaryFile.download_url,
-      primaryFile.name
-    )) as any;
-    connectProgressSSE(data.task_id, model.name);
-  } catch (e: any) {
-    console.error('Download failed:', e);
-    toast.error($tt('download.downloadFailed', { msg: e.message }));
-  } finally {
-    downloadingLoras.value[model.id] = false;
-  }
-}
-
 /* ───── Format / Helpers ───── */
-
-function formatNumber(num: number): string {
-  if (num >= 1000000) return (num / 1000000).toFixed(1) + 'M';
-  if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
-  return num.toString();
-}
 
 function showImportDialog() {
   importModelName.value = '';

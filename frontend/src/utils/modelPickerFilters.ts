@@ -20,13 +20,16 @@ export function applyModelVersionFilters<T extends ModelVersionFilterRow>(
 }
 
 export function modelPassesRegistryFilters(
-  model: { ready?: boolean; commercial_use_allowed?: CommercialUseFlag },
-  opts: { installedOnly: boolean; commercialOnly: boolean },
+  model: { ready?: boolean; commercial_use_allowed?: CommercialUseFlag; successor?: string | null },
+  opts: { installedOnly: boolean; commercialOnly: boolean; currentModelsOnly?: boolean },
 ): boolean {
   if (opts.installedOnly && !model.ready) {
     return false;
   }
   if (opts.commercialOnly && !isCommercialUseAllowed(model.commercial_use_allowed)) {
+    return false;
+  }
+  if (opts.currentModelsOnly && model.successor) {
     return false;
   }
   return true;

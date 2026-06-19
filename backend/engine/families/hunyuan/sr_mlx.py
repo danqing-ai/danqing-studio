@@ -49,8 +49,8 @@ def load_hunyuan_sr_transformer(
     return model
 
 
-def _configure_step_distill_scheduler(ctx: Any, sched: Any, steps: int) -> Any:
-    """Match ``VideoPipeline`` step-distill sigma schedule for few-step SR."""
+def configure_hunyuan_step_distill_timesteps(ctx: Any, sched: Any, steps: int) -> Any:
+    """Match diffusers HunyuanVideo-1.5 step-distill sigma schedule (linspace 1→0)."""
     sigmas_arr = np.linspace(1.0, 0.0, steps + 1, dtype=np.float32)[:-1]
     sched.set_timesteps(steps, use_empirical_mu=False)
     sched._sigmas = ctx.concat([
@@ -80,7 +80,7 @@ def upscale_latents_to_1080p(
     from backend.engine.inference.step_kwargs_builders import FixedStepKwargsBuilder
 
     sched = FlowMatchEulerScheduler(ctx=ctx)
-    timesteps = _configure_step_distill_scheduler(ctx, sched, steps)
+    timesteps = configure_hunyuan_step_distill_timesteps(ctx, sched, steps)
 
     latents = low_res_latents
     B, C, T, H, W = latents.shape

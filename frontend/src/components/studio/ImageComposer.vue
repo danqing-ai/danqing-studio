@@ -119,6 +119,12 @@
       @append="$emit('prompt-apply-append')"
       @dismiss="$emit('prompt-apply-dismiss')"
     />
+    <ComposerSuccessorHintStrip
+      v-if="successorHint"
+      :successor-name="successorHint.successorName"
+      @switch="$emit('successor-switch')"
+      @dismiss="$emit('successor-dismiss')"
+    />
     </div>
 
     <!-- Toolbar -->
@@ -465,6 +471,7 @@
 import { ref, computed, watch } from 'vue';
 import StudioComposerAdvancedDrawer from './StudioComposerAdvancedDrawer.vue';
 import ComposerPromptApplyStrip from './ComposerPromptApplyStrip.vue';
+import ComposerSuccessorHintStrip from './ComposerSuccessorHintStrip.vue';
 import ComposerIconTip from './ComposerIconTip.vue';
 import { useI18n } from 'vue-i18n';
 import {
@@ -534,6 +541,7 @@ const props = defineProps<{
   reversing?: boolean;
   collapsed?: boolean;
   promptApplyPreview?: string | null;
+  successorHint?: { successorId: string; successorName: string } | null;
 }>();
 
 const emit = defineEmits<{
@@ -560,6 +568,8 @@ const emit = defineEmits<{
   (e: 'prompt-apply-replace'): void;
   (e: 'prompt-apply-append'): void;
   (e: 'prompt-apply-dismiss'): void;
+  (e: 'successor-switch'): void;
+  (e: 'successor-dismiss'): void;
 }>();
 
 const { t: $t } = useI18n();

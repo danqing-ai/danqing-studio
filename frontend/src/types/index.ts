@@ -56,6 +56,9 @@ export interface ModelConfig {
   description?: string | { zh?: string; en?: string };
   name_en?: string;
   description_en?: string;
+  successor?: string;
+  distilled_from?: string;
+  distilled_variant?: string;
   [key: string]: unknown;
 }
 

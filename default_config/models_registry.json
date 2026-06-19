@@ -58,8 +58,8 @@
         "en": "LoRA"
       },
       "description": {
-        "zh": "风格和艺术LoRA",
-        "en": "Style and art LoRAs"
+        "zh": "风格、艺术与人像 LoRA",
+        "en": "Style, art, and portrait LoRAs"
       },
       "icon": "🎭"
     },
@@ -514,8 +514,10 @@
           "zh": "FLUX.1 [schnell]",
           "en": "FLUX.1 [schnell]"
         },
-        "recommended": true,
-        "engine": "danqing-image"
+        "recommended": false,
+        "engine": "danqing-image",
+        "successor": "flux2-klein-4b",
+        "distilled_from": "flux1-dev"
       },
       "runtime": {
         "family": "flux1",
@@ -621,6 +623,13 @@
               "1536x1920",
               "1920x1536"
             ]
+          },
+          "lora_search": {
+            "terms": [
+              "FLUX.1 schnell",
+              "flux schnell"
+            ],
+            "suffix": "lora"
           }
         },
         "extends": "image_dit_standard"
@@ -689,7 +698,9 @@
           "en": "FLUX.1 [dev]"
         },
         "recommended": false,
-        "engine": "danqing-image"
+        "engine": "danqing-image",
+        "successor": "flux2-klein-9b",
+        "distilled_variant": "flux1-schnell"
       },
       "runtime": {
         "family": "flux1",
@@ -794,6 +805,14 @@
               "1536x1920",
               "1920x1536"
             ]
+          },
+          "lora_search": {
+            "terms": [
+              "FLUX.1 dev",
+              "flux1 dev",
+              "flux dev"
+            ],
+            "suffix": "lora"
           }
         },
         "extends": "image_dit_standard"
@@ -862,7 +881,8 @@
           "en": "FLUX.1 Krea [dev]"
         },
         "recommended": false,
-        "engine": "danqing-image"
+        "engine": "danqing-image",
+        "successor": "flux2-klein-9b"
       },
       "runtime": {
         "family": "flux1",
@@ -960,6 +980,13 @@
               "1024x1536",
               "1536x1024"
             ]
+          },
+          "lora_search": {
+            "terms": [
+              "FLUX.1 krea",
+              "flux krea"
+            ],
+            "suffix": "lora"
           }
         },
         "extends": "image_dit_standard"
@@ -1028,7 +1055,8 @@
           "en": "FLUX.2-klein-4B"
         },
         "recommended": true,
-        "engine": "danqing-image"
+        "engine": "danqing-image",
+        "distilled_from": "flux2-klein-base-4b"
       },
       "runtime": {
         "family": "flux2",
@@ -1137,6 +1165,13 @@
               "1024x1536",
               "1536x1024"
             ]
+          },
+          "lora_search": {
+            "terms": [
+              "FLUX.2 klein 4B",
+              "flux2 klein"
+            ],
+            "suffix": "lora"
           }
         },
         "extends": "image_dit_standard"
@@ -1243,7 +1278,8 @@
           "en": "FLUX.2-klein-9B"
         },
         "recommended": false,
-        "engine": "danqing-image"
+        "engine": "danqing-image",
+        "distilled_from": "flux2-klein-base-9b"
       },
       "runtime": {
         "family": "flux2",
@@ -1357,6 +1393,13 @@
               "1024x1536",
               "1536x1024"
             ]
+          },
+          "lora_search": {
+            "terms": [
+              "FLUX.2 klein 9B",
+              "flux2 klein"
+            ],
+            "suffix": "lora"
           }
         },
         "extends": "image_dit_standard"
@@ -1457,7 +1500,8 @@
           "en": "FLUX.2-klein-base-4B"
         },
         "recommended": false,
-        "engine": "danqing-image"
+        "engine": "danqing-image",
+        "distilled_variant": "flux2-klein-4b"
       },
       "runtime": {
         "family": "flux2",
@@ -1564,6 +1608,13 @@
               "1024x1536",
               "1536x1024"
             ]
+          },
+          "lora_search": {
+            "terms": [
+              "FLUX.2 klein base 4B",
+              "flux2 klein base"
+            ],
+            "suffix": "lora"
           }
         },
         "extends": "image_dit_standard"
@@ -1632,7 +1683,8 @@
           "en": "FLUX.2-klein-base-9B"
         },
         "recommended": false,
-        "engine": "danqing-image"
+        "engine": "danqing-image",
+        "distilled_variant": "flux2-klein-9b"
       },
       "runtime": {
         "family": "flux2",
@@ -1734,6 +1786,13 @@
               "1024x1536",
               "1536x1024"
             ]
+          },
+          "lora_search": {
+            "terms": [
+              "FLUX.2 klein base 9B",
+              "flux2 klein base"
+            ],
+            "suffix": "lora"
           }
         },
         "extends": "image_dit_standard"
@@ -1802,7 +1861,8 @@
           "en": "Z-Image"
         },
         "recommended": false,
-        "engine": "danqing-image"
+        "engine": "danqing-image",
+        "distilled_variant": "z-image-turbo"
       },
       "runtime": {
         "family": "z_image",
@@ -1922,6 +1982,13 @@
               "1024x1536",
               "1536x1024"
             ]
+          },
+          "lora_search": {
+            "terms": [
+              "Z-Image",
+              "z-image"
+            ],
+            "suffix": "lora"
           }
         },
         "extends": "image_dit_standard"
@@ -1990,7 +2057,8 @@
           "en": "Z-Image-Turbo"
         },
         "recommended": true,
-        "engine": "danqing-image"
+        "engine": "danqing-image",
+        "distilled_from": "z-image"
       },
       "runtime": {
         "family": "z_image",
@@ -2130,6 +2198,14 @@
               "1024x1536",
               "1536x1024"
             ]
+          },
+          "lora_search": {
+            "terms": [
+              "Z-Image-Turbo",
+              "z-image turbo",
+              "z-image"
+            ],
+            "suffix": "lora"
           }
         },
         "extends": "image_dit_standard"
@@ -2978,6 +3054,13 @@
               "1024x1536",
               "1536x1024"
             ]
+          },
+          "lora_search": {
+            "terms": [
+              "Qwen Image",
+              "qwen image"
+            ],
+            "suffix": "lora"
           }
         },
         "extends": "image_dit_standard"
@@ -3034,7 +3117,7 @@
             },
             "size": "26GB",
             "default": false,
-            "source": "huggingface",
+            "source": "modelscope",
             "repo_id": "mlx-community/Qwen-Image-2512-4bit",
             "local_path": "models/Image/qwen-image-2512-mlx-community-4bit",
             "source_type": "prequantized",
@@ -3050,7 +3133,7 @@
             },
             "size": "31GB",
             "default": false,
-            "source": "huggingface",
+            "source": "modelscope",
             "repo_id": "themindstudio/Qwen-Image-2512-6bit-MLX",
             "local_path": "models/Image/qwen-image-2512-themindstudio-6bit",
             "source_type": "prequantized",
@@ -3066,7 +3149,7 @@
             },
             "size": "36GB",
             "default": false,
-            "source": "huggingface",
+            "source": "modelscope",
             "repo_id": "mlx-community/Qwen-Image-2512-8bit",
             "local_path": "models/Image/qwen-image-2512-mlx-community-8bit",
             "source_type": "prequantized",
@@ -4409,6 +4492,13 @@
               "1024x1536",
               "1536x1024"
             ]
+          },
+          "lora_search": {
+            "terms": [
+              "FLUX.1 kontext",
+              "flux kontext"
+            ],
+            "suffix": "lora"
           }
         },
         "extends": "image_dit_standard"
@@ -4457,538 +4547,6 @@
               "bits": 4,
               "scheme": "mlx_affine"
             }
-          }
-        }
-      }
-    },
-    "realism-lora-nsfw": {
-      "catalog": {
-        "media": "image",
-        "description": {
-          "zh": "适用于 FLUX.1-dev；真实感增强 LoRA，提升人物细节。",
-          "en": "For FLUX.1-dev; realism enhancement LoRA for finer portrait detail."
-        },
-        "category": "loras",
-        "commercial_use_allowed": null,
-        "type": "lora",
-        "nsfw": false,
-        "source": "modelscope",
-        "name": {
-          "zh": "Realism LoRA",
-          "en": "Realism LoRA"
-        },
-        "recommended": false,
-        "base_model": "flux1-dev",
-        "engine": "danqing-image"
-      },
-      "runtime": {
-        "family": "flux1"
-      },
-      "actions": {},
-      "ui": {
-        "parameters": {
-          "lora_scale": {
-            "default": 0.8,
-            "min": 0.0,
-            "max": 2.0,
-            "step": 0.1,
-            "label": "LoRA强度",
-            "type": "float"
-          }
-        }
-      },
-      "distribution": {
-        "versions": {
-          "fp16": {
-            "name": {
-              "zh": "FP16",
-              "en": "FP16"
-            },
-            "size": "200MB",
-            "default": true,
-            "repo_id": "XLabs-AI/flux-RealismLora",
-            "local_path": "models/Lora/realism-lora-fp16",
-            "source_type": "full"
-          }
-        }
-      }
-    },
-    "miasweet-nsfw-lora": {
-      "catalog": {
-        "media": "image",
-        "description": {
-          "zh": "适用于 FLUX.1-dev；NSFW LoRA，触发词：miasweet。",
-          "en": "For FLUX.1-dev; NSFW LoRA. Trigger word: miasweet."
-        },
-        "category": "loras",
-        "commercial_use_allowed": null,
-        "type": "lora",
-        "nsfw": true,
-        "source": "modelscope",
-        "name": {
-          "zh": "MiaSweet NSFW LoRA",
-          "en": "MiaSweet NSFW LoRA"
-        },
-        "recommended": false,
-        "base_model": "flux1-dev",
-        "engine": "danqing-image"
-      },
-      "runtime": {
-        "family": "flux1"
-      },
-      "actions": {},
-      "ui": {
-        "parameters": {
-          "lora_scale": {
-            "default": 0.8,
-            "min": 0.0,
-            "max": 2.0,
-            "step": 0.1,
-            "label": "LoRA强度",
-            "type": "float"
-          }
-        }
-      },
-      "distribution": {
-        "versions": {
-          "fp16": {
-            "name": {
-              "zh": "FP16",
-              "en": "FP16"
-            },
-            "size": "200MB",
-            "default": true,
-            "repo_id": "davidjaymes/depr_flux-lora-fast-training_miasweet-v1_nsfw",
-            "local_path": "models/Lora/miasweet-nsfw-lora-fp16",
-            "source_type": "full"
-          }
-        }
-      }
-    },
-    "flux-uncensored-enhanceaiteam-v2-ms": {
-      "catalog": {
-        "media": "image",
-        "description": {
-          "zh": "enhanceaiteam Flux Uncensored V2 LoRA；适用于 FLUX.1-dev，成人向，请遵守法律与许可。",
-          "en": "enhanceaiteam Flux Uncensored V2 LoRA for FLUX.1-dev; adult content—comply with law and licenses."
-        },
-        "category": "loras",
-        "commercial_use_allowed": false,
-        "type": "lora",
-        "nsfw": true,
-        "source": "modelscope",
-        "name": {
-          "zh": "Flux Uncensored V2",
-          "en": "Flux Uncensored V2"
-        },
-        "recommended": false,
-        "base_model": "flux1-dev",
-        "engine": "danqing-image"
-      },
-      "runtime": {
-        "family": "flux1"
-      },
-      "actions": {},
-      "ui": {
-        "parameters": {
-          "lora_scale": {
-            "default": 0.85,
-            "min": 0.0,
-            "max": 2.0,
-            "step": 0.1,
-            "label": "LoRA强度",
-            "type": "float"
-          }
-        }
-      },
-      "distribution": {
-        "versions": {
-          "fp16": {
-            "name": {
-              "zh": "FP16",
-              "en": "FP16"
-            },
-            "size": "300MB",
-            "default": true,
-            "repo_id": "FluxLora/enhanceaiteam-Flux-Uncensored-V2",
-            "local_path": "models/Lora/flux-uncensored-enhanceaiteam-v2-ms-fp16",
-            "source_type": "full"
-          }
-        }
-      }
-    },
-    "flux-uncensored-ryouko-v2-ms": {
-      "catalog": {
-        "media": "image",
-        "description": {
-          "zh": "Uncensored V2 社区变体 LoRA；适用于 FLUX.1-dev，成人向。",
-          "en": "Uncensored V2 community variant LoRA for FLUX.1-dev; adult content."
-        },
-        "category": "loras",
-        "commercial_use_allowed": false,
-        "type": "lora",
-        "nsfw": true,
-        "source": "modelscope",
-        "name": {
-          "zh": "Flux Uncensored V2 Ryouko",
-          "en": "Flux Uncensored V2 Ryouko"
-        },
-        "recommended": false,
-        "base_model": "flux1-dev",
-        "engine": "danqing-image"
-      },
-      "runtime": {
-        "family": "flux1"
-      },
-      "actions": {},
-      "ui": {
-        "parameters": {
-          "lora_scale": {
-            "default": 0.85,
-            "min": 0.0,
-            "max": 2.0,
-            "step": 0.1,
-            "label": "LoRA强度",
-            "type": "float"
-          }
-        }
-      },
-      "distribution": {
-        "versions": {
-          "fp16": {
-            "name": {
-              "zh": "FP16",
-              "en": "FP16"
-            },
-            "size": "300MB",
-            "default": true,
-            "repo_id": "FluxLora/Ryouko65777-Flux-Uncensored-V2",
-            "local_path": "models/Lora/flux-uncensored-ryouko-v2-ms-fp16",
-            "source_type": "full"
-          }
-        }
-      }
-    },
-    "flux-uncensored-lustlyai-v1-ms": {
-      "catalog": {
-        "media": "image",
-        "description": {
-          "zh": "Lustly.ai NSFW/Uncensored LoRA；适用于 FLUX.1-dev。",
-          "en": "Lustly.ai NSFW/uncensored LoRA for FLUX.1-dev."
-        },
-        "category": "loras",
-        "commercial_use_allowed": false,
-        "type": "lora",
-        "nsfw": true,
-        "source": "modelscope",
-        "name": {
-          "zh": "Lustly.ai Uncensored NSFW v1",
-          "en": "Lustly.ai Uncensored NSFW v1"
-        },
-        "recommended": false,
-        "base_model": "flux1-dev",
-        "engine": "danqing-image"
-      },
-      "runtime": {
-        "family": "flux1"
-      },
-      "actions": {},
-      "ui": {
-        "parameters": {
-          "lora_scale": {
-            "default": 0.85,
-            "min": 0.0,
-            "max": 2.0,
-            "step": 0.1,
-            "label": "LoRA强度",
-            "type": "float"
-          }
-        }
-      },
-      "distribution": {
-        "versions": {
-          "fp16": {
-            "name": {
-              "zh": "FP16",
-              "en": "FP16"
-            },
-            "size": "300MB",
-            "default": true,
-            "repo_id": "FluxLora/lustlyai-Flux_Lustly.ai_Uncensored_nsfw_v1",
-            "local_path": "models/Lora/flux-uncensored-lustlyai-v1-ms-fp16",
-            "source_type": "full"
-          }
-        }
-      }
-    },
-    "flux-uncensored-enhanceaiteam-v1-hf": {
-      "catalog": {
-        "media": "image",
-        "description": {
-          "zh": "enhanceaiteam Flux Uncensored V1 LoRA；适用于 FLUX.1-dev，成人向。",
-          "en": "enhanceaiteam Flux Uncensored V1 LoRA for FLUX.1-dev; adult content."
-        },
-        "category": "loras",
-        "commercial_use_allowed": false,
-        "type": "lora",
-        "nsfw": true,
-        "source": "huggingface",
-        "name": {
-          "zh": "Flux Uncensored V1",
-          "en": "Flux Uncensored V1"
-        },
-        "recommended": false,
-        "base_model": "flux1-dev",
-        "engine": "danqing-image"
-      },
-      "runtime": {
-        "family": "flux1"
-      },
-      "actions": {},
-      "ui": {
-        "parameters": {
-          "lora_scale": {
-            "default": 0.85,
-            "min": 0.0,
-            "max": 2.0,
-            "step": 0.1,
-            "label": "LoRA强度",
-            "type": "float"
-          }
-        }
-      },
-      "distribution": {
-        "versions": {
-          "fp16": {
-            "name": {
-              "zh": "FP16",
-              "en": "FP16"
-            },
-            "size": "300MB",
-            "default": true,
-            "repo_id": "enhanceaiteam/Flux-uncensored",
-            "local_path": "models/Lora/flux-uncensored-enhanceaiteam-v1-hf-fp16",
-            "source_type": "full"
-          }
-        }
-      }
-    },
-    "flux-uncensored-enhanceaiteam-v2-hf": {
-      "catalog": {
-        "media": "image",
-        "description": {
-          "zh": "enhanceaiteam Uncensored V2 LoRA；与 V2 系列同源，适用于 FLUX.1-dev。",
-          "en": "enhanceaiteam Uncensored V2 LoRA; same series as V2, for FLUX.1-dev."
-        },
-        "category": "loras",
-        "commercial_use_allowed": false,
-        "type": "lora",
-        "nsfw": true,
-        "source": "huggingface",
-        "name": {
-          "zh": "Flux Uncensored V2",
-          "en": "Flux Uncensored V2"
-        },
-        "recommended": false,
-        "base_model": "flux1-dev",
-        "engine": "danqing-image"
-      },
-      "runtime": {
-        "family": "flux1"
-      },
-      "actions": {},
-      "ui": {
-        "parameters": {
-          "lora_scale": {
-            "default": 0.85,
-            "min": 0.0,
-            "max": 2.0,
-            "step": 0.1,
-            "label": "LoRA强度",
-            "type": "float"
-          }
-        }
-      },
-      "distribution": {
-        "versions": {
-          "fp16": {
-            "name": {
-              "zh": "FP16",
-              "en": "FP16"
-            },
-            "size": "300MB",
-            "default": true,
-            "repo_id": "enhanceaiteam/Flux-Uncensored-V2",
-            "local_path": "models/Lora/flux-uncensored-enhanceaiteam-v2-hf-fp16",
-            "source_type": "full"
-          }
-        }
-      }
-    },
-    "flux-uncensored-the1ian-hf": {
-      "catalog": {
-        "media": "image",
-        "description": {
-          "zh": "the1ian Flux Uncensored LoRA；适用于 FLUX.1-dev，成人向。",
-          "en": "the1ian Flux Uncensored LoRA for FLUX.1-dev; adult content."
-        },
-        "category": "loras",
-        "commercial_use_allowed": false,
-        "type": "lora",
-        "nsfw": true,
-        "source": "huggingface",
-        "name": {
-          "zh": "Flux Uncensored the1ian",
-          "en": "Flux Uncensored the1ian"
-        },
-        "recommended": false,
-        "base_model": "flux1-dev",
-        "engine": "danqing-image"
-      },
-      "runtime": {
-        "family": "flux1"
-      },
-      "actions": {},
-      "ui": {
-        "parameters": {
-          "lora_scale": {
-            "default": 0.85,
-            "min": 0.0,
-            "max": 2.0,
-            "step": 0.1,
-            "label": "LoRA强度",
-            "type": "float"
-          }
-        }
-      },
-      "distribution": {
-        "versions": {
-          "fp16": {
-            "name": {
-              "zh": "FP16",
-              "en": "FP16"
-            },
-            "size": "300MB",
-            "default": true,
-            "repo_id": "the1ian/Flux-uncensored",
-            "local_path": "models/Lora/flux-uncensored-the1ian-hf-fp16",
-            "source_type": "full"
-          }
-        }
-      }
-    },
-    "bbw-style": {
-      "catalog": {
-        "media": "image",
-        "description": {
-          "zh": "适用于 FLUX.2 Klein 9B 的风格 LoRA。",
-          "en": "Style LoRA for FLUX.2 Klein 9B."
-        },
-        "category": "loras",
-        "commercial_use_allowed": null,
-        "type": "lora",
-        "metadata": {
-          "ss_output_name": "MS_BBW_Style_klein_V1",
-          "ss_base_model_version": "flux2_klein_9b",
-          "software": "ai-toolkit 0.9.4",
-          "training_step": 3220,
-          "training_epoch": 9,
-          "version": "1.0",
-          "format": "pt",
-          "sshs_legacy_hash": "2f308a4d",
-          "sshs_model_hash": "9007e6aacf07d66b293de420237fe54aa6574b75a10d7ad637b3d4a099a4120f"
-        },
-        "source": "local",
-        "name": {
-          "zh": "MS BBW Style (Klein V1)",
-          "en": "MS BBW Style (Klein V1)"
-        },
-        "recommended": false,
-        "base_model": "flux2-klein-9b",
-        "engine": "danqing-image"
-      },
-      "runtime": {
-        "family": "flux2"
-      },
-      "actions": {},
-      "ui": {
-        "parameters": {
-          "lora_scale": {
-            "default": 0.8,
-            "min": 0.0,
-            "max": 2.0,
-            "step": 0.1,
-            "label": "LoRA强度",
-            "type": "float"
-          }
-        }
-      },
-      "distribution": {
-        "versions": {
-          "fp16": {
-            "name": {
-              "zh": "FP16",
-              "en": "FP16"
-            },
-            "size": "158MB",
-            "default": true,
-            "local_path": "models/Lora/bbw-style.safetensors",
-            "source_type": "full"
-          }
-        }
-      }
-    },
-    "lyza": {
-      "catalog": {
-        "media": "image",
-        "description": {
-          "zh": "Lyza 风格 LoRA。",
-          "en": "Lyza style LoRA."
-        },
-        "category": "loras",
-        "commercial_use_allowed": null,
-        "type": "lora",
-        "metadata": {
-          "provider": "liblib",
-          "sshs_legacy_hash": "bba47f1c",
-          "sshs_model_hash": "6ae425d4995dd80074893bb7a4692c1ed13cc73874e7be73177214cc693c1265"
-        },
-        "source": "local",
-        "name": {
-          "zh": "Lyza",
-          "en": "Lyza"
-        },
-        "recommended": false,
-        "base_model": "flux1-dev",
-        "engine": "danqing-image"
-      },
-      "runtime": {
-        "family": "flux1"
-      },
-      "actions": {},
-      "ui": {
-        "parameters": {
-          "lora_scale": {
-            "default": 0.8,
-            "min": 0.0,
-            "max": 2.0,
-            "step": 0.1,
-            "label": "LoRA强度",
-            "type": "float"
-          }
-        }
-      },
-      "distribution": {
-        "versions": {
-          "fp16": {
-            "name": {
-              "zh": "FP16",
-              "en": "FP16"
-            },
-            "size": "584MB",
-            "default": true,
-            "local_path": "models/Lora/lyza.safetensors",
-            "source_type": "full"
           }
         }
       }
@@ -5257,8 +4815,8 @@
       "catalog": {
         "media": "image",
         "description": {
-          "zh": "高写实人像与细节增强，触发词可参考仓库说明。",
-          "en": "Photorealism boost ; see repo for trigger words."
+          "zh": "高写实人像与皮肤质感增强，触发词见上游仓库说明。",
+          "en": "High photorealism and skin-texture boost; see upstream repo for trigger words."
         },
         "category": "loras",
         "commercial_use_allowed": true,
@@ -5682,7 +5240,7 @@
         "category": "loras",
         "commercial_use_allowed": null,
         "type": "lora",
-        "source": "modelscope",
+        "source": "huggingface",
         "name": {
           "zh": "Lightx2v I2V Distill",
           "en": "Lightx2v I2V Distill"
@@ -5737,7 +5295,7 @@
         "category": "loras",
         "commercial_use_allowed": null,
         "type": "lora",
-        "source": "modelscope",
+        "source": "huggingface",
         "name": {
           "zh": "Wan2.2 InP Low Noise",
           "en": "Wan2.2 InP Low Noise"
@@ -5792,7 +5350,7 @@
         "category": "loras",
         "commercial_use_allowed": null,
         "type": "lora",
-        "source": "modelscope",
+        "source": "huggingface",
         "name": {
           "zh": "Wan2.2 InP High Noise",
           "en": "Wan2.2 InP High Noise"
@@ -5853,7 +5411,7 @@
           "zh": "StarFace (Z-Image)",
           "en": "StarFace (Z-Image)"
         },
-        "recommended": false,
+        "recommended": true,
         "base_model": "z-image",
         "engine": "danqing-image"
       },
@@ -5905,7 +5463,7 @@
           "zh": "StarFace (Qwen Image)",
           "en": "StarFace (Qwen Image)"
         },
-        "recommended": false,
+        "recommended": true,
         "base_model": "qwen-image",
         "engine": "danqing-image"
       },
@@ -5945,8 +5503,8 @@
       "catalog": {
         "media": "video",
         "description": {
-          "zh": "Lightricks LTX-2.3 蒸馏版，含音视频 DiT，4 步快速生成。",
-          "en": "Lightricks LTX-2.3 distilled A/V DiT; fast 4-step generation."
+          "zh": "Lightricks LTX-2.3 蒸馏版，含音视频 DiT，两阶段 8+3 步快速生成。",
+          "en": "Lightricks LTX-2.3 distilled A/V DiT; two-stage 8+3 step generation."
         },
         "category": "video_models",
         "commercial_use_allowed": false,
@@ -5957,7 +5515,8 @@
           "en": "LTX 2.3 [Distilled]"
         },
         "recommended": false,
-        "engine": "danqing-video"
+        "engine": "danqing-video",
+        "distilled_from": "ltx-2.3-dev"
       },
       "runtime": {
         "family": "ltx",
@@ -5978,10 +5537,11 @@
         "parameters": {
           "seed_support": true,
           "steps": {
-            "default": 4,
+            "default": 8,
             "min": 1,
             "max": 50,
             "label": "步数",
+            "note": "蒸馏两阶段：Stage1 默认 8 步 + Stage2 固定 3 步；低于 8 会自动补全",
             "type": "int"
           },
           "guide_scale": {
@@ -5997,20 +5557,24 @@
           "width": {
             "default": 512,
             "options": [
-              320,
+              480,
               512,
-              720
+              704,
+              768,
+              1280
             ],
-            "type": "enum"
+            "type": "enum",
+            "note": "须为 32 的倍数（LTX VAE）"
           },
           "height": {
             "default": 768,
             "options": [
-              512,
+              704,
               768,
-              1024
+              1280
             ],
-            "type": "enum"
+            "type": "enum",
+            "note": "须为 32 的倍数（LTX VAE）"
           },
           "num_frames": {
             "default": 97,
@@ -6033,12 +5597,12 @@
           "resolution_presets": {
             "default": "512x768",
             "options": [
-              "320x512",
-              "512x512",
+              "480x704",
               "512x768",
-              "512x1024",
-              "720x768",
-              "720x1024"
+              "704x1280",
+              "768x1280",
+              "1280x704",
+              "1280x768"
             ]
           }
         },
@@ -6053,10 +5617,15 @@
             },
             "size": "60GB",
             "default": true,
-            "source": "modelscope",
+            "source": "huggingface",
             "repo_id": "dgrauet/ltx-2.3-mlx-q4",
             "local_path": "models/Video/ltx-2.3-distilled-mlx-q4",
-            "source_type": "full"
+            "source_type": "full",
+            "quantization": {
+              "bits": 4,
+              "scheme": "mlx_affine",
+              "group_size": 64
+            }
           },
           "mlx": {
             "name": {
@@ -6065,10 +5634,15 @@
             },
             "size": "88GB",
             "default": false,
-            "source": "modelscope",
+            "source": "huggingface",
             "repo_id": "dgrauet/ltx-2.3-mlx-q8",
             "local_path": "models/Video/ltx-2.3-distilled-mlx-q8",
-            "source_type": "full"
+            "source_type": "full",
+            "quantization": {
+              "bits": 8,
+              "scheme": "mlx_affine",
+              "group_size": 32
+            }
           },
           "mlx-bf16": {
             "name": {
@@ -6077,7 +5651,7 @@
             },
             "size": "140GB",
             "default": false,
-            "source": "modelscope",
+            "source": "huggingface",
             "repo_id": "dgrauet/ltx-2.3-mlx",
             "local_path": "models/Video/ltx-2.3-distilled-mlx-bf16",
             "source_type": "full"
@@ -6101,7 +5675,8 @@
           "en": "LTX 2.3 [Dev]"
         },
         "recommended": false,
-        "engine": "danqing-video"
+        "engine": "danqing-video",
+        "distilled_variant": "ltx-2.3-distilled"
       },
       "runtime": {
         "family": "ltx",
@@ -6138,20 +5713,24 @@
           "width": {
             "default": 512,
             "options": [
-              320,
+              480,
               512,
-              720
+              704,
+              768,
+              1280
             ],
-            "type": "enum"
+            "type": "enum",
+            "note": "须为 32 的倍数（LTX VAE）"
           },
           "height": {
             "default": 768,
             "options": [
-              512,
+              704,
               768,
-              1024
+              1280
             ],
-            "type": "enum"
+            "type": "enum",
+            "note": "须为 32 的倍数（LTX VAE）"
           },
           "num_frames": {
             "default": 97,
@@ -6174,12 +5753,12 @@
           "resolution_presets": {
             "default": "512x768",
             "options": [
-              "320x512",
-              "512x512",
+              "480x704",
               "512x768",
-              "512x1024",
-              "720x768",
-              "720x1024"
+              "704x1280",
+              "768x1280",
+              "1280x704",
+              "1280x768"
             ]
           }
         },
@@ -6194,10 +5773,15 @@
             },
             "size": "60GB",
             "default": true,
-            "source": "modelscope",
+            "source": "huggingface",
             "repo_id": "dgrauet/ltx-2.3-mlx-q4",
             "local_path": "models/Video/ltx-2.3-dev-mlx-q4",
-            "source_type": "full"
+            "source_type": "full",
+            "quantization": {
+              "bits": 4,
+              "scheme": "mlx_affine",
+              "group_size": 64
+            }
           },
           "mlx": {
             "name": {
@@ -6206,10 +5790,15 @@
             },
             "size": "88GB",
             "default": false,
-            "source": "modelscope",
+            "source": "huggingface",
             "repo_id": "dgrauet/ltx-2.3-mlx-q8",
             "local_path": "models/Video/ltx-2.3-dev-mlx-q8",
-            "source_type": "full"
+            "source_type": "full",
+            "quantization": {
+              "bits": 8,
+              "scheme": "mlx_affine",
+              "group_size": 32
+            }
           },
           "mlx-bf16": {
             "name": {
@@ -6218,7 +5807,7 @@
             },
             "size": "140GB",
             "default": false,
-            "source": "modelscope",
+            "source": "huggingface",
             "repo_id": "dgrauet/ltx-2.3-mlx",
             "local_path": "models/Video/ltx-2.3-dev-mlx-bf16",
             "source_type": "full"
@@ -6242,7 +5831,8 @@
           "en": "Hunyuan Video 1.5 480p T2V"
         },
         "recommended": false,
-        "engine": "danqing-video"
+        "engine": "danqing-video",
+        "distilled_variant": "hunyuan-video-1.5-t2v-step-distill"
       },
       "runtime": {
         "family": "hunyuan",
@@ -6371,7 +5961,8 @@
           "en": "Hunyuan Video 1.5 480p I2V"
         },
         "recommended": false,
-        "engine": "danqing-video"
+        "engine": "danqing-video",
+        "distilled_variant": "hunyuan-video-1.5-i2v-step-distill"
       },
       "runtime": {
         "family": "hunyuan",
@@ -6475,7 +6066,8 @@
           "en": "Hunyuan Video 1.5 I2V Step Distill"
         },
         "recommended": true,
-        "engine": "danqing-video"
+        "engine": "danqing-video",
+        "distilled_from": "hunyuan-video-1.5-480p-i2v"
       },
       "runtime": {
         "family": "hunyuan",
@@ -6483,7 +6075,8 @@
           "mlx"
         ],
         "overrides": {
-          "supports_guidance": false
+          "supports_guidance": false,
+          "step_distill": true
         }
       },
       "actions": {
@@ -6523,6 +6116,9 @@
             "type": "int"
           },
           "negative_prompt_support": false,
+          "text_encoder_qwen_local": "models/Text/qwen2.5-vl-7b-instruct",
+          "text_encoder_byt5_local": "models/Text/byt5-small",
+          "text_encoder_release_after_encode": true,
           "resolution_presets": {
             "default": "480x864",
             "options": [
@@ -6551,6 +6147,146 @@
                 "local_path": "models/Video/hunyuan-video-1.5-i2v-step-distill-original",
                 "name": "HunyuanVideo-1.5",
                 "size": "40GB",
+                "source": "modelscope"
+              },
+              {
+                "repo_id": "Qwen/Qwen2.5-VL-7B-Instruct",
+                "local_path": "models/Text/qwen2.5-vl-7b-instruct",
+                "name": "Qwen2.5-VL-7B-Instruct",
+                "size": "16GB",
+                "source": "modelscope"
+              },
+              {
+                "repo_id": "google/byt5-small",
+                "local_path": "models/Text/byt5-small",
+                "name": "byt5-small",
+                "size": "1GB",
+                "source": "modelscope"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "hunyuan-video-1.5-t2v-step-distill": {
+      "catalog": {
+        "media": "video",
+        "description": {
+          "zh": "HunyuanVideo 1.5 文生视频蒸馏版，步数更少。",
+          "en": "HunyuanVideo 1.5 distilled text-to-video; fewer steps."
+        },
+        "category": "video_models",
+        "commercial_use_allowed": true,
+        "type": "video",
+        "source": "modelscope",
+        "name": {
+          "zh": "Hunyuan Video 1.5 T2V Step Distill",
+          "en": "Hunyuan Video 1.5 T2V Step Distill"
+        },
+        "recommended": true,
+        "engine": "danqing-video",
+        "distilled_from": "hunyuan-video-1.5-480p-t2v"
+      },
+      "runtime": {
+        "family": "hunyuan",
+        "backends": [
+          "mlx"
+        ],
+        "overrides": {
+          "supports_guidance": false,
+          "step_distill": true
+        }
+      },
+      "actions": {
+        "create": {}
+      },
+      "ui": {
+        "parameters": {
+          "seed_support": true,
+          "steps": {
+            "default": 6,
+            "min": 1,
+            "max": 12,
+            "label": "步数",
+            "type": "int"
+          },
+          "width": {
+            "default": 480,
+            "options": [
+              480
+            ],
+            "type": "enum"
+          },
+          "height": {
+            "default": 864,
+            "options": [
+              864
+            ],
+            "type": "enum"
+          },
+          "num_frames": {
+            "default": 81,
+            "min": 1,
+            "max": 129,
+            "step": 4,
+            "label": "帧数",
+            "note": "必须为 4n+1",
+            "type": "int"
+          },
+          "fps": {
+            "default": 24,
+            "min": 1,
+            "max": 60,
+            "step": 1,
+            "label": "FPS",
+            "type": "int"
+          },
+          "negative_prompt_support": false,
+          "text_encoder_qwen_local": "models/Text/qwen2.5-vl-7b-instruct",
+          "text_encoder_byt5_local": "models/Text/byt5-small",
+          "text_encoder_release_after_encode": true,
+          "resolution_presets": {
+            "default": "480x864",
+            "options": [
+              "480x864"
+            ]
+          }
+        },
+        "extends": "video_dit_standard"
+      },
+      "distribution": {
+        "versions": {
+          "original": {
+            "name": {
+              "zh": "原始权重",
+              "en": "Original Weights"
+            },
+            "size": "40GB",
+            "default": true,
+            "repo_id": "Tencent-Hunyuan/HunyuanVideo-1.5",
+            "local_path": "models/Video/hunyuan-video-1.5-t2v-step-distill-original",
+            "source_type": "full",
+            "hunyuan_ms_variant": "480p_t2v_distilled",
+            "bundle_repos": [
+              {
+                "repo_id": "Tencent-Hunyuan/HunyuanVideo-1.5",
+                "local_path": "models/Video/hunyuan-video-1.5-t2v-step-distill-original",
+                "name": "HunyuanVideo-1.5",
+                "size": "40GB",
+                "source": "modelscope"
+              },
+              {
+                "repo_id": "Qwen/Qwen2.5-VL-7B-Instruct",
+                "local_path": "models/Text/qwen2.5-vl-7b-instruct",
+                "name": "Qwen2.5-VL-7B-Instruct",
+                "size": "16GB",
+                "source": "modelscope"
+              },
+              {
+                "repo_id": "google/byt5-small",
+                "local_path": "models/Text/byt5-small",
+                "name": "byt5-small",
+                "size": "1GB",
                 "source": "modelscope"
               }
             ]
@@ -6684,17 +6420,19 @@
             "type": "float"
           },
           "width": {
-            "default": 720,
+            "default": 704,
             "options": [
               480,
-              720
+              704,
+              1280
             ],
-            "type": "enum"
+            "type": "enum",
+            "note": "720P 竖屏 704×1280、横屏 1280×704（VAE×patch 对齐 32）"
           },
           "height": {
             "default": 1280,
             "options": [
-              720,
+              704,
               1280
             ],
             "type": "enum"
@@ -6710,10 +6448,11 @@
           },
           "negative_prompt_support": true,
           "resolution_presets": {
-            "default": "720x1280",
+            "default": "704x1280",
             "options": [
-              "480x720",
-              "720x1280"
+              "480x704",
+              "704x1280",
+              "1280x704"
             ]
           }
         },
@@ -6728,7 +6467,7 @@
             },
             "size": "28GB",
             "default": true,
-            "repo_id": "Wan-AI/Wan2.2-T2V-14B",
+            "repo_id": "Wan-AI/Wan2.2-T2V-A14B",
             "local_path": "models/Video/wan-2.2-t2v-14b-original",
             "source_type": "full"
           },
@@ -6739,7 +6478,7 @@
             },
             "size": "14GB",
             "default": false,
-            "repo_id": "Wan-AI/Wan2.2-T2V-14B",
+            "repo_id": "Wan-AI/Wan2.2-T2V-A14B",
             "local_path": "models/Video/wan-2.2-t2v-14b-int8",
             "source_type": "derived",
             "from_version": "original",
@@ -6755,7 +6494,7 @@
             },
             "size": "7GB",
             "default": false,
-            "repo_id": "Wan-AI/Wan2.2-T2V-14B",
+            "repo_id": "Wan-AI/Wan2.2-T2V-A14B",
             "local_path": "models/Video/wan-2.2-t2v-14b-int4",
             "source_type": "derived",
             "from_version": "original",
@@ -6822,17 +6561,19 @@
             "type": "float"
           },
           "width": {
-            "default": 720,
+            "default": 704,
             "options": [
               480,
-              720
+              704,
+              1280
             ],
-            "type": "enum"
+            "type": "enum",
+            "note": "720P 竖屏 704×1280、横屏 1280×704（VAE×patch 对齐 32）"
           },
           "height": {
             "default": 1280,
             "options": [
-              720,
+              704,
               1280
             ],
             "type": "enum"
@@ -6857,11 +6598,20 @@
             "type": "float"
           },
           "resolution_presets": {
-            "default": "720x1280",
+            "default": "704x1280",
             "options": [
-              "480x720",
-              "720x1280"
+              "480x704",
+              "704x1280",
+              "1280x704"
             ]
+          },
+          "lora_search": {
+            "terms": [
+              "Wan 2.2",
+              "wan video",
+              "wan i2v"
+            ],
+            "suffix": "lora"
           }
         },
         "extends": "video_dit_standard"
@@ -6875,7 +6625,7 @@
             },
             "size": "28GB",
             "default": true,
-            "repo_id": "Wan-AI/Wan2.2-I2V-14B",
+            "repo_id": "Wan-AI/Wan2.2-I2V-A14B",
             "local_path": "models/Video/wan-2.2-i2v-14b-original",
             "source_type": "full"
           },
@@ -6886,7 +6636,7 @@
             },
             "size": "14GB",
             "default": false,
-            "repo_id": "Wan-AI/Wan2.2-I2V-14B",
+            "repo_id": "Wan-AI/Wan2.2-I2V-A14B",
             "local_path": "models/Video/wan-2.2-i2v-14b-int8",
             "source_type": "derived",
             "from_version": "original",
@@ -6902,7 +6652,7 @@
             },
             "size": "7GB",
             "default": false,
-            "repo_id": "Wan-AI/Wan2.2-I2V-14B",
+            "repo_id": "Wan-AI/Wan2.2-I2V-A14B",
             "local_path": "models/Video/wan-2.2-i2v-14b-int4",
             "source_type": "derived",
             "from_version": "original",
@@ -6954,7 +6704,7 @@
             "type": "int"
           },
           "guide_scale": {
-            "default": 1.0,
+            "default": 5.0,
             "min": 1.0,
             "max": 10.0,
             "step": 0.5,
@@ -6985,7 +6735,6 @@
             "options": [
               480,
               704,
-              720,
               1280
             ],
             "type": "enum",
@@ -7125,9 +6874,9 @@
           },
           "steps": {
             "type": "int",
-            "default": 8,
+            "default": 50,
             "min": 1,
-            "max": 8
+            "max": 100
           },
           "guidance": {
             "type": "float",
@@ -7135,6 +6884,7 @@
             "min": 1.0,
             "max": 20.0
           },
+          "lora_support": true,
           "supports_lyrics": true,
           "requires_lyrics_for_vocal": true,
           "supports_instrumental": true,
@@ -7164,7 +6914,7 @@
             },
             "size": "20GB",
             "default": true,
-            "repo_id": "ACE-Step/Audio/Ace-Step1.5",
+            "repo_id": "ACE-Step/Ace-Step1.5",
             "local_path": "models/Audio/acestep-v15-xl-sft",
             "source_type": "full"
           },
@@ -7175,7 +6925,7 @@
             },
             "size": "10GB",
             "default": false,
-            "repo_id": "ACE-Step/Audio/Ace-Step1.5",
+            "repo_id": "ACE-Step/Ace-Step1.5",
             "local_path": "models/Audio/acestep-v15-xl-sft-int8",
             "source_type": "derived",
             "from_version": "xl-sft",
@@ -7191,7 +6941,7 @@
             },
             "size": "5GB",
             "default": false,
-            "repo_id": "ACE-Step/Audio/Ace-Step1.5",
+            "repo_id": "ACE-Step/Ace-Step1.5",
             "local_path": "models/Audio/acestep-v15-xl-sft-int4",
             "source_type": "derived",
             "from_version": "xl-sft",
@@ -7215,6 +6965,162 @@
               "bits": 4,
               "scheme": "mlx_affine"
             }
+          }
+        }
+      }
+    },
+    "ace-step-lora-super-eurobeats": {
+      "catalog": {
+        "media": "audio",
+        "description": {
+          "zh": "Super Eurobeat 风格 LoRA（ACE-Step 1.5 XL）；建议在 prompt 中加入触发词 Eurobeats。",
+          "en": "Super Eurobeat style LoRA for ACE-Step 1.5 XL; add trigger word Eurobeats in the prompt."
+        },
+        "category": "loras",
+        "commercial_use_allowed": null,
+        "type": "lora",
+        "nsfw": false,
+        "source": "modelscope",
+        "name": {
+          "zh": "Super Eurobeat LoRA",
+          "en": "Super Eurobeat LoRA"
+        },
+        "recommended": true,
+        "base_model": "ace-step-xl-sft",
+        "engine": "danqing-audio"
+      },
+      "runtime": {
+        "family": "ace_step"
+      },
+      "actions": {},
+      "ui": {
+        "parameters": {
+          "lora_scale": {
+            "default": 0.8,
+            "min": 0.0,
+            "max": 2.0,
+            "step": 0.1,
+            "label": "LoRA强度",
+            "type": "float"
+          }
+        }
+      },
+      "distribution": {
+        "versions": {
+          "fp16": {
+            "name": {
+              "zh": "FP16",
+              "en": "FP16"
+            },
+            "size": "200MB",
+            "default": true,
+            "repo_id": "AI-ModelScope/super_eurobeats_ACE_STEP-1.5-lora",
+            "local_path": "models/Lora/ace-step-lora-super-eurobeats-fp16",
+            "source_type": "full"
+          }
+        }
+      }
+    },
+    "ace-step-lora-accompaniment-ms": {
+      "catalog": {
+        "media": "audio",
+        "description": {
+          "zh": "DiffSynth 伴奏增强 LoRA，适用于 ACE-Step 1.5 XL SFT。",
+          "en": "DiffSynth accompaniment enhancement LoRA for ACE-Step 1.5 XL SFT."
+        },
+        "category": "loras",
+        "commercial_use_allowed": null,
+        "type": "lora",
+        "nsfw": false,
+        "source": "modelscope",
+        "name": {
+          "zh": "ACE-Step 伴奏 LoRA",
+          "en": "ACE-Step Accompaniment LoRA"
+        },
+        "recommended": true,
+        "base_model": "ace-step-xl-sft",
+        "engine": "danqing-audio"
+      },
+      "runtime": {
+        "family": "ace_step"
+      },
+      "actions": {},
+      "ui": {
+        "parameters": {
+          "lora_scale": {
+            "default": 0.8,
+            "min": 0.0,
+            "max": 2.0,
+            "step": 0.1,
+            "label": "LoRA强度",
+            "type": "float"
+          }
+        }
+      },
+      "distribution": {
+        "versions": {
+          "fp16": {
+            "name": {
+              "zh": "FP16",
+              "en": "FP16"
+            },
+            "size": "200MB",
+            "default": true,
+            "repo_id": "DiffSynth-Studio/acestep15xlsft-lora-music",
+            "local_path": "models/Lora/ace-step-lora-accompaniment-ms-fp16",
+            "source_type": "full"
+          }
+        }
+      }
+    },
+    "ace-step-lora-chinese-new-year": {
+      "catalog": {
+        "media": "audio",
+        "description": {
+          "zh": "ACE-Step 官方春节主题 LoRA（1.5 XL），适合喜庆、节日氛围音乐。",
+          "en": "Official ACE-Step Chinese New Year theme LoRA (1.5 XL) for festive holiday music."
+        },
+        "category": "loras",
+        "commercial_use_allowed": true,
+        "type": "lora",
+        "nsfw": false,
+        "source": "modelscope",
+        "name": {
+          "zh": "春节主题 LoRA",
+          "en": "Chinese New Year LoRA"
+        },
+        "recommended": false,
+        "base_model": "ace-step-xl-sft",
+        "engine": "danqing-audio"
+      },
+      "runtime": {
+        "family": "ace_step"
+      },
+      "actions": {},
+      "ui": {
+        "parameters": {
+          "lora_scale": {
+            "default": 0.8,
+            "min": 0.0,
+            "max": 2.0,
+            "step": 0.1,
+            "label": "LoRA强度",
+            "type": "float"
+          }
+        }
+      },
+      "distribution": {
+        "versions": {
+          "fp16": {
+            "name": {
+              "zh": "FP16",
+              "en": "FP16"
+            },
+            "size": "200MB",
+            "default": true,
+            "repo_id": "ACE-Step/ACE-Step-v1.5-chinese-new-year-LoRA",
+            "local_path": "models/Lora/ace-step-lora-chinese-new-year-fp16",
+            "source_type": "full"
           }
         }
       }
@@ -7313,7 +7219,7 @@
                 "local_path": "models/Audio/diffrhythm-v2",
                 "name": "DiffRhythm2 G2P",
                 "size": "80MB",
-                "source": "huggingface",
+                "source": "modelscope",
                 "allow_patterns": [
                   "g2p/**"
                 ]
@@ -7353,6 +7259,494 @@
               "bits": 4,
               "scheme": "mlx_affine"
             }
+          }
+        }
+      }
+    },
+    "realism-lora": {
+      "catalog": {
+        "media": "image",
+        "description": {
+          "zh": "适用于 FLUX.1-dev；通用真实感增强 LoRA，提升人物细节与整体写实度。",
+          "en": "General photorealism LoRA for FLUX.1-dev; improves portrait detail and realism."
+        },
+        "category": "loras",
+        "commercial_use_allowed": null,
+        "type": "lora",
+        "nsfw": false,
+        "source": "modelscope",
+        "name": {
+          "zh": "Realism LoRA",
+          "en": "Realism LoRA"
+        },
+        "recommended": true,
+        "base_model": "flux1-dev",
+        "engine": "danqing-image"
+      },
+      "runtime": {
+        "family": "flux1"
+      },
+      "actions": {},
+      "ui": {
+        "parameters": {
+          "lora_scale": {
+            "default": 0.8,
+            "min": 0.0,
+            "max": 2.0,
+            "step": 0.1,
+            "label": "LoRA强度",
+            "type": "float"
+          }
+        }
+      },
+      "distribution": {
+        "versions": {
+          "fp16": {
+            "name": {
+              "zh": "FP16",
+              "en": "FP16"
+            },
+            "size": "200MB",
+            "default": true,
+            "repo_id": "AI-ModelScope/flux-RealismLora",
+            "local_path": "models/Lora/realism-lora-fp16",
+            "source_type": "full"
+          }
+        }
+      }
+    },
+    "awportraitcn-hf": {
+      "catalog": {
+        "media": "image",
+        "description": {
+          "zh": "面向中国人像审美训练的 FLUX.1-dev LoRA；棚拍、时尚与室内外写真，肤质细腻自然。建议权重 0.9–1.0。",
+          "en": "FLUX.1-dev portrait LoRA tuned for Chinese aesthetics; studio, fashion, and outdoor portraits. Weight 0.9–1.0 recommended."
+        },
+        "category": "loras",
+        "commercial_use_allowed": false,
+        "type": "lora",
+        "nsfw": false,
+        "source": "huggingface",
+        "name": {
+          "zh": "AWPortrait CN",
+          "en": "AWPortrait CN"
+        },
+        "recommended": true,
+        "base_model": "flux1-dev",
+        "engine": "danqing-image"
+      },
+      "runtime": {
+        "family": "flux1"
+      },
+      "actions": {},
+      "ui": {
+        "parameters": {
+          "lora_scale": {
+            "default": 0.9,
+            "min": 0.0,
+            "max": 2.0,
+            "step": 0.1,
+            "label": "LoRA强度",
+            "type": "float"
+          }
+        }
+      },
+      "distribution": {
+        "versions": {
+          "fp16": {
+            "name": {
+              "zh": "FP16",
+              "en": "FP16"
+            },
+            "size": "361MB",
+            "default": true,
+            "repo_id": "Shakker-Labs/AWPortraitCN",
+            "local_path": "models/Lora/awportraitcn-hf-fp16",
+            "source_type": "full"
+          }
+        }
+      }
+    },
+    "awportraitcn2-hf": {
+      "catalog": {
+        "media": "image",
+        "description": {
+          "zh": "AWPortrait CN 升级版；更广的东方美学与全年龄段面谱，场景与民族服饰响应更好。适用于 FLUX.1-dev，建议权重 0.9–1.0。",
+          "en": "Upgraded AWPortrait CN with broader Eastern aesthetics and age coverage; better scenes and ethnic costumes. For FLUX.1-dev; weight 0.9–1.0."
+        },
+        "category": "loras",
+        "commercial_use_allowed": false,
+        "type": "lora",
+        "nsfw": false,
+        "source": "huggingface",
+        "name": {
+          "zh": "AWPortrait CN2",
+          "en": "AWPortrait CN2"
+        },
+        "recommended": true,
+        "base_model": "flux1-dev",
+        "engine": "danqing-image"
+      },
+      "runtime": {
+        "family": "flux1"
+      },
+      "actions": {},
+      "ui": {
+        "parameters": {
+          "lora_scale": {
+            "default": 0.9,
+            "min": 0.0,
+            "max": 2.0,
+            "step": 0.1,
+            "label": "LoRA强度",
+            "type": "float"
+          }
+        }
+      },
+      "distribution": {
+        "versions": {
+          "fp16": {
+            "name": {
+              "zh": "FP16",
+              "en": "FP16"
+            },
+            "size": "361MB",
+            "default": true,
+            "repo_id": "Shakker-Labs/AWPortraitCN2",
+            "local_path": "models/Lora/awportraitcn2-hf-fp16",
+            "source_type": "full"
+          }
+        }
+      }
+    },
+    "awportrait-z": {
+      "catalog": {
+        "media": "image",
+        "description": {
+          "zh": "基于 Z-Image 的东方人像美颜 LoRA；降噪、改善光比与面孔多样性。适用于 Z-Image-Turbo（与 Z-Image Base 适配器互通）；建议权重 0.8。",
+          "en": "Z-Image portrait-beauty LoRA: reduced grain, improved lighting, and face diversity. For Z-Image-Turbo (compatible with Z-Image Base adapters). Weight 0.8 recommended."
+        },
+        "category": "loras",
+        "commercial_use_allowed": true,
+        "type": "lora",
+        "nsfw": false,
+        "source": "modelscope",
+        "name": {
+          "zh": "AWPortrait Z",
+          "en": "AWPortrait Z"
+        },
+        "recommended": true,
+        "base_model": "z-image-turbo",
+        "engine": "danqing-image"
+      },
+      "runtime": {
+        "family": "z_image"
+      },
+      "actions": {},
+      "ui": {
+        "parameters": {
+          "lora_scale": {
+            "default": 0.8,
+            "min": 0.0,
+            "max": 2.0,
+            "step": 0.1,
+            "label": "LoRA强度",
+            "type": "float"
+          }
+        }
+      },
+      "distribution": {
+        "versions": {
+          "fp16": {
+            "name": {
+              "zh": "FP16",
+              "en": "FP16"
+            },
+            "size": "649MB",
+            "default": true,
+            "repo_id": "LiblibAI/AWPortrait-Z",
+            "local_path": "models/Lora/awportrait-z-fp16",
+            "source_type": "full",
+            "allow_patterns": [
+              "AWPortrait-Z.safetensors",
+              "README.md"
+            ]
+          }
+        }
+      }
+    },
+    "awportrait-fl-hf": {
+      "catalog": {
+        "media": "image",
+        "description": {
+          "zh": "时尚摄影向 FLUX.1-dev LoRA；构图与肤质更细腻写实，适合人像与服装大片。建议权重 0.9。",
+          "en": "Fashion-photography FLUX.1-dev LoRA with finer composition and realistic skin. Weight 0.9 recommended."
+        },
+        "category": "loras",
+        "commercial_use_allowed": false,
+        "type": "lora",
+        "nsfw": false,
+        "source": "huggingface",
+        "name": {
+          "zh": "AWPortrait FL",
+          "en": "AWPortrait FL"
+        },
+        "recommended": true,
+        "base_model": "flux1-dev",
+        "engine": "danqing-image"
+      },
+      "runtime": {
+        "family": "flux1"
+      },
+      "actions": {},
+      "ui": {
+        "parameters": {
+          "lora_scale": {
+            "default": 0.9,
+            "min": 0.0,
+            "max": 2.0,
+            "step": 0.1,
+            "label": "LoRA强度",
+            "type": "float"
+          }
+        }
+      },
+      "distribution": {
+        "versions": {
+          "fp16": {
+            "name": {
+              "zh": "FP16",
+              "en": "FP16"
+            },
+            "size": "674MB",
+            "default": true,
+            "repo_id": "Shakker-Labs/AWPortrait-FL",
+            "local_path": "models/Lora/awportrait-fl-hf-fp16",
+            "source_type": "full",
+            "allow_patterns": [
+              "AWPortrait-FL-lora.safetensors",
+              "README.md"
+            ]
+          }
+        }
+      }
+    },
+    "flux1-dev-lora-add-details-hf": {
+      "catalog": {
+        "media": "image",
+        "description": {
+          "zh": "FLUX.1-dev 真实质感增强 LoRA；自然肤质与细节，无固定触发词，建议权重 1.0（可为负向微调）。",
+          "en": "FLUX.1-dev realism/detail LoRA for natural skin; no trigger words. Weight 1.0 recommended (can go negative)."
+        },
+        "category": "loras",
+        "commercial_use_allowed": false,
+        "type": "lora",
+        "nsfw": false,
+        "source": "huggingface",
+        "name": {
+          "zh": "FLUX.1-dev Add Details",
+          "en": "FLUX.1-dev Add Details"
+        },
+        "recommended": true,
+        "base_model": "flux1-dev",
+        "engine": "danqing-image"
+      },
+      "runtime": {
+        "family": "flux1"
+      },
+      "actions": {},
+      "ui": {
+        "parameters": {
+          "lora_scale": {
+            "default": 1.0,
+            "min": 0.0,
+            "max": 2.0,
+            "step": 0.1,
+            "label": "LoRA强度",
+            "type": "float"
+          }
+        }
+      },
+      "distribution": {
+        "versions": {
+          "fp16": {
+            "name": {
+              "zh": "FP16",
+              "en": "FP16"
+            },
+            "size": "665MB",
+            "default": true,
+            "repo_id": "Shakker-Labs/FLUX.1-dev-LoRA-add-details",
+            "local_path": "models/Lora/flux1-dev-lora-add-details-hf-fp16",
+            "source_type": "full",
+            "allow_patterns": [
+              "FLUX-dev-lora-add_details.safetensors",
+              "README.md"
+            ]
+          }
+        }
+      }
+    },
+    "flux-asian-portrait-hf": {
+      "catalog": {
+        "media": "image",
+        "description": {
+          "zh": "FLUX.1-dev 亚洲女性写实肖像 LoRA；触发词 1girl，建议权重 0.6–1.0。",
+          "en": "FLUX.1-dev realistic Asian female portrait LoRA. Trigger: 1girl. Weight 0.6–1.0."
+        },
+        "category": "loras",
+        "commercial_use_allowed": null,
+        "type": "lora",
+        "nsfw": false,
+        "source": "huggingface",
+        "name": {
+          "zh": "Asian Portrait (FLUX.1)",
+          "en": "Asian Portrait (FLUX.1)"
+        },
+        "recommended": false,
+        "base_model": "flux1-dev",
+        "engine": "danqing-image"
+      },
+      "runtime": {
+        "family": "flux1"
+      },
+      "actions": {},
+      "ui": {
+        "parameters": {
+          "lora_scale": {
+            "default": 0.8,
+            "min": 0.0,
+            "max": 2.0,
+            "step": 0.1,
+            "label": "LoRA强度",
+            "type": "float"
+          }
+        }
+      },
+      "distribution": {
+        "versions": {
+          "fp16": {
+            "name": {
+              "zh": "FP16",
+              "en": "FP16"
+            },
+            "size": "200MB",
+            "default": true,
+            "repo_id": "Keltezaa/flux-realistic-asian-girls-face-flux",
+            "local_path": "models/Lora/flux-asian-portrait-hf-fp16",
+            "source_type": "full",
+            "allow_patterns": [
+              "*.safetensors",
+              "README.md"
+            ]
+          }
+        }
+      }
+    },
+    "flux2-klein-asian-real-hf": {
+      "catalog": {
+        "media": "image",
+        "description": {
+          "zh": "FLUX.2 Klein 9B 亚洲青年写实人像 LoRA；动漫/插画转真人或文生图均可。触发词如 realistic style of a young Asian girl，建议权重 0.6–1.0。",
+          "en": "FLUX.2 Klein 9B Asian photoreal portrait LoRA for T2I or anime-to-real. Trigger e.g. realistic style of a young Asian girl. Weight 0.6–1.0."
+        },
+        "category": "loras",
+        "commercial_use_allowed": true,
+        "type": "lora",
+        "nsfw": false,
+        "source": "huggingface",
+        "name": {
+          "zh": "Klein 9B Asian Real",
+          "en": "Klein 9B Asian Real"
+        },
+        "recommended": true,
+        "base_model": "flux2-klein-9b",
+        "engine": "danqing-image"
+      },
+      "runtime": {
+        "family": "flux2"
+      },
+      "actions": {},
+      "ui": {
+        "parameters": {
+          "lora_scale": {
+            "default": 0.8,
+            "min": 0.0,
+            "max": 2.0,
+            "step": 0.1,
+            "label": "LoRA强度",
+            "type": "float"
+          }
+        }
+      },
+      "distribution": {
+        "versions": {
+          "fp16": {
+            "name": {
+              "zh": "FP16",
+              "en": "FP16"
+            },
+            "size": "200MB",
+            "default": true,
+            "repo_id": "WarmBloodAban/Flux2_Klein_Anything_to_Real_Characters",
+            "local_path": "models/Lora/flux2-klein-asian-real-hf-fp16",
+            "source_type": "full",
+            "allow_patterns": [
+              "*.safetensors",
+              "README.md"
+            ]
+          }
+        }
+      }
+    },
+    "starface-z-image-turbo-ms": {
+      "catalog": {
+        "media": "image",
+        "description": {
+          "zh": "StarFace 中国高颜值气质人像 LoRA，绑定 Z-Image-Turbo 快速出图；建议权重 0.6–0.8。",
+          "en": "StarFace Chinese portrait LoRA for Z-Image-Turbo fast generation. Weight 0.6–0.8 recommended."
+        },
+        "category": "loras",
+        "commercial_use_allowed": true,
+        "type": "lora",
+        "nsfw": false,
+        "source": "modelscope",
+        "name": {
+          "zh": "StarFace (Z-Image Turbo)",
+          "en": "StarFace (Z-Image Turbo)"
+        },
+        "recommended": true,
+        "base_model": "z-image-turbo",
+        "engine": "danqing-image"
+      },
+      "runtime": {
+        "family": "z_image"
+      },
+      "actions": {},
+      "ui": {
+        "parameters": {
+          "lora_scale": {
+            "default": 0.7,
+            "min": 0.0,
+            "max": 2.0,
+            "step": 0.1,
+            "label": "LoRA强度",
+            "type": "float"
+          }
+        }
+      },
+      "distribution": {
+        "versions": {
+          "fp16": {
+            "name": {
+              "zh": "FP16",
+              "en": "FP16"
+            },
+            "size": "152MB",
+            "default": true,
+            "repo_id": "SecretDongGe/StarFace-Z-Image",
+            "local_path": "models/Lora/starface-z-image-turbo-ms-fp16",
+            "source_type": "full"
           }
         }
       }

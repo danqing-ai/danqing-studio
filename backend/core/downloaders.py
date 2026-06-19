@@ -21,8 +21,13 @@ class HTTPDownloader:
     - CivitAI direct links (supports API Key)
     """
 
-    def __init__(self, civitai_token: Optional[str] = None):
+    def __init__(
+        self,
+        civitai_token: Optional[str] = None,
+        huggingface_token: Optional[str] = None,
+    ):
         self._civitai_token = civitai_token
+        self._huggingface_token = huggingface_token
         self._cancelled: set = set()
         self._active_sessions: Dict[str, aiohttp.ClientSession] = {}
 
@@ -47,6 +52,12 @@ class HTTPDownloader:
         # CivitAI auth
         if "civitai.com" in url and self._civitai_token:
             headers["Authorization"] = f"Bearer {self._civitai_token}"
+
+        # Hugging Face / mirror auth (gated repos)
+        if self._huggingface_token and (
+            "huggingface.co" in url or "hf-mirror.com" in url
+        ):
+            headers["Authorization"] = f"Bearer {self._huggingface_token}"
 
         last_report = {"time": time.time(), "bytes": 0}
         mode = "ab" if downloaded_size > 0 else "wb"

@@ -257,6 +257,12 @@ class SettingsService(ISettingsService):
                         or lora_base_key.startswith("wan")
                         or lora_base_key == model_base_key
                     )
+                elif model_base_key.startswith("ace-step"):
+                    from backend.engine.families.ace_step.weights import ace_step_lora_base_compatible
+
+                    ok = lora_base_key == "" or ace_step_lora_base_compatible(
+                        model_base_key, lora_base_key
+                    )
                 else:
                     from backend.engine.families.z_image.weights import z_image_lora_base_compatible
 
@@ -287,6 +293,13 @@ class SettingsService(ISettingsService):
 
                     if model_base_key.startswith("flux1") and lora_base_key.startswith("flux1"):
                         pass
+                    elif model_base_key.startswith("ace-step"):
+                        from backend.engine.families.ace_step.weights import ace_step_lora_base_compatible
+
+                        if ace_step_lora_base_compatible(model_base_key, lora_base_key):
+                            pass
+                        else:
+                            continue
                     elif z_image_lora_base_compatible(model_base_key, lora_base_key):
                         pass
                     else:
@@ -303,7 +316,7 @@ class SettingsService(ISettingsService):
                     "id": str(ul.get("id")),
                     "name": str(ul.get("name") or ul.get("id")),
                     "base_model": lora_base,
-                    "source": "user_trained",
+                    "source": str(ul.get("source") or "user_trained"),
                     "local_path": local_path,
                 },
             )
@@ -362,10 +375,10 @@ class SettingsService(ISettingsService):
                     components: dict[str, Any] | None = None
                     from backend.core.bundle_manifest import (
                         bundle_component_status,
-                        is_registry_lora_category,
+                        skips_full_family_bundle_contract,
                     )
 
-                    if has_weights and family and not is_registry_lora_category(category):
+                    if has_weights and family and not skips_full_family_bundle_contract(category):
                         components = bundle_component_status(model_dir, family=family)
 
                     version_entry: dict[str, Any] = {

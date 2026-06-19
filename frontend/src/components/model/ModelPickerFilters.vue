@@ -9,6 +9,7 @@ withDefaults(
 
 const installedOnly = defineModel<boolean>('installedOnly', { default: false });
 const commercialOnly = defineModel<boolean>('commercialOnly', { required: true });
+const currentModelsOnly = defineModel<boolean>('currentModelsOnly', { default: false });
 </script>
 
 <template>
@@ -23,6 +24,14 @@ const commercialOnly = defineModel<boolean>('commercialOnly', { required: true }
     </DqCheckbox>
     <DqCheckbox v-model="commercialOnly" size="small" class="model-picker-filters__item">
       {{ $t(showInstalledFilter ? 'download.filterCommercialOnly' : 'studio.filterCommercialOnly') }}
+    </DqCheckbox>
+    <DqCheckbox
+      v-if="showInstalledFilter"
+      v-model="currentModelsOnly"
+      size="small"
+      class="model-picker-filters__item"
+    >
+      {{ $t('download.filterCurrentModelsOnly') }}
     </DqCheckbox>
   </div>
 </template>

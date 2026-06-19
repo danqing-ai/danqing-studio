@@ -17,20 +17,23 @@ def run_upscale_job(ctx: Any) -> dict[str, Any]:
         if ctx.on_log:
             ctx.on_log(level, msg)
 
+    kwargs: dict[str, Any] = {
+        "bundle_path": ctx.bundle_root,
+        "model_key": ctx.model_key,
+        "source_image": ctx.src_path,
+        "scale": ctx.scale,
+        "softness": float(ctx.request.denoise),
+        "seed": ctx.seed,
+        "output_png": ctx.out_path,
+        "on_log": _log,
+        "pipeline": ctx.upscale_pipeline,
+    }
+    if ctx.family == "esrgan":
+        kwargs["tile_size"] = int(getattr(ctx.request, "tile_size", 0) or 0)
+
     bundle = JobBundle(
         run_fn=run_upscale_job_fn,
-        kwargs={
-            "bundle_path": ctx.bundle_root,
-            "model_key": ctx.model_key,
-            "source_image": ctx.src_path,
-            "scale": ctx.scale,
-            "softness": float(ctx.request.denoise),
-            "seed": ctx.seed,
-            "output_png": ctx.out_path,
-            "on_log": _log,
-            "pipeline": ctx.upscale_pipeline,
-            "tile_size": int(getattr(ctx.request, "tile_size", 0) or 0),
-        },
+        kwargs=kwargs,
     )
     with inference_span(ctx.exec_ctx, "job_paradigm"):
         return run_job(bundle)

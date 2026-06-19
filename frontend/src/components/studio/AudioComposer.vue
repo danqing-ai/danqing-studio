@@ -365,6 +365,37 @@
                 </div>
               </div>
 
+              <!-- LoRA -->
+              <div
+                v-if="workMode !== 'cover' && currentModelConfig?.parameters?.lora_support && compatibleLoras?.length"
+                class="audio-composer__advanced-row"
+              >
+                <div class="audio-composer__field audio-composer__field--full" style="flex-direction: column; align-items: flex-start; gap: 8px;">
+                  <div style="display: flex; align-items: center; gap: 10px; width: 100%;">
+                    <label>{{ $tt('studio.loraLabel') }}</label>
+                    <DqSelect
+                      v-model="localParams.lora"
+                      size="small"
+                      clearable
+                      :placeholder="$tt('studio.noLora')"
+                      style="flex: 1; max-width: 300px;"
+                    >
+                      <DqOption
+                        v-for="l in compatibleLoras"
+                        :key="String(l.id)"
+                        :label="loraOptionLabel(l)"
+                        :value="l.id"
+                      />
+                    </DqSelect>
+                  </div>
+                  <div v-if="localParams.lora" style="display: flex; align-items: center; gap: 10px; width: 100%;">
+                    <label style="min-width: 60px;">{{ $tt('create.loraScale') }}</label>
+                    <DqSlider v-model="localParams.lora_scale" :min="0" :max="2" :step="0.05" style="flex: 1;" />
+                    <span class="audio-composer__field-val">{{ localParams.lora_scale }}</span>
+                  </div>
+                </div>
+              </div>
+
               <!-- Negative prompt -->
               <div v-if="showNegativePrompt" class="audio-composer__advanced-row">
                 <div class="audio-composer__field audio-composer__field--full">
@@ -470,6 +501,7 @@ const props = defineProps<{
   showCoverFidelity?: boolean;
   referenceMedia?: { type: string; previewUrl: string; label: string } | null;
   currentModelConfig?: Record<string, any> | null;
+  compatibleLoras?: Array<Record<string, unknown>>;
   lyricsLoading?: boolean;
   briefEnhancing?: boolean;
   collapsed?: boolean;
@@ -640,6 +672,14 @@ function randomizeSeed() {
 }
 
 // Style / Preset
+function loraOptionLabel(l: Record<string, unknown>): string {
+  const base = String(l.name || l.id || '');
+  if (l.source === 'user_trained') {
+    return `${base} (${$t('studio.myLoraTag')})`;
+  }
+  return base;
+}
+
 function presetLabel(name: string, preset: Record<string, unknown>): string {
   const a = (preset.applies_to as string[]) || [];
   const hasC = a.includes('create');

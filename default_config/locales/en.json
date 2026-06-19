@@ -37,7 +37,8 @@
     "model_profile_required": "Engine missing dedicated model config for model '{name}' (generic defaults disabled).",
     "workspace_path_required": "Please choose a workspace directory",
     "workspace_not_empty": "Target directory must be empty: {path}",
-    "workspace_use_apply_endpoint": "Change the workspace via the apply-workspace flow (Settings saves migrate automatically)"
+    "workspace_use_apply_endpoint": "Change the workspace via the apply-workspace flow (Settings saves migrate automatically)",
+    "lora_search_failed": "LoRA search failed: {msg}"
   },
   "log": {
     "generating_step": "Generating... step {step}/{total}",

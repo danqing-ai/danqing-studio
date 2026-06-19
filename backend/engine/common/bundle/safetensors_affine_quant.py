@@ -2,8 +2,49 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
+
+
+def read_affine_quant_bits_from_quantize_config(bundle_root: Path) -> int | None:
+    """Read ``quantization.bits`` from ``quantize_config.json`` (dgrauet / mlx-forge bundles)."""
+    cfg_path = bundle_root / "quantize_config.json"
+    if not cfg_path.is_file():
+        return None
+    try:
+        data = json.loads(cfg_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    quant = data.get("quantization") if isinstance(data, dict) else None
+    if not isinstance(quant, dict):
+        return None
+    bits = quant.get("bits")
+    if bits in (4, 8):
+        return int(bits)
+    return None
+
+
+def read_affine_quant_group_size_from_quantize_config(bundle_root: Path) -> int | None:
+    """Read ``quantization.group_size`` from ``quantize_config.json`` when present."""
+    cfg_path = bundle_root / "quantize_config.json"
+    if not cfg_path.is_file():
+        return None
+    try:
+        data = json.loads(cfg_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    quant = data.get("quantization") if isinstance(data, dict) else None
+    if not isinstance(quant, dict):
+        return None
+    gs = quant.get("group_size")
+    if gs is None:
+        return None
+    try:
+        v = int(gs)
+    except (TypeError, ValueError):
+        return None
+    return v if v >= 1 else None
 
 
 def read_affine_quant_bits_from_transformer_dir(transformer_dir: Path) -> int | None:
@@ -86,5 +127,11 @@ def read_bundle_affine_bits_if_quantized(
     if not any(k.endswith(".scales") for k in w.keys()):
         return None
     if transformer_dir.is_file():
-        return read_affine_quant_bits_from_safetensors(transformer_dir)
-    return read_affine_quant_bits_from_transformer_dir(transformer_dir)
+        bits = read_affine_quant_bits_from_safetensors(transformer_dir)
+        if bits is not None:
+            return bits
+        return read_affine_quant_bits_from_quantize_config(transformer_dir.parent)
+    bits = read_affine_quant_bits_from_transformer_dir(transformer_dir)
+    if bits is not None:
+        return bits
+    return read_affine_quant_bits_from_quantize_config(transformer_dir)

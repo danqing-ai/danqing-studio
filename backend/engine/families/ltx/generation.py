@@ -1,8 +1,7 @@
 """LTX 2.3 MLX video generation — in-repo two-stage T2V/I2V orchestration.
 
 Pipeline and :class:`VideoPipeline` import from this module for the LTX 2.3
-backend (``video_pipeline_shape=family_generator``), not from external
-``ltx-pipelines-mlx``.
+backend (``video_pipeline_shape=family_generator``).
 """
 from __future__ import annotations
 
@@ -31,6 +30,7 @@ class LTX23GeneratorProto(Protocol):
         step_distill: bool,
         image_path: str | None,
         on_log: Any | None,
+        on_progress: Any | None = None,
     ) -> str: ...
 
 

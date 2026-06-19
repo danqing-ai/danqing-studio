@@ -58,8 +58,8 @@ defineEmits<{
   display: flex;
   align-items: center;
   gap: 4px;
-  min-width: 0;
-  flex: 1;
+  flex: 0 0 auto;
+  flex-shrink: 0;
   justify-content: flex-end;
 }
 

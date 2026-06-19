@@ -97,7 +97,10 @@ class BatchedCfgStrategy:
         cfg_renorm: bool = False,
         cfg_renorm_min: float = 0.0,
     ) -> Any:
-        neg_kwargs = uncond_kwargs or {}
+        if uncond_kwargs is None or uncond_kwargs.get("txt_embeds") is None:
+            return model(latents, t, **cond_kwargs)
+
+        neg_kwargs = uncond_kwargs
         # 优先使用 model 自带的 predict_noise_cfg（如 Wan）
         if hasattr(model, "predict_noise_cfg"):
             return model.predict_noise_cfg(

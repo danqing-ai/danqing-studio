@@ -120,6 +120,9 @@ class LTX23TimestepEmbedder(nn.Module):
         super().__init__()
         self.timestep_embedder = _LTX23TimestepMLP(in_channels, time_embed_dim)
 
+    def __call__(self, sample: mx.array) -> mx.array:
+        return self.timestep_embedder(sample)
+
 
 class _LTX23TimestepMLP(nn.Module):
     def __init__(self, in_channels: int, time_embed_dim: int):
@@ -425,10 +428,13 @@ class LTX23Model(nn.Module):
     AUDIO_DIM = 2048
     NUM_LAYERS = 48
 
-    def __init__(self, config: LTXConfig | None = None):
+    def __init__(self, config: LTXConfig | None = None, ctx: RuntimeContext | None = None):
         super().__init__()
         cfg = config or LTXConfig()
         self.config = cfg
+        if ctx is None:
+            raise RuntimeError("LTX23Model requires RuntimeContext (ctx)")
+        self.ctx = ctx
         vd = self.VIDEO_DIM
         ad = self.AUDIO_DIM
         t_dim = 256
@@ -713,7 +719,7 @@ class LTX23Transformer(TransformerBase):
         self.config = config
         self.ctx = ctx
         self._num_frames = num_frames
-        self.model = LTX23Model(config)
+        self.model = LTX23Model(config, ctx=ctx)
         self.x0_model = LTX23X0Model(self.model)
         self._param_map: dict[str, Any] = {}
         self._build_param_map()
@@ -884,6 +890,22 @@ def _resolve_bundle_safetensors(bundle_root: Path, stem: str) -> Path:
     return matches[0]
 
 
+def _read_ltx_quant_group_size(bundle_root: Path, *, default: int = 64) -> int:
+    import json
+
+    cfg_path = bundle_root / "quantize_config.json"
+    if not cfg_path.is_file():
+        return default
+    try:
+        data = json.loads(cfg_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return default
+    q = data.get("quantization") if isinstance(data, dict) else None
+    if isinstance(q, dict) and q.get("group_size") is not None:
+        return int(q["group_size"])
+    return default
+
+
 def load_ltx23_x0_model(
     ctx: RuntimeContext,
     bundle_root: Path,
@@ -893,18 +915,33 @@ def load_ltx23_x0_model(
     entry: Any | None = None,
     version_key: str | None = None,
 ) -> LTX23X0Model:
-    """Load LTX 2.3 DiT from bundle safetensors and return an ``LTX23X0Model``."""
+    """Load LTX 2.3 DiT from bundle safetensors and return an X0 wrapper."""
     from pathlib import Path as _Path
+
+    from ltx_core_mlx.utils.weights import load_split_safetensors
 
     from backend.engine.common.bundle.quant_inference import resolve_dit_inference_weight_mode
     from backend.engine.common.bundle.safetensors_affine_quant import read_bundle_affine_bits_if_quantized
+    from backend.engine.families.ltx.weights import remap_ltx23_weights
     from backend.engine.runtime.mlx_runtime import load_weights_dict
 
     path = _resolve_bundle_safetensors(_Path(bundle_root), weight_stem)
+    raw_weights = load_split_safetensors(path, prefix="transformer.")
+    if not raw_weights:
+        raise RuntimeError(f"LTX 2.3 transformer weights empty: {path}")
+
+    if any(k.endswith(".scales") for k in raw_weights):
+        # Quantized bundles: use upstream LTXModel (in-repo LTX23Model diverges at full-res stage 2).
+        from ltx_core_mlx.model.transformer.model import X0Model
+        from ltx_pipelines_mlx.utils._orchestration import load_transformer
+
+        low_ram = bool(getattr(config or LTXConfig(), "low_ram_streaming", False))
+        return X0Model(load_transformer(path, low_ram_streaming=low_ram))
+
+    ltx = LTX23Transformer(config or LTXConfig(), ctx)
     raw = load_weights_dict(getattr(ctx, "load_weights", None), str(path))
     if not raw:
         raise RuntimeError(f"LTX 2.3 transformer weights empty: {path}")
-
     bundle_affine_bits = read_bundle_affine_bits_if_quantized(raw, path)
     inference_mode = resolve_dit_inference_weight_mode(
         ctx,
@@ -913,8 +950,6 @@ def load_ltx23_x0_model(
         weight_keys=frozenset(raw.keys()),
         bundle_affine_bits=bundle_affine_bits,
     )
-
-    ltx = LTX23Transformer(config or LTXConfig(), ctx)
     ltx.load_weights(
         list(raw.items()),
         strict=False,
@@ -923,5 +958,6 @@ def load_ltx23_x0_model(
         inference_mode=inference_mode,
     )
     setattr(ltx, "_dq_inference_mode", inference_mode)
-    _mx_eval(ltx.parameters())
-    return LTX23X0Model(ltx.model)
+
+    _mx_eval(ltx.model.parameters())
+    return ltx.x0_model

@@ -65,6 +65,7 @@ _SHARED_HIDDEN_IMPORTS: tuple[str, ...] = (
     "backend.engine.families.seedvr2",
     "backend.engine.families.seedvr2.video_upscale",
     "backend.engine.families.hunyuan.video_upscale",
+    "backend.engine.families.hunyuan.image_encoder_mlx",
     "backend.engine.video_upscale_registry",
     "backend.engine.families.ltx",
     "backend.engine.families.ltx.generation",

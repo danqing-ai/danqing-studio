@@ -39,6 +39,7 @@ from backend.engine.contracts import (
     resolve_wan_shift_value,
     video_apply_i2v_conditioning,
     video_apply_ltx_distilled_scheduler_timesteps,
+    video_apply_hunyuan_step_distill_scheduler_timesteps,
     video_cfg_negative_prompt,
     video_encoder_type,
     video_i2v_encode_failure_message,
@@ -50,6 +51,7 @@ from backend.engine.contracts import (
     video_snap_pixel_dims_if_needed,
     video_t5_max_seq_len,
     video_uses_ltx_distilled_timesteps,
+    video_uses_hunyuan_step_distill_timesteps,
     video_validate_generate_geometry,
     wan_t5_bundle_paths,
 )
@@ -361,6 +363,14 @@ def create_timesteps_for_video(pipeline,
             vae_scale=vae_scale,
             on_log=on_log,
         )
+    elif video_uses_hunyuan_step_distill_timesteps(
+        config, step_distill=step_distill, scheduler_default=scheduler_default,
+    ):
+        timesteps = video_apply_hunyuan_step_distill_scheduler_timesteps(
+            pipeline.ctx,
+            scheduler,
+            steps=steps,
+        )
     else:
         sched_kwargs: dict[str, Any] = {}
         shift_default = _registry_scalar_default_fn(entry, "shift", None)
@@ -555,7 +565,9 @@ def execute_family_video_generator(pipeline,
     out_path = str(work / f"{model_key}_{seed}_{timestamp}.mp4")
 
     pipeline_graph_step("denoise", on_log)
-    emit_phase(on_progress, phase="generate", progress=0.05, n_steps=max(1, steps))
+    stage2_steps = int(getattr(config, "ltx_stage2_steps", 3) or 3) if family == "ltx" else 0
+    progress_total_steps = max(1, int(steps) + stage2_steps) if family == "ltx" else max(1, int(steps))
+    emit_phase(on_progress, phase="generate", progress=0.05, n_steps=progress_total_steps)
 
     if ctx_exec.cancel_token.is_cancelled():
         return None
@@ -577,13 +589,14 @@ def execute_family_video_generator(pipeline,
         step_distill=step_distill,
         image_path=image_path,
         on_log=on_log,
+        on_progress=on_progress,
     )
 
     if ctx_exec.cancel_token.is_cancelled():
         return None
 
     pipeline_graph_step("save_asset", on_log)
-    emit_complete(on_progress, max(1, steps))
+    emit_complete(on_progress, progress_total_steps)
 
     metadata = {
         "model": request.model,

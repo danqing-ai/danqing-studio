@@ -18,6 +18,7 @@ export const DQ_STORAGE = Object.freeze({
   MODELS_CATEGORY: 'dq-studio.modelsCategory.v4',
   MODEL_FILTER_INSTALLED: 'dq-studio.modelFilterInstalled.v4',
   MODEL_FILTER_COMMERCIAL: 'dq-studio.modelFilterCommercial.v4',
+  MODEL_FILTER_CURRENT_ONLY: 'dq-studio.modelFilterCurrentOnly.v4',
   IMAGE_LAST_SIZE: 'dq-studio.imageLastSize.v4',
   /** Per image model id → ``WxH`` (bump suffix when preset schema changes). */
   IMAGE_SIZE_BY_MODEL: 'dq-studio.imageSizeByModel.v5',

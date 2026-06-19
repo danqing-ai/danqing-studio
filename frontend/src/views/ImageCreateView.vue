@@ -114,9 +114,12 @@
         @enhance="onEnhancePrompt"
         @reverse-prompt="onReversePromptFromReference"
         :prompt-apply-preview="promptApplyPreview"
+        :successor-hint="successorHint"
         @prompt-apply-replace="onPromptApplyReplace"
         @prompt-apply-append="onPromptApplyAppend"
         @prompt-apply-dismiss="promptApply.clear()"
+        @successor-switch="onSuccessorSwitch"
+        @successor-dismiss="onSuccessorDismiss"
         :enhancing="isEnhancing"
         :reversing="isReversing"
         :collapsed="viewMode === 'canvas' && composerCollapsed"
@@ -250,6 +253,8 @@ import {
 } from '@/utils/loraTrainHandoff';
 import { reconcileVersionPickerSelection } from '@/composables/useModelRegistryFilters';
 import { applyModelVersionFilters } from '@/utils/modelPickerFilters';
+import { pickDefaultVersionKey } from '@/utils/defaultModelSettings';
+import { dismissSuccessorHint, isSuccessorHintDismissed } from '@/utils/modelSuccessor';
 import { previewDisplayCaption, truncateDisplayLabel } from '@/utils/assetDisplay';
 // Studio components
 import StudioLayout from '@/components/studio/StudioLayout.vue';
@@ -1142,6 +1147,40 @@ const modelSelectOptions = computed(() => {
 });
 
 const currentModelConfig = computed(() => modelRegistry.value[params.model as string] || null);
+
+const successorDismissNonce = ref(0);
+
+const successorHint = computed(() => {
+  void successorDismissNonce.value;
+  const modelId = String(params.model || '');
+  const cfg = currentModelConfig.value;
+  const successorId = typeof cfg?.successor === 'string' ? cfg.successor.trim() : '';
+  if (!successorId || !modelRegistry.value[successorId]) return null;
+  if (isSuccessorHintDismissed(modelId)) return null;
+  return {
+    successorId,
+    successorName: $mn(modelRegistry.value[successorId], successorId),
+  };
+});
+
+function onSuccessorSwitch() {
+  const hint = successorHint.value;
+  if (!hint) return;
+  const versionKey = pickDefaultVersionKey(
+    hint.successorId,
+    modelRegistry.value,
+    modelsDetailedStatus.value[hint.successorId]?.versions,
+  );
+  if (!versionKey) return;
+  onModelVersionChange(`${hint.successorId}|${versionKey}`);
+}
+
+function onSuccessorDismiss() {
+  const modelId = String(params.model || '');
+  if (!modelId) return;
+  dismissSuccessorHint(modelId);
+  successorDismissNonce.value += 1;
+}
 const currentModelDisplayName = computed(() => {
   const c = currentModelConfig.value;
   if (c) {

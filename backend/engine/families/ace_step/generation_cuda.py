@@ -64,9 +64,18 @@ def _write_silence_latent_npy(pt_path: Path) -> Path:
 class AceStepCudaGenerator:
     """CUDA PyTorch ACE-Step generator."""
 
-    def __init__(self, ctx: Any, bundle_root: Path):
+    def __init__(
+        self,
+        ctx: Any,
+        bundle_root: Path,
+        *,
+        entry: Any | None = None,
+        version_key: str | None = None,
+    ):
         self._ctx = ctx
         self._bundle_root = Path(bundle_root)
+        self._registry_entry = entry
+        self._version_key = version_key
         self._device = "cuda"
         self._condition_model: Any = None
         self._vae: AceStepVAE | None = None
@@ -103,7 +112,12 @@ class AceStepCudaGenerator:
             raise RuntimeError("ACE-Step CUDA backend requires torch.cuda")
 
         bundle = self._bundle_root
-        dit_bundle = resolve_dit_bundle(bundle)
+        dit_subdir = None
+        if self._registry_entry is not None:
+            from backend.engine.families.ace_step.weights import ace_step_dit_subdir_for_model
+
+            dit_subdir = ace_step_dit_subdir_for_model(str(getattr(self._registry_entry, "id", "") or ""))
+        dit_bundle = resolve_dit_bundle(bundle, dit_subdir=dit_subdir)
         if not (dit_bundle / "config.json").is_file():
             raise RuntimeError(f"ACE-Step config.json missing under {dit_bundle}")
 

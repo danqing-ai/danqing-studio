@@ -35,7 +35,7 @@ TaskKind = Literal[
 
 
 class AdapterRef(BaseModel):
-    """LoRA / adapter — ``id`` is the registry LoRA model id (optional ``:version``, e.g. ``bbw-style:fp16``)."""
+    """LoRA / adapter — ``id`` is the registry LoRA model id (optional ``:version``, e.g. ``realism-lora:fp16``)."""
 
     id: str
     weight: float = Field(1.0, ge=0.0, le=2.0)
@@ -224,6 +224,7 @@ class AudioGenerationRequest(BaseModel):
     n: int = Field(2, ge=1, le=8)
     lm_expansion: Optional[str] = None  # auto | format | off
     audio_format: str = "mp3"
+    adapters: list[AdapterRef] = Field(default_factory=list)
     priority: Literal["normal", "high"] = "normal"
     metadata: dict[str, Any] = Field(default_factory=dict)
 
@@ -239,6 +240,7 @@ class AudioEditRequest(BaseModel):
     seed: Optional[int] = None
     n: int = Field(1, ge=1, le=8)
     audio_format: str = "mp3"
+    adapters: list[AdapterRef] = Field(default_factory=list)
     priority: Literal["normal", "high"] = "normal"
     metadata: dict[str, Any] = Field(default_factory=dict)
 
