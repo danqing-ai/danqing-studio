@@ -356,6 +356,9 @@ async def download_lora_from_hub(request: DownloadLoraHubRequest):
 
     asyncio.create_task(do_download())
     first_progress = await progress_queue.get()
+    if not first_progress.task_id or first_progress.status == "failed":
+        detail = first_progress.error_message or "LoRA download failed to start"
+        raise HTTPException(status_code=502, detail=detail)
     task_id = first_progress.task_id
     await progress_queue.put(first_progress)
 

@@ -875,7 +875,7 @@ class DownloadService(IDownloadService):
                         file_target = target / file_pattern
                         await self._http_downloader.download(
                             task_id=f"{task_id}_{i}",
-                            source=file_url,
+                            url=file_url,
                             target=file_target,
                             progress_callback=on_progress
                         )
@@ -886,7 +886,7 @@ class DownloadService(IDownloadService):
                     file_target = target / filename
                     result = await self._http_downloader.download(
                         task_id=task_id,
-                        source=download_url,
+                        url=download_url,
                         target=file_target,
                         progress_callback=on_progress
                     )
@@ -958,7 +958,7 @@ class DownloadService(IDownloadService):
         try:
             result = await self._http_downloader.download(
                 task_id=task_id,
-                source=url,
+                url=url,
                 target=target,
                 progress_callback=on_progress
             )

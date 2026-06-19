@@ -634,8 +634,12 @@ def resolve_modelscope_lora_filename(repo_id: str) -> str:
     return preferred
 
 
-def resolve_modelscope_lora_url(repo_id: str, filename: str) -> str:
-    return (
-        f"{MS_ENDPOINT}/models/{repo_id}/resolve/master/"
-        f"{quote(filename, safe='/')}"
-    )
+def resolve_modelscope_lora_url(
+    repo_id: str,
+    filename: str,
+    *,
+    revision: str = "master",
+) -> str:
+    from modelscope.hub.file_download import get_file_download_url
+
+    return get_file_download_url(repo_id, filename, revision)

@@ -1440,6 +1440,7 @@
     "versionConfigError": "Version configuration error",
     "convertFailed": "Generation failed: {msg}",
     "downloadFailed": "Download failed: {msg}",
+    "downloadStarted": "Download started: {name}",
     "downloadComplete": "{name} downloaded successfully",
     "downloadCancelled": "{name} cancelled",
     "deleteConfirm": "Are you sure you want to delete \"{name}\"?\nThis will delete {path} directory.",

@@ -1440,6 +1440,7 @@
     "versionConfigError": "版本配置错误",
     "convertFailed": "生成失败: {msg}",
     "downloadFailed": "下载失败: {msg}",
+    "downloadStarted": "已开始下载 {name}",
     "downloadComplete": "{name} 下载完成",
     "downloadCancelled": "{name} 已取消",
     "deleteConfirm": "确定要删除 \"{name}\" 吗？\n这将删除 {path} 目录。",
