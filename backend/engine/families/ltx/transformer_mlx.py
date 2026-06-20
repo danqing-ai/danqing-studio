@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import math
 import os
+from pathlib import Path
 from typing import Any
 
 import mlx.core as mx
@@ -15,6 +16,7 @@ from backend.engine.common.model.base import TransformerBase
 from backend.engine.common.ops.attention import scaled_dot_product_attention_bhsd_mx
 from backend.engine.common.ops.embeddings import sinusoidal_timestep_proj
 from backend.engine.config.model_configs import LTXConfig
+from backend.engine.families.ltx.perturbations import BatchedPerturbationConfig, PerturbationType
 from backend.engine.runtime._base import RuntimeContext
 
 # Watchdog guard: flush lazy graph every N blocks (Metal ~10 s deadline).
@@ -192,6 +194,7 @@ class LTX23Attention(nn.Module):
         rope_freqs: tuple[mx.array, mx.array, str] | None = None,
         rope_freqs_k: tuple[mx.array, mx.array, str] | None = None,
         attention_mask: mx.array | None = None,
+        perturbation_mask: mx.array | None = None,
     ) -> mx.array:
         b, n, _ = x.shape
         kv_input = encoder_hidden_states if encoder_hidden_states is not None else x
@@ -215,6 +218,9 @@ class LTX23Attention(nn.Module):
             k = apply_fn(k, cos_fk, sin_fk)
 
         out = scaled_dot_product_attention_bhsd_mx(mx, q, k, v, scale=self.scale, mask=attention_mask)
+
+        if perturbation_mask is not None:
+            out = out * perturbation_mask + v * (1.0 - perturbation_mask)
 
         if self.to_gate_logits is not None:
             gate_logits = self.to_gate_logits(x)
@@ -325,6 +331,8 @@ class LTX23AVBlock(nn.Module):
         audio_cross_rope_freqs: tuple[mx.array, mx.array, str] | None = None,
         video_attention_mask: mx.array | None = None,
         audio_attention_mask: mx.array | None = None,
+        block_idx: int = 0,
+        perturbations: BatchedPerturbationConfig | None = None,
     ) -> tuple[mx.array, mx.array]:
         vdim = video_hidden.shape[-1]
         adim = audio_hidden.shape[-1]
@@ -358,14 +366,38 @@ class LTX23AVBlock(nn.Module):
             av_a_gate_v2a = av_ca_v2a_gate_params + self.scale_shift_table_a2v_ca_audio[None, None, 4, :]
 
         video_normed = self._rms_norm(video_hidden) * (1.0 + v_scale_sa) + v_shift_sa
+        v_ptb_mask = None
+        if perturbations is not None and perturbations.any_in_batch(
+            PerturbationType.SKIP_VIDEO_SELF_ATTN, block_idx
+        ):
+            v_ptb_mask = perturbations.mask_like(
+                PerturbationType.SKIP_VIDEO_SELF_ATTN,
+                block_idx,
+                video_hidden[:, :1, :1, None],
+            )
         video_sa_out = self.attn1(
-            video_normed, rope_freqs=video_rope_freqs, attention_mask=video_attention_mask,
+            video_normed,
+            rope_freqs=video_rope_freqs,
+            attention_mask=video_attention_mask,
+            perturbation_mask=v_ptb_mask,
         )
         video_hidden = video_hidden + video_sa_out * v_gate_sa
 
         audio_normed = self._rms_norm(audio_hidden) * (1.0 + a_scale_sa) + a_shift_sa
+        a_ptb_mask = None
+        if perturbations is not None and perturbations.any_in_batch(
+            PerturbationType.SKIP_AUDIO_SELF_ATTN, block_idx
+        ):
+            a_ptb_mask = perturbations.mask_like(
+                PerturbationType.SKIP_AUDIO_SELF_ATTN,
+                block_idx,
+                audio_hidden[:, :1, :1, None],
+            )
         audio_sa_out = self.audio_attn1(
-            audio_normed, rope_freqs=audio_rope_freqs, attention_mask=audio_attention_mask,
+            audio_normed,
+            rope_freqs=audio_rope_freqs,
+            attention_mask=audio_attention_mask,
+            perturbation_mask=a_ptb_mask,
         )
         audio_hidden = audio_hidden + audio_sa_out * a_gate_sa
 
@@ -390,7 +422,7 @@ class LTX23AVBlock(nn.Module):
 
         video_q_a2v = video_norm3 * (1.0 + av_v_scale_a2v) + av_v_shift_a2v
         audio_kv_a2v = audio_norm3 * (1.0 + av_a_scale_a2v) + av_a_shift_a2v
-        video_hidden = video_hidden + (
+        a2v_out = (
             self.audio_to_video_attn(
                 video_q_a2v,
                 encoder_hidden_states=audio_kv_a2v,
@@ -399,10 +431,18 @@ class LTX23AVBlock(nn.Module):
             )
             * av_v_gate_a2v
         )
+        if perturbations is not None and perturbations.any_in_batch(
+            PerturbationType.SKIP_A2V_CROSS_ATTN, block_idx
+        ):
+            a2v_mask = perturbations.mask_like(
+                PerturbationType.SKIP_A2V_CROSS_ATTN, block_idx, video_hidden
+            )
+            a2v_out = a2v_out * a2v_mask
+        video_hidden = video_hidden + a2v_out
 
         audio_q_v2a = audio_norm3 * (1.0 + av_a_scale_v2a) + av_a_shift_v2a
         video_kv_v2a = video_norm3 * (1.0 + av_v_scale_v2a) + av_v_shift_v2a
-        audio_hidden = audio_hidden + (
+        v2a_out = (
             self.video_to_audio_attn(
                 audio_q_v2a,
                 encoder_hidden_states=video_kv_v2a,
@@ -411,6 +451,14 @@ class LTX23AVBlock(nn.Module):
             )
             * av_a_gate_v2a
         )
+        if perturbations is not None and perturbations.any_in_batch(
+            PerturbationType.SKIP_V2A_CROSS_ATTN, block_idx
+        ):
+            v2a_mask = perturbations.mask_like(
+                PerturbationType.SKIP_V2A_CROSS_ATTN, block_idx, audio_hidden
+            )
+            v2a_out = v2a_out * v2a_mask
+        audio_hidden = audio_hidden + v2a_out
 
         video_normed = self._rms_norm(video_hidden) * (1.0 + v_scale_ff) + v_shift_ff
         video_hidden = video_hidden + self.ff(video_normed) * v_gate_ff
@@ -539,6 +587,7 @@ class LTX23Model(nn.Module):
         audio_attention_mask: mx.array | None = None,
         video_timesteps: mx.array | None = None,
         audio_timesteps: mx.array | None = None,
+        perturbations: BatchedPerturbationConfig | None = None,
     ) -> tuple[mx.array, mx.array]:
         video_latent = video_latent.astype(mx.bfloat16)
         audio_latent = audio_latent.astype(mx.bfloat16)
@@ -624,6 +673,8 @@ class LTX23Model(nn.Module):
                 audio_cross_rope_freqs=audio_cross_rope_freqs,
                 video_attention_mask=video_attention_mask,
                 audio_attention_mask=audio_attention_mask,
+                block_idx=block_idx,
+                perturbations=perturbations,
             )
             if _DIT_EVAL_EVERY > 0 and (block_idx + 1) % _DIT_EVAL_EVERY == 0:
                 _mx_eval(video_hidden, audio_hidden)
@@ -915,43 +966,33 @@ def load_ltx23_x0_model(
     entry: Any | None = None,
     version_key: str | None = None,
 ) -> LTX23X0Model:
-    """Load LTX 2.3 DiT from bundle safetensors and return an X0 wrapper."""
+    """Load LTX 2.3 DiT from bundle safetensors and return an in-repo X0 wrapper."""
     from pathlib import Path as _Path
-
-    from ltx_core_mlx.utils.weights import load_split_safetensors
 
     from backend.engine.common.bundle.quant_inference import resolve_dit_inference_weight_mode
     from backend.engine.common.bundle.safetensors_affine_quant import read_bundle_affine_bits_if_quantized
-    from backend.engine.families.ltx.weights import remap_ltx23_weights
+    from backend.engine.families.ltx.weights import load_split_safetensors, remap_ltx23_weights
     from backend.engine.runtime.mlx_runtime import load_weights_dict
 
     path = _resolve_bundle_safetensors(_Path(bundle_root), weight_stem)
-    raw_weights = load_split_safetensors(path, prefix="transformer.")
-    if not raw_weights:
-        raise RuntimeError(f"LTX 2.3 transformer weights empty: {path}")
-
-    if any(k.endswith(".scales") for k in raw_weights):
-        # Quantized bundles: use upstream LTXModel (in-repo LTX23Model diverges at full-res stage 2).
-        from ltx_core_mlx.model.transformer.model import X0Model
-        from ltx_pipelines_mlx.utils._orchestration import load_transformer
-
-        low_ram = bool(getattr(config or LTXConfig(), "low_ram_streaming", False))
-        return X0Model(load_transformer(path, low_ram_streaming=low_ram))
-
-    ltx = LTX23Transformer(config or LTXConfig(), ctx)
     raw = load_weights_dict(getattr(ctx, "load_weights", None), str(path))
     if not raw:
+        raw = load_split_safetensors(path)
+    if not raw:
         raise RuntimeError(f"LTX 2.3 transformer weights empty: {path}")
-    bundle_affine_bits = read_bundle_affine_bits_if_quantized(raw, path)
+
+    remapped = remap_ltx23_weights(raw)
+    ltx = LTX23Transformer(config or LTXConfig(), ctx)
+    bundle_affine_bits = read_bundle_affine_bits_if_quantized(remapped, path)
     inference_mode = resolve_dit_inference_weight_mode(
         ctx,
         entry=entry,
         version_key=version_key,
-        weight_keys=frozenset(raw.keys()),
+        weight_keys=frozenset(remapped.keys()),
         bundle_affine_bits=bundle_affine_bits,
     )
     ltx.load_weights(
-        list(raw.items()),
+        list(remapped.items()),
         strict=False,
         ctx=ctx,
         bundle_affine_bits=bundle_affine_bits,

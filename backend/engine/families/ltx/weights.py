@@ -2,7 +2,26 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Any
+
+import mlx.core as mx
+
+
+def load_split_safetensors(
+    path: str | Path,
+    prefix: str | None = None,
+) -> dict[str, mx.array]:
+    """Load safetensors via ``mx.load``, optionally stripping a key prefix."""
+    path = Path(path)
+    raw = mx.load(str(path))
+    if not prefix:
+        return raw
+    weights: dict[str, mx.array] = {}
+    for key, tensor in raw.items():
+        if key.startswith(prefix):
+            weights[key[len(prefix) :]] = tensor
+    return weights
 
 
 def normalize_ltx23_bundle_keys(weights: dict[str, Any]) -> dict[str, Any]:

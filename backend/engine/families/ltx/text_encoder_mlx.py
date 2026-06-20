@@ -1,7 +1,7 @@
 """LTX 2.3 Gemma 3 text encoder + connector (MLX).
 
 Loads Gemma via ``mlx_lm`` from ``gemma_model_id`` and the bundle
-``connector.safetensors`` weights. No ``ltx_core_mlx`` imports.
+``connector.safetensors`` weights (in-repo connector + feature extractor).
 """
 from __future__ import annotations
 
@@ -396,9 +396,7 @@ class LTX23GemmaEncoder:
             raise RuntimeError(f"LTX 2.3 bundle directory not found: {self.bundle_root}")
 
         if self._gemma is None:
-            from ltx_core_mlx.text_encoders.gemma.encoders.base_encoder import GemmaLanguageModel
-
-            self._gemma = GemmaLanguageModel()
+            self._gemma = _GemmaLanguageModel()
             msg = (
                 f"LTX 2.3 loading Gemma text encoder ({self.gemma_model_id}); "
                 "first run may download from HuggingFace (~7GB) and take several minutes"
@@ -411,15 +409,12 @@ class LTX23GemmaEncoder:
                 on_log("info", "LTX 2.3 Gemma text encoder ready")
 
         if self._extractor is None:
-            from ltx_core_mlx.text_encoders.gemma.feature_extractor import GemmaFeaturesExtractorV2
-            from ltx_core_mlx.utils.weights import load_split_safetensors
-
             if on_log:
                 on_log("info", "LTX 2.3 loading connector weights")
-            self._extractor = GemmaFeaturesExtractorV2()
-            connector_weights = load_split_safetensors(
-                self.bundle_root / "connector.safetensors",
-                prefix="connector.",
+            self._extractor = _GemmaFeaturesExtractor()
+            connector_weights = _load_connector_weights(
+                self.bundle_root,
+                getattr(self.ctx, "load_weights", None),
             )
             self._extractor.connector.load_weights(list(connector_weights.items()))
             _materialize(

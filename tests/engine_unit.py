@@ -955,6 +955,38 @@ class LtxWeightTests(unittest.TestCase):
         up = load_ltx23_latent_upsampler(bundle, load_fn=ctx.load_weights)
         self.assertEqual(up.mid_channels, 1024)
 
+    def test_ltx_vocoder_rms_floor(self) -> None:
+        """Guard against mlx 0.31.2 Metal strided-scatter collapse (~-50 dB audio)."""
+        import math
+
+        import mlx.core as mx
+        import numpy as np
+
+        from tests.benchmark.registry_utils import resolve_benchmark_data_root
+
+        bundle = resolve_benchmark_data_root() / "models/Video/ltx-2.3-distilled-mlx-q4"
+        if not (bundle / "vocoder.safetensors").is_file():
+            return
+
+        from backend.engine.runtime.mlx import MLXContext
+        from backend.engine.families.ltx.vae_mlx import load_ltx23_vocoder
+        from ltx_core_mlx.model.audio_vae.processor import AudioProcessor
+
+        voc = load_ltx23_vocoder(bundle, load_fn=MLXContext().load_weights)
+        proc = AudioProcessor(sample_rate=16000)
+        t = np.linspace(0, 2.0, 32000, endpoint=False)
+        stereo = np.stack(
+            [0.5 * np.sin(2 * np.pi * 440 * t), 0.4 * np.sin(2 * np.pi * 880 * t)],
+            axis=0,
+        )[None, ...].astype(np.float32)
+        mel = proc.waveform_to_mel(mx.array(stereo))
+        wav = voc(mel)[0]
+        mono = ((wav[0] + wav[1]) / 2).astype(mx.float32)
+        arr = np.array(mono)
+        rms = float(np.sqrt(np.mean(arr**2)))
+        rms_db = 20.0 * math.log10(max(rms, 1e-12))
+        self.assertGreater(rms_db, -30.0, f"vocoder output collapsed to noise: {rms_db:.1f} dB")
+
     def test_ltx_video_decoder_per_channel_stats(self) -> None:
         import mlx.nn as nn
 
@@ -2800,17 +2832,16 @@ class BenchmarkMetadataTests(unittest.TestCase):
         turbo = _load_default_registry_expanded()["models"]["z-image-turbo"]
         self.assertTrue(turbo["parameters"].get("lora_support", False))
 
-    def test_z_image_lora_scope_requires_exact_base(self) -> None:
+    def test_z_image_lora_scope_base_turbo_compatible(self) -> None:
         from backend.engine.families.z_image.weights import (
             z_image_lora_base_compatible,
             z_image_lora_scope_key,
         )
 
-        self.assertEqual(z_image_lora_scope_key("z-image"), "z-image")
-        self.assertEqual(z_image_lora_scope_key("z-image-turbo"), "z-image-turbo")
-        self.assertFalse(z_image_lora_base_compatible("z-image-turbo", "z-image"))
-        self.assertFalse(z_image_lora_base_compatible("z-image", "z-image-turbo"))
-        self.assertTrue(z_image_lora_base_compatible("z-image-turbo", "z-image-turbo"))
+        self.assertEqual(z_image_lora_scope_key("z-image"), "z_image")
+        self.assertEqual(z_image_lora_scope_key("z-image-turbo"), "z_image")
+        self.assertTrue(z_image_lora_base_compatible("z-image-turbo", "z-image"))
+        self.assertTrue(z_image_lora_base_compatible("z-image", "z-image-turbo"))
         self.assertFalse(z_image_lora_base_compatible("z-image-turbo", "flux1-dev"))
 
 
@@ -4536,6 +4567,69 @@ class ArchitectureWrapUpTests(unittest.TestCase):
             )
         )
 
+    def test_video_wan_step_distill_flag(self) -> None:
+        from types import SimpleNamespace
+
+        from backend.engine.contracts import (
+            video_uses_wan_step_distill_timesteps,
+        )
+
+        cfg = SimpleNamespace(video_i2v_style="wan")
+        self.assertTrue(
+            video_uses_wan_step_distill_timesteps(
+                cfg, step_distill=True, scheduler_default="wan_flow_unipc",
+            )
+        )
+        self.assertFalse(
+            video_uses_wan_step_distill_timesteps(
+                cfg, step_distill=False, scheduler_default="wan_flow_unipc",
+            )
+        )
+
+    def test_configure_wan_step_distill_timesteps(self) -> None:
+        from backend.engine.common.ops.schedulers import WanFlowUniPCScheduler
+        from backend.engine.config.model_configs import WanConfig
+        from backend.engine.families.wan.distill import configure_wan_step_distill_timesteps
+        from backend.engine.runtime.mlx import MLXContext
+
+        ctx = MLXContext()
+        sched = WanFlowUniPCScheduler(1000, ctx=ctx)
+        cfg = WanConfig(step_distill=True)
+        timesteps = configure_wan_step_distill_timesteps(ctx, sched, 4, config=cfg)
+        self.assertEqual(len(timesteps), 4)
+        self.assertAlmostEqual(float(timesteps[0]), 1000.0, places=3)
+
+    def test_wan_moe_bundle_layout_helpers(self) -> None:
+        from backend.engine.pipelines.video_bundle_layout import (
+            wan_is_moe_bundle,
+            wan_moe_expert_shards,
+        )
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            high = root / "high_noise_model"
+            low = root / "low_noise_model"
+            high.mkdir()
+            low.mkdir()
+            (high / "diffusion_pytorch_model.safetensors").write_bytes(b"x")
+            (low / "diffusion_pytorch_model.safetensors").write_bytes(b"y")
+            self.assertTrue(wan_is_moe_bundle(root))
+            self.assertEqual(len(wan_moe_expert_shards(root, "high")), 1)
+            self.assertEqual(len(wan_moe_expert_shards(root, "low")), 1)
+
+    def test_assemble_wan_distill_bundle(self) -> None:
+        from backend.services.wan_distill_bundle import assemble_wan_distill_bundle
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            high_name = "wan2.2_i2v_A14b_high_noise_lightx2v_4step_720p_260412.safetensors"
+            low_name = "wan2.2_i2v_A14b_low_noise_lightx2v_4step_720p_260412.safetensors"
+            (root / high_name).write_bytes(b"h")
+            (root / low_name).write_bytes(b"l")
+            assemble_wan_distill_bundle(root, "i2v_720p")
+            self.assertTrue((root / "high_noise_model" / "diffusion_pytorch_model.safetensors").is_file())
+            self.assertTrue((root / "low_noise_model" / "diffusion_pytorch_model.safetensors").is_file())
+
     def test_video_ltx_distilled_flag(self) -> None:
         from types import SimpleNamespace
 
@@ -4797,25 +4891,17 @@ class LoraQualityTests(unittest.TestCase):
         self.assertIn("tiny_face_in_crop", merged["issues"])
         self.assertFalse(merged["suitable_for_training"])
 
-    def test_compose_person_caption_cjk(self) -> None:
-        from backend.engine.training.lora_auto_caption import compose_person_caption
-
-        self.assertEqual(
-            compose_person_caption("杨紫", "半身照，白色衬衫，室内"),
-            "杨紫，半身照，白色衬衫，室内",
-        )
-
-    def test_compose_person_caption_english(self) -> None:
-        from backend.engine.training.lora_auto_caption import compose_person_caption
-
-        self.assertEqual(
-            compose_person_caption("cyq", "bust portrait, red dress, outdoor"),
-            "cyq, bust portrait, red dress, outdoor",
-        )
-
-    def test_resolve_lora_subject_name_prefers_name_over_legacy_template(self) -> None:
+    def test_resolve_lora_subject_name_uses_only_explicit_trigger(self) -> None:
         from backend.engine.training.lora_auto_caption import resolve_lora_subject_name
 
+        self.assertEqual(
+            resolve_lora_subject_name({"default_prompt": "陈钰琪", "trigger_word": "", "name": "cyq"}),
+            "",
+        )
+        self.assertEqual(
+            resolve_lora_subject_name({"default_prompt": "陈钰琪", "trigger_word": "starface", "name": "cyq"}),
+            "starface",
+        )
         self.assertEqual(
             resolve_lora_subject_name(
                 {
@@ -4824,14 +4910,14 @@ class LoraQualityTests(unittest.TestCase):
                     "name": "陈钰琪",
                 }
             ),
-            "陈钰琪",
+            "",
         )
         self.assertEqual(
             resolve_lora_subject_name({"default_prompt": "杨紫", "trigger_word": "", "name": "dataset-1"}),
-            "杨紫",
+            "",
         )
 
-    def test_caption_dataset_image_concept_prefixes_subject(self) -> None:
+    def test_caption_dataset_image_concept_prefixes_subject_visibly(self) -> None:
         from pathlib import Path
 
         from backend.engine.training.lora_auto_caption import caption_dataset_image
@@ -4849,12 +4935,77 @@ class LoraQualityTests(unittest.TestCase):
         )
         self.assertEqual(caption, "杨紫，半身照，白色连衣裙，自然光")
 
+    def test_caption_dataset_image_without_trigger_does_not_prefix_dataset_name(self) -> None:
+        from pathlib import Path
+
+        from backend.engine.training.lora_auto_caption import caption_dataset_image
+
+        def fake_analyze(_path: Path, _instruction: str) -> str:
+            self.assertIn("No trigger word is configured", _instruction)
+            return "半身照，白色连衣裙，自然光"
+
+        caption = caption_dataset_image(
+            Path("x.jpg"),
+            Path("/tmp/vlm"),
+            audit_kind="concept",
+            subject_name="",
+            analyze_fn=fake_analyze,
+        )
+        self.assertEqual(caption, "半身照，白色连衣裙，自然光")
+
+    def test_caption_dataset_image_strips_subject_from_vlm_output(self) -> None:
+        from pathlib import Path
+
+        from backend.engine.training.lora_auto_caption import caption_dataset_image
+
+        def fake_analyze(_path: Path, _instruction: str) -> str:
+            return "陈钰琪 半身照，白色连衣裙，室内自然光"
+
+        caption = caption_dataset_image(
+            Path("x.jpg"),
+            Path("/tmp/vlm"),
+            audit_kind="concept",
+            subject_name="陈钰琪",
+            analyze_fn=fake_analyze,
+        )
+        self.assertEqual(caption, "陈钰琪，半身照，白色连衣裙，室内自然光")
+        self.assertEqual(caption.count("陈钰琪"), 1)
+
+    def test_concept_auto_caption_filters_smoothing_texture_labels(self) -> None:
+        from pathlib import Path
+
+        from backend.engine.training.lora_auto_caption import (
+            build_concept_auto_caption_instruction,
+            caption_dataset_image,
+            normalize_scene_caption,
+        )
+
+        instruction = build_concept_auto_caption_instruction("陈钰琪")
+        self.assertIn("Do NOT describe skin texture", instruction)
+        cleaned = normalize_scene_caption(
+            "半身照，光滑皮肤，白色连衣裙，smooth skin，室内自然光",
+            subject_name="陈钰琪",
+        )
+        self.assertEqual(cleaned, "半身照，白色连衣裙，室内自然光")
+
+        def fake_analyze(_path: Path, _instruction: str) -> str:
+            self.assertIn("Do NOT describe skin texture", _instruction)
+            return "半身照，光滑皮肤，白色连衣裙，smooth skin，室内自然光"
+
+        caption = caption_dataset_image(
+            Path("x.jpg"),
+            Path("/tmp/vlm"),
+            audit_kind="concept",
+            subject_name="陈钰琪",
+            analyze_fn=fake_analyze,
+        )
+        self.assertEqual(caption, "陈钰琪，半身照，白色连衣裙，室内自然光")
+
     def test_normalize_scene_caption_rejects_exclamation_garbage(self) -> None:
-        from backend.engine.training.lora_auto_caption import compose_person_caption, normalize_scene_caption
+        from backend.engine.training.lora_auto_caption import normalize_scene_caption
 
         raw = "!" * 80
         self.assertEqual(normalize_scene_caption(raw), "")
-        self.assertEqual(compose_person_caption("陈钰琪", raw), "陈钰琪")
 
     def test_caption_dataset_image_retries_after_garbage_vlm_output(self) -> None:
         from pathlib import Path
@@ -4926,13 +5077,13 @@ class LoraQualityTests(unittest.TestCase):
             mod.caption_dataset_images_batch = original
         self.assertEqual(out["captions"], ["陈钰琪，半身照"])
 
-    def test_create_dataset_defaults_prompt_to_name(self) -> None:
+    def test_create_dataset_does_not_use_name_as_default_prompt(self) -> None:
         from backend.engine.training import dataset_store
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             ds = dataset_store.create_dataset(root, name="杨紫", kind="concept")
-            self.assertEqual(ds.get("default_prompt"), "杨紫")
+            self.assertEqual(ds.get("default_prompt"), "")
 
     def test_prepare_image_for_vlm_downscales(self) -> None:
         from PIL import Image
@@ -5011,7 +5162,7 @@ class LoraQualityTests(unittest.TestCase):
             codes = {h["code"] for h in report["hints"]}
             self.assertTrue(codes & {"many_small_512", "many_small_600", "low_resolution_median"})
 
-    def test_analyze_training_quality_high_initial_loss(self) -> None:
+    def test_analyze_training_quality_high_loss_is_diagnostic_only(self) -> None:
         from backend.engine.training.lora_quality import analyze_training_quality
 
         loss_history = [
@@ -5020,22 +5171,23 @@ class LoraQualityTests(unittest.TestCase):
             {"step": 30, "loss": 0.35},
         ]
         report = analyze_training_quality(loss_history)
-        self.assertIn(report["level"], ("fair", "poor"))
+        self.assertEqual(report["level"], "good")
         codes = {h["code"] for h in report["hints"]}
-        self.assertIn("high_initial_loss", codes)
+        self.assertIn("loss_curve_diagnostic_only", codes)
+        self.assertNotIn("high_initial_loss", codes)
 
-    def test_analyze_training_quality_healthy(self) -> None:
+    def test_analyze_training_quality_warns_on_val_regression(self) -> None:
         from backend.engine.training.lora_quality import analyze_training_quality
 
         loss_history = [
-            {"step": 10, "loss": 0.30},
-            {"step": 100, "loss": 0.12},
-            {"step": 200, "loss": 0.08},
+            {"step": 10, "loss": 0.30, "val_loss": 0.32},
+            {"step": 100, "loss": 0.20, "val_loss": 0.21},
+            {"step": 200, "loss": 0.19, "val_loss": 0.34},
         ]
         report = analyze_training_quality(loss_history)
-        self.assertEqual(report["level"], "good")
+        self.assertEqual(report["level"], "fair")
         codes = {h["code"] for h in report["hints"]}
-        self.assertIn("training_healthy", codes)
+        self.assertIn("val_loss_regressed", codes)
 
 
 class LoraTrainRuntimeTests(unittest.TestCase):
@@ -5065,6 +5217,7 @@ class LoraTrainRuntimeTests(unittest.TestCase):
                 "train_type": "dora",
                 "min_snr_gamma": 5.0,
                 "prior_loss_weight": 1.0,
+                "class_prompt": "a photo of a person",
                 "early_stop_patience": 3,
                 "fuse_adapters": True,
             },
@@ -5079,14 +5232,50 @@ class LoraTrainRuntimeTests(unittest.TestCase):
         self.assertEqual(cfg.early_stop_patience, 3)
         self.assertTrue(cfg.fuse_adapters)
 
+    def test_parse_lora_train_runtime_config_requires_class_prompt_for_prior(self) -> None:
+        from backend.engine.training.lora_train_runtime import parse_lora_train_runtime_config
+
+        with self.assertRaisesRegex(RuntimeError, "class_prompt"):
+            parse_lora_train_runtime_config(
+                {"prior_loss_weight": 1.0},
+                defaults={"lora_rank": 8, "iterations": 100},
+            )
+
+    def test_resolve_dreambooth_caption_fails_without_prompt(self) -> None:
+        from backend.engine.training.dataset_store import resolve_dreambooth_caption
+        from pathlib import Path
+
+        with self.assertRaisesRegex(RuntimeError, "progress_prompt"):
+            resolve_dreambooth_caption(
+                [(Path("a.jpg"), "some caption")],
+                progress_prompt="",
+                dataset_meta={},
+            )
+
+    def test_resolve_per_image_captions_fails_on_empty_without_fallback(self) -> None:
+        from backend.engine.training.dataset_store import resolve_per_image_captions
+        from pathlib import Path
+
+        with self.assertRaisesRegex(RuntimeError, "empty"):
+            resolve_per_image_captions(
+                [(Path("a.jpg"), "")],
+                progress_prompt="",
+                dataset_meta={},
+            )
+
+    def test_z_image_presets_disable_prior_loss(self) -> None:
+        from backend.engine.training.presets import resolve_preset
+
+        for name in ("quick", "standard", "quality"):
+            preset = resolve_preset(name, base_model="z-image")
+            self.assertEqual(preset.get("prior_loss_weight"), 0.0, msg=name)
+
     def test_parse_lora_train_runtime_config_default_scale(self) -> None:
-        from backend.engine.training.lora_train_runtime import (
-            DEFAULT_LORA_SCALE,
-            parse_lora_train_runtime_config,
-        )
+        from backend.engine.training.lora_train_runtime import parse_lora_train_runtime_config
 
         cfg = parse_lora_train_runtime_config({}, defaults={"lora_rank": 16, "iterations": 100})
-        self.assertEqual(cfg.lora_scale, DEFAULT_LORA_SCALE)
+        self.assertEqual(cfg.lora_alpha, 16)
+        self.assertEqual(cfg.lora_scale, 1.0)
 
     def test_parse_lora_train_runtime_config_rejects_batch_size_gt_one(self) -> None:
         from backend.engine.training.lora_train_runtime import parse_lora_train_runtime_config
@@ -5205,7 +5394,7 @@ class LoraTrainingPresetsTests(unittest.TestCase):
         self.assertTrue(zimg["grad_checkpoint"])
         self.assertEqual(zturbo["lora_rank"], 16)
         self.assertEqual(zturbo["guidance"], 0.0)
-        self.assertEqual(zturbo["timestep_low"], 1)
+        self.assertEqual(zturbo["timestep_low"], 4)
         self.assertEqual(zturbo["timestep_high"], 9)
         self.assertEqual(zturbo["timestep_bias"], "uniform")
         self.assertEqual(zturbo["min_snr_gamma"], 5.0)
@@ -5234,7 +5423,7 @@ class LoraTrainingPresetsTests(unittest.TestCase):
         turbo = resolve_preset("standard", base_model="z-image-turbo")
         self.assertEqual(turbo["lora_rank"], 16)
         self.assertNotIn("lora_module_keys", turbo)
-        self.assertEqual(turbo["timestep_low"], 1)
+        self.assertEqual(turbo["timestep_low"], 4)
         self.assertEqual(turbo["learning_rate"], 1e-4)
         self.assertEqual(resolve_preset("mflux", base_model="z-image-turbo"), turbo)
 
@@ -5474,7 +5663,7 @@ class LoraTrainingCropTests(unittest.TestCase):
         )
         self.assertEqual(cap, "A photo of sks person")
 
-    def test_resolve_dreambooth_caption_injects_trigger_word(self) -> None:
+    def test_resolve_dreambooth_caption_does_not_hide_inject_trigger_word(self) -> None:
         from backend.engine.training.dataset_store import resolve_dreambooth_caption
         from pathlib import Path
 
@@ -5484,8 +5673,7 @@ class LoraTrainingCropTests(unittest.TestCase):
             progress_prompt="a beautiful portrait",
             dataset_meta={"trigger_word": "sks"},
         )
-        self.assertIn("sks", cap.lower())
-        self.assertIn("beautiful portrait", cap)
+        self.assertEqual(cap, "a beautiful portrait")
 
     def test_resolve_per_image_captions_keeps_row_text(self) -> None:
         from backend.engine.training.dataset_store import resolve_per_image_captions
@@ -5502,6 +5690,43 @@ class LoraTrainingCropTests(unittest.TestCase):
         )
         self.assertEqual(out[0][1], "陈钰琪，白色连衣裙")
         self.assertEqual(out[1][1], "陈钰琪，古装")
+
+    def test_load_training_pairs_fails_when_concept_caption_missing_trigger(self) -> None:
+        from backend.engine.training import dataset_store
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ds = dataset_store.create_dataset(root, name="cyq", kind="concept", trigger_word="陈钰琪")
+            ds_dir = dataset_store.datasets_root(root) / ds["id"]
+            (ds_dir / "images").mkdir(exist_ok=True)
+            (ds_dir / "images" / "a.jpg").write_bytes(b"x")
+            (ds_dir / "train.jsonl").write_text(
+                __import__("json").dumps(
+                    {"image": "images/a.jpg", "prompt": "半身照，白色连衣裙"},
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(RuntimeError, "trigger_word"):
+                dataset_store.load_training_pairs_unified(
+                    root,
+                    ds["id"],
+                    progress_prompt="陈钰琪",
+                    caption_mode="per_image",
+                )
+
+    def test_resolve_per_image_captions_does_not_repeat_progress_prompt_name(self) -> None:
+        from backend.engine.training.dataset_store import resolve_per_image_captions
+        from pathlib import Path
+
+        out = resolve_per_image_captions(
+            [(Path("a.jpg"), "陈钰琪，半身照，白色连衣裙")],
+            progress_prompt="陈钰琪",
+            dataset_meta={"trigger_word": "", "default_prompt": "陈钰琪"},
+        )
+        self.assertEqual(out[0][1].count("陈钰琪"), 1)
+        self.assertEqual(out[0][1], "陈钰琪，半身照，白色连衣裙")
 
     def test_collect_lora_safetensors_remaps_for_qwen_image(self) -> None:
         from backend.engine.runtime.mlx import MLXContext

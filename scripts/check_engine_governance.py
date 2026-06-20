@@ -84,6 +84,10 @@ HUNYUAN_STEP_DISTILL_IDS = (
     "hunyuan-video-1.5-i2v-step-distill",
     "hunyuan-video-1.5-t2v-step-distill",
 )
+WAN_STEP_DISTILL_IDS = (
+    "wan-2.2-i2v-14b-distill",
+    "wan-2.2-t2v-14b-distill",
+)
 HUNYUAN_REPO_ID = "Tencent-Hunyuan/HunyuanVideo-1.5"
 MAX_FAMILY_UNITS = 8
 DOCS = ROOT / "docs"
@@ -102,6 +106,7 @@ ALL_RULES = (
     "registry",
     "docs",
     "pipeline-family",
+    "ltx-vendored",
 )
 RULE_CHOICES = ALL_RULES + ("parity",)
 
@@ -478,7 +483,7 @@ def check_registry() -> list[str]:
             if "google/byt5-small" not in repo_ids:
                 failures.append(f"{mid}: bundle_repos must include google/byt5-small")
 
-    for mid in HUNYUAN_STEP_DISTILL_IDS:
+    for mid in HUNYUAN_STEP_DISTILL_IDS + WAN_STEP_DISTILL_IDS:
         model = models.get(mid)
         if not isinstance(model, dict):
             continue
@@ -495,6 +500,10 @@ def check_registry() -> list[str]:
         if mid.endswith("i2v-step-distill") and "animate" not in actions:
             failures.append(f"{mid}: actions must include animate")
         if mid.endswith("t2v-step-distill") and "create" not in actions:
+            failures.append(f"{mid}: actions must include create")
+        if mid.endswith("i2v-14b-distill") and "animate" not in actions:
+            failures.append(f"{mid}: actions must include animate")
+        if mid.endswith("t2v-14b-distill") and "create" not in actions:
             failures.append(f"{mid}: actions must include create")
 
     mid = "hunyuan-video-1.5-1080p-sr"
@@ -694,6 +703,34 @@ def check_docs(_allow: dict[str, list[str]]) -> list[str]:
     return violations
 
 
+LTX_VENDORED_MARKERS = (
+    "import ltx_core_mlx",
+    "from ltx_core_mlx",
+    "import ltx_pipelines_mlx",
+    "from ltx_pipelines_mlx",
+    "ltx-core-mlx",
+    "ltx-pipelines-mlx",
+)
+
+
+def check_ltx_vendored(_allow: dict[str, list[str]]) -> list[str]:
+    """Ban third-party LTX MLX pipeline packages — engine uses in-repo families/ltx/."""
+    violations: list[str] = []
+    for path in sorted((ROOT / "backend").rglob("*.py")):
+        rel = str(path.relative_to(ROOT)).replace("\\", "/")
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for i, line in enumerate(text.splitlines(), 1):
+            s = line.strip()
+            if s.startswith("#") or not s:
+                continue
+            if any(marker in s for marker in LTX_VENDORED_MARKERS):
+                violations.append(f"{rel}:{i}: {s[:100]}")
+    return violations
+
+
 RULE_RUNNERS: dict[str, Callable[[dict[str, list[str]]], list[str]]] = {
     "imports": check_imports,
     "mlx-torch": check_mlx_torch,
@@ -708,6 +745,7 @@ RULE_RUNNERS: dict[str, Callable[[dict[str, list[str]]], list[str]]] = {
     "parity": lambda _a: check_parity(),
     "docs": lambda _a: check_docs({}),
     "pipeline-family": lambda _a: check_pipeline_family({}),
+    "ltx-vendored": check_ltx_vendored,
 }
 
 RULE_HINTS: dict[str, str] = {
@@ -728,6 +766,7 @@ RULE_HINTS: dict[str, str] = {
     "parity": "Fix remap_* vs Transformer _param_map key mismatch (make check-engine-governance --rule parity)",
     "docs": "Keep only docs/engine_architecture.md; merge or delete other docs/*.md files",
     "pipeline-family": "Use registry/config dispatch instead of family == in pipelines (see docs/engine_architecture.md §5)",
+    "ltx-vendored": "Remove ltx_core_mlx / ltx_pipelines_mlx imports; implement under backend/engine/families/ltx/",
 }
 
 

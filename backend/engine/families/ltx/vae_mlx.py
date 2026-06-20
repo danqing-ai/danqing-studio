@@ -1,4 +1,4 @@
-"""LTX 2.3 video/audio codec — MLX implementation (no ltx_core_mlx imports)."""
+"""LTX 2.3 video/audio codec — MLX implementation (in-repo)."""
 from __future__ import annotations
 
 import logging
@@ -2022,7 +2022,8 @@ class UpSample1d(nn.Module):
         B, T, C = x.shape
         # Insert zeros between samples: (B, T, C) -> (B, T*2, C)
         x_up = mx.zeros((B, T * 2, C))
-        x_up = x_up.at[:, ::2, :].add(x)
+        # Slice assign avoids mlx 0.31.2 Metal scatter bug in .at[strided].add().
+        x_up[:, ::2, :] = x
 
         # Reshape for grouped conv1d: (B*C, T*2, 1)
         x_up = x_up.transpose(0, 2, 1).reshape(B * C, T * 2, 1)
@@ -2317,7 +2318,8 @@ class HannSincResampler:
         #    output length = (T_padded - 1) * ratio + 1
         zi_len = (T_padded - 1) * ratio + 1
         upsampled = mx.zeros((B, zi_len))
-        upsampled = upsampled.at[:, ::ratio].add(x_padded)
+        # Slice assign avoids mlx 0.31.2 Metal scatter bug in .at[strided].add().
+        upsampled[:, ::ratio] = x_padded
 
         # 3. Full convolution via zero-pad + valid conv1d
         #    Full conv output = zi_len + K - 1
@@ -2550,8 +2552,8 @@ class LTX23Vocoder(nn.Module):
 
         x = self.act_post(x)
         x = self.conv_post(x)  # (B, T_audio, 2)
-        x = mx.tanh(x)
-        return x
+        # embedded_config: use_tanh_at_final=false for base vocoder
+        return mx.clip(x, -1.0, 1.0)
 
     def __call__(self, mel: mx.array) -> mx.array:
         """Full pipeline: mel -> 48kHz stereo waveform.

@@ -32,6 +32,7 @@ from backend.engine.families.ltx.pipeline_math import (
     ltx2_schedule,
     ltx_dev_audio_guider_params,
     ltx_dev_video_guider_params,
+    VIDEO_SPATIAL_SCALE,
 )
 from backend.engine.families.ltx.text_encoder_mlx import LTX23GemmaEncoder
 from backend.engine.families.ltx.transformer_mlx import LTX23X0Model, load_ltx23_x0_model
@@ -88,8 +89,8 @@ def _per_token_timesteps(ctx: RuntimeContext, sigma: float, denoise_mask: mx.arr
     return (denoise_mask * sigma).squeeze(-1)
 
 
-def _is_ltx_core_x0(model: Any) -> bool:
-    return type(model).__name__ == "X0Model" and "ltx_core_mlx" in (type(model).__module__ or "")
+def _is_inrepo_x0(model: Any) -> bool:
+    return isinstance(model, LTX23X0Model)
 
 
 def _parse_ffmpeg_size(stderr: str) -> tuple[int, int] | None:
@@ -295,13 +296,12 @@ def _multimodal_guided_denoise_loop(
     on_log: Callable[[str, str], None] | None = None,
 ) -> _DenoiseOutput:
     """Dev stage-1 denoise with CFG + STG + modality guidance (dgrauet reference)."""
-    if not _is_ltx_core_x0(model):
+    if not _is_inrepo_x0(model):
         raise RuntimeError(
-            "LTX 2.3 dev guidance requires the quantized dgrauet DiT (ltx_core_mlx X0Model); "
-            "select an mlx-q4/q8/bf16 bundle version."
+            "LTX 2.3 dev guidance requires the in-repo LTX23X0Model DiT wrapper."
         )
 
-    from ltx_core_mlx.guidance.perturbations import (
+    from backend.engine.families.ltx.perturbations import (
         BatchedPerturbationConfig,
         Perturbation,
         PerturbationConfig,
@@ -553,8 +553,8 @@ class LTX23MlxGenerator:
             conditionings_1 = _i2v_conditionings(
                 ctx,
                 image_path,
-                enc_h=half_h * 32,
-                enc_w=half_w * 32,
+                enc_h=h_half * VIDEO_SPATIAL_SCALE,
+                enc_w=w_half * VIDEO_SPATIAL_SCALE,
                 video_encoder=self._video_encoder,
             )
 
@@ -662,8 +662,8 @@ class LTX23MlxGenerator:
             conditionings_2 = _i2v_conditionings(
                 ctx,
                 image_path,
-                enc_h=h_full * 32,
-                enc_w=w_full * 32,
+                enc_h=h_full * VIDEO_SPATIAL_SCALE,
+                enc_w=w_full * VIDEO_SPATIAL_SCALE,
                 video_encoder=self._video_encoder,
             )
 
