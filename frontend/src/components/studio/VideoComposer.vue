@@ -1,7 +1,7 @@
 <template>
   <div
     class="video-composer studio-composer-shell dq-glass--panel"
-    :class="{ 'video-composer--collapsed': collapsed }"
+    :class="{ 'video-composer--collapsed': collapsed, 'video-composer--expanded-prompt': isLongDuration && !collapsed }"
   >
     <!-- Model not-ready alert -->
     <div v-if="modelNotReady" class="video-composer__model-meta">
@@ -36,8 +36,8 @@
       <DqInput
         v-model="localPrompt"
         type="textarea"
-        :rows="3"
-        :placeholder="$tt('video.promptPlaceholder')"
+        :rows="promptRows"
+        :placeholder="promptPlaceholder"
         resize="none"
         class="video-composer__prompt"
         @keydown="onKeydown"
@@ -130,6 +130,20 @@
             <DqIcon :size="12"><MagicStick /></DqIcon>
           </DqIconButton>
         </ComposerIconTip>
+        <ComposerIconTip
+          v-if="showStoryboardExpand"
+          :content="localPrompt.trim() ? $t('video.storyboardExpandTip') : $t('video.storyboardExpandEmpty')"
+        >
+          <DqIconButton
+            type="text"
+            size="xs"
+            :disabled="storyboardExpanding || !localPrompt.trim()"
+            :aria-label="$t('video.storyboardExpand')"
+            @click="$emit('storyboard-expand')"
+          >
+            <DqIcon :size="12"><DocumentCopy /></DqIcon>
+          </DqIconButton>
+        </ComposerIconTip>
         <DqDropdown
           v-if="styles && Object.keys(styles).length > 0"
           trigger="click"
@@ -158,25 +172,6 @@
         </DqDropdown>
       </div>
     </div>
-    <!-- Long video storyboard panel -->
-    <div v-if="isLongClipMode && !collapsed" class="video-composer__storyboard">
-      <div class="video-composer__storyboard-head">
-        <span>{{ $tt('video.storyboardPanel') }}</span>
-        <span class="video-composer__storyboard-meta">{{ longPlanHint }}</span>
-        <DqButton
-          type="text"
-          size="sm"
-          :disabled="storyboardExpanding || !localPrompt.trim()"
-          @click="$emit('storyboard-expand')"
-        >
-          {{ storyboardExpanding ? $tt('video.storyboardExpanding') : $tt('video.storyboardExpand') }}
-        </DqButton>
-      </div>
-      <div v-for="(line, idx) in localSegmentPrompts" :key="idx" class="video-composer__storyboard-row">
-        <label>{{ idx === 0 ? $tt('video.storyboardOpening') : $tt('video.storyboardSegment', { n: idx }) }}</label>
-        <DqInput v-model="localSegmentPrompts[idx]" type="textarea" :rows="2" resize="none" />
-      </div>
-    </div>
     <ComposerPromptApplyStrip
       v-if="promptApplyPreview"
       :preview="promptApplyPreview"
@@ -195,15 +190,6 @@
           size="small"
           :options="workModeOptions"
           @update:model-value="localWorkMode = $event"
-        />
-
-        <!-- Clip mode (short / long) for create -->
-        <DqSegmented
-          v-if="workMode === 'create' && longVideoSupport"
-          :model-value="localClipMode"
-          size="small"
-          :options="clipModeOptions"
-          @update:model-value="localClipMode = $event"
         />
 
         <!-- Model selector -->
@@ -247,29 +233,14 @@
           />
         </DqSelect>
 
-        <!-- Duration (frames) -->
+        <!-- Duration -->
         <DqSelect
-          v-if="workMode !== 'upscale' && !isLongClipMode"
+          v-if="workMode !== 'upscale'"
           v-model="localDuration"
           size="small"
           class="video-composer__select video-composer__select--duration"
         >
           <DqOption v-for="opt in durationOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
-        </DqSelect>
-
-        <!-- Long video target duration -->
-        <DqSelect
-          v-if="isLongClipMode"
-          v-model="localLongTargetSec"
-          size="small"
-          class="video-composer__select video-composer__select--duration"
-        >
-          <DqOption
-            v-for="opt in longTargetOptions"
-            :key="String(opt)"
-            :label="$tt('video.longTargetSec', { sec: opt })"
-            :value="opt"
-          />
         </DqSelect>
 
         <!-- Advanced params toggle -->
@@ -520,6 +491,7 @@ import {
 import { assetIdFromGalleryPath } from '@/utils/copilotHandoff';
 import { $tt, $pn } from '@/utils/i18n';
 import { formatResolutionOptionLabel } from '@/utils/registryParamSchema';
+import { isLongVideoTargetDuration } from '@/utils/videoStoryboardPrompt';
 
 const props = defineProps<{
   modelValue: string;
@@ -566,9 +538,6 @@ const props = defineProps<{
   compatibleLoras?: Record<string, unknown>[];
   collapsed?: boolean;
   promptApplyPreview?: string | null;
-  clipMode?: 'short' | 'long';
-  longVideoTargetSec?: number;
-  segmentPrompts?: string[];
   storyboardExpanding?: boolean;
 }>();
 
@@ -594,11 +563,7 @@ const emit = defineEmits<{
   (e: 'prompt-apply-replace'): void;
   (e: 'prompt-apply-append'): void;
   (e: 'prompt-apply-dismiss'): void;
-  (e: 'update:clipMode', value: 'short' | 'long'): void;
-  (e: 'update:longVideoTargetSec', value: number): void;
-  (e: 'update:segmentPrompts', value: string[]): void;
   (e: 'storyboard-expand'): void;
-  (e: 'enhance-opening'): void;
 }>();
 
 const { t: $t } = useI18n();
@@ -674,40 +639,17 @@ const paramSchema = computed(() => props.currentModelConfig?.parameters || {});
 
 const longVideoSupport = computed(() => Boolean(paramSchema.value.long_video_support));
 
-const localClipMode = computed({
-  get: () => props.clipMode ?? 'short',
-  set: (v: 'short' | 'long') => emit('update:clipMode', v),
-});
-
-const isLongClipMode = computed(
-  () => props.workMode === 'create' && longVideoSupport.value && localClipMode.value === 'long',
+const isLongDuration = computed(
+  () => props.workMode === 'create' && isLongVideoTargetDuration(localDuration.value, longVideoSupport.value),
 );
 
-const clipModeOptions = computed(() => [
-  { label: $tt('video.clipShort'), value: 'short' },
-  { label: $tt('video.clipLong'), value: 'long' },
-]);
+const promptRows = computed(() => (isLongDuration.value ? 8 : 3));
 
-const longTargetOptions = computed(() => {
-  const spec = paramSchema.value.long_video_target_duration_sec;
-  const opts = (spec?.options as number[]) || [30, 60, 90];
-  return opts.map((n) => Number(n));
-});
+const promptPlaceholder = computed(() =>
+  isLongDuration.value ? $tt('video.promptPlaceholderLong') : $tt('video.promptPlaceholder'),
+);
 
-const localLongTargetSec = computed({
-  get: () => props.longVideoTargetSec ?? longTargetOptions.value[1] ?? 60,
-  set: (v: number) => emit('update:longVideoTargetSec', v),
-});
-
-const localSegmentPrompts = computed({
-  get: () => props.segmentPrompts ?? [],
-  set: (v: string[]) => emit('update:segmentPrompts', v),
-});
-
-const longPlanHint = computed(() => {
-  const n = localSegmentPrompts.value.length;
-  return n > 0 ? $tt('video.longPlanSegments', { n }) : $tt('video.longPlanEmpty');
-});
+const showStoryboardExpand = computed(() => isLongDuration.value && !props.collapsed);
 
 const showSeedField = computed(() => paramSchema.value.seed_support !== false);
 
@@ -816,6 +758,7 @@ function onKeydown(e: KeyboardEvent) {
   display: flex;
   flex-direction: column;
   margin-bottom: 8px;
+  flex-shrink: 0;
 }
 
 .video-composer__prompt-wrap {
@@ -843,6 +786,11 @@ function onKeydown(e: KeyboardEvent) {
 
 .video-composer__prompt :deep(.dq-input--textarea:focus) {
   box-shadow: var(--dq-focus-ring);
+}
+
+.video-composer--expanded-prompt .video-composer__prompt :deep(.dq-input--textarea) {
+  min-height: 8rem;
+  max-height: 14rem;
 }
 
 /* Reference media area inside textarea */
@@ -920,6 +868,7 @@ function onKeydown(e: KeyboardEvent) {
   justify-content: space-between;
   gap: 4px;
   flex-wrap: nowrap;
+  flex-shrink: 0;
 }
 
 .video-composer__toolbar-left,
@@ -1079,32 +1028,6 @@ function onKeydown(e: KeyboardEvent) {
   font-size: 11px;
   color: var(--dq-label-tertiary);
   line-height: 1.4;
-}
-
-.video-composer__storyboard {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 4px;
-}
-
-.video-composer__storyboard-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-}
-
-.video-composer__storyboard-meta {
-  flex: 1;
-  color: var(--dq-label-secondary);
-}
-
-.video-composer__storyboard-row label {
-  display: block;
-  font-size: 11px;
-  margin-bottom: 4px;
-  color: var(--dq-label-secondary);
 }
 
 /* Hint - compact inline */
