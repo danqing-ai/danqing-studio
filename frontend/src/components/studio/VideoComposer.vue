@@ -158,6 +158,25 @@
         </DqDropdown>
       </div>
     </div>
+    <!-- Long video storyboard panel -->
+    <div v-if="isLongClipMode && !collapsed" class="video-composer__storyboard">
+      <div class="video-composer__storyboard-head">
+        <span>{{ $tt('video.storyboardPanel') }}</span>
+        <span class="video-composer__storyboard-meta">{{ longPlanHint }}</span>
+        <DqButton
+          type="text"
+          size="sm"
+          :disabled="storyboardExpanding || !localPrompt.trim()"
+          @click="$emit('storyboard-expand')"
+        >
+          {{ storyboardExpanding ? $tt('video.storyboardExpanding') : $tt('video.storyboardExpand') }}
+        </DqButton>
+      </div>
+      <div v-for="(line, idx) in localSegmentPrompts" :key="idx" class="video-composer__storyboard-row">
+        <label>{{ idx === 0 ? $tt('video.storyboardOpening') : $tt('video.storyboardSegment', { n: idx }) }}</label>
+        <DqInput v-model="localSegmentPrompts[idx]" type="textarea" :rows="2" resize="none" />
+      </div>
+    </div>
     <ComposerPromptApplyStrip
       v-if="promptApplyPreview"
       :preview="promptApplyPreview"
@@ -176,6 +195,15 @@
           size="small"
           :options="workModeOptions"
           @update:model-value="localWorkMode = $event"
+        />
+
+        <!-- Clip mode (short / long) for create -->
+        <DqSegmented
+          v-if="workMode === 'create' && longVideoSupport"
+          :model-value="localClipMode"
+          size="small"
+          :options="clipModeOptions"
+          @update:model-value="localClipMode = $event"
         />
 
         <!-- Model selector -->
@@ -221,12 +249,27 @@
 
         <!-- Duration (frames) -->
         <DqSelect
-          v-if="workMode !== 'upscale'"
+          v-if="workMode !== 'upscale' && !isLongClipMode"
           v-model="localDuration"
           size="small"
           class="video-composer__select video-composer__select--duration"
         >
           <DqOption v-for="opt in durationOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
+        </DqSelect>
+
+        <!-- Long video target duration -->
+        <DqSelect
+          v-if="isLongClipMode"
+          v-model="localLongTargetSec"
+          size="small"
+          class="video-composer__select video-composer__select--duration"
+        >
+          <DqOption
+            v-for="opt in longTargetOptions"
+            :key="String(opt)"
+            :label="$tt('video.longTargetSec', { sec: opt })"
+            :value="opt"
+          />
         </DqSelect>
 
         <!-- Advanced params toggle -->
@@ -523,6 +566,10 @@ const props = defineProps<{
   compatibleLoras?: Record<string, unknown>[];
   collapsed?: boolean;
   promptApplyPreview?: string | null;
+  clipMode?: 'short' | 'long';
+  longVideoTargetSec?: number;
+  segmentPrompts?: string[];
+  storyboardExpanding?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -547,6 +594,11 @@ const emit = defineEmits<{
   (e: 'prompt-apply-replace'): void;
   (e: 'prompt-apply-append'): void;
   (e: 'prompt-apply-dismiss'): void;
+  (e: 'update:clipMode', value: 'short' | 'long'): void;
+  (e: 'update:longVideoTargetSec', value: number): void;
+  (e: 'update:segmentPrompts', value: string[]): void;
+  (e: 'storyboard-expand'): void;
+  (e: 'enhance-opening'): void;
 }>();
 
 const { t: $t } = useI18n();
@@ -619,6 +671,43 @@ const needsReferenceInput = computed(
 );
 
 const paramSchema = computed(() => props.currentModelConfig?.parameters || {});
+
+const longVideoSupport = computed(() => Boolean(paramSchema.value.long_video_support));
+
+const localClipMode = computed({
+  get: () => props.clipMode ?? 'short',
+  set: (v: 'short' | 'long') => emit('update:clipMode', v),
+});
+
+const isLongClipMode = computed(
+  () => props.workMode === 'create' && longVideoSupport.value && localClipMode.value === 'long',
+);
+
+const clipModeOptions = computed(() => [
+  { label: $tt('video.clipShort'), value: 'short' },
+  { label: $tt('video.clipLong'), value: 'long' },
+]);
+
+const longTargetOptions = computed(() => {
+  const spec = paramSchema.value.long_video_target_duration_sec;
+  const opts = (spec?.options as number[]) || [30, 60, 90];
+  return opts.map((n) => Number(n));
+});
+
+const localLongTargetSec = computed({
+  get: () => props.longVideoTargetSec ?? longTargetOptions.value[1] ?? 60,
+  set: (v: number) => emit('update:longVideoTargetSec', v),
+});
+
+const localSegmentPrompts = computed({
+  get: () => props.segmentPrompts ?? [],
+  set: (v: string[]) => emit('update:segmentPrompts', v),
+});
+
+const longPlanHint = computed(() => {
+  const n = localSegmentPrompts.value.length;
+  return n > 0 ? $tt('video.longPlanSegments', { n }) : $tt('video.longPlanEmpty');
+});
 
 const showSeedField = computed(() => paramSchema.value.seed_support !== false);
 
@@ -990,6 +1079,32 @@ function onKeydown(e: KeyboardEvent) {
   font-size: 11px;
   color: var(--dq-label-tertiary);
   line-height: 1.4;
+}
+
+.video-composer__storyboard {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.video-composer__storyboard-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.video-composer__storyboard-meta {
+  flex: 1;
+  color: var(--dq-label-secondary);
+}
+
+.video-composer__storyboard-row label {
+  display: block;
+  font-size: 11px;
+  margin-bottom: 4px;
+  color: var(--dq-label-secondary);
 }
 
 /* Hint - compact inline */

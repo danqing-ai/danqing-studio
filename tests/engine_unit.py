@@ -4595,9 +4595,12 @@ class ArchitectureWrapUpTests(unittest.TestCase):
         ctx = MLXContext()
         sched = WanFlowUniPCScheduler(1000, ctx=ctx)
         cfg = WanConfig(step_distill=True)
+        cfg.shift = 5.0
         timesteps = configure_wan_step_distill_timesteps(ctx, sched, 4, config=cfg)
         self.assertEqual(len(timesteps), 4)
-        self.assertAlmostEqual(float(timesteps[0]), 1000.0, places=3)
+        # First picked sigma is full_schedule[0] after shift, not raw t=1000/1000.
+        self.assertAlmostEqual(float(timesteps[0]), float(sched._sigmas[0]) * 1000.0, places=2)
+        self.assertTrue(getattr(sched, "_wan_distill_simple_step", False))
 
     def test_wan_moe_bundle_layout_helpers(self) -> None:
         from backend.engine.pipelines.video_bundle_layout import (
@@ -4616,6 +4619,76 @@ class ArchitectureWrapUpTests(unittest.TestCase):
             self.assertTrue(wan_is_moe_bundle(root))
             self.assertEqual(len(wan_moe_expert_shards(root, "high")), 1)
             self.assertEqual(len(wan_moe_expert_shards(root, "low")), 1)
+
+    def test_wan_moe_lazy_expert_swap(self) -> None:
+        from types import SimpleNamespace
+
+        from backend.engine.families.wan.moe import WanMoETransformer
+
+        loads = {"high": 0, "low": 0}
+        releases = {"high": 0, "low": 0}
+
+        class _Expert:
+            def __init__(self, name: str, ctx: object) -> None:
+                self.name = name
+                self.ctx = ctx
+
+            def forward(self, latents, timestep, txt_embeds=None, **kwargs):
+                return latents
+
+            def predict_noise_cfg(self, latents, t, **kwargs):
+                return latents
+
+            def prepare_conditioning(self, request, bundle_root=None):
+                return {}
+
+            def before_denoise(self, latents, timesteps, sigmas, **cond):
+                return latents, cond
+
+            def parameters(self):
+                return []
+
+        ctx = SimpleNamespace(clear_cache=lambda: None)
+
+        def load_high():
+            loads["high"] += 1
+            return _Expert("high", ctx)
+
+        def load_low():
+            loads["low"] += 1
+            return _Expert("low", ctx)
+
+        moe = WanMoETransformer(
+            None,
+            None,
+            boundary_step_index=2,
+            config=SimpleNamespace(),
+            lazy=True,
+            ctx=ctx,
+            load_high=load_high,
+            load_low=load_low,
+            release_high=lambda: releases.__setitem__("high", releases["high"] + 1),
+            release_low=lambda: releases.__setitem__("low", releases["low"] + 1),
+        )
+        moe.forward(None, None, wan_denoise_step_idx=0)
+        moe.forward(None, None, wan_denoise_step_idx=1)
+        self.assertEqual(loads, {"high": 1, "low": 0})
+        moe.forward(None, None, wan_denoise_step_idx=2)
+        self.assertEqual(loads, {"high": 1, "low": 1})
+        self.assertEqual(releases["high"], 1)
+        moe.release_experts()
+        self.assertEqual(releases["low"], 1)
+
+    def test_wan_moe_expert_disk_gb_halves_bundle_size(self) -> None:
+        from types import SimpleNamespace
+
+        from backend.engine.pipelines.video_model_load import _wan_moe_expert_disk_gb
+
+        entry = SimpleNamespace(
+            raw={"size": "115GB"},
+            id="wan-2.2-i2v-14b-distill",
+        )
+        self.assertAlmostEqual(_wan_moe_expert_disk_gb(entry, "original"), 57.5, places=1)
 
     def test_assemble_wan_distill_bundle(self) -> None:
         from backend.services.wan_distill_bundle import assemble_wan_distill_bundle
@@ -5834,6 +5907,51 @@ class LoraSearchQueryTests(unittest.TestCase):
             build_search_query(self.registry, "z-image-turbo", ""),
             queries[0],
         )
+
+
+class LtxExtendMaskTests(unittest.TestCase):
+    def test_build_ltx_av_extend_masks_freeze_prefix(self) -> None:
+        import mlx.core as mx
+
+        from backend.engine.families.ltx.extend_mlx import validate_extend_window_frames
+        from backend.engine.families.ltx.pipeline_math import build_ltx_av_extend_masks
+
+        class _Ctx:
+            def ones(self, shape, dtype=None):
+                return mx.ones(shape, dtype=dtype or mx.bfloat16)
+
+            def zeros(self, shape, dtype=None):
+                return mx.zeros(shape, dtype=dtype or mx.bfloat16)
+
+            def concat(self, parts, axis=0):
+                return mx.concatenate(parts, axis=axis)
+
+            def bfloat16(self):
+                return mx.bfloat16
+
+        ctx = _Ctx()
+        f_lat, tpf, audio_t = 4, 6, 20
+        ref_f, ref_a = 1, 5
+        vm, am = build_ltx_av_extend_masks(
+            ctx,
+            num_video_latent_frames=f_lat,
+            tokens_per_frame=tpf,
+            num_audio_tokens=audio_t,
+            reference_latent_frames=ref_f,
+            reference_audio_tokens=ref_a,
+        )
+        self.assertEqual(tuple(vm.shape), (1, f_lat * tpf, 1))
+        self.assertEqual(tuple(am.shape), (1, audio_t, 1))
+        frozen_v = vm[0, : ref_f * tpf, 0]
+        self.assertTrue(mx.all(frozen_v == 0).item())
+        denoise_v = vm[0, ref_f * tpf :, 0]
+        self.assertTrue(mx.all(denoise_v == 1).item())
+
+    def test_validate_extend_window_frames_fail_loud(self) -> None:
+        from backend.engine.families.ltx.extend_mlx import validate_extend_window_frames
+
+        with self.assertRaises(RuntimeError):
+            validate_extend_window_frames(reference_sec=3, extend_sec=8, fps=24, max_frames=257)
 
 
 if __name__ == "__main__":

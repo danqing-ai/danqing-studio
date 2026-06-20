@@ -31,9 +31,8 @@ def _fingerprint(
     resolution: tuple[int, int],
     family: str,
     caption_mode: str = "",
-    face_anchor: str = "",
 ) -> str:
-    raw = f"{dataset_id}|{n_pairs}|{num_augmentations}|{resolution[0]}x{resolution[1]}|{family}|{caption_mode}|{face_anchor}"
+    raw = f"{dataset_id}|{n_pairs}|{num_augmentations}|{resolution[0]}x{resolution[1]}|{family}|{caption_mode}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
@@ -52,7 +51,6 @@ class LatentCache:
         family: str,
         n_samples: int,
         caption_mode: str = "",
-        face_anchor: str = "",
     ) -> bool:
         if not self.manifest_path.is_file():
             return False
@@ -69,7 +67,6 @@ class LatentCache:
             resolution=resolution,
             family=family,
             caption_mode=caption_mode,
-            face_anchor=face_anchor,
         )
         if manifest.get("fingerprint") != fp:
             return False
@@ -90,7 +87,6 @@ class LatentCache:
         family: str,
         tensor_keys: list[str],
         caption_mode: str = "",
-        face_anchor: str = "",
     ) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
         self._tensor_keys = list(tensor_keys)
@@ -104,14 +100,12 @@ class LatentCache:
                 resolution=resolution,
                 family=family,
                 caption_mode=caption_mode,
-                face_anchor=face_anchor,
             ),
             "family": family,
             "n_pairs": n_pairs,
             "num_augmentations": num_augmentations,
             "resolution": list(resolution),
             "caption_mode": caption_mode,
-            "face_anchor": face_anchor,
             "tensor_keys": tensor_keys,
             "n_samples": 0,
         }

@@ -210,6 +210,8 @@ class VideoStepKwargsBuilder:
         wan_seq = int(ec.get("wan_seq_len", 0))
         if wan_seq > 0:
             kw["seq_len"] = wan_seq
+        if hasattr(self._model, "boundary_step_index"):
+            kw["wan_denoise_step_idx"] = step_idx
         if ec.get("wan_expand_timesteps"):
             seq_len = int(ec.get("wan_seq_len", 0))
             if seq_len > 0 and hasattr(self._model, "build_timestep_per_token"):

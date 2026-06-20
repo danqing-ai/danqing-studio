@@ -4,7 +4,7 @@ import asyncio
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from backend.api.deps import get_model_registry
 from backend.core.container import get_container
@@ -17,8 +17,11 @@ from backend.api.routes.download import (
     start_model_install,
 )
 from backend.core.i18n import resolve_locale, t
-from backend.core.interfaces import DownloadProgress
 from backend.core.model_registry import ModelRegistry
+from backend.services.model_install_batch import (
+    normalize_batch_install_items,
+    run_batch_model_install,
+)
 
 router = APIRouter(prefix="/api/models", tags=["models"])
 
@@ -27,10 +30,22 @@ def _settings_service() -> ISettingsService:
     return get_container().resolve(ISettingsService)
 
 
+class BatchInstallItem(BaseModel):
+    model_id: str
+    version: Optional[str] = None
+
+
 class BatchInstallRequest(BaseModel):
     """注册表模型 id 列表；逐项启动 HF 下载（与单模型安装相同进度 SSE）。"""
 
-    model_ids: List[str] = Field(..., min_length=1)
+    model_ids: Optional[List[str]] = None
+    items: Optional[List[BatchInstallItem]] = None
+
+    @model_validator(mode="after")
+    def _require_payload(self):
+        if not self.model_ids and not self.items:
+            raise ValueError("model_ids or items is required")
+        return self
 
 
 @router.get("")
@@ -81,49 +96,20 @@ async def install_registry_models_batch(
 ):
     """批量启动注册表模型下载；响应项与旧 `/api/download/batch` 结构一致（`results[].model_name` / `task_id`）。"""
     locale = resolve_locale(http_request.headers.get("Accept-Language"))
-    service = get_download_service()
-    settings = get_settings_service()
-    detailed = settings.get_models_detailed_status()
-    results: list[dict] = []
+    raw_items = normalize_batch_install_items(
+        model_ids=body.model_ids,
+        items=[item.model_dump() for item in body.items] if body.items else None,
+    )
+    if not raw_items:
+        raise HTTPException(status_code=400, detail="no models to install")
 
-    for model_id in body.model_ids:
-        if reg.get(model_id) is None:
-            results.append({"model_name": model_id, "status": "failed", "error": "model not found in registry"})
-            continue
-        try:
-            config = service.get_model_download_config(model_id)
-            if config and config.get("dependencies"):
-                missing_deps: list[str] = []
-                for dep in config["dependencies"]:
-                    if not detailed.get(dep, {}).get("ready"):
-                        missing_deps.append(dep)
-                if missing_deps:
-                    results.append(
-                        {
-                            "model_name": model_id,
-                            "status": "skipped",
-                            "reason": t("error.missing_dependencies", locale, deps=", ".join(missing_deps)),
-                        }
-                    )
-                    continue
-
-            progress_queue: asyncio.Queue = asyncio.Queue()
-
-            async def on_progress(progress: DownloadProgress):
-                await progress_queue.put(progress)
-
-            asyncio.create_task(service.download_model(model_id, progress_callback=on_progress))
-            first_progress = await asyncio.wait_for(progress_queue.get(), timeout=5.0)
-            results.append(
-                {
-                    "model_name": model_id,
-                    "status": "started",
-                    "task_id": first_progress.task_id,
-                }
-            )
-        except Exception as e:
-            results.append({"model_name": model_id, "status": "failed", "error": str(e)})
-
+    results = await run_batch_model_install(
+        items=raw_items,
+        registry=reg,
+        download_service=get_download_service(),
+        settings_service=get_settings_service(),
+        locale=locale,
+    )
     return {"results": results}
 
 

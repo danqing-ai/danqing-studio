@@ -145,10 +145,21 @@ export const api = {
       return response.data;
     },
 
-    async installBatch(modelIds: string[]): Promise<unknown> {
-      const response = await client.post('/api/models/install-batch', {
-        model_ids: modelIds,
-      });
+    async installBatch(
+      modelIds: string[],
+      items?: Array<{ model_id: string; version_key?: string }>,
+    ): Promise<unknown> {
+      const body = items && items.length > 0
+        ? { items: items.map((row) => ({ model_id: row.model_id, version: row.version_key })) }
+        : { model_ids: modelIds };
+      const response = await client.post('/api/models/install-batch', body);
+      return response.data;
+    },
+  },
+
+  setup: {
+    async getRecommendations(): Promise<unknown> {
+      const response = await client.get('/api/setup/recommendations');
       return response.data;
     },
   },
@@ -598,6 +609,26 @@ export const api = {
       model_id?: string;
     }): Promise<{ enhanced_prompt: string }> {
       const response = await client.post('/api/chat/enhance', body);
+      return response.data;
+    },
+
+    async longVideoStoryboard(body: {
+      prompt: string;
+      target_duration_sec?: number;
+      initial_duration_sec?: number;
+      segment_extend_sec?: number;
+      reference_duration_sec?: number;
+      style_positive?: string;
+    }): Promise<{
+      character_anchor: string;
+      opening_prompt: string;
+      segment_prompts: string[];
+      segment_count: number;
+      plan: Record<string, unknown>;
+      beat_sheet: string[];
+      llm_calls: number;
+    }> {
+      const response = await client.post('/api/chat/long-video-storyboard', body);
       return response.data;
     },
 

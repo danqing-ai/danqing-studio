@@ -519,6 +519,8 @@ class LTXConfig:
     ltx_low_memory: bool = True
     low_ram_streaming: bool = False
     ltx_stage2_steps: int = 3
+    supports_long_video: bool = False
+    ltx_long_video_max_frames: int = 257
 
 
 @dataclass
@@ -552,6 +554,9 @@ class WanConfig:
     temporal_attn_every: int = 2
     # Dual model (14B high/low noise); TI2V 5B is single-model
     dual_model: bool = False
+    moe_boundary_step_index: int = 2  # LightX2V Wan2.2 distill: steps [0, boundary) → high noise
+    step_distill: bool = False
+    wan_distill_timesteps: tuple[float, ...] = ()
     expand_timesteps: bool = True  # I2V only: per-token timesteps via wan_expand_timesteps in before_denoise
     # Pipeline / VAE
     vae_scale: int = 16
@@ -568,7 +573,8 @@ class WanConfig:
     uses_wan_shift: bool = True
     snap_pixel_dims: bool = True
     validate_umt5_embeddings: bool = True
-    post_denoise_clear_cache: bool = False
+    post_denoise_clear_cache: bool = True
+    wan_moe_lazy_experts: bool = True
     geometry_check: str = "wan"
     uses_wan_vae_bundle: bool = True
     video_vae_backend: str = "wan"
@@ -633,6 +639,10 @@ def merge_wan_config_from_bundle(config: WanConfig, bundle_root: Path | None) ->
             object.__setattr__(config, "patch_size", tuple(int(x) for x in ps))
     if "model_type" in data and str(data["model_type"]).lower() in ("ti2v", "t2v", "i2v"):
         object.__setattr__(config, "model_type", str(data["model_type"]).lower())
+    from backend.engine.pipelines.video_bundle_layout import wan_is_moe_bundle
+
+    if wan_is_moe_bundle(bundle_root):
+        config.dual_model = True
 
 
 def merge_wan_vae_config_from_bundle(config: WanConfig, bundle_root: Path | None) -> None:

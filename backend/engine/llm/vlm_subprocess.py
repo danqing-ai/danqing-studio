@@ -151,24 +151,3 @@ async def run_lora_caption_subprocess(
         captions.extend(str(c) for c in chunk_caps)
     return captions
 
-
-async def run_face_anchor_subprocess(
-    *,
-    image_paths: list[Path],
-    model_dir: Path,
-    subject_name: str = "",
-    worker_memory_gb: int | None = None,
-) -> str:
-    """Generate a face_anchor descriptor by analysing a sample of dataset images with VLM."""
-    if not image_paths:
-        return ""
-    payload = await _run_vlm_worker_job(
-        {
-            "mode": "face_anchor",
-            "image_paths": [str(p) for p in image_paths],
-            "model_dir": str(model_dir),
-            "subject_name": subject_name,
-        },
-        worker_memory_gb=worker_memory_gb,
-    )
-    return str(payload.get("face_anchor") or "").strip()

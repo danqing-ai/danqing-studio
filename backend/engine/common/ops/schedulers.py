@@ -710,6 +710,23 @@ class WanFlowUniPCScheduler(Scheduler):
             raise RuntimeError("WanFlowUniPCScheduler.set_timesteps must be called before step")
 
         i = self._step_index
+        if getattr(self, "_wan_distill_simple_step", False):
+            sigma = float(self._sigmas_float[i])
+            ctx = self.ctx
+            flow = noise_pred
+            if ctx is not None:
+                sample = latents.astype(ctx.float32) - flow.astype(ctx.float32) * sigma
+                if i + 1 < len(self._sigmas_float) and self._sigmas_float[i + 1] != 0.0:
+                    sigma_n = float(self._sigmas_float[i + 1])
+                    sample = sample + flow.astype(ctx.float32) * sigma_n
+                self._step_index += 1
+                return sample.astype(latents.dtype) if hasattr(latents, "dtype") else sample
+            sample = latents - flow * sigma
+            if i + 1 < len(self._sigmas_float) and self._sigmas_float[i + 1] != 0.0:
+                sample = sample + flow * float(self._sigmas_float[i + 1])
+            self._step_index += 1
+            return sample
+
         x0 = self.convert_model_output(noise_pred, latents)
 
         # Check if this is the final step (sigma_t = 0)

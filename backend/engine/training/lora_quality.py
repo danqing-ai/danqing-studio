@@ -19,11 +19,8 @@ _SHORT_EDGE_SMALL = 600
 _SHORT_EDGE_TINY = 512
 _MEDIAN_SHORT_EDGE_WARN = 720
 _MEDIAN_SHORT_EDGE_POOR = 560
-_INITIAL_LOSS_WARN = 0.38
-_INITIAL_LOSS_POOR = 0.45
-_FINAL_LOSS_WARN = 0.18
-_LOSS_DROP_WARN = 0.20
 _VAL_GAP_WARN = 0.08
+_VAL_REGRESSION_WARN = 0.08
 
 
 def _hint(code: str, severity: Severity, **params: Any) -> dict[str, Any]:
@@ -207,11 +204,10 @@ def analyze_training_quality(
     *,
     dataset_health: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Summarize training loss trends for post-run quality hints."""
+    """Summarize loss diagnostics without treating loss as a likeness score."""
     points = _loss_points(loss_history)
     hints: list[dict[str, Any]] = []
     score = 100
-    force_poor = False
     force_fair = False
 
     metrics: dict[str, Any] = {
@@ -220,6 +216,7 @@ def analyze_training_quality(
         "final_loss": None,
         "loss_drop_ratio": None,
         "final_val_loss": None,
+        "best_val_loss": None,
     }
 
     if len(points) < 2:
@@ -232,8 +229,10 @@ def analyze_training_quality(
             "dataset_health": dataset_health,
         }
 
-    initial = points[0]["loss"]
-    final = points[-1]["loss"]
+    # Single-sample random-sigma loss is noisy; use short windows for diagnostics.
+    window = max(1, min(5, len(points) // 4 or 1))
+    initial = sum(p["loss"] for p in points[:window]) / window
+    final = sum(p["loss"] for p in points[-window:]) / window
     drop_ratio = (initial - final) / initial if initial > 0 else 0.0
     metrics.update(
         {
@@ -243,34 +242,21 @@ def analyze_training_quality(
         }
     )
 
-    if initial >= _INITIAL_LOSS_POOR:
-        hints.append(_hint("high_initial_loss", "error", loss=round(initial, 4)))
-        score -= 30
-        force_poor = True
-    elif initial >= _INITIAL_LOSS_WARN:
-        hints.append(_hint("high_initial_loss", "warning", loss=round(initial, 4)))
-        score -= 18
-        force_fair = True
-
-    if drop_ratio < _LOSS_DROP_WARN:
-        hints.append(_hint("low_loss_improvement", "warning", pct=round(drop_ratio * 100)))
-        score -= 15
-        force_fair = True
-
-    if final >= _FINAL_LOSS_WARN:
-        hints.append(_hint("high_final_loss", "warning", loss=round(final, 4)))
-        score -= 12
-        force_fair = True
-
-    if final >= 1.0:
-        hints.append(_hint("extreme_final_loss", "error", loss=round(final, 4)))
-        score -= 15
-        force_poor = True
+    hints.append(
+        _hint(
+            "loss_curve_diagnostic_only",
+            "info",
+            initial=round(initial, 4),
+            final=round(final, 4),
+        )
+    )
 
     val_points = [p for p in points if "val_loss" in p]
     if val_points:
         final_val = val_points[-1]["val_loss"]
         metrics["final_val_loss"] = round(final_val, 4)
+        best_val = min(p["val_loss"] for p in val_points)
+        metrics["best_val_loss"] = round(best_val, 4)
         if final_val - final > _VAL_GAP_WARN:
             hints.append(
                 _hint(
@@ -281,6 +267,18 @@ def analyze_training_quality(
                 )
             )
             score -= 8
+            force_fair = True
+        if final_val - best_val > _VAL_REGRESSION_WARN:
+            hints.append(
+                _hint(
+                    "val_loss_regressed",
+                    "warning",
+                    best_val_loss=round(best_val, 4),
+                    final_val_loss=round(final_val, 4),
+                )
+            )
+            score -= 8
+            force_fair = True
 
     if dataset_health:
         ds_level = str(dataset_health.get("level") or "")
@@ -291,17 +289,8 @@ def analyze_training_quality(
         elif ds_level == "fair":
             hints.append(_hint("dataset_health_fair", "info"))
 
-    has_issues = any(h["severity"] in ("warning", "error") for h in hints)
-    if (
-        not has_issues
-        and drop_ratio >= 0.35
-        and initial < _INITIAL_LOSS_WARN
-        and final < _FINAL_LOSS_WARN
-    ):
-        hints.append(_hint("training_healthy", "info", drop_pct=round(drop_ratio * 100)))
-
     score = max(0, min(100, score))
-    level = _level_from_score(score, force_poor=force_poor, force_fair=force_fair)
+    level = _level_from_score(score, force_fair=force_fair)
 
     return {
         "level": level,

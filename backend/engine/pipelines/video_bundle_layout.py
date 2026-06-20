@@ -98,9 +98,35 @@ def _wan_flat_transformer_sources(
     return None
 
 
+def wan_is_moe_bundle(bundle_root: Path) -> bool:
+    """True when bundle has Wan 14B high/low noise expert directories."""
+    if not bundle_root.is_dir():
+        return False
+    return (
+        (bundle_root / "high_noise_model").is_dir()
+        and (bundle_root / "low_noise_model").is_dir()
+    )
+
+
+def wan_moe_expert_shards(bundle_root: Path, expert: str) -> list[Path]:
+    """Return safetensors for one MoE expert (``high`` or ``low``)."""
+    if expert not in {"high", "low"}:
+        raise RuntimeError(f"wan_moe_expert_shards: expert must be 'high' or 'low', got {expert!r}")
+    sub = "high_noise_model" if expert == "high" else "low_noise_model"
+    expert_dir = bundle_root / sub
+    if not expert_dir.is_dir():
+        return []
+    shards = sorted(expert_dir.glob("*.safetensors"))
+    if shards:
+        return shards
+    return sorted(expert_dir.glob("diffusion_pytorch_model*.safetensors"))
+
+
 def wan_flat_transformer_shards(bundle_root: Path) -> list[Path]:
     """Original Wan bundle: ``diffusion_pytorch_model*.safetensors`` at bundle root."""
     if not bundle_root.is_dir():
+        return []
+    if wan_is_moe_bundle(bundle_root):
         return []
     shards = sorted(bundle_root.glob("diffusion_pytorch_model*.safetensors"))
     if shards:

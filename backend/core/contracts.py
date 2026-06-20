@@ -165,6 +165,17 @@ class VideoGenerationRequest(BaseModel):
     adapters: list[AdapterRef] = Field(default_factory=list)
     priority: Literal["normal", "high"] = "normal"
     metadata: dict[str, Any] = Field(default_factory=dict)
+    long_video: Optional["VideoLongVideoSpec"] = None
+
+
+class VideoLongVideoSpec(BaseModel):
+    target_duration_sec: float = 60.0
+    initial_duration_sec: float = 8.0
+    segment_extend_sec: float = 8.0
+    reference_duration_sec: float = 3.0
+    overlap_blend_frames: int = 4
+    segment_prompts: list[str] | None = None
+    opening_prompt: str | None = None
 
 
 class VideoEditRequest(BaseModel):
@@ -304,6 +315,36 @@ class EnhanceRequest(BaseModel):
 
 class EnhanceResponse(BaseModel):
     enhanced_prompt: str
+
+
+class LongVideoPlanDTO(BaseModel):
+    target_duration_sec: float
+    initial_duration_sec: float
+    segment_extend_sec: float
+    reference_duration_sec: float
+    extend_pass_count: int
+    total_segments: int
+    segment_durations_sec: list[float]
+    narrative_budget: str
+
+
+class LongVideoStoryboardRequest(BaseModel):
+    prompt: str
+    target_duration_sec: float = 60.0
+    initial_duration_sec: float = 8.0
+    segment_extend_sec: float = 8.0
+    reference_duration_sec: float = 3.0
+    style_positive: str = ""
+
+
+class LongVideoStoryboardResponse(BaseModel):
+    character_anchor: str
+    opening_prompt: str
+    segment_prompts: list[str]
+    segment_count: int
+    plan: LongVideoPlanDTO
+    beat_sheet: list[str]
+    llm_calls: int
 
 
 class ImageToPromptRequest(BaseModel):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, Optional
 
@@ -284,7 +285,7 @@ async def auto_caption_dataset(
     if audit_kind not in ("concept", "style"):
         audit_kind = "concept"
     from backend.core.container import get_container
-    from backend.engine.llm.vlm_subprocess import run_face_anchor_subprocess, run_lora_caption_subprocess
+    from backend.engine.llm.vlm_subprocess import run_lora_caption_subprocess
     from backend.engine.memory_policy import prepare_host_for_vlm_audit
     from backend.engine.training.lora_auto_caption import resolve_lora_subject_name
 
@@ -331,20 +332,6 @@ async def auto_caption_dataset(
     if not captions:
         raise HTTPException(400, detail={"code": "invalid", "message": "Caption generation produced no results"})
     result = dataset_store.update_dataset_captions(root, dataset_id, captions)
-
-    # For concept (person) LoRAs, auto-generate face_anchor from facial features
-    if audit_kind == "concept" and len(image_paths) >= 3:
-        try:
-            face_anchor = await run_face_anchor_subprocess(
-                image_paths=image_paths,
-                model_dir=model_dir,
-                subject_name=subject_name,
-                worker_memory_gb=worker_mem,
-            )
-            if face_anchor:
-                dataset_store.update_dataset_face_anchor(root, dataset_id, face_anchor)
-        except Exception:
-            pass  # face_anchor is optional; don't fail the whole caption flow
 
     return result
 
@@ -721,7 +708,14 @@ def register_training_checkpoint(
     task_row = sched.get_task(task_id) or {}
     params = task_row.get("params") or {}
     base_model = str(params.get("base_model") or "flux1-dev").split(":", 1)[0]
+    dataset_id = str(params.get("dataset_id") or "").strip()
+    trigger_word = ""
     paths = _paths()
+    if dataset_id:
+        try:
+            trigger_word = str(dataset_store._dataset_meta(paths.get_project_root(), dataset_id).get("trigger_word") or "").strip()
+        except Exception:
+            trigger_word = ""
     slug = body.name.strip() or f"trained-{task_id[-8:]}"
     slug = "".join(c if c.isalnum() or c in "-_" else "-" for c in slug)[:64]
     dest_dir = paths.get_loras_dir() / slug
@@ -730,11 +724,24 @@ def register_training_checkpoint(
 
     dest_file = dest_dir / "adapter.safetensors"
     shutil.copy2(ckpt, dest_file)
+    (dest_dir / "lora_config.json").write_text(
+        json.dumps(
+            {
+                "base_model": base_model,
+                "trigger_word": trigger_word,
+                "task_id": task_id,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
     entry = register_user_lora(
         paths.get_workspace_config_dir(),
         name=body.name or slug,
         base_model=base_model,
         local_path=f"models/Lora/{slug}",
+        trigger_word=trigger_word,
         task_id=task_id,
     )
     return {"user_lora": entry, "adapter_path": str(dest_file)}

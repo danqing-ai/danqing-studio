@@ -514,6 +514,7 @@ class LTX23MlxGenerator:
         image_path: str | None,
         on_log: Callable[[str, str], None] | None,
         on_progress: Callable[..., None] | None = None,
+        stage1_states: tuple[LatentState, LatentState] | None = None,
     ) -> tuple[mx.array, mx.array]:
         ctx = self.ctx
         load_fn = getattr(ctx, "load_weights", None)
@@ -558,26 +559,35 @@ class LTX23MlxGenerator:
                 video_encoder=self._video_encoder,
             )
 
-        video_state = create_noised_state(
-            ctx,
-            video_shape,
-            conditionings=conditionings_1,
-            spatial_dims=(f_lat, h_half, w_half),
-            positions=video_positions_1,
-            seed=seed,
-            sigma=1.0,
-            legacy_scalar_blend=True,
-        )
-        audio_state = create_noised_state(
-            ctx,
-            audio_shape,
-            conditionings=[],
-            spatial_dims=(f_lat, h_half, w_half),
-            positions=audio_positions,
-            seed=seed + 1,
-            sigma=1.0,
-            legacy_scalar_blend=True,
-        )
+        if stage1_states is not None:
+            video_state, audio_state = stage1_states
+            if image_path:
+                self._log(
+                    on_log,
+                    "warning",
+                    "LTX extend pass: ignoring image_path when stage1_states are prebuilt",
+                )
+        else:
+            video_state = create_noised_state(
+                ctx,
+                video_shape,
+                conditionings=conditionings_1,
+                spatial_dims=(f_lat, h_half, w_half),
+                positions=video_positions_1,
+                seed=seed,
+                sigma=1.0,
+                legacy_scalar_blend=True,
+            )
+            audio_state = create_noised_state(
+                ctx,
+                audio_shape,
+                conditionings=[],
+                spatial_dims=(f_lat, h_half, w_half),
+                positions=audio_positions,
+                seed=seed + 1,
+                sigma=1.0,
+                legacy_scalar_blend=True,
+            )
 
         if step_distill:
             sigmas_1 = DISTILLED_SIGMAS[: stage1_steps + 1]

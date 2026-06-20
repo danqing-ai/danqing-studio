@@ -23,7 +23,11 @@ from backend.engine.common.bundle.quant_inference import (
     estimate_dit_cache_size_gb,
     resolve_inference_weight_mode,
 )
-from backend.engine.pipelines.video_bundle_layout import resolve_video_transformer_weight_sources
+from backend.engine.pipelines.video_bundle_layout import (
+    resolve_video_transformer_weight_sources,
+    wan_is_moe_bundle,
+    wan_moe_expert_shards,
+)
 
 
 def video_model_cache_key(
@@ -81,6 +85,12 @@ def apply_video_registry_config_overrides(
     sd = registry_scalar_default(entry, "step_distill", None)
     if sd is not None:
         config.step_distill = bool(sd)
+    moe_boundary = registry_scalar_default(entry, "moe_boundary_step_index", None)
+    if moe_boundary is not None:
+        config.moe_boundary_step_index = int(moe_boundary)
+    distill_ts = registry_scalar_default(entry, "wan_distill_timesteps", None)
+    if isinstance(distill_ts, (list, tuple)) and distill_ts:
+        config.wan_distill_timesteps = tuple(float(x) for x in distill_ts)
     vst = registry_scalar_default(entry, "vae_spatial_tiling", None)
     if vst is not None:
         config.vae_spatial_tiling = bool(vst)
@@ -95,26 +105,31 @@ def prepare_video_config(entry: Any, family: str, bundle_root: Path, *, project_
     return config
 
 
-def load_video_transformer(
+def _wan_moe_expert_disk_gb(entry: Any, version_key: str | None) -> float:
+    """MoE bundles store two experts; budget one expert per cache slot."""
+    from backend.engine.common.bundle.weights import parse_size_gb
+
+    ver = resolve_version_block(entry, version_key)
+    size_str = str((ver or {}).get("size") or getattr(entry, "raw", {}).get("size") or "10GB")
+    disk_gb = parse_size_gb(size_str)
+    return max(disk_gb / 2.0, 0.5)
+
+
+def _load_wan_single_expert(
     *,
     ctx: Any,
     family: str,
     config: Any,
     entry: Any,
     version_key: str | None,
-    project_root: Path,
     num_frames: int,
-    model_cache: ModelCache | None = None,
+    shard_paths: list[Path],
+    tensor_root: Path,
+    model_cache: ModelCache | None,
+    cache_key_suffix: str = "",
     on_log: Any | None = None,
-) -> Any | None:
-    """Load video transformer weights from bundle (registry-driven)."""
-    bundle_root = local_bundle_root(project_root, entry, version_key)
-    tensor_root, shard_paths = resolve_video_transformer_weight_sources(
-        bundle_root, family, entry.id
-    )
-    if tensor_root is None or not shard_paths:
-        return None
-
+    disk_gb_override: float | None = None,
+) -> Any:
     weights: dict[str, Any] = {}
     for shard in shard_paths:
         weights.update(ctx.load_weights(str(shard)))
@@ -133,6 +148,8 @@ def load_video_transformer(
     )
 
     cache_key = video_model_cache_key(entry, version_key, num_frames, inference_mode)
+    if cache_key_suffix:
+        cache_key = f"{cache_key}{cache_key_suffix}"
     if model_cache is not None:
         cached = model_cache.get(cache_key)
         if cached is not None:
@@ -154,9 +171,12 @@ def load_video_transformer(
     if on_log is not None:
         from backend.engine.common.bundle.weights import parse_size_gb
 
-        ver = resolve_version_block(entry, version_key)
-        size_str = str((ver or {}).get("size") or getattr(entry, "raw", {}).get("size") or "10GB")
-        disk_gb = parse_size_gb(size_str)
+        if disk_gb_override is not None:
+            disk_gb = float(disk_gb_override)
+        else:
+            ver = resolve_version_block(entry, version_key)
+            size_str = str((ver or {}).get("size") or getattr(entry, "raw", {}).get("size") or "10GB")
+            disk_gb = parse_size_gb(size_str)
         est_gb = estimate_dit_cache_size_gb(disk_gb, inference_mode)
         on_log(
             "info",
@@ -165,19 +185,180 @@ def load_video_transformer(
         )
 
     if model_cache is not None:
-        from backend.engine.common.bundle.weights import parse_size_gb
+        if disk_gb_override is not None:
+            disk_gb = float(disk_gb_override)
+        else:
+            from backend.engine.common.bundle.weights import parse_size_gb
 
-        ver = resolve_version_block(entry, version_key)
-        size_str = ""
-        if ver:
-            size_str = str(ver.get("size") or "")
-        if not size_str:
-            raw = getattr(entry, "raw", {}) or {}
-            size_str = str(raw.get("size") or "10GB")
-        disk_gb = parse_size_gb(size_str)
+            ver = resolve_version_block(entry, version_key)
+            size_str = ""
+            if ver:
+                size_str = str(ver.get("size") or "")
+            if not size_str:
+                raw = getattr(entry, "raw", {}) or {}
+                size_str = str(raw.get("size") or "10GB")
+            disk_gb = parse_size_gb(size_str)
         model_cache.put(
             cache_key,
             model,
             estimate_dit_cache_size_gb(disk_gb, inference_mode),
         )
+    setattr(model, "_dq_cache_key", cache_key)
     return model
+
+
+def load_wan_moe_video_transformer(
+    *,
+    ctx: Any,
+    config: Any,
+    entry: Any,
+    version_key: str | None,
+    project_root: Path,
+    num_frames: int,
+    bundle_root: Path,
+    model_cache: ModelCache | None = None,
+    on_log: Any | None = None,
+) -> Any:
+    """Load Wan 14B MoE (high/low noise experts) for step-distill or base MoE bundles."""
+    from backend.engine.families.wan.moe import WanMoETransformer
+
+    high_shards = wan_moe_expert_shards(bundle_root, "high")
+    low_shards = wan_moe_expert_shards(bundle_root, "low")
+    if not high_shards or not low_shards:
+        raise RuntimeError(
+            f"Wan MoE bundle at {bundle_root} requires safetensors under "
+            "high_noise_model/ and low_noise_model/."
+        )
+
+    boundary = int(getattr(config, "moe_boundary_step_index", 2))
+    lazy = bool(getattr(config, "wan_moe_lazy_experts", True))
+    expert_disk_gb = _wan_moe_expert_disk_gb(entry, version_key)
+    base_key_suffix = ":moe"
+    held_cache_keys: dict[str, str | None] = {"high": None, "low": None}
+
+    def _load_high() -> Any:
+        model = _load_wan_single_expert(
+            ctx=ctx,
+            family="wan",
+            config=config,
+            entry=entry,
+            version_key=version_key,
+            num_frames=num_frames,
+            shard_paths=high_shards,
+            tensor_root=bundle_root / "high_noise_model",
+            model_cache=model_cache,
+            cache_key_suffix=f"{base_key_suffix}-high",
+            on_log=on_log,
+            disk_gb_override=expert_disk_gb,
+        )
+        held_cache_keys["high"] = str(getattr(model, "_dq_cache_key", "") or "") or None
+        return model
+
+    def _load_low() -> Any:
+        model = _load_wan_single_expert(
+            ctx=ctx,
+            family="wan",
+            config=config,
+            entry=entry,
+            version_key=version_key,
+            num_frames=num_frames,
+            shard_paths=low_shards,
+            tensor_root=bundle_root / "low_noise_model",
+            model_cache=model_cache,
+            cache_key_suffix=f"{base_key_suffix}-low",
+            on_log=on_log,
+            disk_gb_override=expert_disk_gb,
+        )
+        held_cache_keys["low"] = str(getattr(model, "_dq_cache_key", "") or "") or None
+        return model
+
+    def _release_side(side: str) -> None:
+        key = held_cache_keys.get(side)
+        if model_cache is not None and key:
+            model_cache.evict(key)
+        held_cache_keys[side] = None
+
+    if lazy:
+        if on_log is not None:
+            on_log(
+                "info",
+                f"Wan MoE lazy swap enabled (high={len(high_shards)} shard(s), "
+                f"low={len(low_shards)} shard(s), boundary_step_index={boundary}, "
+                f"expert_est_gb={expert_disk_gb:.1f})",
+            )
+        return WanMoETransformer(
+            None,
+            None,
+            boundary_step_index=boundary,
+            config=config,
+            lazy=True,
+            ctx=ctx,
+            load_high=_load_high,
+            load_low=_load_low,
+            release_high=lambda: _release_side("high"),
+            release_low=lambda: _release_side("low"),
+        )
+
+    high = _load_high()
+    low = _load_low()
+    if on_log is not None:
+        on_log(
+            "info",
+            f"Wan MoE loaded (high={len(high_shards)} shard(s), low={len(low_shards)} shard(s), "
+            f"boundary_step_index={boundary})",
+        )
+    return WanMoETransformer(
+        high,
+        low,
+        boundary_step_index=boundary,
+        config=config,
+        lazy=False,
+        ctx=ctx,
+    )
+
+
+def load_video_transformer(
+    *,
+    ctx: Any,
+    family: str,
+    config: Any,
+    entry: Any,
+    version_key: str | None,
+    project_root: Path,
+    num_frames: int,
+    model_cache: ModelCache | None = None,
+    on_log: Any | None = None,
+) -> Any | None:
+    """Load video transformer weights from bundle (registry-driven)."""
+    bundle_root = local_bundle_root(project_root, entry, version_key)
+    if family == "wan" and bundle_root is not None and wan_is_moe_bundle(bundle_root):
+        return load_wan_moe_video_transformer(
+            ctx=ctx,
+            config=config,
+            entry=entry,
+            version_key=version_key,
+            project_root=project_root,
+            num_frames=num_frames,
+            bundle_root=bundle_root,
+            model_cache=model_cache,
+            on_log=on_log,
+        )
+
+    tensor_root, shard_paths = resolve_video_transformer_weight_sources(
+        bundle_root, family, entry.id
+    )
+    if tensor_root is None or not shard_paths:
+        return None
+
+    return _load_wan_single_expert(
+        ctx=ctx,
+        family=family,
+        config=config,
+        entry=entry,
+        version_key=version_key,
+        num_frames=num_frames,
+        shard_paths=shard_paths,
+        tensor_root=tensor_root,
+        model_cache=model_cache,
+        on_log=on_log,
+    )

@@ -150,10 +150,40 @@ Do not write "Okay", explanations, or quotes. Output ONLY the enhanced prompt.""
 ENHANCE_VIDEO_SYSTEM_PROMPT = """You are a professional prompt engineer for AI video generation.
 Given a user's brief, rewrite it into a detailed prompt for image-to-video or text-to-video models.
 Include subject, scene, lighting, style, camera movement, motion dynamics, pacing, and temporal mood.
+For LTX audio-video models, hint ambient sound rhythm and dialogue pacing without writing looping lines.
+Distinguish static scene description from continuing motion the camera can follow.
 Match the user's language: Chinese input → Chinese output; English input → English output.
 Keep it concise: one paragraph, at most ~120 Chinese characters or ~80 English words.
 CRITICAL: Never repeat the same phrase or word. No filler loops.
 Output ONLY the enhanced prompt text, without explanation or quotation marks."""
+
+LONG_VIDEO_OPENING_SYSTEM_PROMPT = """You polish the FIRST segment prompt for a multi-pass long LTX audio-video generation.
+Output ONE paragraph for Pass0 text-to-video. Must include:
+1) CharacterAnchor: 2-3 sentences fixing appearance, wardrobe, palette, camera distance.
+2) SceneBeat: this segment's action, camera move, and sound mood.
+Match input language. Max ~180 Chinese characters or ~120 English words.
+No markdown. Output ONLY the prompt."""
+
+LONG_VIDEO_PLAN_SYSTEM_PROMPT = """You plan a timed long-video beat sheet for LTX A/V generation.
+Output format ONLY:
+[Anchor] <2-3 sentences: fixed character/scene identity>
+[Beat 1] <one sentence plot beat for segment 1 (~opening)>
+[Beat 2] <one sentence for segment 2>
+... exactly N beats total as requested.
+Budget: compact=quick arc; standard=mid climax; epic=slower build + late climax.
+Match user language. No extra commentary."""
+
+LONG_VIDEO_EXPAND_SYSTEM_PROMPT = """Expand beat sheet lines into full LTX audio-video prompts.
+Output format ONLY:
+[Opening] <full Pass0 prompt with CharacterAnchor + SceneBeat>
+[Segment 1] <extend pass 1 prompt: continue motion + restate anchor keywords>
+[Segment 2] ...
+Each segment is one paragraph; include motion, camera, ambient audio mood.
+Never copy-paste identical text across segments. Match user language."""
+
+LONG_VIDEO_CONTINUITY_SYSTEM_PROMPT = """Fix continuity across long-video segment prompts.
+Keep [Opening] and [Segment N] labels. Smooth transitions, restore missing anchor keywords,
+remove repetition loops. Match user language. Output ONLY the revised script."""
 
 ENHANCE_AUDIO_BRIEF_SYSTEM_PROMPT = """You are a music producer writing briefs for AI music generation (ACE-Step).
 Given a user's music idea, expand it into a clear, vivid description covering genre, mood, tempo feel, instrumentation,
@@ -431,6 +461,8 @@ class LLMService:
         action = (target_action or "image_create").strip().lower()
         if action in ("video", "video_create", "animate", "video_generation"):
             return ENHANCE_VIDEO_SYSTEM_PROMPT
+        if action in ("long_video_opening",):
+            return LONG_VIDEO_OPENING_SYSTEM_PROMPT
         if action in ("audio", "audio_create", "music", "audio_generation"):
             return ENHANCE_AUDIO_BRIEF_SYSTEM_PROMPT
         return ENHANCE_IMAGE_SYSTEM_PROMPT
@@ -480,6 +512,159 @@ class LLMService:
         if prompt_enhance_quality_ok(last_clean):
             return EnhanceResponse(enhanced_prompt=last_clean)
         return EnhanceResponse(enhanced_prompt=fallback or last_clean)
+
+    def generate_long_video_storyboard(
+        self,
+        request: "LongVideoStoryboardRequest",
+    ) -> "LongVideoStoryboardResponse":
+        from backend.core.contracts import (
+            LongVideoPlanDTO,
+            LongVideoStoryboardRequest,
+            LongVideoStoryboardResponse,
+        )
+        from backend.engine.families.ltx.long_video_plan import build_long_video_plan
+        from backend.engine.llm.storyboard import (
+            expand_batches_for_plan,
+            merge_expand_batches,
+            parse_expand_script,
+            parse_plan_script,
+            plan_to_dto,
+            storyboard_quality_ok,
+        )
+
+        raw = (request.prompt or "").strip()
+        if not raw:
+            raise RuntimeError("long_video_storyboard requires a non-empty prompt")
+
+        plan = build_long_video_plan(
+            target_duration_sec=request.target_duration_sec,
+            initial_duration_sec=request.initial_duration_sec,
+            segment_extend_sec=request.segment_extend_sec,
+            reference_duration_sec=request.reference_duration_sec,
+        )
+        llm_calls = 0
+        think_active = self._think_is_active(self._resolve_enable_thinking(None))
+
+        plan_user = (
+            f"Brief: {raw}\n"
+            f"Segments: {plan.total_segments} (1 opening + {plan.extend_pass_count} extends)\n"
+            f"Durations (sec): {list(plan.segment_durations_sec)}\n"
+            f"Narrative budget: {plan.narrative_budget}\n"
+            f"Write exactly {plan.total_segments} [Beat] lines after [Anchor]."
+        )
+        if request.style_positive.strip():
+            plan_user += f"\nStyle: {request.style_positive.strip()}"
+
+        plan_resp = self.chat_completion(
+            ChatCompletionRequest(
+                model=self._model_id,
+                messages=[
+                    ChatMessage(role="system", content=LONG_VIDEO_PLAN_SYSTEM_PROMPT),
+                    ChatMessage(role="user", content=self._apply_think_mode_to_text(plan_user)),
+                ],
+                temperature=0.55,
+                top_p=0.9,
+                max_tokens=self._token_budget(600, think_active),
+                stream=False,
+            )
+        )
+        llm_calls += 1
+        plan_text = sanitize_enhanced_prompt(
+            plan_resp.choices[0].message.content,
+            think_enabled=think_active,
+        )
+        character_anchor, beat_sheet = parse_plan_script(plan_text, expected_beats=plan.total_segments)
+
+        segment_batches: list[list[str]] = []
+        opening_parts: list[str] = []
+        for start, count in expand_batches_for_plan(plan):
+            expand_user = (
+                f"Anchor:\n{character_anchor}\n\nBeats:\n"
+                + "\n".join(f"- {beat_sheet[i]}" for i in range(start, min(start + count + 1, len(beat_sheet))))
+                + f"\n\nExpand beats {start + 1}..{start + count} into [Segment] prompts "
+                f"(plus [Opening] if batch starts at 0)."
+            )
+            expand_resp = self.chat_completion(
+                ChatCompletionRequest(
+                    model=self._model_id,
+                    messages=[
+                        ChatMessage(role="system", content=LONG_VIDEO_EXPAND_SYSTEM_PROMPT),
+                        ChatMessage(role="user", content=self._apply_think_mode_to_text(expand_user)),
+                    ],
+                    temperature=0.6,
+                    top_p=0.9,
+                    max_tokens=self._token_budget(900, think_active),
+                    stream=False,
+                )
+            )
+            llm_calls += 1
+            expand_text = sanitize_enhanced_prompt(
+                expand_resp.choices[0].message.content,
+                think_enabled=think_active,
+            )
+            opening, segs = parse_expand_script(expand_text, expected_segments=count)
+            opening_parts.append(opening)
+            segment_batches.append(segs)
+
+        opening_prompt, segment_prompts = merge_expand_batches(opening_parts, segment_batches)
+        if not opening_prompt and beat_sheet:
+            opening_prompt = beat_sheet[0]
+
+        if not storyboard_quality_ok(
+            character_anchor=character_anchor,
+            opening_prompt=opening_prompt,
+            segment_prompts=segment_prompts,
+            beat_sheet=beat_sheet,
+            plan=plan,
+        ):
+            cont_user = (
+                f"Anchor:\n{character_anchor}\n\nOpening:\n{opening_prompt}\n\nSegments:\n"
+                + "\n".join(f"[Segment {i+1}] {p}" for i, p in enumerate(segment_prompts))
+            )
+            cont_resp = self.chat_completion(
+                ChatCompletionRequest(
+                    model=self._model_id,
+                    messages=[
+                        ChatMessage(role="system", content=LONG_VIDEO_CONTINUITY_SYSTEM_PROMPT),
+                        ChatMessage(role="user", content=self._apply_think_mode_to_text(cont_user)),
+                    ],
+                    temperature=0.45,
+                    top_p=0.9,
+                    max_tokens=self._token_budget(1000, think_active),
+                    stream=False,
+                )
+            )
+            llm_calls += 1
+            cont_text = sanitize_enhanced_prompt(
+                cont_resp.choices[0].message.content,
+                think_enabled=think_active,
+            )
+            opening_prompt, segment_prompts = parse_expand_script(
+                cont_text,
+                expected_segments=plan.extend_pass_count,
+            )
+
+        if not storyboard_quality_ok(
+            character_anchor=character_anchor,
+            opening_prompt=opening_prompt,
+            segment_prompts=segment_prompts,
+            beat_sheet=beat_sheet,
+            plan=plan,
+        ):
+            raise RuntimeError(
+                "long_video_storyboard quality check failed after Plan/Expand/Continuity"
+            )
+
+        dto = LongVideoPlanDTO(**plan_to_dto(plan))
+        return LongVideoStoryboardResponse(
+            character_anchor=character_anchor,
+            opening_prompt=opening_prompt,
+            segment_prompts=segment_prompts,
+            segment_count=plan.extend_pass_count,
+            plan=dto,
+            beat_sheet=beat_sheet,
+            llm_calls=llm_calls,
+        )
 
     # ------------------------------------------------------------------
     # Lyrics generation

@@ -81,6 +81,8 @@
         v-model:model="selectedModelVersion"
         v-model:size="selectedSize"
         v-model:batch-count="batchCount"
+        :composer-busy="composerBusy"
+        :submitting="queueSubmitting"
         :generating="generating"
         :can-generate="canGenerate"
         :model-options="modelSelectOptions"
@@ -100,7 +102,7 @@
         :compatible-control-nets="compatibleControlNets"
         :control-net-runtime-available="controlNetHostRuntimeAvailable"
         @update:mode="onModeChange"
-        @generate="startGeneration"
+        @generate="onComposerSubmit"
         @pick-reference="openAssetPicker('reference')"
         @remove-reference="removeReferenceImage"
         @pick-control="openAssetPicker('control')"
@@ -360,6 +362,16 @@ const selectedModelVersion = ref('');
 const selectedSize = ref('1024x1024');
 const batchCount = ref(1);
 const generating = ref(false);
+const queueSubmitting = ref(false);
+
+const ACTIVE_IMAGE_TASK_STATUSES = new Set(['queued', 'running', 'pending', 'submitting']);
+
+function splitComposerPromptLines(text: string): string[] {
+  return String(text || '')
+    .split(/\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
 const infiniteCanvasRef = ref<InstanceType<typeof InfiniteCanvas> | null>(null);
 const pendingCanvasAssetIds = ref<string[]>([]);
 const imageCanvas = useCanvasStore('image');
@@ -1039,6 +1051,13 @@ const activeImageTasks = computed(() => {
   });
 });
 
+const composerBusy = computed(() => {
+  if (generating.value) return true;
+  return activeImageTasks.value.some((t) =>
+    ACTIVE_IMAGE_TASK_STATUSES.has(String(t.status || '')),
+  );
+});
+
 /* ------------------------------------------------------------------ */
 /*  Task status helpers                                                */
 /* ------------------------------------------------------------------ */
@@ -1614,18 +1633,21 @@ function attachStreamFromSubmit(submitRes: unknown) {
   });
 }
 
-const startGeneration = async () => {
-  if (generating.value) return;
-  if (!String(params.prompt || '').trim()) {
-    toast.warning($tt('studio.enterPrompt'));
-    return;
-  }
+type GenerationPrepared = {
+  modelStr: string;
+  adapters: Array<{ id: string; weight: number }>;
+  meta: Record<string, unknown>;
+  control_asset_id: string | null;
+  source_asset_id: string | null;
+  hasRef: boolean;
+};
 
+function validateGenerationPreconditions(): boolean {
   const detailed = modelsDetailedStatus.value[params.model as string];
   const versionStatus = detailed?.versions?.[params.version as string];
   if (!versionStatus?.ready) {
     toast.warning($tt('studio.modelNotReadyDesc', { name: currentModelDisplayName.value, version: params.version as string }));
-    return;
+    return false;
   }
 
   const verCfg =
@@ -1655,117 +1677,199 @@ const startGeneration = async () => {
     };
     const toastKey = guideToastKeys[guideValidation.code];
     if (toastKey) toast.warning($tt(toastKey));
+    return false;
+  }
+
+  return true;
+}
+
+async function prepareGenerationContext(): Promise<GenerationPrepared | null> {
+  if (!validateGenerationPreconditions()) return null;
+
+  const modelStr = params.version ? `${params.model}:${params.version}` : params.model;
+  const adapters: Array<{ id: string; weight: number }> = [];
+  if (params.lora) adapters.push({ id: String(params.lora), weight: Number(params.lora_scale) || 0.8 });
+  persistComposerSnapshot();
+  const meta = buildCanvasMeta();
+  if (params.scheduler) meta.scheduler = params.scheduler;
+
+  let control_asset_id: string | null = null;
+  if (params.controlnet) {
+    control_asset_id = resolveControlAssetId(controlImage.value, {
+      assetRequired: $tt('canvas.controlImageAssetRequired'),
+      required: $tt('canvas.controlImageRequired'),
+    });
+  }
+
+  const hasRef = referenceImage.value != null;
+  let source_asset_id: string | null = null;
+  if (hasRef) {
+    const rp = referenceImage.value!.path;
+    if (typeof rp === 'string' && rp.startsWith('asset:')) {
+      source_asset_id = rp.slice('asset:'.length);
+    } else {
+      const blob = await api.gen.urlToBlob(referenceImage.value!.previewUrl);
+      const up = await api.gen.uploadAsset(
+        new File([blob], 'ref.png', { type: blob.type || 'image/png' })
+      );
+      source_asset_id = (up as any).id;
+    }
+  }
+
+  return {
+    modelStr,
+    adapters,
+    meta,
+    control_asset_id,
+    source_asset_id,
+    hasRef,
+  };
+}
+
+function resolveSeedForTask(baseSeed: number | null, batchIndex: number): number | null {
+  if (baseSeed == null) return null;
+  return baseSeed + batchIndex;
+}
+
+async function submitImageGenerationTask(
+  ctx: GenerationPrepared,
+  opts: { prompt: string; title: string; seed: number | null; n: number },
+): Promise<unknown> {
+  const inpSrc = resolveInpaintAssetId(inpaintSourceImage.value);
+  const inpMsk = resolveInpaintAssetId(inpaintMaskImage.value);
+  const enhCommon = {
+    controlnet: String(params.controlnet || ''),
+    controlAssetId: ctx.control_asset_id,
+    controlnetStrength: Number(params.controlnet_strength) || 0.8,
+    inpaintSourceId: inpSrc,
+    inpaintMaskId: inpMsk,
+    lemicaMode: String(params.lemica_mode || 'none'),
+    latentRefineScale: Number(params.latent_refine_scale),
+    latentRefineDenoise: Number(params.latent_refine_denoise),
+  };
+
+  if (ctx.hasRef) {
+    const editBody: Record<string, unknown> = {
+      model: ctx.modelStr,
+      operation: 'rewrite',
+      source_asset_id: ctx.source_asset_id,
+      title: opts.title,
+      prompt: opts.prompt,
+      negative_prompt: params.negative_prompt || '',
+      n: 1,
+      steps: params.steps,
+      guidance: params.guidance,
+      seed: opts.seed,
+      adapters: ctx.adapters,
+      source_fidelity: strengthToSourceFidelity(
+        params.strength,
+        strengthDefaultFromRegistry(currentModelConfig.value?.parameters as Record<string, unknown> | undefined),
+      ),
+      metadata: { ...ctx.meta },
+      priority: 'normal',
+    };
+    const editEnh = appendZImageEnhancementFields(editBody, enhCommon);
+    if (!editEnh.ok) {
+      throw new Error($tt('create.inpaintPairRequired'));
+    }
+    return api.gen.createImageEdit(editBody);
+  }
+
+  const genBody: Record<string, unknown> = {
+    model: ctx.modelStr,
+    title: opts.title,
+    prompt: opts.prompt,
+    negative_prompt: params.negative_prompt || '',
+    size: `${params.width}x${params.height}`,
+    n: opts.n,
+    steps: params.steps,
+    guidance: params.guidance,
+    seed: opts.seed,
+    adapters: ctx.adapters,
+    metadata: { ...ctx.meta },
+    priority: 'normal',
+  };
+  const genEnh = appendZImageEnhancementFields(genBody, enhCommon);
+  if (!genEnh.ok) {
+    throw new Error($tt('create.inpaintPairRequired'));
+  }
+  return api.gen.createImageGeneration(genBody);
+}
+
+async function queuePromptsToServer() {
+  const lines = splitComposerPromptLines(params.prompt);
+  if (lines.length === 0) {
+    toast.warning($tt('studio.enterPrompt'));
+    return;
+  }
+  if (queueSubmitting.value) return;
+
+  queueSubmitting.value = true;
+  const baseSeed = params.seed ? parseInt(String(params.seed), 10) : null;
+  const title = String(params.title || '').trim();
+
+  try {
+    const ctx = await prepareGenerationContext();
+    if (!ctx) return;
+
+    for (let i = 0; i < lines.length; i += 1) {
+      await submitImageGenerationTask(ctx, {
+        prompt: lines[i],
+        title,
+        seed: resolveSeedForTask(baseSeed, i),
+        n: 1,
+      });
+    }
+
+    params.prompt = '';
+    toast.success(
+      lines.length > 1
+        ? $tt('create.batchSubmitted', { count: lines.length })
+        : $tt('assistant.taskQueued'),
+    );
+    tasksStore.pollQueueOnce();
+  } catch (e) {
+    toast.error($tt('studio.error', { msg: (e as Error).message || String(e) }));
+  } finally {
+    queueSubmitting.value = false;
+  }
+}
+
+async function onComposerSubmit() {
+  if (!String(params.prompt || '').trim()) {
+    toast.warning($tt('studio.enterPrompt'));
+    return;
+  }
+  if (composerBusy.value) {
+    await queuePromptsToServer();
+    return;
+  }
+  await startGeneration();
+}
+
+const startGeneration = async () => {
+  if (generating.value) return;
+  if (!String(params.prompt || '').trim()) {
+    toast.warning($tt('studio.enterPrompt'));
     return;
   }
 
   generating.value = true;
 
   try {
-    const modelStr = params.version ? `${params.model}:${params.version}` : params.model;
+    const ctx = await prepareGenerationContext();
+    if (!ctx) {
+      generating.value = false;
+      return;
+    }
+
     const seedNum = params.seed ? parseInt(String(params.seed), 10) : null;
-    const adapters: Array<{ id: string; weight: number }> = [];
-    if (params.lora) adapters.push({ id: String(params.lora), weight: Number(params.lora_scale) || 0.8 });
-    persistComposerSnapshot();
-    const meta = buildCanvasMeta();
-    if (params.scheduler) meta.scheduler = params.scheduler;
-
-    let control_asset_id: string | null = null;
-    if (params.controlnet) {
-      control_asset_id = resolveControlAssetId(controlImage.value, {
-        assetRequired: $tt('canvas.controlImageAssetRequired'),
-        required: $tt('canvas.controlImageRequired'),
-      });
-    }
-
-    let submitRes: unknown;
-    const hasRef = referenceImage.value != null;
-
-    if (hasRef) {
-      // Image-to-image via edits endpoint
-      let source_asset_id: string;
-      const rp = referenceImage.value!.path;
-      if (typeof rp === 'string' && rp.startsWith('asset:')) {
-        source_asset_id = rp.slice('asset:'.length);
-      } else {
-        const blob = await api.gen.urlToBlob(referenceImage.value!.previewUrl);
-        const up = await api.gen.uploadAsset(
-          new File([blob], 'ref.png', { type: blob.type || 'image/png' })
-        );
-        source_asset_id = (up as any).id;
-      }
-
-      const editBody: Record<string, unknown> = {
-        model: modelStr,
-        operation: 'rewrite',
-        source_asset_id,
-        title: String(params.title || '').trim(),
-        prompt: params.prompt,
-        negative_prompt: params.negative_prompt || '',
-        n: 1,
-        steps: params.steps,
-        guidance: params.guidance,
-        seed: seedNum,
-        adapters,
-        source_fidelity: strengthToSourceFidelity(
-          params.strength,
-          strengthDefaultFromRegistry(currentModelConfig.value?.parameters as Record<string, unknown> | undefined),
-        ),
-        metadata: { ...meta },
-        priority: 'normal',
-      };
-      const inpSrc = resolveInpaintAssetId(inpaintSourceImage.value);
-      const inpMsk = resolveInpaintAssetId(inpaintMaskImage.value);
-      const editEnh = appendZImageEnhancementFields(editBody, {
-        controlnet: String(params.controlnet || ''),
-        controlAssetId: control_asset_id,
-        controlnetStrength: Number(params.controlnet_strength) || 0.8,
-        inpaintSourceId: inpSrc,
-        inpaintMaskId: inpMsk,
-        lemicaMode: String(params.lemica_mode || 'none'),
-        latentRefineScale: Number(params.latent_refine_scale),
-        latentRefineDenoise: Number(params.latent_refine_denoise),
-      });
-      if (!editEnh.ok) {
-        toast.error($tt('create.inpaintPairRequired'));
-        generating.value = false;
-        return;
-      }
-      submitRes = await api.gen.createImageEdit(editBody);
-    } else {
-      // Text-to-image
-      const genBody: Record<string, unknown> = {
-        model: modelStr,
-        title: String(params.title || '').trim(),
-        prompt: params.prompt,
-        negative_prompt: params.negative_prompt || '',
-        size: `${params.width}x${params.height}`,
-        n: batchCount.value,
-        steps: params.steps,
-        guidance: params.guidance,
-        seed: seedNum,
-        adapters,
-        metadata: { ...meta },
-        priority: 'normal',
-      };
-      const inpSrc = resolveInpaintAssetId(inpaintSourceImage.value);
-      const inpMsk = resolveInpaintAssetId(inpaintMaskImage.value);
-      const genEnh = appendZImageEnhancementFields(genBody, {
-        controlnet: String(params.controlnet || ''),
-        controlAssetId: control_asset_id,
-        controlnetStrength: Number(params.controlnet_strength) || 0.8,
-        inpaintSourceId: inpSrc,
-        inpaintMaskId: inpMsk,
-        lemicaMode: String(params.lemica_mode || 'none'),
-        latentRefineScale: Number(params.latent_refine_scale),
-        latentRefineDenoise: Number(params.latent_refine_denoise),
-      });
-      if (!genEnh.ok) {
-        toast.error($tt('create.inpaintPairRequired'));
-        generating.value = false;
-        return;
-      }
-      submitRes = await api.gen.createImageGeneration(genBody);
-    }
+    const submitRes = await submitImageGenerationTask(ctx, {
+      prompt: params.prompt,
+      title: String(params.title || '').trim(),
+      seed: seedNum,
+      n: batchCount.value,
+    });
 
     attachStreamFromSubmit(submitRes);
     tasksStore.pollQueueOnce();

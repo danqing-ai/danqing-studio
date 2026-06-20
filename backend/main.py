@@ -138,6 +138,8 @@ def create_app() -> FastAPI:
     app.include_router(gallery.router)
     app.include_router(download.router)
     app.include_router(settings.router)
+    import backend.api.routes.setup as setup_routes
+    app.include_router(setup_routes.router)
 
     # LLM service (standalone, not through TaskScheduler)
     import backend.api.routes.llm as llm_routes

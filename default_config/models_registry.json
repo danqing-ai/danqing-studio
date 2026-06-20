@@ -1184,6 +1184,7 @@
               "en": "FP16 Full"
             },
             "size": "15GB",
+            "min_unified_memory_gb": 16,
             "default": true,
             "repo_id": "black-forest-labs/FLUX.2-klein-4B",
             "local_path": "models/Image/flux2-klein-4b-fp16",
@@ -1214,6 +1215,7 @@
               "en": "INT4 Quantized"
             },
             "size": "4GB",
+            "min_unified_memory_gb": 6,
             "default": false,
             "repo_id": "black-forest-labs/FLUX.2-klein-4B",
             "local_path": "models/Image/flux2-klein-4b-int4",
@@ -1233,6 +1235,7 @@
               "en": "4-bit Quantized"
             },
             "size": "4.6GB",
+            "min_unified_memory_gb": 6,
             "default": false,
             "source": "modelscope",
             "repo_id": "mlx-community/flux2-klein-4b-4bit",
@@ -2245,6 +2248,7 @@
               "en": "INT4 Quantized"
             },
             "size": "8GB",
+            "min_unified_memory_gb": 10,
             "default": false,
             "repo_id": "Tongyi-MAI/Z-Image-Turbo",
             "local_path": "models/Image/z-image-turbo-int4",
@@ -5593,6 +5597,30 @@
             "type": "int"
           },
           "negative_prompt_support": false,
+          "long_video_support": true,
+          "long_video_target_duration_sec": {
+            "default": 60,
+            "min": 16,
+            "max": 120,
+            "options": [
+              30,
+              60,
+              90
+            ],
+            "type": "enum"
+          },
+          "long_video_segment_extend_sec": {
+            "default": 7,
+            "min": 4,
+            "max": 12,
+            "type": "float"
+          },
+          "long_video_reference_duration_sec": {
+            "default": 3,
+            "min": 2,
+            "max": 5,
+            "type": "float"
+          },
           "default_scheduler": "flow_match_euler",
           "resolution_presets": {
             "default": "512x768",
@@ -5749,6 +5777,26 @@
             "type": "int"
           },
           "negative_prompt_support": true,
+          "long_video_support": true,
+          "long_video_target_duration_sec": {
+            "default": 60,
+            "min": 16,
+            "max": 120,
+            "options": [30, 60, 90],
+            "type": "enum"
+          },
+          "long_video_segment_extend_sec": {
+            "default": 7,
+            "min": 4,
+            "max": 12,
+            "type": "float"
+          },
+          "long_video_reference_duration_sec": {
+            "default": 3,
+            "min": 2,
+            "max": 5,
+            "type": "float"
+          },
           "default_scheduler": "flow_match_euler",
           "resolution_presets": {
             "default": "512x768",
@@ -6381,7 +6429,8 @@
           "en": "Wan 2.2 T2V 14B"
         },
         "recommended": false,
-        "engine": "danqing-video"
+        "engine": "danqing-video",
+        "distilled_variant": "wan-2.2-t2v-14b-distill"
       },
       "runtime": {
         "family": "wan",
@@ -6522,7 +6571,8 @@
           "en": "Wan 2.2 I2V 14B"
         },
         "recommended": false,
-        "engine": "danqing-video"
+        "engine": "danqing-video",
+        "distilled_variant": "wan-2.2-i2v-14b-distill"
       },
       "runtime": {
         "family": "wan",
@@ -6660,6 +6710,305 @@
               "bits": 4,
               "scheme": "mlx_affine"
             }
+          }
+        }
+      }
+    },
+    "wan-2.2-t2v-14b-distill": {
+      "catalog": {
+        "media": "video",
+        "description": {
+          "zh": "Wan 2.2 文生视频 14B LightX2V 4 步蒸馏（FP8）；上游尚未发布 T2V 720P 新版。",
+          "en": "Wan 2.2 T2V 14B LightX2V 4-step distill (FP8); no T2V 720p drop from upstream yet."
+        },
+        "category": "video_models",
+        "commercial_use_allowed": true,
+        "type": "video",
+        "source": "modelscope",
+        "name": {
+          "zh": "Wan 2.2 T2V 14B [Distilled]",
+          "en": "Wan 2.2 T2V 14B [Distilled]"
+        },
+        "recommended": true,
+        "engine": "danqing-video",
+        "distilled_from": "wan-2.2-t2v-14b"
+      },
+      "runtime": {
+        "family": "wan",
+        "backends": [
+          "mlx",
+          "cuda"
+        ],
+        "overrides": {
+          "supports_guidance": false,
+          "step_distill": true,
+          "moe_boundary_step_index": 2
+        }
+      },
+      "actions": {
+        "create": {}
+      },
+      "ui": {
+        "parameters": {
+          "seed_support": true,
+          "steps": {
+            "default": 4,
+            "min": 4,
+            "max": 4,
+            "label": "步数",
+            "note": "LightX2V 4-step distill（固定 4 步）",
+            "type": "int"
+          },
+          "shift": {
+            "default": 5.0,
+            "min": 5.0,
+            "max": 5.0,
+            "step": 0.5,
+            "label": "Shift",
+            "type": "float"
+          },
+          "width": {
+            "default": 704,
+            "options": [
+              480,
+              704,
+              1280
+            ],
+            "type": "enum",
+            "note": "720P 竖屏 704×1280、横屏 1280×704（VAE×patch 对齐 32）"
+          },
+          "height": {
+            "default": 1280,
+            "options": [
+              704,
+              1280
+            ],
+            "type": "enum"
+          },
+          "num_frames": {
+            "default": 81,
+            "min": 1,
+            "max": 129,
+            "step": 4,
+            "label": "帧数",
+            "note": "必须为 4n+1",
+            "type": "int"
+          },
+          "negative_prompt_support": false,
+          "resolution_presets": {
+            "default": "704x1280",
+            "options": [
+              "480x704",
+              "704x1280",
+              "1280x704"
+            ]
+          }
+        },
+        "extends": "video_dit_standard"
+      },
+      "distribution": {
+        "versions": {
+          "original": {
+            "name": {
+              "zh": "FP8 蒸馏版",
+              "en": "FP8 Distilled"
+            },
+            "size": "32GB",
+            "default": true,
+            "repo_id": "Wan-AI/Wan2.2-T2V-A14B",
+            "local_path": "models/Video/wan-2.2-t2v-14b-distill-original",
+            "source_type": "full",
+            "wan_distill_variant": "t2v_fp8",
+            "bundle_repos": [
+              {
+                "repo_id": "Wan-AI/Wan2.2-T2V-A14B",
+                "local_path": "models/Video/wan-2.2-t2v-14b-distill-original",
+                "source": "modelscope",
+                "allow_patterns": [
+                  "google/**",
+                  "models_t5*.pth",
+                  "Wan2.2_VAE.pth",
+                  "config.json",
+                  "configuration.json"
+                ]
+              },
+              {
+                "repo_id": "lightx2v/Wan2.2-Distill-Models",
+                "local_path": "models/Video/wan-2.2-t2v-14b-distill-original",
+                "source": "huggingface",
+                "allow_patterns": [
+                  "wan2.2_t2v_A14b_high_noise_scaled_fp8_e4m3_lightx2v_4step.safetensors",
+                  "wan2.2_t2v_A14b_low_noise_scaled_fp8_e4m3_lightx2v_4step.safetensors"
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    "wan-2.2-i2v-14b-distill": {
+      "catalog": {
+        "media": "video",
+        "description": {
+          "zh": "Wan 2.2 图生视频 14B LightX2V 720P 4 步蒸馏（2026.04 新版）；MoE 双专家，无需 CFG。",
+          "en": "Wan 2.2 I2V 14B LightX2V 720p 4-step distill (Apr 2026); MoE dual experts, no CFG."
+        },
+        "category": "video_models",
+        "commercial_use_allowed": true,
+        "type": "video",
+        "source": "modelscope",
+        "name": {
+          "zh": "Wan 2.2 I2V 14B [Distilled]",
+          "en": "Wan 2.2 I2V 14B [Distilled]"
+        },
+        "recommended": true,
+        "engine": "danqing-video",
+        "distilled_from": "wan-2.2-i2v-14b"
+      },
+      "runtime": {
+        "family": "wan",
+        "backends": [
+          "mlx",
+          "cuda"
+        ],
+        "overrides": {
+          "supports_guidance": false,
+          "step_distill": true,
+          "moe_boundary_step_index": 2
+        }
+      },
+      "actions": {
+        "animate": {}
+      },
+      "ui": {
+        "parameters": {
+          "seed_support": true,
+          "steps": {
+            "default": 4,
+            "min": 4,
+            "max": 4,
+            "label": "步数",
+            "note": "LightX2V 4-step distill（固定 4 步：2 高噪 + 2 低噪）",
+            "type": "int"
+          },
+          "shift": {
+            "default": 5.0,
+            "min": 5.0,
+            "max": 5.0,
+            "step": 0.5,
+            "label": "Shift",
+            "type": "float"
+          },
+          "width": {
+            "default": 704,
+            "options": [
+              480,
+              704,
+              1280
+            ],
+            "type": "enum",
+            "note": "720P 竖屏 704×1280、横屏 1280×704（VAE×patch 对齐 32）"
+          },
+          "height": {
+            "default": 1280,
+            "options": [
+              704,
+              1280
+            ],
+            "type": "enum"
+          },
+          "num_frames": {
+            "default": 81,
+            "min": 1,
+            "max": 129,
+            "step": 4,
+            "label": "帧数",
+            "note": "必须为 4n+1",
+            "type": "int"
+          },
+          "negative_prompt_support": false,
+          "resolution_presets": {
+            "default": "704x1280",
+            "options": [
+              "480x704",
+              "704x1280",
+              "1280x704"
+            ]
+          }
+        },
+        "extends": "video_dit_standard"
+      },
+      "distribution": {
+        "versions": {
+          "original": {
+            "name": {
+              "zh": "720P 蒸馏版",
+              "en": "720P Distilled"
+            },
+            "size": "115GB",
+            "default": true,
+            "repo_id": "Wan-AI/Wan2.2-I2V-A14B",
+            "local_path": "models/Video/wan-2.2-i2v-14b-distill-original",
+            "source_type": "full",
+            "wan_distill_variant": "i2v_720p",
+            "bundle_repos": [
+              {
+                "repo_id": "Wan-AI/Wan2.2-I2V-A14B",
+                "local_path": "models/Video/wan-2.2-i2v-14b-distill-original",
+                "source": "modelscope",
+                "allow_patterns": [
+                  "google/**",
+                  "models_t5*.pth",
+                  "Wan2.2_VAE.pth",
+                  "config.json",
+                  "configuration.json"
+                ]
+              },
+              {
+                "repo_id": "lightx2v/Wan2.2-Distill-Models",
+                "local_path": "models/Video/wan-2.2-i2v-14b-distill-original",
+                "source": "huggingface",
+                "allow_patterns": [
+                  "wan2.2_i2v_A14b_high_noise_lightx2v_4step_720p_260412.safetensors",
+                  "wan2.2_i2v_A14b_low_noise_lightx2v_4step_720p_260412.safetensors"
+                ]
+              }
+            ]
+          },
+          "fp8": {
+            "name": {
+              "zh": "FP8 量化版",
+              "en": "FP8 Quantized"
+            },
+            "size": "32GB",
+            "default": false,
+            "repo_id": "lightx2v/Wan2.2-Distill-Models",
+            "local_path": "models/Video/wan-2.2-i2v-14b-distill-fp8",
+            "source_type": "full",
+            "wan_distill_variant": "i2v_fp8",
+            "bundle_repos": [
+              {
+                "repo_id": "Wan-AI/Wan2.2-I2V-A14B",
+                "local_path": "models/Video/wan-2.2-i2v-14b-distill-fp8",
+                "source": "modelscope",
+                "allow_patterns": [
+                  "google/**",
+                  "models_t5*.pth",
+                  "Wan2.2_VAE.pth",
+                  "config.json",
+                  "configuration.json"
+                ]
+              },
+              {
+                "repo_id": "lightx2v/Wan2.2-Distill-Models",
+                "local_path": "models/Video/wan-2.2-i2v-14b-distill-fp8",
+                "source": "huggingface",
+                "allow_patterns": [
+                  "wan2.2_i2v_A14b_high_noise_scaled_fp8_e4m3_lightx2v_4step.safetensors",
+                  "wan2.2_i2v_A14b_low_noise_scaled_fp8_e4m3_lightx2v_4step.safetensors"
+                ]
+              }
+            ]
           }
         }
       }
@@ -6806,6 +7155,7 @@
               "en": "INT4 Quantized"
             },
             "size": "3GB",
+            "min_unified_memory_gb": 5,
             "default": false,
             "repo_id": "Wan-AI/Wan2.2-TI2V-5B",
             "local_path": "models/Video/wan-2.2-ti2v-5b-int4",
@@ -6913,6 +7263,7 @@
               "en": "XL SFT (4B)"
             },
             "size": "20GB",
+            "min_unified_memory_gb": 24,
             "default": true,
             "repo_id": "ACE-Step/Ace-Step1.5",
             "local_path": "models/Audio/acestep-v15-xl-sft",

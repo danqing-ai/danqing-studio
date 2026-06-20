@@ -1848,6 +1848,82 @@ class AudioPerChannelStatistics(nn.Module):
         self.std_of_means = mx.ones((channels,))
 
 
+class AudioDownsample(nn.Module):
+    """2x spatial downsample via stride-2 Conv2d (inverse of AudioUpsample)."""
+
+    def __init__(self, channels: int, causal: bool = False):
+        super().__init__()
+        self.conv = WrappedConv2d(channels, channels, 3, stride=2, padding=1, causal=causal)
+
+    def __call__(self, x: mx.array) -> mx.array:
+        return self.conv(x)
+
+
+class AudioDownBlock(nn.Module):
+    """Encoder down-stage: optional downsample + N resblocks."""
+
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        num_blocks: int = 3,
+        add_downsample: bool = False,
+        add_attention: bool = False,
+        causal: bool = False,
+    ):
+        super().__init__()
+        self.downsample = AudioDownsample(in_channels, causal=causal) if add_downsample else None
+        self.block = [
+            AudioResBlock(in_channels if i == 0 else out_channels, out_channels, causal=causal)
+            for i in range(num_blocks)
+        ]
+        self.attn = [AudioAttnBlock(out_channels) for _ in range(num_blocks)] if add_attention else None
+
+    def __call__(self, x: mx.array) -> mx.array:
+        if self.downsample is not None:
+            x = self.downsample(x)
+        for i, blk in enumerate(self.block):
+            x = blk(x)
+            if self.attn is not None:
+                x = self.attn[i](x)
+        return x
+
+
+class LTX23AudioEncoder(nn.Module):
+    """Audio VAE encoder: mel (B, 2, T, 64) -> latent (B, 8, T', 16)."""
+
+    def __init__(self):
+        super().__init__()
+        self.conv_in = WrappedConv2d(2, 128, 3, padding=1, causal=True)
+        self.down = [
+            AudioDownBlock(128, 256, num_blocks=3, add_downsample=True, add_attention=False, causal=True),
+            AudioDownBlock(256, 512, num_blocks=3, add_downsample=True, add_attention=False, causal=True),
+            AudioDownBlock(512, 512, num_blocks=3, add_downsample=False, add_attention=False, causal=True),
+        ]
+        self.mid = AudioMidBlock(512, causal=True, add_attention=False)
+        self.conv_out = WrappedConv2d(512, 8, 3, padding=1, causal=True)
+        self.per_channel_statistics = AudioPerChannelStatistics(128)
+
+    def encode(self, mel: mx.array) -> mx.array:
+        """mel: (B, 2, T, 64) -> latent (B, 8, T', 16)."""
+        x = mel.transpose(0, 2, 3, 1)  # (B, T, 64, 2) NHWC
+        x = self.conv_in(x)
+        for blk in self.down:
+            x = blk(x)
+        x = self.mid(x)
+        x = pixel_norm(x)
+        x = nn.silu(x)
+        x = self.conv_out(x)
+        b, h, w, c = x.shape
+        x_flat = x.reshape(b, h * w, c)
+        mean = self.per_channel_statistics.mean_of_means.reshape(1, 1, -1)
+        std = self.per_channel_statistics.std_of_means.reshape(1, 1, -1)
+        x_flat = (x_flat - mean) / (std + 1e-6)
+        if h * w * c != 8 * h * 16:
+            raise RuntimeError(f"LTX audio encoder output shape mismatch: got {(b, h, w, c)}")
+        return x_flat.reshape(b, h, 8, 16).transpose(0, 2, 1, 3)
+
+
 class LTX23AudioDecoder(nn.Module):
     """Audio VAE decoder: latent (B, 8, T, 16) -> mel (B, 2, T', 64).
 
@@ -2626,6 +2702,7 @@ _decoder_cache: dict[str, LTX23VideoDecoder] = {}
 _encoder_cache: dict[str, LTX23VideoEncoder] = {}
 _upsampler_cache: dict[str, LTX23LatentUpsampler] = {}
 _audio_decoder_cache: dict[str, LTX23AudioDecoder] = {}
+_audio_encoder_cache: dict[str, LTX23AudioEncoder] = {}
 _vocoder_cache: dict[str, LTX23Vocoder] = {}
 
 
@@ -2735,6 +2812,21 @@ def load_ltx23_latent_upsampler(bundle_root: Path, *, variant: str = "spatial_x2
     return up
 
 
+def load_ltx23_audio_encoder(bundle_root: Path, *, load_fn: Any | None = None) -> LTX23AudioEncoder:
+    key = str(bundle_root.resolve())
+    if key in _audio_encoder_cache:
+        return _audio_encoder_cache[key]
+    enc = LTX23AudioEncoder()
+    raw = _load_bundle_weights(bundle_root, "audio_vae.safetensors", "audio_vae.", load_fn)
+    weights = {k[len("encoder."):]: v for k, v in raw.items() if k.startswith("encoder.")}
+    for k, v in raw.items():
+        if k.startswith("per_channel_statistics."):
+            weights[k] = v
+    enc.load_weights(list(_remap_audio_keys(weights).items()), strict=False)
+    _audio_encoder_cache[key] = enc
+    return enc
+
+
 def load_ltx23_audio_decoder(bundle_root: Path, *, load_fn: Any | None = None) -> LTX23AudioDecoder:
     key = str(bundle_root.resolve())
     if key in _audio_decoder_cache:
@@ -2767,6 +2859,47 @@ def decode_audio_latent_to_waveform(ctx: RuntimeContext, audio_latent: mx.array,
     wav = load_ltx23_vocoder(bundle_root, load_fn=load_fn)(mel)
     _eval(wav)
     return wav
+
+
+def encode_waveform_to_mel(
+    ctx: RuntimeContext,
+    waveform: mx.array,
+    bundle_root: Path,
+) -> mx.array:
+    """Mono/stereo waveform → stereo mel ``(B, 2, T, 64)`` using vocoder MelSTFT."""
+    load_fn = getattr(ctx, "load_weights", None)
+    voc = load_ltx23_vocoder(bundle_root, load_fn=load_fn)
+    if waveform.ndim == 1:
+        waveform = waveform[None, :]
+    if waveform.ndim == 2 and int(waveform.shape[0]) <= 2 and int(waveform.shape[0]) != int(waveform.shape[-1]):
+        # (C, T)
+        ch0 = waveform[0:1, :]
+        ch1 = waveform[1:2, :] if waveform.shape[0] > 1 else ch0
+    else:
+        ch0 = waveform.reshape(1, -1)
+        ch1 = ch0
+    mel0 = voc.mel_stft(ch0)
+    mel1 = voc.mel_stft(ch1)
+    t = min(int(mel0.shape[1]), int(mel1.shape[1]))
+    mel0 = mel0[:, :t, :]
+    mel1 = mel1[:, :t, :]
+    mel = mx.stack([mel0[0], mel1[0]], axis=0)
+    mel = mel[None, :, :, :]
+    _eval(mel)
+    return mel
+
+
+def encode_waveform_to_audio_latent(
+    ctx: RuntimeContext,
+    waveform: mx.array,
+    bundle_root: Path,
+) -> mx.array:
+    """Waveform → audio VAE latent ``(B, 8, T', 16)``."""
+    mel = encode_waveform_to_mel(ctx, waveform, bundle_root)
+    load_fn = getattr(ctx, "load_weights", None)
+    latent = load_ltx23_audio_encoder(bundle_root, load_fn=load_fn).encode(mel)
+    _eval(latent)
+    return latent
 
 
 def _save_waveform(waveform: mx.array, path: str, sample_rate: int = 48000) -> None:

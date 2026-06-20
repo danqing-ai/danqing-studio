@@ -192,7 +192,6 @@
       </div>
 
       <div class="image-composer__toolbar-right">
-        <!-- Batch count -->
         <DqSelect
           v-model="localBatchCount"
           size="small"
@@ -206,17 +205,19 @@
           />
         </DqSelect>
 
-        <!-- Generate button -->
-        <DqButton
-          type="primary"
-          size="sm"
-          class="image-composer__generate"
-          :disabled="generating || !canGenerate"
-          @click="$emit('generate')"
-        >
-          <DqIcon size="16"><MagicStick /></DqIcon>
-          <span>{{ generating ? $t('create.generating') : $t('studio.generate') }}</span>
-        </DqButton>
+        <ComposerIconTip :content="composerBusy ? $t('create.composerQueueHint') : $t('create.composerGenerateHint')">
+          <DqButton
+            type="primary"
+            size="sm"
+            class="image-composer__generate"
+            :disabled="!canGenerate || submitting"
+            :loading="submitting"
+            @click="$emit('generate')"
+          >
+            <DqIcon size="16"><MagicStick /></DqIcon>
+            <span>{{ primaryActionLabel }}</span>
+          </DqButton>
+        </ComposerIconTip>
       </div>
     </div>
 
@@ -468,7 +469,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, withDefaults } from 'vue';
 import StudioComposerAdvancedDrawer from './StudioComposerAdvancedDrawer.vue';
 import ComposerPromptApplyStrip from './ComposerPromptApplyStrip.vue';
 import ComposerSuccessorHintStrip from './ComposerSuccessorHintStrip.vue';
@@ -495,12 +496,14 @@ import { assetIdFromGalleryPath } from '@/utils/copilotHandoff';
 import { $tt } from '@/utils/i18n';
 import { formatResolutionOptionLabel, img2imgUsesStrength, normalizeParamsDef } from '@/utils/registryParamSchema';
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   modelValue: string;
   title?: string;
   model: string;
   size: string;
   batchCount: number;
+  composerBusy?: boolean;
+  submitting?: boolean;
   generating: boolean;
   canGenerate: boolean;
   modelOptions: Array<{ label: string; value: string; disabled?: boolean; commercialUseAllowed?: boolean }>;
@@ -542,7 +545,10 @@ const props = defineProps<{
   collapsed?: boolean;
   promptApplyPreview?: string | null;
   successorHint?: { successorId: string; successorName: string } | null;
-}>();
+}>(), {
+  composerBusy: false,
+  submitting: false,
+});
 
 const emit = defineEmits<{
   (e: 'update:modelValue', value: string): void;
@@ -573,6 +579,12 @@ const emit = defineEmits<{
 }>();
 
 const { t: $t } = useI18n();
+
+const primaryActionLabel = computed(() => {
+  if (props.composerBusy) return $t('create.addToBatch');
+  if (props.generating) return $t('create.generating');
+  return $t('studio.generate');
+});
 
 const referenceAssetId = computed(() => {
   if (!props.referenceImage?.path) return null;

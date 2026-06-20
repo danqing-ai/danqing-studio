@@ -109,7 +109,6 @@ def _encode_dataset_to_cache(
     exec_ctx: ExecutionContext,
     class_prompt: str | None,
     caption_mode: str = "",
-    face_anchor: str = "",
 ) -> int:
     cache.begin(
         dataset_id=dataset_id,
@@ -119,7 +118,6 @@ def _encode_dataset_to_cache(
         family="flux1",
         tensor_keys=["latent", "t5", "clip"],
         caption_mode=caption_mode,
-        face_anchor=face_anchor,
     )
     _log(exec_ctx, "info", f"Encoding {len(pairs)} images × {num_augmentations} augmentations …")
     sample_idx = 0
@@ -403,16 +401,10 @@ def run_flux_dreambooth_training(
     if len(pairs) < 3:
         raise RuntimeError("Dataset must contain at least 3 images")
     _log(exec_ctx, "info", f"DreamBooth caption: {training_caption!r}")
+    dataset_meta = _dataset_meta(project_root, request.dataset_id)
+    trigger_word = str(dataset_meta.get("trigger_word") or "").strip()
     resolved_caption_mode = "per_image" if len({str(p or "").strip() for _, p in pairs}) > 1 else "unified"
     _log(exec_ctx, "info", f"Caption mode: {resolved_caption_mode} ({len(pairs)} images)")
-
-    # Face anchor: consistent facial-feature descriptor injected into a fraction of captions
-    ds_meta = _dataset_meta(project_root, request.dataset_id)
-    face_anchor = (ds_meta.get("face_anchor") or "").strip()
-    if face_anchor:
-        always = len(pairs) <= 5
-        injected = len(pairs) if always else sum(1 for i in range(len(pairs)) if i % 2 == 0)
-        _log(exec_ctx, "info", f"Face anchor: {face_anchor!r} (injected into {injected}/{len(pairs)} captions)")
 
     config = get_config_class("flux1")()
     _log(exec_ctx, "info", "Loading VAE encoder and text encoders …")
@@ -426,8 +418,6 @@ def run_flux_dreambooth_training(
     )
     latent_cache = LatentCache(work_dir)
     class_prompt = train_runtime.class_prompt
-    if train_runtime.prior_loss_weight > 0 and not class_prompt:
-        class_prompt = "a photo"
     if latent_cache.is_valid(
         dataset_id=request.dataset_id,
         n_pairs=len(pairs),
@@ -436,7 +426,6 @@ def run_flux_dreambooth_training(
         family="flux1",
         n_samples=len(pairs) * train_runtime.num_augmentations,
         caption_mode=resolved_caption_mode,
-        face_anchor=face_anchor,
     ):
         _log(exec_ctx, "info", "Reusing cached latents from work_dir/latent_cache …")
         n_samples = len(pairs) * train_runtime.num_augmentations
@@ -456,7 +445,6 @@ def run_flux_dreambooth_training(
             exec_ctx=exec_ctx,
             class_prompt=class_prompt if train_runtime.prior_loss_weight > 0 else None,
             caption_mode=resolved_caption_mode,
-            face_anchor=face_anchor,
         )
     del vae_enc
     text_encoder.release_weights()
@@ -641,7 +629,7 @@ def run_flux_dreambooth_training(
         "lora_rank": train_runtime.lora_rank,
         "base_model": base_model_id,
         "alpha": train_runtime.lora_alpha,
-        "trigger_word": "",
+        "trigger_word": trigger_word,
         "training_caption": training_caption,
     }
     (dest_dir / "lora_config.json").write_text(json.dumps(lora_config, indent=2), encoding="utf-8")
@@ -653,6 +641,7 @@ def run_flux_dreambooth_training(
             name=output_name,
             base_model=base_model_id,
             local_path=f"models/Lora/{slug}",
+            trigger_word=trigger_word,
             lora_rank=train_runtime.lora_rank,
             task_id=exec_ctx.task_id,
         )

@@ -19,6 +19,7 @@ from backend.engine.contracts.video_runtime_contracts import (
     video_apply_i2v_conditioning,
     video_apply_ltx_distilled_scheduler_timesteps,
     video_apply_hunyuan_step_distill_scheduler_timesteps,
+    video_apply_wan_step_distill_scheduler_timesteps,
     video_cfg_negative_prompt,
     video_encoder_type,
     video_i2v_encode_failure_message,
@@ -31,6 +32,7 @@ from backend.engine.contracts.video_runtime_contracts import (
     video_t5_max_seq_len,
     video_uses_ltx_distilled_timesteps,
     video_uses_hunyuan_step_distill_timesteps,
+    video_uses_wan_step_distill_timesteps,
     video_validate_generate_geometry,
     wan_t5_bundle_paths,
 )
@@ -51,6 +53,7 @@ __all__ = [
     "video_apply_i2v_conditioning",
     "video_apply_ltx_distilled_scheduler_timesteps",
     "video_apply_hunyuan_step_distill_scheduler_timesteps",
+    "video_apply_wan_step_distill_scheduler_timesteps",
     "video_cfg_negative_prompt",
     "video_encoder_type",
     "video_i2v_encode_failure_message",
@@ -63,6 +66,7 @@ __all__ = [
     "video_t5_max_seq_len",
     "video_uses_ltx_distilled_timesteps",
     "video_uses_hunyuan_step_distill_timesteps",
+    "video_uses_wan_step_distill_timesteps",
     "video_validate_generate_geometry",
     "wan_t5_bundle_paths",
 ]

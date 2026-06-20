@@ -29,16 +29,6 @@ def run_job(job: dict[str, Any]) -> dict[str, Any]:
         )
         return {"captions": captions}
 
-    if mode == "face_anchor":
-        from backend.engine.training.lora_auto_caption import generate_face_anchor
-
-        face_anchor = generate_face_anchor(
-            image_paths,
-            model_dir,
-            subject_name=str(job.get("subject_name") or ""),
-        )
-        return {"face_anchor": face_anchor}
-
     from backend.engine.llm.vision import analyze_image_files_batch
 
     instruction = str(job.get("instruction") or "").strip()

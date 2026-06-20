@@ -247,7 +247,7 @@ def create_dataset(
         "name": name.strip() or dataset_id,
         "kind": kind,
         "trigger_word": trigger_word.strip(),
-        "default_prompt": (default_prompt.strip() or (name.strip() if kind == "concept" else "")),
+        "default_prompt": default_prompt.strip(),
         "nsfw": nsfw,
         "created_at": _now_iso(),
         "updated_at": _now_iso(),
@@ -339,26 +339,6 @@ def update_dataset_captions(
     return get_dataset(workspace_root, dataset_id)
 
 
-def update_dataset_face_anchor(
-    workspace_root: Path,
-    dataset_id: str,
-    face_anchor: str,
-) -> None:
-    """Write ``face_anchor`` into dataset meta.json (used by VLM auto-caption)."""
-    path = _dataset_dir(datasets_root(workspace_root), dataset_id)
-    meta_path = path / "meta.json"
-    if not meta_path.is_file():
-        raise FileNotFoundError(f"Dataset {dataset_id!r} not found")
-    meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    fa = (face_anchor or "").strip()
-    if fa:
-        meta["face_anchor"] = fa
-    else:
-        meta.pop("face_anchor", None)
-    meta["updated_at"] = _now_iso()
-    meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
 def remove_dataset_image(workspace_root: Path, dataset_id: str, file_rel: str) -> dict[str, Any]:
     file_rel = _validate_dataset_file_rel(file_rel)
     path = _dataset_dir(datasets_root(workspace_root), dataset_id)
@@ -414,8 +394,6 @@ def import_dataset_from_assets(
         raise FileNotFoundError(f"Dataset {dataset_id!r} not found")
     meta = json.loads((path / "meta.json").read_text(encoding="utf-8"))
     fallback = (default_prompt if default_prompt is not None else meta.get("default_prompt") or "").strip()
-    if not fallback and meta.get("trigger_word"):
-        fallback = f"A photo of {meta['trigger_word']}"
     caps = asset_captions or {}
     for raw in asset_ids:
         aid = _normalize_asset_id(raw)
@@ -428,6 +406,10 @@ def import_dataset_from_assets(
         if suffix not in {".png", ".jpg", ".jpeg", ".webp"}:
             raise ValueError(f"Asset {aid!r} is not an image ({suffix or 'unknown'})")
         cap = caps.get(raw) or caps.get(aid) or caps.get(f"asset:{aid}") or fallback
+        if not str(cap or "").strip():
+            raise ValueError(
+                f"Asset {aid!r}: no caption. Set dataset default_prompt or provide asset_captions."
+            )
         files.append((src.name, src.read_bytes()))
         prompts.append(cap)
     if not files:
@@ -514,47 +496,32 @@ def _dataset_meta(workspace_root: Path, dataset_id: str) -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def _ensure_trigger_in_caption(caption: str, trigger: str) -> str:
+def _caption_contains_trigger(caption: str, trigger: str) -> bool:
     trigger = (trigger or "").strip()
     if not trigger:
-        return caption
-    if trigger.lower() in caption.lower():
-        return caption
-    base = caption.strip()
-    if not base:
-        return trigger
-    return f"{base}, {trigger}"
+        return True
+    return trigger.lower() in str(caption or "").lower()
 
 
-def _inject_face_anchor(caption: str, face_anchor: str) -> str:
-    """Inject face-anchor descriptors after the identity trigger word.
-
-    The face anchor provides consistent facial feature information across all
-    training images, which is critical for face-identity LoRA learning.
-    Without it, per-image captions describe only variable elements (clothing,
-    scene, pose) and the model cannot learn to associate the trigger name with
-    specific facial features.
-
-    Example:
-        caption = "杨紫，特写，浅粉色吊带裙，珍珠耳环"
-        face_anchor = "鹅蛋脸，大眼，白皙皮肤，精致五官"
-        result = "杨紫，鹅蛋脸，大眼，白皙皮肤，精致五官，特写，浅粉色吊带裙，珍珠耳环"
-    """
-    fa = (face_anchor or "").strip().rstrip("，,。.")
-    if not fa:
-        return caption
-    cap = caption.strip()
-    if not cap:
-        return fa
-    # Insert after the first comma-separated segment (typically the identity trigger)
-    sep_idx = -1
-    for sep in ("，", ","):
-        idx = cap.find(sep)
-        if idx >= 0 and (sep_idx < 0 or idx < sep_idx):
-            sep_idx = idx + len(sep)
-    if sep_idx > 0:
-        return f"{cap[:sep_idx]} {fa}，{cap[sep_idx:].lstrip('，, ')}"
-    return f"{cap}，{fa}"
+def _validate_concept_trigger_captions(
+    pairs: list[tuple[Path, str]],
+    *,
+    dataset_meta: dict[str, Any],
+) -> None:
+    if str(dataset_meta.get("kind") or "concept").strip().lower() != "concept":
+        return
+    trigger = (dataset_meta.get("trigger_word") or "").strip()
+    if not trigger:
+        raise RuntimeError("Concept LoRA training requires trigger_word; set it on the dataset first.")
+    missing = [path.name for path, caption in pairs if not _caption_contains_trigger(caption, trigger)]
+    if missing:
+        preview = ", ".join(missing[:5])
+        more = "" if len(missing) <= 5 else f" (+{len(missing) - 5} more)"
+        raise RuntimeError(
+            f"Concept LoRA training captions must visibly include trigger_word {trigger!r}; "
+            f"{len(missing)}/{len(pairs)} caption(s) are missing it: {preview}{more}. "
+            "Run VLM auto-caption again or edit captions before training."
+        )
 
 
 def resolve_dreambooth_caption(
@@ -564,22 +531,14 @@ def resolve_dreambooth_caption(
     dataset_meta: dict[str, Any],
 ) -> str:
     """Single caption for DreamBooth — must match inference / progress preview prompt."""
-    trigger = (dataset_meta.get("trigger_word") or "").strip()
     unified = (progress_prompt or "").strip()
     if not unified:
         unified = (dataset_meta.get("default_prompt") or "").strip()
-    if not unified and trigger:
-        unified = trigger
     if not unified:
-        from collections import Counter
-
-        prompts = [str(p or "").strip() for _, p in pairs if str(p or "").strip()]
-        if prompts:
-            unified = Counter(prompts).most_common(1)[0][0]
-    if not unified:
-        unified = "a photo"
-    if trigger:
-        unified = _ensure_trigger_in_caption(unified, trigger)
+        raise RuntimeError(
+            "DreamBooth training requires progress_prompt or dataset default_prompt; "
+            "set one in the training form or dataset settings."
+        )
     return unified
 
 
@@ -589,35 +548,22 @@ def resolve_per_image_captions(
     progress_prompt: str,
     dataset_meta: dict[str, Any],
 ) -> list[tuple[Path, str]]:
-    """Per-image captions with optional trigger word injection (face / concept LoRA).
-
-    When ``face_anchor`` is present in *dataset_meta*, the anchor text is
-    injected into a fraction of captions (``injection_ratio``, default 0.5)
-    rather than all of them.  This prevents *portrait collapse* — where the
-    model learns to generate only frontal portraits — by leaving the remaining
-    captions to describe diverse scenes, poses, and clothing.  The trigger word
-    alone is sufficient for identity binding; the face anchor reinforces facial
-    features on a subset.
-
-    For very small datasets (≤ 5 images), face_anchor is always injected to
-    guarantee enough identity signal.
-    """
-    trigger = (dataset_meta.get("trigger_word") or "").strip()
-    face_anchor = (dataset_meta.get("face_anchor") or "").strip()
+    """Per-image captions exactly as stored; blanks may use progress/default prompt only."""
     fallback = (progress_prompt or "").strip() or (dataset_meta.get("default_prompt") or "").strip()
-    if not fallback and trigger:
-        fallback = trigger
-    injection_ratio = float(dataset_meta.get("face_anchor_ratio", 0.5))
-    n = len(pairs)
-    always_inject = n <= 5
     out: list[tuple[Path, str]] = []
-    for idx, (path, cap) in enumerate(pairs):
-        text = str(cap or "").strip() or fallback or "a photo"
-        if trigger:
-            text = _ensure_trigger_in_caption(text, trigger)
-        if face_anchor and (always_inject or idx % 2 == 0 or injection_ratio >= 1.0):
-            text = _inject_face_anchor(text, face_anchor)
+    missing: list[str] = []
+    for path, cap in pairs:
+        text = str(cap or "").strip() or fallback
+        if not text:
+            missing.append(path.name)
         out.append((path, text))
+    if missing:
+        preview = ", ".join(missing[:5])
+        more = "" if len(missing) <= 5 else f" (+{len(missing) - 5} more)"
+        raise RuntimeError(
+            f"{len(missing)}/{len(pairs)} training caption(s) are empty: {preview}{more}. "
+            "Fill per-image captions or set progress_prompt / dataset default_prompt."
+        )
     return out
 
 
@@ -669,12 +615,16 @@ def load_training_pairs_unified(
     else:
         mode = raw_mode
     if mode == "per_image":
-        return resolve_per_image_captions(
+        pairs = resolve_per_image_captions(
             pairs_raw,
             progress_prompt=progress_prompt,
             dataset_meta=meta,
-        ), preview_caption
-    return [(path, preview_caption) for path, _ in pairs_raw], preview_caption
+        )
+        _validate_concept_trigger_captions(pairs, dataset_meta=meta)
+        return pairs, preview_caption
+    pairs = [(path, preview_caption) for path, _ in pairs_raw]
+    _validate_concept_trigger_captions(pairs, dataset_meta=meta)
+    return pairs, preview_caption
 
 
 def resize_rgb_image(

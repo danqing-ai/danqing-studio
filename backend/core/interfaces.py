@@ -78,6 +78,7 @@ class AppSettings:
     mlx_memory_limit: int = 120
     model_cache_ttl_minutes: int = 30
     queue_image_first: bool = False
+    quick_setup_completed: bool = False
     custom_workspace_dir: str = ""
 
 

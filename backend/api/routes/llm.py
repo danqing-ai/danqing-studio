@@ -17,6 +17,8 @@ from backend.core.contracts import (
     EnhanceRequest,
     ImageToPromptRequest,
     ImageToPromptResponse,
+    LongVideoStoryboardRequest,
+    LongVideoStoryboardResponse,
     VisualAnalyzeRequest,
     VisualAnalyzeResponse,
 )
@@ -89,6 +91,23 @@ async def enhance_prompt(
 
     result = await asyncio.to_thread(service.enhance_prompt, request)
     return result
+
+
+@router.post("/api/chat/long-video-storyboard")
+async def long_video_storyboard(
+    request: LongVideoStoryboardRequest,
+    service: LLMService = Depends(get_llm_service),
+):
+    """Multi-round long-video storyboard (Plan → Expand → optional Continuity)."""
+    if not service.is_available():
+        raise HTTPException(
+            status_code=503,
+            detail="LLM model not installed. Install via Models page.",
+        )
+    try:
+        return await asyncio.to_thread(service.generate_long_video_storyboard, request)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.post("/api/chat/lyrics")

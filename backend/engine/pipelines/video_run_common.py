@@ -40,6 +40,7 @@ from backend.engine.contracts import (
     video_apply_i2v_conditioning,
     video_apply_ltx_distilled_scheduler_timesteps,
     video_apply_hunyuan_step_distill_scheduler_timesteps,
+    video_apply_wan_step_distill_scheduler_timesteps,
     video_cfg_negative_prompt,
     video_encoder_type,
     video_i2v_encode_failure_message,
@@ -52,6 +53,7 @@ from backend.engine.contracts import (
     video_t5_max_seq_len,
     video_uses_ltx_distilled_timesteps,
     video_uses_hunyuan_step_distill_timesteps,
+    video_uses_wan_step_distill_timesteps,
     video_validate_generate_geometry,
     wan_t5_bundle_paths,
 )
@@ -194,6 +196,15 @@ def apply_video_registry_config_overrides(pipeline, entry: Any, config: Any) -> 
     sd = _registry_scalar_default_fn(entry, "step_distill", None)
     if sd is not None:
         config.step_distill = bool(sd)
+    lvs = _registry_scalar_default_fn(entry, "long_video_support", None)
+    if lvs is not None:
+        config.supports_long_video = bool(lvs)
+    moe_boundary = _registry_scalar_default_fn(entry, "moe_boundary_step_index", None)
+    if moe_boundary is not None:
+        config.moe_boundary_step_index = int(moe_boundary)
+    distill_ts = _registry_scalar_default_fn(entry, "wan_distill_timesteps", None)
+    if isinstance(distill_ts, (list, tuple)) and distill_ts:
+        config.wan_distill_timesteps = tuple(float(x) for x in distill_ts)
     vst = _registry_scalar_default_fn(entry, "vae_spatial_tiling", None)
     if vst is not None:
         config.vae_spatial_tiling = bool(vst)
@@ -371,6 +382,21 @@ def create_timesteps_for_video(pipeline,
             scheduler,
             steps=steps,
         )
+    elif video_uses_wan_step_distill_timesteps(
+        config, step_distill=step_distill, scheduler_default=scheduler_default,
+    ):
+        timesteps = video_apply_wan_step_distill_scheduler_timesteps(
+            pipeline.ctx,
+            scheduler,
+            steps=steps,
+            config=config,
+        )
+        if on_log is not None:
+            on_log(
+                "info",
+                f"Wan step-distill schedule: steps={steps}, "
+                f"boundary_step_index={getattr(config, 'moe_boundary_step_index', 2)}",
+            )
     else:
         sched_kwargs: dict[str, Any] = {}
         shift_default = _registry_scalar_default_fn(entry, "shift", None)
@@ -573,24 +599,57 @@ def execute_family_video_generator(pipeline,
         return None
 
     prompt = (request.prompt or "").strip()
-    if not prompt:
+    if not prompt and not (
+        isinstance(request, VideoGenerationRequest)
+        and request.long_video is not None
+        and (request.long_video.opening_prompt or "").strip()
+    ):
         raise RuntimeError("LTX 2.3 generation requires a non-empty prompt")
 
-    result_path = generator.generate_and_save(
-        prompt=prompt,
-        output_path=out_path,
-        width=w,
-        height=h,
-        num_frames=num_frames,
-        fps=float(fps),
-        seed=seed,
-        steps=steps,
-        guidance=guidance,
-        step_distill=step_distill,
-        image_path=image_path,
-        on_log=on_log,
-        on_progress=on_progress,
-    )
+    long_spec = getattr(request, "long_video", None) if not is_edit else None
+    lv_fps = float(fps)
+    if long_spec is not None:
+        if not getattr(config, "supports_long_video", False):
+            raise RuntimeError(
+                f"Model {model_key!r} does not support long_video generation "
+                "(registry long_video_support=false)"
+            )
+        from backend.engine.families.ltx.ltx_long_video import run_ltx_long_video
+
+        lv_fps = float(request.fps) if getattr(request, "fps", None) else 24.0
+        max_frames = int(getattr(config, "ltx_long_video_max_frames", 257) or 257)
+        result_path = run_ltx_long_video(
+            generator,
+            request=request,
+            spec=long_spec,
+            output_path=out_path,
+            width=w,
+            height=h,
+            fps=lv_fps,
+            seed=seed,
+            steps=steps,
+            guidance=guidance,
+            step_distill=step_distill,
+            max_frames=max_frames,
+            on_log=on_log,
+            on_progress=on_progress,
+        )
+    else:
+        result_path = generator.generate_and_save(
+            prompt=prompt,
+            output_path=out_path,
+            width=w,
+            height=h,
+            num_frames=num_frames,
+            fps=float(fps),
+            seed=seed,
+            steps=steps,
+            guidance=guidance,
+            step_distill=step_distill,
+            image_path=image_path,
+            on_log=on_log,
+            on_progress=on_progress,
+        )
 
     if ctx_exec.cancel_token.is_cancelled():
         return None
@@ -613,6 +672,9 @@ def execute_family_video_generator(pipeline,
         "video_pipeline_shape": "family_generator",
         "step_distill": step_distill,
     }
+    if long_spec is not None:
+        metadata["long_video"] = long_spec.model_dump()
+        metadata["fps"] = int(lv_fps)
     metadata.update(work_title_metadata(getattr(request, "title", None)))
     return result_path, metadata
 
@@ -810,13 +872,14 @@ def release_video_t5_after_encode(pipeline,
     config: Any,
     encoder_type: str,
 ) -> None:
-    """Drop T5 weights before loading DiT so ~10GB headroom is available."""
-    if encoder_type != "t5" or pipeline._t5 is None:
-        return
+    """Drop text-encoder weights before loading DiT (T5 pipeline cache or Wan UMT5 MLX cache)."""
     if not bool(getattr(config, "release_t5_after_encode", False)):
         return
-    pipeline._t5.release_weights()
-    pipeline._t5 = None
+    if encoder_type == "t5" and pipeline._t5 is not None:
+        pipeline._t5.release_weights()
+        pipeline._t5 = None
+    elif encoder_type == "wan_umt5" and hasattr(pipeline.ctx, "clear_cache"):
+        pipeline.ctx.clear_cache()
 
 def encode_t5(pipeline, text: str) -> Any:
     """T5 文本编码（视频模型目前统一使用 T5）；权重来自当前请求的 bundle，不走 Hub。"""

@@ -3,7 +3,10 @@ import { computed, onMounted, ref, watch } from 'vue';
 import type { ThemeId } from '@/utils/i18n';
 import { $mn } from '@/utils/i18n';
 import { canvasAutoAddEnabled, setCanvasAutoAdd } from '@/composables/useCanvasStore';
+import QuickSetupPanel from '@/components/settings/QuickSetupPanel.vue';
 import { useRegistryStore } from '@/stores/registry';
+
+const quickSetupRef = ref<InstanceType<typeof QuickSetupPanel> | null>(null);
 
 const canvasAutoAddImage = ref(canvasAutoAddEnabled('image'));
 const canvasAutoAddVideo = ref(canvasAutoAddEnabled('video'));
@@ -28,6 +31,7 @@ type SectionId =
   | 'general'
   | 'performance'
   | 'studio'
+  | 'quicksetup'
   | 'workspace'
   | 'integrations'
   | 'maintenance'
@@ -54,6 +58,14 @@ const emit = defineEmits<{
   pickWorkspace: [];
   restoreModelRegistry: [];
 }>();
+
+function onQuickSetupPatch(patch: Record<string, unknown>) {
+  Object.assign(props.settings, patch);
+}
+
+function applyQuickSetupDefaults() {
+  void quickSetupRef.value?.applyRecommendedDefaults();
+}
 
 const registryStore = useRegistryStore();
 
@@ -301,6 +313,10 @@ const vlmModelOptions = computed(() => {
       </section>
     </template>
 
+    <template v-if="props.activeSection === 'quicksetup'">
+      <QuickSetupPanel ref="quickSetupRef" @patch-settings="onQuickSetupPatch" />
+    </template>
+
     <!-- Workspace -->
     <template v-if="props.activeSection === 'workspace'">
       <section class="settings-group-block">
@@ -423,7 +439,18 @@ const vlmModelOptions = computed(() => {
     </template>
 
     <!-- Save row -->
-    <div class="settings-system-save-row" v-if="props.activeSection !== 'systeminfo' && props.activeSection !== 'maintenance'">
+    <div class="settings-system-save-row" v-if="props.activeSection === 'quicksetup'">
+      <DqButton
+        type="primary"
+        class="settings-system-save-btn"
+        :loading="quickSetupRef?.applyingDefaults"
+        @click="applyQuickSetupDefaults"
+      >
+        <DqIcon><check /></DqIcon>
+        {{ $t('settings.quickSetupApplyDefaults') }}
+      </DqButton>
+    </div>
+    <div class="settings-system-save-row" v-else-if="props.activeSection !== 'systeminfo' && props.activeSection !== 'maintenance'">
       <DqButton type="primary" class="settings-system-save-btn" @click="emit('save')">
         <DqIcon><check /></DqIcon>
         {{ $t('common.save') }}

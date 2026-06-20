@@ -14,6 +14,8 @@ _ENGINE_TEST_MODULES = (
     "tests.test_catalog_unit",
     "tests.test_observability_unit",
     "tests.test_engine_sessions_unit",
+    "tests.setup_unit",
+    "tests.storyboard_unit",
 )
 
 

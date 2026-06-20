@@ -49,41 +49,26 @@ function progressColor(percent: number) {
 </script>
 
 <template>
-  <div class="settings-system-sidebar">
-    <DqInspectorStack aria-label="system-sidebar">
-      <DqInspectorSection :title="$t('settings.systemInfo')">
-        <DqInspectorSectionBody v-if="systemInfo">
-          <div class="system-info-grid system-info-grid--inspector">
-            <div class="info-item">
-              <div class="info-icon">
-                <DqIcon class="settings-info-icon-lg"><monitor /></DqIcon>
-              </div>
-              <div class="info-content">
-                <div class="info-label">{{ $t('settings.platform') }}</div>
-                <div class="info-value">{{ systemInfo.platform }} {{ systemInfo.architecture }}</div>
-              </div>
-            </div>
-            <div class="info-item">
-              <div class="info-icon">
-                <DqIcon class="settings-info-icon-lg"><cpu /></DqIcon>
-              </div>
-              <div class="info-content">
-                <div class="info-label">{{ $t('settings.memory') }}</div>
-                <div class="info-value">{{ systemInfo.memory_gb?.toFixed(1) }} GB</div>
-              </div>
-            </div>
-            <div class="info-item">
-              <div class="info-icon">
-                <DqIcon class="settings-info-icon-lg"><document /></DqIcon>
-              </div>
-              <div class="info-content">
-                <div class="info-label">{{ $t('settings.pythonVersion') }}</div>
-                <div class="info-value">{{ systemInfo.python_version }}</div>
-              </div>
-            </div>
-          </div>
-          <div v-if="systemInfo.dependencies" class="settings-dependencies settings-dependencies--inspector">
-            <div class="settings-dependencies-title">{{ $t('settings.dependencies') }}</div>
+  <div class="settings-system-form">
+    <section class="settings-group-block">
+      <h2 class="settings-section-title">{{ $t('settings.systeminfo') }}</h2>
+      <p class="settings-section-desc">{{ $t('settings.systeminfoDesc') }}</p>
+
+      <DqPrefPane
+        v-if="systemInfo"
+        class="settings-grouped-form settings-pref-pane-form settings-pref-pane-form--system"
+      >
+        <DqPrefRow :label="$t('settings.platform')">
+          <span>{{ systemInfo.platform }} {{ systemInfo.architecture }}</span>
+        </DqPrefRow>
+        <DqPrefRow :label="$t('settings.memory')">
+          <span>{{ systemInfo.memory_gb?.toFixed(1) }} GB</span>
+        </DqPrefRow>
+        <DqPrefRow :label="$t('settings.pythonVersion')">
+          <span>{{ systemInfo.python_version }}</span>
+        </DqPrefRow>
+        <DqPrefRow v-if="systemInfo.dependencies" :label="$t('settings.dependencies')" stacked>
+          <div class="settings-stacked-control">
             <div class="settings-dep-tags">
               <DqTag
                 v-for="(version, name) in systemInfo.dependencies"
@@ -96,102 +81,99 @@ function progressColor(percent: number) {
               </DqTag>
             </div>
           </div>
-        </DqInspectorSectionBody>
-      </DqInspectorSection>
+        </DqPrefRow>
+      </DqPrefPane>
 
-      <DqInspectorSection :title="$t('settings.modelCacheTitle')">
-        <template #actions>
-          <DqIconButton type="text" size="sm" :label="$t('gallery.refresh')" :disabled="cacheLoading" @click="emit('refreshCache')">
-            <DqIcon><refresh /></DqIcon>
-          </DqIconButton>
-        </template>
-        <DqInspectorSectionBody>
-          <DqInspectorCallout v-if="cacheError" variant="warn" :title="cacheError" />
-          <template v-else>
-            <p v-if="cacheStatus.cache" class="dq-inspector-cache-summary">
-              {{
-                $tt('settings.modelCacheTotal', {
-                  count: cacheStatus.cache.cached_models ?? 0,
-                  total: cacheStatus.cache.total_gb ?? 0,
-                  limit: cacheStatus.cache.limit_gb ?? 0,
-                })
-              }}
-            </p>
-            <DqInspectorList v-if="cacheStatus.cache?.models?.length">
-              <DqInspectorListItem
-                v-for="m in cacheStatus.cache.models"
-                :key="m.key"
-                class="dq-inspector-cache-item"
-              >
-                <div class="cache-item-icon">
-                  <DqIcon><cpu /></DqIcon>
-                </div>
-                <div class="cache-item-info">
-                  <div class="cache-item-name">{{ m.key }}</div>
-                  <div class="cache-item-meta">
-                    {{ $tt('settings.modelCacheIdle', { minutes: m.idle_minutes }) }}
-                  </div>
-                </div>
-                <div class="cache-item-size">{{ m.size_gb }} GB</div>
-              </DqInspectorListItem>
-            </DqInspectorList>
-            <DqInspectorEmpty v-else>
-              {{ $t('settings.modelCacheEmpty') }}
-            </DqInspectorEmpty>
-          </template>
-        </DqInspectorSectionBody>
-      </DqInspectorSection>
-
-      <DqInspectorSection :title="$t('settings.resourceMonitor')" last>
-        <p class="dq-inspector-monitor-sub">
-          {{ $t('settings.realtime') }}
+      <h3 class="settings-group-block-title settings-system-subsection-title">
+        {{ $t('settings.modelCacheTitle') }}
+      </h3>
+      <div class="settings-header-actions">
+        <p v-if="cacheError" class="settings-section-desc settings-section-desc--compact">
+          {{ cacheError }}
         </p>
-        <DqInspectorSectionBody>
-          <div class="dq-inspector-meter">
-            <DqInspectorKv :label="$t('settings.cpu')" :value="`${monitorData.cpu_percent}%`" />
-            <DqProgress
-              class="dq-inspector-progress"
-              :percentage="monitorData.cpu_percent"
-              :color="progressColor(monitorData.cpu_percent)"
-              :show-text="false"
-              :stroke-width="6"
-            />
-          </div>
+        <p v-else-if="cacheStatus.cache" class="settings-section-desc settings-section-desc--compact">
+          {{
+            $tt('settings.modelCacheTotal', {
+              count: cacheStatus.cache.cached_models ?? 0,
+              total: cacheStatus.cache.total_gb ?? 0,
+              limit: cacheStatus.cache.limit_gb ?? 0,
+            })
+          }}
+        </p>
+        <DqButton
+          size="sm"
+          class="settings-workspace-pick-btn"
+          :loading="cacheLoading"
+          @click="emit('refreshCache')"
+        >
+          {{ $t('gallery.refresh') }}
+        </DqButton>
+      </div>
+      <DqPrefPane class="settings-grouped-form settings-pref-pane-form settings-pref-pane-form--system">
+        <DqPrefRow
+          v-for="m in cacheStatus.cache?.models || []"
+          :key="m.key"
+          :label="m.key"
+        >
+          <span>
+            {{ m.size_gb }} GB · {{ $tt('settings.modelCacheIdle', { minutes: m.idle_minutes }) }}
+          </span>
+        </DqPrefRow>
 
-          <div class="dq-inspector-meter">
-            <DqInspectorKv
-              :label="$t('settings.memoryLabel')"
-              :value="`${monitorData.memory.used_gb} / ${monitorData.memory.total_gb} GB`"
-            />
-            <DqProgress
-              class="dq-inspector-progress"
-              :percentage="monitorData.memory.percent"
-              :color="progressColor(monitorData.memory.percent)"
-              :show-text="false"
-              :stroke-width="6"
-            />
-          </div>
+        <DqPrefRow v-if="!cacheError && !cacheStatus.cache?.models?.length" no-label>
+          <span class="settings-form-hint">{{ $t('settings.modelCacheEmpty') }}</span>
+        </DqPrefRow>
+      </DqPrefPane>
 
-          <div v-if="monitorData.gpu" class="dq-inspector-meter dq-inspector-meter--stacked">
-            <DqInspectorKv
-              v-if="monitorData.gpu.model"
-              :label="$t('settings.gpu')"
-              :value="monitorData.gpu.model"
-            />
-            <p v-else class="dq-inspector-footnote">{{ $t('settings.gpu') }}</p>
-            <div class="settings-monitor-gpu-meta">
-              <span v-if="monitorData.gpu.memory_gb">
-                {{ monitorData.gpu.memory_gb }} {{ $t('settings.unifiedMemory') }}
-              </span>
-              <span v-if="monitorData.gpu.note">{{ monitorData.gpu.note }}</span>
+      <h3 class="settings-group-block-title settings-system-subsection-title">
+        {{ $t('settings.resourceMonitor') }}
+      </h3>
+      <p class="settings-section-desc settings-section-desc--compact">{{ $t('settings.realtime') }}</p>
+      <DqPrefPane class="settings-grouped-form settings-pref-pane-form settings-pref-pane-form--system">
+        <DqPrefRow :label="$t('settings.cpu')">
+          <div class="param-control-row settings-pref-slider-row">
+            <div class="param-slider">
+              <DqProgress
+                :percentage="monitorData.cpu_percent"
+                :color="progressColor(monitorData.cpu_percent)"
+                :show-text="false"
+                :stroke-width="6"
+              />
             </div>
+            <span class="settings-slider-suffix">{{ monitorData.cpu_percent }}%</span>
           </div>
+        </DqPrefRow>
 
-          <p class="dq-inspector-footnote dq-inspector-monitor-foot">
-            {{ $t('settings.refreshInterval') }}
-          </p>
-        </DqInspectorSectionBody>
-      </DqInspectorSection>
-    </DqInspectorStack>
+        <DqPrefRow :label="$t('settings.memoryLabel')">
+          <div class="param-control-row settings-pref-slider-row">
+            <div class="param-slider">
+              <DqProgress
+                :percentage="monitorData.memory.percent"
+                :color="progressColor(monitorData.memory.percent)"
+                :show-text="false"
+                :stroke-width="6"
+              />
+            </div>
+            <span class="settings-slider-suffix">
+              {{ monitorData.memory.used_gb }} / {{ monitorData.memory.total_gb }} GB
+            </span>
+          </div>
+        </DqPrefRow>
+
+        <DqPrefRow v-if="monitorData.gpu" :label="$t('settings.gpu')" stacked>
+          <div class="settings-stacked-control">
+            <span v-if="monitorData.gpu.model">{{ monitorData.gpu.model }}</span>
+            <p class="settings-form-hint settings-form-hint--below-control">
+              <template v-if="monitorData.gpu.memory_gb">
+                {{ monitorData.gpu.memory_gb }} {{ $t('settings.unifiedMemory') }}
+              </template>
+              <template v-if="monitorData.gpu.memory_gb && monitorData.gpu.note"> · </template>
+              <template v-if="monitorData.gpu.note">{{ monitorData.gpu.note }}</template>
+            </p>
+          </div>
+        </DqPrefRow>
+      </DqPrefPane>
+      <p class="settings-group-footnote">{{ $t('settings.refreshInterval') }}</p>
+    </section>
   </div>
 </template>

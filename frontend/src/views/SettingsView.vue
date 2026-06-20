@@ -30,8 +30,9 @@
 
     <!-- Main content area -->
     <div class="settings-content-area">
-      <template v-if="activeSection === 'systeminfo'">
+      <DqSurfaceCard class="settings-tab-panel">
         <SystemSettingsSidebar
+          v-if="activeSection === 'systeminfo'"
           :system-info="systemInfo"
           :cache-status="cacheStatus"
           :cache-loading="cacheLoading"
@@ -39,22 +40,19 @@
           :monitor-data="monitorData"
           @refresh-cache="refreshCacheStatus"
         />
-      </template>
-      <template v-else>
-        <DqSurfaceCard class="settings-tab-panel">
-          <SystemSettingsForm
-            :active-section="activeSection"
-            :settings="settings"
-            :workspace-paths="workspacePaths"
-            :restore-config-busy="restoreConfigBusy"
-            @save="saveSettings"
-            @language-change="handleLanguageChange"
-            @theme-change="handleThemeChange"
-            @pick-workspace="pickWorkspaceDirectory"
-            @restore-model-registry="confirmRestoreModelRegistry"
-          />
-        </DqSurfaceCard>
-      </template>
+        <SystemSettingsForm
+          v-else
+          :active-section="activeSection"
+          :settings="settings"
+          :workspace-paths="workspacePaths"
+          :restore-config-busy="restoreConfigBusy"
+          @save="saveSettings"
+          @language-change="handleLanguageChange"
+          @theme-change="handleThemeChange"
+          @pick-workspace="pickWorkspaceDirectory"
+          @restore-model-registry="confirmRestoreModelRegistry"
+        />
+      </DqSurfaceCard>
     </div>
   </div>
 </template>
@@ -89,6 +87,7 @@ type SectionId =
   | 'general'
   | 'performance'
   | 'studio'
+  | 'quicksetup'
   | 'workspace'
   | 'integrations'
   | 'maintenance'
@@ -122,6 +121,7 @@ const navItems: NavItem[] = [
   { id: 'general', labelKey: 'settings.general', icon: Monitor },
   { id: 'performance', labelKey: 'settings.performance', icon: Monitor },
   { id: 'studio', labelKey: 'settings.studio', icon: Picture },
+  { id: 'quicksetup', labelKey: 'settings.quickSetupTitle', icon: Setting },
   { id: 'workspace', labelKey: 'settings.workspace', icon: FolderChecked },
   { id: 'integrations', labelKey: 'settings.integrations', icon: Document },
   { id: 'maintenance', labelKey: 'settings.maintenance', icon: Tools },
@@ -141,7 +141,7 @@ const { locale } = useI18n();
 /* ------------------------------------------------------------------ */
 
 const activeSection = ref<SectionId>(
-  (getItem(DQ_STORAGE.SETTINGS_TAB) as SectionId | null) || 'general'
+  (getItem(DQ_STORAGE.SETTINGS_TAB) as SectionId | null) || 'quicksetup'
 );
 
 const settings = reactive<Record<string, unknown>>({
@@ -513,19 +513,6 @@ onUnmounted(() => {
   min-width: 0;
   overflow-y: auto;
   padding: 4px 8px 0 0;
-}
-
-.settings-section-title {
-  font-size: 20px;
-  font-weight: 600;
-  color: var(--dq-label-primary);
-  margin: 0 0 6px;
-}
-
-.settings-section-desc {
-  font-size: 13px;
-  color: var(--dq-label-tertiary);
-  margin: 0 0 20px;
 }
 
 .settings-pref-pane-form--mt {

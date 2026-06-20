@@ -65,7 +65,7 @@ def run_video_denoise(
     init_sigma = float(getattr(scheduler, "init_noise_sigma", 1.0))
 
     with inference_span(ctx_exec, "diffusion_paradigm"):
-        return run_diffusion_denoise(
+        latents = run_diffusion_denoise(
             ctx,
             model=model,
             config=config,
@@ -84,3 +84,8 @@ def run_video_denoise(
             step_post_fns=step_post_fns,
             on_step_complete=_on_step_complete,
         )
+
+    from backend.engine.families.wan.moe import release_wan_moe_experts_if_supported
+
+    release_wan_moe_experts_if_supported(model, ctx)
+    return latents

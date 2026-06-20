@@ -116,6 +116,11 @@
         @prompt-apply-append="onPromptApplyAppend"
         @prompt-apply-dismiss="promptApply.clear()"
         :collapsed="viewMode === 'canvas' && composerCollapsed"
+        v-model:clip-mode="clipMode"
+        v-model:long-video-target-sec="longVideoTargetSec"
+        v-model:segment-prompts="longVideoSegmentPrompts"
+        :storyboard-expanding="isStoryboardExpanding"
+        @storyboard-expand="onStoryboardExpand"
       />
     </template>
   </StudioLayout>
@@ -743,7 +748,7 @@ function onModelVersionChange(val: string) {
   loadCompatibleLoras();
 }
 
-const { isEnhancing, isReversing, enhance: doEnhance, reversePrompt } = useComposerLlm();
+const { isEnhancing, isReversing, enhance: doEnhance, reversePrompt, storyboardLongVideo, isStoryboardExpanding } = useComposerLlm();
 const promptApply = usePromptApplyOffer();
 const promptApplyPreview = computed(() => promptApply.pending.value?.result ?? null);
 
@@ -759,6 +764,34 @@ async function onEnhancePrompt(ctx?: { stylePositive?: string }) {
   );
   if (enhanced) {
     promptApply.offer(params.prompt, enhanced, (text) => { params.prompt = text; });
+  }
+}
+
+async function onStoryboardExpand() {
+  const prompt = String(params.prompt || '').trim();
+  if (!prompt) return;
+  const extendSec = Number(currentModelConfig.value?.parameters?.long_video_segment_extend_sec?.default ?? 7);
+  const result = await storyboardLongVideo({
+    prompt,
+    target_duration_sec: longVideoTargetSec.value,
+    initial_duration_sec: 8,
+    segment_extend_sec: extendSec,
+    reference_duration_sec: Number(
+      currentModelConfig.value?.parameters?.long_video_reference_duration_sec?.default ?? 3,
+    ),
+  });
+  if (!result) return;
+  longVideoOpeningPrompt.value = result.opening_prompt;
+  if (longVideoSegmentPrompts.value.length > 0) {
+    longVideoSegmentPrompts.value[0] = result.opening_prompt;
+  }
+  const extendRows = result.segment_prompts || [];
+  syncLongStoryboardRows();
+  for (let i = 0; i < extendRows.length; i += 1) {
+    const rowIdx = i + 1;
+    if (rowIdx < longVideoSegmentPrompts.value.length) {
+      longVideoSegmentPrompts.value[rowIdx] = extendRows[i];
+    }
   }
 }
 
@@ -880,6 +913,10 @@ const recentStartImages = ref<GalleryItem[]>([]);
 /* ------------------------------------------------------------------ */
 
 const videoWorkMode = ref('create');
+const clipMode = ref<'short' | 'long'>('short');
+const longVideoTargetSec = ref(60);
+const longVideoSegmentPrompts = ref<string[]>([]);
+const longVideoOpeningPrompt = ref('');
 const videoWorkSegmentOptions = computed(() => {
   const acts = currentModelConfig.value?.actions || {};
   const opts: { label: string; value: string }[] = [];
@@ -1023,6 +1060,34 @@ const videoModelSelectOptions = computed(() => {
 
 const currentModelConfig = computed(() => modelRegistry.value[params.model] || null);
 
+function computeLongSegmentCount(targetSec: number): number {
+  const initial = 8;
+  const extend = Number(currentModelConfig.value?.parameters?.long_video_segment_extend_sec?.default ?? 7);
+  const remaining = Math.max(0, targetSec - initial);
+  return 1 + (remaining > 0 ? Math.ceil(remaining / extend) : 0);
+}
+
+function syncLongStoryboardRows() {
+  const n = computeLongSegmentCount(longVideoTargetSec.value);
+  const rows = [...longVideoSegmentPrompts.value];
+  while (rows.length < n) rows.push('');
+  longVideoSegmentPrompts.value = rows.slice(0, n);
+}
+
+watch([longVideoTargetSec, clipMode], () => {
+  if (clipMode.value === 'long') syncLongStoryboardRows();
+});
+
+watch(
+  () => currentModelConfig.value?.parameters?.long_video_support,
+  (supported) => {
+    if (!supported && clipMode.value === 'long') {
+      clipMode.value = 'short';
+      toast.warning($tt('video.longVideoModelUnsupported'));
+    }
+  },
+);
+
 const currentModelDisplayName = computed(() => {
   const c = currentModelConfig.value;
   if (c) {
@@ -1053,6 +1118,7 @@ const submitDisabled = computed(() => {
 const primaryCtaLabel = computed(() => {
   if (videoWorkMode.value === 'animate') return $tt('action.video.animate');
   if (videoWorkMode.value === 'upscale') return $tt('action.video.upscale');
+  if (clipMode.value === 'long') return $tt('video.generateLong');
   return $tt('action.video.create');
 });
 
@@ -1568,6 +1634,26 @@ const startGeneration = async () => {
       const adapters = buildVideoAdapters();
       if (adapters.length > 0) {
         body.adapters = adapters;
+      }
+      if (videoWorkMode.value === 'create' && clipMode.value === 'long') {
+        const extendSec = Number(
+          currentModelConfig.value?.parameters?.long_video_segment_extend_sec?.default ?? 7,
+        );
+        const refSec = Number(
+          currentModelConfig.value?.parameters?.long_video_reference_duration_sec?.default ?? 3,
+        );
+        const opening = (longVideoSegmentPrompts.value[0] || longVideoOpeningPrompt.value || params.prompt).trim();
+        const extendPrompts = longVideoSegmentPrompts.value.slice(1).filter((p) => p.trim());
+        body.fps = params.fps || 24;
+        body.long_video = {
+          target_duration_sec: longVideoTargetSec.value,
+          initial_duration_sec: 8,
+          segment_extend_sec: extendSec,
+          reference_duration_sec: refSec,
+          overlap_blend_frames: 4,
+          opening_prompt: opening,
+          segment_prompts: extendPrompts.length > 0 ? extendPrompts : undefined,
+        };
       }
       submitRes = await api.gen.createVideoGeneration(body);
     }

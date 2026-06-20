@@ -28,6 +28,21 @@ _LEGACY_TEMPLATE_MARKERS = (
 
 _GARBAGE_SCENE_RE = re.compile(r"^[\s!！?？.。,，、…\-_=~#@*]+$")
 _PUNCT_RUN_RE = re.compile(r"([!！?？.。,，、…])\1{5,}")
+_BANNED_BEAUTY_TEXTURE_TERMS = (
+    "光滑",
+    "磨皮",
+    "无瑕",
+    "零瑕疵",
+    "细腻皮肤",
+    "smooth skin",
+    "flawless skin",
+    "poreless",
+    "airbrushed",
+    "beauty retouch",
+    "over-retouched",
+    "plastic skin",
+    "waxy skin",
+)
 
 
 def _count_meaningful_chars(text: str) -> int:
@@ -52,10 +67,14 @@ def is_usable_scene_caption(text: str, *, min_meaningful: int = 2) -> bool:
 
 
 def build_concept_auto_caption_instruction(subject_name: str) -> str:
-    subject = (subject_name or "subject").strip()
+    subject = (subject_name or "").strip()
+    subject_line = (
+        f"Training trigger word: {subject}\nDo NOT include the trigger word in your output."
+        if subject
+        else "No trigger word is configured. Do NOT identify or name the person in your output."
+    )
     return f"""You caption ONE photo for DreamBooth person/face LoRA training.
-Training subject name: {subject}
-Do NOT include the person's name in your output.
+{subject_line}
 
 Describe only what is visible using concise comma-separated phrases:
 - shot type (特写/胸像/半身/全身, or close-up, bust, half-body, full-body)
@@ -69,6 +88,8 @@ Rules for special cases:
 - If multiple people appear, describe ONLY the most prominent/central person; mention "多人合照" briefly but do NOT describe other people in detail.
 - Ignore any text, watermarks, logos, or UI elements overlaid on the image.
 - If the photo appears to be a selfie or mirror shot, note it (自拍/镜前照 or selfie/mirror shot).
+- Do NOT describe skin texture or beauty-retouching qualities such as 光滑皮肤/无瑕肌肤/smooth skin/flawless skin/poreless/airbrushed.
+- Do NOT turn natural skin details such as moles, freckles, acne, or blemishes into labels.
 
 Use Chinese phrases if the subject name is Chinese; otherwise English.
 Never output repeated punctuation, filler characters, or refusal text.
@@ -94,20 +115,15 @@ def _looks_like_legacy_template(text: str) -> bool:
 
 
 def resolve_lora_subject_name(meta: dict[str, Any]) -> str:
-    """Best-effort subject name for concept LoRA captions."""
-    default = str(meta.get("default_prompt") or "").strip()
+    """Explicit trigger used for concept LoRA captions; dataset names are not identities."""
     trigger = str(meta.get("trigger_word") or "").strip()
-    name = str(meta.get("name") or "").strip()
-
-    for candidate in (default, trigger, name):
-        if candidate and not _looks_like_legacy_template(candidate):
-            return candidate
-    return default or trigger or name or "subject"
+    return trigger if trigger and not _looks_like_legacy_template(trigger) else ""
 
 
 _CONCEPT_AUTO_CAPTION_RETRY_INSTRUCTION = """Describe this photo in 3-8 short comma-separated phrases for LoRA training.
-Subject name is already stored separately — do NOT include any person's name.
+Do NOT identify, infer, or include any person's name.
 Include: shot type, clothing, background, lighting.
+Do NOT describe skin texture or beauty-retouching qualities such as 光滑皮肤, smooth skin, flawless skin, poreless, or airbrushed.
 Use Chinese if appropriate. No punctuation-only output, no exclamation marks, no filler.
 Output ONLY the description phrases."""
 
@@ -145,9 +161,23 @@ def clean_scene_caption(raw: str, *, subject_name: str = "") -> str:
             if text.startswith(prefix):
                 text = text[len(prefix) :].strip()
                 break
+        text = re.sub(rf"^{re.escape(subject)}[\s\-—:：]+", "", text).strip()
         if text == subject:
             text = ""
     return text.strip()
+
+
+def _drop_banned_beauty_texture_phrases(text: str) -> str:
+    phrases = [p.strip() for p in re.split(r"[，,、;；]+", text or "") if p.strip()]
+    if not phrases:
+        return text
+    kept = [
+        p
+        for p in phrases
+        if not any(term in p.lower() for term in _BANNED_BEAUTY_TEXTURE_TERMS)
+    ]
+    sep = "，" if _has_cjk(text) else ", "
+    return sep.join(kept)
 
 
 def normalize_scene_caption(raw: str, *, subject_name: str = "") -> str:
@@ -159,6 +189,10 @@ def normalize_scene_caption(raw: str, *, subject_name: str = "") -> str:
     text = re.sub(r"[\s!！?？.。,，、…\-_=~#@*]+$", "", text)
     text = re.sub(r"([!！?？.。,，、])\1{2,}", r"\1", text)
     text = text.strip()
+    if (subject_name or "").strip():
+        text = _drop_banned_beauty_texture_phrases(text).strip()
+        if not text:
+            return ""
     if not is_usable_scene_caption(text):
         return ""
     if len(text) > 200:
@@ -175,7 +209,7 @@ def compose_person_caption(subject_name: str, scene: str) -> str:
     subject = (subject_name or "").strip()
     scene = normalize_scene_caption(scene, subject_name=subject)
     if not subject:
-        return scene or "a photo"
+        return scene
     if not scene:
         return subject
     sep = "，" if _has_cjk(subject) else ", "
@@ -203,7 +237,7 @@ def caption_dataset_image(
                 scene = normalize_scene_caption(raw_retry)
             return scene or "style reference"
 
-        subject = (subject_name or "subject").strip()
+        subject = (subject_name or "").strip()
         raw = _analyze(path, build_concept_auto_caption_instruction(subject))
         scene = normalize_scene_caption(raw, subject_name=subject)
         if not scene:
@@ -217,7 +251,12 @@ def caption_dataset_image(
         audit_kind=audit_kind,
         subject_name=subject_name,
     )
-    return caps[0] if caps else (subject_name.strip() or "a photo")
+    if not caps:
+        raise RuntimeError(f"VLM auto-caption returned no caption for {path.name}")
+    cap = str(caps[0] or "").strip()
+    if not cap:
+        raise RuntimeError(f"VLM auto-caption returned empty caption for {path.name}")
+    return cap
 
 
 def caption_dataset_images_batch(
@@ -264,7 +303,7 @@ def caption_dataset_images_batch(
                 style_captions[idx] = normalize_scene_caption(raw) or "style reference"
         return [cap if cap is not None else "style reference" for cap in style_captions]
 
-    subject = (subject_name or "subject").strip()
+    subject = (subject_name or "").strip()
     primary_inst = build_concept_auto_caption_instruction(subject)
     raw_list = analyze_batch(paths, primary_inst, max_tokens=128, temperature=0.2)
 
@@ -286,135 +325,18 @@ def caption_dataset_images_batch(
         for idx, raw in zip(retry_indices, raw_retry, strict=False):
             captions[idx] = compose_person_caption(subject, raw)
 
-    fallback = subject or "a photo"
-    return [cap if cap is not None else fallback for cap in captions]
-
-
-# ---------------------------------------------------------------------------
-# Face-anchor generation (consistent facial-feature descriptor for LoRA)
-# ---------------------------------------------------------------------------
-
-_FACE_ANCHOR_INSTRUCTION = """You describe the FACIAL FEATURES of the person in this photo for DreamBooth face LoRA training.
-Describe ONLY these aspects (use short comma-separated phrases, 4-8 phrases total):
-- face shape (鹅蛋脸/圆脸/方脸/瓜子脸, or oval/round/square/heart)
-- eyes (大眼/细长眼/双眼皮, or big eyes, almond eyes, double eyelids)
-- nose (高鼻梁/小巧鼻, or high bridge, small nose)
-- lips (薄唇/厚唇/自然唇, or thin/full/natural lips)
-- skin (白皙/小麦色/光滑, or fair/tanned/smooth skin)
-- eyebrows (弯眉/平眉/浓眉, or arched/straight/thick brows)
-
-Do NOT describe: clothing, accessories, hairstyle, background, lighting, pose.
-Do NOT include the person's name.
-Use Chinese phrases if the subject name is Chinese; otherwise English.
-Output ONLY the facial feature phrases — no quotes, headings, or labels."""
-
-
-def _clean_face_anchor(raw: str) -> str:
-    """Clean VLM face-anchor output into a compact comma-separated string."""
-    text = (raw or "").strip()
-    if not text:
-        return ""
-    # Strip common VLM prefixes
-    text = re.sub(r"^(description|output|facial features|face features)\s*[:：]\s*", "", text, flags=re.I).strip()
-    text = text.strip('"\'')
-    # Remove line breaks, join with comma
-    text = re.sub(r"\s*[\n\r]+\s*", "，", text)
-    # Normalize separators
-    text = re.sub(r"[,，、;；]+", "，", text)
-    text = text.strip("，,。.")
-    # Truncate if too long
-    if len(text) > 120:
-        for sep in ("，", ","):
-            if sep in text[:120]:
-                text = text[:120].rsplit(sep, 1)[0].strip()
-                break
-        else:
-            text = text[:120].strip()
-    return text
-
-
-def generate_face_anchor(
-    paths: list[Path],
-    model_dir: Path,
-    *,
-    subject_name: str = "",
-    sample_count: int = 5,
-    batch_analyze_fn: Callable[..., list[str]] | None = None,
-) -> str:
-    """Analyze a sample of dataset images with VLM and produce a face_anchor string.
-
-    The face anchor is a consistent facial-feature descriptor injected into every
-    training caption, helping the LoRA learn identity-specific facial features
-    rather than variable elements (clothing, scene, etc.).
-
-    Returns a clean comma-separated string, or ``""`` on failure.
-    """
-    if not paths:
-        return ""
-    # Sample up to sample_count images (evenly spaced)
-    n = len(paths)
-    if n <= sample_count:
-        sample = list(paths)
-    else:
-        step = max(1, n // sample_count)
-        sample = [paths[i] for i in range(0, n, step)][:sample_count]
-
-    from backend.engine.llm.vision import analyze_image_files_batch
-
-    analyze_batch = batch_analyze_fn or (
-        lambda image_paths, instruction, max_tokens=64, temperature=0.15: analyze_image_files_batch(
-            image_paths,
-            model_dir,
-            instruction=instruction,
-            max_tokens=max_tokens,
-            temperature=temperature,
+    missing = [
+        paths[i].name
+        for i, cap in enumerate(captions)
+        if cap is None or not str(cap).strip()
+    ]
+    if missing:
+        preview = ", ".join(missing[:5])
+        more = "" if len(missing) <= 5 else f" (+{len(missing) - 5} more)"
+        raise RuntimeError(
+            f"VLM auto-caption failed for {len(missing)}/{len(paths)} image(s): {preview}{more}. "
+            "Retry auto-caption or edit captions manually."
         )
-    )
+    return [str(cap).strip() for cap in captions]
 
-    inst = _FACE_ANCHOR_INSTRUCTION
-    try:
-        raw_list = analyze_batch(sample, inst, max_tokens=64, temperature=0.15)
-    except Exception:
-        return ""
 
-    # Collect all phrases from VLM responses
-    all_phrases: list[str] = []
-    for raw in raw_list:
-        cleaned = _clean_face_anchor(raw)
-        if cleaned:
-            for sep in ("，", ","):
-                if sep in cleaned:
-                    all_phrases.extend(p.strip() for p in cleaned.split(sep) if p.strip())
-                    break
-            else:
-                all_phrases.append(cleaned)
-
-    if not all_phrases:
-        return ""
-
-    # Keep phrases that appear in >=40% of responses (consensus features).
-    # Require at least 2 occurrences to filter VLM hallucinations on single images.
-    from collections import Counter
-
-    counts = Counter(all_phrases)
-    threshold = max(2, round(len(sample) * 0.4))
-    consensus = [p for p, c in counts.most_common() if c >= threshold]
-    if len(consensus) < 3:
-        # Fall back: take top phrases with count >= 2, or most common if very few
-        consensus = [p for p, c in counts.most_common(6) if c >= 2]
-        if len(consensus) < 2:
-            consensus = [p for p, _ in counts.most_common(6)]
-
-    if not consensus:
-        return ""
-
-    # Deduplicate while preserving order
-    seen: set[str] = set()
-    deduped: list[str] = []
-    for p in consensus:
-        low = p.lower()
-        if low not in seen:
-            seen.add(low)
-            deduped.append(p)
-
-    return "，".join(deduped[:8])

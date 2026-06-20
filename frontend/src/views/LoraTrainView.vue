@@ -255,12 +255,12 @@
                   <DqInput v-model.number="form.grad_accumulate" type="number" min="1" max="32" />
                   <p class="lora-train-page__field-hint">{{ $t('loraTrain.customGradAccumHint') }}</p>
                 </div>
-                <div class="lora-train-page__field">
+                <div v-if="supportsPriorPreservation" class="lora-train-page__field">
                   <label class="lora-train-page__label">{{ $t('loraTrain.priorLossWeight') }}</label>
                   <DqInput v-model.number="form.prior_loss_weight" type="number" step="0.1" min="0" />
                   <p class="lora-train-page__field-hint">{{ $t('loraTrain.customPriorHint') }}</p>
                 </div>
-                <div class="lora-train-page__field lora-train-page__field--wide">
+                <div v-if="supportsPriorPreservation" class="lora-train-page__field lora-train-page__field--wide">
                   <label class="lora-train-page__label">{{ $t('loraTrain.classPrompt') }}</label>
                   <DqInput
                     v-model="form.class_prompt"
@@ -368,11 +368,11 @@
                   <label class="lora-train-page__label">{{ $t('loraTrain.minSnrGamma') }}</label>
                   <DqInput v-model.number="form.min_snr_gamma" type="number" step="1" min="0" />
                 </div>
-                <div v-if="form.preset !== 'custom'" class="lora-train-page__field">
+                <div v-if="supportsPriorPreservation && form.preset !== 'custom'" class="lora-train-page__field">
                   <label class="lora-train-page__label">{{ $t('loraTrain.priorLossWeight') }}</label>
                   <DqInput v-model.number="form.prior_loss_weight" type="number" step="0.1" min="0" />
                 </div>
-                <div v-if="form.preset !== 'custom'" class="lora-train-page__field lora-train-page__field--wide">
+                <div v-if="supportsPriorPreservation && form.preset !== 'custom'" class="lora-train-page__field lora-train-page__field--wide">
                   <label class="lora-train-page__label">{{ $t('loraTrain.classPrompt') }}</label>
                   <DqInput
                     v-model="form.class_prompt"
@@ -538,6 +538,17 @@ const captionEdits = reactive<Record<string, string>>({});
 const datasetPanelRef = ref<InstanceType<typeof LoraDatasetPanel> | null>(null);
 const historyRef = ref<InstanceType<typeof LoraTrainHistory> | null>(null);
 const presetKeys = ['quick', 'standard', 'quality', 'custom'];
+
+const Z_IMAGE_PRIOR_DISABLED_MODELS = new Set(['z-image', 'z-image-turbo']);
+
+const supportsPriorPreservation = computed(
+  () => !Z_IMAGE_PRIOR_DISABLED_MODELS.has(form.base_model),
+);
+
+function clearPriorPreservationFields() {
+  form.class_prompt = '';
+  form.prior_loss_weight = null;
+}
 
 const stepNavItems = computed(() => [
   { key: 'base', label: t('loraTrain.stepBase'), icon: MagicStick },
@@ -815,6 +826,7 @@ function onDatasetsChanged(next: any[]) {
 function selectBase(m: any) {
   if (!m.trainable || !m.ready) return;
   form.base_model = m.id;
+  applyPresetTrainingDefaults();
 }
 
 function qloraBitsForApi(): number | null {
@@ -860,6 +872,9 @@ function applyPresetTrainingDefaults() {
   } else {
     form.prior_loss_weight = null;
   }
+  if (!supportsPriorPreservation.value) {
+    clearPriorPreservationFields();
+  }
 }
 
 function applyCustomDefaultsFromQuick() {
@@ -879,7 +894,7 @@ function applyCustomDefaultsFromQuick() {
   if (form.grad_accumulate == null) {
     form.grad_accumulate = Number(quick.grad_accumulate) || 4;
   }
-  if (form.prior_loss_weight == null) form.prior_loss_weight = 0;
+  if (form.prior_loss_weight == null && supportsPriorPreservation.value) form.prior_loss_weight = 0;
   form.grad_checkpoint = true;
 }
 
@@ -982,9 +997,12 @@ function buildTrainingBody(): Record<string, unknown> {
       body.min_snr_gamma = form.min_snr_gamma;
     }
   }
-  if (form.class_prompt.trim()) body.class_prompt = form.class_prompt.trim();
+  if (supportsPriorPreservation.value && form.class_prompt.trim()) {
+    body.class_prompt = form.class_prompt.trim();
+  }
   if (
-    form.prior_loss_weight != null
+    supportsPriorPreservation.value
+    && form.prior_loss_weight != null
     && form.prior_loss_weight >= 0
     && shouldSendPresetNumberOverride('prior_loss_weight', form.prior_loss_weight)
   ) {
@@ -1230,6 +1248,10 @@ watch(
 );
 
 watch(() => form.base_model, () => {
+  if (!supportsPriorPreservation.value) {
+    clearPriorPreservationFields();
+  }
+  applyPresetTrainingDefaults();
   void refreshRequirements();
 });
 

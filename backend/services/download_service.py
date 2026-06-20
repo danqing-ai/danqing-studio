@@ -250,6 +250,16 @@ class DownloadService(IDownloadService):
 
         assemble_hunyuan_modelscope_bundle(target, str(variant))
 
+    def _maybe_assemble_wan_distill_bundle(self, target: Path, ver_config: dict[str, Any] | None) -> None:
+        if not ver_config:
+            return
+        variant = ver_config.get("wan_distill_variant")
+        if not variant:
+            return
+        from backend.services.wan_distill_bundle import assemble_wan_distill_bundle
+
+        assemble_wan_distill_bundle(target, str(variant))
+
     async def _finalize_version_install(
         self,
         *,
@@ -264,6 +274,8 @@ class DownloadService(IDownloadService):
         """Post-download steps: Hunyuan MS assembly + install_hooks + bundle manifest."""
         if ver_config and ver_config.get("hunyuan_ms_variant"):
             self._maybe_assemble_hunyuan_ms_bundle(target, ver_config)
+        if ver_config and ver_config.get("wan_distill_variant"):
+            self._maybe_assemble_wan_distill_bundle(target, ver_config)
 
         hooks = install_hooks_from_version(ver_config)
         if hooks:

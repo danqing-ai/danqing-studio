@@ -1,0 +1,98 @@
+/**
+ * Registry model install + SSE progress (shared with Models page).
+ */
+import { onBeforeUnmount, ref } from 'vue';
+import { toast } from '@/utils/feedback';
+import { api } from '@/utils/api';
+import { $tt } from '@/utils/i18n';
+
+export function useModelInstall(opts?: { onCompleted?: () => void }) {
+  const downloading = ref<Record<string, boolean>>({});
+  const progressByKey = ref<Record<string, number>>({});
+  const sseConnections = ref<Record<string, EventSource>>({});
+
+  function uiKey(modelId: string, versionKey: string): string {
+    return `${modelId}-${versionKey}`;
+  }
+
+  function closeAllSse() {
+    for (const id of Object.keys(sseConnections.value)) {
+      sseConnections.value[id].close();
+    }
+    sseConnections.value = {};
+  }
+
+  function connectProgressSSE(taskId: string, label: string, key: string) {
+    if (sseConnections.value[taskId]) {
+      sseConnections.value[taskId].close();
+    }
+    const eventSource = new EventSource(api.download.installProgressStreamUrl(taskId));
+    sseConnections.value[taskId] = eventSource;
+
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        progressByKey.value[key] = Math.round((data.progress || 0) * 100);
+        if (data.status === 'completed') {
+          eventSource.close();
+          delete sseConnections.value[taskId];
+          delete downloading.value[key];
+          setTimeout(() => {
+            delete progressByKey.value[key];
+          }, 2000);
+          toast.success($tt('download.downloadComplete', { name: label }));
+          opts?.onCompleted?.();
+        } else if (data.status === 'failed' || data.status === 'cancelled') {
+          eventSource.close();
+          delete sseConnections.value[taskId];
+          delete downloading.value[key];
+          delete progressByKey.value[key];
+          if (data.status === 'failed') {
+            toast.error($tt('download.downloadFailed', { name: label, msg: data.error_message || '' }));
+          }
+        }
+      } catch {
+        /* ignore malformed SSE */
+      }
+    };
+
+    eventSource.onerror = () => {
+      eventSource.close();
+      delete sseConnections.value[taskId];
+      delete downloading.value[key];
+    };
+  }
+
+  async function installModel(modelId: string, versionKey: string, label: string) {
+    const key = uiKey(modelId, versionKey);
+    if (downloading.value[key]) return;
+    downloading.value[key] = true;
+    progressByKey.value[key] = 0;
+    try {
+      const data = (await api.models.install(modelId, { version: versionKey })) as {
+        task_id?: string;
+      };
+      if (data?.task_id) {
+        connectProgressSSE(data.task_id, label, key);
+      } else {
+        delete downloading.value[key];
+      }
+    } catch (e: unknown) {
+      delete downloading.value[key];
+      delete progressByKey.value[key];
+      const msg = e instanceof Error ? e.message : String(e);
+      toast.error($tt('download.downloadFailed', { name: label, msg }));
+    }
+  }
+
+  onBeforeUnmount(() => {
+    closeAllSse();
+  });
+
+  return {
+    downloading,
+    progressByKey,
+    installModel,
+    uiKey,
+  };
+}

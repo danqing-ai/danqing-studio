@@ -2730,6 +2730,28 @@ body {
  margin-bottom: 22px;
 }
 
+.settings-section-title {
+ margin: 0 0 6px;
+ font-size: 20px;
+ font-weight: 600;
+ color: var(--dq-label-primary);
+}
+
+.settings-section-desc {
+ margin: 0 0 20px;
+ font-size: 13px;
+ line-height: 1.45;
+ color: var(--dq-label-tertiary);
+}
+
+.settings-section-desc--compact {
+ margin-bottom: 12px;
+}
+
+.settings-system-subsection-title {
+ margin-top: 20px;
+}
+
 .settings-group-block-title {
  margin: 0 0 8px;
  padding: 0 4px;
@@ -2829,6 +2851,10 @@ body {
  flex: 0 0 148px !important;
  max-width: 42% !important;
  align-self: center;
+ font-size: 13px;
+ font-weight: 400;
+ line-height: 1.35;
+ color: var(--dq-label-primary);
 }
 
 .settings-pref-pane-form--system .dq-pref-row__content {
@@ -2837,6 +2863,9 @@ body {
  flex-direction: column !important;
  align-items: flex-end !important;
  justify-content: center !important;
+ font-size: 13px;
+ line-height: 1.35;
+ color: var(--dq-label-primary);
 }
 
 .settings-mac-value-column {
@@ -3956,6 +3985,13 @@ body {
  flex-wrap: wrap;
  align-items: center;
  gap: 8px;
+ margin-bottom: 12px;
+}
+
+.settings-header-actions .settings-section-desc--compact {
+ margin-bottom: 0;
+ flex: 1;
+ min-width: 0;
 }
 
 .settings-group-footnote {
@@ -4054,6 +4090,7 @@ body {
 }
 
 .settings-slider-suffix {
+ font-size: 13px;
  color: var(--dq-label-tertiary);
  white-space: nowrap;
 }

@@ -386,6 +386,19 @@ def video_uses_hunyuan_step_distill_timesteps(
     )
 
 
+def video_uses_wan_step_distill_timesteps(
+    config: Any,
+    *,
+    step_distill: bool,
+    scheduler_default: str,
+) -> bool:
+    return bool(
+        step_distill
+        and scheduler_default == "wan_flow_unipc"
+        and str(getattr(config, "video_i2v_style", "")) == "wan"
+    )
+
+
 def video_apply_hunyuan_step_distill_scheduler_timesteps(
     ctx: Any,
     scheduler: Any,
@@ -396,6 +409,19 @@ def video_apply_hunyuan_step_distill_scheduler_timesteps(
     from backend.engine.families.hunyuan.sr_mlx import configure_hunyuan_step_distill_timesteps
 
     return configure_hunyuan_step_distill_timesteps(ctx, scheduler, steps)
+
+
+def video_apply_wan_step_distill_scheduler_timesteps(
+    ctx: Any,
+    scheduler: Any,
+    *,
+    steps: int,
+    config: Any | None = None,
+) -> Any:
+    """Apply LightX2V Wan 2.2 4-step distilled timesteps."""
+    from backend.engine.families.wan.distill import configure_wan_step_distill_timesteps
+
+    return configure_wan_step_distill_timesteps(ctx, scheduler, steps, config=config)
 
 
 def video_apply_ltx_distilled_scheduler_timesteps(

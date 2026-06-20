@@ -121,6 +121,17 @@
           <p class="lora-dataset-panel__field-hint">{{ $t('loraTrain.datasetKindDesc') }}</p>
         </div>
 
+        <div v-if="datasetKindEdit === 'concept'" class="lora-dataset-panel__field">
+          <label class="lora-dataset-panel__label">{{ $t('loraTrain.triggerWord') }}</label>
+          <DqInput
+            v-model="triggerWordEdit"
+            size="sm"
+            :placeholder="$t('loraTrain.triggerWordHint')"
+            @blur="saveTriggerWord"
+          />
+          <p class="lora-dataset-panel__field-hint">{{ $t('loraTrain.triggerWordDesc') }}</p>
+        </div>
+
         <LoraQualityHints
           v-if="datasetHealth"
           :report="datasetHealth"
@@ -261,6 +272,11 @@
         <label class="lora-dataset-panel__label">{{ $t('loraTrain.newDatasetName') }}</label>
         <DqInput v-model="newDatasetName" :placeholder="$t('loraTrain.newDatasetDefault')" @keyup.enter="createDataset" />
       </div>
+      <div class="lora-dataset-panel__dialog-field">
+        <label class="lora-dataset-panel__label">{{ $t('loraTrain.triggerWord') }}</label>
+        <DqInput v-model="newTriggerWord" :placeholder="$t('loraTrain.triggerWordHint')" @keyup.enter="createDataset" />
+        <p class="lora-dataset-panel__field-hint">{{ $t('loraTrain.triggerWordDesc') }}</p>
+      </div>
       <template #footer>
         <DqButton size="sm" @click="showCreateDialog = false">{{ $t('common.cancel') }}</DqButton>
         <DqButton size="sm" type="primary" :disabled="!newDatasetName.trim()" @click="createDataset">
@@ -357,10 +373,12 @@ const deletingDataset = ref(false);
 const showCreateDialog = ref(false);
 const showGalleryImport = ref(false);
 const newDatasetName = ref('');
+const newTriggerWord = ref('');
 const datasetSearch = ref('');
 const pendingGalleryAssets = ref<string[]>([]);
 const uploadInputRef = ref<HTMLInputElement | null>(null);
 const datasetNameEdit = ref('');
+const triggerWordEdit = ref('');
 const datasetKindEdit = ref<'concept' | 'style'>('concept');
 
 const selectedDataset = computed(() =>
@@ -446,6 +464,14 @@ watch(
 );
 
 watch(
+  () => selectedDataset.value?.trigger_word,
+  (trigger) => {
+    triggerWordEdit.value = trigger || '';
+  },
+  { immediate: true }
+);
+
+watch(
   () => selectedDataset.value?.kind,
   (kind) => {
     datasetKindEdit.value = kind === 'style' ? 'style' : 'concept';
@@ -503,20 +529,23 @@ async function createDataset() {
   const name = newDatasetName.value.trim();
   if (!name) return;
   const kind = datasetKindEdit.value;
-  const defaultPrompt = kind === 'concept' ? name : props.defaultPrompt.trim();
+  const defaultPrompt = props.defaultPrompt.trim();
+  const triggerWord = kind === 'concept' ? newTriggerWord.value.trim() : '';
   try {
     const ds = (await api.loras.createDataset({
       name,
       kind,
+      trigger_word: triggerWord,
       default_prompt: defaultPrompt,
     })) as Record<string, any>;
-    if (kind === 'concept' && defaultPrompt) {
+    if (defaultPrompt) {
       emit('update:defaultPrompt', defaultPrompt);
     }
     patchDatasets([ds, ...props.datasets]);
     emit('update:selectedId', ds.id);
     showCreateDialog.value = false;
     newDatasetName.value = '';
+    newTriggerWord.value = '';
     toast.success(t('loraTrain.datasetCreated'));
   } catch (e: unknown) {
     toast.error(apiErrorMessage(e));
@@ -541,6 +570,7 @@ async function importDog6() {
 
 function openCreateDialog() {
   newDatasetName.value = t('loraTrain.newDatasetDefault');
+  newTriggerWord.value = '';
   showCreateDialog.value = true;
 }
 
@@ -658,13 +688,19 @@ async function saveCaptions() {
   }
 }
 
+function datasetMetaPatch(name?: string): Record<string, unknown> {
+  const kind = datasetKindEdit.value;
+  return {
+    name: name?.trim() || datasetNameEdit.value.trim() || selectedDataset.value?.name || '',
+    trigger_word: kind === 'concept' ? triggerWordEdit.value.trim() : '',
+    default_prompt: props.defaultPrompt,
+    kind,
+  };
+}
+
 async function patchDefaultPrompt() {
   if (!props.selectedId) return;
-  await api.loras.patchDataset(props.selectedId, {
-    name: datasetNameEdit.value.trim() || selectedDataset.value?.name || '',
-    default_prompt: props.defaultPrompt,
-    kind: datasetKindEdit.value,
-  });
+  await api.loras.patchDataset(props.selectedId, datasetMetaPatch());
 }
 
 async function saveDatasetKind() {
@@ -673,11 +709,7 @@ async function saveDatasetKind() {
   if (kind !== 'concept' && kind !== 'style') return;
   if (kind === (selectedDataset.value?.kind || 'concept')) return;
   try {
-    const ds = (await api.loras.patchDataset(props.selectedId, {
-      name: datasetNameEdit.value.trim() || selectedDataset.value?.name || '',
-      default_prompt: props.defaultPrompt,
-      kind,
-    })) as Record<string, any>;
+    const ds = (await api.loras.patchDataset(props.selectedId, datasetMetaPatch())) as Record<string, any>;
     patchDatasets(props.datasets.map((d) => (d.id === props.selectedId ? { ...d, ...ds } : d)));
   } catch (e: unknown) {
     toast.error(apiErrorMessage(e));
@@ -689,11 +721,19 @@ async function saveDatasetName() {
   const name = datasetNameEdit.value.trim();
   if (!name || name === selectedDataset.value?.name) return;
   try {
-    const ds = (await api.loras.patchDataset(props.selectedId, {
-      name,
-      default_prompt: props.defaultPrompt,
-      kind: datasetKindEdit.value,
-    })) as Record<string, any>;
+    const ds = (await api.loras.patchDataset(props.selectedId, datasetMetaPatch(name))) as Record<string, any>;
+    patchDatasets(props.datasets.map((d) => (d.id === props.selectedId ? { ...d, ...ds } : d)));
+  } catch (e: unknown) {
+    toast.error(apiErrorMessage(e));
+  }
+}
+
+async function saveTriggerWord() {
+  if (!props.selectedId) return;
+  const triggerWord = triggerWordEdit.value.trim();
+  if (triggerWord === String(selectedDataset.value?.trigger_word || '')) return;
+  try {
+    const ds = (await api.loras.patchDataset(props.selectedId, datasetMetaPatch())) as Record<string, any>;
     patchDatasets(props.datasets.map((d) => (d.id === props.selectedId ? { ...d, ...ds } : d)));
   } catch (e: unknown) {
     toast.error(apiErrorMessage(e));

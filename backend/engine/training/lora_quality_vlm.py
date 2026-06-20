@@ -58,7 +58,12 @@ def build_progress_audit_instruction(progress_prompt: str, *, audit_kind: str = 
         if audit_kind == "style"
         else _CONCEPT_PROGRESS_AUDIT_INSTRUCTION
     )
-    return template.format(progress_prompt=(progress_prompt or "A photo of subject").strip())
+    prompt = (progress_prompt or "").strip()
+    if not prompt:
+        raise RuntimeError(
+            "progress_prompt is required for VLM progress audit; set the training preview prompt first."
+        )
+    return template.format(progress_prompt=prompt)
 
 
 def resolve_audit_paths(image_paths: list[Path], *, max_samples: int = 0) -> tuple[list[Path], bool]:

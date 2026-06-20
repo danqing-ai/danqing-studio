@@ -15,6 +15,21 @@
     </aside>
 
     <main class="app-main dq-app-main">
+      <div
+        v-if="showSetupHint"
+        class="dq-app-setup-hint"
+        role="status"
+      >
+        <p class="dq-app-setup-hint__text">{{ $tt('settings.quickSetupFirstRunHint') }}</p>
+        <div class="dq-app-setup-hint__actions">
+          <DqButton size="sm" type="primary" @click="goQuickSetupSettings">
+            {{ $tt('settings.quickSetupGoSettings') }}
+          </DqButton>
+          <DqButton size="sm" @click="dismissSetupHint">
+            {{ $tt('settings.quickSetupDismissHint') }}
+          </DqButton>
+        </div>
+      </div>
       <router-view />
     </main>
   </div>
@@ -169,12 +184,6 @@
     v-model:open="showQueueTaskLogs"
     :task-id="queueLogTaskId"
   />
-
-  <WorkspaceSetupDialog
-    v-model:visible="showWorkspaceSetup"
-    :effective-root="workspaceEffectiveRoot"
-    @completed="onWorkspaceSetupCompleted"
-  />
 </template>
 
 <script setup lang="ts">
@@ -182,13 +191,12 @@ import { ref, computed, onMounted, onBeforeUnmount, watch, provide } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { toast } from '@/utils/feedback';
 import TopNav from '@/components/shell/TopNav.vue';
-import WorkspaceSetupDialog from '@/components/workspace/WorkspaceSetupDialog.vue';
 import GenTaskLogDialog from '@/components/studio/GenTaskLogDialog.vue';
 import TaskIdBadge from '@/components/studio/TaskIdBadge.vue';
 import { useTasksStore } from '@/stores/tasks';
 import { api } from '@/utils/api';
 import { $tt, applyTheme, PRODUCTIVITY_THEME_IDS, type ThemeId } from '@/utils/i18n';
-import { getItem, DQ_STORAGE } from '@/utils/storage';
+import { getItem, DQ_STORAGE, setItem } from '@/utils/storage';
 import type { PageKey, SystemInfo, Task } from '@/types';
 import { appEvents } from '@/utils/appEvents';
 
@@ -205,9 +213,8 @@ function openQueueTaskLogs(taskId: string) {
   queueLogTaskId.value = taskId;
   showQueueTaskLogs.value = true;
 }
-const showWorkspaceSetup = ref(false);
-const workspaceEffectiveRoot = ref('');
 const currentLang = ref('zh');
+const showSetupHint = ref(false);
 
 const systemInfo = ref<SystemInfo>({
   env_ready: false,
@@ -295,9 +302,21 @@ async function loadSystemInfo() {
   try {
     const info = await api.settings.getSystemInfo();
     systemInfo.value = info;
+    showSetupHint.value =
+      !getItem(DQ_STORAGE.SETUP_HINT_DISMISSED) && !info.env_ready;
   } catch (e) {
     console.error('Failed to load system info:', e);
   }
+}
+
+function goQuickSetupSettings() {
+  setItem(DQ_STORAGE.SETTINGS_TAB, 'quicksetup');
+  void router.push({ name: 'settings' });
+}
+
+function dismissSetupHint() {
+  setItem(DQ_STORAGE.SETUP_HINT_DISMISSED, '1');
+  showSetupHint.value = false;
 }
 
 function queueTaskLabel(task: { params?: { title?: string; prompt?: string } }) {
@@ -320,29 +339,12 @@ function taskKindLabel(kind?: string): string {
 
 let sysInfoInterval: ReturnType<typeof setInterval> | null = null;
 
-async function loadWorkspaceGate() {
-  try {
-    const status = await api.settings.getWorkspaceStatus();
-    workspaceEffectiveRoot.value = status.effective_root || '';
-    if (!status.configured) {
-      showWorkspaceSetup.value = true;
-    }
-  } catch (e) {
-    console.error('Failed to load workspace status:', e);
-  }
-}
-
-function onWorkspaceSetupCompleted() {
-  void loadWorkspaceGate();
-}
-
 onMounted(async () => {
   const savedLang = getItem(DQ_STORAGE.LANG);
   if (savedLang) {
     currentLang.value = savedLang;
   }
 
-  await loadWorkspaceGate();
   await loadSystemInfo();
 
   const savedTheme = getItem(DQ_STORAGE.THEME);
@@ -383,6 +385,31 @@ provide('systemInfo', systemInfo);
   width: var(--dq-shell-sidebar-width, 60px);
   flex-shrink: 0;
   padding-top: env(safe-area-inset-top, 0px);
+}
+.dq-app-setup-hint {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 12px 16px 0;
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--dq-border-subtle, rgba(255, 255, 255, 0.1));
+  background: var(--dq-surface-elevated, rgba(255, 255, 255, 0.04));
+}
+.dq-app-setup-hint__text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--dq-text-secondary, #a0a0a8);
+  flex: 1;
+  min-width: 200px;
+}
+.dq-app-setup-hint__actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
 }
 .app-main {
   flex: 1;

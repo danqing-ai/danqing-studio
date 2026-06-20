@@ -172,6 +172,13 @@ def parse_lora_train_runtime_config(cfg: dict[str, Any], *, defaults: dict[str, 
     warmup_raw = int(merged.get("warmup_steps") or 100)
     warmup_steps = min(warmup_raw, max(1, opt_steps // 4))
 
+    prior_loss_weight = float(merged.get("prior_loss_weight") or 0.0)
+    if prior_loss_weight > 0 and not class_prompt:
+        raise RuntimeError(
+            "prior_loss_weight > 0 requires class_prompt "
+            "(e.g. 'a photo of a person'); set it in training params or set prior_loss_weight to 0."
+        )
+
     return LoraTrainRuntimeConfig(
         iterations=iterations,
         batch_size=batch_size,
@@ -199,7 +206,7 @@ def parse_lora_train_runtime_config(cfg: dict[str, Any], *, defaults: dict[str, 
         train_type=train_type,  # type: ignore[assignment]
         min_snr_gamma=float(merged.get("min_snr_gamma") or 0.0),
         class_prompt=class_prompt,
-        prior_loss_weight=float(merged.get("prior_loss_weight") or 0.0),
+        prior_loss_weight=prior_loss_weight,
         early_stop_patience=int(merged.get("early_stop_patience") or 0),
         fuse_adapters=bool(merged.get("fuse_adapters") or False),
         turbo_infer_steps=int(merged.get("turbo_infer_steps") or 9),

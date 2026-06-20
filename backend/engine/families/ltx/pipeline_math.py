@@ -465,6 +465,107 @@ def create_noised_state(
     )
 
 
+def reference_latent_frame_count(reference_pixel_frames: int, temporal_compression: int = VIDEO_TEMPORAL_SCALE) -> int:
+    """How many latent time slices are fully covered by reference pixel frames."""
+    pf = max(1, int(reference_pixel_frames))
+    return max(1, (pf + temporal_compression - 1) // temporal_compression)
+
+
+def build_ltx_av_extend_masks(
+    ctx: Any,
+    *,
+    num_video_latent_frames: int,
+    tokens_per_frame: int,
+    num_audio_tokens: int,
+    reference_latent_frames: int,
+    reference_audio_tokens: int,
+    dtype: Any | None = None,
+) -> tuple[Any, Any]:
+    """Build per-token denoise masks for extend-at-end (0=freeze, 1=denoise)."""
+    if dtype is None:
+        dtype = ctx.bfloat16()
+    f_lat = max(1, int(num_video_latent_frames))
+    tpf = max(1, int(tokens_per_frame))
+    ref_f = max(0, min(int(reference_latent_frames), f_lat))
+    ref_v_tokens = ref_f * tpf
+    v_total = f_lat * tpf
+    video_mask = ctx.ones((1, v_total, 1), dtype=dtype)
+    if ref_v_tokens > 0:
+        video_mask = ctx.concat(
+            [
+                ctx.zeros((1, ref_v_tokens, 1), dtype=dtype),
+                ctx.ones((1, v_total - ref_v_tokens, 1), dtype=dtype),
+            ],
+            axis=1,
+        )
+    a_total = max(1, int(num_audio_tokens))
+    ref_a = max(0, min(int(reference_audio_tokens), a_total))
+    audio_mask = ctx.ones((1, a_total, 1), dtype=dtype)
+    if ref_a > 0:
+        audio_mask = ctx.concat(
+            [
+                ctx.zeros((1, ref_a, 1), dtype=dtype),
+                ctx.ones((1, a_total - ref_a, 1), dtype=dtype),
+            ],
+            axis=1,
+        )
+    return video_mask, audio_mask
+
+
+def merge_extend_latent_states(
+    ctx: Any,
+    *,
+    video_tokens: Any,
+    audio_tokens: Any,
+    video_clean: Any,
+    audio_clean: Any,
+    video_mask: Any,
+    audio_mask: Any,
+    video_positions: Any,
+    audio_positions: Any,
+    seed: int,
+    sigma: float = 1.0,
+    spatial_dims: tuple[int, int, int],
+    legacy_scalar_blend: bool = True,
+) -> tuple[LatentState, LatentState]:
+    """Initialize extend pass states from encoded reference + noise in extend region."""
+    v_state = LatentState(
+        latent=video_tokens,
+        clean_latent=video_clean,
+        denoise_mask=video_mask,
+        positions=video_positions,
+    )
+    a_state = LatentState(
+        latent=audio_tokens,
+        clean_latent=audio_clean,
+        denoise_mask=audio_mask,
+        positions=audio_positions,
+    )
+    from backend.engine.runtime.mlx_runtime import set_random_seed
+
+    set_random_seed(getattr(ctx, "set_random_seed", None), seed)
+    dtype = video_tokens.dtype
+    v_noise = ctx.randn(v_state.clean_latent.shape, dtype=dtype)
+    a_noise = ctx.randn(a_state.clean_latent.shape, dtype=dtype)
+    one = ctx.ones((1,), dtype=dtype)
+    v_noised = v_noise * (v_state.denoise_mask * sigma) + v_state.clean_latent * (one - v_state.denoise_mask * sigma)
+    a_noised = a_noise * (a_state.denoise_mask * sigma) + a_state.clean_latent * (one - a_state.denoise_mask * sigma)
+    return (
+        LatentState(
+            latent=v_noised,
+            clean_latent=v_state.clean_latent,
+            denoise_mask=v_state.denoise_mask,
+            positions=v_state.positions,
+        ),
+        LatentState(
+            latent=a_noised,
+            clean_latent=a_state.clean_latent,
+            denoise_mask=a_state.denoise_mask,
+            positions=a_state.positions,
+        ),
+    )
+
+
 # Legacy NCTHW helpers (28-layer diffusers transformer path)
 @dataclass
 class LTXLatentState:

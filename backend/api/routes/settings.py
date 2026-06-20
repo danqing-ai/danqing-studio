@@ -35,6 +35,7 @@ class SettingsResponse(BaseModel):
     mlx_memory_limit: int
     model_cache_ttl_minutes: int = 30
     queue_image_first: bool = False
+    quick_setup_completed: bool = False
     civitai_token: str = ""
     huggingface_token: str = ""
     nsfw_enabled: bool = False
@@ -66,6 +67,7 @@ class SettingsUpdateRequest(BaseModel):
     mlx_memory_limit: Optional[int] = None
     model_cache_ttl_minutes: Optional[int] = None
     queue_image_first: Optional[bool] = None
+    quick_setup_completed: Optional[bool] = None
     civitai_token: Optional[str] = None
     huggingface_token: Optional[str] = None
     nsfw_enabled: Optional[bool] = None
@@ -129,6 +131,9 @@ def update_settings(request: SettingsUpdateRequest, req: Request):
                 status_code=400,
                 detail=t("error.workspace_use_apply_endpoint", locale),
             )
+
+    if "quick_setup_completed" in payload:
+        payload.pop("quick_setup_completed")
 
     for key, value in payload.items():
         if value is not None:

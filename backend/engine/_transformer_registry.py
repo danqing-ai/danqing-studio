@@ -584,7 +584,12 @@ def encode_video_prompt(
         checkpoint_pth, tokenizer_dir = paths
         text_len = int(getattr(config, "text_len", 512))
         enc = enc_cls(ctx, checkpoint_pth, tokenizer_dir, text_len=text_len)
-        return enc.encode([text]), None, None, None, None, None
+        embeds = enc.encode([text])
+        if bool(getattr(config, "release_t5_after_encode", False)):
+            release = getattr(enc, "release_weights", None)
+            if callable(release):
+                release()
+        return embeds, None, None, None, None, None
 
     raise RuntimeError(f"Unsupported video encoder_type: {encoder_type!r}")
 
