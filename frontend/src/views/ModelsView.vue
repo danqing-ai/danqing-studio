@@ -748,13 +748,7 @@ const filteredModels = computed(() => {
     list.push(model);
   }
 
-  return list.sort((a, b) => {
-    if (a.recommended !== b.recommended) return a.recommended ? -1 : 1;
-    const aLegacy = a.successor ? 1 : 0;
-    const bLegacy = b.successor ? 1 : 0;
-    if (aLegacy !== bLegacy) return aLegacy - bLegacy;
-    return $mn(a, a.id).localeCompare($mn(b, b.id));
-  });
+  return list.sort((a, b) => $mn(a, a.id).localeCompare($mn(b, b.id)));
 });
 
 const totalModelCount = computed(() => Object.keys(modelRegistry.value).length);
