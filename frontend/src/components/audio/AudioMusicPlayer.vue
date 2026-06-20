@@ -16,6 +16,7 @@
       preload="auto"
       playsinline
       @loadedmetadata="onLoadedMetadata"
+      @durationchange="onDurationChange"
       @timeupdate="onTimeUpdate"
       @ended="onEnded"
       @play="onPlay"
@@ -190,6 +191,7 @@ import { computed, ref, watch } from 'vue';
 import { Download, Headset, Pause, Play } from '@danqing/dq-shell';
 import { toast } from '@/utils/feedback';
 import { $tt } from '@/utils/i18n';
+import { useMediaTimeline } from '@/composables/useMediaTimeline';
 
 const props = defineProps({
   src: { type: String, default: '' },
@@ -199,6 +201,7 @@ const props = defineProps({
   layout: { type: String, default: 'inline' },
   showDownload: { type: Boolean, default: true },
   autoplay: { type: Boolean, default: false },
+  durationSeconds: { type: Number, default: 0 },
   hue: { type: Number, default: 0 },
 });
 
@@ -209,12 +212,24 @@ const waveBars = 32;
 const audioEl = ref<HTMLAudioElement | null>(null);
 const isPlaying = ref(false);
 const isLoading = ref(false);
-const currentTime = ref(0);
-const duration = ref(0);
-const bufferEnd = ref(0);
 const pendingPlay = ref(false);
 const mediaReady = ref(false);
 const loadingToastShown = ref(false);
+
+const {
+  currentTime,
+  duration,
+  bufferEnd,
+  resetTimeline,
+  onTimeUpdate,
+  onDurationChange,
+  onPlay: onTimelinePlay,
+  onPause: onTimelinePause,
+  onEnded: onTimelineEnded,
+  syncFromElement,
+} = useMediaTimeline(audioEl, {
+  durationHint: () => props.durationSeconds || null,
+});
 
 const displayTitle = computed(() => {
   const t = (props.title || '').trim();
@@ -249,7 +264,7 @@ function formatClock(sec: number) {
 function onLoadedMetadata() {
   const el = audioEl.value;
   if (!el) return;
-  duration.value = Number.isFinite(el.duration) ? el.duration : 0;
+  syncFromElement();
   if (duration.value > 0) emit('duration', duration.value);
   if (el.readyState >= HTMLMediaElement.HAVE_FUTURE_DATA) {
     mediaReady.value = true;
@@ -259,18 +274,9 @@ function onLoadedMetadata() {
   }
 }
 
-function onTimeUpdate() {
-  const el = audioEl.value;
-  if (!el) return;
-  currentTime.value = el.currentTime;
-  if (el.buffered.length > 0) {
-    bufferEnd.value = el.buffered.end(el.buffered.length - 1);
-  }
-}
-
 function onEnded() {
   isPlaying.value = false;
-  currentTime.value = 0;
+  onTimelineEnded();
   emit('pause');
 }
 
@@ -278,11 +284,13 @@ function onPlay() {
   isPlaying.value = true;
   isLoading.value = false;
   pendingPlay.value = false;
+  onTimelinePlay();
   emit('play');
 }
 
 function onPause() {
   isPlaying.value = false;
+  onTimelinePause();
   emit('pause');
 }
 
@@ -293,7 +301,7 @@ function onSeek(ev: MouseEvent) {
   const rect = track.getBoundingClientRect();
   const ratio = Math.min(1, Math.max(0, (ev.clientX - rect.left) / rect.width));
   el.currentTime = ratio * duration.value;
-  currentTime.value = el.currentTime;
+  syncFromElement();
 }
 
 function onCanPlay() {
@@ -399,8 +407,7 @@ function pause() {
 }
 
 function resetForNewSrc(clearPending: boolean) {
-  currentTime.value = 0;
-  duration.value = 0;
+  resetTimeline();
   isPlaying.value = false;
   mediaReady.value = false;
   isLoading.value = !!props.src;
@@ -426,6 +433,11 @@ watch(
     resetForNewSrc(!wantAutoplay);
     if (wantAutoplay) pendingPlay.value = true;
   },
+);
+
+watch(
+  () => props.durationSeconds,
+  () => syncFromElement(),
 );
 
 defineExpose({ pause, load, togglePlay, playWhenReady, isPlaying });

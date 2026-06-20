@@ -10,6 +10,7 @@
       :title="displayTitle"
       :subtitle="displaySubtitle"
       :hue="artHue"
+      :duration-seconds="durationSeconds"
       :layout="variant === 'lightbox' ? 'featured' : 'inline'"
       :autoplay="false"
       :show-download="variant === 'lightbox'"
@@ -104,6 +105,14 @@ const displaySubtitle = computed(() => {
   if (props.item.model) parts.push(props.item.model);
   if (props.durationLabel) parts.push(props.durationLabel);
   return parts.join(' · ');
+});
+
+const durationSeconds = computed(() => {
+  const raw =
+    props.item.duration_seconds ??
+    (props.item.metadata?.duration_seconds as number | undefined);
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : 0;
 });
 
 const lyricsText = computed(() => {

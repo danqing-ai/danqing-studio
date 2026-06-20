@@ -57,6 +57,7 @@
           :src="getVideoUrl(currentItem)"
           :aspect-width="currentItem.width || 0"
           :aspect-height="currentItem.height || 0"
+          :duration-seconds="videoDurationSeconds"
           :show-download="true"
           @download="downloadCurrent"
         />
@@ -208,6 +209,14 @@ const audioDurationLabel = computed(() => {
   const dur = item.duration_seconds ?? (item.metadata?.duration_seconds as number | undefined);
   if (!dur) return '';
   return formatClock(Number(dur));
+});
+
+const videoDurationSeconds = computed(() => {
+  const item = currentItem.value;
+  if (!item) return 0;
+  const raw = item.duration_seconds ?? (item.metadata?.duration_seconds as number | undefined);
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : 0;
 });
 
 function formatClock(sec: number) {

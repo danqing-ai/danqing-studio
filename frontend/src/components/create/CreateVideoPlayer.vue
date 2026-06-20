@@ -18,6 +18,7 @@
         preload="metadata"
         playsinline
         @loadedmetadata="onLoadedMetadata"
+        @durationchange="onDurationChange"
         @timeupdate="onTimeUpdate"
         @ended="onEnded"
         @play="onPlay"
@@ -102,6 +103,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { Download, Pause, Play } from '@danqing/dq-shell';
+import { useMediaTimeline } from '@/composables/useMediaTimeline';
 
 const props = defineProps({
   src: { type: String, default: '' },
@@ -110,6 +112,7 @@ const props = defineProps({
   layout: { type: String, default: 'create' },
   aspectWidth: { type: Number, default: 0 },
   aspectHeight: { type: Number, default: 0 },
+  durationSeconds: { type: Number, default: 0 },
   showDownload: { type: Boolean, default: true },
   hue: { type: Number, default: 268 },
 });
@@ -119,10 +122,22 @@ const emit = defineEmits(['download', 'play', 'pause', 'duration']);
 const videoEl = ref<HTMLVideoElement | null>(null);
 const isPlaying = ref(false);
 const isLoading = ref(false);
-const currentTime = ref(0);
-const duration = ref(0);
-const bufferEnd = ref(0);
 const intrinsicAspect = ref<{ w: number; h: number } | null>(null);
+
+const {
+  currentTime,
+  duration,
+  bufferEnd,
+  resetTimeline,
+  onTimeUpdate,
+  onDurationChange,
+  onPlay: onTimelinePlay,
+  onPause: onTimelinePause,
+  onEnded: onTimelineEnded,
+  syncFromElement,
+} = useMediaTimeline(videoEl, {
+  durationHint: () => props.durationSeconds || null,
+});
 
 const displayTitle = computed(() => (props.title || '').trim() || 'Untitled');
 
@@ -157,7 +172,7 @@ function formatClock(sec: number) {
 function onLoadedMetadata() {
   const el = videoEl.value;
   if (!el) return;
-  duration.value = Number.isFinite(el.duration) ? el.duration : 0;
+  syncFromElement();
   isLoading.value = false;
   if (el.videoWidth > 0 && el.videoHeight > 0) {
     intrinsicAspect.value = { w: el.videoWidth, h: el.videoHeight };
@@ -165,28 +180,21 @@ function onLoadedMetadata() {
   if (duration.value > 0) emit('duration', duration.value);
 }
 
-function onTimeUpdate() {
-  const el = videoEl.value;
-  if (!el) return;
-  currentTime.value = el.currentTime;
-  if (el.buffered.length > 0) {
-    bufferEnd.value = el.buffered.end(el.buffered.length - 1);
-  }
-}
-
 function onEnded() {
   isPlaying.value = false;
-  currentTime.value = 0;
+  onTimelineEnded();
   emit('pause');
 }
 
 function onPlay() {
   isPlaying.value = true;
+  onTimelinePlay();
   emit('play');
 }
 
 function onPause() {
   isPlaying.value = false;
+  onTimelinePause();
   emit('pause');
 }
 
@@ -197,7 +205,7 @@ function onSeek(ev: MouseEvent) {
   const rect = track.getBoundingClientRect();
   const ratio = Math.min(1, Math.max(0, (ev.clientX - rect.left) / rect.width));
   el.currentTime = ratio * duration.value;
-  currentTime.value = el.currentTime;
+  syncFromElement();
 }
 
 function togglePlay() {
@@ -210,8 +218,7 @@ function togglePlay() {
 function load() {
   const el = videoEl.value;
   if (!el) return;
-  currentTime.value = 0;
-  duration.value = 0;
+  resetTimeline();
   isPlaying.value = false;
   intrinsicAspect.value = null;
   try {
@@ -221,7 +228,15 @@ function load() {
   }
 }
 
-watch(() => props.src, () => load());
+watch(
+  () => props.src,
+  () => load(),
+);
+
+watch(
+  () => props.durationSeconds,
+  () => syncFromElement(),
+);
 
 defineExpose({ load, togglePlay, pause: () => videoEl.value?.pause() });
 </script>
