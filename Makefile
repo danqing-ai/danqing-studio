@@ -1,4 +1,4 @@
-.PHONY: help clean lint dev start stop test test-integration \
+.PHONY: help clean clean-download-cache lint dev start stop test test-integration \
 	frontend-install frontend-dev frontend-build frontend-typecheck frontend-canvas-unit \
 	bench-setup bench-download-judge bench-eval bench-eval-smoke bench-eval-case bench-eval-calibrate \
 	check-consistency check-models-registry-contracts check-ep-boundary check-theme-legacy check-ui-compat check-engine-rules check-engine-imports check-engine-family-layout check-engine-family-primitives check-engine-attention-paths check-engine-sdpa-paths check-engine-rope-paths check-engine-modulation-paths check-frontend-governance check-weight-parity check-engine-governance verify-engine-stack \
@@ -191,6 +191,9 @@ lint:
 clean:
 	$(PYTHON) scripts/clean_build.py
 
+clean-download-cache:
+	$(PYTHON) scripts/clean_download_caches.py
+
 # ============================================================================
 # Release packaging — pack-<platform>-<product>-<step>
 # ============================================================================
@@ -293,7 +296,7 @@ help:
 	@echo "Desktop:   (deprecated — use Tauri desktop via pack-macos-desktop)"
 	@echo "Test:      test | test-integration"
 	@echo "Quality:   lint | check-*"
-	@echo "Clean:     clean"
+	@echo "Clean:     clean | clean-download-cache"
 	@echo ""
 	@echo "Release (pack-<platform>-<product>):"
 	@echo "  macOS desktop (MLX):     pack-macos-desktop"
