@@ -1619,6 +1619,46 @@ class AceStepGenerationTests(unittest.TestCase):
             get_audio_prepare_request("unknown_audio_family")
 
 
+class WorkspaceMigrationTests(unittest.TestCase):
+    def test_migrate_workspace_rolls_back_on_failure(self) -> None:
+        import shutil
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from backend.utils.workspace import migrate_workspace_data
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            old_ws = root / "old"
+            new_ws = root / "new"
+            old_ws.mkdir()
+            new_ws.mkdir()
+            (old_ws / "config").mkdir()
+            (old_ws / "config" / "models_registry.json").write_text("{}", encoding="utf-8")
+            (old_ws / "db").mkdir()
+            (old_ws / "db" / "studio.db").write_bytes(b"sqlite")
+            (old_ws / "models").mkdir()
+            (old_ws / "models" / "weights.bin").write_bytes(b"x" * 8)
+
+            real_move = shutil.move
+
+            def _move_fail_large_models(src: str, dst: str) -> None:
+                if Path(src).name == "models":
+                    raise OSError("simulated disk full")
+                real_move(src, dst)
+
+            with patch("backend.utils.workspace.shutil.move", side_effect=_move_fail_large_models):
+                with self.assertRaises(OSError):
+                    migrate_workspace_data(old_ws, new_ws)
+
+            self.assertTrue((old_ws / "config" / "models_registry.json").is_file())
+            self.assertTrue((old_ws / "db" / "studio.db").is_file())
+            self.assertTrue((old_ws / "models" / "weights.bin").is_file())
+            self.assertFalse((new_ws / "config").exists())
+            self.assertFalse((new_ws / "db").exists())
+
+
 class RegistrySeedTests(unittest.TestCase):
     def test_seed_workspace_config_copies_registry_once(self) -> None:
         import json
