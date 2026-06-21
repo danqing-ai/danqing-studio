@@ -1643,6 +1643,7 @@
     "batchDownloadFailed": "批量下载失败: {msg}",
     "resumeStart": "开始恢复下载: {name}",
     "resumeFailed": "恢复下载失败: {msg}",
+    "retryDownload": "重试",
     "searchFailed": "搜索失败",
     "selectVersionWarn": "请选择版本",
     "noDownloadableFile": "未找到可下载文件",

@@ -84,7 +84,7 @@ const navTitle = computed(() => `${props.navLabel} ${props.targetName}`.trim());
 }
 
 .model-catalog-relation__nav-prefix {
-  color: var(--dq-text-secondary);
+  color: var(--dq-label-secondary);
   white-space: nowrap;
 }
 

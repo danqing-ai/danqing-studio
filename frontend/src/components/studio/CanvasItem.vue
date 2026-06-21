@@ -183,7 +183,7 @@ function onMouseDown(e: MouseEvent) {
 }
 
 .canvas-item--multi .canvas-item__card {
-  outline: 2px solid var(--dq-color-warning, #e6a23c);
+  outline: 2px solid var(--dq-warning);
   outline-offset: 2px;
 }
 
@@ -194,10 +194,10 @@ function onMouseDown(e: MouseEvent) {
 }
 
 .canvas-item--editing .canvas-item__card {
-  outline: 2px solid var(--dq-color-primary, #5b8def);
+  outline: 2px solid var(--dq-accent);
   outline-offset: 3px;
   box-shadow:
-    0 0 0 4px color-mix(in srgb, var(--dq-color-primary, #5b8def) 18%, transparent),
+    0 0 0 4px color-mix(in srgb, var(--dq-accent) 18%, transparent),
     0 8px 24px rgba(0, 0, 0, 0.35);
 }
 
@@ -207,7 +207,7 @@ function onMouseDown(e: MouseEvent) {
   height: var(--card-h, 200px);
   border-radius: 8px;
   overflow: hidden;
-  background: var(--dq-color-bg-tertiary);
+  background: var(--dq-fill-tertiary);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
 }
 
@@ -225,7 +225,7 @@ function onMouseDown(e: MouseEvent) {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--dq-color-text-tertiary);
+  color: var(--dq-label-tertiary);
 }
 
 .canvas-item__audio-card {
@@ -242,7 +242,7 @@ function onMouseDown(e: MouseEvent) {
     hsl(var(--dq-audio-hue, 220) 35% 22%),
     hsl(var(--dq-audio-hue, 220) 45% 14%)
   );
-  color: var(--dq-color-text-primary);
+  color: var(--dq-label-primary);
 }
 
 .canvas-item__audio-title {

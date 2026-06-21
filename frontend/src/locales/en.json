@@ -1643,6 +1643,7 @@
     "batchDownloadFailed": "Batch download failed: {msg}",
     "resumeStart": "Resuming download: {name}",
     "resumeFailed": "Resume download failed: {msg}",
+    "retryDownload": "Retry",
     "searchFailed": "Search failed",
     "selectVersionWarn": "Please select a version",
     "noDownloadableFile": "No downloadable files found",

@@ -970,7 +970,7 @@ function onPromptKeydown(e: KeyboardEvent) {
 }
 
 .audio-composer__lyrics-required {
-  color: var(--dq-color-danger, #ff3b30);
+  color: var(--dq-danger);
   margin-left: 2px;
 }
 

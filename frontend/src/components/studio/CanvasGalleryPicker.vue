@@ -237,6 +237,8 @@ function importOne(path: string) {
 .canvas-gallery-picker__grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(108px, 1fr));
+  grid-auto-rows: auto;
+  align-items: start;
   gap: 10px;
   max-height: min(52vh, 420px);
   overflow-y: auto;
@@ -247,6 +249,7 @@ function importOne(path: string) {
   position: relative;
   display: flex;
   flex-direction: column;
+  align-items: stretch;
   gap: 6px;
   padding: 0;
   border: 1px solid var(--dq-border-subtle);
@@ -255,6 +258,10 @@ function importOne(path: string) {
   cursor: pointer;
   text-align: left;
   overflow: hidden;
+  appearance: none;
+  -webkit-appearance: none;
+  font: inherit;
+  color: inherit;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
@@ -274,13 +281,17 @@ function importOne(path: string) {
 .canvas-gallery-picker__thumb {
   position: relative;
   width: 100%;
-  aspect-ratio: 1;
+  flex: 0 0 auto;
+  height: 0;
+  padding-bottom: 100%;
   overflow: hidden;
   background: var(--dq-fill-secondary);
 }
 
 .canvas-gallery-picker__thumb img,
 .canvas-gallery-picker__thumb video {
+  position: absolute;
+  inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
@@ -289,8 +300,8 @@ function importOne(path: string) {
 
 .canvas-gallery-picker__fallback,
 .canvas-gallery-picker__audio {
-  width: 100%;
-  height: 100%;
+  position: absolute;
+  inset: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -319,6 +330,7 @@ function importOne(path: string) {
 }
 
 .canvas-gallery-picker__caption {
+  flex: 0 0 auto;
   padding: 0 8px 8px;
   font-size: 11px;
   color: var(--dq-label-secondary);

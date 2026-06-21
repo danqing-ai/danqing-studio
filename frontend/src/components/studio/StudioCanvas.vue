@@ -263,8 +263,6 @@ function handleCardClick(item: GalleryItem, event: MouseEvent) {
 
 <style scoped>
 .studio-canvas {
-  max-width: 1400px;
-  margin: 0 auto;
   width: 100%;
 }
 

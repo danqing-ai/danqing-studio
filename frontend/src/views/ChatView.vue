@@ -1223,8 +1223,8 @@ onMounted(async () => {
 .copilot-page__result-body {
   padding: 12px;
   border-radius: 10px;
-  background: var(--dq-bg-base);
-  border: 0.5px solid var(--dq-border);
+  background: var(--dq-surface-inset);
+  border: 0.5px solid var(--dq-glass-border);
   font-size: 13px;
   line-height: 1.55;
   white-space: pre-wrap;
@@ -1279,8 +1279,10 @@ onMounted(async () => {
   gap: 8px;
   padding: 10px 12px;
   border-radius: 10px;
-  border: 0.5px solid var(--dq-border);
-  background: var(--dq-bg-base);
+  border: 0.5px solid var(--dq-glass-border);
+  background: var(--dq-surface-inset);
+  -webkit-backdrop-filter: var(--dq-glass-blur-light);
+  backdrop-filter: var(--dq-glass-blur-light);
 }
 
 .copilot-page__card--running {
@@ -1288,16 +1290,16 @@ onMounted(async () => {
 }
 
 .copilot-page__card--done {
-  border-color: rgba(52, 199, 89, 0.35);
+  border-color: var(--dq-success-surface-border);
 }
 
 .copilot-page__card--error {
-  border-color: rgba(255, 59, 48, 0.35);
+  border-color: var(--dq-danger-surface-border);
 }
 
 .copilot-page__card--focused {
   border-color: var(--dq-accent-surface-border);
-  background: color-mix(in srgb, var(--dq-accent) 8%, var(--dq-bg-base));
+  background: color-mix(in srgb, var(--dq-accent) 8%, var(--dq-surface-inset));
 }
 
 .copilot-page__card[role='button'] {

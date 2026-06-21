@@ -148,7 +148,7 @@ async function commitRename() {
 
 .studio-canvas-session-controls__sync {
   font-size: 11px;
-  color: var(--dq-color-text-secondary);
+  color: var(--dq-label-secondary);
   white-space: nowrap;
   padding-left: 4px;
 }

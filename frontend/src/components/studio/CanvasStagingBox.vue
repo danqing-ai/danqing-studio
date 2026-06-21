@@ -111,9 +111,9 @@ onBeforeUnmount(onUp);
 <style scoped>
 .canvas-staging {
   position: absolute;
-  border: 2px dashed var(--dq-color-primary, #5b8def);
+  border: 2px dashed var(--dq-accent);
   border-radius: 12px;
-  background: color-mix(in srgb, var(--dq-color-primary, #5b8def) 6%, transparent);
+  background: color-mix(in srgb, var(--dq-accent) 6%, transparent);
   pointer-events: none;
   z-index: 0;
   user-select: none;
@@ -132,8 +132,8 @@ onBeforeUnmount(onUp);
 }
 
 .canvas-staging--active {
-  border-color: var(--dq-color-success, #3ecf8e);
-  background: color-mix(in srgb, var(--dq-color-success, #3ecf8e) 8%, transparent);
+  border-color: var(--dq-success);
+  background: color-mix(in srgb, var(--dq-success) 8%, transparent);
 }
 
 .canvas-staging__resize {
@@ -143,7 +143,7 @@ onBeforeUnmount(onUp);
   width: 14px;
   height: 14px;
   border-radius: 4px;
-  background: var(--dq-color-primary, #5b8def);
+  background: var(--dq-accent);
   pointer-events: auto;
   cursor: nwse-resize;
 }
@@ -151,12 +151,12 @@ onBeforeUnmount(onUp);
 .canvas-staging__label {
   font-size: 12px;
   font-weight: 600;
-  color: var(--dq-color-text-primary);
+  color: var(--dq-label-primary);
 }
 
 .canvas-staging__hint {
   font-size: 11px;
-  color: var(--dq-color-text-secondary);
+  color: var(--dq-label-secondary);
   text-align: center;
   padding: 0 12px;
   line-height: 1.4;

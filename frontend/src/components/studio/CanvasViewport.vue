@@ -12,9 +12,9 @@
     @mouseleave="pointerInside = false"
     @contextmenu.prevent
   >
-    <div class="canvas-viewport__world" :style="worldStyle">
-      <div class="canvas-viewport__grid" />
+    <div class="canvas-viewport__grid" :style="gridStyle" aria-hidden="true" />
 
+    <div class="canvas-viewport__world" :style="worldStyle">
       <CanvasEdges
         v-if="showEdges && (edges?.length ?? 0) > 0"
         :edges="edges ?? []"
@@ -202,6 +202,15 @@ const worldStyle = computed(() => ({
   transform: `translate(${props.viewport.panX}px, ${props.viewport.panY}px) scale(${props.viewport.zoom})`,
   transformOrigin: '0 0',
 }));
+
+/** Screen-fixed dot grid synced to pan/zoom (must not live inside transformed world). */
+const gridStyle = computed(() => {
+  const step = 20 * props.viewport.zoom;
+  return {
+    backgroundSize: `${step}px ${step}px`,
+    backgroundPosition: `${props.viewport.panX}px ${props.viewport.panY}px`,
+  };
+});
 
 const itemMap = computed(() => {
   const map: Record<string, GalleryItem> = {};
@@ -456,7 +465,7 @@ defineExpose({ viewportRef });
   position: absolute;
   inset: 0;
   overflow: hidden;
-  background: var(--dq-color-bg-canvas, #1a1a1e);
+  background: var(--dq-fill-dim, #1a1a1e);
   cursor: default;
 }
 
@@ -468,28 +477,28 @@ defineExpose({ viewportRef });
   cursor: grabbing;
 }
 
+.canvas-viewport__grid {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background-color: var(--dq-fill-dim, #1a1a1e);
+  background-image: radial-gradient(circle, rgba(255, 255, 255, 0.16) 1px, transparent 1px);
+  background-repeat: repeat;
+}
+
 .canvas-viewport__world {
   position: absolute;
   top: 0;
   left: 0;
+  z-index: 1;
   will-change: transform;
-}
-
-.canvas-viewport__grid {
-  position: absolute;
-  top: -5000px;
-  left: -5000px;
-  width: 10000px;
-  height: 10000px;
-  background-image: radial-gradient(circle, var(--dq-color-border, #3a3a40) 1px, transparent 1px);
-  background-size: 20px 20px;
-  z-index: 0;
 }
 
 .canvas-viewport__marquee {
   position: absolute;
-  border: 1px solid var(--dq-color-primary, #5b8def);
-  background: color-mix(in srgb, var(--dq-color-primary, #5b8def) 12%, transparent);
+  border: 1px solid var(--dq-accent);
+  background: color-mix(in srgb, var(--dq-accent) 12%, transparent);
   pointer-events: none;
   z-index: 20;
 }
@@ -545,7 +554,7 @@ defineExpose({ viewportRef });
   color: var(--dq-label-secondary);
   line-height: 1.55;
   border-radius: 8px;
-  background: color-mix(in srgb, var(--dq-color-bg-secondary) 65%, transparent);
+  background: color-mix(in srgb, var(--dq-fill-secondary) 65%, transparent);
 }
 
 .canvas-viewport__empty-shortcuts li + li {

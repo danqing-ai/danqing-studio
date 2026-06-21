@@ -223,8 +223,16 @@ def _split_modelscope_allow_patterns(patterns: list[str] | None) -> list[list[st
 
 def _min_bytes_for_pattern(pattern: str) -> int:
     name = pattern.rsplit("/", 1)[-1]
-    if name.endswith(".safetensors") or name.endswith(".pth"):
+    if name.endswith(".safetensors"):
         return 1024 ** 3
+    if name.endswith(".pth"):
+        lower = name.lower()
+        if "vae" in lower:
+            # Wan2.1_VAE.pth is ~484MB on ModelScope; do not use the 1GB DiT/T5 floor.
+            return 400 * 1024 ** 2
+        if "t5" in lower or name.startswith("models_t5"):
+            return 1024 ** 3
+        return 100 * 1024 ** 2
     if name.endswith(".json"):
         return 32
     return 1024
@@ -739,6 +747,73 @@ class DownloadService(IDownloadService):
                 return True
         return False
 
+    def _version_local_artifacts_ready(
+        self,
+        *,
+        ver_config: dict[str, Any],
+        target: Path,
+    ) -> bool:
+        bundle_entries = bundle_repos_from_version(ver_config)
+        if bundle_entries:
+            for spec in bundle_entries:
+                dest = self._resolve_registry_path(str(spec["local_path"]))
+                patterns = spec.get("allow_patterns")
+                pat_list = [str(p) for p in patterns] if isinstance(patterns, list) else None
+                if not _bundle_repo_is_complete(dest, pat_list):
+                    return False
+            return True
+
+        patterns = ver_config.get("allow_patterns")
+        if isinstance(patterns, list) and patterns:
+            return _bundle_repo_is_complete(target, [str(p) for p in patterns])
+
+        return target.is_dir() and _calc_download_dir_bytes(target) >= 1024 ** 3
+
+    async def _try_finish_if_already_installed(
+        self,
+        *,
+        model_name: str,
+        version: str | None,
+        config: dict[str, Any],
+        ver_config: dict[str, Any] | None,
+        target: Path,
+        task_id: str,
+        display_name: str,
+        total_size: int,
+        on_progress: Callable[[DownloadProgress], Any],
+    ) -> bool:
+        if not ver_config or not self._version_local_artifacts_ready(
+            ver_config=ver_config, target=target
+        ):
+            return False
+
+        for spec in parse_dependencies(config.get("dependencies")):
+            if not self._dependency_is_ready(spec):
+                return False
+
+        await self._finalize_version_install(
+            model_name=model_name,
+            version=version,
+            ver_config=ver_config,
+            target=target,
+            task_id=task_id,
+            display_name=display_name,
+            on_progress=on_progress,
+        )
+        final_downloaded = _calc_download_dir_bytes(target)
+        await on_progress(
+            DownloadProgress(
+                task_id=task_id,
+                status="completed",
+                progress=1.0,
+                total_size=total_size,
+                downloaded_size=final_downloaded,
+                speed="",
+                filename=display_name,
+            )
+        )
+        return True
+
     async def _ensure_dependencies_installed(
         self,
         *,
@@ -1074,6 +1149,23 @@ class DownloadService(IDownloadService):
                 progress_callback=progress_callback,
             )
 
+            if ver_config and await self._try_finish_if_already_installed(
+                model_name=model_name,
+                version=version,
+                config=config,
+                ver_config=ver_config,
+                target=target,
+                task_id=task_id,
+                display_name=display_name,
+                total_size=estimated_size,
+                on_progress=on_progress,
+            ):
+                task.status = TaskStatus.COMPLETED
+                task.progress = 1.0
+                self._active_model_downloads.pop(dedup_key, None)
+                self._persist_downloads()
+                return str(target)
+
             if source == "huggingface" and repo_id:
                 # Inline HuggingFace download: snapshot_download + poll directory size for progress
                 from huggingface_hub import snapshot_download
@@ -1280,13 +1372,11 @@ class DownloadService(IDownloadService):
                             allow_patterns = primary_spec["allow_patterns"]
                         else:
                             allow_patterns = ver_config.get("allow_patterns")
-                    if (
-                        primary_spec
-                        and isinstance(allow_patterns, list)
-                        and _bundle_repo_is_complete(target, allow_patterns)
+                    if isinstance(allow_patterns, list) and _bundle_repo_is_complete(
+                        target, [str(p) for p in allow_patterns]
                     ):
                         logger.info(
-                            "Primary bundle repo already present under %s; skipping",
+                            "Model bundle already present under %s; skipping download",
                             target,
                         )
                         return str(target)
@@ -1777,9 +1867,11 @@ class DownloadService(IDownloadService):
         persisted metadata, and restarts the download reusing the original task_id.
         """
         task = self._downloads.get(task_id)
-        if not task or task.status != TaskStatus.PAUSED:
+        if not task or task.status not in (TaskStatus.PAUSED, TaskStatus.FAILED):
             loc = get_locale()
-            raise ValueError(tt("error.download_not_paused", loc, id=task_id))
+            raise ValueError(tt("error.download_not_resumable", loc, id=task_id))
+
+        task.error_message = ""
 
         model_name = getattr(task, '_model_name', None)
         version = getattr(task, '_version', None)

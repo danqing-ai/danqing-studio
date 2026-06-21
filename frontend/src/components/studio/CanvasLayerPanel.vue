@@ -377,14 +377,14 @@ const layerList = computed(() => {
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--dq-color-text-secondary);
+  color: var(--dq-label-secondary);
 }
 
 .canvas-layer__rename-hint {
   margin: 0;
   padding: 0 16px 8px;
   font-size: 11px;
-  color: var(--dq-color-text-secondary);
+  color: var(--dq-label-secondary);
   line-height: 1.4;
 }
 
@@ -408,11 +408,11 @@ const layerList = computed(() => {
 
 .canvas-layer__row:hover,
 .canvas-layer__overlay-row:hover {
-  background: var(--dq-color-bg-secondary);
+  background: var(--dq-fill-secondary);
 }
 
 .canvas-layer__row--selected {
-  background: color-mix(in srgb, var(--dq-color-primary) 10%, transparent);
+  background: color-mix(in srgb, var(--dq-accent) 10%, transparent);
 }
 
 .canvas-layer__row--hidden,
@@ -426,7 +426,7 @@ const layerList = computed(() => {
   border-radius: 6px;
   overflow: hidden;
   flex-shrink: 0;
-  background: var(--dq-color-bg-secondary);
+  background: var(--dq-fill-secondary);
 }
 
 .canvas-layer__thumb img {
@@ -441,8 +441,8 @@ const layerList = computed(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: var(--dq-color-primary);
-  background: color-mix(in srgb, var(--dq-color-primary) 12%, var(--dq-color-bg-secondary));
+  color: var(--dq-accent);
+  background: color-mix(in srgb, var(--dq-accent) 12%, var(--dq-fill-secondary));
 }
 
 .canvas-layer__info {
@@ -456,7 +456,7 @@ const layerList = computed(() => {
 .canvas-layer__name {
   font-size: 13px;
   font-weight: 500;
-  color: var(--dq-color-text-primary);
+  color: var(--dq-label-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -468,12 +468,12 @@ const layerList = computed(() => {
 
 .canvas-layer__dim {
   font-size: 11px;
-  color: var(--dq-color-text-secondary);
+  color: var(--dq-label-secondary);
 }
 
 .canvas-layer__note {
   font-size: 11px;
-  color: var(--dq-color-text-secondary);
+  color: var(--dq-label-secondary);
   line-height: 1.35;
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -491,7 +491,7 @@ const layerList = computed(() => {
 .canvas-layer__overlay-row {
   margin: 0 12px 6px;
   padding: 10px;
-  border: 1px solid var(--dq-color-border);
+  border: 1px solid var(--dq-border-subtle);
   cursor: default;
 }
 
@@ -518,7 +518,7 @@ const layerList = computed(() => {
 
 .canvas-layer__opacity-label {
   font-size: 11px;
-  color: var(--dq-color-text-secondary);
+  color: var(--dq-label-secondary);
 }
 
 .canvas-layer__overlay-clear {
@@ -533,7 +533,7 @@ const layerList = computed(() => {
   gap: 10px;
   margin: 0 12px 8px;
   padding: 10px;
-  border: 1px dashed var(--dq-color-border);
+  border: 1px dashed var(--dq-border-subtle);
   border-radius: 8px;
 }
 
@@ -549,8 +549,8 @@ const layerList = computed(() => {
   align-items: center;
   justify-content: center;
   font-size: 18px;
-  color: var(--dq-color-primary);
-  background: color-mix(in srgb, var(--dq-color-primary) 10%, transparent);
+  color: var(--dq-accent);
+  background: color-mix(in srgb, var(--dq-accent) 10%, transparent);
   flex-shrink: 0;
 }
 </style>

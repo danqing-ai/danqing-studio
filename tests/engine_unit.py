@@ -2234,6 +2234,49 @@ class DownloadStallTests(unittest.TestCase):
             ["models_t5*.pth", "Wan2.1_VAE.pth", "configuration.json"],
         )
 
+    def test_bundle_repo_complete_accepts_wan_vae_under_one_gb(self) -> None:
+        from backend.services.download_service import _bundle_repo_is_complete
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "google" / "umt5-xxl").mkdir(parents=True)
+            (root / "google" / "umt5-xxl" / "tokenizer.json").write_bytes(b"x" * 2048)
+            (root / "configuration.json").write_bytes(b"{}")
+            (root / "models_t5_umt5-xxl-enc-bf16.pth").write_bytes(b"x" * (1024 ** 3 + 1))
+            (root / "Wan2.1_VAE.pth").write_bytes(b"x" * (484 * 1024 ** 2))
+            patterns = [
+                "google/**",
+                "configuration.json",
+                "models_t5*.pth",
+                "Wan2.1_VAE.pth",
+            ]
+            self.assertTrue(_bundle_repo_is_complete(root, patterns))
+
+    def test_version_local_artifacts_ready_without_bundle_repos(self) -> None:
+        from backend.services.download_service import DownloadService
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "Wan2.1_VAE.pth").write_bytes(b"x" * (484 * 1024 ** 2))
+            (root / "models_t5_umt5-xxl-enc-bf16.pth").write_bytes(b"x" * (1024 ** 3 + 1))
+            (root / "google" / "x").mkdir(parents=True)
+            (root / "google" / "x" / "t.json").write_bytes(b"x" * 64)
+            (root / "configuration.json").write_bytes(b"{}")
+            ver = {
+                "allow_patterns": [
+                    "google/**",
+                    "configuration.json",
+                    "models_t5*.pth",
+                    "Wan2.1_VAE.pth",
+                ]
+            }
+            resolver = SimpleNamespace(
+                get_workspace_config_dir=lambda: Path(tempfile.gettempdir()),
+                resolve_registry_local_path=lambda p: Path(p),
+            )
+            svc = DownloadService(path_resolver=resolver)  # type: ignore[arg-type]
+            self.assertTrue(svc._version_local_artifacts_ready(ver_config=ver, target=root))
+
     def _download_service_for_stall_tests(self):
         from backend.services.download_service import DownloadService
 

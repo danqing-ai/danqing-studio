@@ -117,12 +117,12 @@ async function confirm() {
 .dq-workspace-setup-intro {
   margin: 0 0 8px;
   line-height: 1.5;
-  color: var(--dq-text-secondary, #a0a0a8);
+  color: var(--dq-label-secondary);
 }
 .dq-workspace-setup-hint {
   margin: 0 0 16px;
   font-size: 12px;
-  color: var(--dq-text-muted, #888);
+  color: var(--dq-label-tertiary);
 }
 .dq-workspace-setup-input-row {
   margin-bottom: 12px;
@@ -131,7 +131,7 @@ async function confirm() {
   margin: 0;
   font-size: 12px;
   line-height: 1.45;
-  color: var(--dq-text-muted, #888);
+  color: var(--dq-label-tertiary);
 }
 .dq-workspace-setup-from-label {
   display: block;

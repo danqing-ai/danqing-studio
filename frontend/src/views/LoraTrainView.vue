@@ -1,6 +1,6 @@
 <template>
   <div class="lora-train-page">
-    <aside class="lora-train-page__rail">
+    <aside class="lora-train-page__rail dq-glass--grouped">
       <div class="lora-train-page__rail-head">
         <div class="lora-train-page__rail-icon" aria-hidden="true">
           <DqIcon><MagicStick /></DqIcon>
@@ -105,7 +105,7 @@
           </div>
         </header>
 
-        <div class="lora-train-page__surface">
+        <div class="lora-train-page__surface dq-glass--grouped">
           <!-- Step 1: base model -->
           <div v-show="step === 0" class="lora-train-page__panel">
             <div class="lora-train-page__model-grid">
@@ -1339,15 +1339,6 @@ onMounted(async () => {
   flex-direction: column;
   gap: 14px;
   padding: 18px 16px;
-  border-radius: var(--dq-radius-group, 16px);
-  border: 0.5px solid color-mix(in srgb, var(--dq-border) 55%, transparent);
-  background: linear-gradient(
-    165deg,
-    color-mix(in srgb, var(--dq-fill-secondary) 88%, var(--dq-accent) 4%) 0%,
-    var(--dq-fill-secondary) 42%,
-    color-mix(in srgb, var(--dq-bg-base) 92%, transparent) 100%
-  );
-  box-shadow: 0 12px 40px color-mix(in srgb, var(--dq-shadow-md) 65%, transparent);
   overflow: hidden;
 }
 
@@ -1659,10 +1650,6 @@ onMounted(async () => {
   min-height: 0;
   overflow: auto;
   padding: 20px 22px;
-  border-radius: var(--dq-radius-group, 16px);
-  border: 0.5px solid color-mix(in srgb, var(--dq-border) 50%, transparent);
-  background: color-mix(in srgb, var(--dq-fill-secondary) 72%, var(--dq-bg-base));
-  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 4%, transparent);
 }
 
 .lora-train-page__panel {
@@ -1680,9 +1667,11 @@ onMounted(async () => {
   align-items: center;
   gap: 12px;
   padding: 12px 16px;
-  border-radius: var(--radius-md);
-  border: 0.5px solid var(--dq-border-subtle);
-  background: color-mix(in srgb, var(--dq-fill-secondary) 90%, var(--dq-bg-base));
+  border-radius: var(--dq-radius-group);
+  border: 0.5px solid var(--dq-glass-border);
+  background: var(--dq-surface-inset);
+  -webkit-backdrop-filter: var(--dq-glass-blur-light);
+  backdrop-filter: var(--dq-glass-blur-light);
 }
 
 .lora-train-page__footer-left {
@@ -1728,7 +1717,6 @@ onMounted(async () => {
 
 .lora-model-tile:hover:not(:disabled) {
   border-color: color-mix(in srgb, var(--dq-accent) 35%, var(--dq-border));
-  transform: translateY(-1px);
   box-shadow: 0 8px 24px color-mix(in srgb, var(--dq-shadow-md) 70%, transparent);
 }
 

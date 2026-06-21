@@ -2498,7 +2498,7 @@ onUnmounted(() => {
   margin: 0 16px 8px;
   font-size: 11px;
   line-height: 1.45;
-  color: var(--dq-color-text-tertiary);
+  color: var(--dq-label-tertiary);
 }
 
 .studio-retouch-editor-wrap {

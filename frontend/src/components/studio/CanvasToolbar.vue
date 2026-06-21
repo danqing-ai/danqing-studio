@@ -211,8 +211,8 @@ function onMoreCommand(cmd: string) {
   display: flex;
   align-items: center;
   gap: 2px;
-  background: var(--dq-color-bg-primary);
-  border: 1px solid var(--dq-color-border);
+  background: var(--dq-bg-base);
+  border: 1px solid var(--dq-border-subtle);
   border-radius: 8px;
   padding: 4px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
@@ -220,25 +220,25 @@ function onMoreCommand(cmd: string) {
 
 .canvas-toolbar__zoom-label {
   font-size: 11px;
-  color: var(--dq-color-text-secondary);
+  color: var(--dq-label-secondary);
   width: 36px;
   text-align: center;
   font-variant-numeric: tabular-nums;
 }
 
 .canvas-toolbar__btn--active {
-  color: var(--dq-color-primary);
-  background: color-mix(in srgb, var(--dq-color-primary) 12%, transparent);
+  color: var(--dq-accent);
+  background: color-mix(in srgb, var(--dq-accent) 12%, transparent);
   border-radius: 6px;
 }
 
 .canvas-toolbar__btn--accent {
-  color: var(--dq-color-primary);
+  color: var(--dq-accent);
 }
 
 .canvas-toolbar__menu-hint {
   font-size: 11px;
-  color: var(--dq-color-text-secondary);
+  color: var(--dq-label-secondary);
   white-space: normal;
   line-height: 1.35;
   max-width: 200px;
@@ -248,7 +248,7 @@ function onMoreCommand(cmd: string) {
 .canvas-toolbar__menu-section {
   font-size: 11px;
   font-weight: 600;
-  color: var(--dq-color-text-primary);
+  color: var(--dq-label-primary);
 }
 
 .canvas-toolbar__zoom-out-icon {
@@ -260,6 +260,6 @@ function onMoreCommand(cmd: string) {
   justify-content: center;
   width: 14px;
   height: 14px;
-  color: var(--dq-color-text-primary);
+  color: var(--dq-label-primary);
 }
 </style>

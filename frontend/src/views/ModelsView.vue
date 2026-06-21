@@ -461,14 +461,22 @@
                   <DqIcon class="model-ver-btn__icon"><close /></DqIcon>
                   <span class="model-ver-btn__label">{{ $t('download.cancelDownload') }}</span>
                 </DqButton>
-                <DqButton size="sm"
-                  v-else-if="item.status === 'failed'"
-                  class="model-ver-btn model-ver-btn--delete"
-                  @click="deleteDownload(taskId)"
-                >
-                  <DqIcon class="model-ver-btn__icon"><delete /></DqIcon>
-                  <span class="model-ver-btn__label">{{ $t('download.deleteTask') }}</span>
-                </DqButton>
+                <template v-else-if="item.status === 'failed'">
+                  <DqButton size="sm"
+                    class="model-ver-btn model-ver-btn--download"
+                    @click="resumeDownload(taskId)"
+                  >
+                    <DqIcon class="model-ver-btn__icon"><video-play /></DqIcon>
+                    <span class="model-ver-btn__label">{{ $t('download.retryDownload') }}</span>
+                  </DqButton>
+                  <DqButton size="sm"
+                    class="model-ver-btn model-ver-btn--delete"
+                    @click="deleteDownload(taskId)"
+                  >
+                    <DqIcon class="model-ver-btn__icon"><delete /></DqIcon>
+                    <span class="model-ver-btn__label">{{ $t('download.deleteTask') }}</span>
+                  </DqButton>
+                </template>
               </div>
             </div>
             <DqProgress
@@ -1115,7 +1123,7 @@ async function downloadVersion(
       (t) =>
         t.model_name === model.id &&
         (t.version ?? null) === (versionKey || null) &&
-        (t.status === 'running' || t.status === 'paused')
+        (t.status === 'running' || t.status === 'paused' || t.status === 'failed')
     );
     if (active?.id) {
       const version = model.versions?.[versionKey];
@@ -1123,7 +1131,11 @@ async function downloadVersion(
         ? $mvn(model.id, model, version)
         : `${$mn(model, model.id)} ${versionKey}`;
       downloadingModels.value[uiKey] = true;
-      connectProgressSSE(active.id, label, uiKey);
+      if (active.status === 'failed') {
+        await resumeDownload(active.id);
+      } else {
+        connectProgressSSE(active.id, label, uiKey);
+      }
       return;
     }
   } catch {
@@ -1498,7 +1510,7 @@ onUnmounted(() => {
   padding: 12px 16px;
   border: 1px solid var(--dq-border-subtle);
   border-radius: var(--dq-radius-md, 8px);
-  background: var(--dq-surface-subtle, transparent);
+  background: var(--dq-surface-inset);
 }
 .models-page__merged-title {
   margin: 0 0 10px;
@@ -1522,7 +1534,7 @@ onUnmounted(() => {
   border-bottom: none;
 }
 .models-page__merged-id {
-  color: var(--dq-text-secondary);
+  color: var(--dq-label-secondary);
   font-family: var(--dq-font-mono, monospace);
   font-size: 12px;
 }

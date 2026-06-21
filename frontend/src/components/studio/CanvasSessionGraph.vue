@@ -195,7 +195,7 @@ function notePreview(note: string | undefined, max = 48): string {
   z-index: 45;
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--dq-color-border);
+  border: 1px solid var(--dq-border-subtle);
   border-radius: 10px;
   overflow: hidden;
   pointer-events: auto;
@@ -209,7 +209,7 @@ function notePreview(note: string | undefined, max = 48): string {
   padding: 10px 12px;
   font-size: 12px;
   font-weight: 600;
-  border-bottom: 1px solid var(--dq-color-border);
+  border-bottom: 1px solid var(--dq-border-subtle);
 }
 
 .canvas-session-graph__head-text {
@@ -222,7 +222,7 @@ function notePreview(note: string | undefined, max = 48): string {
 .canvas-session-graph__stats {
   font-size: 10px;
   font-weight: 400;
-  color: var(--dq-color-text-tertiary);
+  color: var(--dq-label-tertiary);
 }
 
 .canvas-session-graph__search {
@@ -247,7 +247,7 @@ function notePreview(note: string | undefined, max = 48): string {
   gap: 10px;
   padding: 16px;
   font-size: 11px;
-  color: var(--dq-color-text-secondary);
+  color: var(--dq-label-secondary);
   text-align: center;
 }
 
@@ -270,18 +270,18 @@ function notePreview(note: string | undefined, max = 48): string {
 }
 
 .canvas-session-graph__node:hover {
-  background: var(--dq-color-bg-hover);
+  background: var(--dq-surface-inset-hover);
 }
 
 .canvas-session-graph__node--active {
-  border-color: var(--dq-color-primary);
-  background: color-mix(in srgb, var(--dq-color-primary) 10%, transparent);
+  border-color: var(--dq-accent);
+  background: color-mix(in srgb, var(--dq-accent) 10%, transparent);
 }
 
 .canvas-session-graph__branch {
   flex-shrink: 0;
   font-size: 11px;
-  color: var(--dq-color-text-tertiary);
+  color: var(--dq-label-tertiary);
   width: 10px;
 }
 
@@ -303,7 +303,7 @@ function notePreview(note: string | undefined, max = 48): string {
 
 .canvas-session-graph__name {
   font-size: 11px;
-  color: var(--dq-color-text-primary);
+  color: var(--dq-label-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -311,7 +311,7 @@ function notePreview(note: string | undefined, max = 48): string {
 
 .canvas-session-graph__parent {
   font-size: 9px;
-  color: var(--dq-color-text-tertiary);
+  color: var(--dq-label-tertiary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -319,7 +319,7 @@ function notePreview(note: string | undefined, max = 48): string {
 
 .canvas-session-graph__note {
   font-size: 9px;
-  color: var(--dq-color-text-secondary);
+  color: var(--dq-label-secondary);
   font-style: italic;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -331,13 +331,13 @@ function notePreview(note: string | undefined, max = 48): string {
   font-size: 9px;
   padding: 2px 5px;
   border-radius: 4px;
-  background: color-mix(in srgb, var(--dq-color-primary) 12%, transparent);
-  color: var(--dq-color-primary);
+  background: color-mix(in srgb, var(--dq-accent) 12%, transparent);
+  color: var(--dq-accent);
 }
 
 .canvas-session-graph__children {
   font-size: 10px;
-  color: var(--dq-color-text-tertiary);
+  color: var(--dq-label-tertiary);
   flex-shrink: 0;
 }
 </style>

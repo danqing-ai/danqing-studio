@@ -149,11 +149,11 @@ async function submitMerge() {
 .zimage-merge-panel__warn {
   margin: 8px 0 12px;
   font-size: 12px;
-  color: var(--dq-text-secondary);
+  color: var(--dq-label-secondary);
   line-height: 1.45;
 }
 .zimage-merge-panel__warn {
-  color: var(--dq-color-warning, #c97a00);
+  color: var(--dq-warning);
 }
 .zimage-merge-panel__form {
   margin-bottom: 12px;
@@ -162,6 +162,6 @@ async function submitMerge() {
   min-width: 36px;
   text-align: right;
   font-size: 12px;
-  color: var(--dq-text-secondary);
+  color: var(--dq-label-secondary);
 }
 </style>

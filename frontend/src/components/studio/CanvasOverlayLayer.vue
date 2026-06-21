@@ -116,15 +116,15 @@ onBeforeUnmount(() => {
 }
 
 .canvas-overlay--reference {
-  outline: 2px dashed color-mix(in srgb, var(--dq-color-success, #3ecf8e) 70%, transparent);
+  outline: 2px dashed color-mix(in srgb, var(--dq-success) 70%, transparent);
 }
 
 .canvas-overlay--control {
-  outline: 2px dashed color-mix(in srgb, var(--dq-color-warning, #e6a23c) 70%, transparent);
+  outline: 2px dashed color-mix(in srgb, var(--dq-warning) 70%, transparent);
 }
 
 .canvas-overlay--start_frame {
-  outline: 2px dashed color-mix(in srgb, var(--dq-color-primary, #5b8def) 70%, transparent);
+  outline: 2px dashed color-mix(in srgb, var(--dq-accent) 70%, transparent);
 }
 
 .canvas-overlay--tail_frame {
@@ -132,7 +132,7 @@ onBeforeUnmount(() => {
 }
 
 .canvas-overlay--video_source {
-  outline: 2px dashed color-mix(in srgb, var(--dq-color-danger, #f56c6c) 65%, transparent);
+  outline: 2px dashed color-mix(in srgb, var(--dq-danger) 65%, transparent);
 }
 
 .canvas-overlay--cover_source {

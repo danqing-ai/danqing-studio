@@ -118,7 +118,7 @@ const toolbarStyle = computed(() => ({
 
 .canvas-multi-toolbar__count {
   font-size: 11px;
-  color: var(--dq-color-text-secondary);
+  color: var(--dq-label-secondary);
   padding: 0 4px;
   white-space: nowrap;
 }

@@ -41,7 +41,7 @@ defineEmits<{
   margin: 0;
   font-size: 12px;
   line-height: 1.45;
-  color: var(--dq-text-secondary);
+  color: var(--dq-label-secondary);
 }
 
 .composer-successor-hint__actions {

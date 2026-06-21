@@ -14,6 +14,7 @@
     "model_no_download_source": "Model '{name}' has no valid download source",
     "audio_stub_no_download": "Model '{name}' is an API-only placeholder; there is no weight package to download",
     "download_not_paused": "Download task {id} not found or not paused",
+    "download_not_resumable": "Download task {id} not found or cannot be resumed (paused/failed only)",
     "download_missing_metadata": "Download task {id} is missing metadata required for resume",
     "source_version_not_found": "Source version '{version}' not found",
     "target_version_not_found": "Target version '{version}' not found",

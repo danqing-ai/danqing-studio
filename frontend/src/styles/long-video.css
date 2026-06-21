@@ -411,7 +411,7 @@ html.dark .dq-app-main:has(.lv-studio) {
 }
 
 .lv-cast__danger:hover {
-  color: var(--dq-color-danger, #e54d4d);
+  color: var(--dq-danger);
 }
 
 .lv-cast .dq-input {
@@ -1150,7 +1150,8 @@ html.dark .dq-app-main:has(.lv-studio) {
   position: absolute;
   inset: 0;
   background: color-mix(in srgb, var(--dq-surface-base) 55%, transparent);
-  backdrop-filter: blur(2px);
+  backdrop-filter: var(--dq-glass-blur-light);
+  -webkit-backdrop-filter: var(--dq-glass-blur-light);
 }
 
 .lv-rail__node-empty-glyph {
@@ -1177,7 +1178,8 @@ html.dark .dq-app-main:has(.lv-studio) {
   background: color-mix(in srgb, var(--dq-glass-floating-bar-bg, var(--dq-surface-elevated)) 92%, transparent);
   color: var(--dq-label-tertiary);
   border: 0.5px solid var(--dq-glass-border, var(--dq-border-subtle));
-  backdrop-filter: blur(8px);
+  backdrop-filter: var(--dq-glass-blur-light);
+  -webkit-backdrop-filter: var(--dq-glass-blur-light);
 }
 
 .lv-rail__badge.is-keyframe {

@@ -56,9 +56,9 @@ const zones = computed(() =>
   position: absolute;
   pointer-events: none;
   z-index: 3;
-  border: 2px dashed color-mix(in srgb, #5b8def 75%, transparent);
+  border: 2px dashed color-mix(in srgb, var(--dq-accent) 75%, transparent);
   border-radius: 6px;
-  background: color-mix(in srgb, #5b8def 14%, transparent);
+  background: color-mix(in srgb, var(--dq-accent) 14%, transparent);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -69,7 +69,7 @@ const zones = computed(() =>
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.03em;
-  color: var(--dq-color-primary, #5b8def);
+  color: var(--dq-accent);
   text-transform: uppercase;
   padding: 2px 6px;
   border-radius: 4px;

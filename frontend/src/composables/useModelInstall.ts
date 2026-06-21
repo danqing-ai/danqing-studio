@@ -79,9 +79,12 @@ export function useModelInstall(opts?: { onCompleted?: () => void }) {
         (t) =>
           t.model_name === modelId &&
           (t.version ?? null) === (versionKey || null) &&
-          (t.status === 'running' || t.status === 'paused')
+          (t.status === 'running' || t.status === 'paused' || t.status === 'failed')
       );
       if (active?.id) {
+        if (active.status === 'failed') {
+          await api.download.resume(active.id);
+        }
         connectProgressSSE(active.id, label, key);
         return;
       }

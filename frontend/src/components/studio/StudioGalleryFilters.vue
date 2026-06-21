@@ -147,7 +147,7 @@ function onViewModeChange(mode: 'grid' | 'canvas') {
 .studio-gallery-filters__view-label {
   font-size: 12px;
   font-weight: 500;
-  color: var(--dq-color-text-secondary);
+  color: var(--dq-label-secondary);
   white-space: nowrap;
 }
 </style>

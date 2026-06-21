@@ -573,7 +573,8 @@ const previewUrl = computed(() => {
   align-items: center;
   justify-content: center;
   background: color-mix(in srgb, var(--dq-surface-base) 62%, transparent);
-  backdrop-filter: blur(3px);
+  backdrop-filter: var(--dq-glass-blur-light);
+  -webkit-backdrop-filter: var(--dq-glass-blur-light);
   color: var(--dq-accent);
 }
 

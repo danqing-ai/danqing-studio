@@ -93,7 +93,7 @@ watch(
   z-index: 45;
   display: flex;
   flex-direction: column;
-  border: 1px solid var(--dq-color-border);
+  border: 1px solid var(--dq-border-subtle);
   border-radius: 10px;
   overflow: hidden;
   pointer-events: auto;
@@ -107,7 +107,7 @@ watch(
   padding: 10px 12px;
   font-size: 13px;
   font-weight: 600;
-  border-bottom: 1px solid var(--dq-color-border);
+  border-bottom: 1px solid var(--dq-border-subtle);
 }
 
 .canvas-lineage-sidebar__head-text {
@@ -120,7 +120,7 @@ watch(
 .canvas-lineage-sidebar__hint {
   font-size: 10px;
   font-weight: 400;
-  color: var(--dq-color-text-tertiary);
+  color: var(--dq-label-tertiary);
 }
 
 .canvas-lineage-sidebar__graph {
@@ -138,7 +138,7 @@ watch(
   gap: 8px;
   padding: 24px 16px;
   font-size: 12px;
-  color: var(--dq-color-text-secondary);
+  color: var(--dq-label-secondary);
   text-align: center;
 }
 </style>

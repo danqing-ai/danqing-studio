@@ -6,6 +6,8 @@
 html.dark .studio-surface-card.dq-surface-card:hover,
 html.dark .card:hover,
 html.dark .model-card:hover,
+html.dark .studio-card:hover,
+html.dark .lora-model-tile:hover,
 html.dark .civitai-card:hover,
 html.dark .image-preview:hover {
  transform: none !important;
@@ -121,6 +123,20 @@ html.dark .settings-page {
  margin: 0;
 }
 
+html.dark .studio-filter-bar__inner,
+html.dark .studio-canvas {
+ width: 100%;
+ max-width: none;
+ margin: 0;
+}
+
+/* 无限画布：点阵在视口层（非 transform 子树），避免 WebKit 不绘制 */
+html.dark .canvas-viewport__grid {
+ background-color: var(--dq-fill-dim, #1a1a1e);
+ background-image: radial-gradient(circle, rgba(255, 255, 255, 0.16) 1px, transparent 1px);
+ background-repeat: repeat;
+}
+
 html.dark .models-page {
   height: 100%;
   min-height: 480px;
@@ -186,15 +202,15 @@ html.dark .model-ver-btn--download.dq-btn .dq-icon {
 }
 
 html.dark .model-ver-btn--force.dq-btn .model-ver-btn__icon {
- color: #ffb340;
+ color: var(--dq-warning);
 }
 
 html.dark .model-ver-btn--delete.dq-btn .model-ver-btn__icon {
- color: #ff6b63;
+ color: var(--dq-danger);
 }
 
 html.dark .model-ver-btn--quantize.dq-btn .model-ver-btn__icon {
- color: #ffb340;
+ color: var(--dq-warning);
 }
 
 html.dark .model-ver-btn--download.dq-btn {
@@ -215,7 +231,7 @@ html.dark .model-ver-btn--download.dq-btn .model-ver-btn__icon {
 html.dark .model-ver-btn--quantize.dq-btn {
  background: var(--dq-warning-surface);
  border: 1px solid var(--dq-warning-surface-border);
- color: #ffb340;
+ color: var(--dq-warning);
 }
 
 html.dark .model-ver-btn--quantize.dq-btn:hover:not(:disabled) {
@@ -224,13 +240,13 @@ html.dark .model-ver-btn--quantize.dq-btn:hover:not(:disabled) {
 }
 
 html.dark .model-ver-btn--quantize.dq-btn .model-ver-btn__icon {
- color: #ffb340;
+ color: var(--dq-warning);
 }
 
 html.dark .model-ver-btn--force.dq-btn {
  background: var(--dq-warning-surface);
  border: 1px solid var(--dq-warning-surface-border);
- color: #ffb340;
+ color: var(--dq-warning);
 }
 
 html.dark .model-ver-btn--force.dq-btn:hover:not(:disabled) {
@@ -239,13 +255,13 @@ html.dark .model-ver-btn--force.dq-btn:hover:not(:disabled) {
 }
 
 html.dark .model-ver-btn--force.dq-btn .model-ver-btn__icon {
- color: #ffb340;
+ color: var(--dq-warning);
 }
 
 html.dark .model-ver-btn--delete.dq-btn {
  background: var(--dq-danger-surface);
  border: 1px solid var(--dq-danger-surface-border);
- color: #ff6b63;
+ color: var(--dq-danger);
 }
 
 html.dark .model-ver-btn--delete.dq-btn:hover:not(:disabled) {
@@ -254,7 +270,7 @@ html.dark .model-ver-btn--delete.dq-btn:hover:not(:disabled) {
 }
 
 html.dark .model-ver-btn--delete.dq-btn .model-ver-btn__icon {
- color: #ff6b63;
+ color: var(--dq-danger);
 }
 
 html.dark .model-ver-btn--neutral.dq-btn {

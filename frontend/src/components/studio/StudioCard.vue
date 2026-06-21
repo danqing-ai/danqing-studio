@@ -316,11 +316,6 @@ function truncate(text: string, length: number): string {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  transition: transform 0.18s ease;
-}
-
-.studio-card:hover {
-  transform: translateY(-1px);
 }
 
 .studio-card--selected .studio-card__media {
@@ -483,7 +478,8 @@ function truncate(text: string, length: number): string {
   background: color-mix(in srgb, var(--dq-bg-page) 55%, transparent);
   border: 1px solid color-mix(in srgb, var(--dq-border-subtle) 70%, transparent);
   border-radius: 8px;
-  backdrop-filter: blur(6px);
+  backdrop-filter: var(--dq-glass-blur-light);
+  -webkit-backdrop-filter: var(--dq-glass-blur-light);
 }
 
 .studio-card__overlay-actions :deep(.dq-icon-btn:hover) {

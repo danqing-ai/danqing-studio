@@ -14,6 +14,7 @@
     "model_no_download_source": "模型 '{name}' 没有配置有效的下载源",
     "audio_stub_no_download": "模型 '{name}' 仅为 API 占位条目，无可下载的权重包",
     "download_not_paused": "下载任务 {id} 不存在或未暂停",
+    "download_not_resumable": "下载任务 {id} 不存在或无法重试（仅暂停/失败任务可恢复）",
     "download_missing_metadata": "下载任务 {id} 缺少恢复所需的元数据",
     "source_version_not_found": "源版本 '{version}' 不存在",
     "target_version_not_found": "目标版本 '{version}' 不存在",

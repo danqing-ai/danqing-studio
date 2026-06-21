@@ -395,14 +395,16 @@ provide('systemInfo', systemInfo);
   margin: 12px 16px 0;
   padding: 10px 14px;
   border-radius: 8px;
-  border: 1px solid var(--dq-border-subtle, rgba(255, 255, 255, 0.1));
-  background: var(--dq-surface-elevated, rgba(255, 255, 255, 0.04));
+  border: 0.5px solid var(--dq-glass-border);
+  background: var(--dq-glass-grouped-bg);
+  -webkit-backdrop-filter: var(--dq-glass-blur-light);
+  backdrop-filter: var(--dq-glass-blur-light);
 }
 .dq-app-setup-hint__text {
   margin: 0;
   font-size: 13px;
   line-height: 1.5;
-  color: var(--dq-text-secondary, #a0a0a8);
+  color: var(--dq-label-secondary);
   flex: 1;
   min-width: 200px;
 }

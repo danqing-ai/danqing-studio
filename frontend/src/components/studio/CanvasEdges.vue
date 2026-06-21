@@ -10,7 +10,7 @@
         orient="auto"
         markerUnits="strokeWidth"
       >
-        <path d="M0,0 L6,3 L0,6 Z" fill="var(--dq-color-primary, #5b8def)" opacity="0.7" />
+        <path d="M0,0 L6,3 L0,6 Z" fill="var(--dq-accent)" opacity="0.7" />
       </marker>
       <marker
         id="canvas-edge-arrow-active"
@@ -21,7 +21,7 @@
         orient="auto"
         markerUnits="strokeWidth"
       >
-        <path d="M0,0 L7,3.5 L0,7 Z" fill="var(--dq-color-primary, #5b8def)" opacity="1" />
+        <path d="M0,0 L7,3.5 L0,7 Z" fill="var(--dq-accent)" opacity="1" />
       </marker>
     </defs>
     <g v-for="(edge, idx) in edgeLines" :key="idx">
@@ -82,7 +82,7 @@ const edgeLines = computed(() => {
 }
 
 .canvas-edges__line {
-  stroke: var(--dq-color-primary, #5b8def);
+  stroke: var(--dq-accent);
   stroke-width: 2;
   stroke-opacity: 0.55;
   fill: none;
@@ -96,7 +96,7 @@ const edgeLines = computed(() => {
 
 .canvas-edges__label {
   font-size: 10px;
-  fill: var(--dq-color-text-secondary);
+  fill: var(--dq-label-secondary);
   text-anchor: middle;
 }
 </style>

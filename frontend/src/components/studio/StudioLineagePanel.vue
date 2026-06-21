@@ -97,7 +97,7 @@ watch(
   margin: 0;
   padding: 8px 16px 0;
   font-size: 11px;
-  color: var(--dq-color-text-tertiary);
+  color: var(--dq-label-tertiary);
   line-height: 1.4;
 }
 
@@ -114,7 +114,7 @@ watch(
   justify-content: center;
   gap: 8px;
   padding: 32px 24px;
-  color: var(--dq-color-text-secondary);
+  color: var(--dq-label-secondary);
   font-size: 13px;
 }
 </style>

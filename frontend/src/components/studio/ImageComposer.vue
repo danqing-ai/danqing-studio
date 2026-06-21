@@ -593,7 +593,7 @@ function onStyleCommand(command: string) {
   margin: 0;
   font-size: 10px;
   line-height: 1.4;
-  color: var(--dq-color-text-tertiary);
+  color: var(--dq-label-tertiary);
 }
 
 .image-composer__control-hint--sub {

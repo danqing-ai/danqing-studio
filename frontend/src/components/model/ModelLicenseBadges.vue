@@ -65,8 +65,8 @@ const showAny = computed(() => props.recommended || showCommercial.value);
 }
 
 .commercial-badge.dq-tag {
-  color: #fff;
-  background: color-mix(in srgb, #4f6ef7 88%, #000);
-  border-color: color-mix(in srgb, #4f6ef7 70%, transparent);
+  color: var(--dq-color-white);
+  background: color-mix(in srgb, var(--dq-accent) 88%, #000);
+  border-color: color-mix(in srgb, var(--dq-accent) 70%, transparent);
 }
 </style>

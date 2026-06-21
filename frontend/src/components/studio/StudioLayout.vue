@@ -147,11 +147,9 @@ defineExpose({ scrollToTop, canvasRef, layoutRef });
   display: flex;
   align-items: center;
   gap: 10px;
-  max-width: 1400px;
-  margin: 0 auto;
   width: 100%;
   min-width: 0;
-  padding: 10px 20px;
+  padding: 10px 12px;
   box-sizing: border-box;
   overflow-x: auto;
   overflow-y: hidden;
@@ -166,7 +164,10 @@ defineExpose({ scrollToTop, canvasRef, layoutRef });
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 20px 20px 220px;
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 16px 12px 220px;
   scroll-behavior: smooth;
 }
 

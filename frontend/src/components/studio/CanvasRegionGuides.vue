@@ -112,8 +112,8 @@ const overlayLinks = computed(() => {
 }
 
 .canvas-region-guides__staging {
-  fill: color-mix(in srgb, var(--dq-color-warning, #f5a623) 6%, transparent);
-  stroke: var(--dq-color-warning, #f5a623);
+  fill: color-mix(in srgb, var(--dq-warning) 6%, transparent);
+  stroke: var(--dq-warning);
   stroke-width: 1.5;
   stroke-dasharray: 6 4;
   stroke-opacity: 0.75;
@@ -122,12 +122,12 @@ const overlayLinks = computed(() => {
 .canvas-region-guides__staging-label {
   font-size: 11px;
   font-weight: 600;
-  fill: var(--dq-color-warning, #f5a623);
+  fill: var(--dq-warning);
   opacity: 0.9;
 }
 
 .canvas-region-guides__link {
-  stroke: var(--dq-color-warning, #f5a623);
+  stroke: var(--dq-warning);
   stroke-width: 1.5;
   stroke-dasharray: 5 4;
   stroke-opacity: 0.65;
@@ -136,7 +136,7 @@ const overlayLinks = computed(() => {
 .canvas-region-guides__link-label {
   font-size: 9px;
   font-weight: 700;
-  fill: var(--dq-color-warning, #f5a623);
+  fill: var(--dq-warning);
   opacity: 0.85;
 }
 </style>
