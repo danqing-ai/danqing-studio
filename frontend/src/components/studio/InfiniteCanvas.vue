@@ -62,6 +62,7 @@
       @import-json="onImportJsonClick"
       @copy-session="onCopySessionShare"
       @open-gallery-picker="showGalleryPicker = true"
+      @open-composer="$emit('open-composer')"
     />
 
     <CanvasGalleryPicker
@@ -201,6 +202,8 @@ const emit = defineEmits<{
   (e: 'open-preview', item: GalleryItem): void;
   (e: 'composer-restore', snapshot: import('@/types').CanvasComposerSnapshot): void;
   (e: 'overlay-cleared', kind: CanvasOverlayKind): void;
+  (e: 'open-composer'): void;
+  (e: 'request-close-composer'): void;
 }>();
 
 const store = useCanvasStore(props.media);
@@ -593,6 +596,7 @@ function onToolbarAction(action: string) {
     case 'branch':
       store.placeStagingBeside(path, props.items);
       toast.info($tt('canvas.branchHint'));
+      emit('open-composer');
       break;
     case 'remove':
       onRemoveItem(path);
@@ -1142,6 +1146,11 @@ function onCanvasKeydown(e: KeyboardEvent) {
     }
     return;
   }
+  if (lower === 'c') {
+    e.preventDefault();
+    emit('open-composer');
+    return;
+  }
   if (lower === 'y') {
     e.preventDefault();
     if (!primaryPath.value) {
@@ -1163,11 +1172,22 @@ onBeforeUnmount(() => {
   window.removeEventListener('keydown', onCanvasKeydown);
 });
 
+watch(showLayers, (open) => {
+  if (open) emit('request-close-composer');
+});
+
+function closeMutexPanels() {
+  showLayers.value = false;
+  showLineage.value = false;
+  showGraph.value = false;
+}
+
 defineExpose({
   addToCanvas,
   addPathsToCanvas,
   fitAll,
   focusNode: onFocusNode,
+  closeMutexPanels,
   focusLineageAsset,
   hasOnCanvas: store.hasItem,
   sessionId: store.sessionId,

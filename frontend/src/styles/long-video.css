@@ -17,11 +17,6 @@ html.dark .dq-app-main:has(.lv-studio) {
   background-image:
     radial-gradient(ellipse 120% 420px at 50% -8%, rgba(10, 132, 255, 0.07) 0%, transparent 55%),
     var(--dq-bg-page-glow);
-  /* 面板内输入：透明底 + 细边框，替代 dq-glass-control-bg 实心块 */
-  --lv-field-bg: transparent;
-  --lv-field-bg-focus: color-mix(in srgb, var(--dq-label-primary) 5%, transparent);
-  --lv-field-border: color-mix(in srgb, var(--dq-label-primary) 14%, transparent);
-  --lv-field-border-focus: color-mix(in srgb, var(--dq-accent) 65%, var(--lv-field-border));
 }
 
 .lv-studio__alert {
@@ -103,55 +98,6 @@ html.dark .dq-app-main:has(.lv-studio) {
 .lv-studio__editor > .lv-rail {
   flex: 1;
   min-height: 0;
-}
-
-/* ── 长视频工作台：面板内统一输入外观（覆盖 dq-ui 的 glass-control-bg 色块） ── */
-.lv-studio .lv-panel .dq-input,
-.lv-studio .lv-panel textarea.dq-input,
-.lv-studio .lv-brief__textarea,
-.lv-studio .lv-panel .dq-select__trigger,
-.lv-inspector-drawer .dq-input,
-.lv-inspector-drawer textarea.dq-input,
-.lv-inspector-drawer .dq-select__trigger {
-  background: var(--lv-field-bg) !important;
-  border: 1px solid var(--lv-field-border) !important;
-  box-shadow: none !important;
-  color: var(--dq-label-primary);
-  transition: border-color 0.15s ease, background 0.15s ease;
-}
-
-.lv-studio .lv-panel .dq-input:hover:not(:disabled),
-.lv-studio .lv-panel textarea.dq-input:hover:not(:disabled),
-.lv-studio .lv-brief__textarea:hover:not(:disabled),
-.lv-studio .lv-panel .dq-select__trigger:hover:not([data-disabled]),
-.lv-inspector-drawer .dq-input:hover:not(:disabled),
-.lv-inspector-drawer textarea.dq-input:hover:not(:disabled),
-.lv-inspector-drawer .dq-select__trigger:hover:not([data-disabled]) {
-  border-color: color-mix(in srgb, var(--dq-label-primary) 18%, transparent) !important;
-}
-
-.lv-studio .lv-panel .dq-input:focus,
-.lv-studio .lv-panel .dq-input:focus-visible,
-.lv-studio .lv-panel textarea.dq-input:focus,
-.lv-studio .lv-brief__textarea:focus,
-.lv-studio .lv-panel .dq-select__trigger:focus,
-.lv-studio .lv-panel .dq-select__trigger:focus-visible,
-.lv-inspector-drawer .dq-input:focus,
-.lv-inspector-drawer .dq-input:focus-visible,
-.lv-inspector-drawer textarea.dq-input:focus,
-.lv-inspector-drawer .dq-select__trigger:focus,
-.lv-inspector-drawer .dq-select__trigger:focus-visible {
-  outline: none;
-  background: var(--lv-field-bg-focus) !important;
-  border-color: var(--lv-field-border-focus) !important;
-  box-shadow: none !important;
-}
-
-.lv-inspector-drawer {
-  --lv-field-bg: transparent;
-  --lv-field-bg-focus: color-mix(in srgb, var(--dq-label-primary) 5%, transparent);
-  --lv-field-border: color-mix(in srgb, var(--dq-label-primary) 14%, transparent);
-  --lv-field-border-focus: color-mix(in srgb, var(--dq-accent) 65%, var(--lv-field-border));
 }
 
 /* ── Brief / storyboard expand ── */
@@ -247,7 +193,7 @@ html.dark .dq-app-main:has(.lv-studio) {
   border-radius: 4px;
   color: var(--dq-label-tertiary);
   background: transparent;
-  border: 0.5px solid var(--lv-field-border, var(--dq-border-subtle));
+  border: 0.5px solid var(--dq-glass-control-border, var(--dq-border-subtle));
 }
 
 .lv-cast__head-actions {
@@ -336,8 +282,8 @@ html.dark .dq-app-main:has(.lv-studio) {
   font-weight: 600;
   line-height: 1;
   color: var(--dq-label-secondary);
-  background: var(--lv-field-bg, var(--dq-fill-control));
-  border: 0.5px solid var(--lv-field-border, var(--dq-border-subtle));
+  background: var(--dq-glass-control-bg, var(--dq-fill-control));
+  border: 0.5px solid var(--dq-glass-control-border, var(--dq-border-subtle));
 }
 
 .lv-cast__name {

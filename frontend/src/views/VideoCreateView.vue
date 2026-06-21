@@ -2,8 +2,7 @@
   <StudioLayout
     class="studio-create-page"
     :freeform="viewMode === 'canvas'"
-    :collapsible="viewMode === 'canvas'"
-    v-model:composer-collapsed="composerCollapsed"
+    hide-composer-bar
     @scroll="onCanvasScroll"
   >
     <template #filters>
@@ -18,6 +17,7 @@
         :view-mode="viewMode"
         :supports-canvas="true"
         canvas-media="video"
+        :composer-busy="activeVideoTasks.length > 0"
         @update:filter-time="filterTime = $event"
         @update:filter-models="filterModels = $event"
         @refresh="refreshGallery"
@@ -27,6 +27,7 @@
         @clear-selection="clearSelection"
         @update:view-mode="onViewModeChange"
         @composer-restore="onCanvasComposerRestore"
+        @open-composer="openComposerDrawer()"
       />
     </template>
 
@@ -50,6 +51,7 @@
         @select-all="selectAllLoaded"
         @batch-delete="batchDeleteSelected"
         @clear-selection="clearSelection"
+        @open-composer="openComposerDrawer()"
       />
       <InfiniteCanvas
         v-else
@@ -67,11 +69,24 @@
         @use-as-start-frame="onCanvasUseAsStartFrame"
         @use-as-tail-frame="onCanvasUseAsTailFrame"
         @use-as-video-source="onCanvasUseAsVideoSource"
+        @open-composer="openComposerDrawer()"
+        @request-close-composer="closeComposerDrawer()"
       />
     </template>
+  </StudioLayout>
 
-    <template #composer>
-      <VideoComposer
+  <StudioComposeFab
+    v-if="!composerDrawerOpen"
+    media="video"
+    :busy="activeVideoTasks.length > 0"
+    @open="openComposerDrawer()"
+  />
+
+  <StudioComposerHost
+    v-model:open="composerDrawerOpen"
+    :drawer-title="$t('studio.composerDrawerTitle')"
+  >
+    <VideoComposer
         v-model="params.prompt"
         v-model:title="params.title"
         v-model:work-mode="videoWorkMode"
@@ -115,12 +130,10 @@
         @prompt-apply-replace="onPromptApplyReplace"
         @prompt-apply-append="onPromptApplyAppend"
         @prompt-apply-dismiss="promptApply.clear()"
-        :collapsed="viewMode === 'canvas' && composerCollapsed"
         :storyboard-expanding="isStoryboardExpanding"
         @storyboard-expand="onStoryboardExpand"
       />
-    </template>
-  </StudioLayout>
+  </StudioComposerHost>
 
   <!-- Start image asset picker -->
   <DqDialog v-model:open="showAssetPicker" :title="assetPickerTitle" width="70%">
@@ -171,7 +184,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch, onMounted, inject, nextTick } from 'vue';
+import { ref, reactive, computed, watch, onMounted, onUnmounted, inject, nextTick } from 'vue';
 import type { Ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { toast } from '@/utils/feedback';
@@ -186,17 +199,19 @@ import { useModelRegistryFilters, reconcileVersionPickerSelection } from '@/comp
 import { applyModelVersionFilters } from '@/utils/modelPickerFilters';
 import AssetPicker from '@/components/asset/AssetPicker.vue';
 import GalleryPreviewDialog from '@/components/gallery/GalleryPreviewDialog.vue';
-import { previewDisplayCaption, truncateDisplayLabel } from '@/utils/assetDisplay';
+import { previewDisplayCaption } from '@/utils/assetDisplay';
 
 // Studio components
 import StudioLayout from '@/components/studio/StudioLayout.vue';
 import StudioCanvas from '@/components/studio/StudioCanvas.vue';
 import StudioGalleryFilters from '@/components/studio/StudioGalleryFilters.vue';
 import VideoComposer from '@/components/studio/VideoComposer.vue';
+import StudioComposerHost from '@/components/studio/StudioComposerHost.vue';
+import StudioComposeFab from '@/components/studio/StudioComposeFab.vue';
 import InfiniteCanvas from '@/components/studio/InfiniteCanvas.vue';
 import StudioLineagePanel from '@/components/studio/StudioLineagePanel.vue';
 import { canvasAutoAddEnabled, useCanvasStore } from '@/composables/useCanvasStore';
-import { useComposerCollapse } from '@/composables/useComposerCollapse';
+import { useComposerDrawer } from '@/composables/useComposerDrawer';
 import {
   activateCanvasViewForResults,
   maybeShowCanvasWorkspaceHint,
@@ -319,7 +334,11 @@ const infiniteCanvasRef = ref<InstanceType<typeof InfiniteCanvas> | null>(null);
 const pendingCanvasAssetIds = ref<string[]>([]);
 const videoCanvas = useCanvasStore('video');
 const canvasSelectedItem = ref<GalleryItem | null>(null);
-const { collapsed: composerCollapsed, setCollapsed: setComposerCollapsed } = useComposerCollapse('video');
+const {
+  composerDrawerOpen,
+  openComposerDrawer,
+  closeComposerDrawer,
+} = useComposerDrawer('video');
 
 const savedViewMode = getItem(DQ_STORAGE.VIDEO_VIEW_MODE);
 const viewMode = ref<'grid' | 'canvas'>(
@@ -463,14 +482,7 @@ function onCanvasOverlayCleared(kind: import('@/types').CanvasOverlayKind) {
   }
 }
 
-function onCanvasNodeSelected(item: GalleryItem | null) {
-  canvasSelectedItem.value = item;
-  if (!item) {
-    persistComposerSnapshot();
-    return;
-  }
-  setComposerCollapsed(false);
-
+function fillComposerFromGalleryItem(item: GalleryItem) {
   if (item.prompt) params.prompt = item.prompt;
   if (item.title) params.title = item.title;
   if (item.model) {
@@ -487,6 +499,17 @@ function onCanvasNodeSelected(item: GalleryItem | null) {
   }
   persistComposerSnapshot();
 }
+
+function onCanvasNodeSelected(item: GalleryItem | null) {
+  canvasSelectedItem.value = item;
+  if (!item) {
+    persistComposerSnapshot();
+    return;
+  }
+  fillComposerFromGalleryItem(item);
+  openComposerDrawer();
+}
+
 
 function persistComposerSnapshot() {
   videoCanvas.setComposerSnapshot({
@@ -656,6 +679,17 @@ const activeVideoTasks = computed(() => {
 const showLineageDrawer = ref(false);
 const lineageTargetAssetId = ref('');
 
+watch(composerDrawerOpen, (open) => {
+  if (open) {
+    showLineageDrawer.value = false;
+    infiniteCanvasRef.value?.closeMutexPanels?.();
+  }
+});
+
+watch(showLineageDrawer, (open) => {
+  if (open) closeComposerDrawer();
+});
+
 const canvasAssetIdsOnCanvas = computed(() =>
   Object.keys(videoCanvas.items)
     .filter((p) => p.startsWith('asset:'))
@@ -687,7 +721,10 @@ async function addGalleryItemToCanvas(
 }
 
 function onCardAction({ action, item }: { action: string; item: GalleryItem }) {
-  if (action === 'add-to-canvas') {
+  if (action === 'compose-from-item') {
+    fillComposerFromGalleryItem(item);
+    openComposerDrawer();
+  } else if (action === 'add-to-canvas') {
     void addGalleryItemToCanvas(item, { fit: true });
   } else if (action === 'delete') {
     deleteItem(item);
@@ -1842,9 +1879,35 @@ onMounted(async () => {
   loadRecentStartImages();
   loadGallery(true);
   tasksStore.ensureQueuePoller();
+  window.addEventListener('keydown', onCreatePageKeydown);
   const promptDraft = consumePromptDraft(DQ_STORAGE.VIDEO_CREATE_PROMPT_DRAFT);
   if (promptDraft) {
     params.prompt = applyPromptDraft(params.prompt, promptDraft);
   }
 });
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', onCreatePageKeydown);
+});
+
+function onCreatePageKeydown(e: KeyboardEvent) {
+  const target = e.target as HTMLElement | null;
+  if (
+    target &&
+    (target.tagName === 'INPUT' ||
+      target.tagName === 'TEXTAREA' ||
+      target.isContentEditable)
+  ) {
+    return;
+  }
+  if (e.key === 'Escape' && composerDrawerOpen.value) {
+    e.preventDefault();
+    closeComposerDrawer();
+    return;
+  }
+  if (e.key.toLowerCase() === 'c' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    e.preventDefault();
+    openComposerDrawer();
+  }
+}
 </script>

@@ -3,6 +3,9 @@
     <!-- Empty state -->
     <div v-if="items.length === 0 && !loading" class="studio-canvas__empty">
       <DqEmpty :description="emptyMessage" />
+      <DqButton v-if="!hasActiveFilters" type="primary" @click="$emit('open-composer')">
+        {{ $t('gallery.emptyComposeCta') }}
+      </DqButton>
       <DqButton v-if="hasActiveFilters" type="primary" @click="$emit('reset-filters')">
         {{ $t('gallery.clearFilters') }}
       </DqButton>
@@ -135,6 +138,7 @@ const emit = defineEmits<{
   (e: 'select-all'): void;
   (e: 'batch-delete'): void;
   (e: 'clear-selection'): void;
+  (e: 'open-composer'): void;
 }>();
 
 const { t: $t } = useI18n();

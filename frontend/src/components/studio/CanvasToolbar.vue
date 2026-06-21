@@ -43,6 +43,15 @@
         type="text"
         size="xs"
         class="canvas-toolbar__btn--accent"
+        :label="$t('studio.openComposer')"
+        @click="$emit('open-composer')"
+      >
+        <DqIcon :size="14"><MagicStick /></DqIcon>
+      </DqIconButton>
+      <DqIconButton
+        type="text"
+        size="xs"
+        class="canvas-toolbar__btn--accent"
         :label="$t('canvas.importWorks')"
         @click="$emit('open-gallery-picker')"
       >
@@ -152,7 +161,7 @@
 </template>
 
 <script setup lang="ts">
-import { Grid, ZoomIn, Refresh, Menu, Document, Plus, Aim } from '@danqing/dq-shell';
+import { Grid, ZoomIn, Refresh, Menu, Document, Plus, Aim, MagicStick } from '@danqing/dq-shell';
 
 defineProps<{
   zoom: number;
@@ -174,6 +183,7 @@ const emit = defineEmits<{
   (e: 'export-png'): void;
   (e: 'copy-session'): void;
   (e: 'open-gallery-picker'): void;
+  (e: 'open-composer'): void;
 }>();
 
 function onMoreCommand(cmd: string) {

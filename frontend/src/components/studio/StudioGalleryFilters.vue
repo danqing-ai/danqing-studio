@@ -25,6 +25,16 @@
     <DqOption v-for="m in modelOptions" :key="m" :label="m" :value="m" />
   </DqSelect>
 
+  <DqButton
+    type="primary"
+    size="sm"
+    class="studio-gallery-filters__compose"
+    @click="$emit('open-composer')"
+  >
+    <span v-if="composerBusy" class="studio-gallery-filters__compose-dot" aria-hidden="true" />
+    {{ $t('studio.openComposer') }}
+  </DqButton>
+
   <div class="studio-gallery-filters__spacer" />
 
   <div
@@ -87,6 +97,7 @@ const props = defineProps<{
   viewMode?: 'grid' | 'canvas';
   supportsCanvas?: boolean;
   canvasMedia?: CanvasMedia;
+  composerBusy?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -100,6 +111,7 @@ const emit = defineEmits<{
   (e: 'clear-selection'): void;
   (e: 'update:viewMode', value: 'grid' | 'canvas'): void;
   (e: 'composer-restore', snapshot: Record<string, string>): void;
+  (e: 'open-composer'): void;
 }>();
 
 function onViewModeChange(mode: 'grid' | 'canvas') {
@@ -118,6 +130,21 @@ function onViewModeChange(mode: 'grid' | 'canvas') {
   flex: 1 1 auto;
   min-width: 0;
   max-width: 280px;
+}
+
+.studio-gallery-filters__compose {
+  flex-shrink: 0;
+  position: relative;
+}
+
+.studio-gallery-filters__compose-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--dq-accent);
 }
 
 .studio-gallery-filters__spacer {

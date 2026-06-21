@@ -78,6 +78,16 @@
           <div class="studio-card__overlay-actions">
             <!-- Canvas workflow: browse + add to canvas; edit tools live on canvas node toolbar -->
             <template v-if="galleryCanvasMode && (isImage || isVideo || isAudio)">
+              <ComposerIconTip :content="$t('studio.composeFromItem')">
+                <DqIconButton
+                  type="text"
+                  size="sm"
+                  :label="$t('studio.composeFromItem')"
+                  @click.stop="emitAction('compose-from-item')"
+                >
+                  <DqIcon :size="14"><MagicStick /></DqIcon>
+                </DqIconButton>
+              </ComposerIconTip>
               <ComposerIconTip :content="$t('canvas.addToCanvas')">
                 <DqIconButton
                   type="text"
@@ -122,6 +132,16 @@
 
             <!-- Grid-only fallback (no canvas): keep inline edit shortcuts for images -->
             <template v-else>
+              <ComposerIconTip :content="$t('studio.composeFromItem')">
+                <DqIconButton
+                  type="text"
+                  size="sm"
+                  :label="$t('studio.composeFromItem')"
+                  @click.stop="emitAction('compose-from-item')"
+                >
+                  <DqIcon :size="14"><MagicStick /></DqIcon>
+                </DqIconButton>
+              </ComposerIconTip>
               <template v-if="isImage">
                 <ComposerIconTip :content="$t('action.image.retouch')">
                   <DqIconButton
@@ -215,6 +235,7 @@ import {
   Delete,
   Download,
   Grid,
+  MagicStick,
   Headset,
   Picture,
   Plus,

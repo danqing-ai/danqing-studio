@@ -1,10 +1,7 @@
 <template>
   <div
     class="video-composer studio-composer-shell dq-glass--panel"
-    :class="{
-      'video-composer--collapsed': collapsed,
-      'video-composer--expanded-prompt': isLongDuration && !collapsed,
-    }"
+    :class="{ 'video-composer--expanded-prompt': isLongDuration }"
   >
     <!-- Model not-ready alert -->
     <div v-if="modelNotReady" class="video-composer__model-meta">
@@ -24,7 +21,7 @@
     </div>
 
     <!-- Title input -->
-    <div v-if="!collapsed" class="video-composer__title-wrap">
+    <div class="video-composer__title-wrap">
       <DqInput
         v-model="localTitle"
         size="small"
@@ -33,14 +30,14 @@
       />
     </div>
 
-    <div v-if="!collapsed" class="video-composer__long-link">
+    <div class="video-composer__long-link">
       <RouterLink :to="{ name: 'long_video_create' }" class="video-composer__long-link-anchor">
         {{ $tt('video.longVideoOpenStudio') }}
       </RouterLink>
     </div>
 
     <!-- Prompt -->
-    <div v-if="!collapsed" class="video-composer__prompt-block">
+    <div class="video-composer__prompt-block">
     <div class="video-composer__prompt-wrap">
       <DqInput
         v-model="localPrompt"
@@ -206,7 +203,6 @@
           v-model="localModel"
           size="small"
           class="video-composer__select video-composer__select--model"
-          style="min-width: 140px; max-width: 200px"
           @change="(val: string) => emit('model-change', val)"
         >
           <DqOption
@@ -251,18 +247,6 @@
         >
           <DqOption v-for="opt in durationOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
         </DqSelect>
-
-        <!-- Advanced params toggle -->
-        <DqButton
-          type="text"
-          size="sm"
-          class="video-composer__adv-btn"
-          @click="advancedOpen = !advancedOpen"
-        >
-          <DqIcon :size="14"><Tools /></DqIcon>
-          <span>{{ $tt('studio.advancedParams') }}</span>
-          <span v-if="hasCustomParams || tailReferenceMedia" class="video-composer__dot" />
-        </DqButton>
       </div>
 
       <div class="video-composer__toolbar-right">
@@ -295,9 +279,9 @@
       </div>
     </div>
 
-    <StudioComposerAdvancedDrawer
+    <ComposerAdvancedCollapsible
       v-model:open="advancedOpen"
-      :reset-label="$tt('studio.resetDefaults')"
+      :has-custom-params="hasCustomParams || !!tailReferenceMedia"
       @reset-defaults="$emit('reset-defaults')"
     >
       <div class="video-composer__advanced-inner">
@@ -474,19 +458,14 @@
           </div>
         </div>
       </div>
-    </StudioComposerAdvancedDrawer>
-
-    <!-- Shortcut hint -->
-    <div class="video-composer__hint">
-      {{ shortcutHint }}
-    </div>
+    </ComposerAdvancedCollapsible>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed } from 'vue';
 import { RouterLink } from 'vue-router';
-import StudioComposerAdvancedDrawer from './StudioComposerAdvancedDrawer.vue';
+import ComposerAdvancedCollapsible from './ComposerAdvancedCollapsible.vue';
 import ComposerPromptApplyStrip from './ComposerPromptApplyStrip.vue';
 import ComposerIconTip from './ComposerIconTip.vue';
 import { useI18n } from 'vue-i18n';
@@ -496,7 +475,6 @@ import {
   MagicStick,
   Picture,
   Refresh,
-  Tools,
 } from '@danqing/dq-shell';
 import { assetIdFromGalleryPath } from '@/utils/copilotHandoff';
 import { $tt, $pn } from '@/utils/i18n';
@@ -653,11 +631,9 @@ const isLongDuration = computed(
   () => props.workMode === 'create' && isLongVideoTargetDuration(localDuration.value, longVideoSupport.value),
 );
 
-const showStoryboardExpand = computed(
-  () => isLongDuration.value && !props.collapsed,
-);
+const showStoryboardExpand = computed(() => isLongDuration.value);
 
-const promptRows = computed(() => (isLongDuration.value ? 8 : 3));
+const promptRows = computed(() => (isLongDuration.value ? 8 : 5));
 
 const promptPlaceholder = computed(() =>
   isLongDuration.value ? $tt('video.promptPlaceholderLong') : $tt('video.promptPlaceholder'),
@@ -739,15 +715,14 @@ function onKeydown(e: KeyboardEvent) {
 <style scoped>
 .video-composer {
   border-radius: var(--dq-radius-group);
-  padding: 18px 20px 16px;
+  padding: 14px 16px 12px;
   display: flex;
   flex-direction: column;
   gap: 10px;
-}
-
-.video-composer--collapsed {
-  padding: 10px 16px 12px;
-  gap: 6px;
+  width: 100%;
+  min-width: 0;
+  container-type: inline-size;
+  box-sizing: border-box;
 }
 
 /* Model meta */
@@ -788,16 +763,11 @@ function onKeydown(e: KeyboardEvent) {
   font-size: 14px;
   line-height: 1.5;
   padding: 10px 12px 32px;
-  min-height: 4.5rem;
-  max-height: 4.5rem;
+  min-height: 7.5rem;
+  max-height: 14rem;
   resize: none;
   overflow-y: auto;
-  box-shadow: 0 0 0 3px transparent;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
-}
-
-.video-composer__prompt :deep(.dq-input--textarea:focus) {
-  box-shadow: var(--dq-focus-ring);
+  transition: border-color 0.15s ease, background 0.15s ease;
 }
 
 .video-composer--expanded-prompt .video-composer__prompt :deep(.dq-input--textarea) {
@@ -873,13 +843,12 @@ function onKeydown(e: KeyboardEvent) {
   opacity: 1;
 }
 
-/* Toolbar - compact single row */
+/* Toolbar — drawer: stack controls vertically */
 .video-composer__toolbar {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 4px;
-  flex-wrap: nowrap;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
   flex-shrink: 0;
 }
 
@@ -887,25 +856,35 @@ function onKeydown(e: KeyboardEvent) {
 .video-composer__toolbar-right {
   display: flex;
   align-items: center;
-  gap: 4px;
-  flex-wrap: nowrap;
+  gap: 8px;
+  flex-wrap: wrap;
+  width: 100%;
 }
 
-.video-composer__toolbar-left {
-  overflow-x: auto;
-  scrollbar-width: none;
+.video-composer__toolbar-left :deep(.dq-segmented) {
+  flex: 1 1 100%;
+  width: 100%;
 }
 
-.video-composer__toolbar-left::-webkit-scrollbar {
-  display: none;
+.video-composer__toolbar-right {
+  justify-content: flex-end;
 }
 
 .video-composer__select {
   width: auto;
 }
 
-.video-composer__select--size {
-  min-width: 96px;
+.video-composer__select--model {
+  flex: 1 1 100%;
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+}
+
+.video-composer__select--size,
+.video-composer__select--duration {
+  flex: 1 1 calc(50% - 4px);
+  min-width: 120px;
 }
 
 .video-composer__size-ratio {
@@ -922,33 +901,17 @@ function onKeydown(e: KeyboardEvent) {
   min-width: 60px;
 }
 
-.video-composer__adv-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  position: relative;
-  padding: 0 4px;
-}
-
-.video-composer__dot {
-  position: absolute;
-  top: 1px;
-  right: 1px;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--dq-warning);
-  border: 1.5px solid var(--dq-surface);
-}
-
 /* Generate button */
 .video-composer__generate {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 4px 10px;
+  flex: 1;
+  justify-content: center;
+  min-height: 36px;
+  padding: 8px 16px;
   font-weight: 600;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 /* Advanced panel (inside drawer) */

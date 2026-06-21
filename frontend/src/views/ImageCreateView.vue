@@ -2,8 +2,7 @@
   <StudioLayout
     class="studio-create-page"
     :freeform="viewMode === 'canvas'"
-    :collapsible="viewMode === 'canvas'"
-    v-model:composer-collapsed="composerCollapsed"
+    hide-composer-bar
     @scroll="onCanvasScroll"
   >
     <template #filters>
@@ -18,6 +17,7 @@
         :view-mode="viewMode"
         :supports-canvas="true"
         canvas-media="image"
+        :composer-busy="composerBusy"
         @update:filter-time="filterTime = $event"
         @update:filter-models="filterModels = $event"
         @refresh="refreshGallery"
@@ -28,6 +28,7 @@
         @clear-selection="clearSelection"
         @update:view-mode="onViewModeChange"
         @composer-restore="onCanvasComposerRestore"
+        @open-composer="openComposerDrawer()"
       />
     </template>
 
@@ -52,6 +53,7 @@
         @batch-delete="batchDeleteSelected"
         @batch-train-lora="batchTrainLoraSelected"
         @clear-selection="clearSelection"
+        @open-composer="openComposerDrawer()"
       />
       <InfiniteCanvas
         v-else
@@ -71,11 +73,24 @@
         @open-preview="onCanvasOpenPreview"
         @composer-restore="onCanvasComposerRestore"
         @overlay-cleared="onCanvasOverlayCleared"
+        @open-composer="openComposerDrawer()"
+        @request-close-composer="closeComposerDrawer()"
       />
     </template>
+  </StudioLayout>
 
-    <template #composer>
-      <ImageComposer
+  <StudioComposeFab
+    v-if="!composerDrawerOpen"
+    media="image"
+    :busy="composerBusy"
+    @open="openComposerDrawer()"
+  />
+
+  <StudioComposerHost
+    v-model:open="composerDrawerOpen"
+    :drawer-title="$t('studio.composerDrawerTitle')"
+  >
+    <ImageComposer
         v-model="params.prompt"
         v-model:title="params.title"
         v-model:model="selectedModelVersion"
@@ -124,10 +139,8 @@
         @successor-dismiss="onSuccessorDismiss"
         :enhancing="isEnhancing"
         :reversing="isReversing"
-        :collapsed="viewMode === 'canvas' && composerCollapsed"
       />
-    </template>
-  </StudioLayout>
+  </StudioComposerHost>
 
   <!-- Asset picker for reference image -->
   <DqDialog v-model:open="showAssetPicker" :title="$t('assetPicker.dialogTitle')" width="70%">
@@ -257,12 +270,13 @@ import { reconcileVersionPickerSelection } from '@/composables/useModelRegistryF
 import { applyModelVersionFilters } from '@/utils/modelPickerFilters';
 import { pickDefaultVersionKey } from '@/utils/defaultModelSettings';
 import { dismissSuccessorHint, isSuccessorHintDismissed } from '@/utils/modelSuccessor';
-import { previewDisplayCaption, truncateDisplayLabel } from '@/utils/assetDisplay';
 // Studio components
 import StudioLayout from '@/components/studio/StudioLayout.vue';
 import StudioCanvas from '@/components/studio/StudioCanvas.vue';
 import StudioGalleryFilters from '@/components/studio/StudioGalleryFilters.vue';
 import ImageComposer from '@/components/studio/ImageComposer.vue';
+import StudioComposerHost from '@/components/studio/StudioComposerHost.vue';
+import StudioComposeFab from '@/components/studio/StudioComposeFab.vue';
 import AssetPicker from '@/components/asset/AssetPicker.vue';
 import ImageEditor from '@/components/image/ImageEditor.vue';
 import CreateExtendParams from '@/components/create/CreateExtendParams.vue';
@@ -272,7 +286,7 @@ import GalleryPreviewDialog from '@/components/gallery/GalleryPreviewDialog.vue'
 import StudioLineagePanel from '@/components/studio/StudioLineagePanel.vue';
 import InfiniteCanvas from '@/components/studio/InfiniteCanvas.vue';
 import { canvasAutoAddEnabled, useCanvasStore } from '@/composables/useCanvasStore';
-import { useComposerCollapse } from '@/composables/useComposerCollapse';
+import { useComposerDrawer } from '@/composables/useComposerDrawer';
 import {
   activateCanvasViewForResults,
   maybeShowCanvasWorkspaceHint,
@@ -376,7 +390,13 @@ const infiniteCanvasRef = ref<InstanceType<typeof InfiniteCanvas> | null>(null);
 const pendingCanvasAssetIds = ref<string[]>([]);
 const imageCanvas = useCanvasStore('image');
 const canvasSelectedItem = ref<GalleryItem | null>(null);
-const { collapsed: composerCollapsed, setCollapsed: setComposerCollapsed } = useComposerCollapse('image');
+
+const showEditorDrawer = ref(false);
+const {
+  composerDrawerOpen,
+  openComposerDrawer,
+  closeComposerDrawer,
+} = useComposerDrawer('image', { editorDrawerOpen: showEditorDrawer });
 
 const savedViewMode = getItem(DQ_STORAGE.IMAGE_VIEW_MODE);
 const viewMode = ref<'grid' | 'canvas'>(
@@ -445,13 +465,7 @@ function onCanvasSessionReady(_payload: { sessionId: string }) {
   }
 }
 
-function onCanvasNodeSelected(item: GalleryItem | null) {
-  canvasSelectedItem.value = item;
-  if (!item) {
-    persistComposerSnapshot();
-    return;
-  }
-  setComposerCollapsed(false);
+function fillComposerFromGalleryItem(item: GalleryItem) {
   if (item.prompt) params.prompt = item.prompt;
   if (item.title) params.title = item.title;
   if (item.model) {
@@ -468,6 +482,16 @@ function onCanvasNodeSelected(item: GalleryItem | null) {
     loadCompatibleAdapters(String(params.model || ''));
   }
   persistComposerSnapshot();
+}
+
+function onCanvasNodeSelected(item: GalleryItem | null) {
+  canvasSelectedItem.value = item;
+  if (!item) {
+    persistComposerSnapshot();
+    return;
+  }
+  fillComposerFromGalleryItem(item);
+  openComposerDrawer();
 }
 
 function persistComposerSnapshot() {
@@ -1208,6 +1232,13 @@ const currentModelDisplayName = computed(() => {
   return params.model || '';
 });
 
+watch(composerDrawerOpen, (open) => {
+  if (open) {
+    showLineageDrawer.value = false;
+    infiniteCanvasRef.value?.closeMutexPanels?.();
+  }
+});
+
 const selectedModelNotReady = computed(() => {
   if (!params.model || !params.version) return false;
   const detailed = modelsDetailedStatus.value[params.model as string];
@@ -1292,7 +1323,6 @@ function restoreModelForMode(mode: string) {
   }
 }
 
-const showEditorDrawer = ref(false);
 const editorMode = ref<'retouch' | 'extend' | 'upscale'>('retouch');
 const editDrawerItem = ref<GalleryItem | null>(null);
 const canvasMaskPreview = ref<import('@/types').CanvasMaskPreviewState | null>(null);
@@ -1341,6 +1371,10 @@ const canvasExtendPreview = computed((): import('@/types').CanvasExtendPreviewSt
 });
 const showLineageDrawer = ref(false);
 const lineageTargetAssetId = ref('');
+
+watch(showLineageDrawer, (open) => {
+  if (open) closeComposerDrawer();
+});
 
 const canvasAssetIdsOnCanvas = computed(() =>
   Object.keys(imageCanvas.items)
@@ -2133,6 +2167,15 @@ watch(
 
 function onCardAction({ action, item }: { action: string; item: GalleryItem }) {
   switch (action) {
+    case 'compose-from-item':
+      fillComposerFromGalleryItem(item);
+      if (item.path?.startsWith('asset:')) {
+        const previewUrl = previewUrlForGalleryItem(item);
+        referenceImage.value = { path: item.path, previewUrl };
+        imageMode.value = 'img2img';
+      }
+      openComposerDrawer();
+      break;
     case 'retouch':
     case 'extend':
     case 'upscale':
@@ -2441,6 +2484,7 @@ onMounted(async () => {
   loadRecentImages();
   loadGallery(true);
   tasksStore.ensureQueuePoller();
+  window.addEventListener('keydown', onCreatePageKeydown);
   const promptDraft = consumePromptDraft(DQ_STORAGE.IMAGE_CREATE_PROMPT_DRAFT);
   if (promptDraft) {
     params.prompt = applyPromptDraft(params.prompt, promptDraft);
@@ -2452,9 +2496,31 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
+  window.removeEventListener('keydown', onCreatePageKeydown);
   closeGenStream();
   tasksStore.releaseQueuePoller();
 });
+
+function onCreatePageKeydown(e: KeyboardEvent) {
+  const target = e.target as HTMLElement | null;
+  if (
+    target &&
+    (target.tagName === 'INPUT' ||
+      target.tagName === 'TEXTAREA' ||
+      target.isContentEditable)
+  ) {
+    return;
+  }
+  if (e.key === 'Escape' && composerDrawerOpen.value) {
+    e.preventDefault();
+    closeComposerDrawer();
+    return;
+  }
+  if (e.key.toLowerCase() === 'c' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    e.preventDefault();
+    openComposerDrawer();
+  }
+}
 
 </script>
 

@@ -2,7 +2,10 @@
   <div
     ref="layoutRef"
     class="studio-layout"
-    :class="{ 'studio-layout--composer-collapsed': collapsible && composerCollapsed }"
+    :class="{
+      'studio-layout--composer-collapsed': collapsible && composerCollapsed,
+      'studio-layout--drawer-mode': hideComposerBar,
+    }"
     :style="layoutStyle"
   >
     <!-- Filter bar -->
@@ -17,8 +20,9 @@
       <slot name="canvas" />
     </div>
 
-    <!-- Composer -->
+    <!-- Composer bar (legacy / long-video); hidden in unified drawer mode -->
     <div
+      v-if="!hideComposerBar"
       class="studio-composer-bar"
       :class="{ 'studio-composer-bar--collapsed': collapsible && composerCollapsed }"
     >
@@ -46,6 +50,8 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { useI18n } from 'vue-i18n';
 import {
+  COMPOSER_RESERVE_CSS_DRAWER_MODE,
+  COMPOSER_SCRIM_CSS_DRAWER_MODE,
   COMPOSER_RESERVE_CSS_COLLAPSED,
   COMPOSER_RESERVE_CSS_EXPANDED,
   COMPOSER_RESERVE_CSS_LONG_VIDEO,
@@ -59,6 +65,7 @@ const props = defineProps<{
   freeform?: boolean;
   collapsible?: boolean;
   composerCollapsed?: boolean;
+  hideComposerBar?: boolean;
   /** Taller composer reserve (long-video storyboard rail). */
   composerTall?: boolean;
 }>();
@@ -80,18 +87,23 @@ const layoutStyle = computed(() => {
   const collapsed = props.collapsible && composerCollapsed.value;
   const vh = viewportHeight.value;
   const tall = Boolean(props.composerTall) && !collapsed;
+  const drawerMode = Boolean(props.hideComposerBar);
   return {
-    '--dq-composer-reserve': collapsed
-      ? COMPOSER_RESERVE_CSS_COLLAPSED
-      : tall
-        ? COMPOSER_RESERVE_CSS_LONG_VIDEO
-        : COMPOSER_RESERVE_CSS_EXPANDED,
-    '--dq-composer-scrim-height': collapsed
-      ? COMPOSER_SCRIM_CSS_COLLAPSED
-      : tall
-        ? COMPOSER_SCRIM_CSS_LONG_VIDEO
-        : COMPOSER_SCRIM_CSS_EXPANDED,
-    '--dq-composer-reserve-px': `${composerReservePx(vh, collapsed, tall)}px`,
+    '--dq-composer-reserve': drawerMode
+      ? COMPOSER_RESERVE_CSS_DRAWER_MODE
+      : collapsed
+        ? COMPOSER_RESERVE_CSS_COLLAPSED
+        : tall
+          ? COMPOSER_RESERVE_CSS_LONG_VIDEO
+          : COMPOSER_RESERVE_CSS_EXPANDED,
+    '--dq-composer-scrim-height': drawerMode
+      ? COMPOSER_SCRIM_CSS_DRAWER_MODE
+      : collapsed
+        ? COMPOSER_SCRIM_CSS_COLLAPSED
+        : tall
+          ? COMPOSER_SCRIM_CSS_LONG_VIDEO
+          : COMPOSER_SCRIM_CSS_EXPANDED,
+    '--dq-composer-reserve-px': `${composerReservePx(vh, collapsed, tall, drawerMode)}px`,
   };
 });
 
@@ -169,6 +181,10 @@ defineExpose({ scrollToTop, canvasRef, layoutRef });
   box-sizing: border-box;
   padding: 16px 12px 220px;
   scroll-behavior: smooth;
+}
+
+.studio-layout--drawer-mode .studio-canvas-area:not(.studio-canvas-area--freeform) {
+  padding-bottom: 88px;
 }
 
 .studio-canvas-area--freeform {

@@ -2,8 +2,7 @@
   <StudioLayout
     class="studio-create-page"
     :freeform="viewMode === 'canvas'"
-    :collapsible="viewMode === 'canvas'"
-    v-model:composer-collapsed="composerCollapsed"
+    hide-composer-bar
     @scroll="onCanvasScroll"
   >
     <template #filters>
@@ -18,6 +17,7 @@
         :view-mode="viewMode"
         :supports-canvas="true"
         canvas-media="audio"
+        :composer-busy="activeAudioTasks.length > 0"
         @update:filter-time="filterTime = $event"
         @update:filter-models="filterModels = $event"
         @refresh="refreshGallery"
@@ -27,6 +27,7 @@
         @clear-selection="clearSelection"
         @update:view-mode="onViewModeChange"
         @composer-restore="onCanvasComposerRestore"
+        @open-composer="openComposerDrawer()"
       />
     </template>
     <template #canvas>
@@ -49,6 +50,7 @@
         @select-all="selectAllLoaded"
         @batch-delete="batchDeleteSelected"
         @clear-selection="clearSelection"
+        @open-composer="openComposerDrawer()"
       />
       <InfiniteCanvas
         v-else
@@ -64,10 +66,24 @@
         @composer-restore="onCanvasComposerRestore"
         @overlay-cleared="onCanvasOverlayCleared"
         @use-as-cover-source="onCanvasUseAsCoverSource"
+        @open-composer="openComposerDrawer()"
+        @request-close-composer="closeComposerDrawer()"
       />
     </template>
-    <template #composer>
-      <AudioComposer
+  </StudioLayout>
+
+  <StudioComposeFab
+    v-if="!composerDrawerOpen"
+    media="audio"
+    :busy="activeAudioTasks.length > 0"
+    @open="openComposerDrawer()"
+  />
+
+  <StudioComposerHost
+    v-model:open="composerDrawerOpen"
+    :drawer-title="$t('studio.composerDrawerTitle')"
+  >
+    <AudioComposer
         v-model="params.prompt"
         v-model:title="params.title"
         v-model:work-mode="audioWorkTab"
@@ -107,10 +123,8 @@
         @lyrics-apply-replace="onLyricsApplyReplace"
         @lyrics-apply-append="onLyricsApplyAppend"
         @lyrics-apply-dismiss="lyricsApply.clear()"
-        :collapsed="viewMode === 'canvas' && composerCollapsed"
       />
-    </template>
-  </StudioLayout>
+  </StudioComposerHost>
 
   <!-- Audio preview dialog -->
   <GalleryPreviewDialog
@@ -130,7 +144,7 @@
 
 <script setup lang="ts">
 // @ts-nocheck — legacy create view; narrow types in a follow-up pass
-import { ref, reactive, computed, watch, onMounted, nextTick, inject, unref, type Ref } from 'vue';
+import { ref, reactive, computed, watch, onMounted, onUnmounted, nextTick, inject, unref, type Ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { toast } from '@/utils/feedback';
 import { api, taskIdFromSubmitResponse } from '@/utils/api';
@@ -151,12 +165,14 @@ import StudioLayout from '@/components/studio/StudioLayout.vue';
 import StudioCanvas from '@/components/studio/StudioCanvas.vue';
 import StudioGalleryFilters from '@/components/studio/StudioGalleryFilters.vue';
 import AudioComposer from '@/components/studio/AudioComposer.vue';
+import StudioComposerHost from '@/components/studio/StudioComposerHost.vue';
+import StudioComposeFab from '@/components/studio/StudioComposeFab.vue';
 import InfiniteCanvas from '@/components/studio/InfiniteCanvas.vue';
 import StudioLineagePanel from '@/components/studio/StudioLineagePanel.vue';
 import GalleryPreviewDialog from '@/components/gallery/GalleryPreviewDialog.vue';
 import { useStudioGallery } from '@/composables/useStudioGallery';
 import { canvasAutoAddEnabled, useCanvasStore } from '@/composables/useCanvasStore';
-import { useComposerCollapse } from '@/composables/useComposerCollapse';
+import { useComposerDrawer } from '@/composables/useComposerDrawer';
 import {
   activateCanvasViewForResults,
   maybeShowCanvasWorkspaceHint,
@@ -1178,7 +1194,33 @@ onMounted(async () => {
   loadRecentAudio();
   loadGallery();
   loadPresets();
+  window.addEventListener('keydown', onCreatePageKeydown);
 });
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', onCreatePageKeydown);
+});
+
+function onCreatePageKeydown(e: KeyboardEvent) {
+  const target = e.target as HTMLElement | null;
+  if (
+    target &&
+    (target.tagName === 'INPUT' ||
+      target.tagName === 'TEXTAREA' ||
+      target.isContentEditable)
+  ) {
+    return;
+  }
+  if (e.key === 'Escape' && composerDrawerOpen.value) {
+    e.preventDefault();
+    closeComposerDrawer();
+    return;
+  }
+  if (e.key.toLowerCase() === 'c' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    e.preventDefault();
+    openComposerDrawer();
+  }
+}
 
 let _draftTimer: ReturnType<typeof setTimeout> | null = null;
 watch(() => params.prompt, () => {
@@ -1245,7 +1287,12 @@ const infiniteCanvasRef = ref<InstanceType<typeof InfiniteCanvas> | null>(null);
 const pendingCanvasAssetIds = ref<string[]>([]);
 const audioCanvas = useCanvasStore('audio');
 const canvasSelectedItem = ref<GalleryItem | null>(null);
-const { collapsed: composerCollapsed, setCollapsed: setComposerCollapsed } = useComposerCollapse('audio');
+const showLineageDrawer = ref(false);
+const {
+  composerDrawerOpen,
+  openComposerDrawer,
+  closeComposerDrawer,
+} = useComposerDrawer('audio');
 
 const savedViewMode = getItem(DQ_STORAGE.AUDIO_VIEW_MODE);
 const viewMode = ref<'grid' | 'canvas'>(
@@ -1286,7 +1333,6 @@ function onViewModeChange(mode: 'grid' | 'canvas') {
   }
 }
 
-const showLineageDrawer = ref(false);
 const lineageTargetAssetId = ref('');
 
 const canvasAssetIdsOnCanvas = computed(() =>
@@ -1371,17 +1417,32 @@ function onCanvasOverlayCleared(kind: import('@/types').CanvasOverlayKind) {
   }
 }
 
+function fillComposerFromGalleryItem(item: GalleryItem) {
+  if (item.prompt) params.prompt = item.prompt;
+  if (item.title) params.title = item.title;
+  persistComposerSnapshot();
+}
+
 function onCanvasNodeSelected(item: GalleryItem | null) {
   canvasSelectedItem.value = item;
   if (!item) {
     persistComposerSnapshot();
     return;
   }
-  setComposerCollapsed(false);
-  if (item.prompt) params.prompt = item.prompt;
-  if (item.title) params.title = item.title;
-  persistComposerSnapshot();
+  fillComposerFromGalleryItem(item);
+  openComposerDrawer();
 }
+
+watch(composerDrawerOpen, (open) => {
+  if (open) {
+    showLineageDrawer.value = false;
+    infiniteCanvasRef.value?.closeMutexPanels?.();
+  }
+});
+
+watch(showLineageDrawer, (open) => {
+  if (open) closeComposerDrawer();
+});
 
 function persistComposerSnapshot() {
   audioCanvas.setComposerSnapshot({
@@ -1531,7 +1592,10 @@ function onGallerySelect(item: any) {
 }
 
 function onCardAction({ action, item }: { action: string; item: any }) {
-  if (action === 'add-to-canvas') {
+  if (action === 'compose-from-item') {
+    fillComposerFromGalleryItem(item);
+    openComposerDrawer();
+  } else if (action === 'add-to-canvas') {
     void addGalleryItemToCanvas(item, { fit: true });
   } else if (action === 'delete') {
     deleteItem(item);

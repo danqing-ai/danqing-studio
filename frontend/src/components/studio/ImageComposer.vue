@@ -1,11 +1,11 @@
 <template>
   <div
     class="image-composer studio-composer-shell dq-glass--panel"
-    :class="{ 'image-composer--collapsed': collapsed, 'image-composer--embedded': embedded }"
+    :class="{ 'image-composer--embedded': embedded }"
   >
     <!-- Top: Title -->
     <DqInput
-      v-if="!collapsed && !embedded"
+      v-if="!embedded"
       v-model="localTitle"
       size="small"
       :placeholder="$t('studio.workTitlePlaceholder')"
@@ -13,14 +13,14 @@
     />
 
     <!-- Middle: Prompt input -->
-    <div v-if="!collapsed" class="image-composer__prompt-block">
+    <div class="image-composer__prompt-block">
     <div class="image-composer__prompt-wrap">
       <DqInput
         v-model="localPrompt"
         type="textarea"
-        :rows="3"
+        :rows="5"
         :placeholder="$t('create.promptPlaceholder')"
-        resize="none"
+        resize="vertical"
         class="image-composer__prompt"
         @keydown.meta.enter.prevent="$emit('generate')"
         @keydown.ctrl.enter.prevent="$emit('generate')"
@@ -143,7 +143,6 @@
           v-model="localModel"
           size="small"
           class="image-composer__select image-composer__select--model"
-          style="min-width: 140px; max-width: 200px"
           @change="(val: string) => emit('model-change', val)"
         >
           <DqOption
@@ -178,17 +177,6 @@
             :label="formatResolutionOptionLabel(opt)"
           />
         </DqSelect>
-
-        <!-- Advanced params toggle -->
-        <DqButton
-          type="text"
-          size="sm"
-          class="image-composer__adv-btn"
-          @click="advancedOpen = !advancedOpen"
-        >
-          <DqIcon :size="14"><Tools /></DqIcon>
-          <span>{{ $t('studio.advancedParams') }}</span>
-        </DqButton>
       </div>
 
       <div class="image-composer__toolbar-right">
@@ -221,12 +209,13 @@
       </div>
     </div>
 
-    <StudioComposerAdvancedDrawer
+    <ComposerAdvancedCollapsible
       v-model:open="advancedOpen"
-      :reset-label="$t('create.restoreDefaults')"
+      :has-custom-params="hasCustomParams"
       @reset-defaults="$emit('reset-defaults')"
     >
       <ImageComposerAdvancedFields
+        stacked
         :params="params"
         :model="model"
         :mode="localMode"
@@ -246,18 +235,13 @@
         @pick-inpaint-mask="$emit('pick-inpaint-mask')"
         @remove-inpaint-mask="$emit('remove-inpaint-mask')"
       />
-    </StudioComposerAdvancedDrawer>
-
-    <!-- Inline shortcut hint -->
-    <div v-if="!collapsed && !embedded" class="image-composer__hint">
-      {{ shortcutHint }}
-    </div>
+    </ComposerAdvancedCollapsible>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, withDefaults } from 'vue';
-import StudioComposerAdvancedDrawer from './StudioComposerAdvancedDrawer.vue';
+import ComposerAdvancedCollapsible from './ComposerAdvancedCollapsible.vue';
 import ImageComposerAdvancedFields from './ImageComposerAdvancedFields.vue';
 import ComposerPromptApplyStrip from './ComposerPromptApplyStrip.vue';
 import ComposerSuccessorHintStrip from './ComposerSuccessorHintStrip.vue';
@@ -268,7 +252,6 @@ import {
   DocumentCopy,
   MagicStick,
   Picture,
-  Tools,
 } from '@danqing/dq-shell';
 import { assetIdFromGalleryPath } from '@/utils/copilotHandoff';
 import { $tt } from '@/utils/i18n';
@@ -320,8 +303,7 @@ const props = withDefaults(defineProps<{
   controlNetRuntimeAvailable?: boolean;
   enhancing?: boolean;
   reversing?: boolean;
-  collapsed?: boolean;
-  /** Drawer / inspector embed: hide title row and footer hint. */
+  /** Inspector embed: hide title row. */
   embedded?: boolean;
   /** Hide size selector (output size fixed by parent). */
   lockSize?: boolean;
@@ -492,15 +474,14 @@ function onStyleCommand(command: string) {
 <style scoped>
 .image-composer {
   border-radius: var(--dq-radius-group);
-  padding: 18px 20px 16px;
+  padding: 14px 16px 12px;
   display: flex;
   flex-direction: column;
   gap: 10px;
-}
-
-.image-composer--collapsed {
-  padding: 10px 16px 12px;
-  gap: 0;
+  width: 100%;
+  min-width: 0;
+  container-type: inline-size;
+  box-sizing: border-box;
 }
 
 /* Title */
@@ -533,12 +514,7 @@ function onStyleCommand(command: string) {
   max-height: 4.5rem;
   resize: none;
   overflow-y: auto;
-  box-shadow: 0 0 0 3px transparent;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
-}
-
-.image-composer__prompt :deep(.dq-input--textarea:focus) {
-  box-shadow: var(--dq-focus-ring);
+  transition: border-color 0.15s ease, background 0.15s ease;
 }
 
 /* Reference image area inside textarea */
@@ -619,41 +595,50 @@ function onStyleCommand(command: string) {
   opacity: 1;
 }
 
-/* Toolbar - single row AI agent style */
+/* Toolbar — drawer: stack controls vertically */
 .image-composer__toolbar {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 4px;
-  flex-wrap: nowrap;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
 }
 
 .image-composer__toolbar-left,
 .image-composer__toolbar-right {
   display: flex;
   align-items: center;
-  gap: 6px;
-  flex-wrap: nowrap;
+  gap: 8px;
+  flex-wrap: wrap;
+  width: 100%;
 }
 
-.image-composer__toolbar-left {
-  overflow-x: auto;
-  scrollbar-width: none;
+.image-composer__toolbar-left :deep(.dq-segmented) {
+  flex: 1 1 100%;
+  width: 100%;
 }
 
-.image-composer__toolbar-left::-webkit-scrollbar {
-  display: none;
+.image-composer__toolbar-right {
+  justify-content: flex-end;
 }
 
 .image-composer__select {
   width: auto;
 }
 
+.image-composer__select--model {
+  flex: 1 1 100%;
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+}
+
 .image-composer__select--size {
-  min-width: 70px;
+  flex: 1 1 calc(50% - 4px);
+  min-width: 120px;
 }
 
 .image-composer__select--batch {
+  flex: 0 0 auto;
   min-width: 50px;
 }
 
@@ -688,30 +673,15 @@ function onStyleCommand(command: string) {
   opacity: 0.8;
 }
 
-.image-composer__adv-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  position: relative;
-}
-
-.image-composer__dot {
-  position: absolute;
-  top: 1px;
-  right: 1px;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--dq-warning);
-  border: 1.5px solid var(--dq-surface);
-}
-
 /* Generate button */
 .image-composer__generate {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 6px 14px;
+  flex: 1;
+  justify-content: center;
+  min-height: 36px;
+  padding: 8px 16px;
   font-weight: 600;
   font-size: 13px;
 }
@@ -775,20 +745,8 @@ function onStyleCommand(command: string) {
 }
 
 /* Hint - compact inline */
-.image-composer__hint {
-  text-align: right;
-  margin-top: 2px;
-  font-size: 10px;
-  color: var(--dq-label-tertiary);
-  opacity: 0;
-  transition: opacity 0.2s;
-  height: 0;
-  overflow: hidden;
-}
-
-.image-composer__prompt-wrap:focus-within + .image-composer__hint,
-.image-composer__prompt-wrap:hover + .image-composer__hint {
-  opacity: 1;
-  height: auto;
+.image-composer__prompt :deep(.dq-input--textarea) {
+  min-height: 7.5rem;
+  max-height: 14rem;
 }
 </style>

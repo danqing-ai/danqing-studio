@@ -1,11 +1,7 @@
 <template>
-  <div
-    class="audio-composer studio-composer-shell dq-glass--panel"
-    :class="{ 'audio-composer--collapsed': collapsed }"
-  >
+  <div class="audio-composer studio-composer-shell dq-glass--panel">
     <!-- Title -->
     <DqInput
-      v-if="!collapsed"
       v-model="localTitle"
       size="small"
       :placeholder="$tt('studio.workTitlePlaceholder')"
@@ -13,12 +9,12 @@
     />
 
     <!-- Prompt -->
-    <div v-if="!collapsed" class="audio-composer__prompt-block">
+    <div class="audio-composer__prompt-block">
     <div class="audio-composer__prompt-wrap">
       <DqInput
         v-model="localPrompt"
         type="textarea"
-        :rows="3"
+        :rows="5"
         :placeholder="promptPlaceholder"
         resize="none"
         class="audio-composer__prompt"
@@ -188,7 +184,6 @@
           v-model="localModel"
           size="small"
           class="audio-composer__select audio-composer__select--model"
-          style="min-width: 140px; max-width: 200px"
           @change="(val: string) => emit('model-change', val)"
         >
           <DqOption
@@ -222,18 +217,6 @@
             :value="opt.value"
           />
         </DqSelect>
-
-        <!-- Advanced toggle -->
-        <DqButton
-          type="text"
-          size="sm"
-          class="audio-composer__adv-btn"
-          @click="advancedOpen = !advancedOpen"
-        >
-          <DqIcon :size="14"><Tools /></DqIcon>
-          <span>{{ $tt('studio.advancedParams') }}</span>
-          <span v-if="hasCustomParams" class="audio-composer__dot" />
-        </DqButton>
       </div>
 
       <div class="audio-composer__toolbar-right">
@@ -265,9 +248,9 @@
       </div>
     </div>
 
-    <StudioComposerAdvancedDrawer
+    <ComposerAdvancedCollapsible
       v-model:open="advancedOpen"
-      :reset-label="$tt('studio.resetDefaults')"
+      :has-custom-params="hasCustomParams"
       @reset-defaults="$emit('reset-defaults')"
     >
       <div class="audio-composer__advanced-inner">
@@ -457,13 +440,13 @@
                 </div>
               </div>
       </div>
-    </StudioComposerAdvancedDrawer>
+    </ComposerAdvancedCollapsible>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
-import StudioComposerAdvancedDrawer from './StudioComposerAdvancedDrawer.vue';
+import ComposerAdvancedCollapsible from './ComposerAdvancedCollapsible.vue';
 import ComposerPromptApplyStrip from './ComposerPromptApplyStrip.vue';
 import ComposerIconTip from './ComposerIconTip.vue';
 import { useI18n } from 'vue-i18n';
@@ -475,7 +458,6 @@ import {
   Pause,
   Play,
   Refresh,
-  Tools,
 } from '@danqing/dq-shell';
 import { $tt } from '@/utils/i18n';
 import { isAudioLyricsRequired, audioLyricsRequiredHintKey } from '@/utils/audioLyrics';
@@ -797,15 +779,14 @@ function onPromptKeydown(e: KeyboardEvent) {
 <style scoped>
 .audio-composer {
   border-radius: var(--dq-radius-group);
-  padding: 18px 20px 16px;
+  padding: 14px 16px 12px;
   display: flex;
   flex-direction: column;
   gap: 10px;
-}
-
-.audio-composer--collapsed {
-  padding: 10px 16px 12px;
-  gap: 0;
+  width: 100%;
+  min-width: 0;
+  container-type: inline-size;
+  box-sizing: border-box;
 }
 
 .audio-composer__title {
@@ -832,16 +813,11 @@ function onPromptKeydown(e: KeyboardEvent) {
   font-size: 14px;
   line-height: 1.5;
   padding: 10px 12px 32px;
-  min-height: 4.5rem;
-  max-height: 4.5rem;
+  min-height: 7.5rem;
+  max-height: 14rem;
   resize: none;
   overflow-y: auto;
-  box-shadow: 0 0 0 3px transparent;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
-}
-
-.audio-composer__prompt :deep(.dq-input--textarea:focus) {
-  box-shadow: var(--dq-focus-ring);
+  transition: border-color 0.15s ease, background 0.15s ease;
 }
 
 /* Reference area inside textarea */
@@ -886,30 +862,30 @@ function onPromptKeydown(e: KeyboardEvent) {
   align-items: center;
 }
 
-/* Toolbar */
+/* Toolbar — drawer: stack controls vertically */
 .audio-composer__toolbar {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 4px;
-  flex-wrap: nowrap;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
 }
 
 .audio-composer__toolbar-left,
 .audio-composer__toolbar-right {
   display: flex;
   align-items: center;
-  gap: 6px;
-  flex-wrap: nowrap;
+  gap: 8px;
+  flex-wrap: wrap;
+  width: 100%;
 }
 
-.audio-composer__toolbar-left {
-  overflow-x: auto;
-  scrollbar-width: none;
+.audio-composer__toolbar-left :deep(.dq-segmented) {
+  flex: 1 1 100%;
+  width: 100%;
 }
 
-.audio-composer__toolbar-left::-webkit-scrollbar {
-  display: none;
+.audio-composer__toolbar-right {
+  justify-content: flex-end;
 }
 
 .audio-composer__select {
@@ -917,15 +893,19 @@ function onPromptKeydown(e: KeyboardEvent) {
 }
 
 .audio-composer__select--model {
-  min-width: 140px;
-  max-width: 200px;
+  flex: 1 1 100%;
+  width: 100%;
+  max-width: none;
+  min-width: 0;
 }
 
 .audio-composer__select--duration {
-  min-width: 70px;
+  flex: 1 1 calc(50% - 4px);
+  min-width: 120px;
 }
 
 .audio-composer__select--batch {
+  flex: 0 0 auto;
   min-width: 50px;
 }
 
@@ -983,12 +963,7 @@ function onPromptKeydown(e: KeyboardEvent) {
   max-height: 9rem;
   resize: none;
   overflow-y: auto;
-  box-shadow: 0 0 0 3px transparent;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease;
-}
-
-.audio-composer__lyrics :deep(.dq-input--textarea:focus) {
-  box-shadow: var(--dq-focus-ring);
+  transition: border-color 0.15s ease, background 0.15s ease;
 }
 
 .audio-composer__lyrics-hint {
@@ -998,29 +973,14 @@ function onPromptKeydown(e: KeyboardEvent) {
   color: var(--dq-label-tertiary);
 }
 
-.audio-composer__adv-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  position: relative;
-}
-
-.audio-composer__dot {
-  position: absolute;
-  top: 1px;
-  right: 1px;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--dq-warning);
-  border: 1.5px solid var(--dq-surface);
-}
-
 .audio-composer__generate {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 6px 14px;
+  flex: 1;
+  justify-content: center;
+  min-height: 36px;
+  padding: 8px 16px;
   font-weight: 600;
   font-size: 13px;
 }
