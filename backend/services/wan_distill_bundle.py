@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 
 # Keys → (high_noise_filename, low_noise_filename) at bundle root after download.
-# Source of truth: https://huggingface.co/lightx2v/Wan2.2-Distill-Models
+# ModelScope mirror: https://modelscope.cn/models/lightx2v/Wan2.2-Distill-Models
 _WAN_DISTILL_VARIANTS: dict[str, tuple[str, str]] = {
     # 2026-04-12 — latest I2V 720p BF16 (README: fine detail + texture)
     "i2v_720p": (
@@ -27,8 +27,12 @@ _WAN_DISTILL_VARIANTS: dict[str, tuple[str, str]] = {
 
 
 def assemble_wan_distill_bundle(bundle_root: Path, variant: str) -> None:
-    """Place LightX2V distill safetensors under ``high_noise_model/`` + ``low_noise_model/``."""
+    """Move LightX2V distill safetensors into ``high_noise_model/`` + ``low_noise_model/``."""
     root = Path(bundle_root)
+    vae21 = root / "Wan2.1_VAE.pth"
+    vae22 = root / "Wan2.2_VAE.pth"
+    if vae21.is_file() and not vae22.exists():
+        vae22.symlink_to(vae21.name)
     if not variant:
         raise RuntimeError("wan_distill_variant is required for Wan distill bundle assembly.")
     names = _WAN_DISTILL_VARIANTS.get(str(variant))
@@ -41,17 +45,26 @@ def assemble_wan_distill_bundle(bundle_root: Path, variant: str) -> None:
     high_name, low_name = names
     for expert, filename in (("high", high_name), ("low", low_name)):
         src = root / filename
-        if not src.is_file():
-            raise RuntimeError(
-                f"Wan distill bundle missing {filename} under {root}. "
-                "Check bundle_repos allow_patterns for lightx2v/Wan2.2-Distill-Models."
-            )
         dest_dir = root / ("high_noise_model" if expert == "high" else "low_noise_model")
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest = dest_dir / "diffusion_pytorch_model.safetensors"
-        if dest.exists():
-            dest.unlink()
-        shutil.copy2(src, dest)
+
+        if dest.is_file():
+            # Older installs copied instead of moving; drop the redundant root shard.
+            if src.is_file():
+                try:
+                    if src.resolve() != dest.resolve():
+                        src.unlink()
+                except OSError:
+                    src.unlink()
+            continue
+
+        if not src.is_file():
+            raise RuntimeError(
+                f"Wan distill bundle missing {filename} under {root}. "
+                "Check allow_patterns for lightx2v/Wan2.2-Distill-Models (ModelScope)."
+            )
+        shutil.move(str(src), str(dest))
 
     index_path = root / "model_index.json"
     payload: dict[str, object] = {}

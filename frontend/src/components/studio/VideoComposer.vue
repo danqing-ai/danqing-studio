@@ -1,7 +1,10 @@
 <template>
   <div
     class="video-composer studio-composer-shell dq-glass--panel"
-    :class="{ 'video-composer--collapsed': collapsed, 'video-composer--expanded-prompt': isLongDuration && !collapsed }"
+    :class="{
+      'video-composer--collapsed': collapsed,
+      'video-composer--expanded-prompt': isLongDuration && !collapsed,
+    }"
   >
     <!-- Model not-ready alert -->
     <div v-if="modelNotReady" class="video-composer__model-meta">
@@ -28,6 +31,12 @@
         :placeholder="$tt('studio.workTitlePlaceholder')"
         class="video-composer__title"
       />
+    </div>
+
+    <div v-if="!collapsed" class="video-composer__long-link">
+      <RouterLink :to="{ name: 'long_video_create' }" class="video-composer__long-link-anchor">
+        {{ $tt('video.longVideoOpenStudio') }}
+      </RouterLink>
     </div>
 
     <!-- Prompt -->
@@ -476,6 +485,7 @@
 
 <script setup lang="ts">
 import { ref, computed } from 'vue';
+import { RouterLink } from 'vue-router';
 import StudioComposerAdvancedDrawer from './StudioComposerAdvancedDrawer.vue';
 import ComposerPromptApplyStrip from './ComposerPromptApplyStrip.vue';
 import ComposerIconTip from './ComposerIconTip.vue';
@@ -643,13 +653,15 @@ const isLongDuration = computed(
   () => props.workMode === 'create' && isLongVideoTargetDuration(localDuration.value, longVideoSupport.value),
 );
 
+const showStoryboardExpand = computed(
+  () => isLongDuration.value && !props.collapsed,
+);
+
 const promptRows = computed(() => (isLongDuration.value ? 8 : 3));
 
 const promptPlaceholder = computed(() =>
   isLongDuration.value ? $tt('video.promptPlaceholderLong') : $tt('video.promptPlaceholder'),
 );
-
-const showStoryboardExpand = computed(() => isLongDuration.value && !props.collapsed);
 
 const showSeedField = computed(() => paramSchema.value.seed_support !== false);
 
@@ -1046,5 +1058,19 @@ function onKeydown(e: KeyboardEvent) {
 .video-composer__prompt-wrap:hover + .video-composer__hint {
   opacity: 1;
   height: auto;
+}
+
+.video-composer__long-link {
+  padding: 6px 12px 0;
+}
+
+.video-composer__long-link-anchor {
+  font-size: 12px;
+  color: var(--dq-accent);
+  text-decoration: none;
+}
+
+.video-composer__long-link-anchor:hover {
+  text-decoration: underline;
 }
 </style>

@@ -29,6 +29,7 @@ from backend.engine.families.ltx.pipeline_math import (
     compute_video_latent_shape,
     compute_video_positions,
     create_noised_state,
+    pin_latent_by_mask,
     ltx2_schedule,
     ltx_dev_audio_guider_params,
     ltx_dev_video_guider_params,
@@ -265,6 +266,8 @@ def _denoise_loop(
         audio_x0 = apply_denoise_mask(ctx, audio_x0, audio_state.clean_latent, audio_state.denoise_mask)
         video_x = _euler_step(video_x, video_x0, sigma, sigma_next)
         audio_x = _euler_step(audio_x, audio_x0, sigma, sigma_next)
+        video_x = pin_latent_by_mask(ctx, video_x, video_state.clean_latent, video_state.denoise_mask)
+        audio_x = pin_latent_by_mask(ctx, audio_x, audio_state.clean_latent, audio_state.denoise_mask)
         _materialize(ctx, video_x, audio_x)
 
         step_1based = progress_step_offset + step_idx + 1
@@ -400,6 +403,8 @@ def _multimodal_guided_denoise_loop(
 
         video_x = _euler_step(video_x, video_x0, sigma, sigma_next)
         audio_x = _euler_step(audio_x, audio_x0, sigma, sigma_next)
+        video_x = pin_latent_by_mask(ctx, video_x, video_state.clean_latent, video_state.denoise_mask)
+        audio_x = pin_latent_by_mask(ctx, audio_x, audio_state.clean_latent, audio_state.denoise_mask)
         _materialize(ctx, video_x, audio_x)
 
         step_1based = progress_step_offset + step_idx + 1
@@ -421,11 +426,28 @@ def _i2v_conditionings(
     enc_h: int,
     enc_w: int,
     video_encoder: Any,
+    anchor_strength: float = 1.0,
 ) -> list[VideoConditionByLatentIndex]:
     pixels = _load_i2v_image_tensor(image_path, enc_h, enc_w, ctx)
     pixels = ctx.expand_dims(pixels, axis=2)
     latent = video_encoder.encode(pixels)
-    return [VideoConditionByLatentIndex(latent=latent, frame_idx=0, strength=1.0)]
+    patchifier = VideoLatentPatchifier()
+    tokens, _ = patchifier.patchify(latent, ctx)
+    strength = float(max(0.0, min(1.0, anchor_strength)))
+    return [VideoConditionByLatentIndex(latent=tokens, frame_idx=0, strength=strength)]
+
+
+def _pre_denoise_materialize(ctx: RuntimeContext, video_state: LatentState, audio_state: LatentState) -> None:
+    """Force-eval noised states before the denoise loop (Metal watchdog + stable I2V)."""
+    _materialize(
+        ctx,
+        video_state.latent,
+        video_state.clean_latent,
+        video_state.denoise_mask,
+        audio_state.latent,
+        audio_state.clean_latent,
+        audio_state.denoise_mask,
+    )
 
 
 class LTX23MlxGenerator:
@@ -480,6 +502,12 @@ class LTX23MlxGenerator:
             weight_stem=stem,
             entry=self._registry_entry,
             version_key=self._version_key,
+        )
+        inner = self._dit.model
+        self._log(
+            on_log,
+            "info",
+            f"LTX 2.3 DiT scales ts={inner._timestep_scale} av_ca={inner._av_ca_timestep_scale}",
         )
         return self._dit
 
@@ -547,6 +575,8 @@ class LTX23MlxGenerator:
         if image_path and self._video_encoder is None:
             self._video_encoder = load_ltx23_video_encoder(self.bundle_root, load_fn=load_fn)
 
+        i2v_anchor_strength = float(getattr(self.config, "ltx_i2v_anchor_strength", 1.0) or 1.0)
+
         conditionings_1: list[VideoConditionByLatentIndex] = []
         if image_path:
             if self._video_encoder is None:
@@ -557,6 +587,7 @@ class LTX23MlxGenerator:
                 enc_h=h_half * VIDEO_SPATIAL_SCALE,
                 enc_w=w_half * VIDEO_SPATIAL_SCALE,
                 video_encoder=self._video_encoder,
+                anchor_strength=i2v_anchor_strength,
             )
 
         if stage1_states is not None:
@@ -600,6 +631,7 @@ class LTX23MlxGenerator:
 
         model = self._load_dit(step_distill=step_distill, on_log=on_log)
         self._log(on_log, "info", f"LTX 2.3 stage 1 denoise steps={stage1_denoise_steps} at {half_w}x{half_h}")
+        _pre_denoise_materialize(ctx, video_state, audio_state)
 
         if step_distill:
             output_1 = _denoise_loop(
@@ -675,6 +707,7 @@ class LTX23MlxGenerator:
                 enc_h=h_full * VIDEO_SPATIAL_SCALE,
                 enc_w=w_full * VIDEO_SPATIAL_SCALE,
                 video_encoder=self._video_encoder,
+                anchor_strength=i2v_anchor_strength,
             )
 
         if low_memory:
@@ -716,6 +749,7 @@ class LTX23MlxGenerator:
         )
 
         self._log(on_log, "info", f"LTX 2.3 stage 2 denoise steps={stage2_denoise_steps} at {w_full}x{h_full}")
+        _pre_denoise_materialize(ctx, video_state_2, audio_state_2)
         output_2 = _denoise_loop(
             ctx,
             model,
@@ -770,22 +804,32 @@ class LTX23MlxGenerator:
         )
         mode = "distilled" if step_distill else "dev"
         i2v = "i2v" if image_path else "t2v"
+        if image_path and int(num_frames) > 121:
+            self._log(
+                on_log,
+                "warning",
+                f"LTX I2V: {num_frames} frames (~{(num_frames - 1) / max(float(fps), 1):.1f}s) — "
+                "long single-anchor clips tend to blur or warp on fast motion (distilled/q4). "
+                "Try 4s (97 frames), soften the prompt, or use ltx-2.3-dev + negative prompt.",
+            )
+        log_parts = [
+            f"LTX 2.3 MLX pipeline={mode}",
+            f"mode={i2v}",
+            f"size={width}x{height}",
+            f"frames={num_frames}",
+            f"fps={fps}",
+            f"seed={seed}",
+            f"stage1_steps={stage1_steps}",
+            f"stage2_steps={stage2_steps}",
+            f"bundle={self.bundle_root.name}",
+        ]
+        if image_path:
+            anchor = float(getattr(self.config, "ltx_i2v_anchor_strength", 1.0) or 1.0)
+            log_parts.append(f"i2v_anchor={anchor:.2f}")
         self._log(
             on_log,
             "info",
-            " ".join(
-                [
-                    f"LTX 2.3 MLX pipeline={mode}",
-                    f"mode={i2v}",
-                    f"size={width}x{height}",
-                    f"frames={num_frames}",
-                    f"fps={fps}",
-                    f"seed={seed}",
-                    f"stage1_steps={stage1_steps}",
-                    f"stage2_steps={stage2_steps}",
-                    f"bundle={self.bundle_root.name}",
-                ]
-            ),
+            " ".join(log_parts),
         )
 
         video_latent, audio_latent = self._generate_two_stage(

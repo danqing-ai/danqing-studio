@@ -84,18 +84,26 @@ export function useComposerLlm() {
 
   const isStoryboardExpanding = ref(false);
 
-  async function storyboardLongVideo(body: {
-    prompt: string;
-    target_duration_sec: number;
-    initial_duration_sec?: number;
-    segment_extend_sec?: number;
-    reference_duration_sec?: number;
-    style_positive?: string;
-  }) {
+  async function storyboardLongVideo(
+    body: {
+      prompt: string;
+      target_duration_sec: number;
+      initial_duration_sec?: number;
+      segment_extend_sec?: number;
+      segment_duration_sec?: number;
+      reference_duration_sec?: number;
+      style_positive?: string;
+      locale?: string;
+      use_shot_plan?: boolean;
+    },
+    opts?: { quietSuccess?: boolean },
+  ) {
     isStoryboardExpanding.value = true;
     try {
       const result = await api.gen.longVideoStoryboard(body);
-      toast.success($tt('video.storyboardComplete'));
+      if (!opts?.quietSuccess) {
+        toast.success($tt('video.storyboardComplete'));
+      }
       return result;
     } catch (e) {
       const msg = (e as { response?: { data?: { detail?: string } }; message?: string })?.response?.data?.detail

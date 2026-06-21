@@ -28,6 +28,7 @@ from backend.utils.path_utils import PathResolver
 from backend.persistence.stores import JsonConfigStore, JsonPresetStore
 from backend.persistence.asset_store import SQLiteAssetStore
 from backend.persistence.canvas_session_store import CanvasSessionStore
+from backend.persistence.long_video_project_store import LongVideoProjectStore
 from backend.persistence.v3_task_store import V3TaskStore
 from backend.core.model_registry import ModelRegistry
 from backend.engine.engine_registry import EngineRegistry
@@ -144,8 +145,10 @@ def create_app() -> FastAPI:
     # LLM service (standalone, not through TaskScheduler)
     import backend.api.routes.llm as llm_routes
     import backend.api.routes.canvas as canvas_routes
+    import backend.api.routes.long_video_projects as long_video_routes
     app.include_router(llm_routes.router)
     app.include_router(canvas_routes.router)
+    app.include_router(long_video_routes.router)
 
     frontend_dir = _resolve_frontend_static_dir(project_root)
     if frontend_dir is not None:
@@ -222,7 +225,9 @@ def _setup_dependencies():
     asset_root = path_resolver.get_project_root() / "outputs" / "assets"
     asset_store = SQLiteAssetStore(v3_db, asset_root)
     canvas_session_store = CanvasSessionStore(v3_db)
+    long_video_project_store = LongVideoProjectStore(v3_db)
     container.register_instance(CanvasSessionStore, canvas_session_store)
+    container.register_instance(LongVideoProjectStore, long_video_project_store)
 
     scheduler = TaskScheduler(
         path_resolver=path_resolver,

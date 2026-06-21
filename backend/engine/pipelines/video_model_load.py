@@ -12,6 +12,7 @@ from backend.engine._transformer_registry import (
 from backend.engine.config.model_configs import get_config_class
 from backend.engine.contracts import (
     inject_hunyuan_text_encoder_paths,
+    inject_ltx_text_encoder_paths,
     local_bundle_root,
     merge_video_bundle_config,
     registry_scalar_default,
@@ -96,6 +97,7 @@ def apply_video_registry_config_overrides(
         config.vae_spatial_tiling = bool(vst)
     if getattr(config, "inject_text_encoder_paths", False):
         inject_hunyuan_text_encoder_paths(entry, config, project_root)
+        inject_ltx_text_encoder_paths(entry, config, project_root)
 
 
 def prepare_video_config(entry: Any, family: str, bundle_root: Path, *, project_root: Path) -> Any:

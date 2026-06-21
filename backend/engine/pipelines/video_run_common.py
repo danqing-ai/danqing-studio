@@ -30,6 +30,7 @@ from backend.engine.config.model_configs import get_config_class
 from backend.engine.contracts import (
     create_video_t5_encoder,
     inject_hunyuan_text_encoder_paths,
+    inject_ltx_text_encoder_paths,
     local_bundle_root as _local_bundle_root_fn,
     merge_video_bundle_config,
     registry_scalar_default as _registry_scalar_default_fn,
@@ -82,6 +83,11 @@ def _video_post_denoise_clear_cache(config: Any) -> bool:
 def configure_hunyuan_text_encoder_paths(pipeline, entry, config) -> None:
     """Resolve registry-declared native TE roots (ModelScope Qwen + ByT5)."""
     inject_hunyuan_text_encoder_paths(entry, config, pipeline._project_root)
+
+
+def configure_ltx_text_encoder_paths(pipeline, entry, config) -> None:
+    """Resolve registry-declared Gemma 3 root under ``models/Text/…``."""
+    inject_ltx_text_encoder_paths(entry, config, pipeline._project_root)
 
 def resolved_original_video_bundle_root(pipeline, entry) -> Path | None:
     """Registry ``versions.original.local_path`` for the same model (T5 fallback for MLX-only trees)."""
@@ -210,6 +216,7 @@ def apply_video_registry_config_overrides(pipeline, entry: Any, config: Any) -> 
         config.vae_spatial_tiling = bool(vst)
     if getattr(config, "inject_text_encoder_paths", False):
         configure_hunyuan_text_encoder_paths(pipeline, entry, config)
+        configure_ltx_text_encoder_paths(pipeline, entry, config)
 
 def prepare_video_bundle_and_schedule(pipeline,
     *,
@@ -609,6 +616,12 @@ def execute_family_video_generator(pipeline,
     long_spec = getattr(request, "long_video", None) if not is_edit else None
     lv_fps = float(fps)
     if long_spec is not None:
+        strategy = getattr(long_spec, "strategy", "latent_extend") or "latent_extend"
+        if strategy == "segmented_i2v":
+            raise RuntimeError(
+                "long_video strategy segmented_i2v must use POST /api/videos/long-generations "
+                "(task kind video.long_generation), not standard video create"
+            )
         if not getattr(config, "supports_long_video", False):
             raise RuntimeError(
                 f"Model {model_key!r} does not support long_video generation "

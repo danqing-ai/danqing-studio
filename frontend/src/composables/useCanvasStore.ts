@@ -147,7 +147,7 @@ function snapshotState(
   activeAssetPath: string,
   overlays: CanvasOverlaysState,
   edges: CanvasEdge[],
-  composerSnapshot: CanvasComposerSnapshot
+  composerSnapshot: CanvasComposerSnapshot,
 ): CanvasSessionState {
   return {
     items: JSON.parse(JSON.stringify(items)),
@@ -316,7 +316,7 @@ function createCanvasStore(media: CanvasMedia) {
       activeAssetPath.value,
       overlays,
       edges.value,
-      composerSnapshot
+      composerSnapshot,
     );
     syncing.value = true;
     try {

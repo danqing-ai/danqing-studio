@@ -6,6 +6,38 @@ from typing import Any
 
 from backend.engine.common.model.base import _assign_param_tensor, _mlx_affine_infer_bits_and_group_size
 
+_QUANT_AFFINE_FIELDS = frozenset({"scales", "biases"})
+
+
+def _resolve_module_attr(root: Any, key: str) -> tuple[Any, str]:
+    parts = key.split(".")
+    if len(parts) < 2:
+        raise RuntimeError(f"Invalid quantized module key: {key!r}")
+    obj: Any = root
+    for part in parts[:-1]:
+        obj = obj[int(part)] if part.isdigit() else getattr(obj, part)
+    return obj, parts[-1]
+
+
+def _assign_quant_affine_field(root: Any, key: str, tensor: Any) -> None:
+    """Assign MLX affine-quant ``scales`` / ``biases`` without slice corruption.
+
+    ``nn.quantize`` initializes these buffers as float32, but checkpoints store
+    bfloat16. In-place ``param[:] = bf16_tensor`` corrupts values on Metal; replace
+    the module attribute instead (matches ``nn.Module.load_weights`` behavior).
+    """
+    import mlx.core as mx
+
+    parent, attr = _resolve_module_attr(root, key)
+    if attr not in _QUANT_AFFINE_FIELDS:
+        raise RuntimeError(f"Expected scales/biases key, got {key!r}")
+    value = mx.array(tensor, dtype=mx.bfloat16)
+    if tuple(getattr(parent, attr).shape) != tuple(value.shape):
+        raise RuntimeError(
+            f"{key}: shape mismatch {tuple(getattr(parent, attr).shape)} vs {tuple(value.shape)}"
+        )
+    setattr(parent, attr, value)
+
 
 def collect_affine_quant_bases(weight_dict: dict[str, Any]) -> set[str]:
     bases: set[str] = set()
@@ -172,6 +204,28 @@ def load_weights_quantized_inference(
     loaded: list[str] = []
     skipped: list[str] = []
     for key, tensor in weight_dict.items():
+        field = key.rsplit(".", 1)[-1]
+        if field in _QUANT_AFFINE_FIELDS:
+            base = key[: -(len(field) + 1)]
+            if base not in bases:
+                skipped.append(key)
+                continue
+            try:
+                parent, attr = _resolve_module_attr(skeleton_root, key)
+            except (AttributeError, IndexError, RuntimeError) as exc:
+                skipped.append(f"{key} module_missing: {exc}")
+                continue
+            current = getattr(parent, attr, None)
+            if current is None:
+                skipped.append(f"{key} module_missing: {attr!r} is None")
+                continue
+            if tuple(current.shape) != tuple(tensor.shape):
+                skipped.append(f"{key} shape_mismatch: {current.shape} vs {tensor.shape}")
+                continue
+            _assign_quant_affine_field(skeleton_root, key, tensor)
+            loaded.append(key)
+            continue
+
         if key not in model._param_map:
             skipped.append(key)
             continue
@@ -183,7 +237,20 @@ def load_weights_quantized_inference(
         loaded.append(key)
 
     loaded_set = set(loaded)
-    missing = [k for k in model._param_map if k not in loaded_set]
+    missing = [
+        k
+        for k in model._param_map
+        if k not in loaded_set and k.rsplit(".", 1)[-1] not in _QUANT_AFFINE_FIELDS
+    ]
+    missing_bases = sorted(
+        base
+        for base in bases
+        if f"{base}.scales" not in loaded_set
+        or (
+            f"{base}.biases" in weight_dict
+            and f"{base}.biases" not in loaded_set
+        )
+    )
     if missing:
         preview = missing[:40]
         more = f" (+{len(missing) - 40} more)" if len(missing) > 40 else ""
@@ -197,6 +264,13 @@ def load_weights_quantized_inference(
         raise RuntimeError(
             f"Quantized weight load failed: {len(missing)} model parameter(s) missing or "
             f"shape mismatch. First keys: {preview!r}{more}.{mm_note}"
+        )
+    if missing_bases:
+        preview = missing_bases[:40]
+        more = f" (+{len(missing_bases) - 40} more)" if len(missing_bases) > 40 else ""
+        raise RuntimeError(
+            f"Quantized weight load failed: {len(missing_bases)} affine layer(s) missing "
+            f"scales/biases assignment. First bases: {preview!r}{more}"
         )
 
     if strict:

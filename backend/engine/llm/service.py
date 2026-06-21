@@ -173,6 +173,25 @@ Output format ONLY:
 Budget: compact=quick arc; standard=mid climax; epic=slower build + late climax.
 Match user language. No extra commentary."""
 
+LONG_VIDEO_PLAN_SHOT_SYSTEM_PROMPT = """You plan a keyframe storyboard for segmented image-to-video generation.
+Each [Beat] is one KEYFRAME moment (a still frame), not a transition clip.
+Output format ONLY:
+[Anchor]
+<Cast roster — blocks separated by a line containing only --- >
+One block per character LOOK (same person may have multiple looks if wardrobe changes):
+【角色·<姓名>·<装扮名>】<固定发型、服饰、体型、肤色>
+---
+【角色·<姓名>·<另一装扮名>】<…>   (only when brief implies outfit change)
+---
+【画风】<全片统一的色调、镜头、胶片感>
+[Beat 1] <scene/pose only; name every visible character>
+[Beat 2] ...
+... exactly N beats as requested.
+When a beat uses a non-default look, tag it: <姓名>（<装扮名>）… e.g. 小明（晚礼服）走上红毯.
+Each [Beat] must name visible characters (never 她/他/she/he alone). Do not invent outfits without a matching 【角色·…·装扮名】 block in [Anchor].
+Budget: compact=quick arc; standard=mid climax; epic=slower build + late climax.
+Match brief language. No markdown."""
+
 LONG_VIDEO_EXPAND_SYSTEM_PROMPT = """Expand beat sheet lines into full LTX audio-video prompts.
 Output format ONLY:
 [Opening] <full Pass0 prompt with CharacterAnchor + SceneBeat>
@@ -181,9 +200,24 @@ Output format ONLY:
 Each segment is one paragraph; include motion, camera, ambient audio mood.
 Never copy-paste identical text across segments. Match user language."""
 
+LONG_VIDEO_EXPAND_SHOT_SYSTEM_PROMPT = """Expand story beats into prompts for keyframe + image-to-video workflow.
+For each shot index N output BOTH blocks:
+[Visual N] <scene-only: composition, pose, lighting — NO wardrobe/hair repeat>
+[Motion N] <I2V: camera move + action; may repeat character names>
+Preserve outfit tags from beats (e.g. 赵今麦（地府）) in Visual/Motion when present.
+Downstream code appends [Anchor] character-look blocks (--- separated) before T2I.
+Name every on-screen character. Forbidden: standalone 她/他/she/he.
+Match brief language. No extra commentary."""
+
 LONG_VIDEO_CONTINUITY_SYSTEM_PROMPT = """Fix continuity across long-video segment prompts.
 Keep [Opening] and [Segment N] labels. Smooth transitions, restore missing anchor keywords,
 remove repetition loops. Match user language. Output ONLY the revised script."""
+
+LONG_VIDEO_CONTINUITY_SHOT_SYSTEM_PROMPT = """Fix continuity across keyframe storyboard prompts.
+Keep every [Visual N] and [Motion N] label.
+Replace standalone pronouns (她/他/she/he) with correct character names using Anchor + Beats.
+[Visual N] must stay scene-only (composition/pose/lighting) — do NOT embed full Anchor; code appends reference blocks.
+Remove repetition loops. Match user language. Output ONLY the revised Visual/Motion script."""
 
 ENHANCE_AUDIO_BRIEF_SYSTEM_PROMPT = """You are a music producer writing briefs for AI music generation (ACE-Step).
 Given a user's music idea, expand it into a clear, vivid description covering genre, mood, tempo feel, instrumentation,
@@ -521,20 +555,47 @@ class LLMService:
             LongVideoPlanDTO,
             LongVideoStoryboardRequest,
             LongVideoStoryboardResponse,
+            LongVideoStoryboardShotDTO,
+            LongVideoCharacterDTO,
+            LongVideoCharacterLookDTO,
+            LongVideoShotCastLookDTO,
         )
-        from backend.engine.families.ltx.long_video_plan import build_long_video_plan
+        from backend.engine.common.long_video.plan import build_shot_plan
+        from backend.engine.families.ltx.long_video_plan import LongVideoPlan, build_long_video_plan
+        from backend.engine.llm.storyboard_cast import (
+            format_character_roster,
+            parse_character_roster,
+            roster_to_dtos,
+        )
         from backend.engine.llm.storyboard import (
+            apply_storyboard_anchor_locale,
+            apply_storyboard_output_locale,
+            build_structured_shots,
+            coalesce_dual_pairs,
             expand_batches_for_plan,
+            expand_batches_for_shot_count,
             merge_expand_batches,
+            normalize_storyboard_locale,
+            normalize_character_anchor,
+            parse_dual_shot_script,
             parse_expand_script,
             parse_plan_script,
             plan_to_dto,
+            shot_plan_to_dto,
+            storyboard_language_rule,
+            storyboard_language_user_suffix,
             storyboard_quality_ok,
+            storyboard_shot_pairs_ok,
+            dual_pairs_from_beats,
         )
 
         raw = (request.prompt or "").strip()
         if not raw:
             raise RuntimeError("long_video_storyboard requires a non-empty prompt")
+
+        locale = normalize_storyboard_locale(getattr(request, "locale", None))
+        lang_rule = storyboard_language_rule(locale)
+        lang_suffix = storyboard_language_user_suffix(locale)
 
         plan = build_long_video_plan(
             target_duration_sec=request.target_duration_sec,
@@ -542,24 +603,49 @@ class LLMService:
             segment_extend_sec=request.segment_extend_sec,
             reference_duration_sec=request.reference_duration_sec,
         )
+        shot_plan = build_shot_plan(
+            target_duration_sec=request.target_duration_sec,
+            segment_duration_sec=request.segment_duration_sec,
+        )
+        expected_beats = shot_plan.shot_count if request.use_shot_plan else plan.total_segments
         llm_calls = 0
         think_active = self._think_is_active(self._resolve_enable_thinking(None))
 
-        plan_user = (
-            f"Brief: {raw}\n"
-            f"Segments: {plan.total_segments} (1 opening + {plan.extend_pass_count} extends)\n"
-            f"Durations (sec): {list(plan.segment_durations_sec)}\n"
-            f"Narrative budget: {plan.narrative_budget}\n"
-            f"Write exactly {plan.total_segments} [Beat] lines after [Anchor]."
-        )
+        if request.use_shot_plan:
+            plan_user = (
+                f"Brief: {raw}\n"
+                f"Keyframe shots: {shot_plan.shot_count} "
+                f"(~{shot_plan.segment_duration_sec}s I2V clip per edge)\n"
+                f"Total target duration: {shot_plan.target_duration_sec}s\n"
+                f"Narrative budget: {shot_plan.narrative_budget}\n"
+                f"Write exactly {expected_beats} [Beat] lines after [Anchor] — one per keyframe."
+            )
+            plan_system = LONG_VIDEO_PLAN_SHOT_SYSTEM_PROMPT
+            expand_system = LONG_VIDEO_EXPAND_SHOT_SYSTEM_PROMPT
+            continuity_system = LONG_VIDEO_CONTINUITY_SHOT_SYSTEM_PROMPT
+        else:
+            plan_user = (
+                f"Brief: {raw}\n"
+                f"Segments: {plan.total_segments} (1 opening + {plan.extend_pass_count} extends)\n"
+                f"Durations (sec): {list(plan.segment_durations_sec)}\n"
+                f"Narrative budget: {plan.narrative_budget}\n"
+                f"Write exactly {expected_beats} [Beat] lines after [Anchor]."
+            )
+            plan_system = LONG_VIDEO_PLAN_SYSTEM_PROMPT
+            expand_system = LONG_VIDEO_EXPAND_SYSTEM_PROMPT
+            continuity_system = LONG_VIDEO_CONTINUITY_SYSTEM_PROMPT
+        plan_system = f"{plan_system}\n\n{lang_rule}"
+        expand_system = f"{expand_system}\n\n{lang_rule}"
+        continuity_system = f"{continuity_system}\n\n{lang_rule}"
         if request.style_positive.strip():
             plan_user += f"\nStyle: {request.style_positive.strip()}"
+        plan_user += lang_suffix
 
         plan_resp = self.chat_completion(
             ChatCompletionRequest(
                 model=self._model_id,
                 messages=[
-                    ChatMessage(role="system", content=LONG_VIDEO_PLAN_SYSTEM_PROMPT),
+                    ChatMessage(role="system", content=plan_system),
                     ChatMessage(role="user", content=self._apply_think_mode_to_text(plan_user)),
                 ],
                 temperature=0.55,
@@ -573,27 +659,48 @@ class LLMService:
             plan_resp.choices[0].message.content,
             think_enabled=think_active,
         )
-        character_anchor, beat_sheet = parse_plan_script(plan_text, expected_beats=plan.total_segments)
+        character_anchor, beat_sheet = parse_plan_script(plan_text, expected_beats=expected_beats)
+        if len(character_anchor.strip()) < 12:
+            character_anchor = raw[:240].strip()
+        roster, style_anchor = parse_character_roster(character_anchor, locale=locale)
+        character_anchor = apply_storyboard_anchor_locale(
+            format_character_roster(roster, style_anchor, locale=locale) if roster else character_anchor,
+            beat_sheet=beat_sheet[:expected_beats],
+            locale=locale,
+        )
+        if roster and not style_anchor:
+            _, style_anchor = parse_character_roster(character_anchor, locale=locale)
+        character_dtos = roster_to_dtos(roster)
+
+        expand_expected = shot_plan.shot_count if request.use_shot_plan else plan.extend_pass_count
 
         segment_batches: list[list[str]] = []
+        dual_pairs: list[tuple[str, str]] = []
         opening_parts: list[str] = []
-        for start, count in expand_batches_for_plan(plan):
+        expand_batches = (
+            expand_batches_for_shot_count(shot_plan.shot_count)
+            if request.use_shot_plan
+            else expand_batches_for_plan(plan)
+        )
+        for start, count in expand_batches:
+            batch_beats = beat_sheet[start : start + count]
             expand_user = (
                 f"Anchor:\n{character_anchor}\n\nBeats:\n"
-                + "\n".join(f"- {beat_sheet[i]}" for i in range(start, min(start + count + 1, len(beat_sheet))))
-                + f"\n\nExpand beats {start + 1}..{start + count} into [Segment] prompts "
-                f"(plus [Opening] if batch starts at 0)."
+                + "\n".join(f"- {beat_sheet[i]}" for i in range(start, min(start + count, len(beat_sheet))))
+                + f"\n\nExpand shots {start + 1}..{start + count}. "
+                f"[Visual N] = scene-only; Anchor blocks are appended automatically before T2I."
+                + lang_suffix
             )
             expand_resp = self.chat_completion(
                 ChatCompletionRequest(
                     model=self._model_id,
                     messages=[
-                        ChatMessage(role="system", content=LONG_VIDEO_EXPAND_SYSTEM_PROMPT),
+                        ChatMessage(role="system", content=expand_system),
                         ChatMessage(role="user", content=self._apply_think_mode_to_text(expand_user)),
                     ],
                     temperature=0.6,
                     top_p=0.9,
-                    max_tokens=self._token_budget(900, think_active),
+                    max_tokens=self._token_budget(1400 if request.use_shot_plan else 900, think_active),
                     stream=False,
                 )
             )
@@ -602,35 +709,130 @@ class LLMService:
                 expand_resp.choices[0].message.content,
                 think_enabled=think_active,
             )
-            opening, segs = parse_expand_script(expand_text, expected_segments=count)
-            opening_parts.append(opening)
-            segment_batches.append(segs)
+            try:
+                batch_dual = parse_dual_shot_script(
+                    expand_text,
+                    expected_shots=count,
+                    fallback=batch_beats,
+                )
+                dual_pairs.extend(batch_dual)
+                segment_batches.append([m for _, m in batch_dual])
+            except ValueError:
+                try:
+                    opening, segs = parse_expand_script(
+                        expand_text,
+                        expected_segments=count,
+                        fallback=batch_beats,
+                    )
+                except ValueError:
+                    segs = list(batch_beats)
+                    if len(segs) < count:
+                        segs = dual_pairs_from_beats(
+                            beat_sheet[start : start + count],
+                            count,
+                            character_anchor=character_anchor,
+                        )
+                        segs = [m for _, m in segs]
+                    opening = ""
+                opening_parts.append(opening)
+                segment_batches.append(segs)
 
-        opening_prompt, segment_prompts = merge_expand_batches(opening_parts, segment_batches)
+        if not dual_pairs and beat_sheet and request.use_shot_plan:
+            dual_pairs = dual_pairs_from_beats(
+                beat_sheet,
+                shot_plan.shot_count,
+                character_anchor=character_anchor,
+            )
+
+        if request.use_shot_plan and dual_pairs:
+            dual_pairs = coalesce_dual_pairs(
+                dual_pairs,
+                beat_sheet,
+                shot_plan.shot_count,
+                character_anchor=character_anchor,
+            )
+
+        if dual_pairs:
+            opening_prompt = dual_pairs[0][0] if dual_pairs else ""
+            segment_prompts = [m for _, m in dual_pairs]
+        else:
+            opening_prompt, segment_prompts = merge_expand_batches(opening_parts, segment_batches)
         if not opening_prompt and beat_sheet:
             opening_prompt = beat_sheet[0]
+        if request.use_shot_plan and shot_plan.shot_count > 0:
+            from backend.engine.llm.storyboard import _pad_strings
 
-        if not storyboard_quality_ok(
-            character_anchor=character_anchor,
-            opening_prompt=opening_prompt,
-            segment_prompts=segment_prompts,
-            beat_sheet=beat_sheet,
-            plan=plan,
-        ):
-            cont_user = (
-                f"Anchor:\n{character_anchor}\n\nOpening:\n{opening_prompt}\n\nSegments:\n"
-                + "\n".join(f"[Segment {i+1}] {p}" for i, p in enumerate(segment_prompts))
+            beat_sheet = _pad_strings(beat_sheet, shot_plan.shot_count, label="beat sheet")
+
+        quality_plan = plan
+        if request.use_shot_plan:
+            quality_plan = LongVideoPlan(
+                target_duration_sec=shot_plan.target_duration_sec,
+                initial_duration_sec=shot_plan.segment_duration_sec,
+                segment_extend_sec=shot_plan.segment_duration_sec,
+                reference_duration_sec=request.reference_duration_sec,
+                extend_pass_count=expand_expected,
+                total_segments=expected_beats,
+                segment_durations_sec=shot_plan.segment_durations_sec,
+                narrative_budget=shot_plan.narrative_budget,
             )
+
+        def _quality_ok() -> bool:
+            if request.use_shot_plan:
+                return (
+                    len(character_anchor.strip()) >= 12
+                    and storyboard_shot_pairs_ok(
+                        dual_pairs,
+                        shot_count=shot_plan.shot_count,
+                        beat_sheet=beat_sheet[:expected_beats],
+                        character_anchor=character_anchor,
+                        characters=character_dtos,
+                        style_anchor=style_anchor,
+                        locale=locale,
+                    )
+                )
+            return storyboard_quality_ok(
+                character_anchor=character_anchor,
+                opening_prompt=opening_prompt,
+                segment_prompts=segment_prompts,
+                beat_sheet=beat_sheet[:expected_beats],
+                plan=quality_plan,
+                min_segment_prompts=0,
+            )
+
+        if not _quality_ok():
+            if request.use_shot_plan:
+                pairs_for_cont = dual_pairs or [
+                    (opening_prompt, segment_prompts[i] if i < len(segment_prompts) else beat_sheet[i])
+                    for i in range(expand_expected)
+                ]
+                beat_block = "\n".join(
+                    f"[Beat {i + 1}] {b}" for i, b in enumerate(beat_sheet[:expand_expected])
+                )
+                cont_user = (
+                    f"Anchor:\n{character_anchor}\n\nBeats (cast per shot):\n{beat_block}\n\n"
+                    + "\n".join(
+                        f"[Visual {i + 1}] {v}\n[Motion {i + 1}] {m}"
+                        for i, (v, m) in enumerate(pairs_for_cont)
+                    )
+                    + lang_suffix
+                )
+            else:
+                cont_user = (
+                    f"Anchor:\n{character_anchor}\n\nOpening:\n{opening_prompt}\n\nSegments:\n"
+                    + "\n".join(f"[Segment {i+1}] {p}" for i, p in enumerate(segment_prompts))
+                    + lang_suffix
+                )
             cont_resp = self.chat_completion(
                 ChatCompletionRequest(
                     model=self._model_id,
                     messages=[
-                        ChatMessage(role="system", content=LONG_VIDEO_CONTINUITY_SYSTEM_PROMPT),
+                        ChatMessage(role="system", content=continuity_system),
                         ChatMessage(role="user", content=self._apply_think_mode_to_text(cont_user)),
                     ],
                     temperature=0.45,
                     top_p=0.9,
-                    max_tokens=self._token_budget(1000, think_active),
+                    max_tokens=self._token_budget(1600 if request.use_shot_plan else 1000, think_active),
                     stream=False,
                 )
             )
@@ -639,31 +841,121 @@ class LLMService:
                 cont_resp.choices[0].message.content,
                 think_enabled=think_active,
             )
-            opening_prompt, segment_prompts = parse_expand_script(
-                cont_text,
-                expected_segments=plan.extend_pass_count,
+            if request.use_shot_plan:
+                dual_pairs = parse_dual_shot_script(
+                    cont_text,
+                    expected_shots=expand_expected,
+                    fallback=beat_sheet[:expand_expected],
+                )
+                dual_pairs = coalesce_dual_pairs(
+                    dual_pairs,
+                    beat_sheet,
+                    shot_plan.shot_count,
+                    character_anchor=character_anchor,
+                )
+                opening_prompt = dual_pairs[0][0] if dual_pairs else opening_prompt
+                segment_prompts = [m for _, m in dual_pairs]
+            else:
+                opening_prompt, segment_prompts = parse_expand_script(
+                    cont_text,
+                    expected_segments=expand_expected,
+                    fallback=beat_sheet[:expand_expected],
+                )
+
+        def _localized_shots(shot_dicts: list[dict]) -> list[dict]:
+            return apply_storyboard_output_locale(
+                shot_dicts,
+                beat_sheet=beat_sheet,
+                locale=locale,
             )
 
-        if not storyboard_quality_ok(
-            character_anchor=character_anchor,
-            opening_prompt=opening_prompt,
-            segment_prompts=segment_prompts,
-            beat_sheet=beat_sheet,
-            plan=plan,
-        ):
+        def _shot_build_kwargs() -> dict:
+            return {
+                "character_anchor": character_anchor,
+                "opening_prompt": opening_prompt,
+                "segment_prompts": segment_prompts,
+                "beat_sheet": beat_sheet,
+                "target_duration_sec": request.target_duration_sec,
+                "segment_duration_sec": request.segment_duration_sec,
+                "dual_pairs": dual_pairs or None,
+                "characters": character_dtos,
+                "style_anchor": style_anchor,
+                "locale": locale,
+            }
+
+        def _to_shot_dtos(shot_dicts: list[dict]) -> list[LongVideoStoryboardShotDTO]:
+            out: list[LongVideoStoryboardShotDTO] = []
+            for s in shot_dicts:
+                cast = [
+                    LongVideoShotCastLookDTO(**row)
+                    for row in (s.get("cast_looks") or [])
+                    if isinstance(row, dict)
+                ]
+                out.append(
+                    LongVideoStoryboardShotDTO(
+                        id=str(s.get("id", "")),
+                        order=int(s.get("order", 0)),
+                        visual_prompt=str(s.get("visual_prompt", "")),
+                        motion_prompt=str(s.get("motion_prompt", "")),
+                        scene_prompt=str(s.get("scene_prompt", "")),
+                        cast_looks=cast,
+                    )
+                )
+            return out
+
+        def _to_character_dtos() -> list[LongVideoCharacterDTO]:
+            items: list[LongVideoCharacterDTO] = []
+            for row in character_dtos:
+                looks = [
+                    LongVideoCharacterLookDTO(**lk)
+                    for lk in (row.get("looks") or [])
+                    if isinstance(lk, dict)
+                ]
+                items.append(
+                    LongVideoCharacterDTO(
+                        id=str(row.get("id", "")),
+                        name=str(row.get("name", "")),
+                        default_look_id=str(row.get("default_look_id", "")),
+                        looks=looks,
+                    )
+                )
+            return items
+
+        if not _quality_ok():
+            shot_dicts = _localized_shots(build_structured_shots(**_shot_build_kwargs()))
+            if request.use_shot_plan and any(
+                str(s.get("visual_prompt", "")).strip() for s in shot_dicts
+            ):
+                dto = LongVideoPlanDTO(**plan_to_dto(plan))
+                return LongVideoStoryboardResponse(
+                    character_anchor=character_anchor,
+                    opening_prompt=opening_prompt,
+                    segment_prompts=segment_prompts,
+                    segment_count=expand_expected,
+                    plan=dto,
+                    beat_sheet=beat_sheet[:expected_beats],
+                    llm_calls=llm_calls,
+                    shots=_to_shot_dtos(shot_dicts),
+                    characters=_to_character_dtos(),
+                    style_anchor=style_anchor,
+                )
             raise RuntimeError(
                 "long_video_storyboard quality check failed after Plan/Expand/Continuity"
             )
 
+        shot_dicts = _localized_shots(build_structured_shots(**_shot_build_kwargs()))
         dto = LongVideoPlanDTO(**plan_to_dto(plan))
         return LongVideoStoryboardResponse(
             character_anchor=character_anchor,
             opening_prompt=opening_prompt,
             segment_prompts=segment_prompts,
-            segment_count=plan.extend_pass_count,
+            segment_count=expand_expected,
             plan=dto,
-            beat_sheet=beat_sheet,
+            beat_sheet=beat_sheet[:expected_beats],
             llm_calls=llm_calls,
+            shots=_to_shot_dtos(shot_dicts),
+            characters=_to_character_dtos(),
+            style_anchor=style_anchor,
         )
 
     # ------------------------------------------------------------------

@@ -14,6 +14,7 @@ from backend.engine.contracts.runtime_contracts import (
 from backend.engine.contracts.video_runtime_contracts import (
     create_video_t5_encoder,
     inject_hunyuan_text_encoder_paths,
+    inject_ltx_text_encoder_paths,
     merge_video_bundle_config,
     resolve_wan_shift_value,
     video_apply_i2v_conditioning,
@@ -43,6 +44,7 @@ __all__ = [
     "SchedulerSemanticsResolver",
     "create_video_t5_encoder",
     "inject_hunyuan_text_encoder_paths",
+    "inject_ltx_text_encoder_paths",
     "local_bundle_root",
     "merge_video_bundle_config",
     "registry_scalar_default",

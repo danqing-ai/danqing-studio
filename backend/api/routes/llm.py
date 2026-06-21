@@ -7,10 +7,11 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from backend.api.deps import get_asset_store, get_llm_service
+from backend.api.routes.settings import get_settings_service
 from backend.core.contracts import (
     ChatCompletionRequest,
     DescribeNodeResponse,
@@ -23,9 +24,24 @@ from backend.core.contracts import (
     VisualAnalyzeResponse,
 )
 from backend.engine.llm import LLMService
+from backend.core.i18n import resolve_locale
 from backend.persistence.asset_store import SQLiteAssetStore
 
 router = APIRouter()
+
+
+def _resolve_storyboard_locale(http_request: Request, body_locale: str) -> str:
+    loc = (body_locale or "").strip().lower().split("-")[0]
+    if loc in ("zh", "en"):
+        return loc
+    try:
+        settings = get_settings_service().get_settings()
+        lang = getattr(settings, "language", None)
+        if lang in ("zh", "en"):
+            return str(lang)
+    except Exception:
+        pass
+    return resolve_locale(http_request.headers.get("Accept-Language"))
 
 
 def _resolve_asset_image_path(
@@ -96,6 +112,7 @@ async def enhance_prompt(
 @router.post("/api/chat/long-video-storyboard")
 async def long_video_storyboard(
     request: LongVideoStoryboardRequest,
+    http_request: Request,
     service: LLMService = Depends(get_llm_service),
 ):
     """Multi-round long-video storyboard (Plan → Expand → optional Continuity)."""
@@ -104,9 +121,11 @@ async def long_video_storyboard(
             status_code=503,
             detail="LLM model not installed. Install via Models page.",
         )
+    locale = _resolve_storyboard_locale(http_request, request.locale)
+    req = request.model_copy(update={"locale": locale})
     try:
-        return await asyncio.to_thread(service.generate_long_video_storyboard, request)
-    except RuntimeError as exc:
+        return await asyncio.to_thread(service.generate_long_video_storyboard, req)
+    except (RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 

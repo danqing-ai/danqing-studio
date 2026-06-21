@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -1296,6 +1297,63 @@ class DiTBackendDispatchTests(unittest.TestCase):
         model = LTXTransformer(LTXConfig(), MLXContext())
         self.assertIsInstance(model._inner, LTXMLX)
 
+    def test_ltx_quantized_affine_load_matches_reference(self) -> None:
+        """In-repo q4 DiT must load scales/biases like mlx nn.Module.load_weights."""
+        import mlx.core as mx
+        import numpy as np
+
+        from tests.benchmark.registry_utils import resolve_benchmark_data_root
+
+        bundle = resolve_benchmark_data_root() / "models/Video/ltx-2.3-distilled-mlx-q4"
+        weight_path = bundle / "transformer-distilled.safetensors"
+        if not weight_path.is_file():
+            return
+
+        from backend.engine.config.model_configs import LTXConfig
+        from backend.engine.families.ltx.transformer_mlx import load_ltx23_x0_model
+        from backend.engine.runtime.mlx import MLXContext
+        from ltx_pipelines_mlx.utils._orchestration import load_transformer
+
+        ctx = MLXContext()
+        inrepo = load_ltx23_x0_model(ctx, bundle, LTXConfig(), weight_stem="transformer-distilled")
+        core = load_transformer(weight_path, low_ram_streaming=False)
+
+        lin = inrepo.model.transformer_blocks[0].attn1.to_q
+        self.assertEqual(str(lin.scales.dtype), "mlx.core.bfloat16")
+
+        inp = mx.random.normal((1, 16, 4096)).astype(mx.bfloat16)
+        out_in = lin(inp)
+        out_core = core.transformer_blocks[0].attn1.to_q(inp)
+        mx.eval(out_in, out_core)
+        corr = float(
+            np.corrcoef(
+                np.array(out_in.astype(mx.float32)).flatten(),
+                np.array(out_core.astype(mx.float32)).flatten(),
+            )[0, 1]
+        )
+        self.assertGreater(corr, 0.999, f"quantized LTX layer diverged from reference loader: corr={corr:.4f}")
+
+    def test_ltx_av_ca_timestep_scale_from_bundle(self) -> None:
+        from tests.benchmark.registry_utils import resolve_benchmark_data_root
+
+        bundle = resolve_benchmark_data_root() / "models/Video/ltx-2.3-distilled-mlx-q4"
+        if not (bundle / "embedded_config.json").is_file():
+            self.skipTest("LTX distilled bundle not available locally")
+
+        from backend.engine.config.model_configs import LTXConfig
+        from backend.engine.families.ltx.transformer_mlx import (
+            LTX23Model,
+            apply_ltx_transformer_bundle_config,
+        )
+        from backend.engine.runtime.mlx import MLXContext
+
+        model = LTX23Model(LTXConfig(), MLXContext())
+        apply_ltx_transformer_bundle_config(model, bundle)
+        self.assertEqual(model._av_ca_timestep_scale, 1000.0)
+        self.assertEqual(model._timestep_scale, 1000.0)
+        # Gate path must see full timestep scale, not sigma alone.
+        self.assertAlmostEqual(model._av_ca_timestep_scale / model._timestep_scale, 1.0)
+
     def test_ltx_distilled_stage1_steps_floor(self) -> None:
         from backend.engine.families.ltx.generation_mlx import _resolve_distilled_stage1_steps
 
@@ -1366,6 +1424,21 @@ class DiTBackendDispatchTests(unittest.TestCase):
             progress_total_steps=2,
         )
         self.assertEqual(progress_calls, [(1, 2), (2, 2)])
+
+    def test_ltx_pin_latent_by_mask_preserves_conditioned_tokens(self) -> None:
+        import mlx.core as mx
+
+        from backend.engine.families.ltx.pipeline_math import pin_latent_by_mask
+        from backend.engine.runtime.mlx import MLXContext
+
+        ctx = MLXContext()
+        clean = mx.array([[[1.0], [2.0], [3.0]]], dtype=mx.float32)
+        latent = mx.array([[[9.0], [8.0], [7.0]]], dtype=mx.float32)
+        mask = mx.array([[[0.0], [1.0], [1.0]]], dtype=mx.float32)
+        pinned = pin_latent_by_mask(ctx, latent, clean, mask)
+        self.assertEqual(pinned[0, 0, 0].item(), 1.0)
+        self.assertEqual(pinned[0, 1, 0].item(), 8.0)
+        self.assertEqual(pinned[0, 2, 0].item(), 7.0)
 
     def test_ltx_dispatch_cuda_fail_loud(self) -> None:
         from backend.engine.config.model_configs import LTXConfig
@@ -2122,6 +2195,87 @@ class RegistrySeedTests(unittest.TestCase):
             self.assertNotIn("z-image", reg2["models"])
 
 
+class DownloadStallTests(unittest.TestCase):
+    def test_modelscope_stall_timeout_scales_with_bundle_size(self) -> None:
+        from backend.services.download_service import _modelscope_stall_timeout_seconds
+
+        self.assertEqual(_modelscope_stall_timeout_seconds(estimated_bytes=0), 180)
+        self.assertEqual(
+            _modelscope_stall_timeout_seconds(
+                estimated_bytes=0,
+                allow_patterns=["models_t5_umt5-xxl-enc-bf16.pth"],
+            ),
+            600,
+        )
+        self.assertEqual(
+            _modelscope_stall_timeout_seconds(estimated_bytes=61 * 1024 ** 3),
+            900,
+        )
+
+    def test_modelscope_connect_grace_for_large_bundle(self) -> None:
+        from backend.services.download_service import _modelscope_connect_grace_seconds
+
+        self.assertEqual(_modelscope_connect_grace_seconds(estimated_bytes=61 * 1024 ** 3), 600)
+
+    def test_split_modelscope_allow_patterns_wan_distill_aux(self) -> None:
+        from backend.services.download_service import _split_modelscope_allow_patterns
+
+        patterns = [
+            "google/**",
+            "models_t5*.pth",
+            "Wan2.1_VAE.pth",
+            "configuration.json",
+        ]
+        groups = _split_modelscope_allow_patterns(patterns)
+        self.assertEqual(len(groups), 2)
+        self.assertEqual(groups[0], ["google/**"])
+        self.assertEqual(
+            groups[1],
+            ["models_t5*.pth", "Wan2.1_VAE.pth", "configuration.json"],
+        )
+
+    def _download_service_for_stall_tests(self):
+        from backend.services.download_service import DownloadService
+
+        resolver = SimpleNamespace(
+            get_workspace_config_dir=lambda: Path(tempfile.gettempdir()),
+            resolve_registry_local_path=lambda p: Path(p),
+        )
+        return DownloadService(path_resolver=resolver)  # type: ignore[arg-type]
+
+    def test_check_download_stall_allows_early_large_bundle_idle(self) -> None:
+        svc = self._download_service_for_stall_tests()
+        now = time.time()
+        # 20 MB downloaded, idle 200s — within 600s connect grace for 61GB bundle
+        svc._check_download_stall(
+            downloaded=20 * 1024 ** 2,
+            last_growth_bytes=20 * 1024 ** 2,
+            last_growth_time=now - 200,
+            label="wan",
+            stall_seconds=600,
+            connect_grace_seconds=600,
+            connect_grace_byte_cap=256 * 1024 ** 2,
+            last_activity_time=now - 200,
+        )
+
+    def test_check_download_stall_raises_after_grace(self) -> None:
+        svc = self._download_service_for_stall_tests()
+        now = time.time()
+        with self.assertRaises(RuntimeError) as ctx:
+            svc._check_download_stall(
+                downloaded=20 * 1024 ** 2,
+                last_growth_bytes=20 * 1024 ** 2,
+                last_growth_time=now - 700,
+                label="wan",
+                stall_seconds=600,
+                connect_grace_seconds=600,
+                connect_grace_byte_cap=256 * 1024 ** 2,
+                last_activity_time=now - 700,
+                active_file="models_t5_umt5-xxl-enc-bf16.pth",
+            )
+        self.assertIn("models_t5", str(ctx.exception))
+
+
 class BundleReposTests(unittest.TestCase):
     def test_bundle_repos_from_version(self) -> None:
         from backend.core.bundle_repos import (
@@ -2534,6 +2688,50 @@ class HunyuanWeightTests(unittest.TestCase):
         self.assertTrue(params.get("text_encoder_release_after_encode"))
         self.assertNotIn("companion_repo_id", models["hunyuan-video-1.5-480p-t2v"]["versions"]["original"])
         self.assertNotIn("shared_te_local_path", models["hunyuan-video-1.5-480p-i2v"]["versions"]["original"])
+
+    def test_ltx_registry_gemma_bundle_repos(self) -> None:
+        from backend.core.bundle_repos import bundle_repos_from_version
+
+        models = _load_default_registry_expanded().get("models") or {}
+        for mid in ("ltx-2.3-distilled", "ltx-2.3-dev"):
+            m = models[mid]
+            params = m["parameters"]
+            self.assertEqual(
+                params["text_encoder_gemma_local"],
+                "models/Text/gemma-3-12b-it-4bit",
+            )
+            for vk in ("mlx-q4", "mlx", "mlx-bf16"):
+                repos = bundle_repos_from_version(m["versions"][vk])
+                self.assertEqual(len(repos), 2)
+                self.assertEqual(repos[1]["repo_id"], "mlx-community/gemma-3-12b-it-4bit")
+                self.assertEqual(repos[1]["local_path"], "models/Text/gemma-3-12b-it-4bit")
+
+    def test_gemma_bundle_usable_and_inject_ltx_paths(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from backend.engine.config.model_configs import LTXConfig
+        from backend.engine.contracts.video_runtime_contracts import inject_ltx_text_encoder_paths
+        from backend.engine.families.ltx.gemma_bundle import gemma_bundle_usable
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            gemma = root / "models" / "Text" / "gemma-3-12b-it-4bit"
+            gemma.mkdir(parents=True)
+            (gemma / "config.json").write_text("{}", encoding="utf-8")
+            (gemma / "model.safetensors").write_bytes(b"x")
+
+            self.assertTrue(gemma_bundle_usable(gemma))
+            self.assertFalse(gemma_bundle_usable(root / "missing"))
+
+            class _Entry:
+                parameters = {
+                    "text_encoder_gemma_local": "models/Text/gemma-3-12b-it-4bit",
+                }
+
+            cfg = LTXConfig()
+            inject_ltx_text_encoder_paths(_Entry(), cfg, root)
+            self.assertEqual(cfg.text_encoder_gemma_local, str(gemma.resolve()))
 
     def test_hunyuan_te_path_resolution(self) -> None:
         import tempfile
@@ -4685,10 +4883,10 @@ class ArchitectureWrapUpTests(unittest.TestCase):
         from backend.engine.pipelines.video_model_load import _wan_moe_expert_disk_gb
 
         entry = SimpleNamespace(
-            raw={"size": "115GB"},
+            raw={"size": "61GB"},
             id="wan-2.2-i2v-14b-distill",
         )
-        self.assertAlmostEqual(_wan_moe_expert_disk_gb(entry, "original"), 57.5, places=1)
+        self.assertAlmostEqual(_wan_moe_expert_disk_gb(entry, "original"), 30.5, places=1)
 
     def test_assemble_wan_distill_bundle(self) -> None:
         from backend.services.wan_distill_bundle import assemble_wan_distill_bundle
@@ -4702,6 +4900,30 @@ class ArchitectureWrapUpTests(unittest.TestCase):
             assemble_wan_distill_bundle(root, "i2v_720p")
             self.assertTrue((root / "high_noise_model" / "diffusion_pytorch_model.safetensors").is_file())
             self.assertTrue((root / "low_noise_model" / "diffusion_pytorch_model.safetensors").is_file())
+            self.assertFalse((root / high_name).exists())
+            self.assertFalse((root / low_name).exists())
+            assemble_wan_distill_bundle(root, "i2v_720p")
+
+    def test_assemble_wan_distill_bundle_reclaims_legacy_root_shards(self) -> None:
+        from backend.services.wan_distill_bundle import assemble_wan_distill_bundle
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            high_name = "wan2.2_i2v_A14b_high_noise_lightx2v_4step_720p_260412.safetensors"
+            low_name = "wan2.2_i2v_A14b_low_noise_lightx2v_4step_720p_260412.safetensors"
+            high_dest = root / "high_noise_model" / "diffusion_pytorch_model.safetensors"
+            low_dest = root / "low_noise_model" / "diffusion_pytorch_model.safetensors"
+            high_dest.parent.mkdir(parents=True)
+            low_dest.parent.mkdir(parents=True)
+            high_dest.write_bytes(b"h")
+            low_dest.write_bytes(b"l")
+            (root / high_name).write_bytes(b"stale")
+            (root / low_name).write_bytes(b"stale")
+            assemble_wan_distill_bundle(root, "i2v_720p")
+            self.assertFalse((root / high_name).exists())
+            self.assertFalse((root / low_name).exists())
+            self.assertEqual(high_dest.read_bytes(), b"h")
+            self.assertEqual(low_dest.read_bytes(), b"l")
 
     def test_video_ltx_distilled_flag(self) -> None:
         from types import SimpleNamespace

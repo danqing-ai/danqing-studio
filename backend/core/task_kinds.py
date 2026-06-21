@@ -4,6 +4,7 @@ IMAGE_GENERATION = "image.generation"
 IMAGE_EDIT = "image.edit"
 IMAGE_UPSCALE = "image.upscale"
 VIDEO_GENERATION = "video.generation"
+VIDEO_LONG_GENERATION = "video.long_generation"
 VIDEO_EDIT = "video.edit"
 VIDEO_UPSCALE = "video.upscale"
 AUDIO_GENERATION = "audio.generation"
@@ -17,6 +18,7 @@ ALL_KINDS: frozenset[str] = frozenset(
         IMAGE_EDIT,
         IMAGE_UPSCALE,
         VIDEO_GENERATION,
+        VIDEO_LONG_GENERATION,
         VIDEO_EDIT,
         VIDEO_UPSCALE,
         AUDIO_GENERATION,
@@ -37,6 +39,7 @@ REGISTRY_ACTION_TO_TASK_KIND: dict[str, dict[str, str]] = {
     },
     "video": {
         "create": VIDEO_GENERATION,
+        "long_video": VIDEO_LONG_GENERATION,
         "animate": VIDEO_EDIT,
         "upscale": VIDEO_UPSCALE,
     },

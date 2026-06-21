@@ -339,6 +339,21 @@ def inject_hunyuan_text_encoder_paths(
         setattr(config, "text_encoder_release_after_encode", bool(rel))
 
 
+def inject_ltx_text_encoder_paths(
+    entry: Any, config: Any, project_root: Path,
+) -> None:
+    """Resolve registry-declared Gemma 3 root under ``models/Text/…``."""
+    from backend.engine.contracts.pipeline_registry import (
+        registry_scalar_default,
+        resolve_project_path,
+    )
+
+    val = registry_scalar_default(entry, "text_encoder_gemma_local", None)
+    if val is not None and str(val).strip():
+        resolved = resolve_project_path(project_root, str(val).strip())
+        setattr(config, "text_encoder_gemma_local", str(resolved))
+
+
 def create_video_t5_encoder(
     ctx: Any,
     bundle_root: Path,

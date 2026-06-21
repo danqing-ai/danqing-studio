@@ -1153,6 +1153,7 @@ def _load_vae_state_dict_torch(bundle_root: Path) -> dict[str, torch.Tensor]:
     pth_candidates = [
         bundle_root / "Wan2.2_VAE.pth",
         bundle_root / "Wan2_2_VAE.pth",
+        bundle_root / "Wan2.1_VAE.pth",
     ]
     for pth in pth_candidates:
         if pth.is_file():

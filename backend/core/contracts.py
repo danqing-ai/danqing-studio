@@ -23,7 +23,9 @@ TaskKind = Literal[
     "image.edit",
     "image.upscale",
     "video.generation",
+    "video.long_generation",
     "video.edit",
+    "video.upscale",
     "audio.generation",
     "audio.edit",
     "lora.training",
@@ -168,14 +170,77 @@ class VideoGenerationRequest(BaseModel):
     long_video: Optional["VideoLongVideoSpec"] = None
 
 
+class LongVideoShotSpec(BaseModel):
+    id: str = ""
+    order: int = 0
+    visual_prompt: str = ""
+    motion_prompt: str = ""
+    keyframe_asset_id: str | None = None
+    segment_asset_id: str | None = None
+    duration_sec: float | None = None
+    seed: int | None = None
+    chain_mode: Literal["keyframe_only", "last_frame"] | None = None
+    status: Literal["draft", "keyframe_ready", "segment_ready", "failed"] = "draft"
+    error: str | None = None
+
+
 class VideoLongVideoSpec(BaseModel):
+    strategy: Literal["segmented_i2v", "latent_extend"] = "latent_extend"
     target_duration_sec: float = 60.0
+    keyframe_model: str = ""
+    segment_video_model: str = ""
+    segment_duration_sec: float = 5.0
+    overlap_frames: int = 4
+    chain_mode: Literal["keyframe_only", "last_frame"] = "keyframe_only"
+    character_anchor: str = ""
+    character_lora_id: str | None = None
+    keyframe_adapters: list[AdapterRef] = Field(default_factory=list)
+    shots: list[LongVideoShotSpec] | None = None
+    # latent_extend (LTX) fields
     initial_duration_sec: float = 8.0
     segment_extend_sec: float = 8.0
     reference_duration_sec: float = 3.0
     overlap_blend_frames: int = 4
     segment_prompts: list[str] | None = None
     opening_prompt: str | None = None
+
+    @model_validator(mode="after")
+    def _sync_overlap_fields(self) -> "VideoLongVideoSpec":
+        if self.overlap_frames == 4 and self.overlap_blend_frames != 4:
+            object.__setattr__(self, "overlap_frames", int(self.overlap_blend_frames))
+        return self
+
+
+class VideoLongGenerationRequest(BaseModel):
+    """Structured long-video generation (segmented I2V or LTX latent extend)."""
+
+    model: str = ""
+    title: str = ""
+    prompt: str = ""
+    negative_prompt: str = ""
+    size: str = "832x480"
+    fps: int = 16
+    steps: Optional[int] = None
+    guidance: Optional[float] = None
+    shift: Optional[float] = None
+    seed: Optional[int] = None
+    adapters: list[AdapterRef] = Field(default_factory=list)
+    priority: Literal["normal", "high"] = "normal"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    long_video: VideoLongVideoSpec
+
+    @model_validator(mode="after")
+    def _default_model_from_spec(self) -> "VideoLongGenerationRequest":
+        lv = self.long_video
+        if not (self.model or "").strip():
+            if lv.strategy == "segmented_i2v":
+                seg = (lv.segment_video_model or "").strip()
+                if not seg:
+                    raise ValueError("long_video.segment_video_model is required for segmented_i2v")
+                object.__setattr__(self, "model", seg)
+            elif not (self.model or "").strip():
+                raise ValueError("model is required for latent_extend long video")
+        return self
 
 
 class VideoEditRequest(BaseModel):
@@ -333,8 +398,38 @@ class LongVideoStoryboardRequest(BaseModel):
     target_duration_sec: float = 60.0
     initial_duration_sec: float = 8.0
     segment_extend_sec: float = 8.0
+    segment_duration_sec: float = 5.0
     reference_duration_sec: float = 3.0
     style_positive: str = ""
+    locale: str = ""
+    use_shot_plan: bool = True
+
+
+class LongVideoCharacterLookDTO(BaseModel):
+    id: str
+    label: str = "默认"
+    body: str = ""
+
+
+class LongVideoCharacterDTO(BaseModel):
+    id: str
+    name: str
+    looks: list[LongVideoCharacterLookDTO] = Field(default_factory=list)
+    default_look_id: str = ""
+
+
+class LongVideoShotCastLookDTO(BaseModel):
+    character_id: str
+    look_id: str
+
+
+class LongVideoStoryboardShotDTO(BaseModel):
+    id: str = ""
+    order: int = 0
+    visual_prompt: str = ""
+    motion_prompt: str = ""
+    scene_prompt: str = ""
+    cast_looks: list[LongVideoShotCastLookDTO] = Field(default_factory=list)
 
 
 class LongVideoStoryboardResponse(BaseModel):
@@ -345,6 +440,9 @@ class LongVideoStoryboardResponse(BaseModel):
     plan: LongVideoPlanDTO
     beat_sheet: list[str]
     llm_calls: int
+    shots: list[LongVideoStoryboardShotDTO] = Field(default_factory=list)
+    characters: list[LongVideoCharacterDTO] = Field(default_factory=list)
+    style_anchor: str = ""
 
 
 class ImageToPromptRequest(BaseModel):

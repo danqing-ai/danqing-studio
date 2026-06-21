@@ -340,6 +340,18 @@ def apply_denoise_mask(ctx: Any, denoised: Any, clean: Any, denoise_mask: Any) -
     return out.astype(denoised.dtype)
 
 
+def pin_latent_by_mask(ctx: Any, latent: Any, clean: Any, denoise_mask: Any) -> Any:
+    """Re-lock preserved tokens after an Euler step (I2V frame-0 pin).
+
+    ``apply_denoise_mask`` only blends the x0 prediction; without this pin the
+    noised ``latent`` input to the next step can drift on mask=0 tokens and
+    break temporal coherence for long I2V clips.
+    """
+    one = ctx.ones((1,), dtype=latent.dtype)
+    out = latent * denoise_mask + clean.astype(ctx.float32()) * (one - denoise_mask)
+    return out.astype(latent.dtype)
+
+
 def apply_conditioning(
     ctx: Any,
     state: LatentState,

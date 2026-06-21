@@ -4,6 +4,7 @@ Public stem: ``families.ltx.transformer.LTXTransformer`` → ``LTX23Transformer`
 """
 from __future__ import annotations
 
+import json
 import math
 import os
 from pathlib import Path
@@ -510,8 +511,9 @@ class LTX23Model(nn.Module):
             for _ in range(num_layers)
         ]
 
+        # LTX 2.3 checkpoints ship 1000.0 for both multipliers (dgrauet issue #37).
         self._timestep_scale = 1000.0
-        self._av_ca_timestep_scale = 1.0
+        self._av_ca_timestep_scale = 1000.0
         self._norm_eps = 1e-6
         self._rope_theta = 10000.0
         self._rope_type = "split"
@@ -928,6 +930,49 @@ class LTX23Transformer(TransformerBase):
         return self.model(timestep=timestep, **fwd_kwargs)
 
 
+_LTX23_DEFAULT_TIMESTEP_SCALE = 1000.0
+_LTX23_DEFAULT_AV_CA_TIMESTEP_SCALE = 1000.0
+
+
+def _load_ltx_transformer_checkpoint_dict(bundle_root: Path) -> dict[str, Any]:
+    """Read transformer hyperparams from ``embedded_config.json`` / ``config.json``."""
+    root = Path(bundle_root)
+    for name in ("embedded_config.json", "config.json"):
+        path = root / name
+        if not path.is_file():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            raise RuntimeError(f"LTX 2.3 cannot read transformer config {path}: {e}") from e
+        if isinstance(data, dict):
+            nested = data.get("transformer", data)
+            return nested if isinstance(nested, dict) else data
+    raise RuntimeError(
+        f"LTX 2.3 transformer config missing under {root} "
+        "(expected embedded_config.json or config.json)"
+    )
+
+
+def apply_ltx_transformer_bundle_config(model: LTX23Model, bundle_root: Path) -> None:
+    """Apply checkpoint RoPE / timestep scales to an in-memory ``LTX23Model``."""
+    t = _load_ltx_transformer_checkpoint_dict(bundle_root)
+    model._timestep_scale = float(t.get("timestep_scale_multiplier", _LTX23_DEFAULT_TIMESTEP_SCALE))
+    model._av_ca_timestep_scale = float(
+        t.get("av_ca_timestep_scale_multiplier", _LTX23_DEFAULT_AV_CA_TIMESTEP_SCALE)
+    )
+    max_pos = t.get("positional_embedding_max_pos")
+    if max_pos is not None:
+        model._positional_max_pos = tuple(int(x) for x in max_pos)
+    audio_max = t.get("audio_positional_embedding_max_pos")
+    if audio_max is not None:
+        model._audio_positional_max_pos = tuple(int(x) for x in audio_max)
+    if "positional_embedding_theta" in t:
+        model._rope_theta = float(t["positional_embedding_theta"])
+    if "rope_type" in t:
+        model._rope_type = str(t["rope_type"])
+
+
 def _resolve_bundle_safetensors(bundle_root: Path, stem: str) -> Path:
     from pathlib import Path as _Path
 
@@ -983,6 +1028,7 @@ def load_ltx23_x0_model(
 
     remapped = remap_ltx23_weights(raw)
     ltx = LTX23Transformer(config or LTXConfig(), ctx)
+    apply_ltx_transformer_bundle_config(ltx.model, _Path(bundle_root))
     bundle_affine_bits = read_bundle_affine_bits_if_quantized(remapped, path)
     inference_mode = resolve_dit_inference_weight_mode(
         ctx,

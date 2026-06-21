@@ -99,6 +99,7 @@ export interface SettingsData {
 export type PageKey =
   | 'image_create'
   | 'video_create'
+  | 'long_video_create'
   | 'audio_create'
   | 'lora_train'
   | 'models'
@@ -232,6 +233,99 @@ export interface CanvasComposerSnapshot {
   /** Fill retouch/extend: steps independent from text-to-image composer. */
   fill_edit_steps?: string;
   fill_edit_guidance?: string;
+}
+
+export type LongVideoChainMode = 'keyframe_only' | 'last_frame';
+
+export interface LongVideoCharacterLook {
+  id: string;
+  label: string;
+  body: string;
+}
+
+export interface LongVideoCharacter {
+  id: string;
+  name: string;
+  looks: LongVideoCharacterLook[];
+  default_look_id: string;
+}
+
+export interface LongVideoShotCastLook {
+  character_id: string;
+  look_id: string;
+}
+
+export interface LongVideoShotState {
+  id: string;
+  order: number;
+  visual_prompt: string;
+  motion_prompt: string;
+  /** Scene-only prompt from Expand (without cast reference blocks). */
+  scene_prompt?: string;
+  /** Per-character outfit selection for this keyframe. */
+  cast_looks?: LongVideoShotCastLook[];
+  keyframe_asset_id?: string;
+  /** Optional img2img reference for keyframe generation. */
+  reference_asset_id?: string;
+  segment_asset_id?: string;
+  status?: 'draft' | 'keyframe_ready' | 'segment_ready' | 'failed';
+  error?: string;
+  seed?: number;
+  /** Per-edge I2V chain mode (#i→#i+1); falls back to project ``chain_mode`` when unset. */
+  chain_mode?: LongVideoChainMode;
+  /** Per-shot segment length (seconds); defaults to 5 when generating. */
+  duration_sec?: number;
+}
+
+export type LongVideoSelection =
+  | { kind: 'node'; index: number }
+  | { kind: 'edge'; index: number }
+  | null;
+
+export interface LongVideoProjectState {
+  version: 1;
+  strategy: 'segmented_i2v' | 'latent_extend';
+  title?: string;
+  brief?: string;
+  target_duration_sec: number;
+  /** Plan-round [Anchor] cached from last storyboard expand; reference only. */
+  character_anchor?: string;
+  /** Structured cast roster from storyboard expand (multi-look per character). */
+  characters?: LongVideoCharacter[];
+  style_anchor?: string;
+  character_lora_id?: string;
+  keyframe_model: string;
+  segment_video_model: string;
+  segment_duration_sec: number;
+  overlap_frames: number;
+  /** Default chain mode for new / unset segment edges. */
+  chain_mode: LongVideoChainMode;
+  /** Keyframe + segment output size (must match segment model presets, e.g. 1280x704). */
+  output_size?: string;
+  shots: LongVideoShotState[];
+  final_asset_id?: string;
+  /** Server-side project row id (long_video_projects table). */
+  project_id?: string;
+  selection?: LongVideoSelection;
+}
+
+export interface LongVideoProjectSummary {
+  id: string;
+  title: string;
+  shot_count: number;
+  keyframe_count: number;
+  segment_count: number;
+  has_final: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LongVideoProjectDetail {
+  id: string;
+  title: string;
+  state: Omit<LongVideoProjectState, 'project_id' | 'selection'>;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface CanvasSessionState {

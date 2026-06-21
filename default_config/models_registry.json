@@ -5622,6 +5622,7 @@
             "type": "float"
           },
           "default_scheduler": "flow_match_euler",
+          "text_encoder_gemma_local": "models/Text/gemma-3-12b-it-4bit",
           "resolution_presets": {
             "default": "512x768",
             "options": [
@@ -5643,7 +5644,7 @@
               "zh": "4-bit 量化版",
               "en": "4-bit Quantized"
             },
-            "size": "60GB",
+            "size": "67GB",
             "default": true,
             "source": "huggingface",
             "repo_id": "dgrauet/ltx-2.3-mlx-q4",
@@ -5653,14 +5654,30 @@
               "bits": 4,
               "scheme": "mlx_affine",
               "group_size": 64
-            }
+            },
+            "bundle_repos": [
+              {
+                "repo_id": "dgrauet/ltx-2.3-mlx-q4",
+                "local_path": "models/Video/ltx-2.3-distilled-mlx-q4",
+                "name": "LTX-2.3-DiT",
+                "size": "60GB",
+                "source": "huggingface"
+              },
+              {
+                "repo_id": "mlx-community/gemma-3-12b-it-4bit",
+                "local_path": "models/Text/gemma-3-12b-it-4bit",
+                "name": "Gemma-3-12B-it-4bit",
+                "size": "7GB",
+                "source": "huggingface"
+              }
+            ]
           },
           "mlx": {
             "name": {
               "zh": "8-bit 量化版",
               "en": "8-bit Quantized"
             },
-            "size": "88GB",
+            "size": "95GB",
             "default": false,
             "source": "huggingface",
             "repo_id": "dgrauet/ltx-2.3-mlx-q8",
@@ -5670,19 +5687,51 @@
               "bits": 8,
               "scheme": "mlx_affine",
               "group_size": 32
-            }
+            },
+            "bundle_repos": [
+              {
+                "repo_id": "dgrauet/ltx-2.3-mlx-q8",
+                "local_path": "models/Video/ltx-2.3-distilled-mlx-q8",
+                "name": "LTX-2.3-DiT",
+                "size": "88GB",
+                "source": "huggingface"
+              },
+              {
+                "repo_id": "mlx-community/gemma-3-12b-it-4bit",
+                "local_path": "models/Text/gemma-3-12b-it-4bit",
+                "name": "Gemma-3-12B-it-4bit",
+                "size": "7GB",
+                "source": "huggingface"
+              }
+            ]
           },
           "mlx-bf16": {
             "name": {
               "zh": "BF16",
               "en": "BF16"
             },
-            "size": "140GB",
+            "size": "147GB",
             "default": false,
             "source": "huggingface",
             "repo_id": "dgrauet/ltx-2.3-mlx",
             "local_path": "models/Video/ltx-2.3-distilled-mlx-bf16",
-            "source_type": "full"
+            "source_type": "full",
+            "bundle_repos": [
+              {
+                "repo_id": "dgrauet/ltx-2.3-mlx",
+                "local_path": "models/Video/ltx-2.3-distilled-mlx-bf16",
+                "name": "LTX-2.3-DiT",
+                "size": "140GB",
+                "source": "huggingface"
+              },
+              {
+                "repo_id": "mlx-community/gemma-3-12b-it-4bit",
+                "local_path": "models/Text/gemma-3-12b-it-4bit",
+                "name": "Gemma-3-12B-it-4bit",
+                "size": "7GB",
+                "source": "huggingface"
+              }
+            ]
           }
         }
       }
@@ -5798,6 +5847,7 @@
             "type": "float"
           },
           "default_scheduler": "flow_match_euler",
+          "text_encoder_gemma_local": "models/Text/gemma-3-12b-it-4bit",
           "resolution_presets": {
             "default": "512x768",
             "options": [
@@ -5819,7 +5869,7 @@
               "zh": "4-bit 量化版",
               "en": "4-bit Quantized"
             },
-            "size": "60GB",
+            "size": "67GB",
             "default": true,
             "source": "huggingface",
             "repo_id": "dgrauet/ltx-2.3-mlx-q4",
@@ -5829,14 +5879,30 @@
               "bits": 4,
               "scheme": "mlx_affine",
               "group_size": 64
-            }
+            },
+            "bundle_repos": [
+              {
+                "repo_id": "dgrauet/ltx-2.3-mlx-q4",
+                "local_path": "models/Video/ltx-2.3-dev-mlx-q4",
+                "name": "LTX-2.3-DiT",
+                "size": "60GB",
+                "source": "huggingface"
+              },
+              {
+                "repo_id": "mlx-community/gemma-3-12b-it-4bit",
+                "local_path": "models/Text/gemma-3-12b-it-4bit",
+                "name": "Gemma-3-12B-it-4bit",
+                "size": "7GB",
+                "source": "huggingface"
+              }
+            ]
           },
           "mlx": {
             "name": {
               "zh": "8-bit 量化版",
               "en": "8-bit Quantized"
             },
-            "size": "88GB",
+            "size": "95GB",
             "default": false,
             "source": "huggingface",
             "repo_id": "dgrauet/ltx-2.3-mlx-q8",
@@ -5846,19 +5912,51 @@
               "bits": 8,
               "scheme": "mlx_affine",
               "group_size": 32
-            }
+            },
+            "bundle_repos": [
+              {
+                "repo_id": "dgrauet/ltx-2.3-mlx-q8",
+                "local_path": "models/Video/ltx-2.3-dev-mlx-q8",
+                "name": "LTX-2.3-DiT",
+                "size": "88GB",
+                "source": "huggingface"
+              },
+              {
+                "repo_id": "mlx-community/gemma-3-12b-it-4bit",
+                "local_path": "models/Text/gemma-3-12b-it-4bit",
+                "name": "Gemma-3-12B-it-4bit",
+                "size": "7GB",
+                "source": "huggingface"
+              }
+            ]
           },
           "mlx-bf16": {
             "name": {
               "zh": "BF16",
               "en": "BF16"
             },
-            "size": "140GB",
+            "size": "147GB",
             "default": false,
             "source": "huggingface",
             "repo_id": "dgrauet/ltx-2.3-mlx",
             "local_path": "models/Video/ltx-2.3-dev-mlx-bf16",
-            "source_type": "full"
+            "source_type": "full",
+            "bundle_repos": [
+              {
+                "repo_id": "dgrauet/ltx-2.3-mlx",
+                "local_path": "models/Video/ltx-2.3-dev-mlx-bf16",
+                "name": "LTX-2.3-DiT",
+                "size": "140GB",
+                "source": "huggingface"
+              },
+              {
+                "repo_id": "mlx-community/gemma-3-12b-it-4bit",
+                "local_path": "models/Text/gemma-3-12b-it-4bit",
+                "name": "Gemma-3-12B-it-4bit",
+                "size": "7GB",
+                "source": "huggingface"
+              }
+            ]
           }
         }
       }
@@ -6551,6 +6649,23 @@
               "bits": 4,
               "scheme": "mlx_affine"
             }
+          },
+          "shared": {
+            "name": {
+              "zh": "共享编码器（T5/VAE）",
+              "en": "Shared Encoders (T5/VAE)"
+            },
+            "size": "11GB",
+            "default": false,
+            "repo_id": "Wan-AI/Wan2.2-T2V-A14B",
+            "local_path": "models/Video/wan-2.2-t2v-14b-shared",
+            "source_type": "full",
+            "allow_patterns": [
+              "google/**",
+              "configuration.json",
+              "models_t5*.pth",
+              "Wan2.1_VAE.pth"
+            ]
           }
         }
       }
@@ -6587,6 +6702,13 @@
       "ui": {
         "parameters": {
           "seed_support": true,
+          "long_video_profile": {
+            "strategies": ["segmented_i2v", "latent_extend"],
+            "default_strategy": "segmented_i2v",
+            "keyframe_models": ["z-image-turbo", "z-image", "flux2"],
+            "segment_models": ["wan-2.2-i2v-14b", "wan-2.2-i2v-14b-distill"],
+            "max_target_duration_sec": 120
+          },
           "steps": {
             "default": 40,
             "min": 1,
@@ -6710,6 +6832,23 @@
               "bits": 4,
               "scheme": "mlx_affine"
             }
+          },
+          "shared": {
+            "name": {
+              "zh": "共享编码器（T5/VAE）",
+              "en": "Shared Encoders (T5/VAE)"
+            },
+            "size": "11GB",
+            "default": false,
+            "repo_id": "Wan-AI/Wan2.2-I2V-A14B",
+            "local_path": "models/Video/wan-2.2-i2v-14b-shared",
+            "source_type": "full",
+            "allow_patterns": [
+              "google/**",
+              "configuration.json",
+              "models_t5*.pth",
+              "Wan2.1_VAE.pth"
+            ]
           }
         }
       }
@@ -6807,6 +6946,12 @@
         "extends": "video_dit_standard"
       },
       "distribution": {
+        "dependencies": [
+          {
+            "model_id": "wan-2.2-t2v-14b",
+            "version": "shared"
+          }
+        ],
         "versions": {
           "original": {
             "name": {
@@ -6815,32 +6960,14 @@
             },
             "size": "32GB",
             "default": true,
-            "repo_id": "Wan-AI/Wan2.2-T2V-A14B",
+            "repo_id": "lightx2v/Wan2.2-Distill-Models",
             "local_path": "models/Video/wan-2.2-t2v-14b-distill-original",
+            "source": "modelscope",
             "source_type": "full",
             "wan_distill_variant": "t2v_fp8",
-            "bundle_repos": [
-              {
-                "repo_id": "Wan-AI/Wan2.2-T2V-A14B",
-                "local_path": "models/Video/wan-2.2-t2v-14b-distill-original",
-                "source": "modelscope",
-                "allow_patterns": [
-                  "google/**",
-                  "models_t5*.pth",
-                  "Wan2.2_VAE.pth",
-                  "config.json",
-                  "configuration.json"
-                ]
-              },
-              {
-                "repo_id": "lightx2v/Wan2.2-Distill-Models",
-                "local_path": "models/Video/wan-2.2-t2v-14b-distill-original",
-                "source": "huggingface",
-                "allow_patterns": [
-                  "wan2.2_t2v_A14b_high_noise_scaled_fp8_e4m3_lightx2v_4step.safetensors",
-                  "wan2.2_t2v_A14b_low_noise_scaled_fp8_e4m3_lightx2v_4step.safetensors"
-                ]
-              }
+            "allow_patterns": [
+              "wan2.2_t2v_A14b_high_noise_scaled_fp8_e4m3_lightx2v_4step.safetensors",
+              "wan2.2_t2v_A14b_low_noise_scaled_fp8_e4m3_lightx2v_4step.safetensors"
             ]
           }
         }
@@ -6939,40 +7066,28 @@
         "extends": "video_dit_standard"
       },
       "distribution": {
+        "dependencies": [
+          {
+            "model_id": "wan-2.2-i2v-14b",
+            "version": "shared"
+          }
+        ],
         "versions": {
           "original": {
             "name": {
               "zh": "720P 蒸馏版",
               "en": "720P Distilled"
             },
-            "size": "115GB",
+            "size": "61GB",
             "default": true,
-            "repo_id": "Wan-AI/Wan2.2-I2V-A14B",
+            "repo_id": "lightx2v/Wan2.2-Distill-Models",
             "local_path": "models/Video/wan-2.2-i2v-14b-distill-original",
+            "source": "modelscope",
             "source_type": "full",
             "wan_distill_variant": "i2v_720p",
-            "bundle_repos": [
-              {
-                "repo_id": "Wan-AI/Wan2.2-I2V-A14B",
-                "local_path": "models/Video/wan-2.2-i2v-14b-distill-original",
-                "source": "modelscope",
-                "allow_patterns": [
-                  "google/**",
-                  "models_t5*.pth",
-                  "Wan2.2_VAE.pth",
-                  "config.json",
-                  "configuration.json"
-                ]
-              },
-              {
-                "repo_id": "lightx2v/Wan2.2-Distill-Models",
-                "local_path": "models/Video/wan-2.2-i2v-14b-distill-original",
-                "source": "huggingface",
-                "allow_patterns": [
-                  "wan2.2_i2v_A14b_high_noise_lightx2v_4step_720p_260412.safetensors",
-                  "wan2.2_i2v_A14b_low_noise_lightx2v_4step_720p_260412.safetensors"
-                ]
-              }
+            "allow_patterns": [
+              "wan2.2_i2v_A14b_high_noise_lightx2v_4step_720p_260412.safetensors",
+              "wan2.2_i2v_A14b_low_noise_lightx2v_4step_720p_260412.safetensors"
             ]
           },
           "fp8": {
@@ -6984,30 +7099,12 @@
             "default": false,
             "repo_id": "lightx2v/Wan2.2-Distill-Models",
             "local_path": "models/Video/wan-2.2-i2v-14b-distill-fp8",
+            "source": "modelscope",
             "source_type": "full",
             "wan_distill_variant": "i2v_fp8",
-            "bundle_repos": [
-              {
-                "repo_id": "Wan-AI/Wan2.2-I2V-A14B",
-                "local_path": "models/Video/wan-2.2-i2v-14b-distill-fp8",
-                "source": "modelscope",
-                "allow_patterns": [
-                  "google/**",
-                  "models_t5*.pth",
-                  "Wan2.2_VAE.pth",
-                  "config.json",
-                  "configuration.json"
-                ]
-              },
-              {
-                "repo_id": "lightx2v/Wan2.2-Distill-Models",
-                "local_path": "models/Video/wan-2.2-i2v-14b-distill-fp8",
-                "source": "huggingface",
-                "allow_patterns": [
-                  "wan2.2_i2v_A14b_high_noise_scaled_fp8_e4m3_lightx2v_4step.safetensors",
-                  "wan2.2_i2v_A14b_low_noise_scaled_fp8_e4m3_lightx2v_4step.safetensors"
-                ]
-              }
+            "allow_patterns": [
+              "wan2.2_i2v_A14b_high_noise_scaled_fp8_e4m3_lightx2v_4step.safetensors",
+              "wan2.2_i2v_A14b_low_noise_scaled_fp8_e4m3_lightx2v_4step.safetensors"
             ]
           }
         }

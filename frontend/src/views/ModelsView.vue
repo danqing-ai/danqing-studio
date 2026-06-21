@@ -432,7 +432,10 @@
               <span class="models-download-task-name">{{ formatDownloadDisplayName(item.name) }}</span>
               <div class="models-download-task-meta">
                 <span class="models-download-progress-text">
-                  <span v-if="item.total_size > 0">
+                  <span v-if="item.status === 'failed' && item.error">
+                    {{ $t('download.failed') }}
+                  </span>
+                  <span v-else-if="item.total_size > 0">
                     {{ Math.round(item.progress * 100) }}%
                     <span v-if="item.speed">({{ item.speed }})</span>
                   </span>
@@ -497,6 +500,12 @@ import { useI18n } from 'vue-i18n';
 import { toast, confirm } from '@/utils/feedback';
 import { api } from '@/utils/api';
 import { $tt, $mn, $md, $mvn } from '@/utils/i18n';
+import {
+  isDependencyReady,
+  parseDependencies,
+  type DependencySpec,
+  type RegistryDependency,
+} from '@/utils/dependencySpecs';
 import { openLoraTrainingRun } from '@/utils/loraTrainHandoff';
 import { modelInitialsFromName } from '@/utils/modelInitials';
 import { useRegistryStore } from '@/stores/registry';
@@ -542,7 +551,7 @@ interface ModelConfig {
   successor?: string;
   distilled_from?: string;
   distilled_variant?: string;
-  dependencies?: string[];
+  dependencies?: RegistryDependency[];
   versions?: Record<string, ModelVersion>;
   ready?: boolean;
 }
@@ -1004,16 +1013,35 @@ function getModelName(modelId: string): string {
   return $mn(row, modelId);
 }
 
-function canDownload(model: ModelRow): boolean {
-  if (!model.dependencies || model.dependencies.length === 0) return true;
-  return model.dependencies.every((dep) => isModelReady(dep));
+function modelDependencies(model: ModelRow): DependencySpec[] {
+  return parseDependencies(model.dependencies);
+}
+
+function getDependencyDisplayName(spec: DependencySpec): string {
+  const cfg = modelRegistry.value[spec.modelId];
+  if (!cfg) return spec.modelId;
+  const row: ModelRow = { id: spec.modelId, ...cfg, ready: false };
+  if (spec.version && cfg.versions?.[spec.version]) {
+    return $mvn(spec.modelId, row, cfg.versions[spec.version]);
+  }
+  return $mn(row, spec.modelId);
+}
+
+function isDependencySatisfied(spec: DependencySpec): boolean {
+  return isDependencyReady(spec, modelsDetailedStatus.value, isModelReady);
+}
+
+function canDownload(_model: ModelRow): boolean {
+  // Registry dependencies are installed automatically by the backend before the main download.
+  return true;
 }
 
 function getDependencyHint(model: ModelRow): string {
-  if (!model.dependencies || model.dependencies.length === 0) return '';
-  const missing = model.dependencies.filter((dep) => !isModelReady(dep));
+  const deps = modelDependencies(model);
+  if (deps.length === 0) return '';
+  const missing = deps.filter((dep) => !isDependencySatisfied(dep));
   if (missing.length === 0) return '';
-  const names = missing.map((d) => getModelName(d)).join('、');
+  const names = missing.map((d) => getDependencyDisplayName(d)).join('、');
   return $tt('download.dependencyMissing', { models: names });
 }
 
@@ -1075,6 +1103,32 @@ async function downloadVersion(
   const uiKey =
     opts.uiLoadingKey != null ? opts.uiLoadingKey : `${model.id}-${versionKey}`;
   if (downloadingModels.value[uiKey]) return;
+
+  try {
+    const tasks = (await api.download.listDownloads()) as Array<{
+      id: string;
+      status: string;
+      model_name?: string;
+      version?: string | null;
+    }>;
+    const active = tasks.find(
+      (t) =>
+        t.model_name === model.id &&
+        (t.version ?? null) === (versionKey || null) &&
+        (t.status === 'running' || t.status === 'paused')
+    );
+    if (active?.id) {
+      const version = model.versions?.[versionKey];
+      const label = version
+        ? $mvn(model.id, model, version)
+        : `${$mn(model, model.id)} ${versionKey}`;
+      downloadingModels.value[uiKey] = true;
+      connectProgressSSE(active.id, label, uiKey);
+      return;
+    }
+  } catch {
+    /* fall through to install */
+  }
 
   downloadingModels.value[uiKey] = true;
 

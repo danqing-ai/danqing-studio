@@ -48,8 +48,10 @@ import { useI18n } from 'vue-i18n';
 import {
   COMPOSER_RESERVE_CSS_COLLAPSED,
   COMPOSER_RESERVE_CSS_EXPANDED,
+  COMPOSER_RESERVE_CSS_LONG_VIDEO,
   COMPOSER_SCRIM_CSS_COLLAPSED,
   COMPOSER_SCRIM_CSS_EXPANDED,
+  COMPOSER_SCRIM_CSS_LONG_VIDEO,
   composerReservePx,
 } from '@/utils/composerReserve';
 
@@ -57,6 +59,8 @@ const props = defineProps<{
   freeform?: boolean;
   collapsible?: boolean;
   composerCollapsed?: boolean;
+  /** Taller composer reserve (long-video storyboard rail). */
+  composerTall?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -75,10 +79,19 @@ const composerCollapsed = computed(() => props.composerCollapsed === true);
 const layoutStyle = computed(() => {
   const collapsed = props.collapsible && composerCollapsed.value;
   const vh = viewportHeight.value;
+  const tall = Boolean(props.composerTall) && !collapsed;
   return {
-    '--dq-composer-reserve': collapsed ? COMPOSER_RESERVE_CSS_COLLAPSED : COMPOSER_RESERVE_CSS_EXPANDED,
-    '--dq-composer-scrim-height': collapsed ? COMPOSER_SCRIM_CSS_COLLAPSED : COMPOSER_SCRIM_CSS_EXPANDED,
-    '--dq-composer-reserve-px': `${composerReservePx(vh, collapsed)}px`,
+    '--dq-composer-reserve': collapsed
+      ? COMPOSER_RESERVE_CSS_COLLAPSED
+      : tall
+        ? COMPOSER_RESERVE_CSS_LONG_VIDEO
+        : COMPOSER_RESERVE_CSS_EXPANDED,
+    '--dq-composer-scrim-height': collapsed
+      ? COMPOSER_SCRIM_CSS_COLLAPSED
+      : tall
+        ? COMPOSER_SCRIM_CSS_LONG_VIDEO
+        : COMPOSER_SCRIM_CSS_EXPANDED,
+    '--dq-composer-reserve-px': `${composerReservePx(vh, collapsed, tall)}px`,
   };
 });
 

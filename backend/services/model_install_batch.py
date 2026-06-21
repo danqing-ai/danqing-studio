@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from typing import Optional
 
-from backend.core.i18n import t
 from backend.core.interfaces import DownloadProgress, ISettingsService
 from backend.core.model_registry import ModelRegistry
 from backend.services.setup_recommendations import topological_install_order
@@ -39,25 +38,6 @@ async def run_batch_model_install(
             continue
         try:
             config = download_service.get_model_download_config(model_id)
-            if config and config.get("dependencies"):
-                missing_deps: list[str] = []
-                for dep in config["dependencies"]:
-                    if not detailed.get(dep, {}).get("ready"):
-                        missing_deps.append(dep)
-                if missing_deps:
-                    results.append(
-                        {
-                            "model_id": model_id,
-                            "model_name": model_id,
-                            "status": "skipped",
-                            "reason": t(
-                                "error.missing_dependencies",
-                                locale,
-                                deps=", ".join(missing_deps),
-                            ),
-                        }
-                    )
-                    continue
 
             if detailed.get(model_id, {}).get("ready"):
                 results.append(

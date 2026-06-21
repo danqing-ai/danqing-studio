@@ -1,11 +1,11 @@
 <template>
   <div
     class="image-composer studio-composer-shell dq-glass--panel"
-    :class="{ 'image-composer--collapsed': collapsed }"
+    :class="{ 'image-composer--collapsed': collapsed, 'image-composer--embedded': embedded }"
   >
     <!-- Top: Title -->
     <DqInput
-      v-if="!collapsed"
+      v-if="!collapsed && !embedded"
       v-model="localTitle"
       size="small"
       :placeholder="$t('studio.workTitlePlaceholder')"
@@ -166,7 +166,7 @@
 
         <!-- Size selector (txt2img only; img2img 输出尺寸跟随源图) -->
         <DqSelect
-          v-if="!isImg2imgMode"
+          v-if="!isImg2imgMode && !lockSize"
           v-model="localSize"
           size="small"
           class="image-composer__select image-composer__select--size"
@@ -226,275 +226,53 @@
       :reset-label="$t('create.restoreDefaults')"
       @reset-defaults="$emit('reset-defaults')"
     >
-      <div class="image-composer__advanced-inner">
-              <div v-if="paramSchema.steps || showGuidanceSlider" class="image-composer__advanced-row">
-                <div v-if="paramSchema.steps" class="image-composer__field">
-                  <label>{{ $t('create.stepsLabel') }}</label>
-                  <DqSlider
-                    v-model="localParams.steps"
-                    :min="paramSchema.steps.min ?? 1"
-                    :max="paramSchema.steps.max ?? 50"
-                    :step="paramSchema.steps.step ?? 1"
-                  />
-                  <span class="image-composer__field-val">{{ localParams.steps }}</span>
-                </div>
-
-                <div v-if="showGuidanceSlider" class="image-composer__field">
-                  <label>{{ $t('create.guidanceLabel') }}</label>
-                  <DqSlider
-                    v-model="localParams.guidance"
-                    :min="paramSchema.guidance?.min ?? 0"
-                    :max="paramSchema.guidance?.max ?? 20"
-                    :step="paramSchema.guidance?.step ?? 0.5"
-                  />
-                  <span class="image-composer__field-val">{{ localParams.guidance }}</span>
-                </div>
-              </div>
-
-              <div class="image-composer__advanced-row">
-                <div class="image-composer__field">
-                  <label>{{ $t('studio.seed') }}</label>
-                  <div class="image-composer__seed-wrap">
-                    <DqInput
-                      v-model="localParams.seed"
-                      size="small"
-                      :placeholder="$t('studio.seedPlaceholder')"
-                      style="width: 100px"
-                    />
-                    <DqIconButton
-                      type="text"
-                      size="xs"
-                      :label="$t('create.randomSeed')"
-                      @click="randomizeSeed"
-                    >
-                      <DqIcon :size="12"><Refresh /></DqIcon>
-                    </DqIconButton>
-                  </div>
-                </div>
-
-                <div v-if="showStrengthSlider" class="image-composer__field">
-                  <label>{{ $t('create.strengthLabel') }}</label>
-                  <DqSlider
-                    v-model="localParams.strength"
-                    :min="paramSchema.strength?.min ?? 0"
-                    :max="paramSchema.strength?.max ?? 1"
-                    :step="paramSchema.strength?.step ?? 0.05"
-                  />
-                  <span class="image-composer__field-val">{{ localParams.strength }}</span>
-                </div>
-              </div>
-
-              <!-- Scheduler -->
-          <div v-if="currentModelConfig?.parameters?.scheduler?.options" class="image-composer__advanced-row">
-            <div class="image-composer__field">
-              <label>{{ currentModelConfig.parameters.scheduler.label || $t('create.schedulerLabel') }}</label>
-              <DqSelect v-model="localParams.scheduler" size="small" style="width: 220px">
-                    <DqOption
-                      v-for="opt in currentModelConfig.parameters.scheduler.options"
-                      :key="String(opt)"
-                      :label="String(opt)"
-                      :value="opt"
-                    />
-                  </DqSelect>
-                </div>
-              </div>
-
-              <!-- LoRA -->
-              <div v-if="currentModelConfig?.parameters?.lora_support && compatibleLoras?.length" class="image-composer__advanced-row">
-                <div class="image-composer__field image-composer__field--full" style="flex-direction: column; align-items: flex-start; gap: 8px;">
-                  <div style="display: flex; align-items: center; gap: 10px; width: 100%;">
-                    <label>{{ $t('studio.loraLabel') }}</label>
-                    <DqSelect v-model="localParams.lora" size="small" clearable :placeholder="$t('studio.noLora')" style="flex: 1; max-width: 300px;">
-                      <DqOption
-                        v-for="l in compatibleLoras"
-                        :key="String(l.id)"
-                        :label="loraOptionLabel(l)"
-                        :value="l.id"
-                      />
-                    </DqSelect>
-                  </div>
-                  <div v-if="localParams.lora" style="display: flex; align-items: center; gap: 10px; width: 100%;">
-                    <label style="min-width: 60px;">{{ $t('create.loraScale') }}</label>
-                    <DqSlider v-model="localParams.lora_scale" :min="0" :max="2" :step="0.05" style="flex: 1;" />
-                    <span class="image-composer__field-val">{{ localParams.lora_scale }}</span>
-                  </div>
-                </div>
-              </div>
-
-              <!-- ControlNet -->
-              <div v-if="compatibleControlNets?.length" class="image-composer__advanced-row">
-                <p v-if="!controlNetRuntimeAvailable" class="image-composer__control-hint">
-                  {{ $t('studio.controlnetMlxOnly') }}
-                </p>
-                <div class="image-composer__field image-composer__field--full" style="flex-direction: column; align-items: flex-start; gap: 8px;">
-                  <div style="display: flex; align-items: center; gap: 10px; width: 100%;">
-                    <label>{{ $t('studio.controlNet') }}</label>
-                    <DqSelect
-                      v-model="localParams.controlnet"
-                      size="small"
-                      clearable
-                      :disabled="!controlNetRuntimeAvailable"
-                      :placeholder="$t('studio.noControlNet')"
-                      style="flex: 1; max-width: 300px;"
-                    >
-                      <DqOption
-                        v-for="n in compatibleControlNets"
-                        :key="String(n.key)"
-                        :label="controlNetOptionLabel(n)"
-                        :value="String(n.key)"
-                        :disabled="!controlNetReady(n)"
-                      />
-                    </DqSelect>
-                  </div>
-                  <p v-if="localParams.controlnet" class="image-composer__control-hint">
-                    {{ controlNetGuideHint }}
-                  </p>
-                  <p
-                    v-if="localParams.controlnet && showCompanionLoraHint"
-                    class="image-composer__control-hint image-composer__control-hint--sub"
-                  >
-                    {{ $t('studio.controlnetCompanionLoraHint') }}
-                  </p>
-                  <div v-if="localParams.controlnet" style="display: flex; align-items: center; gap: 10px; width: 100%;">
-                    <label style="min-width: 60px;">{{ controlNetStrengthLabel }}</label>
-                    <DqSlider v-model="localParams.controlnet_strength" :min="0" :max="2" :step="0.05" style="flex: 1;" />
-                    <span class="image-composer__field-val">{{ localParams.controlnet_strength }}</span>
-                  </div>
-                  <div v-if="localParams.controlnet" class="image-composer__control-image-row">
-                    <label>{{ $t('canvas.controlImage') }}</label>
-                    <div v-if="controlImage" class="image-composer__ref-pill image-composer__ref-pill--compact">
-                      <img :src="controlImage.previewUrl" alt="control" />
-                      <DqIconButton
-                        type="text"
-                        size="xs"
-                        :label="$t('common.delete')"
-                        @click="$emit('remove-control')"
-                      >
-                        <DqIcon :size="10"><Close /></DqIcon>
-                      </DqIconButton>
-                    </div>
-                    <DqButton v-else size="xs" type="secondary" @click="$emit('pick-control')">
-                      {{ $t('canvas.pickControlImage') }}
-                    </DqButton>
-                  </div>
-                  <template v-if="showZImageInpaintExtras">
-                    <p class="image-composer__control-hint image-composer__control-hint--sub">
-                      {{ $t('create.controlInpaintHint') }}
-                    </p>
-                    <div class="image-composer__control-image-row">
-                      <label>{{ $t('create.inpaintSource') }}</label>
-                      <div v-if="inpaintSourceImage" class="image-composer__ref-pill image-composer__ref-pill--compact">
-                        <img :src="inpaintSourceImage.previewUrl" alt="inpaint source" />
-                        <DqIconButton
-                          type="text"
-                          size="xs"
-                          :label="$t('common.delete')"
-                          @click="$emit('remove-inpaint-source')"
-                        >
-                          <DqIcon :size="10"><Close /></DqIcon>
-                        </DqIconButton>
-                      </div>
-                      <DqButton v-else size="xs" type="secondary" @click="$emit('pick-inpaint-source')">
-                        {{ $t('create.pickInpaintSource') }}
-                      </DqButton>
-                    </div>
-                    <div class="image-composer__control-image-row">
-                      <label>{{ $t('create.inpaintMask') }}</label>
-                      <div v-if="inpaintMaskImage" class="image-composer__ref-pill image-composer__ref-pill--compact">
-                        <img :src="inpaintMaskImage.previewUrl" alt="inpaint mask" />
-                        <DqIconButton
-                          type="text"
-                          size="xs"
-                          :label="$t('common.delete')"
-                          @click="$emit('remove-inpaint-mask')"
-                        >
-                          <DqIcon :size="10"><Close /></DqIcon>
-                        </DqIconButton>
-                      </div>
-                      <DqButton v-else size="xs" type="secondary" @click="$emit('pick-inpaint-mask')">
-                        {{ $t('create.pickInpaintMask') }}
-                      </DqButton>
-                    </div>
-                  </template>
-                </div>
-              </div>
-
-              <!-- Z-Image Turbo: LeMiCa + latent refine -->
-              <div v-if="showZImageTurboExtras" class="image-composer__advanced-row">
-                <div class="image-composer__field image-composer__field--full" style="flex-direction: column; align-items: flex-start; gap: 8px;">
-                  <div style="display: flex; align-items: center; gap: 10px; width: 100%;">
-                    <label>{{ $t('create.lemicaMode') }}</label>
-                    <DqSelect v-model="localParams.lemica_mode" size="small" style="flex: 1; max-width: 300px;">
-                      <DqOption value="none" :label="$t('create.lemicaOff')" />
-                      <DqOption value="slow" :label="$t('create.lemicaSlow')" />
-                      <DqOption value="medium" :label="$t('create.lemicaMedium')" />
-                      <DqOption value="fast" :label="$t('create.lemicaFast')" />
-                    </DqSelect>
-                  </div>
-                  <p class="image-composer__control-hint">{{ $t('create.lemicaHint') }}</p>
-                  <div style="display: flex; align-items: center; gap: 10px; width: 100%;">
-                    <label style="min-width: 100px;">{{ $t('create.latentRefineScale') }}</label>
-                    <DqSlider v-model="localParams.latent_refine_scale" :min="1" :max="2" :step="0.25" style="flex: 1;" />
-                    <span class="image-composer__field-val">{{ localParams.latent_refine_scale }}</span>
-                  </div>
-                  <div v-if="Number(localParams.latent_refine_scale) > 1" style="display: flex; align-items: center; gap: 10px; width: 100%;">
-                    <label style="min-width: 100px;">{{ $t('create.latentRefineDenoise') }}</label>
-                    <DqSlider v-model="localParams.latent_refine_denoise" :min="0" :max="1" :step="0.05" style="flex: 1;" />
-                    <span class="image-composer__field-val">{{ localParams.latent_refine_denoise }}</span>
-                  </div>
-                </div>
-              </div>
-
-              <!-- Negative prompt -->
-              <div v-if="showNegativePrompt" class="image-composer__advanced-row">
-                <div class="image-composer__field image-composer__field--full">
-                  <label>{{ $t('studio.negativePrompt') }}</label>
-                  <DqInput
-                    v-model="localParams.negative_prompt"
-                    type="textarea"
-                    :rows="2"
-                    :placeholder="$t('create.negativePlaceholder')"
-                    resize="none"
-                  />
-                </div>
-              </div>
-      </div>
+      <ImageComposerAdvancedFields
+        :params="params"
+        :model="model"
+        :mode="localMode"
+        :reference-image="referenceImage"
+        :current-model-config="currentModelConfig"
+        :compatible-loras="compatibleLoras"
+        :compatible-control-nets="compatibleControlNets"
+        :control-net-runtime-available="controlNetRuntimeAvailable"
+        :control-image="controlImage"
+        :inpaint-source-image="inpaintSourceImage"
+        :inpaint-mask-image="inpaintMaskImage"
+        :show-negative-prompt="showNegativePrompt"
+        @pick-control="$emit('pick-control')"
+        @remove-control="$emit('remove-control')"
+        @pick-inpaint-source="$emit('pick-inpaint-source')"
+        @remove-inpaint-source="$emit('remove-inpaint-source')"
+        @pick-inpaint-mask="$emit('pick-inpaint-mask')"
+        @remove-inpaint-mask="$emit('remove-inpaint-mask')"
+      />
     </StudioComposerAdvancedDrawer>
 
     <!-- Inline shortcut hint -->
-    <div v-if="!collapsed" class="image-composer__hint">
+    <div v-if="!collapsed && !embedded" class="image-composer__hint">
       {{ shortcutHint }}
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, withDefaults } from 'vue';
+import { ref, computed, withDefaults } from 'vue';
 import StudioComposerAdvancedDrawer from './StudioComposerAdvancedDrawer.vue';
+import ImageComposerAdvancedFields from './ImageComposerAdvancedFields.vue';
 import ComposerPromptApplyStrip from './ComposerPromptApplyStrip.vue';
 import ComposerSuccessorHintStrip from './ComposerSuccessorHintStrip.vue';
 import ComposerIconTip from './ComposerIconTip.vue';
 import { useI18n } from 'vue-i18n';
 import {
-  applyControlNetRegistryDefaults,
-  controlNetDisplayName,
-  controlNetReady,
-  isCannyOrDepthControlNet,
-  isReduxControlNet,
-  isZImageUnionControlNet,
-  isZImageStructuralBaseModel,
-} from '@/composables/useStructuralGuide';
-import {
   Close,
   DocumentCopy,
   MagicStick,
   Picture,
-  Refresh,
   Tools,
 } from '@danqing/dq-shell';
 import { assetIdFromGalleryPath } from '@/utils/copilotHandoff';
 import { $tt } from '@/utils/i18n';
-import { formatResolutionOptionLabel, img2imgUsesStrength, normalizeParamsDef } from '@/utils/registryParamSchema';
+import { formatResolutionOptionLabel } from '@/utils/registryParamSchema';
 
 const props = withDefaults(defineProps<{
   modelValue: string;
@@ -543,11 +321,19 @@ const props = withDefaults(defineProps<{
   enhancing?: boolean;
   reversing?: boolean;
   collapsed?: boolean;
+  /** Drawer / inspector embed: hide title row and footer hint. */
+  embedded?: boolean;
+  /** Hide size selector (output size fixed by parent). */
+  lockSize?: boolean;
+  /** Override primary generate button label. */
+  generateLabel?: string;
   promptApplyPreview?: string | null;
   successorHint?: { successorId: string; successorName: string } | null;
 }>(), {
   composerBusy: false,
   submitting: false,
+  embedded: false,
+  lockSize: false,
 });
 
 const emit = defineEmits<{
@@ -581,6 +367,7 @@ const emit = defineEmits<{
 const { t: $t } = useI18n();
 
 const primaryActionLabel = computed(() => {
+  if (props.generateLabel) return props.generateLabel;
   if (props.composerBusy) return $t('create.addToBatch');
   if (props.generating) return $t('create.generating');
   return $t('studio.generate');
@@ -596,86 +383,17 @@ const localParams = computed({
   set: (v) => emit('update:params', v),
 });
 
-function controlNetOptionLabel(n: Record<string, unknown>): string {
-  const name = controlNetDisplayName(n);
-  return controlNetReady(n) ? name : `${name} (${$t('studio.controlnetNotInstalled')})`;
-}
-
-function loraOptionLabel(l: Record<string, unknown>): string {
-  const base = String(l.name || l.id || '');
-  if (l.source === 'user_trained') {
-    return `${base} (${$t('studio.myLoraTag')})`;
-  }
-  return base;
-}
-
-const controlNetGuideHint = computed(() => {
-  const key = String(localParams.value.controlnet || '').toLowerCase();
-  if (key.includes('z-image') && key.includes('union')) return $t('studio.controlnetZImageUnionHint');
-  if (key.includes('fill')) return $t('studio.controlnetFillHint');
-  if (key.includes('depth')) return $t('studio.controlnetDepthHint');
-  if (key.includes('redux')) return $t('studio.controlnetReduxHint');
-  return $t('studio.controlnetBundleHint');
-});
-
-const showZImageTurboExtras = computed(() =>
-  isZImageStructuralBaseModel(String(props.model || '')),
-);
-
-const showZImageInpaintExtras = computed(() => {
-  const key = String(localParams.value.controlnet || '');
-  return showZImageTurboExtras.value && isZImageUnionControlNet(key);
-});
-
-const controlNetStrengthLabel = computed(() => {
-  if (isReduxControlNet(String(localParams.value.controlnet || ''))) {
-    return $t('create.reduxStrengthLabel');
-  }
-  return $t('create.controlNetStrengthLabel');
-});
-
 const controlNetRuntimeAvailable = computed(
   () => props.controlNetRuntimeAvailable !== false,
-);
-
-const showCompanionLoraHint = computed(() => {
-  const key = String(localParams.value.controlnet || '');
-  return (
-    isCannyOrDepthControlNet(key)
-    && !isZImageStructuralBaseModel(String(props.model || ''))
-  );
-});
-
-watch(
-  () => localParams.value.controlnet,
-  (key, prev) => {
-    if (!key || key === prev) return;
-    applyControlNetRegistryDefaults(String(key), props.compatibleControlNets, localParams.value);
-  },
 );
 
 const advancedOpen = ref(false);
 const selectedStyle = ref('');
 const lastStylePositive = ref('');
 
-const paramSchema = computed(() => normalizeParamsDef(props.currentModelConfig?.parameters));
-
 const isImg2imgMode = computed(
   () => localMode.value === 'img2img' || props.referenceImage != null,
 );
-
-const showStrengthSlider = computed(
-  () => isImg2imgMode.value && img2imgUsesStrength(props.currentModelConfig?.parameters),
-);
-
-const showGuidanceSlider = computed(() => {
-  const g = paramSchema.value.guidance;
-  if (!g) return false;
-  if (g.fixed === true) return false;
-  const min = typeof g.min === 'number' ? g.min : 0;
-  const max = typeof g.max === 'number' ? g.max : 20;
-  return min !== max;
-});
 
 const localTitle = computed({
   get: () => props.title || '',
@@ -709,10 +427,6 @@ const localBatchCount = computed({
 
 function patchParams(patch: Partial<typeof props.params>) {
   Object.assign(props.params, patch);
-}
-
-function randomizeSeed() {
-  patchParams({ seed: String(Math.floor(Math.random() * 1_000_000)) });
 }
 
 const shortcutHint = computed(() => {

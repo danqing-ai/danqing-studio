@@ -222,8 +222,6 @@ import {
 } from '@/utils/videoSizeStorage';
 import {
   formatStoryboardScript,
-  isLongVideoTargetDuration,
-  parseStoryboardPrompt,
 } from '@/utils/videoStoryboardPrompt';
 
 const router = useRouter();
@@ -472,6 +470,7 @@ function onCanvasNodeSelected(item: GalleryItem | null) {
     return;
   }
   setComposerCollapsed(false);
+
   if (item.prompt) params.prompt = item.prompt;
   if (item.title) params.title = item.title;
   if (item.model) {
@@ -636,6 +635,11 @@ const {
   clearSelection,
 } = useStudioGallery('video');
 
+function registryModelLabel(modelId: string): string {
+  const cfg = modelRegistry.value[modelId];
+  return cfg ? $mn(cfg, modelId) : modelId;
+}
+
 const activeVideoTasks = computed(() => {
   const running = tasksStore.queueState.running.filter((t: Task) =>
     String(t.kind || '').startsWith('video.')
@@ -772,18 +776,19 @@ async function onEnhancePrompt(ctx?: { stylePositive?: string }) {
 async function onStoryboardExpand() {
   const prompt = String(params.prompt || '').trim();
   if (!prompt) return;
-  const p = currentModelConfig.value?.parameters;
-  const extendSec = Number(p?.long_video_segment_extend_sec?.default ?? 7);
-  const refSec = Number(p?.long_video_reference_duration_sec?.default ?? 3);
+  const p = currentModelConfig.value?.parameters || {};
+  const segExtend = Number(p.long_video_segment_extend_sec?.default ?? 8);
+  const initialSec = Number(p.long_video_reference_duration_sec?.default ?? 8);
   const result = await storyboardLongVideo({
     prompt,
     target_duration_sec: selectedDurationSec.value,
-    initial_duration_sec: 8,
-    segment_extend_sec: extendSec,
-    reference_duration_sec: refSec,
+    initial_duration_sec: initialSec,
+    segment_extend_sec: segExtend,
+    use_shot_plan: false,
   });
   if (!result) return;
   params.prompt = formatStoryboardScript(result.opening_prompt, result.segment_prompts || []);
+  toast.info($tt('video.storyboardComplete'));
 }
 
 async function onReversePromptFromReference() {
@@ -907,12 +912,6 @@ const videoWorkMode = ref('create');
 
 function longVideoSupported(): boolean {
   return Boolean(currentModelConfig.value?.parameters?.long_video_support);
-}
-
-function isLongVideoCreate(): boolean {
-  return videoWorkMode.value === 'create'
-    && longVideoSupported()
-    && isLongVideoTargetDuration(selectedDurationSec.value, true);
 }
 
 const videoWorkSegmentOptions = computed(() => {
@@ -1452,6 +1451,106 @@ const loadPreset = () => {
 /*  Generation                                                         */
 /* ------------------------------------------------------------------ */
 
+async function runGenerationTask(submitRes: unknown, modelStr: string) {
+  const tid = taskIdFromSubmitResponse(submitRes);
+  if (!tid) {
+    throw new Error('missing task id in submit response');
+  }
+  tasksStore.clearTaskLogs(tid);
+  tasksStore.appendTaskLog(tid, $tt('studio.startingGen'), 'info');
+  tasksStore.registerPageOwnedStream(tid);
+  currentTask.value = {
+    id: tid,
+    progress: 0,
+    step: 0,
+    total: 0,
+    status: 'queued',
+    progressMessage: null,
+    params: { model: modelStr, title: String(params.title || '').trim(), prompt: params.prompt },
+  };
+  api.gen.streamMediaTask(tid, {
+    onLog: (logData: any) => {
+      tasksStore.ingestTaskLog(tid, logData);
+    },
+    onTrace: (traceData: unknown) => {
+      tasksStore.ingestTaskPipelineTrace(tid, traceData);
+    },
+    onResult: (resultData: any) => {
+      const ids = (resultData?.asset_ids as string[] | undefined) || [];
+      if (ids.length > 0) pendingCanvasAssetIds.value = ids;
+    },
+    onStatus: (statusData: any) => {
+      if (currentTask.value) {
+        currentTask.value.progress = statusData.progress ?? 0;
+        currentTask.value.status = statusData.status;
+      }
+    },
+    onDone: async (doneData: any) => {
+      generating.value = false;
+      tasksStore.unregisterPageOwnedStream(tid);
+      if (doneData.status === 'completed') {
+        tasksStore.appendTaskLog(tid, $tt('studio.genComplete'), 'success');
+        const updated = await api.gen.getMediaTask(tid) as any;
+        currentTask.value = updated;
+        const pid = updated.result && updated.result.primary_asset_id;
+        const ids = [...pendingCanvasAssetIds.value];
+        const willAutoAdd = shouldAutoAddToCanvas() && ids.length > 0;
+        pendingCanvasAssetIds.value = [];
+        if (pid) {
+          previewVideo.value = api.gallery.getImageUrl(`asset:${pid}`);
+          previewVideoKey.value += 1;
+          previewVideoDurationSec.value = 0;
+        }
+        if (!willAutoAdd) {
+          toast.success($tt('studio.genComplete'));
+        }
+        await loadGallery(true);
+        if (willAutoAdd) {
+          await activateCanvasViewForResults(viewMode, syncCompositorOverlaysOnCanvasEnter);
+          addAssetPathsToCanvas(ids.map((id) => `asset:${id}`), { placement: 'staging' });
+        }
+      } else if (doneData.status === 'failed') {
+        const updated = await api.gen.getMediaTask(tid) as any;
+        currentTask.value = updated;
+        tasksStore.appendTaskLog(
+          tid,
+          $tt('studio.genFailed', { msg: updated.error || updated.error_message || '' }),
+          'error'
+        );
+        toast.error($tt('studio.genFailed', { msg: updated.error || updated.error_message || '' }));
+      }
+    },
+    onError: () => {
+      tasksStore.unregisterPageOwnedStream(tid);
+      tasksStore.appendTaskLog(tid, $tt('studio.connectionLost'), 'warning');
+      toast.warning($tt('studio.connectionLost'));
+    },
+    onProgress: (progressData: any) => {
+      tasksStore.ingestTaskProgressLog(tid, progressData);
+      tasksStore.patchLiveTaskProgress(tid, {
+        progress: progressData.progress,
+        step: progressData.step,
+        total: progressData.total,
+        eta_seconds: progressData.eta_seconds,
+        progressMessage: progressData.message ?? progressData.phase,
+      });
+      if (!currentTask.value) return;
+      if (typeof progressData.progress === 'number') {
+        currentTask.value.progress = progressData.progress;
+      }
+      const nextStep =
+        progressData.step != null ? progressData.step : currentTask.value.step;
+      const nextTotal =
+        progressData.total != null ? progressData.total : currentTask.value.total;
+      currentTask.value.step = nextStep;
+      currentTask.value.total = nextTotal;
+      if (progressData.message != null) {
+        currentTask.value.progressMessage = progressData.message;
+      }
+    },
+  });
+}
+
 const startGeneration = async () => {
   if (videoWorkMode.value !== 'upscale' && !String(params.prompt || '').trim()) {
     toast.warning($tt('studio.enterPrompt'));
@@ -1612,125 +1711,9 @@ const startGeneration = async () => {
       if (adapters.length > 0) {
         body.adapters = adapters;
       }
-      if (isLongVideoCreate()) {
-        const p = currentModelConfig.value?.parameters;
-        const extendSec = Number(p?.long_video_segment_extend_sec?.default ?? 7);
-        const refSec = Number(p?.long_video_reference_duration_sec?.default ?? 3);
-        const parsed = parseStoryboardPrompt(params.prompt);
-        body.fps = params.fps || 24;
-        body.long_video = {
-          target_duration_sec: selectedDurationSec.value,
-          initial_duration_sec: 8,
-          segment_extend_sec: extendSec,
-          reference_duration_sec: refSec,
-          overlap_blend_frames: 4,
-          opening_prompt: parsed.opening || params.prompt,
-          segment_prompts: parsed.segmentPrompts.length > 0 ? parsed.segmentPrompts : undefined,
-        };
-      }
       submitRes = await api.gen.createVideoGeneration(body);
     }
-    const tid = taskIdFromSubmitResponse(submitRes);
-    if (!tid) {
-      throw new Error('missing task id in submit response');
-    }
-    tasksStore.clearTaskLogs(tid);
-    tasksStore.appendTaskLog(tid, $tt('studio.startingGen'), 'info');
-    tasksStore.registerPageOwnedStream(tid);
-    currentTask.value = {
-      id: tid,
-      progress: 0,
-      step: 0,
-      total: 0,
-      status: 'queued',
-      progressMessage: null,
-      params: { model: modelStr, title: String(params.title || '').trim(), prompt: params.prompt },
-    };
-    api.gen.streamMediaTask(tid, {
-      onLog: (logData: any) => {
-        tasksStore.ingestTaskLog(tid, logData);
-      },
-      onTrace: (traceData: unknown) => {
-        tasksStore.ingestTaskPipelineTrace(tid, traceData);
-      },
-      onResult: (resultData: any) => {
-        const ids = (resultData?.asset_ids as string[] | undefined) || [];
-        if (ids.length > 0) pendingCanvasAssetIds.value = ids;
-      },
-      onStatus: (statusData: any) => {
-        if (currentTask.value) {
-          currentTask.value.progress = statusData.progress ?? 0;
-          currentTask.value.status = statusData.status;
-        }
-      },
-      onDone: async (doneData: any) => {
-        generating.value = false;
-        tasksStore.unregisterPageOwnedStream(tid);
-        if (doneData.status === 'completed') {
-          tasksStore.appendTaskLog(tid, $tt('studio.genComplete'), 'success');
-          const updated = await api.gen.getMediaTask(tid) as any;
-          currentTask.value = updated;
-          const pid = updated.result && updated.result.primary_asset_id;
-          const ids = [...pendingCanvasAssetIds.value];
-          const willAutoAdd = shouldAutoAddToCanvas() && ids.length > 0;
-          pendingCanvasAssetIds.value = [];
-          if (pid) {
-            previewVideo.value = api.gallery.getImageUrl(`asset:${pid}`);
-            previewVideoKey.value += 1;
-            previewVideoDurationSec.value = 0;
-          }
-          if (!willAutoAdd) {
-            toast.success($tt('studio.genComplete'));
-          }
-          await loadGallery(true);
-          if (willAutoAdd) {
-            await activateCanvasViewForResults(viewMode, syncCompositorOverlaysOnCanvasEnter);
-            addAssetPathsToCanvas(ids.map((id) => `asset:${id}`), { placement: 'staging' });
-          }
-        } else if (doneData.status === 'failed') {
-          const updated = await api.gen.getMediaTask(tid) as any;
-          currentTask.value = updated;
-          tasksStore.appendTaskLog(
-            tid,
-            $tt('studio.genFailed', { msg: updated.error || updated.error_message || '' }),
-            'error'
-          );
-          toast.error($tt('studio.genFailed', { msg: updated.error || updated.error_message || '' }));
-        }
-      },
-      onError: () => {
-        tasksStore.unregisterPageOwnedStream(tid);
-        tasksStore.appendTaskLog(tid, $tt('studio.connectionLost'), 'warning');
-        toast.warning($tt('studio.connectionLost'));
-      },
-      onProgress: (progressData: any) => {
-        tasksStore.ingestTaskProgressLog(tid, progressData);
-        tasksStore.patchLiveTaskProgress(tid, {
-          progress: progressData.progress,
-          step: progressData.step,
-          total: progressData.total,
-          eta_seconds: progressData.eta_seconds,
-          progressMessage: progressData.message ?? progressData.phase,
-        });
-        if (!currentTask.value) return;
-        if (typeof progressData.progress === 'number') {
-          currentTask.value.progress = progressData.progress;
-        }
-        const nextStep =
-          progressData.step != null
-            ? progressData.step
-            : currentTask.value.step;
-        const nextTotal =
-          progressData.total != null
-            ? progressData.total
-            : currentTask.value.total;
-        currentTask.value.step = nextStep;
-        currentTask.value.total = nextTotal;
-        if (progressData.message != null) {
-          currentTask.value.progressMessage = progressData.message;
-        }
-      },
-    });
+    await runGenerationTask(submitRes, modelStr);
   } catch (e: any) {
     generating.value = false;
     currentTask.value = null;

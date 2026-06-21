@@ -16,6 +16,7 @@ _KIND_TO_GRAPH: dict[str, str] = {
     "image.edit": "image_edit",
     "image.upscale": "image_upscale",
     "video.generation": "video_create",
+    "video.long_generation": "video_long_generation",
     "video.edit": "video_create",
     "audio.generation": "audio_create",
     "audio.edit": "audio_create",

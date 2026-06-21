@@ -316,7 +316,9 @@ async def list_downloads():
             "total_size": progress.total_size if progress else 0,
             "downloaded_size": progress.downloaded_size if progress else 0,
             "filename": progress.filename if progress else t.url,
-            "error_message": progress.error_message if progress else t.error_message
+            "error_message": progress.error_message if progress else t.error_message,
+            "model_name": getattr(t, "_model_name", None),
+            "version": getattr(t, "_version", None),
         })
     return result
 

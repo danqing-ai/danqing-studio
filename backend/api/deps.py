@@ -8,6 +8,7 @@ from backend.engine.engine_registry import EngineRegistry
 from backend.engine.llm import LLMService
 from backend.persistence.asset_store import SQLiteAssetStore
 from backend.persistence.canvas_session_store import CanvasSessionStore
+from backend.persistence.long_video_project_store import LongVideoProjectStore
 from backend.scheduler.task_scheduler import TaskScheduler
 
 
@@ -33,3 +34,7 @@ def get_llm_service() -> LLMService:
 
 def get_canvas_session_store() -> CanvasSessionStore:
     return get_container().resolve(CanvasSessionStore)
+
+
+def get_long_video_project_store() -> LongVideoProjectStore:
+    return get_container().resolve(LongVideoProjectStore)

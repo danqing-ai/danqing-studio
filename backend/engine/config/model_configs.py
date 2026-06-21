@@ -516,9 +516,14 @@ class LTXConfig:
     cfg_negative_prompt_style: str = "default"
     scheduler_bundle_extras: str = ""
     gemma_model_id: str = "mlx-community/gemma-3-12b-it-4bit"
+    text_encoder_gemma_local: str = ""
+    inject_text_encoder_paths: bool = True
     ltx_low_memory: bool = True
     low_ram_streaming: bool = False
     ltx_stage2_steps: int = 3
+    # I2V frame-0 anchor strength (1.0 = fully frozen; reference default). Scene
+    # coherence is enforced by pin_latent_by_mask in the denoise loop, not by <1.0.
+    ltx_i2v_anchor_strength: float = 1.0
     supports_long_video: bool = False
     ltx_long_video_max_frames: int = 257
 

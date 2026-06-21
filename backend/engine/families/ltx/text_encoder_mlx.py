@@ -1,7 +1,7 @@
 """LTX 2.3 Gemma 3 text encoder + connector (MLX).
 
-Loads Gemma via ``mlx_lm`` from ``gemma_model_id`` and the bundle
-``connector.safetensors`` weights (in-repo connector + feature extractor).
+Loads Gemma from registry ``text_encoder_gemma_local`` (``models/Text/gemma-3-12b-it-4bit``)
+and the bundle ``connector.safetensors`` weights (in-repo connector + feature extractor).
 """
 from __future__ import annotations
 
@@ -16,10 +16,10 @@ import mlx.nn as nn
 
 from backend.engine.runtime.mlx_runtime import load_weights_dict, run_eval
 from backend.engine.config.model_configs import LTXConfig
+from backend.engine.families.ltx.gemma_bundle import resolve_gemma_load_path
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_GEMMA = "mlx-community/gemma-3-12b-it-4bit"
 _DEFAULT_MAX_LENGTH = 1024
 
 
@@ -380,9 +380,20 @@ class LTX23GemmaEncoder:
         self.ctx = ctx
         self.bundle_root = Path(bundle_root)
         self.config = config or LTXConfig()
-        self.gemma_model_id = str(getattr(self.config, "gemma_model_id", None) or _DEFAULT_GEMMA)
+        self._gemma_root: Path | None = None
         self._gemma: Any | None = None
         self._extractor: Any | None = None
+
+    def _resolve_gemma_root(self) -> Path:
+        if self._gemma_root is not None:
+            return self._gemma_root
+        project_root = getattr(self.ctx, "project_root", None)
+        root = resolve_gemma_load_path(
+            self.config,
+            project_root=Path(project_root) if project_root else None,
+        )
+        self._gemma_root = root
+        return root
 
     def _max_length(self) -> int:
         return int(os.environ.get("LTX2_GEMMA_MAX_LENGTH", str(_DEFAULT_MAX_LENGTH)))
@@ -397,14 +408,12 @@ class LTX23GemmaEncoder:
 
         if self._gemma is None:
             self._gemma = _GemmaLanguageModel()
-            msg = (
-                f"LTX 2.3 loading Gemma text encoder ({self.gemma_model_id}); "
-                "first run may download from HuggingFace (~7GB) and take several minutes"
-            )
+            gemma_root = self._resolve_gemma_root()
+            msg = f"LTX 2.3 loading Gemma text encoder from {gemma_root}"
             logger.info(msg)
             if on_log:
                 on_log("info", msg)
-            self._gemma.load(self.gemma_model_id)
+            self._gemma.load(str(gemma_root))
             if on_log:
                 on_log("info", "LTX 2.3 Gemma text encoder ready")
 

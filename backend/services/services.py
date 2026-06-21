@@ -212,11 +212,24 @@ class SettingsService(ISettingsService):
         if getattr(config, "stub_no_download", False):
             return True
         versions = getattr(config, "versions", None) or {}
+        from backend.core.bundle_repos import bundle_local_paths, version_primary_local_path
+
         for version_key, version_config in versions.items():
-            model_dir = self._resolve_registry_version_bundle_dir(
-                model_name, version_key, version_config
-            )
-            if model_dir.exists() and self._path_has_bundle_weights(model_dir):
+            vc = version_config if isinstance(version_config, dict) else {}
+            try:
+                repo_paths = bundle_local_paths(vc)
+                if not repo_paths:
+                    repo_paths = [version_primary_local_path(vc)]
+            except ValueError:
+                repo_paths = [f"models/{model_name}-{version_key}"]
+
+            all_ready = True
+            for local_path in repo_paths:
+                model_dir = self._path_resolver.resolve_registry_local_path(local_path)
+                if not model_dir.exists() or not self._path_has_bundle_weights(model_dir):
+                    all_ready = False
+                    break
+            if all_ready:
                 return True
         return False
 
@@ -359,57 +372,78 @@ class SettingsService(ISettingsService):
             any_ready = False
             
             for version_key, version_config in versions.items():
+                vc = version_config if isinstance(version_config, dict) else {}
+                from backend.core.bundle_repos import bundle_local_paths, version_primary_local_path
+
+                try:
+                    repo_paths = bundle_local_paths(vc)
+                    if not repo_paths:
+                        repo_paths = [version_primary_local_path(vc)]
+                except ValueError:
+                    repo_paths = [f"models/{model_name}-{version_key}"]
+
+                missing_paths: list[str] = []
+                for local_path in repo_paths:
+                    model_dir = self._path_resolver.resolve_registry_local_path(local_path)
+                    if not model_dir.exists() or not self._path_has_bundle_weights(model_dir):
+                        missing_paths.append(local_path)
+
+                if missing_paths:
+                    model_status["versions"][version_key] = {
+                        "status": "not_downloaded" if all(
+                            not self._path_resolver.resolve_registry_local_path(p).exists()
+                            for p in repo_paths
+                        ) else "incomplete",
+                        "label": "Not downloaded" if len(missing_paths) == len(repo_paths) else "Files missing",
+                        "ready": False,
+                        "missing_paths": missing_paths,
+                    }
+                    continue
+
                 model_dir = self._resolve_registry_version_bundle_dir(
                     model_name, version_key, version_config
                 )
-                if not model_dir.exists():
-                    model_status["versions"][version_key] = {
-                        "status": "not_downloaded",
-                        "label": "Not downloaded",
-                        "ready": False
-                    }
-                else:
-                    has_weights = self._path_has_bundle_weights(model_dir)
-                    family = config.family or ""
-                    category = getattr(config, "category", None) or ""
-                    components: dict[str, Any] | None = None
-                    from backend.core.bundle_manifest import (
-                        bundle_component_status,
-                        skips_full_family_bundle_contract,
-                    )
+                has_weights = self._path_has_bundle_weights(model_dir)
+                family = config.family or ""
+                category = getattr(config, "category", None) or ""
+                components: dict[str, Any] | None = None
+                from backend.core.bundle_manifest import (
+                    bundle_component_status,
+                    skips_full_family_bundle_contract,
+                )
 
-                    if has_weights and family and not skips_full_family_bundle_contract(category):
-                        components = bundle_component_status(model_dir, family=family)
+                if has_weights and family and not skips_full_family_bundle_contract(category):
+                    components = bundle_component_status(model_dir, family=family)
 
-                    version_entry: dict[str, Any] = {
-                        "status": "not_downloaded",
-                        "label": "Not downloaded",
-                        "ready": False,
-                    }
-                    if has_weights:
-                        if components is not None and not components.get("complete", True):
-                            version_entry = {
-                                "status": "incomplete",
-                                "label": "Missing components",
-                                "ready": False,
-                                "bundle_components": components,
-                            }
-                        else:
-                            version_entry = {
-                                "status": "ready",
-                                "label": "Ready",
-                                "ready": True,
-                            }
-                            if components is not None:
-                                version_entry["bundle_components"] = components
-                            any_ready = True
-                    else:
+                version_entry: dict[str, Any] = {
+                    "status": "not_downloaded",
+                    "label": "Not downloaded",
+                    "ready": False,
+                }
+                if has_weights:
+                    if components is not None and not components.get("complete", True):
                         version_entry = {
                             "status": "incomplete",
-                            "label": "Files missing",
+                            "label": "Missing components",
                             "ready": False,
+                            "bundle_components": components,
                         }
-                    model_status["versions"][version_key] = version_entry
+                    else:
+                        version_entry = {
+                            "status": "ready",
+                            "label": "Ready",
+                            "ready": True,
+                        }
+                        if components is not None:
+                            version_entry["bundle_components"] = components
+                        any_ready = True
+                else:
+                    version_entry = {
+                        "status": "incomplete",
+                        "label": "Files missing",
+                        "ready": False,
+                    }
+                model_status["versions"][version_key] = version_entry
             
             # Set overall model status
             if any_ready:

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal, Optional
 
+from backend.core.dependency_specs import dependency_model_ids
 from backend.core.model_registry import ModelEntry, ModelRegistry
 from backend.engine.platform.info import PlatformInfo
 from backend.utils.size_parse import parse_human_size_to_gb
@@ -333,8 +334,8 @@ def topological_install_order(
             deps_map[model_id] = []
             continue
         raw = entry.raw if isinstance(entry.raw, dict) else {}
-        deps = raw.get("dependencies")
-        deps_map[model_id] = [str(d) for d in deps] if isinstance(deps, list) else []
+        deps = dependency_model_ids(raw.get("dependencies"))
+        deps_map[model_id] = deps
 
     ordered_ids: list[str] = []
     visiting: set[str] = set()

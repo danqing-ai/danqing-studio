@@ -5,11 +5,15 @@ import type {
   CanvasSessionState,
   CanvasSessionSummary,
   GalleryItem,
+  LongVideoProjectDetail,
+  LongVideoProjectState,
+  LongVideoProjectSummary,
   QueueState,
   RegistryData,
   SettingsData,
   SystemInfo,
 } from '@/types';
+import { DQ_STORAGE, getItem } from '@/utils/storage';
 
 const API_BASE = '';
 
@@ -17,10 +21,19 @@ const API_BASE = '';
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 /** Dataset auto-caption (vision LLM per image) and bulk uploads can run many minutes. */
 const LONG_REQUEST_TIMEOUT_MS = 600_000;
+/** Multi-round LLM (Plan → Expand batches → Continuity), e.g. long-video storyboard. */
+const LLM_MULTI_ROUND_TIMEOUT_MS = 300_000;
 
 const client = axios.create({
   baseURL: API_BASE,
   timeout: DEFAULT_REQUEST_TIMEOUT_MS,
+});
+
+client.interceptors.request.use((config) => {
+  const lang = getItem(DQ_STORAGE.LANG) || 'zh';
+  config.headers = config.headers ?? {};
+  config.headers['Accept-Language'] = lang;
+  return config;
 });
 
 /** Task id from media submit 202 body `{ task: { id, ... } }` (legacy flat `{ id }` tolerated). */
@@ -470,6 +483,11 @@ export const api = {
       return response.data;
     },
 
+    async createVideoLongGeneration(body: Record<string, unknown>): Promise<unknown> {
+      const response = await client.post('/api/videos/long-generations', body);
+      return response.data;
+    },
+
     async createVideoEdit(body: Record<string, unknown>): Promise<unknown> {
       const response = await client.post('/api/videos/edits', body);
       return response.data;
@@ -617,18 +635,38 @@ export const api = {
       target_duration_sec?: number;
       initial_duration_sec?: number;
       segment_extend_sec?: number;
+      segment_duration_sec?: number;
       reference_duration_sec?: number;
       style_positive?: string;
+      locale?: string;
+      use_shot_plan?: boolean;
     }): Promise<{
       character_anchor: string;
+      style_anchor?: string;
+      characters?: Array<{
+        id: string;
+        name: string;
+        default_look_id: string;
+        looks: Array<{ id: string; label: string; body: string }>;
+      }>;
       opening_prompt: string;
       segment_prompts: string[];
       segment_count: number;
       plan: Record<string, unknown>;
       beat_sheet: string[];
       llm_calls: number;
+      shots: Array<{
+        id?: string;
+        order?: number;
+        visual_prompt: string;
+        motion_prompt: string;
+        scene_prompt?: string;
+        cast_looks?: Array<{ character_id: string; look_id: string }>;
+      }>;
     }> {
-      const response = await client.post('/api/chat/long-video-storyboard', body);
+      const response = await client.post('/api/chat/long-video-storyboard', body, {
+        timeout: LLM_MULTI_ROUND_TIMEOUT_MS,
+      });
       return response.data;
     },
 
@@ -793,6 +831,41 @@ export const api = {
 
     async deleteSession(sessionId: string): Promise<void> {
       await client.delete(`/api/canvas/sessions/${encodeURIComponent(sessionId)}`);
+    },
+  },
+
+  longVideo: {
+    async listProjects(limit = 100): Promise<LongVideoProjectSummary[]> {
+      const response = await client.get('/api/long-video/projects', { params: { limit } });
+      return (response.data?.items || []) as LongVideoProjectSummary[];
+    },
+
+    async getProject(projectId: string): Promise<LongVideoProjectDetail> {
+      const response = await client.get(`/api/long-video/projects/${encodeURIComponent(projectId)}`);
+      return response.data as LongVideoProjectDetail;
+    },
+
+    async createProject(body: {
+      title?: string;
+      state?: Partial<LongVideoProjectState>;
+    }): Promise<LongVideoProjectDetail> {
+      const response = await client.post('/api/long-video/projects', body);
+      return response.data as LongVideoProjectDetail;
+    },
+
+    async updateProject(
+      projectId: string,
+      body: { title?: string; state?: Partial<LongVideoProjectState> },
+    ): Promise<LongVideoProjectDetail> {
+      const response = await client.put(
+        `/api/long-video/projects/${encodeURIComponent(projectId)}`,
+        body,
+      );
+      return response.data as LongVideoProjectDetail;
+    },
+
+    async deleteProject(projectId: string): Promise<void> {
+      await client.delete(`/api/long-video/projects/${encodeURIComponent(projectId)}`);
     },
   },
 

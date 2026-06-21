@@ -7,6 +7,7 @@ import os
 os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
 
 import logging
+import threading
 import time
 import uuid
 import json
@@ -22,6 +23,7 @@ from backend.core.bundle_repos import (
     primary_and_follow_ups,
     version_primary_local_path,
 )
+from backend.core.dependency_specs import DependencySpec, parse_dependencies
 from backend.core.install_hooks import install_hooks_from_version, run_install_hooks
 from backend.core.bundle_manifest import skips_full_family_bundle_contract, write_bundle_manifest
 from backend.core.interfaces import (
@@ -36,12 +38,246 @@ from backend.services.hf_repo_resolve import resolve_huggingface_repo_id
 logger = logging.getLogger(__name__)
 
 
+def _calc_download_dir_bytes(root: Path) -> int:
+    """Bytes on disk for a model install dir (incl. ModelScope ``._____temp`` partials)."""
+    if not root.is_dir():
+        return 0
+    total = 0
+    for dirpath, _dirnames, filenames in os.walk(root):
+        for name in filenames:
+            fp = os.path.join(dirpath, name)
+            try:
+                total += os.path.getsize(fp)
+            except OSError:
+                pass
+    return total
+
+
+def _format_download_speed(bytes_per_sec: float) -> str:
+    if bytes_per_sec <= 0:
+        return ""
+    if bytes_per_sec > 1024 ** 3:
+        return f"{bytes_per_sec / (1024 ** 3):.1f} GB/s"
+    if bytes_per_sec > 1024 ** 2:
+        return f"{bytes_per_sec / (1024 ** 2):.1f} MB/s"
+    if bytes_per_sec > 1024:
+        return f"{bytes_per_sec / 1024:.1f} KB/s"
+    return f"{bytes_per_sec:.1f} B/s"
+
+
+class _ModelScopeProgressTracker:
+    """Thread-safe byte counter fed by ModelScope ``ProgressCallback`` during snapshot_download."""
+
+    def __init__(self, *, baseline_bytes: int = 0) -> None:
+        self._lock = threading.Lock()
+        self._baseline = int(baseline_bytes)
+        self._session_bytes = 0
+        self._active_file = ""
+        self._last_activity_time = time.time()
+
+    def note_activity(self) -> None:
+        with self._lock:
+            self._last_activity_time = time.time()
+
+    def callback_class(self) -> type:
+        tracker = self
+
+        from modelscope.hub.callback import ProgressCallback
+
+        class _TrackedCallback(ProgressCallback):
+            def __init__(self, filename: str, file_size: int) -> None:
+                super().__init__(filename, file_size)
+                with tracker._lock:
+                    tracker._active_file = filename
+                tracker.note_activity()
+
+            def update(self, size: int) -> None:
+                with tracker._lock:
+                    tracker._session_bytes += int(size)
+                tracker.note_activity()
+
+            def end(self) -> None:
+                tracker.note_activity()
+
+        return _TrackedCallback
+
+    def downloaded_bytes(self, root: Path) -> int:
+        disk = _calc_download_dir_bytes(root)
+        with self._lock:
+            tracked = self._baseline + self._session_bytes
+        return max(disk, tracked)
+
+    @property
+    def active_file(self) -> str:
+        with self._lock:
+            return self._active_file
+
+    @property
+    def last_activity_time(self) -> float:
+        with self._lock:
+            return self._last_activity_time
+
+
+def _modelscope_stall_timeout_seconds(
+    *,
+    estimated_bytes: int = 0,
+    allow_patterns: list[str] | None = None,
+) -> int:
+    """Idle timeout before aborting a ModelScope snapshot (large shards need longer handshakes)."""
+    if estimated_bytes >= 50 * 1024 ** 3:
+        return 900
+    if estimated_bytes >= 20 * 1024 ** 3:
+        return 600
+    if allow_patterns and any(
+        str(p).endswith((".safetensors", ".pth")) for p in allow_patterns
+    ):
+        return 600
+    return _DOWNLOAD_STALL_SECONDS
+
+
+def _modelscope_connect_grace_seconds(*, estimated_bytes: int = 0) -> int:
+    """Extra idle budget while still fetching early metadata / first multi-GB shard."""
+    if estimated_bytes >= 20 * 1024 ** 3:
+        return 600
+    if estimated_bytes >= 5 * 1024 ** 3:
+        return 300
+    return 120
+
+
+_MODELSCOPE_CONNECT_GRACE_BYTE_CAP = 256 * 1024 ** 2
+
+
+def _modelscope_stall_watch_kwargs(
+    *,
+    estimated_bytes: int,
+    allow_patterns: list[str] | None,
+    tracker: _ModelScopeProgressTracker,
+) -> dict[str, Any]:
+    return {
+        "stall_seconds": _modelscope_stall_timeout_seconds(
+            estimated_bytes=estimated_bytes,
+            allow_patterns=allow_patterns,
+        ),
+        "connect_grace_seconds": _modelscope_connect_grace_seconds(
+            estimated_bytes=estimated_bytes,
+        ),
+        "connect_grace_byte_cap": _MODELSCOPE_CONNECT_GRACE_BYTE_CAP,
+        "last_activity_time": tracker.last_activity_time,
+        "active_file": tracker.active_file,
+    }
+
+
+def _modelscope_workers_for_patterns(patterns: list[str] | None) -> int:
+    """Large shard repos: download sequentially to reduce disk peak and network errors."""
+    if not patterns:
+        return 4
+    if any(str(p).endswith((".safetensors", ".pth")) for p in patterns):
+        return 1
+    return 4
+
+
+def _split_modelscope_allow_patterns(patterns: list[str] | None) -> list[list[str]]:
+    """Split mixed subtree + repo-root patterns for ModelScope ``snapshot_download``.
+
+    ModelScope ``extract_root_from_patterns`` picks e.g. ``google`` from ``google/**`` and
+    then only lists files under that subtree — root-level shards (T5/VAE) never download.
+    """
+    if not patterns:
+        return []
+    normalized = [str(p).strip() for p in patterns if str(p).strip()]
+    if not normalized:
+        return []
+
+    try:
+        from modelscope.hub.utils.utils import extract_root_from_patterns
+
+        root = extract_root_from_patterns(allow_patterns=normalized)
+    except Exception:
+        return [normalized]
+
+    if not root:
+        return [normalized]
+
+    root = root.strip("/")
+    prefix = f"{root}/"
+    in_root: list[str] = []
+    outside: list[str] = []
+    for pat in normalized:
+        bare = pat.rstrip("/")
+        if bare.endswith("/**") and bare[:-3].rstrip("/") == root:
+            in_root.append(pat)
+        elif pat.startswith(prefix):
+            in_root.append(pat)
+        elif "/" not in pat:
+            outside.append(pat)
+        else:
+            outside.append(pat)
+
+    if not outside:
+        return [in_root]
+    if not in_root:
+        return _split_modelscope_allow_patterns(outside)
+
+    return [in_root] + _split_modelscope_allow_patterns(outside)
+
+
+def _min_bytes_for_pattern(pattern: str) -> int:
+    name = pattern.rsplit("/", 1)[-1]
+    if name.endswith(".safetensors") or name.endswith(".pth"):
+        return 1024 ** 3
+    if name.endswith(".json"):
+        return 32
+    return 1024
+
+
+def _bundle_repo_is_complete(dest: Path, patterns: list[str] | None) -> bool:
+    """True when every allow_pattern target exists with plausible size."""
+    return not _missing_bundle_patterns(dest, patterns)
+
+
+def _missing_bundle_patterns(dest: Path, patterns: list[str] | None) -> list[str]:
+    if not patterns or not dest.is_dir():
+        return list(patterns or [])
+    import fnmatch
+
+    missing: list[str] = []
+    for raw in patterns:
+        pat = str(raw).strip()
+        if not pat:
+            continue
+        min_sz = _min_bytes_for_pattern(pat)
+        if pat.endswith("/**"):
+            sub = dest / pat[:-3].rstrip("/")
+            if not sub.is_dir():
+                missing.append(pat)
+                continue
+            if not any(f.is_file() and f.stat().st_size >= 1024 for f in sub.rglob("*")):
+                missing.append(pat)
+            continue
+        if "**" in pat:
+            suffix = pat.split("**/")[-1]
+            hits = [p for p in dest.rglob(suffix) if p.is_file()]
+        elif any(ch in pat for ch in "*?[]"):
+            hits = [p for p in dest.rglob("*") if p.is_file() and fnmatch.fnmatch(
+                str(p.relative_to(dest)), pat
+            )]
+        else:
+            fp = dest / pat
+            hits = [fp] if fp.is_file() else []
+        if not hits or not any(h.stat().st_size >= min_sz for h in hits):
+            missing.append(pat)
+    return missing
+
+
+_DOWNLOAD_STALL_SECONDS = 180
+
+
 class DownloadService(IDownloadService):
     """Download service implementation.
 
     Automatically selects the download method based on the source field in the model registry:
     - huggingface: uses huggingface_hub.snapshot_download, polls directory size for progress
-    - modelscope: uses modelscope.snapshot_download, polls directory size for progress
+    - modelscope: uses modelscope.snapshot_download with ProgressCallback + disk polling
     - civitai / http: uses HTTPDownloader (aiohttp)
     """
 
@@ -72,6 +308,10 @@ class DownloadService(IDownloadService):
 
         # Active model download dedup: (model_name, version) -> task_id
         self._active_model_downloads: Dict[tuple, str] = {}
+        # In-flight download workers (same model+version must not run concurrently)
+        self._inflight_model_downloads: set[tuple[str, str | None]] = set()
+        # Prevent dependency install recursion loops
+        self._dependency_install_chain: set[tuple[str, str | None]] = set()
         # Concurrency lock protecting dedup checks and task creation
         self._download_lock = asyncio.Lock()
 
@@ -151,7 +391,99 @@ class DownloadService(IDownloadService):
                 )
         except Exception as e:
             print(f"[DownloadService] Failed to load persisted download tasks: {e}")
+        else:
+            self._reconcile_duplicate_model_downloads()
+            self._inflight_model_downloads.clear()
 
+    def _find_active_model_download(self, dedup_key: tuple[str, str | None]) -> str | None:
+        """Return task_id for an active model download (running, paused, or failed)."""
+        tid = self._active_model_downloads.get(dedup_key)
+        if tid and tid in self._downloads:
+            task = self._downloads[tid]
+            if task.status in (TaskStatus.RUNNING, TaskStatus.PAUSED, TaskStatus.FAILED):
+                return tid
+        model_name, version = dedup_key
+        best_id: str | None = None
+        best_bytes = -1
+        for candidate_id, task in self._downloads.items():
+            if getattr(task, "_model_name", None) != model_name:
+                continue
+            if getattr(task, "_version", None) != version:
+                continue
+            if task.status not in (TaskStatus.RUNNING, TaskStatus.PAUSED, TaskStatus.FAILED):
+                continue
+            prog = self._progress.get(candidate_id)
+            nbytes = prog.downloaded_size if prog else 0
+            if nbytes > best_bytes:
+                best_bytes = nbytes
+                best_id = candidate_id
+        return best_id
+
+    async def _emit_task_progress(
+        self,
+        task_id: str,
+        progress_callback: Optional[Callable[[DownloadProgress], None]],
+    ) -> None:
+        if not progress_callback:
+            return
+        progress = self._progress.get(task_id)
+        if progress:
+            await self._async_callback(progress_callback, progress)
+            return
+        task = self._downloads.get(task_id)
+        if not task:
+            return
+        await self._async_callback(
+            progress_callback,
+            DownloadProgress(
+                task_id=task_id,
+                status=task.status.value,
+                progress=task.progress,
+                filename=getattr(task, "url", "") or task_id,
+            ),
+        )
+
+    def _reconcile_duplicate_model_downloads(self) -> None:
+        """Collapse duplicate paused/running tasks for the same model+version after restart."""
+        groups: dict[tuple[str, str | None], list[str]] = {}
+        for task_id, task in self._downloads.items():
+            model_name = getattr(task, "_model_name", None)
+            if not model_name:
+                continue
+            if task.status not in (TaskStatus.RUNNING, TaskStatus.PAUSED, TaskStatus.FAILED):
+                continue
+            key = (model_name, getattr(task, "_version", None))
+            groups.setdefault(key, []).append(task_id)
+
+        changed = False
+        for key, task_ids in groups.items():
+            if len(task_ids) == 1:
+                self._active_model_downloads[key] = task_ids[0]
+                continue
+
+            def _score(tid: str) -> tuple[int, float]:
+                prog = self._progress.get(tid)
+                if not prog:
+                    return (0, 0.0)
+                return (prog.downloaded_size, prog.progress)
+
+            keep_id = max(task_ids, key=_score)
+            self._active_model_downloads[key] = keep_id
+            for tid in task_ids:
+                if tid == keep_id:
+                    continue
+                logger.info(
+                    "Removing duplicate download task %s for %s (keeping %s)",
+                    tid,
+                    key,
+                    keep_id,
+                )
+                del self._downloads[tid]
+                self._progress.pop(tid, None)
+                changed = True
+
+        if changed:
+            self._persist_downloads()
 
 
     def _load_registry(self) -> Dict[str, Any]:
@@ -237,8 +569,136 @@ class DownloadService(IDownloadService):
                 total += self._parse_size_to_bytes(str(sz))
         return total
 
+    def _require_bundle_repo_complete(
+        self,
+        dest: Path,
+        spec: dict[str, Any],
+        *,
+        label: str,
+    ) -> None:
+        patterns = spec.get("allow_patterns")
+        missing = _missing_bundle_patterns(dest, patterns if isinstance(patterns, list) else None)
+        if missing:
+            repo = str(spec.get("repo_id") or label)
+            raise RuntimeError(
+                f"{label} incomplete after download ({repo}): missing {', '.join(missing)}"
+            )
+
+    def _check_download_stall(
+        self,
+        *,
+        downloaded: int,
+        last_growth_bytes: int,
+        last_growth_time: float,
+        label: str,
+        stall_seconds: int | None = None,
+        last_activity_time: float | None = None,
+        connect_grace_seconds: int = 0,
+        connect_grace_byte_cap: int = 0,
+        active_file: str = "",
+    ) -> None:
+        now = time.time()
+        if downloaded > last_growth_bytes:
+            return
+        timeout = int(stall_seconds or _DOWNLOAD_STALL_SECONDS)
+        if (
+            connect_grace_seconds > 0
+            and connect_grace_byte_cap > 0
+            and downloaded < connect_grace_byte_cap
+            and now - last_growth_time < connect_grace_seconds
+        ):
+            return
+        activity = last_activity_time if last_activity_time is not None else last_growth_time
+        idle_for = now - max(last_growth_time, activity)
+        if idle_for < timeout:
+            return
+        file_hint = f" (last file: {os.path.basename(active_file)})" if active_file else ""
+        raise RuntimeError(
+            f"{label} stalled: no new bytes for {int(idle_for)}s "
+            f"(limit {timeout}s, downloaded {downloaded / (1024 ** 3):.2f} GB){file_hint}. "
+            "ModelScope may be slow starting large shards (e.g. T5 ~10GB). "
+            "Check network to modelscope.cn, cancel and retry, or try again off-peak."
+        )
+
     def _resolve_registry_path(self, local_path: str) -> Path:
         return self._path_resolver.resolve_registry_local_path(local_path)
+
+    def _assert_disk_headroom(self, dest: Path, required_bytes: int) -> None:
+        import shutil
+
+        dest.mkdir(parents=True, exist_ok=True)
+        free = shutil.disk_usage(str(dest)).free
+        if free < required_bytes:
+            raise RuntimeError(
+                f"Insufficient disk space under {dest}: need at least "
+                f"{required_bytes / (1024 ** 3):.0f} GB free, have {free / (1024 ** 3):.0f} GB."
+            )
+
+    def _modelscope_snapshot(
+        self,
+        *,
+        model_id: str,
+        local_dir: str,
+        allow_patterns: list[str] | None,
+        progress_callback_cls: type | None = None,
+        max_workers: int | None = None,
+        retries: int = 3,
+    ) -> str:
+        from modelscope import snapshot_download as ms_snapshot
+
+        if not self._check_modelscope_connectivity():
+            raise ConnectionError(
+                "Cannot connect to ModelScope, please check network connection"
+            )
+        pattern_groups = _split_modelscope_allow_patterns(allow_patterns)
+        if not pattern_groups:
+            pattern_groups = [allow_patterns]
+
+        ms_callbacks = [progress_callback_cls] if progress_callback_cls else None
+        last_exc: Exception | None = None
+        result_path = local_dir
+        for group in pattern_groups:
+            workers = max_workers if max_workers is not None else _modelscope_workers_for_patterns(
+                group
+            )
+            for attempt in range(1, retries + 1):
+                try:
+                    result_path = ms_snapshot(
+                        model_id=model_id,
+                        local_dir=local_dir,
+                        allow_patterns=group if group else None,
+                        progress_callbacks=ms_callbacks,
+                        max_workers=workers,
+                    )
+                    last_exc = None
+                    break
+                except Exception as exc:
+                    last_exc = exc
+                    if attempt >= retries:
+                        break
+                    wait_s = min(2 ** attempt, 30)
+                    logger.warning(
+                        "ModelScope download %s failed (attempt %d/%d, patterns=%s): %s; retry in %ds",
+                        model_id,
+                        attempt,
+                        retries,
+                        group,
+                        exc,
+                        wait_s,
+                    )
+                    time.sleep(wait_s)
+            if last_exc is not None:
+                break
+
+        if last_exc is not None:
+            hint = (
+                " Large safetensor shards download one at a time; ensure stable network "
+                "to modelscope.cn and enough free disk (~65GB for Wan 720p distill MoE)."
+            )
+            raise RuntimeError(
+                f"ModelScope download failed for {model_id}: {last_exc}.{hint}"
+            ) from last_exc
+        return result_path
 
     def _maybe_assemble_hunyuan_ms_bundle(self, target: Path, ver_config: dict[str, Any] | None) -> None:
         if not ver_config:
@@ -250,12 +710,103 @@ class DownloadService(IDownloadService):
 
         assemble_hunyuan_modelscope_bundle(target, str(variant))
 
+    def _dependency_is_ready(self, spec: DependencySpec) -> bool:
+        dep_cfg = self.get_model_download_config(spec.model_id) or {}
+        versions = dep_cfg.get("versions") or {}
+        version_keys: list[str] = []
+        if spec.version:
+            version_keys.append(spec.version)
+            if spec.version == "shared":
+                version_keys.append("original")
+        else:
+            version_keys = list(versions.keys())
+
+        for version_key in version_keys:
+            ver = versions.get(version_key)
+            if not isinstance(ver, dict):
+                continue
+            try:
+                local_path = version_primary_local_path(ver)
+            except ValueError:
+                continue
+            root = self._path_resolver.resolve_registry_local_path(local_path)
+            patterns = ver.get("allow_patterns")
+            if isinstance(patterns, list) and patterns:
+                if _bundle_repo_is_complete(root, [str(p) for p in patterns]):
+                    return True
+                continue
+            if root.is_dir() and _calc_download_dir_bytes(root) >= 1024 ** 3:
+                return True
+        return False
+
+    async def _ensure_dependencies_installed(
+        self,
+        *,
+        model_name: str,
+        config: dict[str, Any],
+        progress_callback: Callable[[DownloadProgress], None] | None,
+    ) -> None:
+        deps = parse_dependencies(config.get("dependencies"))
+        if not deps:
+            return
+        for spec in deps:
+            if self._dependency_is_ready(spec):
+                continue
+            dep_key = (spec.model_id, spec.version)
+            if dep_key in self._dependency_install_chain:
+                raise RuntimeError(
+                    f"Circular model dependency while installing {model_name!r}: {spec.model_id!r}"
+                )
+            self._dependency_install_chain.add(dep_key)
+            try:
+                logger.info(
+                    "Installing dependency %s:%s for %s",
+                    spec.model_id,
+                    spec.version or "default",
+                    model_name,
+                )
+                await self.download_model(
+                    spec.model_id,
+                    version=spec.version,
+                    progress_callback=progress_callback,
+                )
+            finally:
+                self._dependency_install_chain.discard(dep_key)
+            if not self._dependency_is_ready(spec):
+                loc = get_locale()
+                raise RuntimeError(
+                    tt(
+                        "error.missing_dependencies",
+                        loc,
+                        deps=f"{spec.model_id}"
+                        + (f":{spec.version}" if spec.version else ""),
+                    )
+                )
+
     def _maybe_assemble_wan_distill_bundle(self, target: Path, ver_config: dict[str, Any] | None) -> None:
         if not ver_config:
             return
         variant = ver_config.get("wan_distill_variant")
         if not variant:
             return
+        from backend.services.wan_distill_shared import link_wan_distill_shared_assets
+
+        def _resolve_dep_path(model_id: str, version_key: str) -> Path:
+            dep_cfg = self.get_model_download_config(model_id) or {}
+            versions = dep_cfg.get("versions") or {}
+            ver = versions.get(version_key)
+            if not isinstance(ver, dict):
+                raise KeyError(f"{model_id}:{version_key}")
+            local_path = ver.get("local_path")
+            if not isinstance(local_path, str) or not local_path.strip():
+                raise ValueError(f"{model_id}:{version_key} missing local_path")
+            return self._path_resolver.resolve_registry_local_path(local_path.strip())
+
+        link_wan_distill_shared_assets(
+            distill_root=target,
+            variant=str(variant),
+            resolve_local_path=_resolve_dep_path,
+        )
         from backend.services.wan_distill_bundle import assemble_wan_distill_bundle
 
         assemble_wan_distill_bundle(target, str(variant))
@@ -334,6 +885,7 @@ class DownloadService(IDownloadService):
         spec: dict[str, Any],
         *,
         default_source: str,
+        progress_callback_cls: type | None = None,
     ) -> str:
         """Download one ``bundle_repos`` follow-up entry."""
         repo = str(spec["repo_id"]).strip()
@@ -341,6 +893,9 @@ class DownloadService(IDownloadService):
         dest.mkdir(parents=True, exist_ok=True)
         source = str(spec.get("source") or default_source).strip().lower()
         patterns = spec.get("allow_patterns")
+        if isinstance(patterns, list) and _bundle_repo_is_complete(dest, patterns):
+            logger.info("Bundle repo %s already present under %s; skipping download", repo, dest)
+            return str(dest)
 
         if source == "huggingface":
             from huggingface_hub import snapshot_download as hf_snapshot
@@ -358,16 +913,15 @@ class DownloadService(IDownloadService):
             )
 
         if source == "modelscope":
-            from modelscope import snapshot_download as ms_snapshot
-
-            if not self._check_modelscope_connectivity():
-                raise ConnectionError(
-                    "Cannot connect to ModelScope, please check network connection"
-                )
-            return ms_snapshot(
+            if isinstance(patterns, list) and any(
+                str(p).endswith((".safetensors", ".pth")) for p in patterns
+            ):
+                self._assert_disk_headroom(dest, 130 * 1024 ** 3)
+            return self._modelscope_snapshot(
                 model_id=repo,
                 local_dir=str(dest),
                 allow_patterns=patterns if patterns else None,
+                progress_callback_cls=progress_callback_cls,
             )
 
         raise RuntimeError(f"Unsupported bundle repo source {source!r} for {repo!r}")
@@ -440,36 +994,43 @@ class DownloadService(IDownloadService):
         target = self._path_resolver.resolve_registry_local_path(local_path)
         target.mkdir(parents=True, exist_ok=True)
 
-        # Dedup check: only one running/queued download per model per version
         dedup_key = (model_name, version)
-        existing_active_id = self._active_model_downloads.get(dedup_key)
-        if existing_active_id and existing_active_id in self._downloads:
-            existing_task = self._downloads[existing_active_id]
-            if existing_task.status == TaskStatus.RUNNING:
-                # Running task already exists, return existing task_id
-                return existing_active_id
-            elif existing_task.status == TaskStatus.PAUSED:
-                # Paused task exists; if resuming, continue; otherwise return existing task_id
-                if not existing_task_id or existing_task_id != existing_active_id:
-                    return existing_active_id
 
-        if existing_task_id and existing_task_id in self._downloads:
-            task_id = existing_task_id
-            task = self._downloads[task_id]
+        async with self._download_lock:
+            if dedup_key in self._inflight_model_downloads:
+                inflight_id = self._active_model_downloads.get(dedup_key)
+                if inflight_id and inflight_id in self._downloads:
+                    await self._emit_task_progress(inflight_id, progress_callback)
+                    return inflight_id
+
+            existing_active_id = self._find_active_model_download(dedup_key)
+            if existing_active_id and existing_active_id in self._downloads:
+                existing_task = self._downloads[existing_active_id]
+                if existing_task.status == TaskStatus.RUNNING:
+                    await self._emit_task_progress(existing_active_id, progress_callback)
+                    return existing_active_id
+                if existing_task.status in (TaskStatus.PAUSED, TaskStatus.FAILED):
+                    if not existing_task_id or existing_task_id != existing_active_id:
+                        existing_task_id = existing_active_id
+
+            if existing_task_id and existing_task_id in self._downloads:
+                task_id = existing_task_id
+                task = self._downloads[task_id]
+                task.status = TaskStatus.RUNNING
+                task.target_path = str(target)
+            else:
+                task_id = str(uuid.uuid4())
+                task = DownloadTask(
+                    id=task_id,
+                    url=repo_id or download_url or "",
+                    target_path=str(target),
+                )
+            task._model_name = model_name
+            task._version = version
+            self._downloads[task_id] = task
+            self._active_model_downloads[dedup_key] = task_id
             task.status = TaskStatus.RUNNING
-            task.target_path = str(target)
-        else:
-            task_id = str(uuid.uuid4())
-            task = DownloadTask(
-                id=task_id,
-                url=repo_id or download_url or "",
-                target_path=str(target)
-            )
-        task._model_name = model_name
-        task._version = version
-        self._downloads[task_id] = task
-        self._active_model_downloads[dedup_key] = task_id
-        task.status = TaskStatus.RUNNING
+            self._inflight_model_downloads.add(dedup_key)
 
         # Internal progress callback (store progress + external callback + persist)
         async def on_progress(progress: DownloadProgress):
@@ -487,18 +1048,32 @@ class DownloadService(IDownloadService):
                 display_name = model_display_name
                 if version_display_name:
                     display_name = f"{model_display_name} {version_display_name}"
+                init_total = estimated_size if estimated_size > 0 else (
+                    existing_progress.total_size if existing_progress else 0
+                )
+                init_downloaded = (
+                    existing_progress.downloaded_size
+                    if existing_progress and existing_progress.downloaded_size > 0
+                    else _calc_download_dir_bytes(target)
+                )
                 await self._async_callback(progress_callback, DownloadProgress(
                     task_id=task_id,
                     status="running",
-                    progress=0,
-                    total_size=0,
-                    downloaded_size=0,
+                    progress=(init_downloaded / init_total) if init_total > 0 else 0,
+                    total_size=init_total,
+                    downloaded_size=init_downloaded,
                     speed="",
                     error_message="",
                     filename=display_name
                 ))
 
         try:
+            await self._ensure_dependencies_installed(
+                model_name=model_name,
+                config=config,
+                progress_callback=progress_callback,
+            )
+
             if source == "huggingface" and repo_id:
                 # Inline HuggingFace download: snapshot_download + poll directory size for progress
                 from huggingface_hub import snapshot_download
@@ -681,85 +1256,83 @@ class DownloadService(IDownloadService):
                     ))
                     raise
             elif source == "modelscope" and repo_id:
-                # Inline ModelScope download: snapshot_download + poll directory size for progress
-                from modelscope import snapshot_download
-
-                def calc_ms_tree(p: Path) -> int:
-                    if not p.exists():
-                        return 0
-                    total = 0
-                    for dirpath, _dirnames, filenames in os.walk(p):
-                        for f in filenames:
-                            fp = os.path.join(dirpath, f)
-                            try:
-                                total += os.path.getsize(fp)
-                            except OSError:
-                                pass
-                    temp_dir = p / "._____temp"
-                    if temp_dir.exists():
-                        for dirpath, _dirnames, filenames in os.walk(temp_dir):
-                            for f in filenames:
-                                fp = os.path.join(dirpath, f)
-                                try:
-                                    total += os.path.getsize(fp)
-                                except OSError:
-                                    pass
-                    return total
-
-                def format_speed_ms(bytes_per_sec):
-                    if bytes_per_sec > 1024 * 1024 * 1024:
-                        return f"{bytes_per_sec / (1024 * 1024 * 1024):.1f} GB/s"
-                    elif bytes_per_sec > 1024 * 1024:
-                        return f"{bytes_per_sec / (1024 * 1024):.1f} MB/s"
-                    elif bytes_per_sec > 1024:
-                        return f"{bytes_per_sec / 1024:.1f} KB/s"
-                    else:
-                        return f"{bytes_per_sec:.1f} B/s"
-
-                total_size = estimated_size if estimated_size > 0 else (existing_progress.total_size if existing_progress else 0)
+                total_size = estimated_size if estimated_size > 0 else (
+                    existing_progress.total_size if existing_progress else 0
+                )
+                baseline = _calc_download_dir_bytes(target)
+                tracker = _ModelScopeProgressTracker(baseline_bytes=baseline)
+                ms_allow_patterns: list[str] | None = None
+                if ver_config:
+                    _primary_spec, _ = primary_and_follow_ups(ver_config)
+                    if _primary_spec:
+                        _raw_patterns = _primary_spec.get("allow_patterns")
+                        if isinstance(_raw_patterns, list):
+                            ms_allow_patterns = [str(p) for p in _raw_patterns]
 
                 loop = asyncio.get_event_loop()
 
                 def do_download_ms():
-                    # Check network connectivity first
-                    if not self._check_modelscope_connectivity():
-                        raise ConnectionError(
-                            "Cannot connect to ModelScope, please check network connection"
-                        )
                     allow_patterns = None
+                    primary_spec = None
                     if ver_config:
                         primary_spec, _ = primary_and_follow_ups(ver_config)
                         if primary_spec and primary_spec.get("allow_patterns"):
                             allow_patterns = primary_spec["allow_patterns"]
                         else:
                             allow_patterns = ver_config.get("allow_patterns")
-                    return snapshot_download(
+                    if (
+                        primary_spec
+                        and isinstance(allow_patterns, list)
+                        and _bundle_repo_is_complete(target, allow_patterns)
+                    ):
+                        logger.info(
+                            "Primary bundle repo already present under %s; skipping",
+                            target,
+                        )
+                        return str(target)
+                    if isinstance(allow_patterns, list) and any(
+                        str(p).endswith((".safetensors", ".pth")) for p in allow_patterns
+                    ):
+                        self._assert_disk_headroom(target, 130 * 1024 ** 3)
+                    return self._modelscope_snapshot(
                         model_id=repo_id,
                         local_dir=str(target),
                         allow_patterns=allow_patterns if allow_patterns else None,
+                        progress_callback_cls=tracker.callback_class(),
                     )
 
                 download_future = loop.run_in_executor(None, do_download_ms)
 
-                # Poll directory size to calculate progress
-                last_downloaded = calc_ms_tree(target)
+                last_downloaded = tracker.downloaded_bytes(target)
                 last_report_time = time.time()
+                last_growth_bytes = last_downloaded
+                last_growth_time = last_report_time
+
+                def _ms_progress_filename(label: str, downloaded: int) -> str:
+                    active = tracker.active_file
+                    if active:
+                        return f"{label} · {os.path.basename(active)}"
+                    if downloaded <= baseline:
+                        return f"{label} · 连接魔塔…"
+                    return label
 
                 try:
                     while not download_future.done():
-                        await asyncio.sleep(2)  # Check every 2 seconds
+                        await asyncio.sleep(1.0)
                         if task_id in self._cancelled_downloads:
                             break
 
-                        current_downloaded = calc_ms_tree(target)
+                        current_downloaded = tracker.downloaded_bytes(target)
                         now = time.time()
-
-                        # Calculate speed
+                        if current_downloaded > last_growth_bytes:
+                            last_growth_bytes = current_downloaded
+                            last_growth_time = now
                         dt = now - last_report_time
                         speed_str = ""
                         if dt >= 1:
-                            speed_bytes = (current_downloaded - last_downloaded) / dt
-                            speed_str = format_speed_ms(speed_bytes)
+                            speed_str = _format_download_speed(
+                                (current_downloaded - last_downloaded) / dt
+                            )
                             last_downloaded = current_downloaded
                             last_report_time = now
 
@@ -772,41 +1345,70 @@ class DownloadService(IDownloadService):
                             total_size=total_size,
                             downloaded_size=current_downloaded,
                             speed=speed_str,
-                            filename=display_name
+                            filename=_ms_progress_filename(display_name, current_downloaded),
                         ))
 
                     result_path = await download_future
 
-                    _, follow_ups = primary_and_follow_ups(ver_config)
+                    if ver_config and ver_config.get("allow_patterns") and not bundle_repos_from_version(
+                        ver_config
+                    ):
+                        self._require_bundle_repo_complete(
+                            target, ver_config, label=display_name
+                        )
+
+                    primary_spec, follow_ups = primary_and_follow_ups(ver_config)
+                    if primary_spec:
+                        self._require_bundle_repo_complete(
+                            target, primary_spec, label=display_name
+                        )
                     if follow_ups:
                         label_parts = [display_name]
                         for spec in follow_ups:
                             repo_label = str(spec.get("name") or str(spec["repo_id"]).split("/")[-1])
                             label_parts.append(repo_label)
                             companion_label = " + ".join(label_parts)
+                            comp_tracker = _ModelScopeProgressTracker(
+                                baseline_bytes=_calc_download_dir_bytes(target),
+                            )
 
-                            def do_download_ms_c(_spec=spec):
+                            def do_download_ms_c(
+                                _spec=spec,
+                                _cb=comp_tracker.callback_class(),
+                            ):
                                 return self._sync_download_bundle_repo(
-                                    _spec, default_source="modelscope",
+                                    _spec,
+                                    default_source="modelscope",
+                                    progress_callback_cls=_cb,
                                 )
 
                             c_future = loop.run_in_executor(None, do_download_ms_c)
-                            last_b = calc_ms_tree(target)
+                            last_b = comp_tracker.downloaded_bytes(target)
                             last_report_time = time.time()
+                            last_growth_bytes = last_b
+                            last_growth_time = last_report_time
                             while not c_future.done():
-                                await asyncio.sleep(2)
+                                await asyncio.sleep(1.0)
                                 if task_id in self._cancelled_downloads:
                                     break
-                                cur = calc_ms_tree(target)
+                                cur = comp_tracker.downloaded_bytes(target)
                                 now = time.time()
+                                if cur > last_growth_bytes:
+                                    last_growth_bytes = cur
+                                    last_growth_time = now
                                 dt = now - last_report_time
                                 speed_str = ""
                                 if dt >= 1:
-                                    speed_bytes = (cur - last_b) / dt
-                                    speed_str = format_speed_ms(speed_bytes)
+                                    speed_str = _format_download_speed((cur - last_b) / dt)
                                     last_b = cur
                                     last_report_time = now
                                 prog = cur / total_size if total_size > 0 else 0.0
+                                active = comp_tracker.active_file
+                                fname = companion_label
+                                if active:
+                                    fname = f"{companion_label} · {os.path.basename(active)}"
+                                elif cur <= last_growth_bytes:
+                                    fname = f"{companion_label} · 连接魔塔…"
                                 await on_progress(DownloadProgress(
                                     task_id=task_id,
                                     status="running",
@@ -814,10 +1416,13 @@ class DownloadService(IDownloadService):
                                     total_size=total_size,
                                     downloaded_size=cur,
                                     speed=speed_str,
-                                    filename=companion_label,
+                                    filename=fname,
                                 ))
                             await c_future
-                        final_downloaded = calc_ms_tree(target)
+                            self._require_bundle_repo_complete(
+                                target, spec, label=companion_label
+                            )
+                        final_downloaded = _calc_download_dir_bytes(target)
                         await self._finalize_version_install(
                             model_name=model_name,
                             version=version,
@@ -838,7 +1443,7 @@ class DownloadService(IDownloadService):
                         ))
                         result = result_path
                     else:
-                        final_downloaded = calc_ms_tree(target)
+                        final_downloaded = _calc_download_dir_bytes(target)
                         await self._finalize_version_install(
                             model_name=model_name,
                             version=version,
@@ -868,12 +1473,15 @@ class DownloadService(IDownloadService):
                     ))
                     raise
                 except Exception as e:
+                    cur = tracker.downloaded_bytes(target)
                     await on_progress(DownloadProgress(
                         task_id=task_id,
                         status="failed",
-                        progress=0,
+                        progress=(cur / total_size) if total_size > 0 else 0,
+                        total_size=total_size,
+                        downloaded_size=cur,
                         error_message=str(e),
-                        filename=display_name
+                        filename=display_name,
                     ))
                     raise
             elif download_url:
@@ -920,9 +1528,11 @@ class DownloadService(IDownloadService):
         except Exception as e:
             task.status = TaskStatus.FAILED
             task.error_message = str(e)
-            self._active_model_downloads.pop(dedup_key, None)
             self._persist_downloads()
             raise
+        finally:
+            async with self._download_lock:
+                self._inflight_model_downloads.discard(dedup_key)
 
     async def download_lora(self, url: str, filename: str,
                            progress_callback: Optional[Callable[[DownloadProgress], None]] = None,

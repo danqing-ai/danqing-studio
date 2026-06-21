@@ -69,6 +69,23 @@ export function useModelInstall(opts?: { onCompleted?: () => void }) {
     downloading.value[key] = true;
     progressByKey.value[key] = 0;
     try {
+      const tasks = (await api.download.listDownloads()) as Array<{
+        id: string;
+        status: string;
+        model_name?: string;
+        version?: string | null;
+      }>;
+      const active = tasks.find(
+        (t) =>
+          t.model_name === modelId &&
+          (t.version ?? null) === (versionKey || null) &&
+          (t.status === 'running' || t.status === 'paused')
+      );
+      if (active?.id) {
+        connectProgressSSE(active.id, label, key);
+        return;
+      }
+
       const data = (await api.models.install(modelId, { version: versionKey })) as {
         task_id?: string;
       };
