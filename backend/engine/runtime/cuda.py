@@ -376,6 +376,13 @@ class CudaContext(RuntimeContext):
     # ------------------------------------------------------------------
 
     def load_weights(self, path: str) -> dict:
+        if str(path).endswith(".pth"):
+            raw = torch.load(path, map_location=self._device, weights_only=True)
+            if isinstance(raw, dict) and "state_dict" in raw:
+                raw = raw["state_dict"]
+            if not isinstance(raw, dict):
+                raise RuntimeError(f"Unsupported checkpoint layout in {path!r}")
+            return raw
         import safetensors.torch
         return safetensors.torch.load_file(path, device=self._device)
 

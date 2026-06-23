@@ -3315,6 +3315,112 @@
         }
       }
     },
+    "firered-image-edit-1.1": {
+      "catalog": {
+        "media": "image",
+        "description": {
+          "zh": "FireRed Image Edit 1.1 指令编辑（仅图生图编辑，不支持文生图），强身份一致性，支持多参考图。",
+          "en": "FireRed Image Edit 1.1 — instruction-based image edit only (no text-to-image); strong identity consistency and multi-reference input."
+        },
+        "category": "base_models",
+        "commercial_use_allowed": true,
+        "type": "diffusion",
+        "source": "modelscope",
+        "name": {
+          "zh": "FireRed Image Edit 1.1",
+          "en": "FireRed Image Edit 1.1"
+        },
+        "recommended": true,
+        "engine": "danqing-image"
+      },
+      "runtime": {
+        "family": "qwen_image",
+        "backends": [
+          "mlx",
+          "cuda"
+        ],
+        "overrides": {
+          "vae_scale": 16,
+          "requires_sigma_shift": true
+        }
+      },
+      "actions": {
+        "rewrite": {}
+      },
+      "ui": {
+        "parameters": {
+          "lora_support": true,
+          "seed_support": true,
+          "preview_mode": {
+            "type": "enum",
+            "default": "stream",
+            "options": [
+              "stream",
+              "none"
+            ]
+          },
+          "preview_interval_steps": {
+            "type": "int",
+            "default": 2,
+            "min": 1,
+            "max": 8
+          },
+          "preview_max_edge": {
+            "type": "int",
+            "default": 512,
+            "min": 128,
+            "max": 1024
+          },
+          "edit_use_vl_vision": true,
+          "edit_conditioning_latent_concat": true,
+          "edit_use_picture_prefix": true,
+          "edit_plus_multi_image": true,
+          "edit_max_reference_images": 3,
+          "scheduler": {
+            "default": "flow_match_euler_discrete",
+            "options": [
+              "flow_match_euler_discrete",
+              "linear"
+            ],
+            "label": "调度器",
+            "type": "enum"
+          },
+          "steps": {
+            "default": 40,
+            "min": 1,
+            "max": 50,
+            "label": "步数",
+            "type": "int"
+          },
+          "guidance": {
+            "default": 4.0,
+            "min": 1.0,
+            "max": 20.0,
+            "step": 0.5,
+            "label": "CFG引导",
+            "type": "float"
+          },
+          "negative_prompt_support": true
+        },
+        "extends": "image_dit_standard"
+      },
+      "distribution": {
+        "versions": {
+          "fp16": {
+            "name": {
+              "zh": "FP16 完整版",
+              "en": "FP16 Full"
+            },
+            "size": "40GB",
+            "default": true,
+            "repo_id": "FireRedTeam/FireRed-Image-Edit-1.1",
+            "local_path": "models/Image/firered-image-edit-1.1-fp16",
+            "source": "modelscope",
+            "source_type": "full"
+          }
+        }
+      }
+    },
     "ernie-image-turbo": {
       "catalog": {
         "media": "image",
@@ -6290,6 +6396,307 @@
         }
       }
     },
+    "hunyuan-video-1.5-i2v-720p": {
+      "catalog": {
+        "media": "video",
+        "description": {
+          "zh": "HunyuanVideo 1.5 图生视频 720p 完整版；需 Qwen2.5-VL + ByT5 与 SigLIP image_encoder。",
+          "en": "HunyuanVideo 1.5 I2V 720p full weights; requires Qwen2.5-VL, ByT5, and SigLIP image_encoder."
+        },
+        "category": "video_models",
+        "commercial_use_allowed": true,
+        "type": "video",
+        "source": "modelscope",
+        "name": {
+          "zh": "Hunyuan Video 1.5 I2V 720p",
+          "en": "Hunyuan Video 1.5 I2V 720p"
+        },
+        "recommended": false,
+        "engine": "danqing-video",
+        "distilled_variant": "hunyuan-video-1.5-i2v-720p-distill"
+      },
+      "runtime": {
+        "family": "hunyuan",
+        "backends": [
+          "mlx"
+        ]
+      },
+      "actions": {
+        "animate": {}
+      },
+      "ui": {
+        "parameters": {
+          "seed_support": true,
+          "video_edit_source_mode": "first_frame",
+          "steps": {
+            "default": 50,
+            "min": 1,
+            "max": 100,
+            "label": "步数",
+            "type": "int"
+          },
+          "guide_scale": {
+            "default": 6.0,
+            "min": 1.0,
+            "max": 10.0,
+            "step": 0.5,
+            "label": "CFG引导",
+            "type": "float"
+          },
+          "shift": {
+            "default": 7.0,
+            "min": 1.0,
+            "max": 20.0,
+            "step": 0.5,
+            "label": "Shift",
+            "type": "float"
+          },
+          "width": {
+            "default": 720,
+            "options": [
+              720,
+              1280
+            ],
+            "type": "enum"
+          },
+          "height": {
+            "default": 1280,
+            "options": [
+              720,
+              1280
+            ],
+            "type": "enum"
+          },
+          "num_frames": {
+            "default": 81,
+            "min": 1,
+            "max": 129,
+            "step": 4,
+            "label": "帧数",
+            "note": "必须为 4n+1",
+            "type": "int"
+          },
+          "fps": {
+            "default": 24,
+            "min": 1,
+            "max": 60,
+            "step": 1,
+            "label": "FPS",
+            "type": "int"
+          },
+          "negative_prompt_support": true,
+          "text_encoder_qwen_local": "models/Text/qwen2.5-vl-7b-instruct",
+          "text_encoder_byt5_local": "models/Text/byt5-small",
+          "text_encoder_release_after_encode": true,
+          "resolution_presets": {
+            "default": "720x1280",
+            "options": [
+              "720x1280",
+              "1280x720"
+            ]
+          }
+        },
+        "extends": "video_dit_standard"
+      },
+      "distribution": {
+        "versions": {
+          "original": {
+            "name": {
+              "zh": "FP16 完整版",
+              "en": "FP16 Full"
+            },
+            "size": "35GB",
+            "default": true,
+            "repo_id": "Tencent-Hunyuan/HunyuanVideo-1.5",
+            "local_path": "models/Video/hunyuan-video-1.5-i2v-720p",
+            "source": "modelscope",
+            "source_type": "partial",
+            "hunyuan_ms_variant": "720p_i2v",
+            "allow_patterns": [
+              "transformer/720p_i2v/**",
+              "vae/**",
+              "image_encoder/**"
+            ],
+            "bundle_repos": [
+              {
+                "repo_id": "Tencent-Hunyuan/HunyuanVideo-1.5",
+                "local_path": "models/Video/hunyuan-video-1.5-i2v-720p",
+                "name": "HunyuanVideo-1.5",
+                "size": "35GB",
+                "source": "modelscope",
+                "allow_patterns": [
+                  "transformer/720p_i2v/**",
+                  "vae/**",
+                  "image_encoder/**"
+                ]
+              },
+              {
+                "repo_id": "Qwen/Qwen2.5-VL-7B-Instruct",
+                "local_path": "models/Text/qwen2.5-vl-7b-instruct",
+                "name": "Qwen2.5-VL-7B-Instruct",
+                "size": "16GB",
+                "source": "modelscope"
+              },
+              {
+                "repo_id": "google/byt5-small",
+                "local_path": "models/Text/byt5-small",
+                "name": "byt5-small",
+                "size": "1GB",
+                "source": "modelscope"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "hunyuan-video-1.5-i2v-720p-distill": {
+      "catalog": {
+        "media": "video",
+        "description": {
+          "zh": "HunyuanVideo 1.5 图生视频 720p CFG 稀疏蒸馏版（50 步，CFG=1）；需 SigLIP image_encoder。",
+          "en": "HunyuanVideo 1.5 I2V 720p CFG sparse-distilled (50 steps, CFG=1); requires SigLIP image_encoder."
+        },
+        "category": "video_models",
+        "commercial_use_allowed": true,
+        "type": "video",
+        "source": "modelscope",
+        "name": {
+          "zh": "Hunyuan Video 1.5 I2V 720p [Distilled]",
+          "en": "Hunyuan Video 1.5 I2V 720p [Distilled]"
+        },
+        "recommended": false,
+        "engine": "danqing-video",
+        "distilled_from": "hunyuan-video-1.5-i2v-720p"
+      },
+      "runtime": {
+        "family": "hunyuan",
+        "backends": [
+          "mlx"
+        ],
+        "overrides": {
+          "supports_guidance": false
+        }
+      },
+      "actions": {
+        "animate": {}
+      },
+      "ui": {
+        "parameters": {
+          "seed_support": true,
+          "video_edit_source_mode": "first_frame",
+          "steps": {
+            "default": 50,
+            "min": 50,
+            "max": 50,
+            "label": "步数",
+            "note": "CFG 蒸馏版固定 50 步（上游 recipe）",
+            "type": "int"
+          },
+          "shift": {
+            "default": 7.0,
+            "min": 7.0,
+            "max": 7.0,
+            "step": 0.5,
+            "label": "Shift",
+            "type": "float"
+          },
+          "width": {
+            "default": 720,
+            "options": [
+              720,
+              1280
+            ],
+            "type": "enum"
+          },
+          "height": {
+            "default": 1280,
+            "options": [
+              720,
+              1280
+            ],
+            "type": "enum"
+          },
+          "num_frames": {
+            "default": 81,
+            "min": 1,
+            "max": 129,
+            "step": 4,
+            "label": "帧数",
+            "type": "int"
+          },
+          "fps": {
+            "default": 24,
+            "min": 1,
+            "max": 60,
+            "step": 1,
+            "label": "FPS",
+            "type": "int"
+          },
+          "negative_prompt_support": false,
+          "text_encoder_qwen_local": "models/Text/qwen2.5-vl-7b-instruct",
+          "text_encoder_byt5_local": "models/Text/byt5-small",
+          "text_encoder_release_after_encode": true,
+          "resolution_presets": {
+            "default": "720x1280",
+            "options": [
+              "720x1280",
+              "1280x720"
+            ]
+          }
+        },
+        "extends": "video_dit_standard"
+      },
+      "distribution": {
+        "versions": {
+          "original": {
+            "name": {
+              "zh": "CFG 稀疏蒸馏版",
+              "en": "CFG Sparse Distilled"
+            },
+            "size": "35GB",
+            "default": true,
+            "repo_id": "Tencent-Hunyuan/HunyuanVideo-1.5",
+            "local_path": "models/Video/hunyuan-video-1.5-i2v-720p-distill",
+            "source": "modelscope",
+            "source_type": "partial",
+            "hunyuan_ms_variant": "720p_i2v_distilled_sparse",
+            "allow_patterns": [
+              "transformer/720p_i2v_distilled_sparse/**",
+              "vae/**",
+              "image_encoder/**"
+            ],
+            "bundle_repos": [
+              {
+                "repo_id": "Tencent-Hunyuan/HunyuanVideo-1.5",
+                "local_path": "models/Video/hunyuan-video-1.5-i2v-720p-distill",
+                "name": "HunyuanVideo-1.5",
+                "size": "35GB",
+                "source": "modelscope",
+                "allow_patterns": [
+                  "transformer/720p_i2v_distilled_sparse/**",
+                  "vae/**",
+                  "image_encoder/**"
+                ]
+              },
+              {
+                "repo_id": "Qwen/Qwen2.5-VL-7B-Instruct",
+                "local_path": "models/Text/qwen2.5-vl-7b-instruct",
+                "name": "Qwen2.5-VL-7B-Instruct",
+                "size": "16GB",
+                "source": "modelscope"
+              },
+              {
+                "repo_id": "google/byt5-small",
+                "local_path": "models/Text/byt5-small",
+                "name": "byt5-small",
+                "size": "1GB",
+                "source": "modelscope"
+              }
+            ]
+          }
+        }
+      }
+    },
     "wan-2.2-t2v-14b": {
       "catalog": {
         "media": "video",
@@ -6937,6 +7344,623 @@
             "allow_patterns": [
               "wan2.2_i2v_A14b_high_noise_lightx2v_4step_720p_260412.safetensors",
               "wan2.2_i2v_A14b_low_noise_lightx2v_4step_720p_260412.safetensors"
+            ]
+          }
+        }
+      }
+    },
+    "wan-2.2-i2v-14b-turbo": {
+      "catalog": {
+        "media": "video",
+        "description": {
+          "zh": "Wan 2.2 I2V 14B TurboDiffusion rCM 4 步极速（CUDA）；基于 SageAttention+SLA 加速，无需 CFG。",
+          "en": "Wan 2.2 I2V 14B TurboDiffusion rCM 4-step fast mode (CUDA); SageAttention+SLA accelerated, no CFG."
+        },
+        "category": "video_models",
+        "commercial_use_allowed": true,
+        "type": "video",
+        "source": "huggingface",
+        "name": {
+          "zh": "Wan 2.2 I2V 14B [Turbo]",
+          "en": "Wan 2.2 I2V 14B [Turbo]"
+        },
+        "recommended": false,
+        "engine": "danqing-video"
+      },
+      "runtime": {
+        "family": "wan",
+        "backends": [
+          "cuda"
+        ],
+        "overrides": {
+          "supports_guidance": false,
+          "step_distill": true,
+          "moe_boundary_step_index": 2
+        }
+      },
+      "actions": {
+        "animate": {}
+      },
+      "ui": {
+        "parameters": {
+          "seed_support": true,
+          "steps": {
+            "default": 4,
+            "min": 4,
+            "max": 4,
+            "label": "步数",
+            "note": "TurboDiffusion rCM（固定 4 步）",
+            "type": "int"
+          },
+          "shift": {
+            "default": 5.0,
+            "min": 5.0,
+            "max": 5.0,
+            "step": 0.5,
+            "label": "Shift",
+            "type": "float"
+          },
+          "width": {
+            "default": 704,
+            "options": [
+              480,
+              704,
+              1280
+            ],
+            "type": "enum"
+          },
+          "height": {
+            "default": 1280,
+            "options": [
+              704,
+              1280
+            ],
+            "type": "enum"
+          },
+          "num_frames": {
+            "default": 81,
+            "min": 1,
+            "max": 129,
+            "step": 4,
+            "label": "帧数",
+            "type": "int"
+          },
+          "negative_prompt_support": false,
+          "resolution_presets": {
+            "default": "704x1280",
+            "options": [
+              "480x704",
+              "704x1280",
+              "1280x704"
+            ]
+          }
+        },
+        "extends": "video_dit_standard"
+      },
+      "distribution": {
+        "dependencies": [
+          {
+            "model_id": "wan-2.2-i2v-14b",
+            "version": "encoders"
+          }
+        ],
+        "versions": {
+          "original": {
+            "name": {
+              "zh": "rCM 极速版",
+              "en": "rCM Turbo"
+            },
+            "size": "30GB",
+            "default": true,
+            "repo_id": "TurboDiffusion/TurboWan2.2-I2V-A14B-720P",
+            "local_path": "models/Video/wan-2.2-i2v-14b-turbo",
+            "source": "huggingface",
+            "source_type": "full",
+            "wan_distill_variant": "turbo_i2v_720p",
+            "allow_patterns": [
+              "TurboWan2.2-I2V-A14B-high-720P.pth",
+              "TurboWan2.2-I2V-A14B-low-720P.pth"
+            ]
+          },
+          "quant": {
+            "name": {
+              "zh": "rCM 量化极速版",
+              "en": "rCM Turbo Quantized"
+            },
+            "size": "16GB",
+            "default": false,
+            "repo_id": "TurboDiffusion/TurboWan2.2-I2V-A14B-720P",
+            "local_path": "models/Video/wan-2.2-i2v-14b-turbo-quant",
+            "source": "huggingface",
+            "source_type": "full",
+            "wan_distill_variant": "turbo_i2v_720p_quant",
+            "allow_patterns": [
+              "TurboWan2.2-I2V-A14B-high-720P-quant.pth",
+              "TurboWan2.2-I2V-A14B-low-720P-quant.pth"
+            ]
+          }
+        }
+      }
+    },
+    "wan-2.2-t2v-14b-turbo": {
+      "catalog": {
+        "media": "video",
+        "description": {
+          "zh": "Wan 2.1 T2V 14B TurboDiffusion rCM 4 步极速（CUDA，720p/480p）；无需 CFG。",
+          "en": "Wan 2.1 T2V 14B TurboDiffusion rCM 4-step fast mode (CUDA, 720p/480p); no CFG."
+        },
+        "category": "video_models",
+        "commercial_use_allowed": true,
+        "type": "video",
+        "source": "huggingface",
+        "name": {
+          "zh": "Wan 2.2 T2V 14B [Turbo]",
+          "en": "Wan 2.2 T2V 14B [Turbo]"
+        },
+        "recommended": false,
+        "engine": "danqing-video"
+      },
+      "runtime": {
+        "family": "wan",
+        "backends": [
+          "cuda"
+        ],
+        "overrides": {
+          "supports_guidance": false,
+          "step_distill": true
+        }
+      },
+      "actions": {
+        "create": {}
+      },
+      "ui": {
+        "parameters": {
+          "seed_support": true,
+          "steps": {
+            "default": 4,
+            "min": 4,
+            "max": 4,
+            "label": "步数",
+            "type": "int"
+          },
+          "shift": {
+            "default": 5.0,
+            "min": 5.0,
+            "max": 5.0,
+            "step": 0.5,
+            "label": "Shift",
+            "type": "float"
+          },
+          "width": {
+            "default": 704,
+            "options": [
+              480,
+              704,
+              1280
+            ],
+            "type": "enum"
+          },
+          "height": {
+            "default": 1280,
+            "options": [
+              704,
+              1280
+            ],
+            "type": "enum"
+          },
+          "num_frames": {
+            "default": 81,
+            "min": 1,
+            "max": 129,
+            "step": 4,
+            "label": "帧数",
+            "type": "int"
+          },
+          "negative_prompt_support": false,
+          "resolution_presets": {
+            "default": "704x1280",
+            "options": [
+              "480x704",
+              "704x1280",
+              "1280x704"
+            ]
+          }
+        },
+        "extends": "video_dit_standard"
+      },
+      "distribution": {
+        "dependencies": [
+          {
+            "model_id": "wan-2.2-t2v-14b",
+            "version": "encoders"
+          }
+        ],
+        "versions": {
+          "720p": {
+            "name": {
+              "zh": "720P rCM 极速版",
+              "en": "720P rCM Turbo"
+            },
+            "size": "28GB",
+            "default": true,
+            "repo_id": "TurboDiffusion/TurboWan2.1-T2V-14B-720P",
+            "local_path": "models/Video/wan-2.2-t2v-14b-turbo-720p",
+            "source": "huggingface",
+            "source_type": "full",
+            "wan_distill_variant": "turbo_t2v_720p_14b",
+            "allow_patterns": [
+              "TurboWan2.1-T2V-14B-720P.pth"
+            ]
+          },
+          "480p": {
+            "name": {
+              "zh": "480P rCM 极速版",
+              "en": "480P rCM Turbo"
+            },
+            "size": "28GB",
+            "default": false,
+            "repo_id": "TurboDiffusion/TurboWan2.1-T2V-14B-480P",
+            "local_path": "models/Video/wan-2.2-t2v-14b-turbo-480p",
+            "source": "huggingface",
+            "source_type": "full",
+            "wan_distill_variant": "turbo_t2v_480p_14b",
+            "allow_patterns": [
+              "TurboWan2.1-T2V-14B-480P.pth"
+            ]
+          }
+        }
+      }
+    },
+    "wan-2.2-t2v-1.3b-turbo": {
+      "catalog": {
+        "media": "video",
+        "description": {
+          "zh": "Wan 2.1 T2V 1.3B TurboDiffusion rCM 4 步极速（CUDA，480p）；轻量快速文生视频。",
+          "en": "Wan 2.1 T2V 1.3B TurboDiffusion rCM 4-step fast mode (CUDA, 480p); lightweight fast T2V."
+        },
+        "category": "video_models",
+        "commercial_use_allowed": true,
+        "type": "video",
+        "source": "huggingface",
+        "name": {
+          "zh": "Wan 2.2 T2V 1.3B [Turbo]",
+          "en": "Wan 2.2 T2V 1.3B [Turbo]"
+        },
+        "recommended": false,
+        "engine": "danqing-video"
+      },
+      "runtime": {
+        "family": "wan",
+        "backends": [
+          "cuda"
+        ],
+        "overrides": {
+          "supports_guidance": false,
+          "step_distill": true
+        }
+      },
+      "actions": {
+        "create": {}
+      },
+      "ui": {
+        "parameters": {
+          "seed_support": true,
+          "steps": {
+            "default": 4,
+            "min": 4,
+            "max": 4,
+            "label": "步数",
+            "type": "int"
+          },
+          "shift": {
+            "default": 5.0,
+            "min": 5.0,
+            "max": 5.0,
+            "step": 0.5,
+            "label": "Shift",
+            "type": "float"
+          },
+          "width": {
+            "default": 480,
+            "options": [
+              480,
+              704
+            ],
+            "type": "enum"
+          },
+          "height": {
+            "default": 704,
+            "options": [
+              704
+            ],
+            "type": "enum"
+          },
+          "num_frames": {
+            "default": 81,
+            "min": 1,
+            "max": 129,
+            "step": 4,
+            "label": "帧数",
+            "type": "int"
+          },
+          "negative_prompt_support": false,
+          "resolution_presets": {
+            "default": "480x704",
+            "options": [
+              "480x704"
+            ]
+          }
+        },
+        "extends": "video_dit_standard"
+      },
+      "distribution": {
+        "dependencies": [
+          {
+            "model_id": "wan-2.2-t2v-14b",
+            "version": "encoders"
+          }
+        ],
+        "versions": {
+          "original": {
+            "name": {
+              "zh": "480P rCM 极速版",
+              "en": "480P rCM Turbo"
+            },
+            "size": "3GB",
+            "default": true,
+            "repo_id": "TurboDiffusion/TurboWan2.1-T2V-1.3B-480P",
+            "local_path": "models/Video/wan-2.2-t2v-1.3b-turbo",
+            "source": "huggingface",
+            "source_type": "full",
+            "wan_distill_variant": "turbo_t2v_480p_1.3b",
+            "allow_patterns": [
+              "TurboWan2.1-T2V-1.3B-480P.pth"
+            ]
+          }
+        }
+      }
+    },
+    "bernini-r-14b": {
+      "catalog": {
+        "media": "video",
+        "description": {
+          "zh": "ByteDance Bernini-R 14B 视频编辑渲染器（基于 Wan）；图生视频/局部编辑/风格迁移，需 Wan 共享编码器。",
+          "en": "ByteDance Bernini-R 14B video edit renderer (Wan-based); animate, local edit, style transfer; requires Wan encoders."
+        },
+        "category": "video_models",
+        "commercial_use_allowed": true,
+        "type": "video",
+        "source": "huggingface",
+        "name": {
+          "zh": "Bernini-R 14B",
+          "en": "Bernini-R 14B"
+        },
+        "recommended": false,
+        "engine": "danqing-video"
+      },
+      "runtime": {
+        "family": "wan",
+        "backends": [
+          "cuda"
+        ],
+        "overrides": {
+          "moe_boundary_step_index": 2
+        }
+      },
+      "actions": {
+        "animate": {}
+      },
+      "ui": {
+        "parameters": {
+          "seed_support": true,
+          "video_edit_source_mode": "first_frame",
+          "steps": {
+            "default": 40,
+            "min": 1,
+            "max": 100,
+            "label": "步数",
+            "type": "int"
+          },
+          "guide_scale": {
+            "default": 3.0,
+            "min": 1.0,
+            "max": 10.0,
+            "step": 0.5,
+            "label": "CFG引导",
+            "type": "float"
+          },
+          "shift": {
+            "default": 5.0,
+            "min": 1.0,
+            "max": 20.0,
+            "step": 0.5,
+            "label": "Shift",
+            "type": "float"
+          },
+          "width": {
+            "default": 704,
+            "options": [
+              480,
+              704,
+              1280
+            ],
+            "type": "enum"
+          },
+          "height": {
+            "default": 1280,
+            "options": [
+              704,
+              1280
+            ],
+            "type": "enum"
+          },
+          "num_frames": {
+            "default": 81,
+            "min": 1,
+            "max": 129,
+            "step": 4,
+            "label": "帧数",
+            "type": "int"
+          },
+          "negative_prompt_support": true,
+          "resolution_presets": {
+            "default": "704x1280",
+            "options": [
+              "480x704",
+              "704x1280",
+              "1280x704"
+            ]
+          }
+        },
+        "extends": "video_dit_standard"
+      },
+      "distribution": {
+        "dependencies": [
+          {
+            "model_id": "wan-2.2-i2v-14b",
+            "version": "encoders"
+          }
+        ],
+        "versions": {
+          "original": {
+            "name": {
+              "zh": "FP16 完整版",
+              "en": "FP16 Full"
+            },
+            "size": "58GB",
+            "default": true,
+            "repo_id": "ByteDance/Bernini-R-Diffusers",
+            "local_path": "models/Video/bernini-r-14b",
+            "source": "huggingface",
+            "source_type": "full",
+            "bernini_variant": "bernini_r_14b",
+            "allow_patterns": [
+              "transformer/**",
+              "transformer_2/**",
+              "vae/**",
+              "text_encoder/**",
+              "tokenizer/**",
+              "scheduler/**",
+              "config.json"
+            ]
+          }
+        }
+      }
+    },
+    "bernini-r-1.3b": {
+      "catalog": {
+        "media": "video",
+        "description": {
+          "zh": "ByteDance Bernini-R 1.3B 轻量视频编辑（基于 Wan2.1）；适合风格迁移、字幕/水印去除与局部编辑。",
+          "en": "ByteDance Bernini-R 1.3B lightweight video edit (Wan2.1-based); style transfer, subtitle/watermark removal, local edits."
+        },
+        "category": "video_models",
+        "commercial_use_allowed": true,
+        "type": "video",
+        "source": "huggingface",
+        "name": {
+          "zh": "Bernini-R 1.3B",
+          "en": "Bernini-R 1.3B"
+        },
+        "recommended": false,
+        "engine": "danqing-video"
+      },
+      "runtime": {
+        "family": "wan",
+        "backends": [
+          "cuda"
+        ]
+      },
+      "actions": {
+        "animate": {}
+      },
+      "ui": {
+        "parameters": {
+          "seed_support": true,
+          "video_edit_source_mode": "first_frame",
+          "steps": {
+            "default": 40,
+            "min": 1,
+            "max": 100,
+            "label": "步数",
+            "type": "int"
+          },
+          "guide_scale": {
+            "default": 3.0,
+            "min": 1.0,
+            "max": 10.0,
+            "step": 0.5,
+            "label": "CFG引导",
+            "type": "float"
+          },
+          "shift": {
+            "default": 5.0,
+            "min": 1.0,
+            "max": 20.0,
+            "step": 0.5,
+            "label": "Shift",
+            "type": "float"
+          },
+          "width": {
+            "default": 480,
+            "options": [
+              480,
+              704
+            ],
+            "type": "enum"
+          },
+          "height": {
+            "default": 704,
+            "options": [
+              704
+            ],
+            "type": "enum"
+          },
+          "num_frames": {
+            "default": 81,
+            "min": 1,
+            "max": 129,
+            "step": 4,
+            "label": "帧数",
+            "type": "int"
+          },
+          "negative_prompt_support": true,
+          "resolution_presets": {
+            "default": "480x704",
+            "options": [
+              "480x704"
+            ]
+          }
+        },
+        "extends": "video_dit_standard"
+      },
+      "distribution": {
+        "dependencies": [
+          {
+            "model_id": "wan-2.2-t2v-14b",
+            "version": "encoders"
+          }
+        ],
+        "versions": {
+          "original": {
+            "name": {
+              "zh": "FP16 完整版",
+              "en": "FP16 Full"
+            },
+            "size": "6GB",
+            "default": true,
+            "repo_id": "ByteDance/Bernini-R-1.3B-Diffusers",
+            "local_path": "models/Video/bernini-r-1.3b",
+            "source": "huggingface",
+            "source_type": "full",
+            "bernini_variant": "bernini_r_1.3b",
+            "allow_patterns": [
+              "transformer/**",
+              "vae/**",
+              "text_encoder/**",
+              "tokenizer/**",
+              "scheduler/**",
+              "config.json"
             ]
           }
         }

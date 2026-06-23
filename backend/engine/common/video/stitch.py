@@ -246,6 +246,40 @@ def append_video_with_crossfade(
         Path(wav_path).unlink(missing_ok=True)
 
 
+def extract_first_frame_image(
+    video_path: Path,
+    *,
+    output_path: Path,
+) -> Path:
+    """Extract the first frame of a video as PNG."""
+    ffmpeg = require_ffmpeg()
+    require_ffprobe()
+    video_path = Path(video_path)
+    output_path = Path(output_path)
+    if not video_path.is_file():
+        raise RuntimeError(f"video stitch: video not found: {video_path}")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        ffmpeg,
+        "-y",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-i",
+        str(video_path),
+        "-frames:v",
+        "1",
+        "-update",
+        "1",
+        str(output_path),
+    ]
+    proc = subprocess.run(cmd, capture_output=True, check=False)
+    if proc.returncode != 0 or not output_path.is_file():
+        err = (proc.stderr or proc.stdout or b"").decode(errors="ignore")
+        raise RuntimeError(f"video stitch: first frame extract failed: {err[:800]}")
+    return output_path
+
+
 def extract_last_frame_image(
     video_path: Path,
     *,

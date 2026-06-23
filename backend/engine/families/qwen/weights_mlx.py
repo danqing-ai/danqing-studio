@@ -1242,3 +1242,28 @@ def apply_qwen_text_encoder_weights(flat_dict: dict) -> dict:
 def apply_qwen_vae_weights(flat_dict: dict) -> dict:
     return WeightMapper.apply_mapping(flat_dict, QwenWeightMapping.get_vae_mapping())
 
+
+QWEN_IMAGE_LORA_COMPAT_MODEL_IDS = frozenset(
+    {
+        "qwen-image",
+        "qwen-image-edit",
+        "firered-image-edit-1.1",
+    }
+)
+
+
+def qwen_image_lora_scope_key(value: str) -> str:
+    """T2I / Edit / FireRed share DiT LoRA key layout — one merge scope."""
+    mid = value.split(":", 1)[0].strip() if value else ""
+    if mid in QWEN_IMAGE_LORA_COMPAT_MODEL_IDS:
+        return "qwen_image"
+    return mid
+
+
+def qwen_image_lora_base_compatible(model_id: str, lora_base: str) -> bool:
+    model_key = (model_id or "").split(":", 1)[0].strip()
+    lora_key = (lora_base or "").split(":", 1)[0].strip()
+    if not lora_key or lora_key == model_key:
+        return True
+    return model_key in QWEN_IMAGE_LORA_COMPAT_MODEL_IDS and lora_key in QWEN_IMAGE_LORA_COMPAT_MODEL_IDS
+

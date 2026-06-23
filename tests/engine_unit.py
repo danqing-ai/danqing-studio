@@ -675,6 +675,28 @@ class CogView4SchedulerTests(unittest.TestCase):
         self.assertAlmostEqual(float(sched.sigmas[0]), 1.0, places=3)
         self.assertAlmostEqual(float(sched.timesteps[0]), 1000.0, places=3)
 
+    def test_image_seq_len_1024_matches_diffusers(self) -> None:
+        from types import SimpleNamespace
+
+        from backend.engine.config.model_configs import CogView4Config
+        from backend.engine.contracts.runtime_contracts import SchedulerSemanticsResolver
+
+        cfg = CogView4Config()
+        resolver = SchedulerSemanticsResolver()
+        semantics = resolver.resolve(
+            entry=SimpleNamespace(parameters={}),
+            config=cfg,
+            request_scheduler="flow_match_euler_cogview4",
+            request_metadata=None,
+            steps=30,
+            width=1024,
+            height=1024,
+        )
+        self.assertEqual(
+            int(semantics.set_timesteps_kwargs["image_seq_len"]),
+            4096,
+        )
+
 
 class CogView4RegistryTests(unittest.TestCase):
     def test_registry_declares_mlx_only(self) -> None:
@@ -1132,6 +1154,32 @@ class QwenImageTransformerTests(unittest.TestCase):
         self.assertEqual(tuple(seq.shape), (1, h_lat * w_lat, 64))
         out = unpack_qwen_sequence_to_nchw(ctx, seq, height_px, width_px)
         self.assertEqual(tuple(out.shape), (1, 64, h_lat, w_lat))
+
+    def test_firered_image_edit_registry_flags(self) -> None:
+        models = _load_default_registry_expanded()["models"]
+        entry = models["firered-image-edit-1.1"]
+        params = entry["parameters"]
+        self.assertTrue(params["edit_use_vl_vision"])
+        self.assertTrue(params["edit_use_picture_prefix"])
+        self.assertTrue(params["edit_plus_multi_image"])
+        self.assertEqual(params["steps"]["default"], 40)
+        self.assertIn("cuda", entry.get("backends", []))
+
+    def test_qwen_image_lora_scope_across_edit_models(self) -> None:
+        from backend.engine.families.qwen.weights_mlx import (
+            qwen_image_lora_base_compatible,
+            qwen_image_lora_scope_key,
+        )
+
+        self.assertEqual(qwen_image_lora_scope_key("qwen-image"), "qwen_image")
+        self.assertEqual(qwen_image_lora_scope_key("firered-image-edit-1.1"), "qwen_image")
+        self.assertTrue(
+            qwen_image_lora_base_compatible("firered-image-edit-1.1", "qwen-image")
+        )
+        self.assertTrue(
+            qwen_image_lora_base_compatible("qwen-image-edit", "firered-image-edit-1.1")
+        )
+        self.assertFalse(qwen_image_lora_base_compatible("firered-image-edit-1.1", "flux1-dev"))
 
 
 class ErnieImageTransformerTests(unittest.TestCase):
@@ -5347,6 +5395,75 @@ class ArchitectureWrapUpTests(unittest.TestCase):
             self.assertFalse((root / low_name).exists())
             self.assertEqual(high_dest.read_bytes(), b"h")
             self.assertEqual(low_dest.read_bytes(), b"l")
+
+    def test_assemble_wan_turbo_distill_bundle(self) -> None:
+        import json
+
+        from backend.services.wan_distill_bundle import assemble_wan_distill_bundle
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            high_name = "TurboWan2.2-I2V-A14B-high-720P.pth"
+            low_name = "TurboWan2.2-I2V-A14B-low-720P.pth"
+            (root / high_name).write_bytes(b"h")
+            (root / low_name).write_bytes(b"l")
+            assemble_wan_distill_bundle(root, "turbo_i2v_720p")
+            self.assertTrue((root / "high_noise_model" / "diffusion_pytorch_model.pth").is_file())
+            self.assertTrue((root / "low_noise_model" / "diffusion_pytorch_model.pth").is_file())
+            index = json.loads((root / "model_index.json").read_text(encoding="utf-8"))
+            self.assertEqual(index.get("_danqing_bundle_source"), "turbodiffusion")
+
+    def test_assemble_wan_turbo_single_bundle(self) -> None:
+        import json
+
+        from backend.services.wan_distill_bundle import assemble_wan_distill_bundle
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            name = "TurboWan2.1-T2V-1.3B-480P.pth"
+            (root / name).write_bytes(b"t")
+            assemble_wan_distill_bundle(root, "turbo_t2v_480p_1.3b")
+            self.assertTrue((root / "diffusion_pytorch_model.pth").is_file())
+            index = json.loads((root / "model_index.json").read_text(encoding="utf-8"))
+            self.assertFalse(index.get("dual_model"))
+
+    def test_assemble_bernini_moe_bundle(self) -> None:
+        from backend.services.bernini_bundle import assemble_bernini_bundle
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            high = root / "transformer"
+            low = root / "transformer_2"
+            high.mkdir()
+            low.mkdir()
+            (high / "config.json").write_text("{}", encoding="utf-8")
+            (low / "config.json").write_text("{}", encoding="utf-8")
+            (high / "diffusion_pytorch_model.safetensors").write_bytes(b"h")
+            (low / "diffusion_pytorch_model.safetensors").write_bytes(b"l")
+            assemble_bernini_bundle(root, "bernini_r_14b")
+            self.assertTrue((root / "high_noise_model" / "diffusion_pytorch_model.safetensors").is_file())
+            self.assertTrue((root / "low_noise_model" / "diffusion_pytorch_model.safetensors").is_file())
+
+    def test_hunyuan_i2v_download_patterns_include_image_encoder(self) -> None:
+        from backend.services.hunyuan_ms_bundle import hunyuan_raw_download_patterns
+
+        patterns = hunyuan_raw_download_patterns("720p_i2v")
+        self.assertIn("image_encoder/**", patterns)
+        sparse = hunyuan_raw_download_patterns("720p_i2v_distilled_sparse")
+        self.assertIn("image_encoder/**", sparse)
+
+    def test_resolve_video_edit_source_image_rejects_video_without_mode(self) -> None:
+        from backend.engine.contracts.video_runtime_contracts import resolve_video_edit_source_image
+
+        class _Store:
+            def get_asset_record(self, asset_id: str):
+                return {"mime_type": "video/mp4", "kind": "video"}
+
+            def get_file_path(self, asset_id: str):
+                return Path("/tmp/fake.mp4")
+
+        with self.assertRaises(RuntimeError):
+            resolve_video_edit_source_image(_Store(), "asset-1", mode="image_only")
 
     def test_link_wan_distill_shared_links_transformer_config(self) -> None:
         import json

@@ -34,6 +34,7 @@ SMOKE_EDIT_ACTION_ORDER: tuple[str, ...] = ("rewrite", "retouch", "extend")
 
 MODEL_TIMEOUT_SEC: dict[str, int] = {
     "qwen-image-edit": 1200,
+    "firered-image-edit-1.1": 1200,
     "cogview4-6b": 900,
     "fibo": 900,
     "fibo-lite": 900,
@@ -165,7 +166,12 @@ def _optional_judge_floor(item: dict[str, Any]) -> float | None:
 
 
 def _omit_image_strength(model_id: str, family: str) -> bool:
-    if model_id in {"qwen-image-edit", "fibo-edit", "fibo-edit-rmbg"}:
+    if model_id in {
+        "qwen-image-edit",
+        "firered-image-edit-1.1",
+        "fibo-edit",
+        "fibo-edit-rmbg",
+    }:
         return True
     if family == "fibo" and model_id.startswith("fibo-edit"):
         return True

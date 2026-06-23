@@ -136,6 +136,69 @@ def create_qwen_edit_conditioning_latents(
     return packed, (1, cond_h, cond_w)
 
 
+def create_qwen_edit_multi_conditioning_latents(
+    ctx: Any,
+    *,
+    vae_encode_fn,
+    sources: list[Image.Image],
+    on_log: Any | None = None,
+) -> tuple[Any, list[tuple[int, int, int]]]:
+    """多参考图 VAE 条件：序列维拼接 packed latents。"""
+    if not sources:
+        raise RuntimeError("Qwen edit multi-image conditioning requires at least one source image.")
+
+    grids: list[tuple[int, int, int]] = []
+    seq_parts: list[Any] = []
+    for idx, source in enumerate(sources):
+        _w, _h, _vl_w, _vl_h, vae_w, vae_h = compute_qwen_edit_dimensions(source)
+        packed, grid = create_qwen_edit_conditioning_latents(
+            ctx,
+            vae_encode_fn=vae_encode_fn,
+            source=source,
+            vae_width=vae_w,
+            vae_height=vae_h,
+            on_log=on_log if idx == 0 else None,
+        )
+        seq_parts.append(pack_qwen_latents_to_sequence(ctx, packed))
+        grids.append(grid)
+
+    combined = seq_parts[0]
+    for part in seq_parts[1:]:
+        combined = ctx.concat([combined, part], axis=1)
+    if getattr(ctx, "backend", None) == "mlx":
+        ctx.eval(combined)
+    if on_log:
+        on_log(
+            "info",
+            f"qwen_edit multi conditioning refs={len(sources)} grids={grids} "
+            f"seq={tuple(combined.shape)}",
+        )
+    return combined, grids
+
+
+def resolve_qwen_edit_reference_images(
+    request: ImageEditRequest,
+    ctx_exec: ExecutionContext,
+    primary: Image.Image,
+    *,
+    max_images: int,
+) -> list[Image.Image]:
+    """Primary source first, then ``reference_asset_ids`` (deduped, capped)."""
+    images = [primary.convert("RGB")]
+    seen = {request.source_asset_id}
+    cap = max(1, int(max_images))
+    for asset_id in request.reference_asset_ids or []:
+        aid = str(asset_id or "").strip()
+        if not aid or aid in seen:
+            continue
+        seen.add(aid)
+        ref_path = ctx_exec.asset_store.get_file_path(aid)
+        images.append(Image.open(ref_path).convert("RGB"))
+        if len(images) >= cap:
+            break
+    return images
+
+
 @dataclass
 class QwenImageEditRunContext(MediaRunContext):
     """Qwen VL edit — encode through persist (VAE finalize, not rewrite decode)."""
@@ -210,16 +273,29 @@ def build_qwen_image_edit_context(
     )
 
     steps, guidance, _meta_ed = resolve_image_steps_guidance(
-        entry, request, runtime_contract, steps_default=20, guidance_default=4.0
+        entry,
+        request,
+        runtime_contract,
+        steps_default=int(getattr(config, "edit_default_steps", 0) or 20),
+        guidance_default=4.0,
     )
     seed = request.seed if request.seed is not None else random.randint(0, 2 ** 32 - 1)
     preview_mode, preview_interval, preview_max_edge = resolve_image_preview(entry)
     preview_state: dict[str, Any] = {}
+    use_picture_prefix = bool(getattr(config, "edit_use_picture_prefix", False))
+    edit_plus_multi = bool(getattr(config, "edit_plus_multi_image", False))
+    max_ref_images = int(getattr(config, "edit_max_reference_images", 1) or 1)
 
     with phase_cm("encode"):
         src_path = ctx_exec.asset_store.get_file_path(request.source_asset_id)
         pil = Image.open(src_path).convert("RGB")
         w, h, vl_w, vl_h, vae_w, vae_h = compute_qwen_edit_dimensions(pil)
+        ref_images = resolve_qwen_edit_reference_images(
+            request,
+            ctx_exec,
+            pil,
+            max_images=max_ref_images if edit_plus_multi else 1,
+        )
 
         emit_phase(on_progress, phase="encoding", progress=0.02, n_steps=steps)
         pipeline_graph_step("encode_prompt", on_log)
@@ -233,7 +309,8 @@ def build_qwen_image_edit_context(
                 device=device,
                 prompt=request.prompt,
                 negative_prompt=neg_prompt,
-                source=pil,
+                sources=ref_images,
+                use_picture_prefix=use_picture_prefix,
             )
             pooled_embeds = neg_pooled_embeds = None
         else:
@@ -247,14 +324,17 @@ def build_qwen_image_edit_context(
             if not tok_root.is_dir():
                 tok_root = bundle_root / "text_encoder"
             vl_encoder = load_qwen_edit_vl_encoder(bundle_root, pipeline.ctx)
-            vl_tokenizer = build_qwen_edit_vl_tokenizer(tok_root)
+            vl_tokenizer = build_qwen_edit_vl_tokenizer(
+                tok_root,
+                use_picture_prefix=use_picture_prefix,
+            )
             txt_embeds, txt_attn_mask, neg_embeds, neg_attn_mask = encode_qwen_edit_prompts_mlx(
                 vl_encoder=vl_encoder,
                 vl_tokenizer=vl_tokenizer,
                 ctx=pipeline.ctx,
                 prompt=request.prompt,
                 negative_prompt=neg_prompt,
-                source=pil,
+                sources=ref_images,
                 vl_width=vl_w,
                 vl_height=vl_h,
             )
@@ -290,19 +370,17 @@ def build_qwen_image_edit_context(
                 on_log=on_log,
             )
 
-        cond_latents, cond_grid = create_qwen_edit_conditioning_latents(
+        cond_latents, cond_grid = create_qwen_edit_multi_conditioning_latents(
             pipeline.ctx,
             vae_encode_fn=lambda img, height_px, width_px: _vae_enc(
                 img, height_px=height_px, width_px=width_px
             ),
-            source=pil,
-            vae_width=vae_w,
-            vae_height=vae_h,
+            sources=ref_images,
             on_log=on_log,
         )
         extra_cond = dict(extra_cond)
         extra_cond["edit_conditioning_latents"] = cond_latents
-        extra_cond["edit_cond_image_grid"] = cond_grid
+        extra_cond["edit_cond_image_grid"] = cond_grid if len(cond_grid) > 1 else cond_grid[0]
 
     with phase_cm("schedule"):
         scheduled = schedule_image_run(
@@ -337,8 +415,8 @@ def build_qwen_image_edit_context(
         if on_log:
             on_log(
                 "info",
-                f"qwen_image_edit model={model_key} out={w}x{h} vae_cond={vae_w}x{vae_h} "
-                f"vl={vl_w}x{vl_h} steps={steps} guidance={guidance} seed={seed}",
+                f"qwen_image_edit model={model_key} out={w}x{h} refs={len(ref_images)} "
+                f"vae_cond={vae_w}x{vae_h} vl={vl_w}x{vl_h} steps={steps} guidance={guidance} seed={seed}",
             )
 
         latents, extra_cond = model.before_denoise(
@@ -455,6 +533,6 @@ def persist_qwen_image_edit(ctx: QwenImageEditRunContext, latents: Any) -> tuple
         on_progress=ctx.on_progress,
         on_log=ctx.on_log,
         name_infix="_edit",
-        extra_meta={"operation": ctx.request.operation, "edit_model": "qwen-image-edit"},
+        extra_meta={"operation": ctx.request.operation, "edit_model": ctx.model_key},
     )
 

@@ -84,6 +84,9 @@ HUNYUAN_STEP_DISTILL_IDS = (
 WAN_STEP_DISTILL_IDS = (
     "wan-2.2-i2v-14b-distill",
     "wan-2.2-t2v-14b-distill",
+    "wan-2.2-i2v-14b-turbo",
+    "wan-2.2-t2v-14b-turbo",
+    "wan-2.2-t2v-1.3b-turbo",
 )
 HUNYUAN_REPO_ID = "Tencent-Hunyuan/HunyuanVideo-1.5"
 MAX_FAMILY_UNITS = 8
@@ -513,6 +516,31 @@ def check_registry() -> list[str]:
                 if first.get("repo_id") != HUNYUAN_REPO_ID:
                     failures.append(f"hunyuan-video-1.5-1080p-sr: first bundle repo must be {HUNYUAN_REPO_ID}")
 
+    i2v_distill = models.get("hunyuan-video-1.5-i2v-720p-distill")
+    if isinstance(i2v_distill, dict):
+        versions = i2v_distill.get("versions")
+        if not isinstance(versions, dict) or "original" not in versions:
+            failures.append("hunyuan-video-1.5-i2v-720p-distill: versions.original is required")
+        else:
+            ver = versions["original"]
+            if not isinstance(ver, dict):
+                failures.append("hunyuan-video-1.5-i2v-720p-distill: versions.original must be object")
+            elif ver.get("hunyuan_ms_variant") != "720p_i2v_distilled_sparse":
+                failures.append(
+                    "hunyuan-video-1.5-i2v-720p-distill: hunyuan_ms_variant must be 720p_i2v_distilled_sparse"
+                )
+            patterns = ver.get("allow_patterns") if isinstance(ver, dict) else None
+            if not isinstance(patterns, list) or "image_encoder/**" not in patterns:
+                failures.append(
+                    "hunyuan-video-1.5-i2v-720p-distill: allow_patterns must include image_encoder/**"
+                )
+        params = i2v_distill.get("parameters", {})
+        if params.get("supports_guidance") is not False:
+            failures.append("hunyuan-video-1.5-i2v-720p-distill: parameters.supports_guidance must be false")
+        actions = i2v_distill.get("actions") or {}
+        if "animate" not in actions:
+            failures.append("hunyuan-video-1.5-i2v-720p-distill: actions must include animate")
+
     for mid in HUNYUAN_STEP_DISTILL_IDS + WAN_STEP_DISTILL_IDS:
         model = models.get(mid)
         if not isinstance(model, dict):
@@ -534,6 +562,14 @@ def check_registry() -> list[str]:
         if mid.endswith("i2v-14b-distill") and "animate" not in actions:
             failures.append(f"{mid}: actions must include animate")
         if mid.endswith("t2v-14b-distill") and "create" not in actions:
+            failures.append(f"{mid}: actions must include create")
+        if mid.endswith("-turbo") and "create" not in actions and "animate" not in actions:
+            failures.append(f"{mid}: turbo model actions must include create and/or animate")
+        if mid.endswith("i2v-14b-turbo") and "animate" not in actions:
+            failures.append(f"{mid}: actions must include animate")
+        if mid.endswith("t2v-14b-turbo") and "create" not in actions:
+            failures.append(f"{mid}: actions must include create")
+        if mid.endswith("t2v-1.3b-turbo") and "create" not in actions:
             failures.append(f"{mid}: actions must include create")
 
     mid = "hunyuan-video-1.5-1080p-sr"

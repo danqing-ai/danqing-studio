@@ -1016,6 +1016,34 @@ class DownloadService(IDownloadService):
 
         assemble_wan_distill_bundle(target, str(variant))
 
+    def _maybe_assemble_bernini_bundle(self, target: Path, ver_config: dict[str, Any] | None) -> None:
+        if not ver_config:
+            return
+        variant = ver_config.get("bernini_variant")
+        if not variant:
+            return
+        from backend.services.bernini_shared import link_bernini_shared_assets
+
+        def _resolve_dep_path(model_id: str, version_key: str) -> Path:
+            dep_cfg = self.get_model_download_config(model_id) or {}
+            versions = dep_cfg.get("versions") or {}
+            ver = versions.get(version_key)
+            if not isinstance(ver, dict):
+                raise KeyError(f"{model_id}:{version_key}")
+            local_path = ver.get("local_path")
+            if not isinstance(local_path, str) or not local_path.strip():
+                raise ValueError(f"{model_id}:{version_key} missing local_path")
+            return self._path_resolver.resolve_registry_local_path(local_path.strip())
+
+        link_bernini_shared_assets(
+            bernini_root=target,
+            variant=str(variant),
+            resolve_local_path=_resolve_dep_path,
+        )
+        from backend.services.bernini_bundle import assemble_bernini_bundle
+
+        assemble_bernini_bundle(target, str(variant))
+
     async def _finalize_version_install(
         self,
         *,
@@ -1034,6 +1062,8 @@ class DownloadService(IDownloadService):
             self._maybe_assemble_hunyuan_distill_bundle(target, ver_config)
         if ver_config and ver_config.get("wan_distill_variant"):
             self._maybe_assemble_wan_distill_bundle(target, ver_config)
+        if ver_config and ver_config.get("bernini_variant"):
+            self._maybe_assemble_bernini_bundle(target, ver_config)
 
         hooks = install_hooks_from_version(ver_config)
         if hooks:

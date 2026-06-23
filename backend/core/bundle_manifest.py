@@ -72,7 +72,7 @@ FAMILY_BUNDLE_CONTRACTS: dict[str, FamilyBundleContract] = {
     ),
     "qwen_image": FamilyBundleContract(
         required=frozenset({"transformer", "text_encoder", "vae"}),
-        optional=frozenset({"tokenizer"}),
+        optional=frozenset({"tokenizer", "processor"}),
     ),
     "fibo": FamilyBundleContract(
         required=frozenset({"transformer", "text_encoder", "vae"}),

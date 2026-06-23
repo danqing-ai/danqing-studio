@@ -111,6 +111,10 @@ class QwenImageConfig:
     # Qwen-Image-Edit（独立权重）：VL 图文编码 + VAE 参考 latent 序列拼接
     edit_use_vl_vision: bool = False
     edit_conditioning_latent_concat: bool = False
+    # FireRed / QwenImageEditPlus：Picture N 前缀 + 多参考图
+    edit_use_picture_prefix: bool = False
+    edit_plus_multi_image: bool = False
+    edit_max_reference_images: int = 1
     release_text_encoder_after_encode: bool = True
 
 
@@ -291,6 +295,8 @@ class CogView4Config:
     supports_guidance: bool = True
     requires_sigma_shift: bool = True
     vae_scale: int = 8
+    # diffusers ``pipeline_cogview4``: seq len = latent pixels // patch_size**2
+    scheduler_image_seq_len_divisor: int = 4
     latent_noise_dtype: str = "bfloat16"
     noise_sample_fp32: bool = True
     supports_img2img: bool = True
@@ -335,6 +341,8 @@ def merge_cogview4_config_from_bundle(config: CogView4Config, bundle_root: Path 
             "rope_axes_dim",
             tuple(int(x) for x in data["rope_axes_dim"]),
         )
+    patch_size = int(getattr(config, "patch_size", 2) or 2)
+    object.__setattr__(config, "scheduler_image_seq_len_divisor", patch_size * patch_size)
 
 
 @dataclass
@@ -592,6 +600,8 @@ class WanConfig:
     wan_scheduler_use_corrector: bool = False
     # Velocity scale calibration - None means no scaling (model output matches scheduler assumption)
     wan_velocity_scale: float | None = None
+    # ``first_frame`` allows animate/edit with a video asset (extract frame 0 via ffmpeg).
+    video_edit_source_mode: str = "image_only"
 
 
 def merge_wan_config_from_bundle(config: WanConfig, bundle_root: Path | None) -> None:
@@ -746,6 +756,7 @@ class HunyuanVideoConfig:
     cfg_negative_prompt_style: str = "default"
     scheduler_bundle_extras: str = ""
     default_encoder_type: str = "hunyuan_video_dual"
+    video_edit_source_mode: str = "image_only"
 
 
 def merge_hunyuan_transformer_config_from_bundle(config: HunyuanVideoConfig, bundle_root: Path | None) -> None:
@@ -856,6 +867,9 @@ def apply_image_registry_config_overrides(entry: Any, config: Any) -> None:
         "edit_rmbg_composite_output",
         "edit_use_vl_vision",
         "edit_conditioning_latent_concat",
+        "edit_use_picture_prefix",
+        "edit_plus_multi_image",
+        "edit_max_reference_images",
         "patch_token_dim",
         "release_text_encoder_after_encode",
     ):

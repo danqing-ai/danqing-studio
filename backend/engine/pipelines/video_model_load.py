@@ -76,6 +76,7 @@ def apply_video_registry_config_overrides(
         "gemma_model_id",
         "low_ram_streaming",
         "ltx_stage2_steps",
+        "video_edit_source_mode",
     ):
         val = registry_scalar_default(entry, param_key, None)
         if val is not None:
@@ -234,7 +235,7 @@ def load_wan_moe_video_transformer(
     low_shards = wan_moe_expert_shards(bundle_root, "low")
     if not high_shards or not low_shards:
         raise RuntimeError(
-            f"Wan MoE bundle at {bundle_root} requires safetensors under "
+            f"Wan MoE bundle at {bundle_root} requires safetensors or .pth under "
             "high_noise_model/ and low_noise_model/."
         )
 

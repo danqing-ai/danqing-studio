@@ -119,6 +119,9 @@ def wan_moe_expert_shards(bundle_root: Path, expert: str) -> list[Path]:
     shards = sorted(expert_dir.glob("*.safetensors"))
     if shards:
         return shards
+    pth = sorted(expert_dir.glob("*.pth"))
+    if pth:
+        return pth
     return sorted(expert_dir.glob("diffusion_pytorch_model*.safetensors"))
 
 
@@ -131,6 +134,12 @@ def wan_flat_transformer_shards(bundle_root: Path) -> list[Path]:
     shards = sorted(bundle_root.glob("diffusion_pytorch_model*.safetensors"))
     if shards:
         return shards
+    pth = sorted(bundle_root.glob("diffusion_pytorch_model*.pth"))
+    if pth:
+        return pth
+    turbo = sorted(bundle_root.glob("TurboWan*.pth"))
+    if turbo:
+        return turbo
     tp = bundle_root / "transformer"
     if _is_dir_nonempty(tp):
         inner = sorted(tp.glob("*.safetensors"))

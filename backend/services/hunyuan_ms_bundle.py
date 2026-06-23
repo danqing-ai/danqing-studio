@@ -22,7 +22,10 @@ def hunyuan_raw_download_patterns(variant: str) -> list[str]:
         raise RuntimeError("hunyuan_ms_variant is required for ModelScope HunyuanVideo allow_patterns.")
     if v in _HUNYUAN_MS_CONFIG_ONLY_VARIANTS:
         return [f"transformer/{v}/config.json", "vae/**"]
-    return [f"transformer/{v}/**", "vae/**"]
+    patterns = [f"transformer/{v}/**", "vae/**"]
+    if "i2v" in v:
+        patterns.append("image_encoder/**")
+    return patterns
 
 
 def hunyuan_assembled_bundle_patterns() -> list[str]:

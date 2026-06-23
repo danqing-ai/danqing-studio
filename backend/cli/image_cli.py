@@ -141,6 +141,8 @@ def edit(
     steps: int | None = None,
     seed: int | None = None,
     scheduler: str | None = None,
+    reference_asset_ids: list[str] | None = None,
+    reference_images: list[str] | None = None,
     output: str = "",
     project_root: Path | None = None,
 ) -> str:
@@ -199,10 +201,20 @@ def edit(
             )
 
         sched = (scheduler or "").strip() or None
+        ref_ids = [str(x).strip() for x in (reference_asset_ids or []) if str(x).strip()]
+        for ref_image in reference_images or []:
+            ref_path = Path(ref_image)
+            ref_aid = ctx.asset_store.create_from_file(
+                ref_path, kind="image", mime_type="image/png", source_task_id="",
+            )
+            ref_ids.append(ref_aid)
+            print(f"[cli] uploaded reference {ref_image} → asset {ref_aid}")
+
         request = ImageEditRequest(
             model=model,
             operation=operation,
             source_asset_id=source_asset_id,
+            reference_asset_ids=ref_ids,
             mask_asset_id=resolved_mask_id or None,
             extend=extend_spec,
             prompt=prompt,

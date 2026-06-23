@@ -239,6 +239,9 @@ class SchedulerSemanticsResolver:
             vae_scale = getattr(config, "vae_scale", 16)
         vae_scale = max(1, int(vae_scale))
         image_seq_len = (height // vae_scale) * (width // vae_scale)
+        seq_divisor = int(getattr(config, "scheduler_image_seq_len_divisor", 1) or 1)
+        if seq_divisor > 1:
+            image_seq_len //= seq_divisor
         sched_extra: dict[str, Any] = {}
         mu = registry_scalar_default(entry, "scheduler_mu", None)
         if mu is not None:

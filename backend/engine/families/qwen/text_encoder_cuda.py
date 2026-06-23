@@ -105,7 +105,27 @@ _QWEN_EDIT_PROMPT_TEMPLATE = (
     "<|vision_start|><|image_pad|><|vision_end|>{}<|im_end|>\n"
     "<|im_start|>assistant\n"
 )
+_QWEN_EDIT_PLUS_USER_TEMPLATE = (
+    "<|im_start|>system\n"
+    "Describe the key features of the input image (color, shape, size, texture, objects, background), "
+    "then explain how the user's text instruction should alter or modify the image. "
+    "Generate a new image that meets the user's requirements while maintaining consistency "
+    "with the original input where appropriate.<|im_end|>\n"
+    "<|im_start|>user\n"
+    "{}<|im_end|>\n"
+    "<|im_start|>assistant\n"
+)
 _QWEN_EDIT_DROP_IDX = 64
+
+
+def _format_qwen_edit_cuda_prompt(text: str, *, use_picture_prefix: bool, num_images: int) -> str:
+    if use_picture_prefix:
+        img_part = "".join(
+            f"Picture {i + 1}: <|vision_start|><|image_pad|><|vision_end|>"
+            for i in range(max(num_images, 1))
+        )
+        return _QWEN_EDIT_PLUS_USER_TEMPLATE.format(img_part + text)
+    return _QWEN_EDIT_PROMPT_TEMPLATE.format(text)
 
 
 def _load_qwen_edit_torch_encoder(bundle_root: Path, device: torch.device) -> tuple[Any, Any, Any]:
@@ -131,16 +151,29 @@ def encode_qwen_edit_prompts_cuda(
     device: torch.device,
     prompt: str,
     negative_prompt: str,
-    source: Any,
+    sources: list[Any],
+    use_picture_prefix: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     from PIL import Image
 
+    if not sources:
+        raise RuntimeError("Qwen edit CUDA encode requires at least one reference image.")
+
     processor, text_model, device = _load_qwen_edit_torch_encoder(bundle_root, device)
-    pil = source.convert("RGB") if isinstance(source, Image.Image) else Image.open(source).convert("RGB")
+    images: list[Image.Image] = []
+    for source in sources:
+        if isinstance(source, Image.Image):
+            images.append(source.convert("RGB"))
+        else:
+            images.append(Image.open(source).convert("RGB"))
 
     def _encode_one(text: str) -> tuple[torch.Tensor, torch.Tensor]:
-        txt = _QWEN_EDIT_PROMPT_TEMPLATE.format(text)
-        model_inputs = processor(text=[txt], images=[pil], padding=True, return_tensors="pt").to(device)
+        txt = _format_qwen_edit_cuda_prompt(
+            text,
+            use_picture_prefix=use_picture_prefix,
+            num_images=len(images),
+        )
+        model_inputs = processor(text=[txt], images=images, padding=True, return_tensors="pt").to(device)
         with torch.no_grad():
             outputs = text_model(
                 input_ids=model_inputs["input_ids"],

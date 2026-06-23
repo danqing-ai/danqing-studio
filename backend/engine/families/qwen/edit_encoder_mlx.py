@@ -832,12 +832,20 @@ def load_qwen_edit_vl_encoder(bundle_root: Path, ctx: Any) -> QwenVisionLanguage
     return QwenVisionLanguageEncoder(encoder=encoder)
 
 
-def build_qwen_edit_vl_tokenizer(tok_root: Path) -> QwenVisionLanguageTokenizer:
+def build_qwen_edit_vl_tokenizer(
+    tok_root: Path,
+    *,
+    use_picture_prefix: bool = False,
+) -> QwenVisionLanguageTokenizer:
     from backend.engine.families.qwen.text_encoder_mlx import QwenImageTextEncoder
 
     hf_tok = QwenImageTextEncoder._load_qwen2_tokenizer(tok_root)
     processor = QwenVisionLanguageProcessor(tokenizer=hf_tok)
-    return QwenVisionLanguageTokenizer(processor=processor, max_length=1024, use_picture_prefix=False)
+    return QwenVisionLanguageTokenizer(
+        processor=processor,
+        max_length=1024,
+        use_picture_prefix=use_picture_prefix,
+    )
 
 
 def encode_qwen_edit_prompts_mlx(
@@ -847,17 +855,25 @@ def encode_qwen_edit_prompts_mlx(
     ctx: Any,
     prompt: str,
     negative_prompt: str,
-    source: Image.Image,
-    vl_width: int,
-    vl_height: int,
+    sources: list[Image.Image],
+    vl_width: int | None = None,
+    vl_height: int | None = None,
 ) -> tuple[Any, Any, Any, Any]:
     """返回 ``(pos_embeds, pos_mask, neg_embeds, neg_mask)``。"""
-    src = source.convert("RGB").resize((vl_width, vl_height), Image.BICUBIC)
-    pos_ids, pos_mask, pos_px, pos_grid = vl_tokenizer.tokenize_with_image(
-        prompt, src, vl_width=vl_width, vl_height=vl_height
-    )
+    if not sources:
+        raise RuntimeError("Qwen edit encode requires at least one reference image.")
+
+    if vl_tokenizer.use_picture_prefix:
+        vl_sources = [s.convert("RGB") for s in sources]
+    else:
+        primary = sources[0].convert("RGB")
+        if vl_width is None or vl_height is None:
+            raise RuntimeError("Qwen Image Edit single-image encode requires vl_width/vl_height.")
+        vl_sources = primary.resize((vl_width, vl_height), Image.BICUBIC)
+
+    pos_ids, pos_mask, pos_px, pos_grid = vl_tokenizer.tokenize_with_image(prompt, vl_sources)
     neg_ids, neg_mask, neg_px, neg_grid = vl_tokenizer.tokenize_with_image(
-        negative_prompt or "", src, vl_width=vl_width, vl_height=vl_height
+        negative_prompt or "", vl_sources
     )
     pos_embeds, pos_attn = vl_encoder(
         input_ids=pos_ids,

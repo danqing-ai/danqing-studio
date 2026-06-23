@@ -682,7 +682,10 @@ class QwenImageDiTMLX(TransformerBase):
             from backend.engine.families.qwen.edit_util import pack_qwen_latents_to_sequence
 
             noise_seq = pack_qwen_latents_to_sequence(ctx, latents)
-            cond_seq = pack_qwen_latents_to_sequence(ctx, edit_cond)
+            if int(getattr(edit_cond, "ndim", edit_cond.dim() if hasattr(edit_cond, "dim") else 4)) == 3:
+                cond_seq = edit_cond
+            else:
+                cond_seq = pack_qwen_latents_to_sequence(ctx, edit_cond)
             target_seq_len = int(noise_seq.shape[1])
             seq_mx = ctx.concat([noise_seq, cond_seq], axis=1)
         else:

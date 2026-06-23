@@ -196,17 +196,20 @@ def _apply_video_i2v_source(
     entry: Any,
     version_key: str | None,
     bundle_root: Path | None,
+    work_dir: Path | None = None,
 ) -> Any:
     if not request.source_asset_id:
         return latents
-    src_path = pipeline._asset_store.get_file_path(request.source_asset_id)
-    if not src_path or not src_path.exists():
-        return latents
-    from PIL import Image
-
     import numpy as np
 
-    src_img = Image.open(str(src_path)).convert("RGB")
+    from backend.engine.contracts.video_runtime_contracts import resolve_video_edit_source_image
+
+    src_img = resolve_video_edit_source_image(
+        pipeline._asset_store,
+        request.source_asset_id,
+        mode=str(getattr(config, "video_edit_source_mode", "image_only") or "image_only"),
+        work_dir=work_dir,
+    )
     src_img = video_prepare_i2v_source_image(config, src_img, w, h)
     src_array = np.array(src_img).astype(np.float32) / 127.5 - 1.0
     src_tensor = pipeline.ctx.array(np.expand_dims(src_array, 0))
@@ -372,6 +375,7 @@ def build_video_create_run_context(
             entry=entry,
             version_key=version_key,
             bundle_root=bundle_root,
+            work_dir=Path(exec_ctx.work_dir),
         )
 
     extra_cond["_pipeline_fps"] = float(fps)

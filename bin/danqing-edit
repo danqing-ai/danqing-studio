@@ -74,6 +74,18 @@ def main():
         default=None,
         help="Override scheduler id (registry default if omitted)",
     )
+    parser.add_argument(
+        "--reference-asset-id",
+        action="append",
+        default=[],
+        help="Extra reference asset id for multi-image edit (FireRed EditPlus; repeatable)",
+    )
+    parser.add_argument(
+        "--reference-image",
+        action="append",
+        default=[],
+        help="Extra local reference image (uploaded as asset; repeatable)",
+    )
     parser.add_argument("--output", required=True)
     parser.add_argument("--project-root", default=str(PROJECT_ROOT))
     args = parser.parse_args()
@@ -95,6 +107,8 @@ def main():
         steps=args.steps,
         seed=args.seed,
         scheduler=args.scheduler,
+        reference_asset_ids=args.reference_asset_id,
+        reference_images=args.reference_image,
         output=args.output,
         project_root=Path(args.project_root).resolve(),
     )

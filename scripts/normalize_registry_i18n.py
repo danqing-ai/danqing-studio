@@ -91,6 +91,10 @@ DESCRIPTION_OVERRIDES: dict[str, dict[str, str]] = {
         "zh": "通义千问 Qwen Image Edit 指令编辑，VL 图文理解 + VAE 参考 latent。",
         "en": "Qwen Image Edit with VL understanding and VAE reference latents.",
     },
+    "firered-image-edit-1.1": {
+        "zh": "FireRed Image Edit 1.1 指令编辑（仅图生图编辑，不支持文生图），强身份一致性，支持多参考图。",
+        "en": "FireRed Image Edit 1.1 — instruction-based image edit only (no text-to-image); strong identity consistency and multi-reference input.",
+    },
     "ace-step-xl-sft": {
         "zh": "ACE-Step-1.5 XL SFT，4B DiT 解码器，高质量音乐生成。",
         "en": "ACE-Step-1.5 XL SFT; 4B DiT decoder for high-quality music generation.",

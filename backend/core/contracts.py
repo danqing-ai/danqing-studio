@@ -111,6 +111,7 @@ class ImageEditRequest(BaseModel):
     model: str
     operation: Literal["rewrite", "retouch", "extend"]
     source_asset_id: str
+    reference_asset_ids: list[str] = Field(default_factory=list)
     title: str = ""
     prompt: str
     source_fidelity: float = Field(0.6, ge=0.0, le=1.0)

@@ -122,7 +122,10 @@ class QwenImageDiTCuda(TransformerBase):
         if edit_cond is not None:
             cond = _to_torch(edit_cond, device=device, dtype=dtype)
             noise = lat.permute(0, 2, 3, 1).reshape(b, h_lat * w_lat, c)
-            cond_packed = cond.permute(0, 2, 3, 1).reshape(b, cond.shape[2] * cond.shape[3], c)
+            if cond.ndim == 3:
+                cond_packed = cond
+            else:
+                cond_packed = cond.permute(0, 2, 3, 1).reshape(b, cond.shape[2] * cond.shape[3], c)
             target_seq_len = int(noise.shape[1])
             hidden = torch.cat([noise, cond_packed], dim=1)
         else:
@@ -145,9 +148,17 @@ class QwenImageDiTCuda(TransformerBase):
         img_shapes = [(1, latent_h, latent_w)]
         if cond_image_grid is not None:
             if isinstance(cond_image_grid, (list, tuple)) and len(cond_image_grid) == 3:
-                img_shapes.append(tuple(int(x) for x in cond_image_grid))
+                if all(isinstance(x, (int, float)) for x in cond_image_grid):
+                    img_shapes.append(tuple(int(x) for x in cond_image_grid))
+                else:
+                    for g in cond_image_grid:
+                        if not isinstance(g, (list, tuple)) or len(g) != 3:
+                            raise RuntimeError(
+                                f"Qwen edit cond_image_grid entries must be (f,h,w); got {g!r}"
+                            )
+                        img_shapes.append(tuple(int(x) for x in g))
             else:
-                raise RuntimeError(f"Qwen edit cond_image_grid must be (f,h,w); got {cond_image_grid!r}")
+                raise RuntimeError(f"Qwen edit cond_image_grid must be (f,h,w) or list thereof; got {cond_image_grid!r}")
 
         out = model(
             hidden_states=hidden,

@@ -1,4 +1,4 @@
-"""Assemble Wan 2.2 LightX2V distill DiT shards into MoE bundle layout."""
+"""Assemble Wan 2.2 LightX2V / TurboDiffusion distill DiT into MoE or flat bundle layout."""
 from __future__ import annotations
 
 import json
@@ -23,11 +23,52 @@ _WAN_DISTILL_VARIANTS: dict[str, tuple[str, str]] = {
         "wan2.2_t2v_A14b_high_noise_scaled_fp8_e4m3_lightx2v_4step.safetensors",
         "wan2.2_t2v_A14b_low_noise_scaled_fp8_e4m3_lightx2v_4step.safetensors",
     ),
+    # TurboDiffusion rCM — HuggingFace TurboDiffusion/* (CUDA .pth checkpoints)
+    "turbo_i2v_720p": (
+        "TurboWan2.2-I2V-A14B-high-720P.pth",
+        "TurboWan2.2-I2V-A14B-low-720P.pth",
+    ),
+    "turbo_i2v_720p_quant": (
+        "TurboWan2.2-I2V-A14B-high-720P-quant.pth",
+        "TurboWan2.2-I2V-A14B-low-720P-quant.pth",
+    ),
+}
+
+# Single-expert TurboDiffusion T2V (Wan2.1 backbone) — filename at bundle root after download.
+_WAN_TURBO_SINGLE_VARIANTS: dict[str, str] = {
+    "turbo_t2v_480p_14b": "TurboWan2.1-T2V-14B-480P.pth",
+    "turbo_t2v_480p_14b_quant": "TurboWan2.1-T2V-14B-480P-quant.pth",
+    "turbo_t2v_720p_14b": "TurboWan2.1-T2V-14B-720P.pth",
+    "turbo_t2v_720p_14b_quant": "TurboWan2.1-T2V-14B-720P-quant.pth",
+    "turbo_t2v_480p_1.3b": "TurboWan2.1-T2V-1.3B-480P.pth",
+    "turbo_t2v_480p_1.3b_quant": "TurboWan2.1-T2V-1.3B-480P-quant.pth",
 }
 
 
+def _expert_dest_name(src: Path) -> str:
+    if src.suffix.lower() == ".pth":
+        return "diffusion_pytorch_model.pth"
+    return "diffusion_pytorch_model.safetensors"
+
+
+def _move_expert_shard(src: Path, dest_dir: Path) -> None:
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / _expert_dest_name(src)
+    if dest.is_file():
+        if src.is_file():
+            try:
+                if src.resolve() != dest.resolve():
+                    src.unlink()
+            except OSError:
+                src.unlink()
+        return
+    if not src.is_file():
+        raise RuntimeError(f"Wan distill bundle missing {src.name} under {src.parent}.")
+    shutil.move(str(src), str(dest))
+
+
 def assemble_wan_distill_bundle(bundle_root: Path, variant: str) -> None:
-    """Move LightX2V distill safetensors into ``high_noise_model/`` + ``low_noise_model/``."""
+    """Move LightX2V / TurboDiffusion shards into MoE or flat Wan bundle layout."""
     root = Path(bundle_root)
     vae21 = root / "Wan2.1_VAE.pth"
     vae22 = root / "Wan2.2_VAE.pth"
@@ -35,36 +76,41 @@ def assemble_wan_distill_bundle(bundle_root: Path, variant: str) -> None:
         vae22.symlink_to(vae21.name)
     if not variant:
         raise RuntimeError("wan_distill_variant is required for Wan distill bundle assembly.")
-    names = _WAN_DISTILL_VARIANTS.get(str(variant))
-    if names is None:
-        known = ", ".join(sorted(_WAN_DISTILL_VARIANTS))
-        raise RuntimeError(
-            f"Unknown wan_distill_variant {variant!r}. Supported: {known}."
-        )
 
-    high_name, low_name = names
-    for expert, filename in (("high", high_name), ("low", low_name)):
-        src = root / filename
-        dest_dir = root / ("high_noise_model" if expert == "high" else "low_noise_model")
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest = dest_dir / "diffusion_pytorch_model.safetensors"
-
-        if dest.is_file():
-            # Older installs copied instead of moving; drop the redundant root shard.
-            if src.is_file():
-                try:
-                    if src.resolve() != dest.resolve():
-                        src.unlink()
-                except OSError:
+    single_name = _WAN_TURBO_SINGLE_VARIANTS.get(str(variant))
+    if single_name is not None:
+        src = root / single_name
+        dest = root / _expert_dest_name(src)
+        if not dest.is_file():
+            if not src.is_file():
+                known = ", ".join(sorted(_WAN_TURBO_SINGLE_VARIANTS))
+                raise RuntimeError(
+                    f"Wan turbo bundle missing {single_name} under {root}. "
+                    f"Supported single variants: {known}."
+                )
+            shutil.move(str(src), str(dest))
+        elif src.is_file():
+            try:
+                if src.resolve() != dest.resolve():
                     src.unlink()
-            continue
-
-        if not src.is_file():
+            except OSError:
+                src.unlink()
+        source = "turbodiffusion"
+        dual = False
+    else:
+        names = _WAN_DISTILL_VARIANTS.get(str(variant))
+        if names is None:
+            known = ", ".join(sorted(set(_WAN_DISTILL_VARIANTS) | set(_WAN_TURBO_SINGLE_VARIANTS)))
             raise RuntimeError(
-                f"Wan distill bundle missing {filename} under {root}. "
-                "Check allow_patterns for lightx2v/Wan2.2-Distill-Models (ModelScope)."
+                f"Unknown wan_distill_variant {variant!r}. Supported: {known}."
             )
-        shutil.move(str(src), str(dest))
+        high_name, low_name = names
+        for expert, filename in (("high", high_name), ("low", low_name)):
+            src = root / filename
+            dest_dir = root / ("high_noise_model" if expert == "high" else "low_noise_model")
+            _move_expert_shard(src, dest_dir)
+        source = "turbodiffusion" if str(variant).startswith("turbo_") else "lightx2v_distill"
+        dual = True
 
     index_path = root / "model_index.json"
     payload: dict[str, object] = {}
@@ -73,8 +119,8 @@ def assemble_wan_distill_bundle(bundle_root: Path, variant: str) -> None:
     payload.update(
         {
             "_wan_distill_variant": variant,
-            "_danqing_bundle_source": "lightx2v_distill",
-            "dual_model": True,
+            "_danqing_bundle_source": source,
+            "dual_model": dual,
         }
     )
     index_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

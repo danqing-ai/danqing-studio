@@ -283,6 +283,40 @@ def video_apply_i2v_conditioning(
     raise RuntimeError(f"Unknown video_i2v_style: {style!r}")
 
 
+def resolve_video_edit_source_image(
+    asset_store: Any,
+    asset_id: str,
+    *,
+    mode: str,
+    work_dir: Path | None = None,
+):
+    """Load animate/edit source as PIL RGB — image assets directly, video assets via first frame."""
+    from PIL import Image
+
+    record = asset_store.get_asset_record(asset_id) if hasattr(asset_store, "get_asset_record") else None
+    src_path = asset_store.get_file_path(asset_id)
+    if not src_path or not Path(src_path).exists():
+        raise RuntimeError(f"Video edit source asset not found: {asset_id!r}")
+
+    mime = str((record or {}).get("mime_type") or "").lower()
+    kind = str((record or {}).get("kind") or "").lower()
+    is_video = mime.startswith("video/") or kind == "video"
+    if is_video and str(mode or "image_only") == "first_frame":
+        from backend.engine.common.video.stitch import extract_first_frame_image
+
+        if work_dir is None:
+            raise RuntimeError("video_edit_source_mode=first_frame requires a work_dir for frame extraction.")
+        out = Path(work_dir) / f"edit_source_{asset_id}_frame0.png"
+        extract_first_frame_image(Path(src_path), output_path=out)
+        return Image.open(out).convert("RGB")
+    if is_video:
+        raise RuntimeError(
+            f"Video edit source {asset_id!r} is a video asset; set registry video_edit_source_mode=first_frame "
+            "or provide an image source_asset_id."
+        )
+    return Image.open(str(src_path)).convert("RGB")
+
+
 def video_i2v_encode_failure_message(config: Any) -> str:
     style = str(getattr(config, "video_i2v_style", "concat") or "concat")
     if style == "wan":

@@ -241,7 +241,7 @@ def build_create_run_context(
         sched_ts = scheduled.sched_ts
         timestep_embed_schedule = scheduled.timestep_embed_schedule
         vae_scale = getattr(config, "vae_scale", 8)
-        image_seq_len = (h // 16) * (w // 16)
+        image_seq_len = int(semantics.set_timesteps_kwargs.get("image_seq_len") or 0)
 
     if on_log:
         parts = [

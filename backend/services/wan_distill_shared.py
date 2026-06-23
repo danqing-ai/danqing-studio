@@ -10,6 +10,14 @@ _WAN_DISTILL_BASE: dict[str, tuple[str, tuple[str, ...]]] = {
     "i2v_720p": ("wan-2.2-i2v-14b", ("encoders", "original")),
     "i2v_fp8": ("wan-2.2-i2v-14b", ("encoders", "original")),
     "t2v_fp8": ("wan-2.2-t2v-14b", ("encoders", "original")),
+    "turbo_i2v_720p": ("wan-2.2-i2v-14b", ("encoders", "original")),
+    "turbo_i2v_720p_quant": ("wan-2.2-i2v-14b", ("encoders", "original")),
+    "turbo_t2v_480p_14b": ("wan-2.2-t2v-14b", ("encoders", "original")),
+    "turbo_t2v_480p_14b_quant": ("wan-2.2-t2v-14b", ("encoders", "original")),
+    "turbo_t2v_720p_14b": ("wan-2.2-t2v-14b", ("encoders", "original")),
+    "turbo_t2v_720p_14b_quant": ("wan-2.2-t2v-14b", ("encoders", "original")),
+    "turbo_t2v_480p_1.3b": ("wan-2.2-t2v-14b", ("encoders", "original")),
+    "turbo_t2v_480p_1.3b_quant": ("wan-2.2-t2v-14b", ("encoders", "original")),
 }
 
 _SHARED_PATTERNS = (

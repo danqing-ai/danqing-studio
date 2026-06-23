@@ -192,6 +192,7 @@ def apply_video_registry_config_overrides(pipeline, entry: Any, config: Any) -> 
         "gemma_model_id",
         "low_ram_streaming",
         "ltx_stage2_steps",
+        "video_edit_source_mode",
     ):
         val = _registry_scalar_default_fn(entry, param_key, None)
         if val is not None:

@@ -270,6 +270,12 @@ class SettingsService(ISettingsService):
                         or lora_base_key.startswith("wan")
                         or lora_base_key == model_base_key
                     )
+                elif model_base_key.startswith("qwen") or model_base_key.startswith("firered-image-edit"):
+                    from backend.engine.families.qwen.weights_mlx import qwen_image_lora_base_compatible
+
+                    ok = lora_base_key == "" or qwen_image_lora_base_compatible(
+                        model_base_key, lora_base_key
+                    )
                 elif model_base_key.startswith("ace-step"):
                     from backend.engine.families.ace_step.weights import ace_step_lora_base_compatible
 
@@ -306,6 +312,13 @@ class SettingsService(ISettingsService):
 
                     if model_base_key.startswith("flux1") and lora_base_key.startswith("flux1"):
                         pass
+                    elif model_base_key.startswith("qwen") or model_base_key.startswith("firered-image-edit"):
+                        from backend.engine.families.qwen.weights_mlx import qwen_image_lora_base_compatible
+
+                        if qwen_image_lora_base_compatible(model_base_key, lora_base_key):
+                            pass
+                        else:
+                            continue
                     elif model_base_key.startswith("ace-step"):
                         from backend.engine.families.ace_step.weights import ace_step_lora_base_compatible
 

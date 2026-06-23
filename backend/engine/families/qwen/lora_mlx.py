@@ -9,8 +9,11 @@ from backend.engine.families.qwen.weights_mlx import remap_qwen_lora_keys
 from backend.engine.runtime._base import RuntimeContext
 
 
+from backend.engine.families.qwen.weights_mlx import qwen_image_lora_scope_key
+
+
 def _base_model_scope_key(value: str) -> str:
-    return value.split(":", 1)[0].strip() if value else ""
+    return qwen_image_lora_scope_key(value)
 
 
 def _repair_indexed_qwen_weights(
