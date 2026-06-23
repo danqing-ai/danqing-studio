@@ -194,19 +194,17 @@
           />
         </DqSelect>
 
-        <ComposerIconTip :content="composerBusy ? $t('create.composerQueueHint') : $t('create.composerGenerateHint')">
-          <DqButton
-            type="primary"
-            size="sm"
-            class="image-composer__generate"
-            :disabled="!canGenerate || submitting"
-            :loading="submitting"
-            @click="$emit('generate')"
-          >
-            <DqIcon size="16"><MagicStick /></DqIcon>
-            <span>{{ primaryActionLabel }}</span>
-          </DqButton>
-        </ComposerIconTip>
+        <!-- Generate button -->
+        <DqButton
+          type="primary"
+          size="sm"
+          class="image-composer__generate"
+          :disabled="!canGenerate || submitting"
+          @click="$emit('generate')"
+        >
+          <DqIcon :size="14"><MagicStick /></DqIcon>
+          <span>{{ primaryActionLabel }}</span>
+        </DqButton>
       </div>
     </div>
 
