@@ -107,6 +107,15 @@ def get_audio_lora_merge(family: str):
     return getattr(importlib.import_module(entry[0]), entry[1])
 
 
+def get_video_lora_merge(family: str):
+    import importlib
+
+    entry = _VIDEO_LORA_MERGE.get(family)
+    if entry is None:
+        return None
+    return getattr(importlib.import_module(entry[0]), entry[1])
+
+
 def merge_image_lora_adapters(
     *,
     family: str,
@@ -153,6 +162,35 @@ def merge_audio_lora_adapters(
         supported = ", ".join(sorted(_AUDIO_LORA_MERGE.keys()))
         raise RuntimeError(
             "LoRA adapters require in-engine merging; supported audio families are "
+            f"{supported} (this model is family={family!r}). Remove adapters or switch model."
+        )
+    merge_fn(
+        model=model,
+        adapters=adapters,
+        base_model_id=base_model_id,
+        project_root=project_root,
+        registry=registry,
+        ctx=ctx,
+        on_log=on_log,
+    )
+
+
+def merge_video_lora_adapters(
+    *,
+    family: str,
+    model: Any,
+    adapters: list[Any],
+    base_model_id: str,
+    project_root: Path,
+    registry: Any,
+    ctx: Any,
+    on_log: Any | None = None,
+) -> None:
+    merge_fn = get_video_lora_merge(family)
+    if merge_fn is None:
+        supported = ", ".join(sorted(_VIDEO_LORA_MERGE.keys()))
+        raise RuntimeError(
+            "LoRA adapters require in-engine merging; supported video families are "
             f"{supported} (this model is family={family!r}). Remove adapters or switch model."
         )
     merge_fn(
