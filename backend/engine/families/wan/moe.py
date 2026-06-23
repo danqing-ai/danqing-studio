@@ -42,6 +42,7 @@ class WanMoETransformer:
         self._stash_i2v_cond: Any | None = None
         self._stash_i2v_mask: Any | None = None
         self._stash_i2v_side: Any | None = None
+        self._lora_pending: list[dict[str, Any]] | None = None
         if not self.lazy and (high is None or low is None):
             raise RuntimeError("Wan MoE requires both experts when lazy=False.")
         if self.lazy and (load_high is None or load_low is None):
@@ -82,17 +83,93 @@ class WanMoETransformer:
                 if self._load_high is None:
                     raise RuntimeError("Wan MoE lazy mode missing load_high.")
                 self._high = self._load_high()
-                self._after_load_one(self._high)
+                self._after_load_one(self._high, side="high")
             return self._high
         if self._low is None:
             if self._load_low is None:
                 raise RuntimeError("Wan MoE lazy mode missing load_low.")
             self._low = self._load_low()
-            self._after_load_one(self._low)
+            self._after_load_one(self._low, side="low")
             self._sync_i2v_state()
         return self._low
 
-    def _after_load_one(self, expert: Any) -> None:
+    def _merge_pending_lora(self, expert: Any, side: ExpertSide) -> None:
+        pending = self._lora_pending
+        if not pending:
+            return
+        from backend.engine.families.wan.lora_mlx import merge_wan_lora_into_expert
+
+        merged: list[str] = list(getattr(expert, "_dq_wan_lora_merged_ids", []) or [])
+        for spec in pending:
+            lora_id = str(spec["lora_id"])
+            if lora_id in merged:
+                continue
+            merge_wan_lora_into_expert(
+                expert,
+                side=side if spec.get("lightning") else None,
+                lora_id=lora_id,
+                strength=float(spec["strength"]),
+                bundle_root=spec["bundle"],
+                ctx=self.ctx,
+                on_log=spec.get("on_log"),
+            )
+            merged.append(lora_id)
+        expert._dq_wan_lora_merged_ids = merged
+
+    def apply_lora_adapters(
+        self,
+        *,
+        adapters: Any,
+        base_model_id: str,
+        project_root: Any,
+        registry: Any,
+        ctx: Any,
+        on_log: Any | None = None,
+    ) -> None:
+        from backend.core.contracts import parse_model_version
+        from backend.engine.common.bundle.lora_mlx import adapter_id_weight
+        from backend.engine.families.wan.lora_mlx import resolve_wan_lora_bundle
+
+        specs: list[dict[str, Any]] = []
+        for item in adapters or ():
+            lora_id, strength = adapter_id_weight(item)
+            mid, bundle, lightning = resolve_wan_lora_bundle(
+                lora_id,
+                base_model_id=base_model_id,
+                project_root=project_root,
+                registry=registry,
+            )
+            if lightning:
+                specs.append(
+                    {
+                        "lora_id": mid,
+                        "strength": strength,
+                        "bundle": bundle,
+                        "lightning": True,
+                        "side": None,
+                        "on_log": on_log,
+                    }
+                )
+            else:
+                specs.append(
+                    {
+                        "lora_id": mid,
+                        "strength": strength,
+                        "bundle": bundle,
+                        "lightning": False,
+                        "side": None,
+                        "on_log": on_log,
+                    }
+                )
+        self._lora_pending = specs
+        del ctx
+        for side, expert in (("high", self._high), ("low", self._low)):
+            if expert is not None:
+                self._merge_pending_lora(expert, side)  # type: ignore[arg-type]
+
+    def _after_load_one(self, expert: Any, *, side: ExpertSide | None = None) -> None:
+        if side is not None:
+            self._merge_pending_lora(expert, side)
         fn = getattr(expert, "after_load_weights", None)
         if callable(fn):
             fn(bundle_root=self._bundle_root)
@@ -194,7 +271,10 @@ class WanMoETransformer:
     def after_load_weights(self, bundle_root: str | None = None) -> None:
         self._bundle_root = bundle_root
         if not self.lazy:
-            for expert in (self._high, self._low):
+            for expert, side in ((self._high, "high"), (self._low, "low")):
+                if expert is None:
+                    continue
+                self._merge_pending_lora(expert, side)
                 fn = getattr(expert, "after_load_weights", None)
                 if callable(fn):
                     fn(bundle_root=bundle_root)

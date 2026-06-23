@@ -192,6 +192,7 @@ const emit = defineEmits<{
   (e: 'use-as-start-frame', payload: { path: string; previewUrl: string; quiet?: boolean }): void;
   (e: 'use-as-tail-frame', payload: { path: string; previewUrl: string; quiet?: boolean }): void;
   (e: 'use-as-video-source', payload: { path: string; previewUrl: string; quiet?: boolean }): void;
+  (e: 'use-as-animate-source', payload: { path: string; previewUrl: string; quiet?: boolean }): void;
   (e: 'use-as-cover-source', payload: { path: string; previewUrl: string; quiet?: boolean }): void;
   (e: 'card-action', payload: { action: string; item: GalleryItem }): void;
   (e: 'download', item: GalleryItem): void;
@@ -555,6 +556,21 @@ function onToolbarAction(action: string) {
       const payload = bindPayload(path, item);
       emit('use-as-tail-frame', payload);
       store.setOverlay('tail_frame', path, item);
+      break;
+    }
+    case 'quick-animate-video':
+      store.placeStagingBeside(path, props.items);
+      {
+        const payload = bindPayload(path, item);
+        emit('use-as-animate-source', { ...payload, quiet: true });
+        store.setOverlay('video_source', path, item);
+        toast.success($tt('canvas.animateVideoBranchHint'));
+      }
+      break;
+    case 'use-animate-source': {
+      const payload = bindPayload(path, item);
+      emit('use-as-animate-source', payload);
+      store.setOverlay('video_source', path, item);
       break;
     }
     case 'quick-upscale':

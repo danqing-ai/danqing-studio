@@ -480,6 +480,7 @@ import {
 import { assetIdFromGalleryPath } from '@/utils/copilotHandoff';
 import { $tt, $pn } from '@/utils/i18n';
 import { formatResolutionOptionLabel } from '@/utils/registryParamSchema';
+import { resolveVideoEditSourceMode } from '@/utils/videoEditSource';
 import { isLongVideoTargetDuration } from '@/utils/videoStoryboardPrompt';
 
 const props = defineProps<{
@@ -642,15 +643,28 @@ const promptPlaceholder = computed(() =>
 
 const showSeedField = computed(() => paramSchema.value.seed_support !== false);
 
+const animateSourceMode = computed(() => {
+  if (props.workMode !== 'animate') return 'image_only' as const;
+  return resolveVideoEditSourceMode(paramSchema.value);
+});
+
 const referenceMediaLabel = computed(() => {
-  if (props.workMode === 'animate') return $tt('action.video.startImage');
+  if (props.workMode === 'animate') {
+    return animateSourceMode.value === 'first_frame'
+      ? $tt('video.animateSourceTitle')
+      : $tt('action.video.startImage');
+  }
   if (props.workMode === 'upscale') return $tt('video.videoSourceTitle');
   return $tt('create.refImage');
 });
 
 const referenceMediaTip = computed(() => {
   if (props.workMode === 'upscale') return $tt('video.videoSourceTitle');
-  if (props.workMode === 'animate') return $t('create.composerTip.reversePromptVideo');
+  if (props.workMode === 'animate') {
+    return animateSourceMode.value === 'first_frame'
+      ? $tt('video.animateSourceHint')
+      : $t('create.composerTip.reversePromptVideo');
+  }
   return $t('create.composerTip.refImage');
 });
 

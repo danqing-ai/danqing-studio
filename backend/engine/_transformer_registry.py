@@ -64,6 +64,10 @@ _AUDIO_LORA_MERGE = {
     "ace_step": ("backend.engine.families.ace_step.lora_mlx", "merge_ace_step_lora_adapters"),
 }
 
+_VIDEO_LORA_MERGE = {
+    "wan": ("backend.engine.families.wan.lora_mlx", "merge_wan_lora_adapters"),
+}
+
 _IMAGE_EDIT_EXTRA_COND = {
     "fibo": ("backend.engine.families.fibo.vae_mlx", "attach_edit_conditioning_extra"),
 }

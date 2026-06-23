@@ -2350,23 +2350,17 @@ class DownloadStallTests(unittest.TestCase):
             (root / "google" / "x").mkdir(parents=True)
             (root / "google" / "x" / "t.json").write_bytes(b"x" * 2048)
             (root / "configuration.json").write_bytes(b"x" * 64)
-            (root / "high_noise_model").mkdir()
-            (root / "high_noise_model" / "config.json").write_bytes(b"x" * 64)
-            (root / "low_noise_model").mkdir()
-            (root / "low_noise_model" / "config.json").write_bytes(b"x" * 64)
             encoders_ver = {
                 "local_path": str(root),
                 "allow_patterns": [
                     "google/**",
                     "configuration.json",
-                    "models_t5*.pth",
+                    "models_t5_umt5-xxl-enc-bf16.pth",
                     "Wan2.1_VAE.pth",
-                    "high_noise_model/config.json",
-                    "low_noise_model/config.json",
                 ],
             }
             registry = {
-                "wan-2.2-i2v-14b": {
+                "wan-2.2-14b-shared": {
                     "versions": {"encoders": encoders_ver},
                 }
             }
@@ -2376,7 +2370,7 @@ class DownloadStallTests(unittest.TestCase):
             )
             svc = DownloadService(path_resolver=resolver)  # type: ignore[arg-type]
             svc._load_registry = lambda: registry  # type: ignore[method-assign]
-            spec = DependencySpec(model_id="wan-2.2-i2v-14b", version="encoders")
+            spec = DependencySpec(model_id="wan-2.2-14b-shared", version="encoders")
             self.assertTrue(svc._dependency_is_ready(spec))
 
     def _download_service_for_stall_tests(self):
@@ -5373,28 +5367,6 @@ class ArchitectureWrapUpTests(unittest.TestCase):
             self.assertTrue((root / "low_noise_model" / "diffusion_pytorch_model.safetensors").is_file())
             self.assertFalse((root / high_name).exists())
             self.assertFalse((root / low_name).exists())
-            assemble_wan_distill_bundle(root, "i2v_720p")
-
-    def test_assemble_wan_distill_bundle_reclaims_legacy_root_shards(self) -> None:
-        from backend.services.wan_distill_bundle import assemble_wan_distill_bundle
-
-        with tempfile.TemporaryDirectory() as td:
-            root = Path(td)
-            high_name = "wan2.2_i2v_A14b_high_noise_lightx2v_4step_720p_260412.safetensors"
-            low_name = "wan2.2_i2v_A14b_low_noise_lightx2v_4step_720p_260412.safetensors"
-            high_dest = root / "high_noise_model" / "diffusion_pytorch_model.safetensors"
-            low_dest = root / "low_noise_model" / "diffusion_pytorch_model.safetensors"
-            high_dest.parent.mkdir(parents=True)
-            low_dest.parent.mkdir(parents=True)
-            high_dest.write_bytes(b"h")
-            low_dest.write_bytes(b"l")
-            (root / high_name).write_bytes(b"stale")
-            (root / low_name).write_bytes(b"stale")
-            assemble_wan_distill_bundle(root, "i2v_720p")
-            self.assertFalse((root / high_name).exists())
-            self.assertFalse((root / low_name).exists())
-            self.assertEqual(high_dest.read_bytes(), b"h")
-            self.assertEqual(low_dest.read_bytes(), b"l")
 
     def test_assemble_wan_turbo_distill_bundle(self) -> None:
         import json
@@ -5465,61 +5437,79 @@ class ArchitectureWrapUpTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             resolve_video_edit_source_image(_Store(), "asset-1", mode="image_only")
 
-    def test_link_wan_distill_shared_links_transformer_config(self) -> None:
+    def test_link_wan_distill_shared_writes_transformer_config(self) -> None:
         import json
 
         from backend.services.wan_distill_shared import link_wan_distill_shared_assets
 
         with tempfile.TemporaryDirectory() as td:
-            base = Path(td) / "base"
+            shared = Path(td) / "shared"
             distill = Path(td) / "distill"
-            base.mkdir()
+            shared.mkdir()
             distill.mkdir()
-            (base / "google").mkdir()
-            (base / "models_t5_umt5-xxl-enc-bf16.pth").write_bytes(b"x" * (1024 ** 3 + 1))
-            (base / "Wan2.1_VAE.pth").write_bytes(b"vae")
-            (base / "high_noise_model").mkdir()
-            cfg = {"dim": 5120, "num_layers": 40, "in_dim": 36, "out_dim": 16}
-            (base / "high_noise_model" / "config.json").write_text(
-                json.dumps(cfg), encoding="utf-8"
-            )
+            (shared / "google").mkdir()
+            (shared / "models_t5_umt5-xxl-enc-bf16.pth").write_bytes(b"x" * (1024 ** 3 + 1))
+            (shared / "Wan2.1_VAE.pth").write_bytes(b"vae")
+            (shared / "configuration.json").write_bytes(b"{}")
 
-            def resolve(_model_id: str, version_key: str) -> Path:
+            def resolve(model_id: str, version_key: str) -> Path:
+                self.assertEqual(model_id, "wan-2.2-14b-shared")
                 self.assertEqual(version_key, "encoders")
-                return base
+                return shared
 
             link_wan_distill_shared_assets(
                 distill_root=distill,
                 variant="i2v_720p",
                 resolve_local_path=resolve,
             )
-            linked = distill / "config.json"
-            self.assertTrue(linked.is_symlink())
-            self.assertEqual(json.loads(linked.read_text(encoding="utf-8"))["dim"], 5120)
+            cfg = distill / "config.json"
+            self.assertTrue(cfg.is_file())
+            self.assertFalse(cfg.is_symlink())
+            data = json.loads(cfg.read_text(encoding="utf-8"))
+            self.assertEqual(data["model_type"], "i2v")
+            self.assertEqual(data["in_dim"], 36)
 
-    def test_link_wan_distill_t2v_uses_original_base(self) -> None:
+    def test_link_wan_distill_t2v_writes_t2v_config(self) -> None:
+        import json
+
         from backend.services.wan_distill_shared import link_wan_distill_shared_assets
 
         with tempfile.TemporaryDirectory() as td:
-            base = Path(td) / "base"
+            shared = Path(td) / "shared"
             distill = Path(td) / "distill"
-            base.mkdir()
+            shared.mkdir()
             distill.mkdir()
-            (base / "google").mkdir()
-            (base / "models_t5_umt5-xxl-enc-bf16.pth").write_bytes(b"x" * (1024 ** 3 + 1))
-            (base / "Wan2.1_VAE.pth").write_bytes(b"vae")
+            (shared / "google").mkdir()
+            (shared / "models_t5_umt5-xxl-enc-bf16.pth").write_bytes(b"x" * (1024 ** 3 + 1))
+            (shared / "Wan2.1_VAE.pth").write_bytes(b"vae")
+            (shared / "configuration.json").write_bytes(b"{}")
 
             def resolve(_model_id: str, version_key: str) -> Path:
-                self.assertEqual(_model_id, "wan-2.2-t2v-14b")
                 self.assertEqual(version_key, "encoders")
-                return base
+                return shared
 
             link_wan_distill_shared_assets(
                 distill_root=distill,
                 variant="t2v_fp8",
                 resolve_local_path=resolve,
             )
+            data = json.loads((distill / "config.json").read_text(encoding="utf-8"))
+            self.assertEqual(data["model_type"], "t2v")
+            self.assertEqual(data["in_dim"], 16)
             self.assertTrue((distill / "google").is_symlink())
+
+    def test_wan_shared_registry_entry(self) -> None:
+        models = _load_default_registry_expanded().get("models") or {}
+        self.assertIn("wan-2.2-14b-shared", models)
+        shared = models["wan-2.2-14b-shared"]
+        self.assertEqual(shared.get("actions") or {}, {})
+        enc = shared["versions"]["encoders"]
+        patterns = enc.get("allow_patterns") or []
+        self.assertNotIn("high_noise_model/config.json", patterns)
+        distill = models["wan-2.2-t2v-14b-distill"]
+        deps = distill.get("dependencies") or []
+        self.assertEqual(deps[0]["model_id"], "wan-2.2-14b-shared")
+        self.assertEqual(deps[0]["version"], "encoders")
 
     def test_merge_wan_config_moe_without_json_sets_dual_model(self) -> None:
         from backend.engine.config.model_configs import WanConfig, merge_wan_config_from_bundle

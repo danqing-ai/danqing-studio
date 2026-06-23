@@ -57,6 +57,14 @@
       <DqIconButton
         type="text"
         size="xs"
+        :label="$t('action.video.animate')"
+        @click="$emit('action', 'quick-animate-video')"
+      >
+        <DqIcon :size="14"><VideoCamera /></DqIcon>
+      </DqIconButton>
+      <DqIconButton
+        type="text"
+        size="xs"
         :label="$t('action.video.upscale')"
         @click="$emit('action', 'quick-upscale')"
       >
@@ -114,6 +122,9 @@
             </DqDropdownItem>
           </template>
           <template v-else-if="pageMedia === 'video' && isVideo">
+            <DqDropdownItem command="use-animate-source">
+              {{ $t('canvas.useAsAnimateSource') }}
+            </DqDropdownItem>
             <DqDropdownItem command="use-video-source">
               {{ $t('canvas.useAsVideoSource') }}
             </DqDropdownItem>

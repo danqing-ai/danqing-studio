@@ -6697,6 +6697,55 @@
         }
       }
     },
+    "wan-2.2-14b-shared": {
+      "catalog": {
+        "media": "video",
+        "description": {
+          "zh": "Wan 2.2 14B 共享编码器（UMT5 + VAE），供 LightX2V / TurboDiffusion / Bernini 依赖。",
+          "en": "Wan 2.2 14B shared encoders (UMT5 + VAE) for LightX2V, TurboDiffusion, and Bernini models."
+        },
+        "category": "video_models",
+        "commercial_use_allowed": true,
+        "type": "video",
+        "source": "modelscope",
+        "name": {
+          "zh": "Wan 2.2 14B 共享编码器",
+          "en": "Wan 2.2 14B Shared Encoders"
+        },
+        "recommended": false,
+        "engine": "danqing-video"
+      },
+      "runtime": {
+        "family": "wan",
+        "backends": [
+          "mlx",
+          "cuda"
+        ]
+      },
+      "actions": {},
+      "distribution": {
+        "versions": {
+          "encoders": {
+            "name": {
+              "zh": "共享编码器",
+              "en": "Shared Encoders"
+            },
+            "size": "12GB",
+            "default": true,
+            "repo_id": "Wan-AI/Wan2.2-T2V-A14B",
+            "local_path": "models/Video/wan-2.2-14b-shared-encoders",
+            "source": "modelscope",
+            "source_type": "partial",
+            "allow_patterns": [
+              "Wan2.1_VAE.pth",
+              "models_t5_umt5-xxl-enc-bf16.pth",
+              "google/**",
+              "configuration.json"
+            ]
+          }
+        }
+      }
+    },
     "wan-2.2-t2v-14b": {
       "catalog": {
         "media": "video",
@@ -6802,26 +6851,6 @@
       },
       "distribution": {
         "versions": {
-          "encoders": {
-            "name": {
-              "zh": "共享编码器（蒸馏依赖）",
-              "en": "Shared encoders (for distill)"
-            },
-            "size": "12GB",
-            "default": false,
-            "repo_id": "Wan-AI/Wan2.2-T2V-A14B",
-            "local_path": "models/Video/wan-2.2-t2v-14b-original",
-            "source": "modelscope",
-            "source_type": "partial",
-            "allow_patterns": [
-              "Wan2.1_VAE.pth",
-              "models_t5_umt5-xxl-enc-bf16.pth",
-              "google/**",
-              "configuration.json",
-              "high_noise_model/config.json",
-              "low_noise_model/config.json"
-            ]
-          },
           "original": {
             "name": {
               "zh": "FP16 完整版",
@@ -7021,26 +7050,6 @@
       },
       "distribution": {
         "versions": {
-          "encoders": {
-            "name": {
-              "zh": "共享编码器（蒸馏依赖）",
-              "en": "Shared encoders (for distill)"
-            },
-            "size": "12GB",
-            "default": false,
-            "repo_id": "Wan-AI/Wan2.2-I2V-A14B",
-            "local_path": "models/Video/wan-2.2-i2v-14b-original",
-            "source": "modelscope",
-            "source_type": "partial",
-            "allow_patterns": [
-              "Wan2.1_VAE.pth",
-              "models_t5_umt5-xxl-enc-bf16.pth",
-              "google/**",
-              "configuration.json",
-              "high_noise_model/config.json",
-              "low_noise_model/config.json"
-            ]
-          },
           "original": {
             "name": {
               "zh": "FP16 完整版",
@@ -7114,8 +7123,8 @@
       "catalog": {
         "media": "video",
         "description": {
-          "zh": "Wan 2.2 文生视频 14B LightX2V 4 步蒸馏（FP8，仅 CUDA）；上游尚未发布 T2V 720P BF16 新版。",
-          "en": "Wan 2.2 T2V 14B LightX2V 4-step distill (FP8, CUDA only); no T2V 720p BF16 drop from upstream yet."
+          "zh": "Wan 2.2 文生视频 14B LightX2V 4 步蒸馏（FP8，仅 CUDA）；需先安装 Wan 2.2 14B 共享编码器。",
+          "en": "Wan 2.2 T2V 14B LightX2V 4-step distill (FP8, CUDA only); requires Wan 2.2 14B shared encoders."
         },
         "category": "video_models",
         "commercial_use_allowed": true,
@@ -7204,7 +7213,7 @@
       "distribution": {
         "dependencies": [
           {
-            "model_id": "wan-2.2-t2v-14b",
+            "model_id": "wan-2.2-14b-shared",
             "version": "encoders"
           }
         ],
@@ -7324,7 +7333,7 @@
       "distribution": {
         "dependencies": [
           {
-            "model_id": "wan-2.2-i2v-14b",
+            "model_id": "wan-2.2-14b-shared",
             "version": "encoders"
           }
         ],
@@ -7440,7 +7449,7 @@
       "distribution": {
         "dependencies": [
           {
-            "model_id": "wan-2.2-i2v-14b",
+            "model_id": "wan-2.2-14b-shared",
             "version": "encoders"
           }
         ],
@@ -7571,7 +7580,7 @@
       "distribution": {
         "dependencies": [
           {
-            "model_id": "wan-2.2-t2v-14b",
+            "model_id": "wan-2.2-14b-shared",
             "version": "encoders"
           }
         ],
@@ -7696,7 +7705,7 @@
       "distribution": {
         "dependencies": [
           {
-            "model_id": "wan-2.2-t2v-14b",
+            "model_id": "wan-2.2-14b-shared",
             "version": "encoders"
           }
         ],
@@ -7817,7 +7826,7 @@
       "distribution": {
         "dependencies": [
           {
-            "model_id": "wan-2.2-i2v-14b",
+            "model_id": "wan-2.2-14b-shared",
             "version": "encoders"
           }
         ],
@@ -7937,7 +7946,7 @@
       "distribution": {
         "dependencies": [
           {
-            "model_id": "wan-2.2-t2v-14b",
+            "model_id": "wan-2.2-14b-shared",
             "version": "encoders"
           }
         ],

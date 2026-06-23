@@ -18,7 +18,7 @@ def link_bernini_shared_assets(
     variant: str,
     resolve_local_path: Callable[[str, str], Path],
 ) -> None:
-    """Symlink UMT5/VAE/tokenizer from Wan base bundles into Bernini install root."""
+    """Symlink Wan shared encoders into Bernini install root."""
     mapped = _BERNINI_ENCODER_VARIANT.get(str(variant))
     if mapped is None:
         known = ", ".join(sorted(_BERNINI_ENCODER_VARIANT))

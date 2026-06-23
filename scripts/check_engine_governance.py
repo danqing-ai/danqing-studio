@@ -78,15 +78,20 @@ HUNYUAN_REQUIRED_IDS = (
     "hunyuan-video-1.5-t2v-distill",
     "hunyuan-video-1.5-1080p-sr",
 )
-HUNYUAN_STEP_DISTILL_IDS = (
-    "hunyuan-video-1.5-t2v-distill",
-)
+WAN_SHARED_MODEL_ID = "wan-2.2-14b-shared"
 WAN_STEP_DISTILL_IDS = (
     "wan-2.2-i2v-14b-distill",
     "wan-2.2-t2v-14b-distill",
     "wan-2.2-i2v-14b-turbo",
     "wan-2.2-t2v-14b-turbo",
     "wan-2.2-t2v-1.3b-turbo",
+)
+HUNYUAN_STEP_DISTILL_IDS = (
+    "hunyuan-video-1.5-t2v-distill",
+)
+WAN_SHARED_DEPENDENT_IDS = WAN_STEP_DISTILL_IDS + (
+    "bernini-r-14b",
+    "bernini-r-1.3b",
 )
 HUNYUAN_REPO_ID = "Tencent-Hunyuan/HunyuanVideo-1.5"
 MAX_FAMILY_UNITS = 8
@@ -462,6 +467,26 @@ def check_registry() -> list[str]:
                 failures.append(
                     "hunyuan-video-1.5-shared: allow_patterns must not include generated model_index.json"
                 )
+
+    shared_wan = models.get(WAN_SHARED_MODEL_ID)
+    if isinstance(shared_wan, dict):
+        versions = shared_wan.get("versions")
+        if not isinstance(versions, dict) or "encoders" not in versions:
+            failures.append(f"{WAN_SHARED_MODEL_ID}: versions.encoders is required")
+        elif shared_wan.get("actions"):
+            failures.append(f"{WAN_SHARED_MODEL_ID}: actions must be empty (install-only)")
+
+    for mid in WAN_SHARED_DEPENDENT_IDS:
+        model = models.get(mid)
+        if not isinstance(model, dict):
+            continue
+        deps = model.get("dependencies")
+        if not isinstance(deps, list) or not deps:
+            failures.append(f"{mid}: dependencies must include {WAN_SHARED_MODEL_ID} encoders")
+            continue
+        first = deps[0] if isinstance(deps[0], dict) else {}
+        if first.get("model_id") != WAN_SHARED_MODEL_ID or first.get("version") != "encoders":
+            failures.append(f"{mid}: first dependency must be {WAN_SHARED_MODEL_ID} encoders")
 
     distill = models.get("hunyuan-video-1.5-t2v-distill")
     if isinstance(distill, dict):

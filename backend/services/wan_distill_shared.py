@@ -1,83 +1,121 @@
-"""Link Wan base encoders (T5/VAE/tokenizer) into a distill install directory."""
+"""Link Wan shared encoders into distill / turbo / Bernini bundles; write DiT ``config.json``."""
 from __future__ import annotations
 
-import fnmatch
+import json
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
-_WAN_DISTILL_BASE: dict[str, tuple[str, tuple[str, ...]]] = {
-    # Prefer ``encoders`` (T5/VAE/tokenizer only); fall back to ``original`` bundle root.
-    "i2v_720p": ("wan-2.2-i2v-14b", ("encoders", "original")),
-    "i2v_fp8": ("wan-2.2-i2v-14b", ("encoders", "original")),
-    "t2v_fp8": ("wan-2.2-t2v-14b", ("encoders", "original")),
-    "turbo_i2v_720p": ("wan-2.2-i2v-14b", ("encoders", "original")),
-    "turbo_i2v_720p_quant": ("wan-2.2-i2v-14b", ("encoders", "original")),
-    "turbo_t2v_480p_14b": ("wan-2.2-t2v-14b", ("encoders", "original")),
-    "turbo_t2v_480p_14b_quant": ("wan-2.2-t2v-14b", ("encoders", "original")),
-    "turbo_t2v_720p_14b": ("wan-2.2-t2v-14b", ("encoders", "original")),
-    "turbo_t2v_720p_14b_quant": ("wan-2.2-t2v-14b", ("encoders", "original")),
-    "turbo_t2v_480p_1.3b": ("wan-2.2-t2v-14b", ("encoders", "original")),
-    "turbo_t2v_480p_1.3b_quant": ("wan-2.2-t2v-14b", ("encoders", "original")),
+WAN_SHARED_MODEL_ID = "wan-2.2-14b-shared"
+
+_T5_PTH = "models_t5_umt5-xxl-enc-bf16.pth"
+_VAE_PTH = "Wan2.1_VAE.pth"
+
+# Official Wan-AI bundle layout (T2V / I2V 14B share the same encoder files).
+_SHARED_FILES = (_T5_PTH, _VAE_PTH, "configuration.json")
+_SHARED_DIRS = ("google",)
+
+_WAN_TRANSFORMER_CONFIGS: dict[str, dict[str, Any]] = {
+    "t2v_14b": {
+        "_class_name": "WanModel",
+        "dim": 5120,
+        "eps": 1e-06,
+        "ffn_dim": 13824,
+        "freq_dim": 256,
+        "in_dim": 16,
+        "model_type": "t2v",
+        "num_heads": 40,
+        "num_layers": 40,
+        "out_dim": 16,
+        "text_len": 512,
+        "expand_timesteps": False,
+    },
+    "i2v_14b": {
+        "_class_name": "WanModel",
+        "dim": 5120,
+        "eps": 1e-06,
+        "ffn_dim": 13824,
+        "freq_dim": 256,
+        "in_dim": 36,
+        "model_type": "i2v",
+        "num_heads": 40,
+        "num_layers": 40,
+        "out_dim": 16,
+        "text_len": 512,
+        "expand_timesteps": True,
+    },
+    "t2v_1.3b": {
+        "_class_name": "WanModel",
+        "dim": 1536,
+        "eps": 1e-06,
+        "ffn_dim": 8960,
+        "freq_dim": 256,
+        "in_dim": 16,
+        "model_type": "t2v",
+        "num_heads": 12,
+        "num_layers": 30,
+        "out_dim": 16,
+        "text_len": 512,
+        "expand_timesteps": False,
+    },
 }
 
-_SHARED_PATTERNS = (
-    "google/**",
-    "configuration.json",
-    "models_t5*.pth",
-    "Wan2.1_VAE.pth",
-)
+_WAN_VARIANT_CONFIG_KEY: dict[str, str] = {
+    "t2v_fp8": "t2v_14b",
+    "i2v_720p": "i2v_14b",
+    "i2v_fp8": "i2v_14b",
+    "turbo_i2v_720p": "i2v_14b",
+    "turbo_i2v_720p_quant": "i2v_14b",
+    "turbo_t2v_480p_14b": "t2v_14b",
+    "turbo_t2v_480p_14b_quant": "t2v_14b",
+    "turbo_t2v_720p_14b": "t2v_14b",
+    "turbo_t2v_720p_14b_quant": "t2v_14b",
+    "turbo_t2v_480p_1.3b": "t2v_1.3b",
+    "turbo_t2v_480p_1.3b_quant": "t2v_1.3b",
+}
 
-_TRANSFORMER_CONFIG_CANDIDATES = (
-    "config.json",
-    "high_noise_model/config.json",
-    "transformer/config.json",
-)
+
+def _config_key_for_variant(variant: str) -> str:
+    key = _WAN_VARIANT_CONFIG_KEY.get(str(variant))
+    if key is None:
+        known = ", ".join(sorted(_WAN_VARIANT_CONFIG_KEY))
+        raise RuntimeError(f"Unknown wan_distill_variant {variant!r} (known: {known}).")
+    return key
 
 
-def _resolve_shared_source(
-    *,
-    base_model_id: str,
-    version_keys: tuple[str, ...],
-    resolve_local_path: Callable[[str, str], Path],
-) -> Path | None:
-    for version_key in version_keys:
-        try:
-            local_path = resolve_local_path(base_model_id, version_key)
-        except (KeyError, ValueError):
+def _shared_encoders_root(resolve_local_path: Callable[[str, str], Path]) -> Path:
+    root = Path(resolve_local_path(WAN_SHARED_MODEL_ID, "encoders"))
+    if not root.is_dir():
+        raise RuntimeError(
+            f"Install {WAN_SHARED_MODEL_ID!r} version encoders first (missing {root})."
+        )
+    t5 = root / _T5_PTH
+    if not t5.is_file() or t5.stat().st_size < 1024 ** 3:
+        raise RuntimeError(f"Wan shared encoders incomplete: missing or invalid {_T5_PTH} under {root}.")
+    for name in _SHARED_FILES:
+        if name == _T5_PTH:
             continue
-        root = Path(local_path)
-        if not root.is_dir():
-            continue
-        t5_hits = list(root.glob("models_t5*.pth"))
-        if t5_hits and t5_hits[0].stat().st_size >= 1024 ** 3:
-            return root
-    return None
+        if not (root / name).is_file():
+            raise RuntimeError(f"Wan shared encoders incomplete: missing {name} under {root}.")
+    for name in _SHARED_DIRS:
+        if not (root / name).is_dir():
+            raise RuntimeError(f"Wan shared encoders incomplete: missing {name}/ under {root}.")
+    return root
 
 
-def _link_or_skip(dest: Path, src: Path) -> None:
-    if dest.exists() or dest.is_symlink():
-        try:
-            if dest.resolve() == src.resolve():
-                return
-        except OSError:
-            pass
-        if dest.is_dir() and not dest.is_symlink():
-            return
-        dest.unlink(missing_ok=True)
+def _link(src: Path, dest: Path) -> None:
     dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.exists() or dest.is_symlink():
+        dest.unlink()
     dest.symlink_to(src, target_is_directory=src.is_dir())
 
 
-def _link_wan_transformer_config(source_root: Path, distill_root: Path) -> None:
-    """Symlink DiT ``config.json`` so distill MoE loads 14B dims (not 5B defaults)."""
-    dest = distill_root / "config.json"
-    if dest.exists() or dest.is_symlink():
-        return
-    for rel in _TRANSFORMER_CONFIG_CANDIDATES:
-        src = source_root / rel
-        if src.is_file():
-            _link_or_skip(dest, src)
-            return
+def _write_transformer_config(bundle_root: Path, config_key: str) -> None:
+    payload = _WAN_TRANSFORMER_CONFIGS[config_key]
+    (Path(bundle_root) / "config.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
 
 def link_wan_distill_shared_assets(
@@ -86,58 +124,17 @@ def link_wan_distill_shared_assets(
     variant: str,
     resolve_local_path: Callable[[str, str], Path],
 ) -> None:
-    """Symlink T5/VAE/google (+ transformer config) from Wan base bundle into ``distill_root``."""
+    """Symlink UMT5/VAE/tokenizer from ``wan-2.2-14b-shared``; write bundle ``config.json``."""
     root = Path(distill_root)
     if not root.is_dir():
         raise RuntimeError(f"Wan distill bundle root not found: {root}")
 
-    mapping = _WAN_DISTILL_BASE.get(str(variant))
-    if mapping is None:
-        known = ", ".join(sorted(_WAN_DISTILL_BASE))
-        raise RuntimeError(f"Unknown wan_distill_variant {variant!r} (known: {known}).")
+    shared = _shared_encoders_root(resolve_local_path)
+    config_key = _config_key_for_variant(variant)
 
-    base_model_id, version_keys = mapping
-    source_root = _resolve_shared_source(
-        base_model_id=base_model_id,
-        version_keys=version_keys,
-        resolve_local_path=resolve_local_path,
-    )
-    if source_root is None:
-        raise RuntimeError(
-            f"Wan distill requires Wan base encoders from {base_model_id!r} "
-            f"(install version {' or '.join(version_keys)} first)."
-        )
+    for name in _SHARED_FILES:
+        _link(shared / name, root / name)
+    for name in _SHARED_DIRS:
+        _link(shared / name, root / name)
 
-    for pattern in _SHARED_PATTERNS:
-        if pattern.endswith("/**"):
-            sub_name = pattern[:-3].rstrip("/")
-            src = source_root / sub_name
-            if src.is_dir():
-                _link_or_skip(root / sub_name, src)
-            continue
-        if any(ch in pattern for ch in "*?[]"):
-            for src in source_root.glob("*"):
-                if src.is_file() and fnmatch.fnmatch(src.name, pattern):
-                    _link_or_skip(root / src.name, src)
-            continue
-        src = source_root / pattern
-        if src.is_file():
-            _link_or_skip(root / pattern, src)
-
-    _link_wan_transformer_config(source_root, root)
-
-    t5 = next((p for p in root.glob("models_t5*.pth") if p.stat().st_size >= 1024 ** 3), None)
-    vae = root / "Wan2.1_VAE.pth"
-    google = root / "google"
-    if t5 is None or not vae.is_file() or not google.is_dir():
-        missing = []
-        if t5 is None:
-            missing.append("models_t5*.pth")
-        if not vae.is_file():
-            missing.append("Wan2.1_VAE.pth")
-        if not google.is_dir():
-            missing.append("google/**")
-        raise RuntimeError(
-            f"Wan distill bundle still missing shared assets after link from {source_root}: "
-            + ", ".join(missing)
-        )
+    _write_transformer_config(root, config_key)

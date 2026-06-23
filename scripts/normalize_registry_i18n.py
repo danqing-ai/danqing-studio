@@ -199,6 +199,10 @@ DESCRIPTION_OVERRIDES: dict[str, dict[str, str]] = {
         "zh": "HunyuanVideo 1.5 共享编码器（VAE + DiT 配置），供 LightX2V 蒸馏版依赖。",
         "en": "HunyuanVideo 1.5 shared encoders (VAE + DiT config) for LightX2V distill models.",
     },
+    "wan-2.2-14b-shared": {
+        "zh": "Wan 2.2 14B 共享编码器（UMT5 + VAE），供 LightX2V / TurboDiffusion / Bernini 依赖。",
+        "en": "Wan 2.2 14B shared encoders (UMT5 + VAE) for LightX2V, TurboDiffusion, and Bernini models.",
+    },
     "hunyuan-video-1.5-t2v-distill": {
         "zh": "HunyuanVideo 1.5 文生视频 LightX2V 4 步真蒸馏（单文件 DiT，480p）；需先安装共享编码器。",
         "en": "HunyuanVideo 1.5 T2V LightX2V 4-step true distill (single-file DiT, 480p); requires shared encoders.",

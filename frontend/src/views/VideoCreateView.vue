@@ -69,6 +69,7 @@
         @use-as-start-frame="onCanvasUseAsStartFrame"
         @use-as-tail-frame="onCanvasUseAsTailFrame"
         @use-as-video-source="onCanvasUseAsVideoSource"
+        @use-as-animate-source="onCanvasUseAsAnimateSource"
         @open-composer="openComposerDrawer()"
         @request-close-composer="closeComposerDrawer()"
       />
@@ -107,7 +108,7 @@
         :show-lora="!!currentModelConfig?.parameters?.lora_support"
         :show-batch-count="true"
         :reference-media="referenceMedia"
-        :reference-asset-path="startImagePath || null"
+        :reference-asset-path="startImagePath || sourceVideoPath || null"
         :enhancing="isEnhancing"
         :reversing="isReversing"
         :tail-reference-media="tailReferenceMedia"
@@ -138,7 +139,7 @@
   <!-- Start image asset picker -->
   <DqDialog v-model:open="showAssetPicker" :title="assetPickerTitle" width="70%">
     <AssetPicker
-      :accept-kind="videoWorkMode === 'upscale' ? 'video' : 'image'"
+      :accept-kind="assetPickerAcceptKind"
       :recent-gallery="recentStartImages"
       @pick="onStartAssetPick"
     />
@@ -216,7 +217,7 @@ import {
   activateCanvasViewForResults,
   maybeShowCanvasWorkspaceHint,
 } from '@/utils/canvasWorkspaceHint';
-import { previewUrlForGalleryItem } from '@/utils/canvasAssets';
+import { previewUrlForGalleryItem, isVideoGalleryItem } from '@/utils/canvasAssets';
 import { useStudioGallery } from '@/composables/useStudioGallery';
 import { useComposerLlm } from '@/composables/useComposerLlm';
 import { assetIdFromGalleryPath } from '@/utils/copilotHandoff';
@@ -236,8 +237,11 @@ import {
   setVideoSizeForModel,
 } from '@/utils/videoSizeStorage';
 import {
-  formatStoryboardScript,
-} from '@/utils/videoStoryboardPrompt';
+  animateReferenceAcceptKind,
+  galleryPathIsVideo,
+  resolveVideoEditSourceMode,
+} from '@/utils/videoEditSource';
+import { formatStoryboardScript } from '@/utils/videoStoryboardPrompt';
 
 const router = useRouter();
 const registryStore = useRegistryStore();
@@ -456,9 +460,14 @@ function restoreComposerFromCanvasOverlays() {
   const vs = videoCanvas.overlays.video_source;
   if (!sourceVideoPath.value && vs?.path) {
     const p = bindVideoAssetFromPath(vs.path);
+    const item = galleryItems.value.find((g) => g.path === vs.path);
     sourceVideoPath.value = p.path;
-    sourceVideoSrc.value = p.previewUrl;
-    videoWorkMode.value = 'upscale';
+    sourceVideoSrc.value = item && isVideoGalleryItem(item)
+      ? api.gallery.getImageUrl(p.path)
+      : p.previewUrl;
+    if (!startImagePath.value) {
+      videoWorkMode.value = videoWorkMode.value === 'animate' ? 'animate' : 'upscale';
+    }
   }
 }
 
@@ -567,8 +576,11 @@ function onCanvasComposerRestore(snapshot: {
   }
   if (snapshot.source_video_path) {
     const p = bindVideoAssetFromPath(snapshot.source_video_path);
+    const item = galleryItems.value.find((g) => g.path === snapshot.source_video_path);
     sourceVideoPath.value = p.path;
-    sourceVideoSrc.value = p.previewUrl;
+    sourceVideoSrc.value = item && isVideoGalleryItem(item)
+      ? api.gallery.getImageUrl(p.path)
+      : p.previewUrl;
   }
   if (viewMode.value === 'canvas') {
     nextTick(() => syncCompositorOverlaysOnCanvasEnter());
@@ -742,6 +754,36 @@ function onCardAction({ action, item }: { action: string; item: GalleryItem }) {
 /*  Reference Media                                                    */
 /* ------------------------------------------------------------------ */
 
+function clearAnimateImageReference() {
+  startImageSrc.value = '';
+  startImagePath.value = '';
+}
+
+function clearAnimateVideoReference() {
+  sourceVideoSrc.value = '';
+  sourceVideoPath.value = '';
+}
+
+function bindAnimateVideoPreview(path: string, previewUrl: string) {
+  const item = galleryItems.value.find((g) => g.path === path);
+  sourceVideoPath.value = path;
+  sourceVideoSrc.value = item && isVideoGalleryItem(item)
+    ? api.gallery.getImageUrl(path)
+    : previewUrl;
+}
+
+function hasAnimateReference(): boolean {
+  if (startImagePath.value) return true;
+  return animateSourceMode.value === 'first_frame' && !!sourceVideoPath.value;
+}
+
+function resolveAnimateSourcePath(): string {
+  if (startImagePath.value) return startImagePath.value;
+  if (animateSourceMode.value === 'first_frame' && sourceVideoPath.value) {
+    return sourceVideoPath.value;
+  }
+  return '';
+}
 const startImageSrc = ref('');
 const startImagePath = ref('');
 const startImageViewerVisible = ref(false);
@@ -768,12 +810,15 @@ const showTailAssetPicker = ref(false);
 
 function removeStartImage() {
   if (videoWorkMode.value === 'upscale') {
-    sourceVideoSrc.value = '';
-    sourceVideoPath.value = '';
+    clearAnimateVideoReference();
     return;
   }
-  startImageSrc.value = '';
-  startImagePath.value = '';
+  if (videoWorkMode.value === 'animate') {
+    clearAnimateImageReference();
+    clearAnimateVideoReference();
+    return;
+  }
+  clearAnimateImageReference();
 }
 
 function removeTailImage() {
@@ -854,19 +899,39 @@ function goToDownload() {
 
 function onStartAssetPick(payload: { path: string; previewUrl: string }) {
   if (videoWorkMode.value === 'upscale') {
-    sourceVideoSrc.value = payload.previewUrl || '';
-    sourceVideoPath.value = payload.path;
+    bindAnimateVideoPreview(payload.path, payload.previewUrl || '');
     if (viewMode.value === 'canvas') {
       syncCanvasOverlay('video_source', payload.path);
     }
-  } else {
-    startImageSrc.value = payload.previewUrl || '';
-    startImagePath.value = payload.path;
-    if (viewMode.value === 'canvas') {
-      syncCanvasOverlay('start_frame', payload.path);
-    }
-    void syncResolutionForStartImage(payload.previewUrl || '');
+    showAssetPicker.value = false;
+    return;
   }
+
+  const item = galleryItems.value.find((g) => g.path === payload.path);
+  const isVideo = galleryPathIsVideo(payload.path, item);
+  if (videoWorkMode.value === 'animate' && isVideo) {
+    if (animateSourceMode.value !== 'first_frame') {
+      toast.warning($tt('video.animateVideoNeedsFirstFrameModel'));
+      return;
+    }
+    clearAnimateImageReference();
+    bindAnimateVideoPreview(payload.path, payload.previewUrl || '');
+    if (viewMode.value === 'canvas') {
+      syncCanvasOverlay('start_frame', null);
+      syncCanvasOverlay('video_source', payload.path);
+    }
+    showAssetPicker.value = false;
+    return;
+  }
+
+  startImageSrc.value = payload.previewUrl || '';
+  startImagePath.value = payload.path;
+  clearAnimateVideoReference();
+  if (viewMode.value === 'canvas') {
+    syncCanvasOverlay('start_frame', payload.path);
+    syncCanvasOverlay('video_source', null);
+  }
+  void syncResolutionForStartImage(payload.previewUrl || '');
   showAssetPicker.value = false;
 }
 
@@ -887,6 +952,15 @@ function onCanvasUseAsTailFrame(payload: { path: string; previewUrl: string; qui
   if (!payload.quiet) toast.success($tt('canvas.tailFrameBound'));
 }
 
+function onCanvasUseAsAnimateSource(payload: { path: string; previewUrl: string; quiet?: boolean }) {
+  videoWorkMode.value = 'animate';
+  clearAnimateImageReference();
+  bindAnimateVideoPreview(payload.path, payload.previewUrl || '');
+  syncCanvasOverlay('start_frame', null);
+  syncCanvasOverlay('video_source', payload.path);
+  if (!payload.quiet) toast.success($tt('canvas.animateVideoSourceBound'));
+}
+
 function onCanvasUseAsVideoSource(payload: { path: string; previewUrl: string; quiet?: boolean }) {
   videoWorkMode.value = 'upscale';
   sourceVideoSrc.value = payload.previewUrl || '';
@@ -905,7 +979,11 @@ function onTailAssetPick(payload: { path: string; previewUrl: string }) {
 }
 
 const assetPickerTitle = computed(() => {
-  if (videoWorkMode.value === 'animate') return $tt('action.video.startImage');
+  if (videoWorkMode.value === 'animate') {
+    return animateSourceMode.value === 'first_frame'
+      ? $tt('video.animateSourceTitle')
+      : $tt('action.video.startImage');
+  }
   if (videoWorkMode.value === 'upscale') return $tt('video.videoSourceTitle');
   return $tt('create.refImage');
 });
@@ -916,6 +994,17 @@ const referenceMedia = computed(() => {
       type: 'image' as const,
       previewUrl: startImageSrc.value,
       label: $tt('action.video.startImage'),
+    };
+  }
+  if (
+    videoWorkMode.value === 'animate'
+    && animateSourceMode.value === 'first_frame'
+    && sourceVideoSrc.value
+  ) {
+    return {
+      type: 'video' as const,
+      previewUrl: sourceVideoSrc.value,
+      label: $tt('video.videoSourceTitle'),
     };
   }
   if (videoWorkMode.value === 'upscale' && sourceVideoSrc.value) {
@@ -1094,6 +1183,18 @@ const videoModelSelectOptions = computed(() => {
 
 const currentModelConfig = computed(() => modelRegistry.value[params.model] || null);
 
+const animateSourceMode = computed(() =>
+  resolveVideoEditSourceMode(currentModelConfig.value?.parameters),
+);
+
+const assetPickerAcceptKind = computed(() => {
+  if (videoWorkMode.value === 'upscale') return 'video' as const;
+  if (videoWorkMode.value === 'animate') {
+    return animateReferenceAcceptKind(currentModelConfig.value?.parameters);
+  }
+  return 'image' as const;
+});
+
 const currentModelDisplayName = computed(() => {
   const c = currentModelConfig.value;
   if (c) {
@@ -1117,7 +1218,7 @@ const submitDisabled = computed(() => {
     return !sourceVideoSrc.value;
   }
   if (!String(params.prompt || '').trim()) return true;
-  if (videoWorkMode.value === 'animate' && !startImageSrc.value) return true;
+  if (videoWorkMode.value === 'animate' && !hasAnimateReference()) return true;
   return false;
 });
 
@@ -1469,8 +1570,8 @@ const loadPreset = () => {
   const preset = presets.value[selectedPreset.value];
   const app = preset.applies_to;
   const animateOnly = app.includes('animate') && !app.includes('create');
-  if (animateOnly && (videoWorkMode.value === 'create' || !startImageSrc.value)) {
-    toast.warning($tt('video.presetNeedsStartImage'));
+  if (animateOnly && (videoWorkMode.value === 'create' || !hasAnimateReference())) {
+    toast.warning($tt('video.presetNeedsAnimateSource'));
   }
   if (preset.positive) {
     params.prompt = params.prompt
@@ -1622,8 +1723,8 @@ const startGeneration = async () => {
     $tt,
   });
 
-  if (videoWorkMode.value === 'animate' && !startImageSrc.value) {
-    toast.warning($tt('video.needStartImage'));
+  if (videoWorkMode.value === 'animate' && !hasAnimateReference()) {
+    toast.warning($tt('video.needAnimateSource'));
     return;
   }
   if (videoWorkMode.value === 'upscale' && !sourceVideoSrc.value) {
@@ -1646,14 +1747,24 @@ const startGeneration = async () => {
     const modelStr = params.version ? `${params.model}:${params.version}` : params.model;
     let submitRes: any;
     if (videoWorkMode.value === 'animate') {
+      const refPath = resolveAnimateSourcePath();
       let source_asset_id: string;
-      const sp = startImagePath.value;
-      if (typeof sp === 'string' && sp.startsWith('asset:')) {
-        source_asset_id = sp.slice('asset:'.length);
-      } else {
+      if (refPath.startsWith('asset:')) {
+        source_asset_id = refPath.slice('asset:'.length);
+      } else if (startImageSrc.value) {
         const blob = await api.gen.urlToBlob(startImageSrc.value);
         const up = await api.gen.uploadAsset(
           new File([blob], 'start.png', { type: blob.type || 'image/png' })
+        );
+        source_asset_id = (up as any).id;
+      } else {
+        const blob = await api.gen.urlToBlob(sourceVideoSrc.value);
+        const ext =
+          (blob.type && blob.type.includes('webm') && 'webm') ||
+          (blob.type && blob.type.includes('quicktime') && 'mov') ||
+          'mp4';
+        const up = await api.gen.uploadAsset(
+          new File([blob], `animate-src.${ext}`, { type: blob.type || 'video/mp4' })
         );
         source_asset_id = (up as any).id;
       }
@@ -1792,6 +1903,13 @@ function onGallerySelect(item: GalleryItem) {
   selectedVideoIndex.value = idx >= 0 ? idx : 0;
   videoPreviewVisible.value = true;
 }
+
+watch(animateSourceMode, (mode, prev) => {
+  if (prev && mode !== 'first_frame' && sourceVideoPath.value && !startImagePath.value) {
+    clearAnimateVideoReference();
+    toast.warning($tt('video.animateVideoClearedForModel'));
+  }
+});
 
 watch(videoWorkMode, () => {
   const cfg = currentModelConfig.value;
