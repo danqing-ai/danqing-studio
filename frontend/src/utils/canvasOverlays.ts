@@ -11,7 +11,7 @@ export const CANVAS_OVERLAY_KINDS = [
 ] as const satisfies readonly CanvasOverlayKind[];
 
 export const OVERLAY_KINDS_BY_MEDIA: Record<CanvasMedia, CanvasOverlayKind[]> = {
-  image: ['reference', 'control'],
+  image: ['control'],
   video: ['start_frame', 'tail_frame', 'video_source'],
   audio: ['cover_source'],
 };

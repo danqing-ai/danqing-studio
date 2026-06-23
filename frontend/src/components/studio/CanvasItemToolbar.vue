@@ -11,7 +11,7 @@
       <DqIconButton
         type="text"
         size="xs"
-        :label="$t('action.image.img2img')"
+        :label="$t('action.image.rewrite')"
         @click="$emit('action', 'quick-reference')"
       >
         <DqIcon :size="14"><Picture /></DqIcon>

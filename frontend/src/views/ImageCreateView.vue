@@ -726,7 +726,6 @@ function onReferencePick({ path, previewUrl }: { path: string; previewUrl: strin
   referenceImage.value = { path, previewUrl, assetId: assetIdFromPickPath(path) };
   showAssetPicker.value = false;
   imageMode.value = 'img2img';
-  syncCanvasReferenceOverlay(path);
 }
 
 function onControlPick({ path, previewUrl }: { path: string; previewUrl: string }) {
@@ -775,9 +774,12 @@ function removeInpaintMaskImage() {
 
 function onCanvasUseAsRef(payload: { path: string; previewUrl: string; quiet?: boolean }) {
   const { path, previewUrl } = payload;
+  if (payload.quiet) {
+    const item = galleryItems.value.find((g) => g.path === path);
+    if (item) fillComposerFromGalleryItem(item);
+  }
   referenceImage.value = { path, previewUrl, assetId: assetIdFromPickPath(path) };
   imageMode.value = 'img2img';
-  syncCanvasReferenceOverlay(path);
   if (!payload.quiet) toast.success($tt('canvas.referenceBound'));
 }
 
@@ -792,7 +794,6 @@ function onCanvasUseAsControl(payload: { path: string; previewUrl: string; quiet
   if (imageMode.value === 'img2img') {
     imageMode.value = 'text2img';
     referenceImage.value = null;
-    syncCanvasReferenceOverlay(null);
   }
   if (!params.controlnet) {
     const key = pickDefaultStructuralControlNet(compatibleControlNets.value);
@@ -815,16 +816,6 @@ function onCanvasUseAsControl(payload: { path: string; previewUrl: string; quiet
 
 function removeReferenceImage() {
   referenceImage.value = null;
-  syncCanvasReferenceOverlay(null);
-}
-
-function syncCanvasReferenceOverlay(path: string | null) {
-  if (!path) {
-    imageCanvas.setReferenceOverlay(null);
-    return;
-  }
-  const item = galleryItems.value.find((g) => g.path === path) ?? null;
-  imageCanvas.setReferenceOverlay(path, item ?? undefined);
 }
 
 function syncCanvasControlOverlay(path: string | null) {
@@ -855,6 +846,9 @@ function restoreComposerFromCanvasOverlays() {
     referenceImage.value = bindComposerImageFromOverlayPath(ref.path);
     imageMode.value = 'img2img';
   }
+  if (ref?.path) {
+    imageCanvas.clearOverlay('reference');
+  }
   const ctrl = imageCanvas.overlays.control;
   if (!controlImage.value && ctrl?.path) {
     controlImage.value = bindComposerImageFromOverlayPath(ctrl.path);
@@ -863,7 +857,6 @@ function restoreComposerFromCanvasOverlays() {
 
 function syncCompositorOverlaysOnCanvasEnter() {
   restoreComposerFromCanvasOverlays();
-  syncCanvasReferenceOverlay(referenceImage.value?.path ?? null);
   syncCanvasControlOverlay(controlImage.value?.path ?? null);
 }
 
@@ -880,8 +873,7 @@ function onCanvasOverlayCleared(kind: import('@/types').CanvasOverlayKind) {
 
 watch(
   () => referenceImage.value?.path ?? null,
-  (path) => {
-    if (viewMode.value === 'canvas') syncCanvasReferenceOverlay(path);
+  () => {
     persistComposerSnapshot();
   }
 );
@@ -1442,7 +1434,7 @@ const imageMode = ref('text2img');
 
 const imageModeOptions = computed(() => [
   { label: $tt('action.image.text2img'), value: 'text2img' },
-  { label: $tt('action.image.img2img'), value: 'img2img' },
+  { label: $tt('action.image.rewrite'), value: 'img2img' },
 ]);
 
 function onModeChange(mode: string) {
@@ -1760,6 +1752,26 @@ async function prepareGenerationContext(): Promise<GenerationPrepared | null> {
   };
 }
 
+function modelSupportsEditMultiReference(): boolean {
+  const raw = currentModelConfig.value?.parameters as Record<string, unknown> | undefined;
+  return Boolean(raw?.edit_plus_multi_image);
+}
+
+function collectExtraReferenceAssetIds(
+  sourceAssetId: string | null,
+  controlAssetId: string | null,
+): string[] {
+  if (!modelSupportsEditMultiReference()) return [];
+  const raw = currentModelConfig.value?.parameters as Record<string, unknown> | undefined;
+  const maxRefs = Number(raw?.edit_max_reference_images ?? 1);
+  const cap = Math.max(1, maxRefs) - 1;
+  const ids: string[] = [];
+  if (controlAssetId && controlAssetId !== sourceAssetId) {
+    ids.push(controlAssetId);
+  }
+  return ids.slice(0, cap);
+}
+
 function resolveSeedForTask(baseSeed: number | null, batchIndex: number): number | null {
   if (baseSeed == null) return null;
   return baseSeed + batchIndex;
@@ -1805,6 +1817,10 @@ async function submitImageGenerationTask(
     const editEnh = appendZImageEnhancementFields(editBody, enhCommon);
     if (!editEnh.ok) {
       throw new Error($tt('create.inpaintPairRequired'));
+    }
+    const extraRefs = collectExtraReferenceAssetIds(ctx.source_asset_id, ctx.control_asset_id);
+    if (extraRefs.length) {
+      editBody.reference_asset_ids = extraRefs;
     }
     return api.gen.createImageEdit(editBody);
   }

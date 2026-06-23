@@ -462,10 +462,6 @@ function createCanvasStore(media: CanvasMedia) {
     schedulePersist();
   }
 
-  function setReferenceOverlay(path: string | null, galleryItem?: GalleryItem) {
-    setOverlay('reference', path, galleryItem);
-  }
-
   function setControlOverlay(path: string | null, galleryItem?: GalleryItem) {
     setOverlay('control', path, galleryItem);
   }
@@ -899,7 +895,6 @@ function createCanvasStore(media: CanvasMedia) {
     setActiveAssetPath,
     updateStaging,
     setOverlay,
-    setReferenceOverlay,
     setControlOverlay,
     clearOverlay,
     updateOverlay,

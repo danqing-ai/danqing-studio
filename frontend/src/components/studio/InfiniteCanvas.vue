@@ -512,8 +512,8 @@ function onToolbarAction(action: string) {
       {
         const payload = bindPayload(path, item);
         emit('use-as-reference', { ...payload, quiet: true });
-        store.setReferenceOverlay(path, item);
-        toast.success($tt('canvas.referenceBranchHint'));
+        toast.success($tt('canvas.rewriteBranchHint'));
+        emit('open-composer');
       }
       break;
     case 'quick-control':
@@ -528,7 +528,6 @@ function onToolbarAction(action: string) {
     case 'use-reference': {
       const payload = bindPayload(path, item);
       emit('use-as-reference', payload);
-      store.setReferenceOverlay(path, item);
       break;
     }
     case 'use-control': {
@@ -962,14 +961,6 @@ function addPathsToCanvas(
   return added;
 }
 
-function syncReferenceOverlay(path: string | null) {
-  if (!path) {
-    store.setReferenceOverlay(null);
-    return;
-  }
-  store.setReferenceOverlay(path, galleryItem(path));
-}
-
 function syncControlOverlay(path: string | null) {
   if (!path) {
     store.setControlOverlay(null);
@@ -1191,7 +1182,6 @@ defineExpose({
   focusLineageAsset,
   hasOnCanvas: store.hasItem,
   sessionId: store.sessionId,
-  syncReferenceOverlay,
   syncControlOverlay,
   persistComposerSnapshot: store.setComposerSnapshot,
   getSelectedItem: () => (primaryPath.value ? galleryItem(primaryPath.value) ?? null : null),
