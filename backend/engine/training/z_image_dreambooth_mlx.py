@@ -18,7 +18,7 @@ from backend.engine.contracts import local_bundle_root
 from backend.engine.families.z_image.weights import remap_zimage_lora_keys
 from backend.engine.pipelines.image_model_load import load_image_transformer
 from backend.engine.training.crop import prepare_training_rgb_image, resolve_training_resolution
-from backend.engine.training.dataset_store import load_training_pairs_unified
+from backend.engine.training.dataset_store import dataset_content_revision, load_training_pairs_unified
 from backend.engine.training.flux_dreambooth_mlx import _load_vae_encoder, _log, _progress, _save_adapter
 from backend.engine.training.lora_layers import (
     apply_lora_to_zimage_dit,
@@ -73,6 +73,7 @@ def _encode_dataset_to_cache(
     preset: str | None,
     num_augmentations: int,
     dataset_id: str,
+    dataset_revision: str,
     resolution: tuple[int, int],
     exec_ctx: ExecutionContext,
     class_prompt: str | None,
@@ -80,6 +81,7 @@ def _encode_dataset_to_cache(
     total_samples = len(pairs) * num_augmentations
     cache.begin(
         dataset_id=dataset_id,
+        dataset_revision=dataset_revision,
         n_pairs=len(pairs),
         num_augmentations=num_augmentations,
         resolution=resolution,
@@ -317,6 +319,7 @@ def run_z_image_dreambooth_training(
         f"Training crop {resolution[0]}×{resolution[1]} (portrait-biased cover, Z-Image VAE grid ÷8) …",
     )
     latent_cache = LatentCache(work_dir)
+    dataset_revision = dataset_content_revision(project_root, request.dataset_id)
     class_prompt = train_runtime.class_prompt
     if train_runtime.prior_loss_weight > 0 and not class_prompt:
         class_prompt = "a photo"
@@ -333,6 +336,7 @@ def run_z_image_dreambooth_training(
             preset=request.preset,
             num_augmentations=train_runtime.num_augmentations,
             dataset_id=request.dataset_id,
+            dataset_revision=dataset_revision,
             resolution=resolution,
             exec_ctx=exec_ctx,
             class_prompt=class_prompt if train_runtime.prior_loss_weight > 0 else None,
@@ -340,6 +344,7 @@ def run_z_image_dreambooth_training(
 
     if latent_cache.is_valid(
         dataset_id=request.dataset_id,
+        dataset_revision=dataset_revision,
         n_pairs=len(pairs),
         num_augmentations=train_runtime.num_augmentations,
         resolution=resolution,

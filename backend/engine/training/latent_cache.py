@@ -26,12 +26,16 @@ def _ensure_batch_latent(latent: mx.array) -> mx.array:
 def _fingerprint(
     *,
     dataset_id: str,
+    dataset_revision: str,
     n_pairs: int,
     num_augmentations: int,
     resolution: tuple[int, int],
     family: str,
 ) -> str:
-    raw = f"{dataset_id}|{n_pairs}|{num_augmentations}|{resolution[0]}x{resolution[1]}|{family}"
+    raw = (
+        f"{dataset_id}|{dataset_revision}|{n_pairs}|{num_augmentations}|"
+        f"{resolution[0]}x{resolution[1]}|{family}"
+    )
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
 
 
@@ -40,10 +44,18 @@ class LatentCache:
         self.root = Path(work_dir) / "latent_cache"
         self.manifest_path = self.root / "manifest.json"
 
+    def _clear_samples(self) -> None:
+        if self.manifest_path.is_file():
+            self.manifest_path.unlink()
+        if self.root.is_dir():
+            for path in self.root.glob("*.safetensors"):
+                path.unlink()
+
     def is_valid(
         self,
         *,
         dataset_id: str,
+        dataset_revision: str,
         n_pairs: int,
         num_augmentations: int,
         resolution: tuple[int, int],
@@ -60,6 +72,7 @@ class LatentCache:
             return False
         fp = _fingerprint(
             dataset_id=dataset_id,
+            dataset_revision=dataset_revision,
             n_pairs=n_pairs,
             num_augmentations=num_augmentations,
             resolution=resolution,
@@ -78,6 +91,7 @@ class LatentCache:
         self,
         *,
         dataset_id: str,
+        dataset_revision: str,
         n_pairs: int,
         num_augmentations: int,
         resolution: tuple[int, int],
@@ -85,12 +99,15 @@ class LatentCache:
         tensor_keys: list[str],
     ) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
+        self._clear_samples()
         self._tensor_keys = list(tensor_keys)
         self._manifest = {
             "schema_version": _SCHEMA_VERSION,
             "dataset_id": dataset_id,
+            "dataset_revision": dataset_revision,
             "fingerprint": _fingerprint(
                 dataset_id=dataset_id,
+                dataset_revision=dataset_revision,
                 n_pairs=n_pairs,
                 num_augmentations=num_augmentations,
                 resolution=resolution,
@@ -171,6 +188,7 @@ def reuse_or_encode(
     *,
     cache: LatentCache,
     dataset_id: str,
+    dataset_revision: str,
     n_pairs: int,
     num_augmentations: int,
     resolution: tuple[int, int],
@@ -180,6 +198,7 @@ def reuse_or_encode(
     n_samples = n_pairs * num_augmentations
     if cache.is_valid(
         dataset_id=dataset_id,
+        dataset_revision=dataset_revision,
         n_pairs=n_pairs,
         num_augmentations=num_augmentations,
         resolution=resolution,
