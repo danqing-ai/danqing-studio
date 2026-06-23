@@ -4258,7 +4258,6 @@ class LoraTrainRuntimeTests(unittest.TestCase):
             dataset_id = ds["id"]
             dataset_dir = root / "datasets" / dataset_id
             images_dir = dataset_dir / "images"
-            images_dir.mkdir(parents=True, exist_ok=True)
             (images_dir / "a.jpg").write_bytes(b"fake-jpeg")
             (dataset_dir / "train.jsonl").write_text(
                 json.dumps({"image": "images/a.jpg", "prompt": "before"}) + "\n",
