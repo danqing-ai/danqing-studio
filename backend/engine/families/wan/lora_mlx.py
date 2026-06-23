@@ -7,6 +7,11 @@ from typing import Any, Callable, Literal, Sequence
 import mlx.core as mx
 
 from backend.core.contracts import parse_model_version
+from backend.catalog.lora_meta import (
+    adapters_include_video_step_distill,
+    lora_base_compatible,
+    lora_moe_shards,
+)
 from backend.engine.common.bundle.lora_mlx import (
     adapter_id_weight,
     load_lora_flat_weights,
@@ -28,23 +33,17 @@ WAN_LIGHTNING_LORA_IDS = frozenset(
 ExpertSide = Literal["high", "low"]
 
 
-def is_wan_lightning_lora_id(lora_id: str) -> bool:
-    mid, _ = parse_model_version(lora_id)
-    return mid in WAN_LIGHTNING_LORA_IDS
+def wan_video_lora_base_compatible(model_base_key: str, lora_base_key: str) -> bool:
+    """Wan video LoRAs: exact ``base_model`` match (I2V ≠ T2V)."""
+    model_key = (model_base_key or "").split(":", 1)[0].strip()
+    lora_key = (lora_base_key or "").split(":", 1)[0].strip()
+    if not model_key or not lora_key:
+        return False
+    return lora_key == model_key
 
 
 def adapters_include_wan_lightning(adapters: Sequence[Any], registry: Any) -> bool:
-    for item in adapters or ():
-        lora_id, _ = adapter_id_weight(item)
-        if is_wan_lightning_lora_id(lora_id):
-            return True
-        mid, _ = parse_model_version(lora_id)
-        entry = registry.get(mid) if registry is not None else None
-        if entry is not None:
-            params = (entry.raw or {}).get("parameters") or {}
-            if params.get("wan_lightning_distill"):
-                return True
-    return False
+    return adapters_include_video_step_distill(adapters, registry)
 
 
 def resolve_wan_lora_weight_path(bundle_root: Path, side: ExpertSide | None) -> Path:
@@ -63,6 +62,9 @@ def resolve_wan_lora_weight_path(bundle_root: Path, side: ExpertSide | None) -> 
             if nested.is_dir() and nested.name == sub:
                 candidates.append(nested / "diffusion_pytorch_model.safetensors")
                 candidates.extend(sorted(nested.glob("*.safetensors")))
+        for shard in root.rglob(f"{sub}.safetensors"):
+            if shard.is_file():
+                candidates.append(shard)
         for cand in candidates:
             if cand.is_file():
                 return cand
@@ -223,10 +225,11 @@ def resolve_wan_lora_bundle(
     """Return ``(mid, bundle_path, is_lightning_moe)`` for one adapter id."""
     mid, ver = parse_model_version(lora_id)
     entry = registry.require(mid)
-    raw = entry.raw or {}
-    if str(raw.get("category") or "") != "loras":
-        raise RuntimeError(f"Adapter {lora_id!r} is not a registry LoRA (category={raw.get('category')!r}).")
-    declared_base = str(raw.get("base_model") or "").strip()
+    raw = getattr(entry, "raw", None) or {}
+    category = getattr(entry, "category", None) or raw.get("category") or ""
+    if str(category) != "loras":
+        raise RuntimeError(f"Adapter {lora_id!r} is not a registry LoRA (category={category!r}).")
+    declared_base = str(getattr(entry, "base_model", None) or raw.get("base_model") or "").strip()
     base_key = base_model_id.split(":", 1)[0].strip()
     if declared_base and declared_base.split(":", 1)[0] != base_key:
         raise RuntimeError(
@@ -234,7 +237,5 @@ def resolve_wan_lora_bundle(
             f"but the video request uses {base_key!r}."
         )
     bundle = local_bundle_root(project_root, entry, ver or None)
-    lightning = is_wan_lightning_lora_id(lora_id) or bool(
-        ((raw.get("parameters") or {}).get("wan_lightning_distill"))
-    )
-    return mid, bundle, lightning
+    moe = lora_moe_shards(entry)
+    return mid, bundle, moe

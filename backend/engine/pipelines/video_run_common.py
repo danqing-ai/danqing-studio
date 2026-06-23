@@ -21,6 +21,7 @@ from backend.engine._transformer_registry import (
     encode_video_hunyuan_dual_cfg_batch as _encode_video_hunyuan_dual_cfg_batch_fn,
     encode_video_prompt as _encode_video_prompt_fn,
     get_video_generation_factory as _get_video_generation_factory,
+    merge_video_lora_adapters as _merge_video_lora_adapters,
     validate_video_generation_params,
 )
 from backend.engine.common.bundle.layout import t5_encoder_bundle_paths
@@ -258,10 +259,33 @@ def prepare_video_bundle_and_schedule(pipeline,
     scheduler_registry = _registry_scalar_default_fn(entry, "scheduler", None)
     scheduler_default = scheduler_registry or getattr(config, "default_scheduler", "unipc")
 
+    adapters = getattr(request, "adapters", None) or []
+    lightning_distill = False
+    if family == "wan" and adapters:
+        from backend.engine.families.wan.lora_mlx import adapters_include_wan_lightning
+
+        lightning_distill = adapters_include_wan_lightning(adapters, pipeline._registry)
+        if lightning_distill:
+            from backend.engine.families.wan.distill import WAN_DISTILL_DEFAULT_BOUNDARY_STEP_INDEX
+
+            config.step_distill = True
+            config.supports_guidance = False
+            config.moe_boundary_step_index = WAN_DISTILL_DEFAULT_BOUNDARY_STEP_INDEX
+            if getattr(config, "wan_distill_shift", None) is None:
+                config.wan_distill_shift = 5.0
+            if on_log is not None:
+                on_log(
+                    "info",
+                    "Wan Lightning LoRA: 4-step distill schedule (no CFG, shift=5, MoE boundary=2)",
+                )
+
     steps = int(request.steps) if request.steps is not None else int(steps_default)
+    if lightning_distill:
+        steps = 4
     steps = max(1, steps)
     step_distill = bool(
-        getattr(config, "step_distill", False)
+        lightning_distill
+        or getattr(config, "step_distill", False)
         or _registry_scalar_default_fn(entry, "step_distill", False)
     )
     validate_video_generation_params(
@@ -324,16 +348,20 @@ def video_encode_load_and_condition(pipeline,
             entry, version_key or None, getattr(request, "adapters", None)
         )
         pipeline_graph_step("load_transformer", on_log)
+        allow_cache = not (getattr(request, "adapters", None) or [])
         model = load_model(
             pipeline,
             config,
             entry,
             version_key or None,
             latent_frames,
+            allow_cache=allow_cache,
             on_log=on_log,
         )
         if model is None:
             raise RuntimeError(f"Failed to load model: {model_key}")
+    apply_video_lora_adapters(pipeline, family, model, request, on_log)
+    if preloaded_model is None:
         model.after_load_weights(bundle_root=str(bundle_root) if bundle_root else None)
     extra_cond = model.prepare_conditioning(
         request,
@@ -935,6 +963,7 @@ def load_model(
     version_key: str | None,
     num_frames: int,
     *,
+    allow_cache: bool = True,
     on_log: Callable | None = None,
 ) -> Any:
     """加载视频模型 — 注册表驱动，零 family 分支。"""
@@ -947,7 +976,45 @@ def load_model(
         version_key=version_key,
         project_root=pipeline._project_root,
         num_frames=num_frames,
-        model_cache=pipeline._cache,
+        model_cache=pipeline._cache if allow_cache else None,
+        on_log=on_log,
+    )
+
+
+def apply_video_lora_adapters(
+    pipeline,
+    family: str,
+    model: Any,
+    request: VideoGenerationRequest | VideoEditRequest,
+    on_log: Callable[..., None] | None,
+) -> None:
+    adapters = getattr(request, "adapters", None) or []
+    if not adapters:
+        return
+    base_model_id, _ = parse_model_version(request.model)
+    entry = pipeline._registry.get(base_model_id)
+    if entry is not None:
+        lora_support = _registry_scalar_default_fn(entry, "lora_support", False)
+        if not lora_support:
+            raise RuntimeError(
+                f"Model {base_model_id!r} does not declare LoRA support; "
+                "remove adapters from the request or use a LoRA-capable base model."
+            )
+    from backend.engine.runtime.mlx import MLXContext
+
+    if not isinstance(pipeline.ctx, MLXContext):
+        raise RuntimeError(
+            "LoRA merging for Wan video is only implemented on the MLX runtime; "
+            f"current runtime is {type(pipeline.ctx).__name__}."
+        )
+    _merge_video_lora_adapters(
+        family=family,
+        model=model,
+        adapters=list(adapters),
+        base_model_id=base_model_id,
+        project_root=pipeline._project_root,
+        registry=pipeline._registry,
+        ctx=pipeline.ctx,
         on_log=on_log,
     )
 

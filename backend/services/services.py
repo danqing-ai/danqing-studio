@@ -265,10 +265,10 @@ class SettingsService(ISettingsService):
                         or lora_base_key == model_base_key
                     )
                 elif model_base_key.startswith("wan"):
-                    ok = (
-                        lora_base_key == ""
-                        or lora_base_key.startswith("wan")
-                        or lora_base_key == model_base_key
+                    from backend.engine.families.wan.lora_mlx import wan_video_lora_base_compatible
+
+                    ok = lora_base_key == "" or wan_video_lora_base_compatible(
+                        model_base_key, lora_base_key
                     )
                 elif model_base_key.startswith("qwen") or model_base_key.startswith("firered-image-edit"):
                     from backend.engine.families.qwen.weights_mlx import qwen_image_lora_base_compatible
@@ -290,6 +290,7 @@ class SettingsService(ISettingsService):
                     )
                 if not ok:
                     continue
+            params = getattr(config, "parameters", None) or {}
             out.append(
                 {
                     "kind": "lora",
@@ -297,6 +298,7 @@ class SettingsService(ISettingsService):
                     "name": (config.name or {}).get("zh") or (config.name or {}).get("en") or key,
                     "base_model": lora_base,
                     "source": "registry",
+                    "wan_lightning_distill": bool(params.get("wan_lightning_distill")),
                 }
             )
         from backend.engine.training.user_lora_registry import list_user_loras
@@ -323,6 +325,13 @@ class SettingsService(ISettingsService):
                         from backend.engine.families.ace_step.weights import ace_step_lora_base_compatible
 
                         if ace_step_lora_base_compatible(model_base_key, lora_base_key):
+                            pass
+                        else:
+                            continue
+                    elif model_base_key.startswith("wan"):
+                        from backend.engine.families.wan.lora_mlx import wan_video_lora_base_compatible
+
+                        if wan_video_lora_base_compatible(model_base_key, lora_base_key):
                             pass
                         else:
                             continue

@@ -239,7 +239,10 @@ class WanModelMLX(TransformerBase):
         self.invalidate_text_cache()
         if getattr(self.ctx, "backend", None) != "mlx":
             return
-        if not getattr(self.config, "use_mlx_compile", True):
+        allow_compile = bool(getattr(self.config, "use_mlx_compile", False))
+        if getattr(self.config, "step_distill", False):
+            allow_compile = bool(getattr(self.config, "use_mlx_compile_step_distill", True))
+        if not allow_compile:
             return
         try:
             self._compiled_forward = self.ctx.compile(self._forward_compute)

@@ -108,6 +108,18 @@
                   <DqIcon :size="14"><Download /></DqIcon>
                 </DqIconButton>
               </ComposerIconTip>
+              <template v-else-if="isVideo">
+                <ComposerIconTip :content="$t('action.video.upscale')">
+                  <DqIconButton
+                    type="text"
+                    size="sm"
+                    :label="$t('action.video.upscale')"
+                    @click.stop="emitAction('upscale')"
+                  >
+                    <DqIcon :size="14"><ZoomIn /></DqIcon>
+                  </DqIconButton>
+                </ComposerIconTip>
+              </template>
               <ComposerIconTip :content="$t('gallery.lineage')">
                 <DqIconButton
                   type="text"

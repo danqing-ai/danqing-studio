@@ -544,6 +544,7 @@ function onToolbarAction(action: string) {
         emit('use-as-start-frame', { ...payload, quiet: true });
         store.setOverlay('start_frame', path, item);
         toast.success($tt('canvas.animateBranchHint'));
+        emit('open-composer');
       }
       break;
     case 'use-start-frame': {
@@ -565,6 +566,7 @@ function onToolbarAction(action: string) {
         emit('use-as-animate-source', { ...payload, quiet: true });
         store.setOverlay('video_source', path, item);
         toast.success($tt('canvas.animateVideoBranchHint'));
+        emit('open-composer');
       }
       break;
     case 'use-animate-source': {
@@ -580,6 +582,7 @@ function onToolbarAction(action: string) {
         emit('use-as-video-source', { ...payload, quiet: true });
         store.setOverlay('video_source', path, item);
         toast.success($tt('canvas.upscaleBranchHint'));
+        emit('open-composer');
       }
       break;
     case 'use-video-source': {
@@ -697,6 +700,7 @@ function onToolbarAction(action: string) {
       emit('card-action', { action, item });
       if (action === 'retouch') toast.success($tt('canvas.retouchBranchHint'));
       else if (action === 'extend') toast.success($tt('canvas.extendBranchHint'));
+      else if (props.media === 'video') toast.success($tt('canvas.upscaleBranchHint'));
       else toast.success($tt('canvas.imageUpscaleBranchHint'));
       break;
     default:

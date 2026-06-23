@@ -120,6 +120,9 @@
           />
         </DqSelect>
       </div>
+      <p v-if="selectedLightningLora" class="video-advanced-fields__lora-hint">
+        {{ $t('studio.wanLightningLoraHint') }}
+      </p>
       <div v-if="params.lora" class="video-advanced-fields__item">
         <div class="video-advanced-fields__head">
           <label>{{ $t('create.loraScale') }}</label>
@@ -143,6 +146,12 @@ import { useI18n } from 'vue-i18n';
 import { Refresh } from '@danqing/dq-shell';
 import type { SegmentComposeParams } from '@/composables/useLongVideoSegmentCompose';
 import type { NormalizedParamSpec } from '@/utils/registryParamSchema';
+import {
+  findCompatibleLora,
+  isWanLightningLoraEntry,
+  videoLoraOptionLabel,
+  type WanCompatibleLora,
+} from '@/utils/wanVideoLora';
 
 const props = defineProps<{
   params: SegmentComposeParams;
@@ -192,12 +201,18 @@ const showGuideScale = computed(() => {
 const showNumFrames = computed(() => Boolean(props.paramSchema.num_frames));
 
 function loraOptionLabel(l: Record<string, unknown>): string {
-  const base = String(l.name || l.id || '');
   if (l.source === 'user_trained') {
-    return `${base} (${$t('studio.myLoraTag')})`;
+    return videoLoraOptionLabel(l as WanCompatibleLora, $t('studio.myLoraTag'));
   }
-  return base;
+  return videoLoraOptionLabel(l as WanCompatibleLora);
 }
+
+const selectedLightningLora = computed(() => {
+  const id = String(props.params.lora || '');
+  if (!id) return false;
+  const row = findCompatibleLora((props.compatibleLoras || []) as WanCompatibleLora[], id);
+  return isWanLightningLoraEntry(row);
+});
 
 function randomizeSeed() {
   props.params.seed = String(Math.floor(Math.random() * 1_000_000));
@@ -277,5 +292,12 @@ function randomizeSeed() {
 
 .video-advanced-fields__select {
   width: 100%;
+}
+
+.video-advanced-fields__lora-hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--dq-label-tertiary);
 }
 </style>

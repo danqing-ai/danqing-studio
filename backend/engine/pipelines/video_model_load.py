@@ -216,6 +216,22 @@ def _load_wan_single_expert(
     return model
 
 
+def _wan_moe_expert_cache(parent_cache: ModelCache | None) -> ModelCache:
+    """Dedicated two-slot cache so lazy MoE swap does not cold-reload experts each step."""
+    get_limit = getattr(parent_cache, "get_memory_limit", None) if parent_cache else None
+    ttl = int(getattr(parent_cache, "ttl_minutes", 30) or 30)
+    reserve = float(getattr(parent_cache, "_reserve_gb", 20.0) or 20.0)
+    from backend.engine.memory_policy import release_cached_model
+
+    return ModelCache(
+        get_memory_limit=get_limit or (lambda: 120.0),
+        reserve_gb=reserve,
+        ttl_minutes=max(1, ttl),
+        max_entries=2,
+        release_fn=release_cached_model,
+    )
+
+
 def load_wan_moe_video_transformer(
     *,
     ctx: Any,
@@ -244,6 +260,7 @@ def load_wan_moe_video_transformer(
     expert_disk_gb = _wan_moe_expert_disk_gb(entry, version_key)
     base_key_suffix = ":moe"
     held_cache_keys: dict[str, str | None] = {"high": None, "low": None}
+    expert_cache = _wan_moe_expert_cache(model_cache) if lazy else model_cache
 
     def _load_high() -> Any:
         model = _load_wan_single_expert(
@@ -255,7 +272,7 @@ def load_wan_moe_video_transformer(
             num_frames=num_frames,
             shard_paths=high_shards,
             tensor_root=bundle_root / "high_noise_model",
-            model_cache=model_cache,
+            model_cache=expert_cache,
             cache_key_suffix=f"{base_key_suffix}-high",
             on_log=on_log,
             disk_gb_override=expert_disk_gb,
@@ -273,7 +290,7 @@ def load_wan_moe_video_transformer(
             num_frames=num_frames,
             shard_paths=low_shards,
             tensor_root=bundle_root / "low_noise_model",
-            model_cache=model_cache,
+            model_cache=expert_cache,
             cache_key_suffix=f"{base_key_suffix}-low",
             on_log=on_log,
             disk_gb_override=expert_disk_gb,
@@ -282,9 +299,7 @@ def load_wan_moe_video_transformer(
         return model
 
     def _release_side(side: str) -> None:
-        key = held_cache_keys.get(side)
-        if model_cache is not None and key:
-            model_cache.evict(key)
+        # Drop resident reference only; keep expert_cache entries for fast re-swap.
         held_cache_keys[side] = None
 
     if lazy:

@@ -242,6 +242,10 @@ import {
   resolveVideoEditSourceMode,
 } from '@/utils/videoEditSource';
 import { formatStoryboardScript } from '@/utils/videoStoryboardPrompt';
+import {
+  applyWanLightningComposerParams,
+  findCompatibleLora,
+} from '@/utils/wanVideoLora';
 
 const router = useRouter();
 const registryStore = useRegistryStore();
@@ -935,7 +939,16 @@ function onStartAssetPick(payload: { path: string; previewUrl: string }) {
   showAssetPicker.value = false;
 }
 
+function fillComposerFromCanvasItem(path: string) {
+  const item = galleryItems.value.find((g) => g.path === path);
+  if (item) {
+    fillComposerFromGalleryItem(item);
+    canvasSelectedItem.value = item;
+  }
+}
+
 function onCanvasUseAsStartFrame(payload: { path: string; previewUrl: string; quiet?: boolean }) {
+  if (payload.quiet) fillComposerFromCanvasItem(payload.path);
   videoWorkMode.value = 'animate';
   startImageSrc.value = payload.previewUrl || '';
   startImagePath.value = payload.path;
@@ -953,6 +966,7 @@ function onCanvasUseAsTailFrame(payload: { path: string; previewUrl: string; qui
 }
 
 function onCanvasUseAsAnimateSource(payload: { path: string; previewUrl: string; quiet?: boolean }) {
+  if (payload.quiet) fillComposerFromCanvasItem(payload.path);
   videoWorkMode.value = 'animate';
   clearAnimateImageReference();
   bindAnimateVideoPreview(payload.path, payload.previewUrl || '');
@@ -962,6 +976,7 @@ function onCanvasUseAsAnimateSource(payload: { path: string; previewUrl: string;
 }
 
 function onCanvasUseAsVideoSource(payload: { path: string; previewUrl: string; quiet?: boolean }) {
+  if (payload.quiet) fillComposerFromCanvasItem(payload.path);
   videoWorkMode.value = 'upscale';
   sourceVideoSrc.value = payload.previewUrl || '';
   sourceVideoPath.value = payload.path;
@@ -1069,27 +1084,43 @@ const videoWorkSegmentOptions = computed(() => {
 const modelRegistry = ref<Record<string, any>>({});
 const modelsDetailedStatus = ref<Record<string, any>>({});
 
-const compatibleLoras = ref<{ id: string; name?: string; parameters?: any }[]>([]);
+const compatibleLoras = ref<
+  { id: string; name?: string; base_model?: string; wan_lightning_distill?: boolean }[]
+>([]);
+
+function syncVideoLoraSelection() {
+  if (!params.lora) return;
+  const row = findCompatibleLora(compatibleLoras.value, params.lora);
+  if (!row) {
+    params.lora = '';
+    return;
+  }
+  applyWanLightningComposerParams(params, row);
+}
 
 function buildVideoAdapters() {
   const adapters: { id: string; weight: number }[] = [];
-  if (params.lora) {
-    adapters.push({ id: String(params.lora), weight: Number(params.lora_scale) || 1.0 });
-  }
+  if (!params.lora) return adapters;
+  const row = findCompatibleLora(compatibleLoras.value, params.lora);
+  if (!row) return adapters;
+  adapters.push({ id: String(params.lora), weight: Number(params.lora_scale) || 1.0 });
   return adapters;
 }
 
 const loadCompatibleLoras = async () => {
   if (!params.model) {
     compatibleLoras.value = [];
+    params.lora = '';
     return;
   }
   try {
     const loras = await api.settings.getCompatibleLoras(params.model);
-    compatibleLoras.value = (loras as any[]) || [];
+    compatibleLoras.value = (loras as typeof compatibleLoras.value) || [];
+    syncVideoLoraSelection();
   } catch (e) {
     console.error('Failed to load compatible loras:', e);
     compatibleLoras.value = [];
+    params.lora = '';
   }
 };
 
@@ -1955,6 +1986,19 @@ watch(modelFilterCommercialOnly, () => {
     syncResolutionForModel(String(params.model || ''));
   }
 });
+
+watch(
+  () => params.lora,
+  (loraId) => {
+    if (!loraId) return;
+    const row = findCompatibleLora(compatibleLoras.value, loraId);
+    if (!row) {
+      params.lora = '';
+      return;
+    }
+    applyWanLightningComposerParams(params, row);
+  },
+);
 
 // Watch size and duration changes to update params
 watch(selectedSize, (val) => {

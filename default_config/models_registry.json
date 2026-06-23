@@ -5309,7 +5309,10 @@
         "backends": [
           "mlx",
           "cuda"
-        ]
+        ],
+        "overrides": {
+          "wan_lightning_distill": true
+        }
       },
       "actions": {},
       "ui": {
@@ -5370,7 +5373,10 @@
         "backends": [
           "mlx",
           "cuda"
-        ]
+        ],
+        "overrides": {
+          "wan_lightning_distill": true
+        }
       },
       "actions": {},
       "ui": {
@@ -6845,6 +6851,14 @@
               "704x1280",
               "1280x704"
             ]
+          },
+          "lora_search": {
+            "terms": [
+              "Wan 2.2 T2V",
+              "wan t2v",
+              "wan video"
+            ],
+            "suffix": "lightning lora"
           }
         },
         "extends": "video_dit_standard"
@@ -7043,7 +7057,7 @@
               "wan video",
               "wan i2v"
             ],
-            "suffix": "lora"
+            "suffix": "lightning lora"
           }
         },
         "extends": "video_dit_standard"

@@ -2,6 +2,10 @@ import { computed, reactive, ref, watch, type Ref } from 'vue';
 import { api } from '@/utils/api';
 import { useRegistryStore } from '@/stores/registry';
 import { applyDefaults, hasDeviation, normalizeParamsDef } from '@/utils/registryParamSchema';
+import {
+  applyWanLightningComposerParams,
+  findCompatibleLora,
+} from '@/utils/wanVideoLora';
 
 export type SegmentComposeParams = {
   steps: number;
@@ -74,13 +78,20 @@ export function useLongVideoSegmentCompose(modelId: Ref<string>) {
   async function loadCompatibleAdapters(id: string) {
     if (!id) {
       compatibleLoras.value = [];
+      params.lora = '';
       return;
     }
     try {
       const loras = await api.settings.getCompatibleLoras(id);
       compatibleLoras.value = (loras as Record<string, unknown>[]) || [];
+      if (params.lora && !findCompatibleLora(compatibleLoras.value, params.lora)) {
+        params.lora = '';
+      } else if (params.lora) {
+        applyWanLightningComposerParams(params, findCompatibleLora(compatibleLoras.value, params.lora));
+      }
     } catch {
       compatibleLoras.value = [];
+      params.lora = '';
     }
   }
 
@@ -95,6 +106,19 @@ export function useLongVideoSegmentCompose(modelId: Ref<string>) {
       void loadCompatibleAdapters(id);
     },
     { immediate: true },
+  );
+
+  watch(
+    () => params.lora,
+    (loraId) => {
+      if (!loraId) return;
+      const row = findCompatibleLora(compatibleLoras.value, loraId);
+      if (!row) {
+        params.lora = '';
+        return;
+      }
+      applyWanLightningComposerParams(params, row);
+    },
   );
 
   return {

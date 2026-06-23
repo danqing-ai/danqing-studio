@@ -66,7 +66,7 @@
         type="text"
         size="xs"
         :label="$t('action.video.upscale')"
-        @click="$emit('action', 'quick-upscale')"
+        @click="$emit('action', 'upscale')"
       >
         <DqIcon :size="14"><ZoomIn /></DqIcon>
       </DqIconButton>

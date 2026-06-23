@@ -440,11 +440,14 @@
                 <DqOption
                   v-for="l in compatibleLoras"
                   :key="String(l.id)"
-                  :label="(l.name as string) || String(l.id)"
+                  :label="videoLoraLabel(l)"
                   :value="String(l.id)"
                 />
               </DqSelect>
             </div>
+            <p v-if="selectedLightningLora" class="video-composer__lora-hint">
+              {{ $tt('studio.wanLightningLoraHint') }}
+            </p>
             <div v-if="localParams.lora" class="video-composer__lora-row">
               <label>{{ $tt('create.loraScale') }}</label>
               <DqSlider
@@ -482,6 +485,12 @@ import { $tt, $pn } from '@/utils/i18n';
 import { formatResolutionOptionLabel } from '@/utils/registryParamSchema';
 import { resolveVideoEditSourceMode } from '@/utils/videoEditSource';
 import { isLongVideoTargetDuration } from '@/utils/videoStoryboardPrompt';
+import {
+  findCompatibleLora,
+  isWanLightningLoraEntry,
+  videoLoraOptionLabel,
+  type WanCompatibleLora,
+} from '@/utils/wanVideoLora';
 
 const props = defineProps<{
   modelValue: string;
@@ -626,6 +635,17 @@ const needsReferenceInput = computed(
 );
 
 const paramSchema = computed(() => props.currentModelConfig?.parameters || {});
+
+function videoLoraLabel(l: Record<string, unknown>) {
+  return videoLoraOptionLabel(l as WanCompatibleLora);
+}
+
+const selectedLightningLora = computed(() => {
+  const id = String(localParams.value.lora || '');
+  if (!id) return false;
+  const row = findCompatibleLora((props.compatibleLoras || []) as WanCompatibleLora[], id);
+  return isWanLightningLoraEntry(row);
+});
 
 const longVideoSupport = computed(() => Boolean(paramSchema.value.long_video_support));
 
@@ -1023,6 +1043,13 @@ function onKeydown(e: KeyboardEvent) {
   align-items: center;
   gap: 10px;
   width: 100%;
+}
+
+.video-composer__lora-hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--dq-label-tertiary);
 }
 
 .video-composer__seed-wrap {

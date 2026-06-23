@@ -5218,6 +5218,68 @@ class ArchitectureWrapUpTests(unittest.TestCase):
             self.assertEqual(len(wan_moe_expert_shards(root, "high")), 1)
             self.assertEqual(len(wan_moe_expert_shards(root, "low")), 1)
 
+    def test_remap_wan_lora_keys(self) -> None:
+        import numpy as np
+
+        from backend.engine.families.wan.lora_weights import remap_wan_lora_keys, wan_lora_param_key
+
+        down = np.zeros((64, 128), dtype=np.float32)
+        up = np.zeros((256, 64), dtype=np.float32)
+        weights = {
+            "blocks.0.self_attn.q.lora_down.weight": down,
+            "blocks.0.self_attn.q.lora_up.weight": up,
+        }
+        groups = remap_wan_lora_keys(weights)
+        self.assertIn("blocks.0.self_attn.q", groups)
+        self.assertEqual(wan_lora_param_key("blocks.0.self_attn.q"), "blocks.0.self_attn.q.weight")
+
+    def test_wan_lightning_lora_detection(self) -> None:
+        from types import SimpleNamespace
+
+        from backend.engine.families.wan.lora_mlx import (
+            adapters_include_wan_lightning,
+            is_wan_lightning_lora_id,
+            wan_video_lora_base_compatible,
+        )
+
+        self.assertTrue(is_wan_lightning_lora_id("wan2.2-i2v-lightning-lora"))
+        self.assertTrue(is_wan_lightning_lora_id("wan2.2-t2v-lightning-lora:v1"))
+        self.assertTrue(
+            wan_video_lora_base_compatible("wan-2.2-i2v-14b", "wan-2.2-i2v-14b")
+        )
+        self.assertFalse(
+            wan_video_lora_base_compatible("wan-2.2-i2v-14b", "wan-2.2-t2v-14b")
+        )
+        self.assertFalse(
+            wan_video_lora_base_compatible("wan-2.2-i2v-14b-distill", "wan-2.2-i2v-14b")
+        )
+        registry = SimpleNamespace(
+            get=lambda mid: SimpleNamespace(
+                parameters={"wan_lightning_distill": True},
+                raw={},
+            )
+        )
+        self.assertTrue(
+            adapters_include_wan_lightning([{"id": "custom-lora", "weight": 1.0}], registry)
+        )
+
+    def test_resolve_wan_lora_weight_path_nested(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from backend.engine.families.wan.lora_mlx import resolve_wan_lora_weight_path
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            nested = root / "Wan2.2-I2V-A14B-4steps-lora-rank64-Seko-V1"
+            nested.mkdir()
+            high = nested / "high_noise_model.safetensors"
+            low = nested / "low_noise_model.safetensors"
+            high.write_bytes(b"h")
+            low.write_bytes(b"l")
+            self.assertEqual(resolve_wan_lora_weight_path(root, "high"), high)
+            self.assertEqual(resolve_wan_lora_weight_path(root, "low"), low)
+
     def test_wan_moe_lazy_expert_swap(self) -> None:
         from types import SimpleNamespace
 

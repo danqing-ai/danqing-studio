@@ -581,6 +581,8 @@ class WanConfig:
     default_scheduler: str = "wan_flow_unipc"
     num_train_timesteps: int = 1000
     use_mlx_compile: bool = False  # compile partial forward + text KV cache caused denoise drift
+    use_mlx_compile_step_distill: bool = True  # safe for 4-step Lightning / distill schedules
+    wan_distill_shift: float | None = None  # None → LightX2V default (5.0) in distill scheduler
     vae_spatial_tiling: bool = False  # 默认整幅 decode；分块拼接在 TI2V 5B 分辨率下会出 seam
     uses_wan_t5_bundle: bool = True
     uses_wan_shift: bool = True
