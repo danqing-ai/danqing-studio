@@ -218,6 +218,7 @@ class WanModelMLX(TransformerBase):
         self._rope_grid_key: tuple[int, int, int] | None = None
         self._i2v_cond: Any | None = None
         self._i2v_mask: Any | None = None
+        self._i2v_side: Any | None = None
         self._compiled_forward = None
         self._text_cache_key: tuple[int, ...] | None = None
         self._cached_context: mx.array | None = None
@@ -293,11 +294,20 @@ class WanModelMLX(TransformerBase):
             self._param_map[f"{prefix}.ffn.layer_2.weight"] = blk.ffn.layer_2.weight
             self._param_map[f"{prefix}.ffn.layer_2.bias"] = blk.ffn.layer_2.bias
 
-    def set_i2v_state(self, cond: Any | None, mask: Any | None) -> None:
+    def set_i2v_state(
+        self,
+        cond: Any | None,
+        mask: Any | None,
+        *,
+        side: Any | None = None,
+    ) -> None:
         self._i2v_cond = cond
         self._i2v_mask = mask
+        self._i2v_side = side
 
     def reblend_i2v_latents(self, latents: Any) -> Any:
+        if self._i2v_side is not None:
+            return latents
         if self._i2v_cond is None or self._i2v_mask is None:
             return latents
         from .conditioning import prepare_ti2v_i2v_latents
@@ -360,6 +370,9 @@ class WanModelMLX(TransformerBase):
         pt, ph, pw = self._patch_size
         for i in range(b):
             sample = latents[i]
+            if self._i2v_side is not None:
+                side = self._i2v_side[i] if int(getattr(self._i2v_side, "ndim", 0)) == 5 else self._i2v_side
+                sample = ctx.concat([sample, side], axis=0)
             c, f, h, w = (int(sample.shape[j]) for j in range(4))
             if f % pt != 0 or h % ph != 0 or w % pw != 0:
                 raise RuntimeError(

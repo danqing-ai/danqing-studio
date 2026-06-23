@@ -7,7 +7,14 @@ from backend.engine.common.model.dit_stem import DelegatingDiTStem
 from backend.engine.config.model_configs import WanConfig
 from backend.engine.runtime._base import RuntimeContext
 
-from .conditioning import expand_wan_cond_latent, masks_like, prepare_ti2v_i2v_latents, wan_seq_len
+from .conditioning import (
+    build_wan_i2v_side_channels,
+    expand_wan_cond_latent,
+    masks_like,
+    prepare_ti2v_i2v_latents,
+    wan_i2v_uses_channel_concat,
+    wan_seq_len,
+)
 from .transformer_mlx import WanModelMLX
 
 
@@ -53,14 +60,21 @@ class WanTransformer(DelegatingDiTStem):
 
         if cond.get("wan_i2v") and cond.get("wan_cond_latent") is not None:
             z = cond["wan_cond_latent"]
-            _, _, t, _, _ = latents.shape
+            _, _, t, h, w = latents.shape
             z = expand_wan_cond_latent(ctx, z, int(t))
             mask2 = cond.get("wan_i2v_mask")
             if mask2 is None:
                 _, mask2_list = masks_like(ctx, [ctx.squeeze(latents, 0)], zero=True)
                 mask2 = mask2_list[0]
-            self._inner.set_i2v_state(z, mask2)
-            latents = prepare_ti2v_i2v_latents(ctx, latents, z, mask2)
+            if wan_i2v_uses_channel_concat(self.config):
+                temporal_scale = int(getattr(self.config, "temporal_vae_scale", 4))
+                side = build_wan_i2v_side_channels(
+                    ctx, z, int(t), int(h), int(w), temporal_vae_scale=temporal_scale,
+                )
+                self._inner.set_i2v_state(None, mask2, side=side)
+            else:
+                self._inner.set_i2v_state(z, mask2)
+                latents = prepare_ti2v_i2v_latents(ctx, latents, z, mask2)
 
         if getattr(self.config, "expand_timesteps", False) and cond.get("wan_i2v"):
             cond["wan_expand_timesteps"] = True

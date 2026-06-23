@@ -39,6 +39,9 @@ class WanMoETransformer:
         self._release_low = release_low
         self._active_side: ExpertSide | None = None
         self._bundle_root: str | None = None
+        self._stash_i2v_cond: Any | None = None
+        self._stash_i2v_mask: Any | None = None
+        self._stash_i2v_side: Any | None = None
         if not self.lazy and (high is None or low is None):
             raise RuntimeError("Wan MoE requires both experts when lazy=False.")
         if self.lazy and (load_high is None or load_low is None):
@@ -110,23 +113,50 @@ class WanMoETransformer:
         if self._active_side == want:
             return self._high if want == "high" else self._low
         other: ExpertSide = "low" if want == "high" else "high"
-        self._release_side(other)
+        if want == "low":
+            # Load low while high is still resident so I2V side channels can sync.
+            self._load_side("low")
+            self._release_side("high")
+        else:
+            self._release_side(other)
+            self._load_side("high")
         self._active_side = want
-        return self._load_side(want)
+        return self._high if want == "high" else self._low
+
+    def _stash_i2v_from_inner(self, inner: Any | None) -> None:
+        if inner is None:
+            return
+        self._stash_i2v_cond = getattr(inner, "_i2v_cond", None)
+        self._stash_i2v_mask = getattr(inner, "_i2v_mask", None)
+        self._stash_i2v_side = getattr(inner, "_i2v_side", None)
 
     def _sync_i2v_state(self) -> None:
-        inner_h = getattr(self._high, "_inner", None)
-        inner_l = getattr(self._low, "_inner", None)
-        if inner_h is None or inner_l is None:
+        inner_h = getattr(self._high, "_inner", None) if self._high is not None else None
+        inner_l = getattr(self._low, "_inner", None) if self._low is not None else None
+        if inner_l is None:
             return
         sync = getattr(inner_l, "set_i2v_state", None)
         if not callable(sync):
             return
-        sync(getattr(inner_h, "_i2v_cond", None), getattr(inner_h, "_i2v_mask", None))
+        cond = getattr(inner_h, "_i2v_cond", None) if inner_h is not None else self._stash_i2v_cond
+        mask = getattr(inner_h, "_i2v_mask", None) if inner_h is not None else self._stash_i2v_mask
+        side = getattr(inner_h, "_i2v_side", None) if inner_h is not None else self._stash_i2v_side
+        sync(cond, mask, side=side)
 
     def forward(self, latents: Any, timestep: Any, txt_embeds: Any | None = None, **kwargs: Any) -> Any:
         step_idx = kwargs.pop("wan_denoise_step_idx", None)
         return self._ensure_expert(step_idx).forward(latents, timestep, txt_embeds=txt_embeds, **kwargs)
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        return self.forward(*args, **kwargs)
+
+    def combine_cfg_noise(self, noise_cond: Any, noise_uncond: Any, guidance: float) -> Any:
+        return self._ensure_high().combine_cfg_noise(noise_cond, noise_uncond, guidance)
+
+    def refine_cfg_noise(self, noise_cond: Any, noise_pred: Any, *, cfg_renorm_min: float) -> Any:
+        return self._ensure_high().refine_cfg_noise(
+            noise_cond, noise_pred, cfg_renorm_min=cfg_renorm_min
+        )
 
     def predict_noise_cfg(
         self,
@@ -156,6 +186,7 @@ class WanMoETransformer:
 
     def before_denoise(self, latents: Any, timesteps: Any, sigmas: Any, **cond: Any) -> tuple[Any, dict[str, Any]]:
         latents, cond = self._ensure_high().before_denoise(latents, timesteps, sigmas, **cond)
+        self._stash_i2v_from_inner(getattr(self._high, "_inner", None))
         if not self.lazy and self._low is not None:
             self._sync_i2v_state()
         return latents, cond

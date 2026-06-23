@@ -512,6 +512,9 @@ class LLMService:
                 user_content += "\n\n（输入已够详细：只做轻微润色，禁止加长或重复用词。）"
             elif len(raw_prompt) >= 80:
                 user_content += "\n\n(Input is already detailed: light polish only; do not lengthen or repeat phrases.)"
+        style = (request.style_positive or "").strip()
+        if style:
+            user_content += f"\n\nStyle cues to weave in: {style}"
         user_content = self._apply_think_mode_to_text(user_content)
 
         think_active = self._think_is_active(self._resolve_enable_thinking(None))
@@ -520,27 +523,45 @@ class LLMService:
             (0.45, self._token_budget(160, think_active)),
             (0.35, self._token_budget(140, think_active)),
         )
+        messages = [
+            ChatMessage(role="system", content=system_prompt),
+            ChatMessage(role="user", content=user_content),
+        ]
         last_clean = ""
-        for temperature, max_tokens in attempts:
-            internal = ChatCompletionRequest(
-                model=self._model_id,
-                messages=[
-                    ChatMessage(role="system", content=system_prompt),
-                    ChatMessage(role="user", content=user_content),
-                ],
-                temperature=temperature,
-                top_p=0.9,
-                max_tokens=max_tokens,
-                stream=False,
-            )
-            result = self.chat_completion(internal)
-            cleaned = sanitize_enhanced_prompt(
-                result.choices[0].message.content,
-                think_enabled=think_active,
-            )
-            if prompt_enhance_quality_ok(cleaned):
-                return EnhanceResponse(enhanced_prompt=cleaned)
-            last_clean = cleaned
+        thinking = self._resolve_enable_thinking(None)
+        with self._generation_lock:
+            model, tokenizer = self._load_model()
+            try:
+                for temperature, max_tokens in attempts:
+                    internal = ChatCompletionRequest(
+                        model=self._model_id,
+                        messages=messages,
+                        temperature=temperature,
+                        top_p=0.9,
+                        max_tokens=max_tokens,
+                        stream=False,
+                    )
+                    prompt = self._build_chat_prompt(
+                        tokenizer,
+                        messages,
+                        enable_thinking=thinking,
+                    )
+                    result = mlx_lm.generate(
+                        model,
+                        tokenizer,
+                        prompt=prompt,
+                        verbose=False,
+                        **self._generation_kwargs(internal, think_active=think_active),
+                    )
+                    cleaned = sanitize_enhanced_prompt(
+                        extract_final_llm_content(result, think_enabled=think_active),
+                        think_enabled=think_active,
+                    )
+                    if prompt_enhance_quality_ok(cleaned):
+                        return EnhanceResponse(enhanced_prompt=cleaned)
+                    last_clean = cleaned
+            finally:
+                self._unload_model(model, tokenizer)
 
         fallback = sanitize_enhanced_prompt(raw_prompt, think_enabled=think_active)
         if prompt_enhance_quality_ok(last_clean):

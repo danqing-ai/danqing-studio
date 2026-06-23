@@ -30,6 +30,16 @@ def _vae_feat_snapshot(x: mx.array) -> mx.array:
     return mx.stop_gradient(x + 0.0)
 
 
+# Official Wan2.1 VAE latent mean / std (16-dim, ``Wan-Video/Wan2.1``).
+_WAN21_VAE_MEAN = [
+    -0.7571, -0.7089, -0.9113, 0.1075, -0.1745, 0.9653, -0.1517, 1.5508,
+    0.4134, -0.0715, 0.5517, -0.3632, -0.1922, -0.9497, 0.2503, -0.2921,
+]
+_WAN21_VAE_STD = [
+    2.8184, 1.4541, 2.3275, 2.6558, 1.2196, 1.7708, 2.6052, 2.0743,
+    3.2687, 2.1526, 2.8652, 1.5579, 1.6382, 1.1253, 2.8251, 1.9160,
+]
+
 # Official Wan2.2 VAE latent mean / std (48-dim).
 _WAN22_VAE_MEAN = [
     -0.2289, -0.0052, -0.1323, -0.2339, -0.2799, 0.0174, 0.1838, 0.1557,
@@ -186,11 +196,13 @@ class WanVAERMSNorm(nn.Module):
 
 
 class Resample(nn.Module):
-    def __init__(self, dim: int, mode: str):
+    def __init__(self, dim: int, mode: str, *, layout: str = "wan22"):
         super().__init__()
         assert mode in ("none", "upsample2d", "upsample3d", "downsample2d", "downsample3d")
+        assert layout in ("wan21", "wan22")
         self.dim = dim
         self.mode = mode
+        self.layout = layout
         if mode == "upsample2d":
             self.resample = ("upsample2d", dim)
         elif mode == "upsample3d":
@@ -205,7 +217,8 @@ class Resample(nn.Module):
             self.resample = ("none", dim)
 
         if mode in ("upsample2d", "upsample3d"):
-            self.resample_conv = nn.Conv2d(dim, dim, 3, padding=1)
+            out_ch = dim // 2 if layout == "wan21" else dim
+            self.resample_conv = nn.Conv2d(dim, out_ch, 3, padding=1)
         elif mode in ("downsample2d", "downsample3d"):
             self.resample_conv = nn.Conv2d(dim, dim, 3, stride=(2, 2))
 
@@ -547,12 +560,13 @@ class Encoder3d(nn.Module):
         num_res_blocks: int = 2,
         temperal_downsample: list[bool] | None = None,
         dropout: float = 0.0,
+        in_channels: int = 12,
     ):
         super().__init__()
         dim_mult = dim_mult or [1, 2, 4, 4]
         temperal_downsample = temperal_downsample or [True, True, False]
         dims = [dim * u for u in [1] + dim_mult]
-        self.conv1 = CausalConv3d(12, dims[0], 3, padding=1)
+        self.conv1 = CausalConv3d(in_channels, dims[0], 3, padding=1)
         downsamples: list[DownResidualBlock] = []
         for i, (in_dim, out_dim) in enumerate(zip(dims[:-1], dims[1:])):
             t_down = temperal_downsample[i] if i < len(temperal_downsample) else False
@@ -630,6 +644,7 @@ class Decoder3d(nn.Module):
         num_res_blocks: int = 2,
         temperal_upsample: list[bool] | None = None,
         dropout: float = 0.0,
+        pixel_out_channels: int = 12,
     ):
         super().__init__()
         dim_mult = dim_mult or [1, 2, 4, 4]
@@ -654,7 +669,7 @@ class Decoder3d(nn.Module):
             )
         self.upsamples = upsamples
         self.head_norm = WanVAERMSNorm(out_dim, images=False)
-        self.head_conv = CausalConv3d(out_dim, 12, 3, padding=1)
+        self.head_conv = CausalConv3d(out_dim, pixel_out_channels, 3, padding=1)
 
     def __call__(
         self,
@@ -710,6 +725,180 @@ class Decoder3d(nn.Module):
         return x
 
 
+class Encoder3dWan21(nn.Module):
+    """Flat ``ResidualBlock`` + ``Resample`` stack (official Wan2.1 ``Encoder3d``)."""
+
+    def __init__(
+        self,
+        dim: int = 96,
+        z_dim: int = 16,
+        dim_mult: list[int] | None = None,
+        num_res_blocks: int = 2,
+        temperal_downsample: list[bool] | None = None,
+        dropout: float = 0.0,
+        in_channels: int = 3,
+    ):
+        super().__init__()
+        dim_mult = dim_mult or [1, 2, 4, 4]
+        temperal_downsample = temperal_downsample or [False, True, True]
+        dims = [dim * u for u in [1] + dim_mult]
+        self.conv1 = CausalConv3d(in_channels, dims[0], 3, padding=1)
+        downsamples: list[nn.Module] = []
+        for i, (in_dim, out_dim) in enumerate(zip(dims[:-1], dims[1:])):
+            cur = in_dim
+            for _ in range(num_res_blocks):
+                downsamples.append(ResidualBlock(cur, out_dim, dropout))
+                cur = out_dim
+            if i != len(dim_mult) - 1:
+                t_down = temperal_downsample[i] if i < len(temperal_downsample) else False
+                mode = "downsample3d" if t_down else "downsample2d"
+                downsamples.append(Resample(out_dim, mode, layout="wan21"))
+        self.downsamples = downsamples
+        self.mid_res0 = ResidualBlock(out_dim, out_dim, dropout)
+        self.mid_attn = AttentionBlock(out_dim)
+        self.mid_res1 = ResidualBlock(out_dim, out_dim, dropout)
+        self.head_norm = WanVAERMSNorm(out_dim, images=False)
+        self.head_conv = CausalConv3d(out_dim, z_dim * 2, 3, padding=1)
+
+    def __call__(
+        self,
+        x: mx.array,
+        feat_cache: list[Any] | None = None,
+        feat_idx: list[int] | None = None,
+    ) -> mx.array:
+        feat_idx = feat_idx if feat_idx is not None else [0]
+        if feat_cache is not None:
+            idx = feat_idx[0]
+            cache_x = x[:, :, -CACHE_T:, :, :]
+            if int(cache_x.shape[2]) < 2 and feat_cache[idx] is not None:
+                cache_x = mx.concatenate(
+                    [mx.expand_dims(feat_cache[idx][:, :, -1, :, :], 2), cache_x],
+                    axis=2,
+                )
+            x = self.conv1(x, feat_cache[idx])
+            feat_cache[idx] = _vae_feat_snapshot(cache_x)
+            feat_idx[0] += 1
+        else:
+            x = self.conv1(x)
+
+        for layer in self.downsamples:
+            if isinstance(layer, (ResidualBlock, Resample)):
+                x = layer(x, feat_cache, feat_idx)
+            else:
+                x = layer(x)
+
+        for layer in (self.mid_res0, self.mid_attn, self.mid_res1):
+            if isinstance(layer, ResidualBlock) and feat_cache is not None:
+                x = layer(x, feat_cache, feat_idx)
+            else:
+                x = layer(x)
+
+        x = self.head_norm(x)
+        x = nn.silu(x)
+        if feat_cache is not None:
+            idx = feat_idx[0]
+            cache_x = x[:, :, -CACHE_T:, :, :]
+            if int(cache_x.shape[2]) < 2 and feat_cache[idx] is not None:
+                cache_x = mx.concatenate(
+                    [mx.expand_dims(feat_cache[idx][:, :, -1, :, :], 2), cache_x],
+                    axis=2,
+                )
+            x = self.head_conv(x, feat_cache[idx])
+            feat_cache[idx] = _vae_feat_snapshot(cache_x)
+            feat_idx[0] += 1
+        else:
+            x = self.head_conv(x)
+        return x
+
+
+class Decoder3dWan21(nn.Module):
+    """Flat upsample stack (official Wan2.1 ``Decoder3d``)."""
+
+    def __init__(
+        self,
+        dim: int = 96,
+        z_dim: int = 16,
+        dim_mult: list[int] | None = None,
+        num_res_blocks: int = 2,
+        temperal_upsample: list[bool] | None = None,
+        dropout: float = 0.0,
+        pixel_out_channels: int = 3,
+    ):
+        super().__init__()
+        dim_mult = dim_mult or [1, 2, 4, 4]
+        temperal_upsample = temperal_upsample or [False, True, True]
+        dims = [dim * u for u in [dim_mult[-1]] + dim_mult[::-1]]
+        self.conv1 = CausalConv3d(z_dim, dims[0], 3, padding=1)
+        self.mid_res0 = ResidualBlock(dims[0], dims[0], dropout)
+        self.mid_attn = AttentionBlock(dims[0])
+        self.mid_res1 = ResidualBlock(dims[0], dims[0], dropout)
+        upsamples: list[nn.Module] = []
+        for i, (in_dim, out_dim) in enumerate(zip(dims[:-1], dims[1:])):
+            cur = in_dim // 2 if i in (1, 2, 3) else in_dim
+            for _ in range(num_res_blocks + 1):
+                upsamples.append(ResidualBlock(cur, out_dim, dropout))
+                cur = out_dim
+            if i != len(dim_mult) - 1:
+                t_up = temperal_upsample[i] if i < len(temperal_upsample) else False
+                mode = "upsample3d" if t_up else "upsample2d"
+                upsamples.append(Resample(out_dim, mode, layout="wan21"))
+        self.upsamples = upsamples
+        self.head_norm = WanVAERMSNorm(out_dim, images=False)
+        self.head_conv = CausalConv3d(out_dim, pixel_out_channels, 3, padding=1)
+
+    def __call__(
+        self,
+        x: mx.array,
+        feat_cache: list[Any] | None = None,
+        feat_idx: list[int] | None = None,
+        first_chunk: bool = False,
+    ) -> mx.array:
+        del first_chunk
+        feat_idx = feat_idx if feat_idx is not None else [0]
+        if feat_cache is not None:
+            idx = feat_idx[0]
+            cache_x = x[:, :, -CACHE_T:, :, :]
+            if int(cache_x.shape[2]) < 2 and feat_cache[idx] is not None:
+                cache_x = mx.concatenate(
+                    [mx.expand_dims(feat_cache[idx][:, :, -1, :, :], 2), cache_x],
+                    axis=2,
+                )
+            x = self.conv1(x, feat_cache[idx])
+            feat_cache[idx] = _vae_feat_snapshot(cache_x)
+            feat_idx[0] += 1
+        else:
+            x = self.conv1(x)
+
+        for layer in (self.mid_res0, self.mid_attn, self.mid_res1):
+            if isinstance(layer, ResidualBlock) and feat_cache is not None:
+                x = layer(x, feat_cache, feat_idx)
+            else:
+                x = layer(x)
+
+        for layer in self.upsamples:
+            if isinstance(layer, Resample):
+                x = layer(x, feat_cache, feat_idx)
+            else:
+                x = layer(x, feat_cache, feat_idx)
+
+        x = self.head_norm(x)
+        x = nn.silu(x)
+        if feat_cache is not None:
+            idx = feat_idx[0]
+            cache_x = x[:, :, -CACHE_T:, :, :]
+            if int(cache_x.shape[2]) < 2 and feat_cache[idx] is not None:
+                cache_x = mx.concatenate(
+                    [mx.expand_dims(feat_cache[idx][:, :, -1, :, :], 2), cache_x],
+                    axis=2,
+                )
+            x = self.head_conv(x, feat_cache[idx])
+            feat_cache[idx] = _vae_feat_snapshot(cache_x)
+            feat_idx[0] += 1
+        else:
+            x = self.head_conv(x)
+        return x
+
+
 def _count_conv3d(model: nn.Module) -> int:
     count = 0
     for mod in model.modules():
@@ -728,30 +917,60 @@ class WanVAE(nn.Module):
         num_res_blocks: int = 2,
         temperal_downsample: list[bool] | None = None,
         dropout: float = 0.0,
+        encoder_in_channels: int = 12,
+        pixel_out_channels: int = 12,
+        layout: str = "wan22",
     ):
         super().__init__()
         dim_mult = dim_mult or [1, 2, 4, 4]
         temperal_downsample = temperal_downsample or [False, True, True]
         self.z_dim = z_dim
+        self.layout = layout
         self.temperal_upsample = temperal_downsample[::-1]
-        self.encoder = Encoder3d(
-            dim,
-            z_dim * 2,
-            dim_mult,
-            num_res_blocks,
-            temperal_downsample,
-            dropout,
-        )
-        self.conv1 = CausalConv3d(z_dim * 2, z_dim * 2, 1)
-        self.conv2 = CausalConv3d(z_dim, z_dim, 1)
-        self.decoder = Decoder3d(
-            dec_dim,
-            z_dim,
-            dim_mult,
-            num_res_blocks,
-            self.temperal_upsample,
-            dropout,
-        )
+        if layout == "wan21":
+            self.patch_size = 1
+            self.encoder = Encoder3dWan21(
+                dim,
+                z_dim,
+                dim_mult,
+                num_res_blocks,
+                temperal_downsample,
+                dropout,
+                in_channels=encoder_in_channels,
+            )
+            self.conv1 = CausalConv3d(z_dim * 2, z_dim * 2, 1)
+            self.conv2 = CausalConv3d(z_dim, z_dim, 1)
+            self.decoder = Decoder3dWan21(
+                dim,
+                z_dim,
+                dim_mult,
+                num_res_blocks,
+                self.temperal_upsample,
+                dropout,
+                pixel_out_channels=pixel_out_channels,
+            )
+        else:
+            self.patch_size = 2 if int(encoder_in_channels) == 12 else 1
+            self.encoder = Encoder3d(
+                dim,
+                z_dim * 2,
+                dim_mult,
+                num_res_blocks,
+                temperal_downsample,
+                dropout,
+                in_channels=encoder_in_channels,
+            )
+            self.conv1 = CausalConv3d(z_dim * 2, z_dim * 2, 1)
+            self.conv2 = CausalConv3d(z_dim, z_dim, 1)
+            self.decoder = Decoder3d(
+                dec_dim,
+                z_dim,
+                dim_mult,
+                num_res_blocks,
+                self.temperal_upsample,
+                dropout,
+                pixel_out_channels=pixel_out_channels,
+            )
         self._conv_num = 0
         self._conv_idx = [0]
         self._feat_map: list[Any] = []
@@ -769,7 +988,8 @@ class WanVAE(nn.Module):
 
     def encode(self, x: mx.array, scale: tuple[mx.array, mx.array]) -> mx.array:
         self.clear_cache()
-        x = patchify(x, 2)
+        if self.patch_size > 1:
+            x = patchify(x, self.patch_size)
         t = int(x.shape[2])
         iter_ = 1 + (t - 1) // 4
         out_parts: list[mx.array] = []
@@ -819,7 +1039,8 @@ class WanVAE(nn.Module):
                 on_stage(0.05 + 0.9 * float(i + 1) / float(iter_t))
         if out is None:
             raise RuntimeError("Wan VAE decode received empty latent volume")
-        out = unpatchify(out, 2)
+        if self.patch_size > 1:
+            out = unpatchify(out, self.patch_size)
         if on_stage is not None:
             on_stage(1.0)
         self.clear_cache()
@@ -1024,7 +1245,10 @@ def _set_residual_block(mod: ResidualBlock, prefix: str, weights: dict[str, mx.a
     _set_rms_norm(mod.norm2, f"{prefix}.residual.3", weights)
     _set_causal_conv3d(mod.conv2, f"{prefix}.residual.6", weights)
     if mod.shortcut is not None:
-        _set_causal_conv3d(mod.shortcut, f"{prefix}.shortcut", weights)
+        if f"{prefix}.shortcut.weight" in weights:
+            _set_causal_conv3d(mod.shortcut, f"{prefix}.shortcut", weights)
+        else:
+            mod.shortcut = None
 
 
 def _set_attention_block(mod: AttentionBlock, prefix: str, weights: dict[str, mx.array]) -> None:
@@ -1040,30 +1264,41 @@ def _set_resample(mod: Resample, prefix: str, weights: dict[str, mx.array]) -> N
         _set_causal_conv3d(mod.time_conv, f"{prefix}.time_conv", weights)
 
 
-def _set_down_block(mod: DownResidualBlock, prefix: str, weights: dict[str, mx.array]) -> None:
-    idx = 0
+def _set_down_block(
+    mod: DownResidualBlock, prefix: str, start_idx: int, weights: dict[str, mx.array]
+) -> int:
+    idx = start_idx
     for block in mod.blocks:
         if isinstance(block, ResidualBlock):
-            _set_residual_block(block, f"{prefix}.downsamples.{idx}", weights)
+            _set_residual_block(block, f"{prefix}.{idx}", weights)
             idx += 1
         elif isinstance(block, Resample):
-            _set_resample(block, f"{prefix}.downsamples.{idx}", weights)
+            _set_resample(block, f"{prefix}.{idx}", weights)
+            idx += 1
+    return idx
 
 
-def _set_up_block(mod: UpResidualBlock, prefix: str, weights: dict[str, mx.array]) -> None:
-    idx = 0
+def _set_up_block(
+    mod: UpResidualBlock, prefix: str, start_idx: int, weights: dict[str, mx.array]
+) -> int:
+    idx = start_idx
     for block in mod.blocks:
         if isinstance(block, ResidualBlock):
-            _set_residual_block(block, f"{prefix}.upsamples.{idx}", weights)
+            _set_residual_block(block, f"{prefix}.{idx}", weights)
             idx += 1
         elif isinstance(block, Resample):
-            _set_resample(block, f"{prefix}.upsamples.{idx}", weights)
+            _set_resample(block, f"{prefix}.{idx}", weights)
+            idx += 1
+    return idx
 
 
-def _assign_wan_vae_weights(model: WanVAE, weights: dict[str, mx.array]) -> None:
+def _assign_wan21_vae_weights(model: WanVAE, weights: dict[str, mx.array]) -> None:
     _set_causal_conv3d(model.encoder.conv1, "encoder.conv1", weights)
-    for i, block in enumerate(model.encoder.downsamples):
-        _set_down_block(block, f"encoder.downsamples.{i}", weights)
+    for i, layer in enumerate(model.encoder.downsamples):
+        if isinstance(layer, ResidualBlock):
+            _set_residual_block(layer, f"encoder.downsamples.{i}", weights)
+        elif isinstance(layer, Resample):
+            _set_resample(layer, f"encoder.downsamples.{i}", weights)
     _set_residual_block(model.encoder.mid_res0, "encoder.middle.0", weights)
     _set_attention_block(model.encoder.mid_attn, "encoder.middle.1", weights)
     _set_residual_block(model.encoder.mid_res1, "encoder.middle.2", weights)
@@ -1077,8 +1312,39 @@ def _assign_wan_vae_weights(model: WanVAE, weights: dict[str, mx.array]) -> None
     _set_residual_block(model.decoder.mid_res0, "decoder.middle.0", weights)
     _set_attention_block(model.decoder.mid_attn, "decoder.middle.1", weights)
     _set_residual_block(model.decoder.mid_res1, "decoder.middle.2", weights)
-    for i, block in enumerate(model.decoder.upsamples):
-        _set_up_block(block, f"decoder.upsamples.{i}", weights)
+    for i, layer in enumerate(model.decoder.upsamples):
+        if isinstance(layer, ResidualBlock):
+            _set_residual_block(layer, f"decoder.upsamples.{i}", weights)
+        elif isinstance(layer, Resample):
+            _set_resample(layer, f"decoder.upsamples.{i}", weights)
+    _set_rms_norm(model.decoder.head_norm, "decoder.head.0", weights)
+    _set_causal_conv3d(model.decoder.head_conv, "decoder.head.2", weights)
+
+
+def _assign_wan_vae_weights(model: WanVAE, weights: dict[str, mx.array]) -> None:
+    if getattr(model, "layout", "wan22") == "wan21":
+        _assign_wan21_vae_weights(model, weights)
+        return
+    _set_causal_conv3d(model.encoder.conv1, "encoder.conv1", weights)
+    enc_idx = 0
+    for block in model.encoder.downsamples:
+        enc_idx = _set_down_block(block, "encoder.downsamples", enc_idx, weights)
+    _set_residual_block(model.encoder.mid_res0, "encoder.middle.0", weights)
+    _set_attention_block(model.encoder.mid_attn, "encoder.middle.1", weights)
+    _set_residual_block(model.encoder.mid_res1, "encoder.middle.2", weights)
+    _set_rms_norm(model.encoder.head_norm, "encoder.head.0", weights)
+    _set_causal_conv3d(model.encoder.head_conv, "encoder.head.2", weights)
+
+    _set_causal_conv3d(model.conv1, "conv1", weights)
+    _set_causal_conv3d(model.conv2, "conv2", weights)
+
+    _set_causal_conv3d(model.decoder.conv1, "decoder.conv1", weights)
+    _set_residual_block(model.decoder.mid_res0, "decoder.middle.0", weights)
+    _set_attention_block(model.decoder.mid_attn, "decoder.middle.1", weights)
+    _set_residual_block(model.decoder.mid_res1, "decoder.middle.2", weights)
+    dec_idx = 0
+    for block in model.decoder.upsamples:
+        dec_idx = _set_up_block(block, "decoder.upsamples", dec_idx, weights)
     _set_rms_norm(model.decoder.head_norm, "decoder.head.0", weights)
     _set_causal_conv3d(model.decoder.head_conv, "decoder.head.2", weights)
 
@@ -1174,7 +1440,11 @@ def _read_wan_vae_config(bundle_root: Path) -> dict[str, Any]:
 
 
 def _scale_tensors_from_vae_cfg(
-    cfg: dict[str, Any], z_dim: int, *, array_fn: Any | None = None
+    cfg: dict[str, Any],
+    z_dim: int,
+    *,
+    array_fn: Any | None = None,
+    layout: str = "wan22",
 ) -> tuple[mx.array, mx.array]:
     if array_fn is None:
         array_fn = mx.array
@@ -1191,8 +1461,16 @@ def _scale_tensors_from_vae_cfg(
             1, z_dim, 1, 1, 1
         )
         return mean_a, inv_std
-    mean_a = array_fn(_WAN22_VAE_MEAN, dtype=mx.float32).reshape(1, z_dim, 1, 1, 1)
-    inv_std = array_fn([1.0 / s for s in _WAN22_VAE_STD], dtype=mx.float32).reshape(
+    if layout == "wan21" or z_dim == 16:
+        mean_src, std_src = _WAN21_VAE_MEAN, _WAN21_VAE_STD
+    else:
+        mean_src, std_src = _WAN22_VAE_MEAN, _WAN22_VAE_STD
+    if len(mean_src) != z_dim or len(std_src) != z_dim:
+        raise RuntimeError(
+            f"Wan VAE scale vector length mismatch: z_dim={z_dim}, layout={layout!r}"
+        )
+    mean_a = array_fn(mean_src, dtype=mx.float32).reshape(1, z_dim, 1, 1, 1)
+    inv_std = array_fn([1.0 / s for s in std_src], dtype=mx.float32).reshape(
         1, z_dim, 1, 1, 1
     )
     return mean_a, inv_std
@@ -1235,12 +1513,72 @@ def _load_vae_state_dict(
     )
 
 
+def _infer_wan_vae_layout(weights: dict[str, Any]) -> str:
+    """Return ``wan21`` or ``wan22`` from checkpoint topology."""
+    if "encoder.head.2.weight" in weights:
+        head_out = int(weights["encoder.head.2.weight"].shape[0])
+        if head_out <= 32:
+            return "wan21"
+    enc_in, _pix = _infer_wan_vae_io_channels(weights)
+    if enc_in == 12:
+        return "wan22"
+    if any(k.startswith("encoder.downsamples.10.") for k in weights):
+        return "wan21"
+    return "wan22"
+
+
+def _infer_wan21_vae_dims(weights: dict[str, Any]) -> tuple[int, int]:
+    c_dim = int(weights["encoder.conv1.weight"].shape[0])
+    z_dim = int(weights["encoder.head.2.weight"].shape[0]) // 2
+    return c_dim, z_dim
+
+
+def _infer_wan_vae_io_channels(weights: dict[str, Any]) -> tuple[int, int]:
+    """Return ``(encoder_in_channels, pixel_out_channels)`` from checkpoint keys."""
+    if "encoder.conv1.weight" in weights:
+        enc_in = int(weights["encoder.conv1.weight"].shape[1])
+    elif "encoder.conv_in.weight" in weights:
+        enc_in = int(weights["encoder.conv_in.weight"].shape[1])
+    else:
+        enc_in = 12
+    if "decoder.head.2.weight" in weights:
+        pix_out = int(weights["decoder.head.2.weight"].shape[0])
+    elif "decoder.conv_out.weight" in weights:
+        pix_out = int(weights["decoder.conv_out.weight"].shape[0])
+    else:
+        pix_out = 12 if enc_in == 12 else 3
+    return enc_in, pix_out
+
+
+def build_wan21_vae_mlx(
+    *,
+    dim: int = 96,
+    z_dim: int = 16,
+    dim_mult: list[int] | None = None,
+    temperal_downsample: list[bool] | None = None,
+    encoder_in_channels: int = 3,
+    pixel_out_channels: int = 3,
+) -> WanVAE:
+    return WanVAE(
+        dim=dim,
+        z_dim=z_dim,
+        dim_mult=dim_mult or [1, 2, 4, 4],
+        temperal_downsample=temperal_downsample or [False, True, True],
+        dropout=0.0,
+        encoder_in_channels=encoder_in_channels,
+        pixel_out_channels=pixel_out_channels,
+        layout="wan21",
+    )
+
+
 def build_wan22_vae_mlx(
     *,
     z_dim: int = 48,
     c_dim: int = 160,
     dim_mult: list[int] | None = None,
     temperal_downsample: list[bool] | None = None,
+    encoder_in_channels: int = 12,
+    pixel_out_channels: int = 12,
 ) -> WanVAE:
     return WanVAE(
         dim=c_dim,
@@ -1249,6 +1587,9 @@ def build_wan22_vae_mlx(
         dim_mult=dim_mult or [1, 2, 4, 4],
         temperal_downsample=temperal_downsample or [False, True, True],
         dropout=0.0,
+        encoder_in_channels=encoder_in_channels,
+        pixel_out_channels=pixel_out_channels,
+        layout="wan22",
     )
 
 
@@ -1277,20 +1618,37 @@ def load_wan_vae(ctx: RuntimeContext, bundle_root: Path | str) -> Wan22VAE:
     if "encoder.conv1.weight" not in weights and "encoder.conv_in.weight" in weights:
         weights = _normalize_vae_state_dict(weights)
 
+    enc_in, pix_out = _infer_wan_vae_io_channels(weights)
+    layout = _infer_wan_vae_layout(weights)
     vae_cfg = _read_wan_vae_config(root)
-    z_dim = int(vae_cfg.get("z_dim", 48))
-    model = build_wan22_vae_mlx(
-        z_dim=z_dim,
-        c_dim=int(vae_cfg.get("base_dim", 160)),
-        dim_mult=list(vae_cfg.get("dim_mult") or [1, 2, 4, 4]),
-        temperal_downsample=list(vae_cfg.get("temperal_downsample") or [False, True, True]),
-    )
+    if layout == "wan21":
+        c_dim, z_dim = _infer_wan21_vae_dims(weights)
+        model = build_wan21_vae_mlx(
+            dim=c_dim,
+            z_dim=z_dim,
+            dim_mult=list(vae_cfg.get("dim_mult") or [1, 2, 4, 4]),
+            temperal_downsample=list(vae_cfg.get("temperal_downsample") or [False, True, True]),
+            encoder_in_channels=enc_in,
+            pixel_out_channels=pix_out,
+        )
+    else:
+        z_dim = int(vae_cfg.get("z_dim", 48))
+        model = build_wan22_vae_mlx(
+            z_dim=z_dim,
+            c_dim=int(vae_cfg.get("base_dim", 160)),
+            dim_mult=list(vae_cfg.get("dim_mult") or [1, 2, 4, 4]),
+            temperal_downsample=list(vae_cfg.get("temperal_downsample") or [False, True, True]),
+            encoder_in_channels=enc_in,
+            pixel_out_channels=pix_out,
+        )
     _assign_wan_vae_weights(model, weights)
 
-    mean, inv_std = _scale_tensors_from_vae_cfg(vae_cfg, z_dim, array_fn=ctx.array)
+    mean, inv_std = _scale_tensors_from_vae_cfg(
+        vae_cfg, model.z_dim, array_fn=ctx.array, layout=layout,
+    )
     wrapper = Wan22VAE(model=model, scale_mean=mean, scale_inv_std=inv_std, z_dim=model.z_dim)
     _vae_cache[key] = wrapper
-    logger.info("Wan 2.2 VAE loaded from %s (z_dim=%d)", root, model.z_dim)
+    logger.info("Wan VAE loaded from %s (layout=%s, z_dim=%d)", root, layout, model.z_dim)
     return wrapper
 
 

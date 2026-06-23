@@ -92,6 +92,12 @@ def apply_video_registry_config_overrides(
     distill_ts = registry_scalar_default(entry, "wan_distill_timesteps", None)
     if isinstance(distill_ts, (list, tuple)) and distill_ts:
         config.wan_distill_timesteps = tuple(float(x) for x in distill_ts)
+    hy_distill_ts = registry_scalar_default(entry, "hunyuan_distill_timesteps", None)
+    if isinstance(hy_distill_ts, (list, tuple)) and hy_distill_ts:
+        config.hunyuan_distill_timesteps = tuple(float(x) for x in hy_distill_ts)
+    hy_distill_shift = registry_scalar_default(entry, "hunyuan_distill_shift", None)
+    if hy_distill_shift is not None:
+        config.hunyuan_distill_shift = float(hy_distill_shift)
     vst = registry_scalar_default(entry, "vae_spatial_tiling", None)
     if vst is not None:
         config.vae_spatial_tiling = bool(vst)

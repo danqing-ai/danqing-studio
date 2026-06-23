@@ -21,6 +21,8 @@ const API_BASE = '';
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 /** Dataset auto-caption (vision LLM per image) and bulk uploads can run many minutes. */
 const LONG_REQUEST_TIMEOUT_MS = 600_000;
+/** Single-round local LLM (prompt enhance, lyrics, vision caption) — includes cold model load. */
+const LLM_REQUEST_TIMEOUT_MS = 180_000;
 /** Multi-round LLM (Plan → Expand batches → Continuity), e.g. long-video storyboard. */
 const LLM_MULTI_ROUND_TIMEOUT_MS = 300_000;
 
@@ -626,7 +628,9 @@ export const api = {
       target_action?: string;
       model_id?: string;
     }): Promise<{ enhanced_prompt: string }> {
-      const response = await client.post('/api/chat/enhance', body);
+      const response = await client.post('/api/chat/enhance', body, {
+        timeout: LLM_REQUEST_TIMEOUT_MS,
+      });
       return response.data;
     },
 
@@ -674,7 +678,9 @@ export const api = {
       prompt: string;
       style_positive?: string;
     }): Promise<{ lyrics: string }> {
-      const response = await client.post('/api/chat/lyrics', body);
+      const response = await client.post('/api/chat/lyrics', body, {
+        timeout: LLM_REQUEST_TIMEOUT_MS,
+      });
       return response.data;
     },
 
@@ -697,17 +703,23 @@ export const api = {
       assetId: string,
       opts?: { preferVision?: boolean }
     ): Promise<{ note: string; vision_used?: boolean }> {
-      const response = await client.post('/api/chat/describe-node', {
-        asset_id: assetId,
-        prefer_vision: opts?.preferVision !== false,
-      });
+      const response = await client.post(
+        '/api/chat/describe-node',
+        {
+          asset_id: assetId,
+          prefer_vision: opts?.preferVision !== false,
+        },
+        { timeout: LLM_REQUEST_TIMEOUT_MS },
+      );
       return response.data;
     },
 
     async imageToPrompt(assetId: string): Promise<{ prompt: string; vision_used?: boolean }> {
-      const response = await client.post('/api/chat/image-to-prompt', {
-        asset_id: assetId,
-      });
+      const response = await client.post(
+        '/api/chat/image-to-prompt',
+        { asset_id: assetId },
+        { timeout: LLM_REQUEST_TIMEOUT_MS },
+      );
       return response.data;
     },
 
@@ -715,10 +727,14 @@ export const api = {
       assetId: string,
       question: string,
     ): Promise<{ answer: string; vision_used?: boolean }> {
-      const response = await client.post('/api/chat/visual-analyze', {
-        asset_id: assetId,
-        question,
-      });
+      const response = await client.post(
+        '/api/chat/visual-analyze',
+        {
+          asset_id: assetId,
+          question,
+        },
+        { timeout: LLM_REQUEST_TIMEOUT_MS },
+      );
       return response.data;
     },
 

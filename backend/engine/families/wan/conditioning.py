@@ -71,6 +71,63 @@ def prepare_wan_reference_image(img: Image.Image, target_w: int, target_h: int) 
     return resized.crop((x1, y1, x1 + target_w, y1 + target_h))
 
 
+def wan_i2v_uses_channel_concat(config: Any) -> bool:
+    """True for Wan 14B I2V (``in_dim`` > ``vae_z_dim``): concat noise + side in DiT forward."""
+    z = int(getattr(config, "vae_z_dim", 0) or 0)
+    din = int(getattr(config, "dim_in", 0) or 0)
+    return z > 0 and din > z
+
+
+def build_wan_i2v_side_channels(
+    ctx: RuntimeContext,
+    cond_latent: Any,
+    num_latent_frames: int,
+    latent_h: int,
+    latent_w: int,
+    *,
+    temporal_vae_scale: int = 4,
+) -> Any:
+    """Build ``y = concat([mask(4), cond(16)], channel)`` for Wan2.2 I2V (official ``image2video.py``)."""
+    t_lat = int(num_latent_frames)
+    h = int(latent_h)
+    w = int(latent_w)
+    t_vae = int(temporal_vae_scale)
+    if t_lat <= 0 or h <= 0 or w <= 0:
+        raise RuntimeError(
+            f"Wan I2V side channels need positive latent shape, got T={t_lat} H={h} W={w}"
+        )
+    if cond_latent.ndim == 5:
+        cond_latent = ctx.squeeze(cond_latent, 0)
+    if int(cond_latent.shape[0]) != 16:
+        raise RuntimeError(
+            f"Wan I2V cond latent expects 16 channels, got shape {getattr(cond_latent, 'shape', ())}"
+        )
+    if int(cond_latent.shape[1]) != t_lat:
+        raise RuntimeError(
+            f"Wan I2V cond latent temporal dim {cond_latent.shape[1]} != latent frames {t_lat}"
+        )
+
+    f_pix = (t_lat - 1) * t_vae + 1
+    msk = ctx.ones((1, f_pix, h, w), dtype=cond_latent.dtype)
+    if f_pix > 1:
+        tail = ctx.zeros((1, f_pix - 1, h, w), dtype=cond_latent.dtype)
+        msk = ctx.concat([msk[:, 0:1], tail], axis=1)
+    first_rep = ctx.repeat(msk[:, 0:1], t_vae, axis=1)
+    if f_pix > 1:
+        msk = ctx.concat([first_rep, msk[:, 1:]], axis=1)
+    else:
+        msk = first_rep
+    total = int(msk.shape[1])
+    if total % t_vae != 0:
+        raise RuntimeError(
+            f"Wan I2V mask length {total} not divisible by temporal_vae_scale={t_vae}"
+        )
+    msk = ctx.reshape(msk, (1, total // t_vae, t_vae, h, w))
+    msk = ctx.permute(msk, (0, 2, 1, 3, 4))
+    msk = ctx.squeeze(msk, 0)
+    return ctx.concat([msk, cond_latent], axis=0)
+
+
 def expand_wan_cond_latent(ctx: RuntimeContext, cond: Any, target_t: int) -> Any:
     """Expand ``[C,1,H,W]`` VAE encode to ``[C,T,H,W]`` for I2V blending."""
     t = int(target_t)

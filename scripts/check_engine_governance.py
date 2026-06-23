@@ -74,15 +74,12 @@ MODULATION_PATTERNS = (
 )
 
 HUNYUAN_REQUIRED_IDS = (
-    "hunyuan-video-1.5-480p-t2v",
-    "hunyuan-video-1.5-480p-i2v",
-    "hunyuan-video-1.5-i2v-step-distill",
-    "hunyuan-video-1.5-t2v-step-distill",
+    "hunyuan-video-1.5-shared",
+    "hunyuan-video-1.5-t2v-distill",
     "hunyuan-video-1.5-1080p-sr",
 )
 HUNYUAN_STEP_DISTILL_IDS = (
-    "hunyuan-video-1.5-i2v-step-distill",
-    "hunyuan-video-1.5-t2v-step-distill",
+    "hunyuan-video-1.5-t2v-distill",
 )
 WAN_STEP_DISTILL_IDS = (
     "wan-2.2-i2v-14b-distill",
@@ -442,46 +439,79 @@ def check_registry() -> list[str]:
             continue
         if model.get("source") != "modelscope":
             failures.append(f"{mid}: source must be modelscope")
-        versions = model.get("versions")
-        if not isinstance(versions, dict) or "original" not in versions:
-            failures.append(f"{mid}: versions.original is required")
-            continue
-        ver = versions["original"]
-        if not isinstance(ver, dict):
-            failures.append(f"{mid}: versions.original must be object")
-            continue
-        if not ver.get("hunyuan_ms_variant"):
-            failures.append(f"{mid}: versions.original.hunyuan_ms_variant is required")
-        bundle = ver.get("bundle_repos")
-        if not isinstance(bundle, list) or not bundle:
-            failures.append(f"{mid}: versions.original.bundle_repos must be non-empty array")
-            continue
-        first = bundle[0] if isinstance(bundle[0], dict) else {}
-        if first.get("repo_id") != HUNYUAN_REPO_ID:
-            failures.append(f"{mid}: first bundle repo must be {HUNYUAN_REPO_ID}")
-        if "companion_repo_id" in ver:
-            failures.append(f"{mid}: versions.original should not contain companion_repo_id")
-        if "shared_te_local_path" in ver:
-            failures.append(f"{mid}: versions.original should not contain shared_te_local_path")
 
-    mid = "hunyuan-video-1.5-480p-t2v"
-    model = models.get(mid)
-    if isinstance(model, dict):
-        params = model.get("parameters", {})
-        if params.get("text_encoder_qwen_local") != "models/Text/qwen2.5-vl-7b-instruct":
-            failures.append(f"{mid}: parameters.text_encoder_qwen_local mismatch")
-        if not params.get("text_encoder_release_after_encode"):
-            failures.append(f"{mid}: parameters.text_encoder_release_after_encode must be true")
-        ver = ((model.get("versions") or {}).get("original") or {})
-        bundle = ver.get("bundle_repos") if isinstance(ver, dict) else None
-        if not isinstance(bundle, list) or len(bundle) < 3:
-            failures.append(f"{mid}: bundle_repos must include Hunyuan + Qwen + ByT5")
+    shared = models.get("hunyuan-video-1.5-shared")
+    if isinstance(shared, dict):
+        versions = shared.get("versions")
+        if not isinstance(versions, dict) or "encoders" not in versions:
+            failures.append("hunyuan-video-1.5-shared: versions.encoders is required")
         else:
-            repo_ids = [r.get("repo_id") for r in bundle if isinstance(r, dict)]
-            if "Qwen/Qwen2.5-VL-7B-Instruct" not in repo_ids:
-                failures.append(f"{mid}: bundle_repos must include Qwen/Qwen2.5-VL-7B-Instruct")
-            if "google/byt5-small" not in repo_ids:
-                failures.append(f"{mid}: bundle_repos must include google/byt5-small")
+            ver = versions["encoders"]
+            if not isinstance(ver, dict):
+                failures.append("hunyuan-video-1.5-shared: versions.encoders must be object")
+            elif not ver.get("hunyuan_ms_variant"):
+                failures.append("hunyuan-video-1.5-shared: versions.encoders.hunyuan_ms_variant is required")
+            bundle = ver.get("bundle_repos") if isinstance(ver, dict) else None
+            if not isinstance(bundle, list) or len(bundle) < 3:
+                failures.append("hunyuan-video-1.5-shared: bundle_repos must include Hunyuan + Qwen + ByT5")
+            patterns = ver.get("allow_patterns") if isinstance(ver, dict) else None
+            if isinstance(patterns, list) and "model_index.json" in patterns:
+                failures.append(
+                    "hunyuan-video-1.5-shared: allow_patterns must not include generated model_index.json"
+                )
+
+    distill = models.get("hunyuan-video-1.5-t2v-distill")
+    if isinstance(distill, dict):
+        versions = distill.get("versions")
+        if not isinstance(versions, dict) or "original" not in versions:
+            failures.append("hunyuan-video-1.5-t2v-distill: versions.original is required")
+        else:
+            ver = versions["original"]
+            if not isinstance(ver, dict):
+                failures.append("hunyuan-video-1.5-t2v-distill: versions.original must be object")
+            elif not ver.get("hunyuan_distill_variant"):
+                failures.append("hunyuan-video-1.5-t2v-distill: versions.original.hunyuan_distill_variant is required")
+            elif ver.get("repo_id") != "lightx2v/Hy1.5-Distill-Models":
+                failures.append("hunyuan-video-1.5-t2v-distill: repo_id must be lightx2v/Hy1.5-Distill-Models")
+        params = distill.get("parameters", {})
+        if params.get("text_encoder_qwen_local") != "models/Text/qwen2.5-vl-7b-instruct":
+            failures.append("hunyuan-video-1.5-t2v-distill: parameters.text_encoder_qwen_local mismatch")
+        if not params.get("text_encoder_release_after_encode"):
+            failures.append("hunyuan-video-1.5-t2v-distill: parameters.text_encoder_release_after_encode must be true")
+
+    sr = models.get("hunyuan-video-1.5-1080p-sr")
+    if isinstance(sr, dict):
+        versions = sr.get("versions")
+        if not isinstance(versions, dict) or "original" not in versions:
+            failures.append("hunyuan-video-1.5-1080p-sr: versions.original is required")
+        else:
+            ver = versions["original"]
+            if not isinstance(ver, dict):
+                failures.append("hunyuan-video-1.5-1080p-sr: versions.original must be object")
+            elif not ver.get("hunyuan_ms_variant"):
+                failures.append("hunyuan-video-1.5-1080p-sr: versions.original.hunyuan_ms_variant is required")
+            elif ver.get("hunyuan_ms_variant") != "1080p_sr_distilled":
+                failures.append("hunyuan-video-1.5-1080p-sr: hunyuan_ms_variant must be 1080p_sr_distilled")
+            patterns = ver.get("allow_patterns") if isinstance(ver, dict) else None
+            if not isinstance(patterns, list) or not patterns:
+                failures.append("hunyuan-video-1.5-1080p-sr: versions.original.allow_patterns is required")
+            elif "transformer/1080p_sr_distilled/**" not in patterns:
+                failures.append(
+                    "hunyuan-video-1.5-1080p-sr: allow_patterns must include transformer/1080p_sr_distilled/**"
+                )
+            elif "model_index.json" in patterns:
+                failures.append(
+                    "hunyuan-video-1.5-1080p-sr: allow_patterns must not include generated model_index.json"
+                )
+            bundle = ver.get("bundle_repos")
+            if not isinstance(bundle, list) or len(bundle) < 3:
+                failures.append(
+                    "hunyuan-video-1.5-1080p-sr: bundle_repos must include Hunyuan + Qwen + ByT5"
+                )
+            elif isinstance(bundle, list) and bundle:
+                first = bundle[0] if isinstance(bundle[0], dict) else {}
+                if first.get("repo_id") != HUNYUAN_REPO_ID:
+                    failures.append(f"hunyuan-video-1.5-1080p-sr: first bundle repo must be {HUNYUAN_REPO_ID}")
 
     for mid in HUNYUAN_STEP_DISTILL_IDS + WAN_STEP_DISTILL_IDS:
         model = models.get(mid)
@@ -499,7 +529,7 @@ def check_registry() -> list[str]:
         actions = model.get("actions") or {}
         if mid.endswith("i2v-step-distill") and "animate" not in actions:
             failures.append(f"{mid}: actions must include animate")
-        if mid.endswith("t2v-step-distill") and "create" not in actions:
+        if mid.endswith("t2v-distill") and "create" not in actions:
             failures.append(f"{mid}: actions must include create")
         if mid.endswith("i2v-14b-distill") and "animate" not in actions:
             failures.append(f"{mid}: actions must include animate")
@@ -512,6 +542,10 @@ def check_registry() -> list[str]:
         params = model.get("parameters", {})
         if not params.get("vae_spatial_tiling"):
             failures.append(f"{mid}: parameters.vae_spatial_tiling must be true")
+        if params.get("text_encoder_qwen_local") != "models/Text/qwen2.5-vl-7b-instruct":
+            failures.append(f"{mid}: parameters.text_encoder_qwen_local mismatch")
+        if not params.get("text_encoder_release_after_encode"):
+            failures.append(f"{mid}: parameters.text_encoder_release_after_encode must be true")
 
     successor_edges: dict[str, str] = {}
     for mid, model in models.items():

@@ -380,7 +380,7 @@ class DownloadService(IDownloadService):
                 # Restore metadata
                 if item.get("model_name"):
                     task._model_name = item["model_name"]
-                if item.get("version"):
+                if "version" in item:
                     task._version = item["version"]
                 if item.get("is_lora"):
                     task._is_lora = item["is_lora"]
@@ -514,6 +514,23 @@ class DownloadService(IDownloadService):
         return registry.get(model_name)
 
     @staticmethod
+    def _resolve_download_version_key(
+        config: dict[str, Any],
+        version: str | None,
+    ) -> str | None:
+        """Pick explicit version or registry default (``default: true``)."""
+        versions = config.get("versions")
+        if not isinstance(versions, dict) or not versions:
+            return (version or "").strip() or None
+        key = (version or "").strip()
+        if key and isinstance(versions.get(key), dict):
+            return key
+        for version_key, vinfo in versions.items():
+            if isinstance(vinfo, dict) and vinfo.get("default"):
+                return str(version_key)
+        return None
+
+    @staticmethod
     def _check_hf_connectivity(timeout: float = 10.0) -> bool:
         """Check if HuggingFace mirror is accessible."""
         import urllib.request
@@ -583,7 +600,12 @@ class DownloadService(IDownloadService):
         spec: dict[str, Any],
         *,
         label: str,
+        ver_config: dict[str, Any] | None = None,
     ) -> None:
+        variant = self._hunyuan_ms_variant_for_spec(spec, ver_config)
+        if variant:
+            self._require_hunyuan_ms_bundle_complete(dest, variant, label=label)
+            return
         patterns = spec.get("allow_patterns")
         missing = _missing_bundle_patterns(dest, patterns if isinstance(patterns, list) else None)
         if missing:
@@ -591,6 +613,72 @@ class DownloadService(IDownloadService):
             raise RuntimeError(
                 f"{label} incomplete after download ({repo}): missing {', '.join(missing)}"
             )
+
+    @staticmethod
+    def _hunyuan_ms_variant_for_spec(
+        spec: dict[str, Any] | None,
+        ver_config: dict[str, Any] | None = None,
+    ) -> str | None:
+        for src in (spec, ver_config):
+            if not isinstance(src, dict):
+                continue
+            variant = src.get("hunyuan_ms_variant")
+            if variant:
+                return str(variant)
+        return None
+
+    def _require_hunyuan_ms_bundle_complete(
+        self,
+        dest: Path,
+        variant: str,
+        *,
+        label: str,
+    ) -> None:
+        from backend.services.hunyuan_ms_bundle import (
+            ensure_hunyuan_ms_bundle_assembled,
+            hunyuan_assembled_bundle_patterns,
+            hunyuan_raw_download_patterns,
+            is_hunyuan_ms_bundle_assembled,
+        )
+
+        if not dest.is_dir():
+            raise RuntimeError(f"{label} incomplete: bundle directory missing ({dest})")
+        if is_hunyuan_ms_bundle_assembled(dest):
+            missing = _missing_bundle_patterns(dest, hunyuan_assembled_bundle_patterns())
+        else:
+            missing = _missing_bundle_patterns(dest, hunyuan_raw_download_patterns(variant))
+            if missing:
+                raise RuntimeError(
+                    f"{label} incomplete after download (Tencent-Hunyuan/HunyuanVideo-1.5): "
+                    f"missing {', '.join(missing)}"
+                )
+            ensure_hunyuan_ms_bundle_assembled(dest, variant)
+            missing = _missing_bundle_patterns(dest, hunyuan_assembled_bundle_patterns())
+        if missing:
+            raise RuntimeError(
+                f"{label} incomplete after HunyuanVideo assembly ({dest}): "
+                f"missing {', '.join(missing)}"
+            )
+
+    def _hunyuan_ms_bundle_is_ready(self, dest: Path, variant: str) -> bool:
+        from backend.services.hunyuan_ms_bundle import (
+            ensure_hunyuan_ms_bundle_assembled,
+            hunyuan_assembled_bundle_patterns,
+            hunyuan_raw_download_patterns,
+            is_hunyuan_ms_bundle_assembled,
+        )
+
+        if not dest.is_dir():
+            return False
+        try:
+            if is_hunyuan_ms_bundle_assembled(dest):
+                return not _missing_bundle_patterns(dest, hunyuan_assembled_bundle_patterns())
+            if _missing_bundle_patterns(dest, hunyuan_raw_download_patterns(variant)):
+                return False
+            ensure_hunyuan_ms_bundle_assembled(dest, variant)
+            return not _missing_bundle_patterns(dest, hunyuan_assembled_bundle_patterns())
+        except RuntimeError:
+            return False
 
     def _check_download_stall(
         self,
@@ -714,9 +802,9 @@ class DownloadService(IDownloadService):
         variant = ver_config.get("hunyuan_ms_variant")
         if not variant:
             return
-        from backend.services.hunyuan_ms_bundle import assemble_hunyuan_modelscope_bundle
+        from backend.services.hunyuan_ms_bundle import ensure_hunyuan_ms_bundle_assembled
 
-        assemble_hunyuan_modelscope_bundle(target, str(variant))
+        ensure_hunyuan_ms_bundle_assembled(target, str(variant))
 
     def _dependency_is_ready(self, spec: DependencySpec) -> bool:
         dep_cfg = self.get_model_download_config(spec.model_id) or {}
@@ -738,6 +826,11 @@ class DownloadService(IDownloadService):
             except ValueError:
                 continue
             root = self._path_resolver.resolve_registry_local_path(local_path)
+            variant = self._hunyuan_ms_variant_for_spec(ver, None)
+            if variant:
+                if self._hunyuan_ms_bundle_is_ready(root, variant):
+                    return True
+                continue
             patterns = ver.get("allow_patterns")
             if isinstance(patterns, list) and patterns:
                 if _bundle_repo_is_complete(root, [str(p) for p in patterns]):
@@ -757,11 +850,20 @@ class DownloadService(IDownloadService):
         if bundle_entries:
             for spec in bundle_entries:
                 dest = self._resolve_registry_path(str(spec["local_path"]))
+                variant = self._hunyuan_ms_variant_for_spec(spec, ver_config)
+                if variant:
+                    if not self._hunyuan_ms_bundle_is_ready(dest, variant):
+                        return False
+                    continue
                 patterns = spec.get("allow_patterns")
                 pat_list = [str(p) for p in patterns] if isinstance(patterns, list) else None
                 if not _bundle_repo_is_complete(dest, pat_list):
                     return False
             return True
+
+        variant = self._hunyuan_ms_variant_for_spec(ver_config, None)
+        if variant:
+            return self._hunyuan_ms_bundle_is_ready(target, variant)
 
         patterns = ver_config.get("allow_patterns")
         if isinstance(patterns, list) and patterns:
@@ -858,6 +960,34 @@ class DownloadService(IDownloadService):
                     )
                 )
 
+    def _maybe_assemble_hunyuan_distill_bundle(self, target: Path, ver_config: dict[str, Any] | None) -> None:
+        if not ver_config:
+            return
+        variant = ver_config.get("hunyuan_distill_variant")
+        if not variant:
+            return
+        from backend.services.hunyuan_distill_shared import link_hunyuan_distill_shared_assets
+
+        def _resolve_dep_path(model_id: str, version_key: str) -> Path:
+            dep_cfg = self.get_model_download_config(model_id) or {}
+            versions = dep_cfg.get("versions") or {}
+            ver = versions.get(version_key)
+            if not isinstance(ver, dict):
+                raise KeyError(f"{model_id}:{version_key}")
+            local_path = ver.get("local_path")
+            if not isinstance(local_path, str) or not local_path.strip():
+                raise ValueError(f"{model_id}:{version_key} missing local_path")
+            return self._path_resolver.resolve_registry_local_path(local_path.strip())
+
+        link_hunyuan_distill_shared_assets(
+            distill_root=target,
+            variant=str(variant),
+            resolve_local_path=_resolve_dep_path,
+        )
+        from backend.services.hunyuan_distill_bundle import assemble_hunyuan_distill_bundle
+
+        assemble_hunyuan_distill_bundle(target, str(variant))
+
     def _maybe_assemble_wan_distill_bundle(self, target: Path, ver_config: dict[str, Any] | None) -> None:
         if not ver_config:
             return
@@ -900,6 +1030,8 @@ class DownloadService(IDownloadService):
         """Post-download steps: Hunyuan MS assembly + install_hooks + bundle manifest."""
         if ver_config and ver_config.get("hunyuan_ms_variant"):
             self._maybe_assemble_hunyuan_ms_bundle(target, ver_config)
+        if ver_config and ver_config.get("hunyuan_distill_variant"):
+            self._maybe_assemble_hunyuan_distill_bundle(target, ver_config)
         if ver_config and ver_config.get("wan_distill_variant"):
             self._maybe_assemble_wan_distill_bundle(target, ver_config)
 
@@ -961,12 +1093,17 @@ class DownloadService(IDownloadService):
         *,
         default_source: str,
         progress_callback_cls: type | None = None,
+        ver_config: dict[str, Any] | None = None,
     ) -> str:
         """Download one ``bundle_repos`` follow-up entry."""
         repo = str(spec["repo_id"]).strip()
         dest = self._resolve_registry_path(str(spec["local_path"]).strip())
         dest.mkdir(parents=True, exist_ok=True)
         source = str(spec.get("source") or default_source).strip().lower()
+        variant = self._hunyuan_ms_variant_for_spec(spec, ver_config)
+        if variant and self._hunyuan_ms_bundle_is_ready(dest, variant):
+            logger.info("Bundle repo %s already present under %s; skipping download", repo, dest)
+            return str(dest)
         patterns = spec.get("allow_patterns")
         if isinstance(patterns, list) and _bundle_repo_is_complete(dest, patterns):
             logger.info("Bundle repo %s already present under %s; skipping download", repo, dest)
@@ -1013,13 +1150,15 @@ class DownloadService(IDownloadService):
             loc = get_locale()
             raise ValueError(tt("error.audio_stub_no_download", loc, name=model_name))
 
+        loc = get_locale()
+        version = self._resolve_download_version_key(config, version)
+
         source = config.get("source", "huggingface")
         repo_id = config.get("repo_id")
         download_url = config.get("download_url")
         local_path = config.get("local_path", f"models/{model_name}")
 
         # Build friendly display name: model name + version name
-        loc = get_locale()
         model_display_name = resolve_registry_label(
             config.get("name"), model_name, locale=loc
         )
@@ -1356,10 +1495,12 @@ class DownloadService(IDownloadService):
                 ms_allow_patterns: list[str] | None = None
                 if ver_config:
                     _primary_spec, _ = primary_and_follow_ups(ver_config)
-                    if _primary_spec:
-                        _raw_patterns = _primary_spec.get("allow_patterns")
-                        if isinstance(_raw_patterns, list):
-                            ms_allow_patterns = [str(p) for p in _raw_patterns]
+                    from backend.services.hunyuan_ms_bundle import resolve_hunyuan_modelscope_allow_patterns
+
+                    ms_allow_patterns = resolve_hunyuan_modelscope_allow_patterns(
+                        ver_config,
+                        primary_spec=_primary_spec if isinstance(_primary_spec, dict) else None,
+                    )
 
                 loop = asyncio.get_event_loop()
 
@@ -1368,10 +1509,22 @@ class DownloadService(IDownloadService):
                     primary_spec = None
                     if ver_config:
                         primary_spec, _ = primary_and_follow_ups(ver_config)
-                        if primary_spec and primary_spec.get("allow_patterns"):
-                            allow_patterns = primary_spec["allow_patterns"]
-                        else:
-                            allow_patterns = ver_config.get("allow_patterns")
+                        from backend.services.hunyuan_ms_bundle import resolve_hunyuan_modelscope_allow_patterns
+
+                        allow_patterns = resolve_hunyuan_modelscope_allow_patterns(
+                            ver_config,
+                            primary_spec=primary_spec if isinstance(primary_spec, dict) else None,
+                        )
+                    variant = self._hunyuan_ms_variant_for_spec(
+                        primary_spec if isinstance(primary_spec, dict) else None,
+                        ver_config,
+                    )
+                    if variant and self._hunyuan_ms_bundle_is_ready(target, variant):
+                        logger.info(
+                            "Model bundle already present under %s; skipping download",
+                            target,
+                        )
+                        return str(target)
                     if isinstance(allow_patterns, list) and _bundle_repo_is_complete(
                         target, [str(p) for p in allow_patterns]
                     ):
@@ -1444,13 +1597,16 @@ class DownloadService(IDownloadService):
                         ver_config
                     ):
                         self._require_bundle_repo_complete(
-                            target, ver_config, label=display_name
+                            target, ver_config, label=display_name, ver_config=ver_config
                         )
 
                     primary_spec, follow_ups = primary_and_follow_ups(ver_config)
                     if primary_spec:
                         self._require_bundle_repo_complete(
-                            target, primary_spec, label=display_name
+                            target,
+                            primary_spec,
+                            label=display_name,
+                            ver_config=ver_config,
                         )
                     if follow_ups:
                         label_parts = [display_name]
@@ -1470,6 +1626,7 @@ class DownloadService(IDownloadService):
                                     _spec,
                                     default_source="modelscope",
                                     progress_callback_cls=_cb,
+                                    ver_config=ver_config,
                                 )
 
                             c_future = loop.run_in_executor(None, do_download_ms_c)
@@ -1510,7 +1667,10 @@ class DownloadService(IDownloadService):
                                 ))
                             await c_future
                             self._require_bundle_repo_complete(
-                                target, spec, label=companion_label
+                                target,
+                                spec,
+                                label=companion_label,
+                                ver_config=ver_config,
                             )
                         final_downloaded = _calc_download_dir_bytes(target)
                         await self._finalize_version_install(

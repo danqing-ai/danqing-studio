@@ -598,6 +598,11 @@ def merge_wan_config_from_bundle(config: WanConfig, bundle_root: Path | None) ->
     """Override ``WanConfig`` from ``config.json`` at bundle root or ``transformer/config.json``."""
     if bundle_root is None:
         return
+    from backend.engine.pipelines.video_bundle_layout import wan_is_moe_bundle
+
+    if wan_is_moe_bundle(bundle_root):
+        config.dual_model = True
+
     candidates = [bundle_root / "config.json", bundle_root / "transformer" / "config.json"]
     cfg_path = next((p for p in candidates if p.is_file()), None)
     if cfg_path is None:
@@ -644,10 +649,6 @@ def merge_wan_config_from_bundle(config: WanConfig, bundle_root: Path | None) ->
             object.__setattr__(config, "patch_size", tuple(int(x) for x in ps))
     if "model_type" in data and str(data["model_type"]).lower() in ("ti2v", "t2v", "i2v"):
         object.__setattr__(config, "model_type", str(data["model_type"]).lower())
-    from backend.engine.pipelines.video_bundle_layout import wan_is_moe_bundle
-
-    if wan_is_moe_bundle(bundle_root):
-        config.dual_model = True
 
 
 def merge_wan_vae_config_from_bundle(config: WanConfig, bundle_root: Path | None) -> None:
@@ -655,23 +656,30 @@ def merge_wan_vae_config_from_bundle(config: WanConfig, bundle_root: Path | None
     if bundle_root is None:
         return
     vae_cfg_path = bundle_root / "vae" / "config.json"
-    if not vae_cfg_path.is_file():
-        return
-    try:
-        data: dict[str, Any] = json.loads(vae_cfg_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as e:
-        raise RuntimeError(f"Wan: cannot read VAE config {vae_cfg_path}: {e}") from e
+    if vae_cfg_path.is_file():
+        try:
+            data: dict[str, Any] = json.loads(vae_cfg_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            raise RuntimeError(f"Wan: cannot read VAE config {vae_cfg_path}: {e}") from e
 
-    if "scale_factor_spatial" in data:
-        config.vae_scale = int(data["scale_factor_spatial"])
-    if "scale_factor_temporal" in data:
-        config.temporal_vae_scale = int(data["scale_factor_temporal"])
-    z_dim = data.get("z_dim")
-    if z_dim is not None:
-        z = int(z_dim)
-        config.vae_z_dim = z
-        config.dim_in = z
-        config.dim_out = z
+        if "scale_factor_spatial" in data:
+            config.vae_scale = int(data["scale_factor_spatial"])
+        if "scale_factor_temporal" in data:
+            config.temporal_vae_scale = int(data["scale_factor_temporal"])
+        z_dim = data.get("z_dim")
+        if z_dim is not None:
+            z = int(z_dim)
+            config.vae_z_dim = z
+            config.dim_in = z
+            config.dim_out = z
+        return
+
+    # Official Wan2.1 ``Wan2.1_VAE.pth`` bundles (I2V/T2V 14B, distill) — no ``vae/config.json``.
+    wan21_pth = bundle_root / "Wan2.1_VAE.pth"
+    if wan21_pth.is_file():
+        config.vae_z_dim = 16
+        config.vae_scale = 8
+        config.temporal_vae_scale = 4
 
 
 def merge_wan_bundle_config(config: WanConfig, bundle_root: Path | None) -> None:
@@ -719,6 +727,8 @@ class HunyuanVideoConfig:
     vae_scale: int = 16
     min_unified_memory_gb: int = 32
     step_distill: bool = False
+    hunyuan_distill_timesteps: tuple[float, ...] = ()
+    hunyuan_distill_shift: float = 9.0
     text_encoder_device: str = "auto"
     text_encoder_qwen_local: str = ""
     text_encoder_byt5_local: str = ""

@@ -833,6 +833,8 @@
     "controlStrength": "Control Strength",
     "enhance": "Quick enhance",
     "enhanceComplete": "Prompt enhanced",
+    "enhancing": "Enhancing…",
+    "enhanceTimeout": "Local model load is slow — please try again",
     "enhanceFailed": "Enhance failed: {msg}",
     "enhanceMusicBrief": "Polish music brief",
     "llmApplyDone": "Applied to prompt",

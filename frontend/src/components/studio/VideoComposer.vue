@@ -124,16 +124,17 @@
       <!-- Preset / enhance (prompt corner, same as ImageComposer) -->
       <div class="video-composer__preset-area">
         <ComposerIconTip
-          :content="localPrompt.trim() ? $t('create.composerTip.enhance') : $t('create.composerTip.enhanceEmpty')"
+          :content="enhanceTip"
         >
           <DqIconButton
             type="text"
             size="xs"
+            :class="{ 'video-composer__enhance-btn--busy': enhancing }"
             :disabled="enhancing || !localPrompt.trim()"
             :aria-label="$t('create.enhance')"
             @click="onEnhanceClick"
           >
-            <DqIcon :size="12"><MagicStick /></DqIcon>
+            <DqIcon :size="12" :class="{ 'video-composer__enhance-spin': enhancing }"><MagicStick /></DqIcon>
           </DqIconButton>
         </ComposerIconTip>
         <ComposerIconTip
@@ -667,6 +668,12 @@ function onEnhanceClick() {
   emit('enhance', style ? { stylePositive: style } : undefined);
 }
 
+const enhanceTip = computed(() => {
+  if (props.enhancing) return $t('create.enhancing');
+  if (!localPrompt.value.trim()) return $t('create.composerTip.enhanceEmpty');
+  return $t('create.composerTip.enhance');
+});
+
 function onStyleChange(name: string) {
   if (!name || !props.styles[name]) return;
   const preset = props.styles[name];
@@ -841,6 +848,19 @@ function onKeydown(e: KeyboardEvent) {
 
 .video-composer__preset-btn:hover {
   opacity: 1;
+}
+
+.video-composer__enhance-btn--busy {
+  opacity: 1;
+}
+
+.video-composer__enhance-spin {
+  animation: video-composer-enhance-spin 0.9s linear infinite;
+}
+
+@keyframes video-composer-enhance-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 /* Toolbar — drawer: stack controls vertically */

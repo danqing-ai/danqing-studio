@@ -71,17 +71,18 @@
       <!-- Bottom-right: Preset / Style picker -->
       <div class="image-composer__preset-area">
         <ComposerIconTip
-          :content="localPrompt.trim() ? $t('create.composerTip.enhance') : $t('create.composerTip.enhanceEmpty')"
+          :content="enhanceTip"
         >
           <DqIconButton
             class="image-composer__preset-area__enhance-btn"
+            :class="{ 'image-composer__enhance-btn--busy': enhancing }"
             type="text"
             size="xs"
             :disabled="enhancing || !localPrompt.trim()"
             :aria-label="$t('create.enhance')"
             @click="onEnhanceClick"
           >
-            <DqIcon :size="12"><MagicStick /></DqIcon>
+            <DqIcon :size="12" :class="{ 'image-composer__enhance-spin': enhancing }"><MagicStick /></DqIcon>
           </DqIconButton>
         </ComposerIconTip>
         <DqDropdown
@@ -416,6 +417,12 @@ const shortcutHint = computed(() => {
   return isMac ? '⌘ + Enter ' + $t('create.sendShortcutHintMac') : 'Ctrl + Enter ' + $t('create.sendShortcutHintWin');
 });
 
+const enhanceTip = computed(() => {
+  if (props.enhancing) return $t('create.enhancing');
+  if (!localPrompt.value.trim()) return $t('create.composerTip.enhanceEmpty');
+  return $t('create.composerTip.enhance');
+});
+
 function onEnhanceClick() {
   const style = lastStylePositive.value.trim();
   emit('enhance', style ? { stylePositive: style } : undefined);
@@ -593,6 +600,19 @@ function onStyleCommand(command: string) {
 
 .image-composer__preset-btn:hover {
   opacity: 1;
+}
+
+.image-composer__enhance-btn--busy {
+  opacity: 1;
+}
+
+.image-composer__enhance-spin {
+  animation: image-composer-enhance-spin 0.9s linear infinite;
+}
+
+@keyframes image-composer-enhance-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 /* Toolbar — drawer: stack controls vertically */

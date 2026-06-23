@@ -288,8 +288,8 @@ def video_i2v_encode_failure_message(config: Any) -> str:
     if style == "wan":
         return (
             "Wan image-to-video (animate) failed to VAE-encode the source image. "
-            "Ensure the model bundle includes Wan2.2_VAE.pth (or vae/*.safetensors) "
-            "and text_encoder assets under the bundle root."
+            "Ensure the model bundle includes Wan2.1_VAE.pth or Wan2.2_VAE.pth "
+            "(or vae/*.safetensors) and text_encoder assets under the bundle root."
         )
     if style == "ltx":
         return (
@@ -419,11 +419,12 @@ def video_apply_hunyuan_step_distill_scheduler_timesteps(
     scheduler: Any,
     *,
     steps: int,
+    config: Any | None = None,
 ) -> Any:
-    """Apply HunyuanVideo-1.5 distilled linspace sigmas (I2V step-distill + SR)."""
-    from backend.engine.families.hunyuan.sr_mlx import configure_hunyuan_step_distill_timesteps
+    """Apply HunyuanVideo-1.5 LightX2V 4-step distilled timesteps."""
+    from backend.engine.families.hunyuan.distill import configure_hunyuan_lightx2v_distill_timesteps
 
-    return configure_hunyuan_step_distill_timesteps(ctx, scheduler, steps)
+    return configure_hunyuan_lightx2v_distill_timesteps(ctx, scheduler, steps, config=config)
 
 
 def video_apply_wan_step_distill_scheduler_timesteps(

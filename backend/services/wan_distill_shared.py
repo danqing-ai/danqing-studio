@@ -6,9 +6,10 @@ from collections.abc import Callable
 from pathlib import Path
 
 _WAN_DISTILL_BASE: dict[str, tuple[str, tuple[str, ...]]] = {
-    "i2v_720p": ("wan-2.2-i2v-14b", ("shared", "original")),
-    "i2v_fp8": ("wan-2.2-i2v-14b", ("shared", "original")),
-    "t2v_fp8": ("wan-2.2-t2v-14b", ("shared", "original")),
+    # Prefer ``encoders`` (T5/VAE/tokenizer only); fall back to ``original`` bundle root.
+    "i2v_720p": ("wan-2.2-i2v-14b", ("encoders", "original")),
+    "i2v_fp8": ("wan-2.2-i2v-14b", ("encoders", "original")),
+    "t2v_fp8": ("wan-2.2-t2v-14b", ("encoders", "original")),
 }
 
 _SHARED_PATTERNS = (
@@ -16,6 +17,12 @@ _SHARED_PATTERNS = (
     "configuration.json",
     "models_t5*.pth",
     "Wan2.1_VAE.pth",
+)
+
+_TRANSFORMER_CONFIG_CANDIDATES = (
+    "config.json",
+    "high_noise_model/config.json",
+    "transformer/config.json",
 )
 
 
@@ -53,13 +60,25 @@ def _link_or_skip(dest: Path, src: Path) -> None:
     dest.symlink_to(src, target_is_directory=src.is_dir())
 
 
+def _link_wan_transformer_config(source_root: Path, distill_root: Path) -> None:
+    """Symlink DiT ``config.json`` so distill MoE loads 14B dims (not 5B defaults)."""
+    dest = distill_root / "config.json"
+    if dest.exists() or dest.is_symlink():
+        return
+    for rel in _TRANSFORMER_CONFIG_CANDIDATES:
+        src = source_root / rel
+        if src.is_file():
+            _link_or_skip(dest, src)
+            return
+
+
 def link_wan_distill_shared_assets(
     *,
     distill_root: Path,
     variant: str,
     resolve_local_path: Callable[[str, str], Path],
 ) -> None:
-    """Symlink T5/VAE/google from an installed Wan base bundle into ``distill_root``."""
+    """Symlink T5/VAE/google (+ transformer config) from Wan base bundle into ``distill_root``."""
     root = Path(distill_root)
     if not root.is_dir():
         raise RuntimeError(f"Wan distill bundle root not found: {root}")
@@ -96,6 +115,8 @@ def link_wan_distill_shared_assets(
         src = source_root / pattern
         if src.is_file():
             _link_or_skip(root / pattern, src)
+
+    _link_wan_transformer_config(source_root, root)
 
     t5 = next((p for p in root.glob("models_t5*.pth") if p.stat().st_size >= 1024 ** 3), None)
     vae = root / "Wan2.1_VAE.pth"

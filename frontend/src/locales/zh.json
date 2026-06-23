@@ -833,6 +833,8 @@
     "controlStrength": "控制强度",
     "enhance": "快速增强",
     "enhanceComplete": "提示词已增强",
+    "enhancing": "扩写中…",
+    "enhanceTimeout": "本地模型加载较慢，请稍候重试",
     "enhanceFailed": "增强失败：{msg}",
     "enhanceMusicBrief": "润色音乐描述",
     "llmApplyDone": "已写入提示词",

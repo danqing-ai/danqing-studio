@@ -110,6 +110,7 @@ function parentHasActivity(block: FullVersionBlock): boolean {
 }
 
 function isParentExpanded(block: FullVersionBlock): boolean {
+  if (block.derivedVariants.length > 0) return true;
   if (parentHasActivity(block)) return true;
   return expandedParents.value.has(block.verKey);
 }

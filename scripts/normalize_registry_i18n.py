@@ -183,21 +183,21 @@ DESCRIPTION_OVERRIDES: dict[str, dict[str, str]] = {
         "zh": "明星脸/中国高颜值气质人像风格 LoRA，基于通义 Qwen Image 训练；引擎内合并仅 MLX。",
         "en": "Celebrity-style Chinese portrait LoRA for Qwen Image; in-engine merge is MLX-only.",
     },
-    "hunyuan-video-1.5-480p-t2v": {
-        "zh": "HunyuanVideo 1.5 文生视频，480p 文生变体。",
-        "en": "HunyuanVideo 1.5 text-to-video; 480p T2V variant.",
+    "qwen-image-2512-lightning-lora": {
+        "zh": "Qwen Image 2512 LightX2V 4 步蒸馏 LoRA（V1.0 BF16）。需配合 qwen-image FP16 完整版；建议 4 步、CFG 1.0。",
+        "en": "Qwen Image 2512 LightX2V 4-step distill LoRA (V1.0 BF16). Requires qwen-image FP16 full weights; use 4 steps and CFG 1.0.",
     },
-    "hunyuan-video-1.5-480p-i2v": {
-        "zh": "HunyuanVideo 1.5 图生视频，480p 图生变体。",
-        "en": "HunyuanVideo 1.5 image-to-video; 480p I2V variant.",
+    "qwen-image-edit-2511-lightning-lora": {
+        "zh": "Qwen Image Edit 2511 LightX2V 蒸馏 LoRA（4 步或 8 步 BF16）。需配合 qwen-image-edit FP16 完整版；建议 CFG 1.0。",
+        "en": "Qwen Image Edit 2511 LightX2V distill LoRA (4-step or 8-step BF16). Requires qwen-image-edit FP16; use CFG 1.0.",
     },
-    "hunyuan-video-1.5-i2v-step-distill": {
-        "zh": "HunyuanVideo 1.5 图生视频蒸馏版，步数更少。",
-        "en": "HunyuanVideo 1.5 distilled image-to-video; fewer steps.",
+    "hunyuan-video-1.5-shared": {
+        "zh": "HunyuanVideo 1.5 共享编码器（VAE + DiT 配置），供 LightX2V 蒸馏版依赖。",
+        "en": "HunyuanVideo 1.5 shared encoders (VAE + DiT config) for LightX2V distill models.",
     },
-    "hunyuan-video-1.5-t2v-step-distill": {
-        "zh": "HunyuanVideo 1.5 文生视频蒸馏版，步数更少。",
-        "en": "HunyuanVideo 1.5 distilled text-to-video; fewer steps.",
+    "hunyuan-video-1.5-t2v-distill": {
+        "zh": "HunyuanVideo 1.5 文生视频 LightX2V 4 步真蒸馏（单文件 DiT，480p）；需先安装共享编码器。",
+        "en": "HunyuanVideo 1.5 T2V LightX2V 4-step true distill (single-file DiT, 480p); requires shared encoders.",
     },
     "hunyuan-video-1.5-1080p-sr": {
         "zh": "HunyuanVideo 1.5 超分修复，1080p 超分变体。",
@@ -253,6 +253,14 @@ NAME_OVERRIDES: dict[str, dict[str, str]] = {
     "starface-qwen-image-2512-ms": {
         "zh": "StarFace (Qwen Image)",
         "en": "StarFace (Qwen Image)",
+    },
+    "qwen-image-2512-lightning-lora": {
+        "zh": "Qwen Image 2512 Lightning",
+        "en": "Qwen Image 2512 Lightning",
+    },
+    "qwen-image-edit-2511-lightning-lora": {
+        "zh": "Qwen Image Edit 2511 Lightning",
+        "en": "Qwen Image Edit 2511 Lightning",
     },
 }
 

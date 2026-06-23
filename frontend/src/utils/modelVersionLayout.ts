@@ -186,8 +186,11 @@ export function simplifyPrequantizedName(name: string, source: string): string {
 }
 
 export function shortDerivedLabel(verKey: string, name: string): string {
-  const key = verKey.toUpperCase();
-  if (/^INT[48]$/.test(key)) return key;
+  const key = verKey.toLowerCase();
+  if (key === 'mlx-int8' || key.endsWith('-int8')) return 'MLX INT8';
+  if (key === 'mlx-int4' || key.endsWith('-int4')) return 'MLX INT4';
+  const upper = verKey.toUpperCase();
+  if (/^INT[48]$/.test(upper)) return upper;
   const match = name.match(/INT[48]/i);
   if (match) return match[0].toUpperCase();
   return name.replace(/\s*量化版\s*/u, '').trim() || name;

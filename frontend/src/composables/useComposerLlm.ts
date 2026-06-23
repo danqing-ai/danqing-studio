@@ -29,8 +29,10 @@ export function useComposerLlm() {
       }
       return result.enhanced_prompt;
     } catch (e) {
-      const msg = (e as { response?: { data?: { detail?: string } }; message?: string })?.response?.data?.detail
-        || (e as Error).message
+      const err = e as { code?: string; message?: string; response?: { data?: { detail?: string } } };
+      const msg = err.response?.data?.detail
+        || (err.code === 'ECONNABORTED' ? $tt('create.enhanceTimeout') : '')
+        || err.message
         || String(e);
       toast.error($tt('create.enhanceFailed', { msg }));
       return null;

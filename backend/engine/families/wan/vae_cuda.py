@@ -516,12 +516,13 @@ class Encoder3dTorch(nn.Module):
         num_res_blocks: int = 2,
         temperal_downsample: list[bool] | None = None,
         dropout: float = 0.0,
+        in_channels: int = 12,
     ):
         super().__init__()
         dim_mult = dim_mult or [1, 2, 4, 4]
         temperal_downsample = temperal_downsample or [True, True, False]
         dims = [dim * u for u in [1] + dim_mult]
-        self.conv1 = CausalConv3dTorch(12, dims[0], 3, padding=1)
+        self.conv1 = CausalConv3dTorch(in_channels, dims[0], 3, padding=1)
         downsamples: list[DownResidualBlockTorch] = []
         for i, (in_dim, out_dim) in enumerate(zip(dims[:-1], dims[1:])):
             t_down = temperal_downsample[i] if i < len(temperal_downsample) else False
@@ -599,6 +600,7 @@ class Decoder3dTorch(nn.Module):
         num_res_blocks: int = 2,
         temperal_upsample: list[bool] | None = None,
         dropout: float = 0.0,
+        pixel_out_channels: int = 12,
     ):
         super().__init__()
         dim_mult = dim_mult or [1, 2, 4, 4]
@@ -623,7 +625,7 @@ class Decoder3dTorch(nn.Module):
             )
         self.upsamples = nn.ModuleList(upsamples)
         self.head_norm = WanVAERMSNormTorch(out_dim, images=False)
-        self.head_conv = CausalConv3dTorch(out_dim, 12, 3, padding=1)
+        self.head_conv = CausalConv3dTorch(out_dim, pixel_out_channels, 3, padding=1)
 
     def forward(
         self,
@@ -701,11 +703,14 @@ class WanVAETorch(nn.Module):
         num_res_blocks: int = 2,
         temperal_downsample: list[bool] | None = None,
         dropout: float = 0.0,
+        encoder_in_channels: int = 12,
+        pixel_out_channels: int = 12,
     ):
         super().__init__()
         dim_mult = dim_mult or [1, 2, 4, 4]
         temperal_downsample = temperal_downsample or [False, True, True]
         self.z_dim = z_dim
+        self.patch_size = 2 if int(encoder_in_channels) == 12 else 1
         self.temperal_upsample = temperal_downsample[::-1]
         self.encoder = Encoder3dTorch(
             dim,
@@ -714,6 +719,7 @@ class WanVAETorch(nn.Module):
             num_res_blocks,
             temperal_downsample,
             dropout,
+            in_channels=encoder_in_channels,
         )
         self.conv1 = CausalConv3dTorch(z_dim * 2, z_dim * 2, 1)
         self.conv2 = CausalConv3dTorch(z_dim, z_dim, 1)
@@ -724,6 +730,7 @@ class WanVAETorch(nn.Module):
             num_res_blocks,
             self.temperal_upsample,
             dropout,
+            pixel_out_channels=pixel_out_channels,
         )
         self._conv_num = 0
         self._conv_idx = [0]
@@ -742,7 +749,8 @@ class WanVAETorch(nn.Module):
 
     def encode(self, x: torch.Tensor, scale: tuple[torch.Tensor, torch.Tensor]) -> torch.Tensor:
         self.clear_cache()
-        x = patchify_torch(x, 2)
+        if self.patch_size > 1:
+            x = patchify_torch(x, self.patch_size)
         t = int(x.shape[2])
         iter_ = 1 + (t - 1) // 4
         out_parts: list[torch.Tensor] = []
@@ -774,7 +782,8 @@ class WanVAETorch(nn.Module):
             on_stage(0.05)
         x = self.conv2(z)
         out = self.decoder(x, None, [0], first_chunk=True)
-        out = unpatchify_torch(out, 2)
+        if self.patch_size > 1:
+            out = unpatchify_torch(out, self.patch_size)
         if on_stage is not None:
             on_stage(1.0)
         self.clear_cache()
@@ -978,7 +987,10 @@ def _set_residual_block_torch(mod: ResidualBlockTorch, prefix: str, weights: dic
     _set_rms_norm_torch(mod.norm2, f"{prefix}.residual.3", weights)
     _set_causal_conv3d_torch(mod.conv2, f"{prefix}.residual.6", weights)
     if mod.shortcut is not None:
-        _set_causal_conv3d_torch(mod.shortcut, f"{prefix}.shortcut", weights)
+        if f"{prefix}.shortcut.weight" in weights:
+            _set_causal_conv3d_torch(mod.shortcut, f"{prefix}.shortcut", weights)
+        else:
+            mod.shortcut = None
 
 
 def _set_attention_block_torch(mod: AttentionBlockTorch, prefix: str, weights: dict[str, torch.Tensor]) -> None:
@@ -994,30 +1006,39 @@ def _set_resample_torch(mod: ResampleTorch, prefix: str, weights: dict[str, torc
         _set_causal_conv3d_torch(mod.time_conv, f"{prefix}.time_conv", weights)
 
 
-def _set_down_block_torch(mod: DownResidualBlockTorch, prefix: str, weights: dict[str, torch.Tensor]) -> None:
-    idx = 0
+def _set_down_block_torch(
+    mod: DownResidualBlockTorch, prefix: str, start_idx: int, weights: dict[str, torch.Tensor]
+) -> int:
+    idx = start_idx
     for block in mod.blocks:
         if isinstance(block, ResidualBlockTorch):
-            _set_residual_block_torch(block, f"{prefix}.downsamples.{idx}", weights)
+            _set_residual_block_torch(block, f"{prefix}.{idx}", weights)
             idx += 1
         elif isinstance(block, ResampleTorch):
-            _set_resample_torch(block, f"{prefix}.downsamples.{idx}", weights)
+            _set_resample_torch(block, f"{prefix}.{idx}", weights)
+            idx += 1
+    return idx
 
 
-def _set_up_block_torch(mod: UpResidualBlockTorch, prefix: str, weights: dict[str, torch.Tensor]) -> None:
-    idx = 0
+def _set_up_block_torch(
+    mod: UpResidualBlockTorch, prefix: str, start_idx: int, weights: dict[str, torch.Tensor]
+) -> int:
+    idx = start_idx
     for block in mod.blocks:
         if isinstance(block, ResidualBlockTorch):
-            _set_residual_block_torch(block, f"{prefix}.upsamples.{idx}", weights)
+            _set_residual_block_torch(block, f"{prefix}.{idx}", weights)
             idx += 1
         elif isinstance(block, ResampleTorch):
-            _set_resample_torch(block, f"{prefix}.upsamples.{idx}", weights)
+            _set_resample_torch(block, f"{prefix}.{idx}", weights)
+            idx += 1
+    return idx
 
 
 def _assign_wan_vae_weights_torch(model: WanVAETorch, weights: dict[str, torch.Tensor]) -> None:
     _set_causal_conv3d_torch(model.encoder.conv1, "encoder.conv1", weights)
-    for i, block in enumerate(model.encoder.downsamples):
-        _set_down_block_torch(block, f"encoder.downsamples.{i}", weights)
+    enc_idx = 0
+    for block in model.encoder.downsamples:
+        enc_idx = _set_down_block_torch(block, "encoder.downsamples", enc_idx, weights)
     _set_residual_block_torch(model.encoder.mid_res0, "encoder.middle.0", weights)
     _set_attention_block_torch(model.encoder.mid_attn, "encoder.middle.1", weights)
     _set_residual_block_torch(model.encoder.mid_res1, "encoder.middle.2", weights)
@@ -1031,8 +1052,9 @@ def _assign_wan_vae_weights_torch(model: WanVAETorch, weights: dict[str, torch.T
     _set_residual_block_torch(model.decoder.mid_res0, "decoder.middle.0", weights)
     _set_attention_block_torch(model.decoder.mid_attn, "decoder.middle.1", weights)
     _set_residual_block_torch(model.decoder.mid_res1, "decoder.middle.2", weights)
-    for i, block in enumerate(model.decoder.upsamples):
-        _set_up_block_torch(block, f"decoder.upsamples.{i}", weights)
+    dec_idx = 0
+    for block in model.decoder.upsamples:
+        dec_idx = _set_up_block_torch(block, "decoder.upsamples", dec_idx, weights)
     _set_rms_norm_torch(model.decoder.head_norm, "decoder.head.0", weights)
     _set_causal_conv3d_torch(model.decoder.head_conv, "decoder.head.2", weights)
 
@@ -1181,12 +1203,30 @@ def _load_vae_state_dict_torch(bundle_root: Path) -> dict[str, torch.Tensor]:
     )
 
 
+def _infer_wan_vae_io_channels_torch(weights: dict[str, torch.Tensor]) -> tuple[int, int]:
+    if "encoder.conv1.weight" in weights:
+        enc_in = int(weights["encoder.conv1.weight"].shape[1])
+    elif "encoder.conv_in.weight" in weights:
+        enc_in = int(weights["encoder.conv_in.weight"].shape[1])
+    else:
+        enc_in = 12
+    if "decoder.head.2.weight" in weights:
+        pix_out = int(weights["decoder.head.2.weight"].shape[0])
+    elif "decoder.conv_out.weight" in weights:
+        pix_out = int(weights["decoder.conv_out.weight"].shape[0])
+    else:
+        pix_out = 12 if enc_in == 12 else 3
+    return enc_in, pix_out
+
+
 def build_wan22_vae_torch(
     *,
     z_dim: int = 48,
     c_dim: int = 160,
     dim_mult: list[int] | None = None,
     temperal_downsample: list[bool] | None = None,
+    encoder_in_channels: int = 12,
+    pixel_out_channels: int = 12,
 ) -> WanVAETorch:
     return WanVAETorch(
         dim=c_dim,
@@ -1195,6 +1235,8 @@ def build_wan22_vae_torch(
         dim_mult=dim_mult or [1, 2, 4, 4],
         temperal_downsample=temperal_downsample or [False, True, True],
         dropout=0.0,
+        encoder_in_channels=encoder_in_channels,
+        pixel_out_channels=pixel_out_channels,
     )
 
 
@@ -1215,6 +1257,7 @@ def load_wan_vae_cuda(ctx: CudaContext, bundle_root: Path | str) -> Wan22VAECUDA
     if "encoder.conv1.weight" not in weights and "encoder.conv_in.weight" in weights:
         weights = _normalize_vae_state_dict_torch(weights)
 
+    enc_in, pix_out = _infer_wan_vae_io_channels_torch(weights)
     vae_cfg = _read_wan_vae_config(root)
     z_dim = int(vae_cfg.get("z_dim", 48))
     model = build_wan22_vae_torch(
@@ -1222,6 +1265,8 @@ def load_wan_vae_cuda(ctx: CudaContext, bundle_root: Path | str) -> Wan22VAECUDA
         c_dim=int(vae_cfg.get("base_dim", 160)),
         dim_mult=list(vae_cfg.get("dim_mult") or [1, 2, 4, 4]),
         temperal_downsample=list(vae_cfg.get("temperal_downsample") or [False, True, True]),
+        encoder_in_channels=enc_in,
+        pixel_out_channels=pix_out,
     )
     _assign_wan_vae_weights_torch(model, weights)
     model = model.to(ctx.device).eval()

@@ -1085,6 +1085,20 @@ class QwenImageTransformerTests(unittest.TestCase):
         self.assertIn("cuda", entry.get("backends", []))
         self.assertIn("mlx", entry.get("backends", []))
 
+    def test_qwen_lightning_lora_registry(self) -> None:
+        models = _load_default_registry_expanded()["models"]
+        t2v_lora = models["qwen-image-2512-lightning-lora"]
+        self.assertEqual(t2v_lora["base_model"], "qwen-image")
+        self.assertEqual(t2v_lora["type"], "lora")
+        self.assertEqual(
+            t2v_lora["versions"]["v4-bf16"]["repo_id"],
+            "lightx2v/Qwen-Image-2512-Lightning",
+        )
+        edit_lora = models["qwen-image-edit-2511-lightning-lora"]
+        self.assertEqual(edit_lora["base_model"], "qwen-image-edit")
+        self.assertTrue(models["qwen-image-edit"]["parameters"]["lora_support"])
+        self.assertIn("v8-bf16", edit_lora["versions"])
+
     def test_qwen_text_encoder_weights_accepts_pre_remapped_encoder_keys(self) -> None:
         import mlx.core as mx
 
@@ -2277,6 +2291,46 @@ class DownloadStallTests(unittest.TestCase):
             svc = DownloadService(path_resolver=resolver)  # type: ignore[arg-type]
             self.assertTrue(svc._version_local_artifacts_ready(ver_config=ver, target=root))
 
+    def test_dependency_encoders_ready_without_dit_shards(self) -> None:
+        from backend.core.dependency_specs import DependencySpec
+        from backend.services.download_service import DownloadService
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "Wan2.1_VAE.pth").write_bytes(b"x" * (484 * 1024 ** 2))
+            (root / "models_t5_umt5-xxl-enc-bf16.pth").write_bytes(b"x" * (1024 ** 3 + 1))
+            (root / "google" / "x").mkdir(parents=True)
+            (root / "google" / "x" / "t.json").write_bytes(b"x" * 2048)
+            (root / "configuration.json").write_bytes(b"x" * 64)
+            (root / "high_noise_model").mkdir()
+            (root / "high_noise_model" / "config.json").write_bytes(b"x" * 64)
+            (root / "low_noise_model").mkdir()
+            (root / "low_noise_model" / "config.json").write_bytes(b"x" * 64)
+            encoders_ver = {
+                "local_path": str(root),
+                "allow_patterns": [
+                    "google/**",
+                    "configuration.json",
+                    "models_t5*.pth",
+                    "Wan2.1_VAE.pth",
+                    "high_noise_model/config.json",
+                    "low_noise_model/config.json",
+                ],
+            }
+            registry = {
+                "wan-2.2-i2v-14b": {
+                    "versions": {"encoders": encoders_ver},
+                }
+            }
+            resolver = SimpleNamespace(
+                get_workspace_config_dir=lambda: Path(tempfile.gettempdir()),
+                resolve_registry_local_path=lambda p: Path(p),
+            )
+            svc = DownloadService(path_resolver=resolver)  # type: ignore[arg-type]
+            svc._load_registry = lambda: registry  # type: ignore[method-assign]
+            spec = DependencySpec(model_id="wan-2.2-i2v-14b", version="encoders")
+            self.assertTrue(svc._dependency_is_ready(spec))
+
     def _download_service_for_stall_tests(self):
         from backend.services.download_service import DownloadService
 
@@ -2475,6 +2529,44 @@ class HunyuanWeightTests(unittest.TestCase):
         self.assertTrue(i2v_cond.get("wan_expand_timesteps"))
         self.assertIsNotNone(i2v_cond.get("wan_i2v_mask"))
 
+    def test_wan_i2v_14b_channel_concat_side(self) -> None:
+        """Wan 14B I2V (in_dim=36) concat noise + mask/cond; TI2V 5B still blends 48ch."""
+        import mlx.core as mx
+
+        from backend.engine.config.model_configs import WanConfig
+        from backend.engine.families.wan.conditioning import (
+            build_wan_i2v_side_channels,
+            wan_i2v_uses_channel_concat,
+        )
+        from backend.engine.families.wan.transformer import WanTransformer
+        from backend.engine.runtime.mlx import MLXContext
+
+        ctx = MLXContext()
+        t, h, w = 21, 44, 80
+        cond = mx.zeros((16, t, h, w), dtype=mx.float32)
+        side = build_wan_i2v_side_channels(ctx, cond, t, h, w, temporal_vae_scale=4)
+        mx.eval(side)
+        self.assertEqual(tuple(side.shape), (20, t, h, w))
+
+        cfg_i2v = WanConfig(dim_in=36, vae_z_dim=16, expand_timesteps=True)
+        self.assertTrue(wan_i2v_uses_channel_concat(cfg_i2v))
+        cfg_ti2v = WanConfig(dim_in=48, vae_z_dim=48, expand_timesteps=True)
+        self.assertFalse(wan_i2v_uses_channel_concat(cfg_ti2v))
+
+        model = WanTransformer(cfg_i2v, ctx, num_frames=81)
+        latents = mx.zeros((1, 16, t, h, w), dtype=mx.float32)
+        timesteps = mx.array([999.0], dtype=mx.float32)
+        i2v_in = {
+            "wan_i2v": True,
+            "wan_cond_latent": mx.zeros((16, t, h, w), dtype=mx.float32),
+            "wan_i2v_mask": mx.ones((16, t, h, w), dtype=mx.float32),
+        }
+        out_latents, _ = model.before_denoise(latents, timesteps, None, **i2v_in)
+        mx.eval(out_latents)
+        self.assertEqual(int(out_latents.shape[1]), 16)
+        self.assertIsNotNone(model._inner._i2v_side)
+        self.assertEqual(int(model._inner._i2v_side.shape[0]), 20)
+
     def test_wan_umt5_weights_load(self) -> None:
         from pathlib import Path
 
@@ -2597,6 +2689,57 @@ class HunyuanWeightTests(unittest.TestCase):
         self.assertLess(float(mx.max(mx.abs(patchify(x, 2) - p))), 1e-5)
         self.assertLess(float(mx.max(mx.abs(x - u))), 1e-5)
 
+    def test_wan_vae_assign_official_flat_downsample_keys(self) -> None:
+        import mlx.core as mx
+        import torch
+
+        from backend.engine.families.wan.vae_mlx import (
+            _assign_wan_vae_weights,
+            _infer_wan_vae_io_channels,
+            _infer_wan_vae_layout,
+            _infer_wan21_vae_dims,
+            _vae_cache,
+            build_wan21_vae_mlx,
+            encode_wan_vae_image,
+        )
+        from backend.engine.runtime.mlx import MLXContext
+        from tests.benchmark.registry_utils import resolve_benchmark_data_root
+
+        vae_path = (
+            resolve_benchmark_data_root()
+            / "models/Video/wan-2.2-i2v-14b-distill-original/Wan2.1_VAE.pth"
+        )
+        if not vae_path.is_file():
+            self.skipTest("Wan VAE weights not installed")
+
+        raw = torch.load(vae_path, map_location="cpu", weights_only=True)
+        weights = {k: mx.array(v.numpy()) for k, v in raw.items()}
+        enc_in, pix_out = _infer_wan_vae_io_channels(weights)
+        self.assertEqual(_infer_wan_vae_layout(weights), "wan21")
+        c_dim, z_dim = _infer_wan21_vae_dims(weights)
+        model = build_wan21_vae_mlx(
+            dim=c_dim,
+            z_dim=z_dim,
+            encoder_in_channels=enc_in,
+            pixel_out_channels=pix_out,
+        )
+        _assign_wan_vae_weights(model, weights)
+        mx.eval(model.encoder.conv1.conv.weight)
+        self.assertEqual(enc_in, 3)
+        self.assertEqual(z_dim, 16)
+        self.assertEqual(model.patch_size, 1)
+
+        _vae_cache.clear()
+        ctx = MLXContext()
+        chw = mx.zeros((3, 1280, 704), dtype=mx.float32)
+        latents = encode_wan_vae_image(ctx, chw, vae_path.parent)
+        mx.eval(latents)
+        self.assertEqual(int(latents.shape[0]), 1)
+        self.assertEqual(int(latents.shape[1]), 16)
+        self.assertEqual(int(latents.shape[2]), 1)
+        self.assertEqual(int(latents.shape[3]), 160)
+        self.assertEqual(int(latents.shape[4]), 88)
+
     def test_wan_vae_encode_decode_roundtrip(self) -> None:
         """MLX Wan 2.2 VAE must decode with per-frame causal cache (not full-volume)."""
         from pathlib import Path
@@ -2657,21 +2800,17 @@ class HunyuanWeightTests(unittest.TestCase):
 
     def test_hunyuan_registry_entries(self) -> None:
         models = _load_default_registry_expanded().get("models") or {}
-        self.assertIn("hunyuan-video-1.5-480p-t2v", models)
-        self.assertEqual(models["hunyuan-video-1.5-480p-t2v"]["family"], "hunyuan")
-        self.assertIn("hunyuan-video-1.5-i2v-step-distill", models)
-        self.assertIn("hunyuan-video-1.5-t2v-step-distill", models)
-        for mid in (
-            "hunyuan-video-1.5-i2v-step-distill",
-            "hunyuan-video-1.5-t2v-step-distill",
-        ):
-            distill = models[mid]["parameters"]
-            self.assertFalse(distill.get("supports_guidance"), msg=mid)
-            self.assertTrue(distill.get("step_distill"), msg=mid)
-            self.assertFalse(distill.get("negative_prompt_support"), msg=mid)
-            self.assertNotIn("guide_scale", distill, msg=mid)
-        self.assertIn("animate", models["hunyuan-video-1.5-i2v-step-distill"].get("actions") or {})
-        self.assertIn("create", models["hunyuan-video-1.5-t2v-step-distill"].get("actions") or {})
+        self.assertIn("hunyuan-video-1.5-shared", models)
+        self.assertIn("hunyuan-video-1.5-t2v-distill", models)
+        self.assertEqual(models["hunyuan-video-1.5-t2v-distill"]["family"], "hunyuan")
+        distill = models["hunyuan-video-1.5-t2v-distill"]["parameters"]
+        self.assertFalse(distill.get("supports_guidance"))
+        self.assertTrue(distill.get("step_distill"))
+        self.assertFalse(distill.get("negative_prompt_support"))
+        self.assertNotIn("guide_scale", distill)
+        self.assertIn("create", models["hunyuan-video-1.5-t2v-distill"].get("actions") or {})
+        self.assertNotIn("hunyuan-video-1.5-480p-t2v", models)
+        self.assertNotIn("hunyuan-video-1.5-t2v-step-distill", models)
 
     def test_hunyuan_sr_scheduler_sigmas(self) -> None:
         import mlx.core as mx
@@ -2705,32 +2844,84 @@ class HunyuanWeightTests(unittest.TestCase):
         from backend.core.bundle_repos import bundle_repos_from_version
 
         models = _load_default_registry_expanded().get("models") or {}
-        for mid in (
-            "hunyuan-video-1.5-480p-t2v",
-            "hunyuan-video-1.5-480p-i2v",
-            "hunyuan-video-1.5-i2v-step-distill",
-            "hunyuan-video-1.5-t2v-step-distill",
-            "hunyuan-video-1.5-1080p-sr",
-        ):
-            m = models[mid]
-            self.assertEqual(m.get("source"), "modelscope")
-            ver = m["versions"]["original"]
-            repos = bundle_repos_from_version(ver)
-            self.assertGreaterEqual(len(repos), 1)
-            self.assertEqual(repos[0]["repo_id"], "Tencent-Hunyuan/HunyuanVideo-1.5")
-            self.assertIn("hunyuan_ms_variant", ver)
-        t2v = bundle_repos_from_version(models["hunyuan-video-1.5-480p-t2v"]["versions"]["original"])
-        self.assertEqual(len(t2v), 3)
-        self.assertEqual(t2v[1]["repo_id"], "Qwen/Qwen2.5-VL-7B-Instruct")
-        self.assertEqual(t2v[2]["repo_id"], "google/byt5-small")
-        params = models["hunyuan-video-1.5-480p-t2v"]["parameters"]
+        shared = models["hunyuan-video-1.5-shared"]
+        self.assertEqual(shared.get("source"), "modelscope")
+        enc_ver = shared["versions"]["encoders"]
+        repos = bundle_repos_from_version(enc_ver)
+        self.assertGreaterEqual(len(repos), 3)
+        self.assertEqual(repos[0]["repo_id"], "Tencent-Hunyuan/HunyuanVideo-1.5")
+        self.assertIn("hunyuan_ms_variant", enc_ver)
+
+        distill = models["hunyuan-video-1.5-t2v-distill"]
+        self.assertEqual(distill.get("source"), "modelscope")
+        dver = distill["versions"]["original"]
+        self.assertEqual(dver["repo_id"], "lightx2v/Hy1.5-Distill-Models")
+        self.assertIn("hunyuan_distill_variant", dver)
+
+        sr = models["hunyuan-video-1.5-1080p-sr"]
+        self.assertEqual(sr.get("source"), "modelscope")
+        sr_ver = sr["versions"]["original"]
+        self.assertIn("hunyuan_ms_variant", sr_ver)
+        self.assertEqual(sr_ver["hunyuan_ms_variant"], "1080p_sr_distilled")
+        self.assertIn("transformer/1080p_sr_distilled/**", sr_ver["allow_patterns"])
+        sr_repos = bundle_repos_from_version(sr_ver)
+        self.assertGreaterEqual(len(sr_repos), 3)
+        self.assertEqual(sr_repos[0]["repo_id"], "Tencent-Hunyuan/HunyuanVideo-1.5")
+
+        params = distill["parameters"]
         self.assertEqual(
             params["text_encoder_qwen_local"],
             "models/Text/qwen2.5-vl-7b-instruct",
         )
         self.assertTrue(params.get("text_encoder_release_after_encode"))
-        self.assertNotIn("companion_repo_id", models["hunyuan-video-1.5-480p-t2v"]["versions"]["original"])
-        self.assertNotIn("shared_te_local_path", models["hunyuan-video-1.5-480p-i2v"]["versions"]["original"])
+
+        sr_params = sr["parameters"]
+        self.assertEqual(
+            sr_params["text_encoder_qwen_local"],
+            "models/Text/qwen2.5-vl-7b-instruct",
+        )
+        self.assertTrue(sr_params.get("text_encoder_release_after_encode"))
+
+    def test_hunyuan_distill_bundle_assemble(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from backend.services.hunyuan_distill_bundle import assemble_hunyuan_distill_bundle
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            fname = "hy1.5_t2v_480p_lightx2v_4step.safetensors"
+            (root / fname).write_text("x", encoding="utf-8")
+            (root / "transformer").mkdir()
+            (root / "transformer" / "config.json").write_text("{}", encoding="utf-8")
+            assemble_hunyuan_distill_bundle(root, "t2v_480p")
+            self.assertTrue((root / "transformer" / "diffusion_pytorch_model.safetensors").is_file())
+            self.assertFalse((root / fname).exists())
+
+    def test_hunyuan_lightx2v_distill_timesteps(self) -> None:
+        import mlx.core as mx
+
+        from backend.engine.common.ops.schedulers import FlowMatchEulerScheduler
+        from backend.engine.config.model_configs import HunyuanVideoConfig
+        from backend.engine.families.hunyuan.distill import configure_hunyuan_lightx2v_distill_timesteps
+
+        class _Ctx:
+            @staticmethod
+            def float32():
+                return mx.float32
+
+            @staticmethod
+            def array(x, dtype=None):
+                return mx.array(x, dtype=dtype)
+
+        ctx = _Ctx()
+        sched = FlowMatchEulerScheduler(ctx=ctx)
+        cfg = HunyuanVideoConfig(
+            step_distill=True,
+            hunyuan_distill_timesteps=(1000.0, 750.0, 500.0, 250.0),
+        )
+        timesteps = configure_hunyuan_lightx2v_distill_timesteps(ctx, sched, 4, config=cfg)
+        self.assertEqual(int(timesteps.shape[0]), 4)
 
     def test_ltx_registry_gemma_bundle_repos(self) -> None:
         from backend.core.bundle_repos import bundle_repos_from_version
@@ -2786,7 +2977,7 @@ class HunyuanWeightTests(unittest.TestCase):
             root = Path(td)
             native = root / "qwen"
             native.mkdir()
-            (native / "config.json").write_text("{}", encoding="utf-8")
+            (native / "config.json").write_text("x" * 32, encoding="utf-8")
             enc, tok = _resolve_qwen_dirs(native)
             self.assertEqual(enc, native)
             self.assertEqual(tok, native)
@@ -2807,13 +2998,54 @@ class HunyuanWeightTests(unittest.TestCase):
         import tempfile
         from pathlib import Path
 
-        from backend.services.hunyuan_ms_bundle import assemble_hunyuan_modelscope_bundle
+        from backend.services.hunyuan_ms_bundle import (
+            assemble_hunyuan_modelscope_bundle,
+            ensure_hunyuan_ms_bundle_assembled,
+            hunyuan_assembled_bundle_patterns,
+            hunyuan_modelscope_allow_patterns,
+            hunyuan_raw_download_patterns,
+            is_hunyuan_ms_bundle_assembled,
+            resolve_hunyuan_modelscope_allow_patterns,
+        )
+
+        self.assertEqual(
+            hunyuan_raw_download_patterns("1080p_sr_distilled"),
+            hunyuan_modelscope_allow_patterns("1080p_sr_distilled"),
+        )
+        self.assertIn(
+            "transformer/1080p_sr_distilled/**",
+            hunyuan_modelscope_allow_patterns("1080p_sr_distilled"),
+        )
+        self.assertEqual(
+            resolve_hunyuan_modelscope_allow_patterns(
+                {"hunyuan_ms_variant": "1080p_sr_distilled"},
+            ),
+            hunyuan_modelscope_allow_patterns("1080p_sr_distilled"),
+        )
+        self.assertEqual(
+            resolve_hunyuan_modelscope_allow_patterns(
+                {
+                    "hunyuan_ms_variant": "1080p_sr_distilled",
+                    "allow_patterns": ["custom/**"],
+                },
+            ),
+            ["custom/**"],
+        )
+        self.assertEqual(
+            resolve_hunyuan_modelscope_allow_patterns(
+                {
+                    "hunyuan_ms_variant": "1080p_sr_distilled",
+                    "allow_patterns": ["transformer/1080p_sr_distilled/**", "model_index.json"],
+                },
+            ),
+            ["transformer/1080p_sr_distilled/**"],
+        )
 
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             native = root / "transformer" / "480p_t2v"
             native.mkdir(parents=True)
-            (native / "config.json").write_text("{}", encoding="utf-8")
+            (native / "config.json").write_text("x" * 32, encoding="utf-8")
             (native / "diffusion_pytorch_model.safetensors").write_text("x", encoding="utf-8")
             (root / "vae").mkdir()
             (root / "vae" / "config.json").write_text("{}", encoding="utf-8")
@@ -2821,6 +3053,28 @@ class HunyuanWeightTests(unittest.TestCase):
             assemble_hunyuan_modelscope_bundle(root, "480p_t2v")
             self.assertTrue((root / "transformer" / "config.json").is_file())
             self.assertFalse((root / "transformer" / "480p_t2v").exists())
+            self.assertTrue(is_hunyuan_ms_bundle_assembled(root))
+            self.assertTrue((root / "model_index.json").is_file())
+            ensure_hunyuan_ms_bundle_assembled(root, "480p_t2v")
+            self.assertTrue((root / "transformer" / "config.json").is_file())
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            native = root / "transformer" / "1080p_sr_distilled"
+            native.mkdir(parents=True)
+            (native / "config.json").write_text("x" * 32, encoding="utf-8")
+            (native / "diffusion_pytorch_model.safetensors").write_text("x" * 2048, encoding="utf-8")
+            (root / "vae").mkdir()
+            (root / "vae" / "config.json").write_text("x" * 2048, encoding="utf-8")
+
+            ensure_hunyuan_ms_bundle_assembled(root, "1080p_sr_distilled")
+            self.assertTrue(is_hunyuan_ms_bundle_assembled(root))
+            from backend.services.download_service import _missing_bundle_patterns
+
+            self.assertEqual(
+                _missing_bundle_patterns(root, hunyuan_assembled_bundle_patterns()),
+                [],
+            )
 
     def test_torch_device_preferences(self) -> None:
         from backend.engine.common.codecs.text_encoders.torch_device import resolve_torch_inference_device
@@ -3985,6 +4239,48 @@ Should not appear
             self.assertIn("/no_think", user_content)
             self.assertNotIn("/think", user_content)
 
+    def test_enhance_prompt_includes_style_and_reuses_loaded_model(self) -> None:
+        from unittest.mock import MagicMock, patch
+
+        from backend.core.contracts import EnhanceRequest
+
+        svc = self._load_service()
+        svc.apply_model_settings(llm_think_enabled=True)
+        load_calls = 0
+        generate_calls = 0
+        user_messages: list[str] = []
+
+        fake_model = MagicMock()
+        fake_tokenizer = MagicMock()
+
+        def capture_load():
+            nonlocal load_calls
+            load_calls += 1
+            return fake_model, fake_tokenizer
+
+        def capture_build(_tokenizer, messages, *, enable_thinking=None):
+            user_messages.append(messages[-1].content)
+            return "stub-prompt"
+
+        def capture_generate(*_args, **_kwargs):
+            nonlocal generate_calls
+            generate_calls += 1
+            return "夕阳下的少女，金色余晖，柔和逆光，写实摄影"
+
+        with patch.object(svc, "_load_model", side_effect=capture_load), \
+             patch.object(svc, "_unload_model"), \
+             patch.object(svc, "_build_chat_prompt", side_effect=capture_build), \
+             patch("backend.engine.llm.service.mlx_lm.generate", side_effect=capture_generate):
+            result = svc.enhance_prompt(
+                EnhanceRequest(prompt="夕阳下的少女", style_positive="cinematic"),
+            )
+
+        self.assertTrue(result.enhanced_prompt.strip())
+        self.assertEqual(load_calls, 1)
+        self.assertGreaterEqual(generate_calls, 1)
+        self.assertTrue(user_messages)
+        self.assertIn("cinematic", user_messages[0])
+
     def test_generation_kwargs_uses_sampler(self) -> None:
         from backend.core.contracts import ChatCompletionRequest, ChatMessage
         from backend.core.model_registry import ModelRegistry
@@ -4843,6 +5139,25 @@ class ArchitectureWrapUpTests(unittest.TestCase):
         self.assertAlmostEqual(float(timesteps[0]), float(sched._sigmas[0]) * 1000.0, places=2)
         self.assertTrue(getattr(sched, "_wan_distill_simple_step", False))
 
+    def test_wan_step_distill_scheduler_step_mlx(self) -> None:
+        """Distill simple-step path must cast with ``ctx.float32()`` not the method object."""
+        import mlx.core as mx
+
+        from backend.engine.common.ops.schedulers import WanFlowUniPCScheduler
+        from backend.engine.config.model_configs import WanConfig
+        from backend.engine.families.wan.distill import configure_wan_step_distill_timesteps
+        from backend.engine.runtime.mlx import MLXContext
+
+        ctx = MLXContext()
+        sched = WanFlowUniPCScheduler(1000, ctx=ctx)
+        cfg = WanConfig(step_distill=True)
+        configure_wan_step_distill_timesteps(ctx, sched, 4, config=cfg)
+        latents = mx.ones((1, 16, 3, 4, 4), dtype=mx.float32)
+        noise = mx.zeros((1, 16, 3, 4, 4), dtype=mx.float32)
+        out = sched.step(noise, mx.array(999.0), latents)
+        mx.eval(out)
+        self.assertEqual(tuple(out.shape), tuple(latents.shape))
+
     def test_wan_moe_bundle_layout_helpers(self) -> None:
         from backend.engine.pipelines.video_bundle_layout import (
             wan_is_moe_bundle,
@@ -4920,16 +5235,81 @@ class ArchitectureWrapUpTests(unittest.TestCase):
         moe.release_experts()
         self.assertEqual(releases["low"], 1)
 
+    def test_wan_moe_lazy_swap_syncs_i2v_side(self) -> None:
+        from types import SimpleNamespace
+
+        from backend.engine.families.wan.moe import WanMoETransformer
+
+        class _Inner:
+            def __init__(self) -> None:
+                self._i2v_cond = None
+                self._i2v_mask = None
+                self._i2v_side = None
+
+            def set_i2v_state(self, cond, mask, *, side=None) -> None:
+                self._i2v_cond = cond
+                self._i2v_mask = mask
+                self._i2v_side = side
+
+        class _Expert:
+            def __init__(self, name: str) -> None:
+                self.name = name
+                self._inner = _Inner()
+
+            def forward(self, latents, timestep, txt_embeds=None, **kwargs):
+                return latents
+
+        side_token = object()
+        high_expert = _Expert("high")
+        high_expert._inner.set_i2v_state(None, "mask", side=side_token)
+
+        ctx = SimpleNamespace(clear_cache=lambda: None)
+
+        moe = WanMoETransformer(
+            high_expert,
+            None,
+            boundary_step_index=2,
+            config=SimpleNamespace(),
+            lazy=True,
+            ctx=ctx,
+            load_high=lambda: high_expert,
+            load_low=lambda: _Expert("low"),
+            release_high=lambda: None,
+            release_low=lambda: None,
+        )
+        moe._stash_i2v_from_inner(high_expert._inner)
+        moe.forward(None, None, wan_denoise_step_idx=2)
+        self.assertIs(moe._low._inner._i2v_side, side_token)
+
+    def test_wan_moe_callable_without_cfg(self) -> None:
+        from types import SimpleNamespace
+
+        from backend.engine.families.wan.moe import WanMoETransformer
+
+        class _Expert:
+            def forward(self, latents, timestep, txt_embeds=None, **kwargs):
+                return (latents, timestep)
+
+        moe = WanMoETransformer(
+            _Expert(),
+            _Expert(),
+            boundary_step_index=2,
+            config=SimpleNamespace(),
+            lazy=False,
+        )
+        self.assertEqual(moe("lat", 1.0, wan_denoise_step_idx=0), ("lat", 1.0))
+        self.assertEqual(moe("lat", 2.0, wan_denoise_step_idx=3), ("lat", 2.0))
+
     def test_wan_moe_expert_disk_gb_halves_bundle_size(self) -> None:
         from types import SimpleNamespace
 
         from backend.engine.pipelines.video_model_load import _wan_moe_expert_disk_gb
 
         entry = SimpleNamespace(
-            raw={"size": "61GB"},
+            raw={"size": "114GB"},
             id="wan-2.2-i2v-14b-distill",
         )
-        self.assertAlmostEqual(_wan_moe_expert_disk_gb(entry, "original"), 30.5, places=1)
+        self.assertAlmostEqual(_wan_moe_expert_disk_gb(entry, "original"), 57.0, places=1)
 
     def test_assemble_wan_distill_bundle(self) -> None:
         from backend.services.wan_distill_bundle import assemble_wan_distill_bundle
@@ -4967,6 +5347,74 @@ class ArchitectureWrapUpTests(unittest.TestCase):
             self.assertFalse((root / low_name).exists())
             self.assertEqual(high_dest.read_bytes(), b"h")
             self.assertEqual(low_dest.read_bytes(), b"l")
+
+    def test_link_wan_distill_shared_links_transformer_config(self) -> None:
+        import json
+
+        from backend.services.wan_distill_shared import link_wan_distill_shared_assets
+
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td) / "base"
+            distill = Path(td) / "distill"
+            base.mkdir()
+            distill.mkdir()
+            (base / "google").mkdir()
+            (base / "models_t5_umt5-xxl-enc-bf16.pth").write_bytes(b"x" * (1024 ** 3 + 1))
+            (base / "Wan2.1_VAE.pth").write_bytes(b"vae")
+            (base / "high_noise_model").mkdir()
+            cfg = {"dim": 5120, "num_layers": 40, "in_dim": 36, "out_dim": 16}
+            (base / "high_noise_model" / "config.json").write_text(
+                json.dumps(cfg), encoding="utf-8"
+            )
+
+            def resolve(_model_id: str, version_key: str) -> Path:
+                self.assertEqual(version_key, "encoders")
+                return base
+
+            link_wan_distill_shared_assets(
+                distill_root=distill,
+                variant="i2v_720p",
+                resolve_local_path=resolve,
+            )
+            linked = distill / "config.json"
+            self.assertTrue(linked.is_symlink())
+            self.assertEqual(json.loads(linked.read_text(encoding="utf-8"))["dim"], 5120)
+
+    def test_link_wan_distill_t2v_uses_original_base(self) -> None:
+        from backend.services.wan_distill_shared import link_wan_distill_shared_assets
+
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td) / "base"
+            distill = Path(td) / "distill"
+            base.mkdir()
+            distill.mkdir()
+            (base / "google").mkdir()
+            (base / "models_t5_umt5-xxl-enc-bf16.pth").write_bytes(b"x" * (1024 ** 3 + 1))
+            (base / "Wan2.1_VAE.pth").write_bytes(b"vae")
+
+            def resolve(_model_id: str, version_key: str) -> Path:
+                self.assertEqual(_model_id, "wan-2.2-t2v-14b")
+                self.assertEqual(version_key, "encoders")
+                return base
+
+            link_wan_distill_shared_assets(
+                distill_root=distill,
+                variant="t2v_fp8",
+                resolve_local_path=resolve,
+            )
+            self.assertTrue((distill / "google").is_symlink())
+
+    def test_merge_wan_config_moe_without_json_sets_dual_model(self) -> None:
+        from backend.engine.config.model_configs import WanConfig, merge_wan_config_from_bundle
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "high_noise_model").mkdir()
+            (root / "low_noise_model").mkdir()
+            cfg = WanConfig()
+            merge_wan_config_from_bundle(cfg, root)
+            self.assertTrue(cfg.dual_model)
+            self.assertEqual(cfg.dim, 3072)
 
     def test_video_ltx_distilled_flag(self) -> None:
         from types import SimpleNamespace
