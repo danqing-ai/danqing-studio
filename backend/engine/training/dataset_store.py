@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import secrets
 import shutil
@@ -461,6 +462,24 @@ def load_training_pairs(workspace_root: Path, dataset_id: str) -> list[tuple[Pat
         if img_path.is_file():
             pairs.append((img_path, row["prompt"]))
     return pairs
+
+
+def dataset_content_revision(workspace_root: Path, dataset_id: str) -> str:
+    """Revision token for dataset images + captions; invalidates latent cache on edits."""
+    path = _dataset_dir(datasets_root(workspace_root), dataset_id)
+    digest = hashlib.sha256()
+    train_path = path / "train.jsonl"
+    if train_path.is_file():
+        digest.update(train_path.read_bytes())
+    for row in _read_train_jsonl(train_path):
+        rel = str(row.get("image") or "")
+        img_path = path / rel
+        if img_path.is_file():
+            stat = img_path.stat()
+            digest.update(
+                f"{rel}\0{stat.st_mtime_ns}\0{stat.st_size}\0".encode("utf-8"),
+            )
+    return digest.hexdigest()[:16]
 
 
 def _dataset_meta(workspace_root: Path, dataset_id: str) -> dict[str, Any]:

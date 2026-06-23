@@ -4158,6 +4158,7 @@ class LoraTrainRuntimeTests(unittest.TestCase):
         cache = LatentCache("/tmp/dq_lora_test")
         cache.begin(
             dataset_id="ds_test",
+            dataset_revision="rev_a",
             n_pairs=3,
             num_augmentations=5,
             resolution=(768, 768),
@@ -4165,6 +4166,111 @@ class LoraTrainRuntimeTests(unittest.TestCase):
             tensor_keys=["latent", "cap"],
         )
         self.assertEqual(cache._manifest["n_samples"], 0)
+
+    def test_latent_cache_invalidates_on_dataset_revision(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        import mlx.core as mx
+
+        from backend.engine.training.latent_cache import LatentCache
+
+        with tempfile.TemporaryDirectory() as td:
+            cache = LatentCache(Path(td))
+            cache.begin(
+                dataset_id="ds_rev",
+                dataset_revision="rev_old",
+                n_pairs=1,
+                num_augmentations=1,
+                resolution=(512, 512),
+                family="z_image",
+                tensor_keys=["latent", "cap"],
+            )
+            latent = mx.zeros((16, 64, 64), dtype=mx.bfloat16)
+            cap = mx.zeros((1, 8, 2560), dtype=mx.bfloat16)
+            cache.write_sample(0, {"latent": latent, "cap": cap})
+            cache.finalize()
+            self.assertTrue(
+                cache.is_valid(
+                    dataset_id="ds_rev",
+                    dataset_revision="rev_old",
+                    n_pairs=1,
+                    num_augmentations=1,
+                    resolution=(512, 512),
+                    family="z_image",
+                    n_samples=1,
+                )
+            )
+            self.assertFalse(
+                cache.is_valid(
+                    dataset_id="ds_rev",
+                    dataset_revision="rev_new",
+                    n_pairs=1,
+                    num_augmentations=1,
+                    resolution=(512, 512),
+                    family="z_image",
+                    n_samples=1,
+                )
+            )
+
+    def test_latent_cache_begin_clears_stale_manifest(self) -> None:
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from backend.engine.training.latent_cache import LatentCache
+
+        with tempfile.TemporaryDirectory() as td:
+            cache = LatentCache(Path(td))
+            cache.root.mkdir(parents=True, exist_ok=True)
+            cache.manifest_path.write_text(
+                json.dumps({"schema_version": 1, "n_samples": 1, "fingerprint": "stale"}),
+                encoding="utf-8",
+            )
+            stale_sample = cache.root / "00000.safetensors"
+            stale_sample.write_bytes(b"stale")
+            cache.begin(
+                dataset_id="ds_clear",
+                dataset_revision="rev_clear",
+                n_pairs=1,
+                num_augmentations=1,
+                resolution=(256, 256),
+                family="flux1",
+                tensor_keys=["latent", "t5", "clip"],
+            )
+            self.assertFalse(cache.manifest_path.is_file())
+            self.assertFalse(stale_sample.is_file())
+
+    def test_dataset_content_revision_changes_on_caption_edit(self) -> None:
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from backend.engine.training.dataset_store import (
+            create_dataset,
+            dataset_content_revision,
+            update_dataset_captions,
+        )
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            ds = create_dataset(root, name="rev-test")
+            dataset_id = ds["id"]
+            dataset_dir = root / "datasets" / dataset_id
+            images_dir = dataset_dir / "images"
+            (images_dir / "a.jpg").write_bytes(b"fake-jpeg")
+            (dataset_dir / "train.jsonl").write_text(
+                json.dumps({"image": "images/a.jpg", "prompt": "before"}) + "\n",
+                encoding="utf-8",
+            )
+            before = dataset_content_revision(root, dataset_id)
+            update_dataset_captions(
+                root,
+                dataset_id,
+                [{"file": "images/a.jpg", "prompt": "after"}],
+            )
+            after = dataset_content_revision(root, dataset_id)
+            self.assertNotEqual(before, after)
 
     def test_latent_cache_restores_batch_dim(self) -> None:
         import tempfile
@@ -4178,6 +4284,7 @@ class LoraTrainRuntimeTests(unittest.TestCase):
             cache = LatentCache(Path(td))
             cache.begin(
                 dataset_id="ds_batch",
+                dataset_revision="rev_batch",
                 n_pairs=1,
                 num_augmentations=1,
                 resolution=(512, 512),
@@ -4235,6 +4342,30 @@ class LoraTrainRuntimeTests(unittest.TestCase):
         all_layers = iter_lora_linears(model)
         self.assertGreater(len(all_layers), 0)
         self.assertLess(len(all_layers), 40)
+
+
+class LoraApiPathSafetyTests(unittest.TestCase):
+    def test_resolve_path_under_rejects_traversal(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from fastapi import HTTPException
+
+        from backend.api.routes.loras import _resolve_checkpoint_filename, _resolve_path_under
+
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            allowed = base / "images" / "a.jpg"
+            allowed.parent.mkdir(parents=True, exist_ok=True)
+            allowed.write_bytes(b"jpeg")
+            resolved = _resolve_path_under(base, "images/a.jpg")
+            self.assertEqual(resolved, allowed.resolve())
+            with self.assertRaises(HTTPException):
+                _resolve_path_under(base, "../../etc/passwd")
+        with self.assertRaises(HTTPException):
+            _resolve_checkpoint_filename("../adapter.safetensors")
+        with self.assertRaises(HTTPException):
+            _resolve_checkpoint_filename("nested/adapter.safetensors")
 
 
 class LoraTrainingPresetsTests(unittest.TestCase):

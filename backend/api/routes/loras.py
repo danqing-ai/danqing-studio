@@ -43,6 +43,32 @@ def _paths() -> IPathResolver:
     return get_container().resolve(IPathResolver)
 
 
+def _resolve_path_under(base: Path, rel: str) -> Path:
+    """Resolve *rel* under *base*; reject path traversal."""
+    rel = (rel or "").strip().replace("\\", "/")
+    if not rel or rel in {".", ".."}:
+        raise HTTPException(400, detail={"code": "invalid_path", "message": "path must not be empty"})
+    if ".." in Path(rel).parts:
+        raise HTTPException(400, detail={"code": "invalid_path", "message": "path must not contain .."})
+    resolved = (base / rel).resolve()
+    base_resolved = base.resolve()
+    try:
+        resolved.relative_to(base_resolved)
+    except ValueError as exc:
+        raise HTTPException(404, detail={"code": "not_found", "message": "file not found"}) from exc
+    return resolved
+
+
+def _resolve_checkpoint_filename(filename: str) -> str:
+    name = (filename or "").strip().replace("\\", "/")
+    if not name or "/" in name or ".." in Path(name).parts:
+        raise HTTPException(
+            400,
+            detail={"code": "invalid_checkpoint", "message": "checkpoint must be a filename only"},
+        )
+    return Path(name).name
+
+
 @router.get("/datasets")
 def list_datasets():
     root = _paths().get_project_root()
@@ -438,7 +464,8 @@ def dataset_image_file(dataset_id: str, file_path: str):
     from fastapi.responses import FileResponse
 
     root = _paths().get_project_root()
-    path = root / "datasets" / dataset_id / file_path
+    dataset_root = root / "datasets" / dataset_id
+    path = _resolve_path_under(dataset_root, file_path)
     if not path.is_file():
         raise HTTPException(404, detail={"code": "not_found", "message": "image not found"})
     return FileResponse(path)
@@ -449,9 +476,10 @@ def training_artifact_file(task_id: str, filename: str, sched: TaskScheduler = D
     from fastapi.responses import FileResponse
 
     work = sched.task_work_dir(task_id)
+    safe_name = _resolve_checkpoint_filename(filename)
     candidates = [
-        work / filename,
-        work / "adapters" / filename,
+        _resolve_path_under(work, safe_name),
+        _resolve_path_under(work / "adapters", safe_name),
     ]
     for path in candidates:
         if path.is_file() and path.suffix.lower() in {".png", ".safetensors", ".json"}:
@@ -636,7 +664,8 @@ def register_training_checkpoint(
     sched: TaskScheduler = Depends(get_task_scheduler),
 ):
     work = sched.task_work_dir(task_id)
-    ckpt = work / "adapters" / body.checkpoint
+    checkpoint = _resolve_checkpoint_filename(body.checkpoint)
+    ckpt = _resolve_path_under(work / "adapters", checkpoint)
     if not ckpt.is_file():
         raise HTTPException(404, detail={"code": "not_found", "message": f"checkpoint {body.checkpoint!r} not found"})
     task_row = sched.get_task(task_id) or {}
