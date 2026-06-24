@@ -789,7 +789,8 @@ def run_cover_edit(
         else finalize_lyrics_for_inference(raw_lyrics, instrumental=False, lm_expanded=False)
     )
     vocal_lang = resolve_vocal_language(
-        lyrics or raw_lyrics, request.vocal_language or "", prompt=request.prompt or ""
+        lyrics or raw_lyrics,
+        request.vocal_language or "",
     )
 
     effective_prompt, vocal_tpl_log = apply_vocal_type_to_prompt(
