@@ -73,7 +73,7 @@
         @open-preview="onCanvasOpenPreview"
         @composer-restore="onCanvasComposerRestore"
         @overlay-cleared="onCanvasOverlayCleared"
-        @open-composer="openComposerDrawer()"
+        @open-composer="onCanvasOpenComposer()"
         @request-close-composer="closeComposerDrawer()"
       />
     </template>
@@ -484,14 +484,16 @@ function fillComposerFromGalleryItem(item: GalleryItem) {
   persistComposerSnapshot();
 }
 
+function onCanvasOpenComposer() {
+  if (canvasSelectedItem.value) {
+    fillComposerFromGalleryItem(canvasSelectedItem.value);
+  }
+  openComposerDrawer();
+}
+
 function onCanvasNodeSelected(item: GalleryItem | null) {
   canvasSelectedItem.value = item;
-  if (!item) {
-    persistComposerSnapshot();
-    return;
-  }
-  fillComposerFromGalleryItem(item);
-  openComposerDrawer();
+  if (!item) persistComposerSnapshot();
 }
 
 function persistComposerSnapshot() {

@@ -70,7 +70,7 @@
         @use-as-tail-frame="onCanvasUseAsTailFrame"
         @use-as-video-source="onCanvasUseAsVideoSource"
         @use-as-animate-source="onCanvasUseAsAnimateSource"
-        @open-composer="openComposerDrawer()"
+        @open-composer="onCanvasOpenComposer()"
         @request-close-composer="closeComposerDrawer()"
       />
     </template>
@@ -513,14 +513,16 @@ function fillComposerFromGalleryItem(item: GalleryItem) {
   persistComposerSnapshot();
 }
 
+function onCanvasOpenComposer() {
+  if (canvasSelectedItem.value) {
+    fillComposerFromGalleryItem(canvasSelectedItem.value);
+  }
+  openComposerDrawer();
+}
+
 function onCanvasNodeSelected(item: GalleryItem | null) {
   canvasSelectedItem.value = item;
-  if (!item) {
-    persistComposerSnapshot();
-    return;
-  }
-  fillComposerFromGalleryItem(item);
-  openComposerDrawer();
+  if (!item) persistComposerSnapshot();
 }
 
 
