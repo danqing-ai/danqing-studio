@@ -186,7 +186,10 @@ class WanMoETransformer:
         if not self.lazy:
             return self._high if want == "high" else self._low
         if self._active_side == want:
-            return self._high if want == "high" else self._low
+            expert = self._high if want == "high" else self._low
+            if want == "low" and self._low is not None:
+                self._sync_i2v_state()
+            return expert
         other: ExpertSide = "low" if want == "high" else "high"
         if want == "low":
             # Load low while high is still resident so I2V side channels can sync.
@@ -196,7 +199,10 @@ class WanMoETransformer:
             self._release_side(other)
             self._load_side("high")
         self._active_side = want
-        return self._high if want == "high" else self._low
+        expert = self._high if want == "high" else self._low
+        if want == "low" and self._low is not None:
+            self._sync_i2v_state()
+        return expert
 
     def _stash_i2v_from_inner(self, inner: Any | None) -> None:
         if inner is None:
@@ -262,7 +268,7 @@ class WanMoETransformer:
     def before_denoise(self, latents: Any, timesteps: Any, sigmas: Any, **cond: Any) -> tuple[Any, dict[str, Any]]:
         latents, cond = self._ensure_high().before_denoise(latents, timesteps, sigmas, **cond)
         self._stash_i2v_from_inner(getattr(self._high, "_inner", None))
-        if not self.lazy and self._low is not None:
+        if self._low is not None:
             self._sync_i2v_state()
         return latents, cond
 
