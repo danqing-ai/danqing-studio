@@ -5302,7 +5302,18 @@
         },
         "recommended": true,
         "base_model": "wan-2.2-t2v-14b",
-        "engine": "danqing-video"
+        "engine": "danqing-video",
+        "metadata": {
+          "lora": {
+            "tags": [
+              "lightning",
+              "distill",
+              "moe",
+              "t2v"
+            ],
+            "hint_key": "studio.loraHint.videoStepDistillMoe"
+          }
+        }
       },
       "runtime": {
         "family": "wan",
@@ -5311,7 +5322,13 @@
           "cuda"
         ],
         "overrides": {
-          "wan_lightning_distill": true
+          "video_step_distill": true,
+          "lora_moe_shards": true,
+          "compose_overrides": {
+            "steps": 4,
+            "guide_scale": 0,
+            "shift": 5
+          }
         }
       },
       "actions": {},
@@ -5342,8 +5359,7 @@
             "source_type": "full",
             "allow_patterns": [
               "Wan2.2-T2V-A14B-4steps-lora-rank64-Seko-V2.0/high_noise_model.safetensors",
-              "Wan2.2-T2V-A14B-4steps-lora-rank64-Seko-V2.0/low_noise_model.safetensors",
-              "Wan2.2-T2V-A14B-4steps-lora-rank64-Seko-V2.0/config.json"
+              "Wan2.2-T2V-A14B-4steps-lora-rank64-Seko-V2.0/low_noise_model.safetensors"
             ]
           }
         }
@@ -5366,7 +5382,18 @@
         },
         "recommended": true,
         "base_model": "wan-2.2-i2v-14b",
-        "engine": "danqing-video"
+        "engine": "danqing-video",
+        "metadata": {
+          "lora": {
+            "tags": [
+              "lightning",
+              "distill",
+              "moe",
+              "i2v"
+            ],
+            "hint_key": "studio.loraHint.videoStepDistillMoe"
+          }
+        }
       },
       "runtime": {
         "family": "wan",
@@ -5375,7 +5402,13 @@
           "cuda"
         ],
         "overrides": {
-          "wan_lightning_distill": true
+          "video_step_distill": true,
+          "lora_moe_shards": true,
+          "compose_overrides": {
+            "steps": 4,
+            "guide_scale": 0,
+            "shift": 5
+          }
         }
       },
       "actions": {},
@@ -5406,8 +5439,7 @@
             "source_type": "full",
             "allow_patterns": [
               "Wan2.2-I2V-A14B-4steps-lora-rank64-Seko-V1/high_noise_model.safetensors",
-              "Wan2.2-I2V-A14B-4steps-lora-rank64-Seko-V1/low_noise_model.safetensors",
-              "Wan2.2-I2V-A14B-4steps-lora-rank64-Seko-V1/config.json"
+              "Wan2.2-I2V-A14B-4steps-lora-rank64-Seko-V1/low_noise_model.safetensors"
             ]
           }
         }
@@ -6406,8 +6438,8 @@
       "catalog": {
         "media": "video",
         "description": {
-          "zh": "HunyuanVideo 1.5 图生视频 720p 完整版；需 Qwen2.5-VL + ByT5 与 SigLIP image_encoder。",
-          "en": "HunyuanVideo 1.5 I2V 720p full weights; requires Qwen2.5-VL, ByT5, and SigLIP image_encoder."
+          "zh": "HunyuanVideo 1.5 图生视频 720p 完整版；需 Qwen2.5-VL + ByT5 与 SigLIP（FLUX Redux image_encoder）。",
+          "en": "HunyuanVideo 1.5 I2V 720p full weights; requires Qwen2.5-VL, ByT5, and SigLIP (FLUX Redux image_encoder)."
         },
         "category": "video_models",
         "commercial_use_allowed": true,
@@ -6520,8 +6552,7 @@
             "hunyuan_ms_variant": "720p_i2v",
             "allow_patterns": [
               "transformer/720p_i2v/**",
-              "vae/**",
-              "image_encoder/**"
+              "vae/**"
             ],
             "bundle_repos": [
               {
@@ -6532,7 +6563,16 @@
                 "source": "modelscope",
                 "allow_patterns": [
                   "transformer/720p_i2v/**",
-                  "vae/**",
+                  "vae/**"
+                ]
+              },
+              {
+                "repo_id": "black-forest-labs/FLUX.1-Redux-dev",
+                "local_path": "models/Video/hunyuan-video-1.5-i2v-720p",
+                "name": "SigLIP (FLUX Redux)",
+                "size": "1.2GB",
+                "source": "modelscope",
+                "allow_patterns": [
                   "image_encoder/**"
                 ]
               },
@@ -6559,8 +6599,8 @@
       "catalog": {
         "media": "video",
         "description": {
-          "zh": "HunyuanVideo 1.5 图生视频 720p CFG 稀疏蒸馏版（50 步，CFG=1）；需 SigLIP image_encoder。",
-          "en": "HunyuanVideo 1.5 I2V 720p CFG sparse-distilled (50 steps, CFG=1); requires SigLIP image_encoder."
+          "zh": "HunyuanVideo 1.5 图生视频 720p CFG 稀疏蒸馏版（50 步，CFG=1）；需 SigLIP（FLUX Redux image_encoder）。",
+          "en": "HunyuanVideo 1.5 I2V 720p CFG sparse-distilled (50 steps, CFG=1); requires SigLIP (FLUX Redux image_encoder)."
         },
         "category": "video_models",
         "commercial_use_allowed": true,
@@ -6668,8 +6708,7 @@
             "hunyuan_ms_variant": "720p_i2v_distilled_sparse",
             "allow_patterns": [
               "transformer/720p_i2v_distilled_sparse/**",
-              "vae/**",
-              "image_encoder/**"
+              "vae/**"
             ],
             "bundle_repos": [
               {
@@ -6680,7 +6719,16 @@
                 "source": "modelscope",
                 "allow_patterns": [
                   "transformer/720p_i2v_distilled_sparse/**",
-                  "vae/**",
+                  "vae/**"
+                ]
+              },
+              {
+                "repo_id": "black-forest-labs/FLUX.1-Redux-dev",
+                "local_path": "models/Video/hunyuan-video-1.5-i2v-720p-distill",
+                "name": "SigLIP (FLUX Redux)",
+                "size": "1.2GB",
+                "source": "modelscope",
+                "allow_patterns": [
                   "image_encoder/**"
                 ]
               },

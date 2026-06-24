@@ -363,6 +363,13 @@ class RegistryActionTests(unittest.TestCase):
         self.assertTrue(registry_declares_action(acts, "retouch"))
         self.assertFalse(registry_declares_action(acts, "create"))
 
+    def test_video_upscale_api_action(self) -> None:
+        from backend.core.registry_format import api_action_frozenset
+
+        acts = {"upscale": {}}
+        self.assertEqual(api_action_frozenset(acts, media="video"), frozenset({"upscale"}))
+        self.assertEqual(api_action_frozenset(acts, media="image"), frozenset({"upscale"}))
+
 
 class FluxFillPatchEmbedTests(unittest.TestCase):
     def test_fill_patch_token_dim_matches_x_embedder(self) -> None:
@@ -1568,6 +1575,33 @@ class SeedVR2StemTests(unittest.TestCase):
         self.assertTrue(GeneratedImage)
         self.assertIs(restore_video_chunk_spatiotemporal, stem_mlx.restore_video_chunk_spatiotemporal)
         self.assertIs(run_seedvr2_spatiotemporal_video, stem_mlx.run_seedvr2_spatiotemporal_video)
+
+    def test_vae_util_encode_bypasses_tiling_for_5d_video(self) -> None:
+        import mlx.core as mx
+        from backend.engine.common.codecs.vae.mlx_tiling_mlx import TilingConfig, VAEUtil
+
+        seen: list[tuple[int, ...]] = []
+
+        class _Vae:
+            latent_channels = 16
+            spatial_scale = 8
+
+            def encode(self, x: mx.array) -> mx.array:
+                seen.append(tuple(x.shape))
+                return mx.zeros((x.shape[0], 16, x.shape[2], x.shape[3] // 8, x.shape[4] // 8))
+
+        vol = mx.zeros((1, 3, 5, 512, 512))
+        out = VAEUtil.encode(_Vae(), vol, tiling_config=TilingConfig())
+        self.assertEqual(seen, [(1, 3, 5, 512, 512)])
+        self.assertEqual(tuple(out.shape), (1, 16, 5, 64, 64))
+
+    def test_seedvr2_create_condition_matches_temporal_latent(self) -> None:
+        import mlx.core as mx
+        from backend.engine.families.seedvr2.preprocess_mlx import SeedVR2LatentCreator
+
+        encoded = mx.zeros((1, 16, 3, 64, 64))
+        cond = SeedVR2LatentCreator.create_condition(encoded)
+        self.assertEqual(tuple(cond.shape), (1, 17, 3, 64, 64))
 
 
 class TaskKindMappingTests(unittest.TestCase):
@@ -5233,34 +5267,68 @@ class ArchitectureWrapUpTests(unittest.TestCase):
         self.assertIn("blocks.0.self_attn.q", groups)
         self.assertEqual(wan_lora_param_key("blocks.0.self_attn.q"), "blocks.0.self_attn.q.weight")
 
+    def test_lora_registry_meta(self) -> None:
+        from types import SimpleNamespace
+
+        from backend.catalog.lora_meta import (
+            adapters_include_video_step_distill,
+            lora_adapter_picklist_row,
+            lora_compose_overrides,
+            lora_moe_shards,
+            lora_video_step_distill,
+        )
+
+        entry = SimpleNamespace(
+            parameters={
+                "video_step_distill": True,
+                "lora_moe_shards": True,
+                "compose_overrides": {"steps": 4, "guide_scale": 0, "shift": 5},
+            },
+            raw={
+                "catalog": {
+                    "metadata": {
+                        "lora": {
+                            "tags": ["lightning", "i2v"],
+                            "hint_key": "studio.loraHint.videoStepDistillMoe",
+                        }
+                    }
+                }
+            },
+        )
+        self.assertTrue(lora_video_step_distill(entry))
+        self.assertTrue(lora_moe_shards(entry))
+        self.assertEqual(lora_compose_overrides(entry)["steps"], 4)
+        row = lora_adapter_picklist_row(
+            entry, lora_id="test-lora", name="Test", base_model="wan-2.2-i2v-14b"
+        )
+        self.assertEqual(row["tags"], ["lightning", "i2v"])
+        self.assertEqual(row["compose_overrides"]["shift"], 5)
+        registry = SimpleNamespace(get=lambda _mid: entry)
+        self.assertTrue(
+            adapters_include_video_step_distill([{"id": "test-lora", "weight": 1.0}], registry)
+        )
+
     def test_wan_lightning_lora_detection(self) -> None:
         from types import SimpleNamespace
 
         from backend.engine.families.wan.lora_mlx import (
             adapters_include_wan_lightning,
-            is_wan_lightning_lora_id,
             wan_video_lora_base_compatible,
         )
 
-        self.assertTrue(is_wan_lightning_lora_id("wan2.2-i2v-lightning-lora"))
-        self.assertTrue(is_wan_lightning_lora_id("wan2.2-t2v-lightning-lora:v1"))
         self.assertTrue(
             wan_video_lora_base_compatible("wan-2.2-i2v-14b", "wan-2.2-i2v-14b")
         )
         self.assertFalse(
             wan_video_lora_base_compatible("wan-2.2-i2v-14b", "wan-2.2-t2v-14b")
         )
-        self.assertFalse(
-            wan_video_lora_base_compatible("wan-2.2-i2v-14b-distill", "wan-2.2-i2v-14b")
+        entry = SimpleNamespace(
+            parameters={"video_step_distill": True},
+            raw={},
         )
-        registry = SimpleNamespace(
-            get=lambda mid: SimpleNamespace(
-                parameters={"wan_lightning_distill": True},
-                raw={},
-            )
-        )
+        registry = SimpleNamespace(get=lambda _mid: entry)
         self.assertTrue(
-            adapters_include_wan_lightning([{"id": "custom-lora", "weight": 1.0}], registry)
+            adapters_include_wan_lightning([{"id": "any-lora", "weight": 1.0}], registry)
         )
 
     def test_resolve_wan_lora_weight_path_nested(self) -> None:
@@ -5478,13 +5546,22 @@ class ArchitectureWrapUpTests(unittest.TestCase):
             self.assertTrue((root / "high_noise_model" / "diffusion_pytorch_model.safetensors").is_file())
             self.assertTrue((root / "low_noise_model" / "diffusion_pytorch_model.safetensors").is_file())
 
-    def test_hunyuan_i2v_download_patterns_include_image_encoder(self) -> None:
-        from backend.services.hunyuan_ms_bundle import hunyuan_raw_download_patterns
+    def test_hunyuan_i2v_download_patterns_and_siglip_bundle(self) -> None:
+        from backend.services.hunyuan_ms_bundle import (
+            HUNYUAN_SIGLIP_ALLOW_PATTERNS,
+            HUNYUAN_SIGLIP_REPO_ID,
+            hunyuan_bundle_ready_patterns,
+            hunyuan_raw_download_patterns,
+        )
 
         patterns = hunyuan_raw_download_patterns("720p_i2v")
-        self.assertIn("image_encoder/**", patterns)
+        self.assertNotIn("image_encoder/**", patterns)
         sparse = hunyuan_raw_download_patterns("720p_i2v_distilled_sparse")
-        self.assertIn("image_encoder/**", sparse)
+        self.assertNotIn("image_encoder/**", sparse)
+        self.assertIn("image_encoder/**", hunyuan_bundle_ready_patterns("720p_i2v"))
+        self.assertIn("image_encoder/**", hunyuan_bundle_ready_patterns("720p_i2v_distilled_sparse"))
+        self.assertEqual(HUNYUAN_SIGLIP_REPO_ID, "black-forest-labs/FLUX.1-Redux-dev")
+        self.assertEqual(HUNYUAN_SIGLIP_ALLOW_PATTERNS, ["image_encoder/**"])
 
     def test_resolve_video_edit_source_image_rejects_video_without_mode(self) -> None:
         from backend.engine.contracts.video_runtime_contracts import resolve_video_edit_source_image
@@ -5568,6 +5645,11 @@ class ArchitectureWrapUpTests(unittest.TestCase):
         enc = shared["versions"]["encoders"]
         patterns = enc.get("allow_patterns") or []
         self.assertNotIn("high_noise_model/config.json", patterns)
+        i2v_lora = models.get("wan2.2-i2v-lightning-lora") or {}
+        i2v_v1 = (i2v_lora.get("versions") or {}).get("v1") or {}
+        i2v_patterns = i2v_v1.get("allow_patterns") or []
+        self.assertIn("high_noise_model.safetensors", i2v_patterns[0])
+        self.assertNotIn("config.json", i2v_patterns)
         distill = models["wan-2.2-t2v-14b-distill"]
         deps = distill.get("dependencies") or []
         self.assertEqual(deps[0]["model_id"], "wan-2.2-14b-shared")

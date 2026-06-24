@@ -16,7 +16,18 @@ export function resolveVideoEditSourceMode(
 export function animateReferenceAcceptKind(
   parameters: Record<string, unknown> | undefined | null,
 ): AnimateReferenceAcceptKind {
-  return resolveVideoEditSourceMode(parameters) === 'first_frame' ? 'image_or_video' : 'image';
+  return 'image';
+}
+
+export function videoSupportsVideoEdit(
+  actions: Record<string, unknown> | undefined | null,
+  parameters: Record<string, unknown> | undefined | null,
+): boolean {
+  if (!actions || typeof actions !== 'object') return false;
+  if (!Object.prototype.hasOwnProperty.call(actions, 'animate') || actions.animate == null) {
+    return false;
+  }
+  return resolveVideoEditSourceMode(parameters) === 'first_frame';
 }
 
 export function galleryPathIsVideo(path: string, item?: GalleryItem | null): boolean {

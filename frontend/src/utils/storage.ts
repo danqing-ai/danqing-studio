@@ -33,6 +33,7 @@ export const DQ_STORAGE = Object.freeze({
   IMAGE_MODEL_UPSCALE: 'dq-studio.imageModel.upscale.v4',
   VIDEO_MODEL_CREATE: 'dq-studio.videoModel.create.v4',
   VIDEO_MODEL_ANIMATE: 'dq-studio.videoModel.animate.v4',
+  VIDEO_MODEL_EDIT: 'dq-studio.videoModel.edit.v4',
   VIDEO_MODEL_UPSCALE: 'dq-studio.videoModel.upscale.v4',
   AUDIO_MODEL_CREATE: 'dq-studio.audioModel.create.v4',
   AUDIO_MODEL_COVER: 'dq-studio.audioModel.cover.v4',

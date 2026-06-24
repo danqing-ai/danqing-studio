@@ -48,7 +48,7 @@
         class="video-composer__prompt"
         @keydown="onKeydown"
       />
-      <!-- Reference media: start image / source video (+ optional tail frame for animate) -->
+      <!-- Reference media: start + tail images (animate) or source video (edit) -->
       <div v-if="needsReferenceInput" class="video-composer__ref-area">
         <div class="video-composer__ref-slot">
           <div v-if="referenceMedia" class="video-composer__ref-pill">
@@ -56,7 +56,7 @@
             <video v-else-if="referenceMedia.type === 'video'" :src="referenceMedia.previewUrl" />
             <span class="video-composer__ref-label">{{ referenceMedia.label }}</span>
             <ComposerIconTip
-              v-if="referenceMedia.type === 'image' && referenceAssetId"
+              v-if="workMode === 'animate' && referenceMedia.type === 'image' && referenceAssetId"
               :content="$t('create.composerTip.reversePromptVideo')"
             >
               <DqIconButton
@@ -88,7 +88,7 @@
               :aria-label="referenceMediaLabel"
               @click="$emit('pick-reference')"
             >
-              <DqIcon :size="14"><Picture /></DqIcon>
+              <DqIcon :size="14"><Picture v-if="workMode === 'animate'" /><VideoCamera v-else /></DqIcon>
             </DqIconButton>
           </ComposerIconTip>
         </div>
@@ -226,7 +226,7 @@
 
         <!-- Size selector -->
         <DqSelect
-          v-if="workMode !== 'upscale' && sizeOptions.length > 0"
+          v-if="sizeOptions.length > 0"
           v-model="localSize"
           size="small"
           class="video-composer__select video-composer__select--size"
@@ -241,7 +241,6 @@
 
         <!-- Duration -->
         <DqSelect
-          v-if="workMode !== 'upscale'"
           v-model="localDuration"
           size="small"
           class="video-composer__select video-composer__select--duration"
@@ -290,46 +289,7 @@
           {{ $tt('video.tailFrameHint') }}
         </p>
 
-        <template v-if="workMode === 'upscale'">
-          <div v-if="paramSchema.scale_factor" class="video-composer__advanced-row">
-            <div class="video-composer__field">
-              <label>{{ $tt('create.upscaleScale') }}</label>
-              <DqSelect v-model="localParams.upscale_scale" size="small" style="width: 100px">
-                <DqOption
-                  v-for="opt in paramSchema.scale_factor.options || [2, 4]"
-                  :key="String(opt)"
-                  :label="`${opt}x`"
-                  :value="Number(opt)"
-                />
-              </DqSelect>
-            </div>
-            <div v-if="paramSchema.denoise_strength || paramSchema.denoise" class="video-composer__field">
-              <label>{{ $tt('create.upscaleDenoise') }}</label>
-              <DqSlider
-                v-model="localParams.upscale_denoise"
-                :min="(paramSchema.denoise_strength || paramSchema.denoise).min ?? 0"
-                :max="(paramSchema.denoise_strength || paramSchema.denoise).max ?? 1"
-                :step="(paramSchema.denoise_strength || paramSchema.denoise).step ?? 0.05"
-              />
-              <span class="video-composer__field-val">{{ localParams.upscale_denoise }}</span>
-            </div>
-          </div>
-          <div v-if="paramSchema.max_frames" class="video-composer__advanced-row">
-            <div class="video-composer__field">
-              <label>{{ $tt('video.maxFramesLabel') }}</label>
-              <DqSlider
-                v-model="localParams.upscale_max_frames"
-                :min="paramSchema.max_frames.min ?? 1"
-                :max="paramSchema.max_frames.max ?? 4000"
-                :step="paramSchema.max_frames.step ?? 1"
-              />
-              <span class="video-composer__field-val">{{ localParams.upscale_max_frames }}</span>
-            </div>
-          </div>
-        </template>
-
-        <template v-else>
-          <div v-if="paramSchema.steps" class="video-composer__advanced-row">
+        <div v-if="paramSchema.steps" class="video-composer__advanced-row">
             <div class="video-composer__field">
               <label>{{ $tt('create.steps') }}</label>
               <DqSlider
@@ -417,9 +377,8 @@
               </div>
             </div>
           </div>
-        </template>
 
-        <div v-if="showNegativePrompt && workMode !== 'upscale'" class="video-composer__advanced-row">
+        <div v-if="showNegativePrompt" class="video-composer__advanced-row">
           <div class="video-composer__field video-composer__field--full">
             <label>{{ $tt('create.negativePrompt') }}</label>
             <DqInput v-model="localParams.negative_prompt" type="textarea" :rows="2" />
@@ -445,8 +404,8 @@
                 />
               </DqSelect>
             </div>
-            <p v-if="selectedLightningLora" class="video-composer__lora-hint">
-              {{ $tt('studio.wanLightningLoraHint') }}
+            <p v-if="selectedLoraHintKey" class="video-composer__lora-hint">
+              {{ $tt(selectedLoraHintKey) }}
             </p>
             <div v-if="localParams.lora" class="video-composer__lora-row">
               <label>{{ $tt('create.loraScale') }}</label>
@@ -479,18 +438,18 @@ import {
   MagicStick,
   Picture,
   Refresh,
+  VideoCamera,
 } from '@danqing/dq-shell';
 import { assetIdFromGalleryPath } from '@/utils/copilotHandoff';
 import { $tt, $pn } from '@/utils/i18n';
 import { formatResolutionOptionLabel } from '@/utils/registryParamSchema';
-import { resolveVideoEditSourceMode } from '@/utils/videoEditSource';
 import { isLongVideoTargetDuration } from '@/utils/videoStoryboardPrompt';
 import {
   findCompatibleLora,
-  isWanLightningLoraEntry,
-  videoLoraOptionLabel,
-  type WanCompatibleLora,
-} from '@/utils/wanVideoLora';
+  loraHintKey,
+  loraOptionLabel,
+  type CompatibleLoraRow,
+} from '@/utils/loraAdapterMeta';
 
 const props = defineProps<{
   modelValue: string;
@@ -594,7 +553,7 @@ const localWorkMode = computed({
 const workModeOptions = computed(() => props.workModeOptions || [
   { label: $tt('video.modeCreate'), value: 'create' },
   { label: $tt('video.modeAnimate'), value: 'animate' },
-  { label: $tt('video.modeUpscale'), value: 'upscale' },
+  { label: $tt('video.modeEdit'), value: 'edit' },
 ]);
 
 const localModel = computed({
@@ -631,20 +590,20 @@ const localBatchCount = computed({
 });
 
 const needsReferenceInput = computed(
-  () => props.workMode === 'animate' || props.workMode === 'upscale',
+  () => props.workMode === 'animate' || props.workMode === 'edit',
 );
 
 const paramSchema = computed(() => props.currentModelConfig?.parameters || {});
 
 function videoLoraLabel(l: Record<string, unknown>) {
-  return videoLoraOptionLabel(l as WanCompatibleLora);
+  return loraOptionLabel(l as CompatibleLoraRow);
 }
 
-const selectedLightningLora = computed(() => {
+const selectedLoraHintKey = computed(() => {
   const id = String(localParams.value.lora || '');
-  if (!id) return false;
-  const row = findCompatibleLora((props.compatibleLoras || []) as WanCompatibleLora[], id);
-  return isWanLightningLoraEntry(row);
+  if (!id) return null;
+  const row = findCompatibleLora((props.compatibleLoras || []) as CompatibleLoraRow[], id);
+  return loraHintKey(row);
 });
 
 const longVideoSupport = computed(() => Boolean(paramSchema.value.long_video_support));
@@ -663,28 +622,15 @@ const promptPlaceholder = computed(() =>
 
 const showSeedField = computed(() => paramSchema.value.seed_support !== false);
 
-const animateSourceMode = computed(() => {
-  if (props.workMode !== 'animate') return 'image_only' as const;
-  return resolveVideoEditSourceMode(paramSchema.value);
-});
-
 const referenceMediaLabel = computed(() => {
-  if (props.workMode === 'animate') {
-    return animateSourceMode.value === 'first_frame'
-      ? $tt('video.animateSourceTitle')
-      : $tt('action.video.startImage');
-  }
-  if (props.workMode === 'upscale') return $tt('video.videoSourceTitle');
+  if (props.workMode === 'edit') return $tt('video.editSourceTitle');
+  if (props.workMode === 'animate') return $tt('action.video.startImage');
   return $tt('create.refImage');
 });
 
 const referenceMediaTip = computed(() => {
-  if (props.workMode === 'upscale') return $tt('video.videoSourceTitle');
-  if (props.workMode === 'animate') {
-    return animateSourceMode.value === 'first_frame'
-      ? $tt('video.animateSourceHint')
-      : $t('create.composerTip.reversePromptVideo');
-  }
+  if (props.workMode === 'edit') return $tt('video.editSourceHint');
+  if (props.workMode === 'animate') return $t('create.composerTip.reversePromptVideo');
   return $t('create.composerTip.refImage');
 });
 

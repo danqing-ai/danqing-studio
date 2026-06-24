@@ -109,7 +109,7 @@ def run_seedvr2_video_upscale(
 
     def _progress(frac: float, done: int, total: int) -> None:
         if on_progress:
-            on_progress({"phase": "denoise", "progress": float(frac), "step": done, "n_steps": total})
+            on_progress(float(frac), int(done), int(total), None, "denoise")
 
     def _cancelled() -> bool:
         return ctx_exec.cancel_token.is_cancelled()
@@ -144,7 +144,7 @@ def run_seedvr2_video_upscale(
     if on_log:
         on_log("info", f"SeedVR2 video upscale saved {out_path} frames={n_frames} fps={fps:.3f}")
     if on_progress:
-        on_progress({"phase": "complete", "progress": 1.0})
+        on_progress(1.0, n_frames, n_frames, None, "complete")
 
     return str(out_path), {
         "model": request.model,

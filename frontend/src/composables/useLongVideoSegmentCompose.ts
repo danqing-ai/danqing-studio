@@ -3,9 +3,9 @@ import { api } from '@/utils/api';
 import { useRegistryStore } from '@/stores/registry';
 import { applyDefaults, hasDeviation, normalizeParamsDef } from '@/utils/registryParamSchema';
 import {
-  applyWanLightningComposerParams,
+  applyLoraComposeOverrides,
   findCompatibleLora,
-} from '@/utils/wanVideoLora';
+} from '@/utils/loraAdapterMeta';
 
 export type SegmentComposeParams = {
   steps: number;
@@ -87,7 +87,7 @@ export function useLongVideoSegmentCompose(modelId: Ref<string>) {
       if (params.lora && !findCompatibleLora(compatibleLoras.value, params.lora)) {
         params.lora = '';
       } else if (params.lora) {
-        applyWanLightningComposerParams(params, findCompatibleLora(compatibleLoras.value, params.lora));
+        applyLoraComposeOverrides(params as Record<string, unknown>, findCompatibleLora(compatibleLoras.value, params.lora));
       }
     } catch {
       compatibleLoras.value = [];
@@ -117,7 +117,7 @@ export function useLongVideoSegmentCompose(modelId: Ref<string>) {
         params.lora = '';
         return;
       }
-      applyWanLightningComposerParams(params, row);
+      applyLoraComposeOverrides(params as Record<string, unknown>, row);
     },
   );
 

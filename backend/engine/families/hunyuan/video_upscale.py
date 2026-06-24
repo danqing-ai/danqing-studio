@@ -117,7 +117,7 @@ def run_hunyuan_1080p_sr(
     if on_log:
         on_log("info", f"HunyuanVideo SR saved {out_path}")
     if on_progress:
-        on_progress({"phase": "complete", "progress": 1.0})
+        on_progress(1.0, 1, 1, None, "complete")
 
     return out_path, {
         "model": request.model,

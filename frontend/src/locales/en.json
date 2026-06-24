@@ -408,6 +408,7 @@
     "video": {
       "create": "Text-to-video",
       "animate": "Image-to-video",
+      "edit": "Video edit",
       "upscale": "Video restoration",
       "upscaleDesc": "Pick a SeedVR2 video restoration model and a source video, set scale/denoise/max frames, then submit (no prompt). Uses spatiotemporal latents for better temporal consistency.",
       "startImage": "Start image"
@@ -533,7 +534,9 @@
     "restoreDefaults": "Restore Defaults",
     "loraLabel": "LoRA",
     "noLora": "No LoRA",
-    "wanLightningLoraHint": "Lightning LoRA ships high- and low-noise shards; the engine merges them per step. Fixed 4 steps, no CFG, Shift=5.",
+    "loraHint": {
+      "videoStepDistillMoe": "This LoRA uses high/low noise shards merged per step; composer values follow registry compose_overrides."
+    },
     "myLoraTag": "My LoRA",
     "pickLoraToAdd": "Select LoRA to add…",
     "uploadFailed": "Image upload failed: {msg}",
@@ -799,7 +802,9 @@
     "presetTagT2I": "[Text-to-image]",
     "presetTagI2I": "[Img2img]",
     "noLora": "No LoRA",
-    "wanLightningLoraHint": "Lightning LoRA ships high- and low-noise shards; the engine merges them per step. Fixed 4 steps, no CFG, Shift=5.",
+    "loraHint": {
+      "videoStepDistillMoe": "This LoRA uses high/low noise shards merged per step; composer values follow registry compose_overrides."
+    },
     "myLoraTag": "My LoRA",
     "pickLoraToAdd": "Select LoRA to add…",
     "seedPlaceholder": "Random",
@@ -874,7 +879,13 @@
     "title": "AI Video Creation",
     "modeCreate": "Text-to-video",
     "modeAnimate": "Image-to-video",
+    "modeEdit": "Video edit",
     "modeUpscale": "Video restoration",
+    "editSourceTitle": "Source video",
+    "editSourceHint": "Upload or pick the source video to edit; combine with your prompt for style transfer, local edits, etc.",
+    "needEditSource": "Upload or pick a source video first.",
+    "presetNeedsEditSource": "This preset is for video edit—add a source video first.",
+    "animateUseEditModeForVideo": "Image-to-video accepts start images only. Switch to Video edit and pick a source video.",
     "modeLongVideo": "Long video",
     "longVideoOpenStudio": "Open long video studio →",
     "longVideoHeroTitle": "Start with a brief",

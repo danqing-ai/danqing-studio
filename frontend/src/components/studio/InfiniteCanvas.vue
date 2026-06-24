@@ -542,7 +542,6 @@ function onToolbarAction(action: string) {
       {
         const payload = bindPayload(path, item);
         emit('use-as-start-frame', { ...payload, quiet: true });
-        store.setOverlay('start_frame', path, item);
         toast.success($tt('canvas.animateBranchHint'));
         emit('open-composer');
       }
@@ -550,13 +549,11 @@ function onToolbarAction(action: string) {
     case 'use-start-frame': {
       const payload = bindPayload(path, item);
       emit('use-as-start-frame', payload);
-      store.setOverlay('start_frame', path, item);
       break;
     }
     case 'use-tail-frame': {
       const payload = bindPayload(path, item);
       emit('use-as-tail-frame', payload);
-      store.setOverlay('tail_frame', path, item);
       break;
     }
     case 'quick-animate-video':
@@ -564,7 +561,6 @@ function onToolbarAction(action: string) {
       {
         const payload = bindPayload(path, item);
         emit('use-as-animate-source', { ...payload, quiet: true });
-        store.setOverlay('video_source', path, item);
         toast.success($tt('canvas.animateVideoBranchHint'));
         emit('open-composer');
       }
@@ -572,23 +568,11 @@ function onToolbarAction(action: string) {
     case 'use-animate-source': {
       const payload = bindPayload(path, item);
       emit('use-as-animate-source', payload);
-      store.setOverlay('video_source', path, item);
       break;
     }
-    case 'quick-upscale':
-      store.placeStagingBeside(path, props.items);
-      {
-        const payload = bindPayload(path, item);
-        emit('use-as-video-source', { ...payload, quiet: true });
-        store.setOverlay('video_source', path, item);
-        toast.success($tt('canvas.upscaleBranchHint'));
-        emit('open-composer');
-      }
-      break;
     case 'use-video-source': {
       const payload = bindPayload(path, item);
       emit('use-as-video-source', payload);
-      store.setOverlay('video_source', path, item);
       break;
     }
     case 'quick-cover':

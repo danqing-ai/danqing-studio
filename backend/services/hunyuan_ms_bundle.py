@@ -9,6 +9,11 @@ from typing import Any
 _HUNYUAN_MS_CONFIG_ONLY_VARIANTS = frozenset({"480p_t2v"})
 _GENERATED_BUNDLE_FILES = frozenset({"model_index.json"})
 
+# SigLIP vision encoder is NOT shipped in Tencent-Hunyuan/HunyuanVideo-1.5 (see upstream
+# checkpoints-download.md); fetch image_encoder/ from FLUX.1-Redux-dev via bundle_repos.
+HUNYUAN_SIGLIP_REPO_ID = "black-forest-labs/FLUX.1-Redux-dev"
+HUNYUAN_SIGLIP_ALLOW_PATTERNS = ["image_encoder/**"]
+
 
 def is_hunyuan_ms_bundle_assembled(bundle_root: Path) -> bool:
     """True after ``assemble_hunyuan_modelscope_bundle`` (flat ``transformer/config.json``)."""
@@ -22,15 +27,24 @@ def hunyuan_raw_download_patterns(variant: str) -> list[str]:
         raise RuntimeError("hunyuan_ms_variant is required for ModelScope HunyuanVideo allow_patterns.")
     if v in _HUNYUAN_MS_CONFIG_ONLY_VARIANTS:
         return [f"transformer/{v}/config.json", "vae/**"]
-    patterns = [f"transformer/{v}/**", "vae/**"]
-    if "i2v" in v:
-        patterns.append("image_encoder/**")
-    return patterns
+    return [f"transformer/{v}/**", "vae/**"]
+
+
+def hunyuan_i2v_variant(variant: str) -> bool:
+    return "i2v" in str(variant or "").lower()
 
 
 def hunyuan_assembled_bundle_patterns() -> list[str]:
     """Validate layout after assembly (variant subdir hoisted to ``transformer/``)."""
     return ["transformer/config.json", "vae/**"]
+
+
+def hunyuan_bundle_ready_patterns(variant: str) -> list[str]:
+    """Post-install readiness globs (includes SigLIP for I2V variants)."""
+    patterns = list(hunyuan_assembled_bundle_patterns())
+    if hunyuan_i2v_variant(variant):
+        patterns.extend(HUNYUAN_SIGLIP_ALLOW_PATTERNS)
+    return patterns
 
 
 def hunyuan_modelscope_allow_patterns(variant: str) -> list[str]:

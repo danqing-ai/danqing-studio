@@ -399,16 +399,7 @@ def get_compatible_loras(model_name: str):
     """Get LoRAs compatible with a given model (reads base_model field from registry)"""
     service = get_settings_service()
     rows = service.lora_adapter_picklist(model_name)
-    # Pick list for UI: ``id`` matches ``AdapterRef.id`` (registry model id, optional :version).
-    return [
-        {
-            "name": r["name"],
-            "id": r["id"],
-            "base_model": r.get("base_model", ""),
-            "wan_lightning_distill": bool(r.get("wan_lightning_distill")),
-        }
-        for r in rows
-    ]
+    return rows
 
 
 def _controlnet_matches_scope(actions: object, scope: str | None) -> bool:

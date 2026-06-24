@@ -97,7 +97,7 @@ def persist_video_upscale_create(
         return None
     pipeline_graph_step("save_asset", ctx.on_log)
     if ctx.on_progress:
-        ctx.on_progress({"phase": "complete", "progress": 1.0})
+        ctx.on_progress(1.0, 1, 1, None, "complete")
     return result
 
 

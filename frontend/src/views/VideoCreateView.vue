@@ -108,7 +108,7 @@
         :show-lora="!!currentModelConfig?.parameters?.lora_support"
         :show-batch-count="true"
         :reference-media="referenceMedia"
-        :reference-asset-path="startImagePath || sourceVideoPath || null"
+        :reference-asset-path="videoWorkMode === 'edit' ? (sourceVideoPath || null) : (startImagePath || null)"
         :enhancing="isEnhancing"
         :reversing="isReversing"
         :tail-reference-media="tailReferenceMedia"
@@ -119,7 +119,7 @@
         :work-mode-options="videoWorkSegmentOptions"
         @generate="startGeneration"
         @pick-reference="showAssetPicker = true"
-        @remove-reference="removeStartImage"
+        @remove-reference="removeReference"
         @pick-tail-reference="showTailAssetPicker = true"
         @remove-tail-reference="removeTailImage"
         @model-change="onModelVersionChange"
@@ -135,6 +135,38 @@
         @storyboard-expand="onStoryboardExpand"
       />
   </StudioComposerHost>
+
+  <!-- Video upscale / restoration editor drawer (aligned with image upscale drawer) -->
+  <DqDrawer
+    v-model:open="showEditorDrawer"
+    :title="$tt('action.video.upscale')"
+    direction="rtl"
+    size="520px"
+    class="studio-video-editor-drawer"
+  >
+    <div v-if="editDrawerItem" class="studio-editor-drawer">
+      <div class="studio-upscale-panel">
+        <div class="studio-video-upscale-preview">
+          <video
+            :src="getVideoUrl(editDrawerItem)"
+            controls
+            playsinline
+            preload="metadata"
+            class="studio-video-upscale-preview__media"
+          />
+        </div>
+        <CreateUpscaleParams
+          v-model="upscaleModelVersion"
+          :model-options="upscaleModelOptions"
+          :params="upscaleParams"
+          media="video"
+        />
+        <DqButton type="primary" block class="studio-drawer-submit" @click="onUpscaleSubmit">
+          {{ $t('action.video.upscale') }}
+        </DqButton>
+      </div>
+    </div>
+  </DqDrawer>
 
   <!-- Start image asset picker -->
   <DqDialog v-model:open="showAssetPicker" :title="assetPickerTitle" width="70%">
@@ -207,6 +239,7 @@ import StudioLayout from '@/components/studio/StudioLayout.vue';
 import StudioCanvas from '@/components/studio/StudioCanvas.vue';
 import StudioGalleryFilters from '@/components/studio/StudioGalleryFilters.vue';
 import VideoComposer from '@/components/studio/VideoComposer.vue';
+import CreateUpscaleParams from '@/components/create/CreateUpscaleParams.vue';
 import StudioComposerHost from '@/components/studio/StudioComposerHost.vue';
 import StudioComposeFab from '@/components/studio/StudioComposeFab.vue';
 import InfiniteCanvas from '@/components/studio/InfiniteCanvas.vue';
@@ -217,7 +250,10 @@ import {
   activateCanvasViewForResults,
   maybeShowCanvasWorkspaceHint,
 } from '@/utils/canvasWorkspaceHint';
-import { previewUrlForGalleryItem, isVideoGalleryItem } from '@/utils/canvasAssets';
+import {
+  previewUrlForGalleryItem,
+  isVideoGalleryItem,
+} from '@/utils/canvasAssets';
 import { useStudioGallery } from '@/composables/useStudioGallery';
 import { useComposerLlm } from '@/composables/useComposerLlm';
 import { assetIdFromGalleryPath } from '@/utils/copilotHandoff';
@@ -239,13 +275,14 @@ import {
 import {
   animateReferenceAcceptKind,
   galleryPathIsVideo,
-  resolveVideoEditSourceMode,
+  videoSupportsVideoEdit,
 } from '@/utils/videoEditSource';
 import { formatStoryboardScript } from '@/utils/videoStoryboardPrompt';
 import {
-  applyWanLightningComposerParams,
+  applyLoraComposeOverrides,
   findCompatibleLora,
-} from '@/utils/wanVideoLora';
+  type CompatibleLoraRow,
+} from '@/utils/loraAdapterMeta';
 
 const router = useRouter();
 const registryStore = useRegistryStore();
@@ -342,11 +379,13 @@ const infiniteCanvasRef = ref<InstanceType<typeof InfiniteCanvas> | null>(null);
 const pendingCanvasAssetIds = ref<string[]>([]);
 const videoCanvas = useCanvasStore('video');
 const canvasSelectedItem = ref<GalleryItem | null>(null);
+const showEditorDrawer = ref(false);
+const editDrawerItem = ref<GalleryItem | null>(null);
 const {
   composerDrawerOpen,
   openComposerDrawer,
   closeComposerDrawer,
-} = useComposerDrawer('video');
+} = useComposerDrawer('video', { editorDrawerOpen: showEditorDrawer });
 
 const savedViewMode = getItem(DQ_STORAGE.VIDEO_VIEW_MODE);
 const viewMode = ref<'grid' | 'canvas'>(
@@ -434,52 +473,16 @@ function onCanvasSessionReady(_payload: { sessionId: string }) {
   }
 }
 
-function syncCanvasOverlay(
-  kind: import('@/types').CanvasOverlayKind,
-  path: string | null
-) {
-  if (!path) {
-    videoCanvas.clearOverlay(kind);
-    return;
-  }
-  const item = galleryItems.value.find((g) => g.path === path) ?? undefined;
-  videoCanvas.setOverlay(kind, path, item);
-}
+const VIDEO_EDIT_OVERLAY_KINDS = ['start_frame', 'tail_frame', 'video_source'] as const;
 
-function restoreComposerFromCanvasOverlays() {
-  const sf = videoCanvas.overlays.start_frame;
-  if (!startImagePath.value && sf?.path) {
-    const p = bindVideoAssetFromPath(sf.path);
-    startImagePath.value = p.path;
-    startImageSrc.value = p.previewUrl;
-    videoWorkMode.value = 'animate';
-  }
-  const tf = videoCanvas.overlays.tail_frame;
-  if (!tailImagePath.value && tf?.path) {
-    const p = bindVideoAssetFromPath(tf.path);
-    tailImagePath.value = p.path;
-    tailImageSrc.value = p.previewUrl;
-    videoWorkMode.value = 'animate';
-  }
-  const vs = videoCanvas.overlays.video_source;
-  if (!sourceVideoPath.value && vs?.path) {
-    const p = bindVideoAssetFromPath(vs.path);
-    const item = galleryItems.value.find((g) => g.path === vs.path);
-    sourceVideoPath.value = p.path;
-    sourceVideoSrc.value = item && isVideoGalleryItem(item)
-      ? api.gallery.getImageUrl(p.path)
-      : p.previewUrl;
-    if (!startImagePath.value) {
-      videoWorkMode.value = videoWorkMode.value === 'animate' ? 'animate' : 'upscale';
-    }
+function clearVideoEditCanvasOverlays() {
+  for (const kind of VIDEO_EDIT_OVERLAY_KINDS) {
+    videoCanvas.clearOverlay(kind);
   }
 }
 
 function syncCompositorOverlaysOnCanvasEnter() {
-  restoreComposerFromCanvasOverlays();
-  syncCanvasOverlay('start_frame', startImagePath.value || null);
-  syncCanvasOverlay('tail_frame', tailImagePath.value || null);
-  syncCanvasOverlay('video_source', sourceVideoPath.value || null);
+  clearVideoEditCanvasOverlays();
 }
 
 function onCanvasOverlayCleared(kind: import('@/types').CanvasOverlayKind) {
@@ -558,8 +561,10 @@ function onCanvasComposerRestore(snapshot: {
   if (snapshot.title != null) params.title = snapshot.title;
   if (snapshot.negative_prompt != null) params.negative_prompt = snapshot.negative_prompt;
   if (snapshot.seed != null) params.seed = snapshot.seed;
-  if (snapshot.mode === 'create' || snapshot.mode === 'animate' || snapshot.mode === 'upscale') {
+  if (snapshot.mode === 'create' || snapshot.mode === 'animate' || snapshot.mode === 'edit') {
     videoWorkMode.value = snapshot.mode;
+  } else if (snapshot.mode === 'upscale') {
+    videoWorkMode.value = 'create';
   }
   if (snapshot.model) {
     params.model = snapshot.model;
@@ -601,9 +606,9 @@ function buildCanvasMeta(extra: Record<string, unknown> = {}): Record<string, un
     canvasSelectedItem.value?.path || videoCanvas.activeAssetPath.value || '';
   if (parentPath.startsWith('asset:')) {
     meta.parent_asset_id = parentPath.slice('asset:'.length);
-    if (videoWorkMode.value === 'animate') meta.relation_type = 'animate';
-    else if (videoWorkMode.value === 'upscale') meta.relation_type = 'upscale';
-    else meta.relation_type = 'create';
+    if (videoWorkMode.value === 'animate' || videoWorkMode.value === 'edit') {
+      meta.relation_type = videoWorkMode.value === 'edit' ? 'edit' : 'animate';
+    } else meta.relation_type = 'create';
   }
   return meta;
 }
@@ -700,12 +705,24 @@ const lineageTargetAssetId = ref('');
 watch(composerDrawerOpen, (open) => {
   if (open) {
     showLineageDrawer.value = false;
+    showEditorDrawer.value = false;
+    infiniteCanvasRef.value?.closeMutexPanels?.();
+  }
+});
+
+watch(showEditorDrawer, (open) => {
+  if (open) {
+    showLineageDrawer.value = false;
+    closeComposerDrawer();
     infiniteCanvasRef.value?.closeMutexPanels?.();
   }
 });
 
 watch(showLineageDrawer, (open) => {
-  if (open) closeComposerDrawer();
+  if (open) {
+    closeComposerDrawer();
+    showEditorDrawer.value = false;
+  }
 });
 
 const canvasAssetIdsOnCanvas = computed(() =>
@@ -738,10 +755,41 @@ async function addGalleryItemToCanvas(
   toast.success($tt('canvas.addedToCanvas'));
 }
 
+function videoVersionSupportsEdit(version: { modelKey: string; actions?: Record<string, unknown> }) {
+  const cfg = modelRegistry.value[version.modelKey];
+  return videoSupportsVideoEdit(version.actions || {}, cfg?.parameters);
+}
+
+function openAnimateComposerFromItem(item: GalleryItem) {
+  const previewUrl = previewUrlForGalleryItem(item);
+  fillComposerFromGalleryItem(item);
+  onCanvasUseAsStartFrame({ path: item.path, previewUrl, quiet: true });
+  if (viewMode.value === 'canvas') {
+    videoCanvas.placeStagingBeside(item.path, galleryItems.value);
+  }
+  openComposerDrawer();
+}
+
+function openEditComposerFromItem(item: GalleryItem) {
+  const previewUrl = previewUrlForGalleryItem(item);
+  fillComposerFromGalleryItem(item);
+  onCanvasUseAsAnimateSource({ path: item.path, previewUrl, quiet: true });
+  if (viewMode.value === 'canvas') {
+    videoCanvas.placeStagingBeside(item.path, galleryItems.value);
+  }
+  openComposerDrawer();
+}
+
 function onCardAction({ action, item }: { action: string; item: GalleryItem }) {
   if (action === 'compose-from-item') {
-    fillComposerFromGalleryItem(item);
-    openComposerDrawer();
+    if (isVideoGalleryItem(item)) openEditComposerFromItem(item);
+    else openAnimateComposerFromItem(item);
+  } else if (action === 'animate') {
+    openAnimateComposerFromItem(item);
+  } else if (action === 'video-edit') {
+    openEditComposerFromItem(item);
+  } else if (action === 'upscale') {
+    openUpscaleDrawerForItem(item);
   } else if (action === 'add-to-canvas') {
     void addGalleryItemToCanvas(item, { fit: true });
   } else if (action === 'delete') {
@@ -753,6 +801,130 @@ function onCardAction({ action, item }: { action: string; item: GalleryItem }) {
       ? item.path.slice('asset:'.length)
       : '';
     showLineageDrawer.value = true;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Video upscale editor drawer (aligned with image upscale drawer)    */
+/* ------------------------------------------------------------------ */
+
+const upscaleParams = reactive({
+  upscale_scale: 4,
+  upscale_denoise: 0.3,
+  upscale_max_frames: 300,
+  seed: '',
+});
+
+const upscaleModelVersion = ref('');
+
+const upscaleModelOptions = computed(() =>
+  allVersions.value
+    .filter((v) => videoSupportsUpscale(v.actions || {}))
+    .map((v) => ({
+      label: String(v.name || ''),
+      value: `${v.modelKey}|${v.versionKey}`,
+      disabled: !v.ready,
+      commercialUseAllowed: v.commercialUseAllowed as boolean,
+    })),
+);
+
+function resolveUpscaleModelVersion(preferred?: string): string {
+  const saved = getItem(DQ_STORAGE.VIDEO_MODEL_UPSCALE);
+  const candidates = [preferred, saved, upscaleModelVersion.value].filter(Boolean) as string[];
+  for (const key of candidates) {
+    const row = upscaleModelOptions.value.find((o) => o.value === key && !o.disabled);
+    if (row) return row.value;
+  }
+  const first = upscaleModelOptions.value.find((o) => !o.disabled);
+  return first?.value || '';
+}
+
+function openUpscaleDrawerForItem(item: GalleryItem) {
+  editDrawerItem.value = item;
+  canvasSelectedItem.value = item;
+  upscaleModelVersion.value = resolveUpscaleModelVersion();
+  if (!String(upscaleParams.seed || '').trim() && params.seed) {
+    upscaleParams.seed = params.seed;
+  }
+  if (viewMode.value === 'canvas') {
+    videoCanvas.placeStagingBeside(item.path, galleryItems.value);
+  }
+  showEditorDrawer.value = true;
+}
+
+async function onUpscaleSubmit() {
+  if (!editDrawerItem.value) return;
+  if (!upscaleModelVersion.value) {
+    toast.warning($tt('studio.selectModel'));
+    return;
+  }
+  const [modelKey, versionKey] = upscaleModelVersion.value.split('|');
+  const versionStatus = modelsDetailedStatus.value[modelKey]?.versions?.[versionKey];
+  if (!versionStatus?.ready) {
+    toast.warning(
+      $tt('studio.modelNotReadyDesc', {
+        name: modelKey,
+        version: versionKey,
+      }),
+    );
+    return;
+  }
+
+  setItem(DQ_STORAGE.VIDEO_MODEL_UPSCALE, upscaleModelVersion.value);
+
+  try {
+    const path = editDrawerItem.value.path;
+    let source_asset_id: string;
+    if (path.startsWith('asset:')) {
+      source_asset_id = path.slice('asset:'.length);
+    } else {
+      const blob = await api.gen.urlToBlob(getVideoUrl(editDrawerItem.value));
+      const ext =
+        (blob.type && blob.type.includes('webm') && 'webm') ||
+        (blob.type && blob.type.includes('quicktime') && 'mov') ||
+        'mp4';
+      const up = await api.gen.uploadAsset(
+        new File([blob], `upscale-src.${ext}`, { type: blob.type || 'video/mp4' }),
+      );
+      source_asset_id = (up as { id: string }).id;
+    }
+
+    const modelStr = versionKey ? `${modelKey}:${versionKey}` : modelKey;
+    const meta = buildCanvasMeta();
+    const upscaleBody: Record<string, unknown> = {
+      model: modelStr,
+      source_asset_id,
+      scale: Number(upscaleParams.upscale_scale) === 4 ? 4 : 2,
+      denoise: Number(upscaleParams.upscale_denoise) || 0.3,
+      max_frames: Math.min(
+        4000,
+        Math.max(1, parseInt(String(upscaleParams.upscale_max_frames), 10) || 300),
+      ),
+      metadata: { ...meta },
+      priority: 'normal',
+    };
+    const sd = upscaleParams.seed ? parseInt(String(upscaleParams.seed), 10) : null;
+    if (sd != null && !Number.isNaN(sd)) {
+      (upscaleBody.metadata as Record<string, unknown>).seed = sd;
+    }
+
+    generating.value = true;
+    currentTask.value = {
+      id: '',
+      progress: 0,
+      step: 0,
+      total: 0,
+      status: 'submitting',
+    };
+    const submitRes = await api.gen.createVideoUpscale(upscaleBody);
+    await runGenerationTask(submitRes, modelStr);
+    showEditorDrawer.value = false;
+    tasksStore.pollQueueOnce();
+  } catch (e: unknown) {
+    generating.value = false;
+    currentTask.value = null;
+    const msg = e instanceof Error ? e.message : String(e);
+    toast.error($tt('studio.error', { msg }));
   }
 }
 
@@ -779,16 +951,15 @@ function bindAnimateVideoPreview(path: string, previewUrl: string) {
 }
 
 function hasAnimateReference(): boolean {
-  if (startImagePath.value) return true;
-  return animateSourceMode.value === 'first_frame' && !!sourceVideoPath.value;
+  return !!startImagePath.value;
+}
+
+function hasEditReference(): boolean {
+  return !!sourceVideoPath.value;
 }
 
 function resolveAnimateSourcePath(): string {
-  if (startImagePath.value) return startImagePath.value;
-  if (animateSourceMode.value === 'first_frame' && sourceVideoPath.value) {
-    return sourceVideoPath.value;
-  }
-  return '';
+  return startImagePath.value || '';
 }
 const startImageSrc = ref('');
 const startImagePath = ref('');
@@ -803,24 +974,14 @@ watch(
   [startImagePath, tailImagePath, sourceVideoPath],
   () => {
     persistComposerSnapshot();
-    if (viewMode.value === 'canvas') {
-      syncCanvasOverlay('start_frame', startImagePath.value || null);
-      syncCanvasOverlay('tail_frame', tailImagePath.value || null);
-      syncCanvasOverlay('video_source', sourceVideoPath.value || null);
-    }
   }
 );
 
 const showAssetPicker = ref(false);
 const showTailAssetPicker = ref(false);
 
-function removeStartImage() {
-  if (videoWorkMode.value === 'upscale') {
-    clearAnimateVideoReference();
-    return;
-  }
-  if (videoWorkMode.value === 'animate') {
-    clearAnimateImageReference();
+function removeReference() {
+  if (videoWorkMode.value === 'edit') {
     clearAnimateVideoReference();
     return;
   }
@@ -904,39 +1065,25 @@ function goToDownload() {
 }
 
 function onStartAssetPick(payload: { path: string; previewUrl: string }) {
-  if (videoWorkMode.value === 'upscale') {
-    bindAnimateVideoPreview(payload.path, payload.previewUrl || '');
-    if (viewMode.value === 'canvas') {
-      syncCanvasOverlay('video_source', payload.path);
-    }
-    showAssetPicker.value = false;
-    return;
-  }
-
   const item = galleryItems.value.find((g) => g.path === payload.path);
   const isVideo = galleryPathIsVideo(payload.path, item);
-  if (videoWorkMode.value === 'animate' && isVideo) {
-    if (animateSourceMode.value !== 'first_frame') {
-      toast.warning($tt('video.animateVideoNeedsFirstFrameModel'));
+  if (videoWorkMode.value === 'edit') {
+    if (!isVideo) {
+      toast.warning($tt('assetPicker.needVideo'));
       return;
     }
     clearAnimateImageReference();
     bindAnimateVideoPreview(payload.path, payload.previewUrl || '');
-    if (viewMode.value === 'canvas') {
-      syncCanvasOverlay('start_frame', null);
-      syncCanvasOverlay('video_source', payload.path);
-    }
     showAssetPicker.value = false;
+    return;
+  }
+  if (videoWorkMode.value === 'animate' && isVideo) {
+    toast.warning($tt('video.animateUseEditModeForVideo'));
     return;
   }
 
   startImageSrc.value = payload.previewUrl || '';
   startImagePath.value = payload.path;
-  clearAnimateVideoReference();
-  if (viewMode.value === 'canvas') {
-    syncCanvasOverlay('start_frame', payload.path);
-    syncCanvasOverlay('video_source', null);
-  }
   void syncResolutionForStartImage(payload.previewUrl || '');
   showAssetPicker.value = false;
 }
@@ -954,7 +1101,6 @@ function onCanvasUseAsStartFrame(payload: { path: string; previewUrl: string; qu
   videoWorkMode.value = 'animate';
   startImageSrc.value = payload.previewUrl || '';
   startImagePath.value = payload.path;
-  syncCanvasOverlay('start_frame', payload.path);
   void syncResolutionForStartImage(payload.previewUrl || '');
   if (!payload.quiet) toast.success($tt('canvas.startFrameBound'));
 }
@@ -963,45 +1109,36 @@ function onCanvasUseAsTailFrame(payload: { path: string; previewUrl: string; qui
   videoWorkMode.value = 'animate';
   tailImageSrc.value = payload.previewUrl || '';
   tailImagePath.value = payload.path;
-  syncCanvasOverlay('tail_frame', payload.path);
   if (!payload.quiet) toast.success($tt('canvas.tailFrameBound'));
 }
 
 function onCanvasUseAsAnimateSource(payload: { path: string; previewUrl: string; quiet?: boolean }) {
   if (payload.quiet) fillComposerFromCanvasItem(payload.path);
-  videoWorkMode.value = 'animate';
+  videoWorkMode.value = 'edit';
   clearAnimateImageReference();
+  tailImageSrc.value = '';
+  tailImagePath.value = '';
   bindAnimateVideoPreview(payload.path, payload.previewUrl || '');
-  syncCanvasOverlay('start_frame', null);
-  syncCanvasOverlay('video_source', payload.path);
   if (!payload.quiet) toast.success($tt('canvas.animateVideoSourceBound'));
 }
 
 function onCanvasUseAsVideoSource(payload: { path: string; previewUrl: string; quiet?: boolean }) {
-  if (payload.quiet) fillComposerFromCanvasItem(payload.path);
-  videoWorkMode.value = 'upscale';
-  sourceVideoSrc.value = payload.previewUrl || '';
-  sourceVideoPath.value = payload.path;
-  syncCanvasOverlay('video_source', payload.path);
+  const item = galleryItems.value.find((g) => g.path === payload.path);
+  if (item) {
+    openUpscaleDrawerForItem(item);
+  }
   if (!payload.quiet) toast.success($tt('canvas.videoSourceBound'));
 }
 
 function onTailAssetPick(payload: { path: string; previewUrl: string }) {
   tailImageSrc.value = payload.previewUrl || '';
   tailImagePath.value = payload.path;
-  if (viewMode.value === 'canvas') {
-    syncCanvasOverlay('tail_frame', payload.path);
-  }
   showTailAssetPicker.value = false;
 }
 
 const assetPickerTitle = computed(() => {
-  if (videoWorkMode.value === 'animate') {
-    return animateSourceMode.value === 'first_frame'
-      ? $tt('video.animateSourceTitle')
-      : $tt('action.video.startImage');
-  }
-  if (videoWorkMode.value === 'upscale') return $tt('video.videoSourceTitle');
+  if (videoWorkMode.value === 'edit') return $tt('video.editSourceTitle');
+  if (videoWorkMode.value === 'animate') return $tt('action.video.startImage');
   return $tt('create.refImage');
 });
 
@@ -1013,22 +1150,11 @@ const referenceMedia = computed(() => {
       label: $tt('action.video.startImage'),
     };
   }
-  if (
-    videoWorkMode.value === 'animate'
-    && animateSourceMode.value === 'first_frame'
-    && sourceVideoSrc.value
-  ) {
+  if (videoWorkMode.value === 'edit' && sourceVideoSrc.value) {
     return {
       type: 'video' as const,
       previewUrl: sourceVideoSrc.value,
-      label: $tt('video.videoSourceTitle'),
-    };
-  }
-  if (videoWorkMode.value === 'upscale' && sourceVideoSrc.value) {
-    return {
-      type: 'video' as const,
-      previewUrl: sourceVideoSrc.value,
-      label: $tt('video.videoSourceTitle'),
+      label: $tt('video.editSourceTitle'),
     };
   }
   return null;
@@ -1057,28 +1183,6 @@ function longVideoSupported(): boolean {
   return Boolean(currentModelConfig.value?.parameters?.long_video_support);
 }
 
-const videoWorkSegmentOptions = computed(() => {
-  const acts = currentModelConfig.value?.actions || {};
-  const opts: { label: string; value: string }[] = [];
-  if (videoSupportsCreate(acts)) {
-    opts.push({ label: $tt('action.video.create'), value: 'create' });
-  }
-  if (videoSupportsAnimate(acts)) {
-    opts.push({ label: $tt('action.video.animate'), value: 'animate' });
-  }
-  if (videoSupportsUpscale(acts)) {
-    opts.push({ label: $tt('action.video.upscale'), value: 'upscale' });
-  }
-  if (opts.length === 0) {
-    return [
-      { label: $tt('action.video.create'), value: 'create' },
-      { label: $tt('action.video.animate'), value: 'animate' },
-      { label: $tt('action.video.upscale'), value: 'upscale' },
-    ];
-  }
-  return opts;
-});
-
 /* ------------------------------------------------------------------ */
 /*  Model Registry                                                     */
 /* ------------------------------------------------------------------ */
@@ -1086,9 +1190,7 @@ const videoWorkSegmentOptions = computed(() => {
 const modelRegistry = ref<Record<string, any>>({});
 const modelsDetailedStatus = ref<Record<string, any>>({});
 
-const compatibleLoras = ref<
-  { id: string; name?: string; base_model?: string; wan_lightning_distill?: boolean }[]
->([]);
+const compatibleLoras = ref<CompatibleLoraRow[]>([]);
 
 function syncVideoLoraSelection() {
   if (!params.lora) return;
@@ -1097,7 +1199,7 @@ function syncVideoLoraSelection() {
     params.lora = '';
     return;
   }
-  applyWanLightningComposerParams(params, row);
+  applyLoraComposeOverrides(params as Record<string, unknown>, row);
 }
 
 function buildVideoAdapters() {
@@ -1156,18 +1258,38 @@ const allVersions = computed(() => {
   return result;
 });
 
+const videoWorkSegmentOptions = computed(() => {
+  const opts: { label: string; value: string }[] = [];
+  if (allVersions.value.some((v) => videoSupportsCreate(v.actions || {}))) {
+    opts.push({ label: $tt('action.video.create'), value: 'create' });
+  }
+  if (allVersions.value.some((v) => videoSupportsAnimate(v.actions || {}))) {
+    opts.push({ label: $tt('video.modeAnimate'), value: 'animate' });
+  }
+  if (allVersions.value.some((v) => videoVersionSupportsEdit(v))) {
+    opts.push({ label: $tt('video.modeEdit'), value: 'edit' });
+  }
+  if (opts.length === 0) {
+    return [
+      { label: $tt('action.video.create'), value: 'create' },
+      { label: $tt('video.modeAnimate'), value: 'animate' },
+    ];
+  }
+  return opts;
+});
+
 const videoVersionsForMode = computed(() => {
   const filtered = allVersions.value.filter((v) => {
     const acts = v.actions || {};
     if (videoWorkMode.value === 'animate') {
       return videoSupportsAnimate(acts);
     }
-    if (videoWorkMode.value === 'upscale') {
-      return videoSupportsUpscale(acts);
+    if (videoWorkMode.value === 'edit') {
+      return videoVersionSupportsEdit(v);
     }
     return videoSupportsCreate(acts);
   });
-  if (videoWorkMode.value === 'upscale' || videoWorkMode.value === 'animate') {
+  if (videoWorkMode.value === 'animate' || videoWorkMode.value === 'edit') {
     return filtered;
   }
   return filtered.length ? filtered : allVersions.value;
@@ -1216,12 +1338,8 @@ const videoModelSelectOptions = computed(() => {
 
 const currentModelConfig = computed(() => modelRegistry.value[params.model] || null);
 
-const animateSourceMode = computed(() =>
-  resolveVideoEditSourceMode(currentModelConfig.value?.parameters),
-);
-
 const assetPickerAcceptKind = computed(() => {
-  if (videoWorkMode.value === 'upscale') return 'video' as const;
+  if (videoWorkMode.value === 'edit') return 'video' as const;
   if (videoWorkMode.value === 'animate') {
     return animateReferenceAcceptKind(currentModelConfig.value?.parameters);
   }
@@ -1247,17 +1365,15 @@ const selectedModelNotReady = computed(() => {
 const submitDisabled = computed(() => {
   if (generating.value) return true;
   if (selectedModelNotReady.value) return true;
-  if (videoWorkMode.value === 'upscale') {
-    return !sourceVideoSrc.value;
-  }
   if (!String(params.prompt || '').trim()) return true;
   if (videoWorkMode.value === 'animate' && !hasAnimateReference()) return true;
+  if (videoWorkMode.value === 'edit' && !hasEditReference()) return true;
   return false;
 });
 
 const primaryCtaLabel = computed(() => {
+  if (videoWorkMode.value === 'edit') return $tt('action.video.edit');
   if (videoWorkMode.value === 'animate') return $tt('action.video.animate');
-  if (videoWorkMode.value === 'upscale') return $tt('action.video.upscale');
   return $tt('action.video.create');
 });
 
@@ -1354,7 +1470,6 @@ async function syncResolutionForStartImage(previewUrl: string) {
 }
 
 function syncResolutionForModel(modelId?: string, opts?: { ignoreSaved?: boolean }) {
-  if (videoWorkMode.value === 'upscale') return;
   const mid = modelId || String(params.model || '');
   if (!mid) return;
   migrateLegacyVideoLastSize(mid);
@@ -1457,18 +1572,6 @@ const loadModelDefaults = () => {
   if (!config || !config.parameters) return;
 
   const p = config.parameters;
-  if (videoWorkMode.value === 'upscale') {
-    if (p.scale_factor && p.scale_factor.default != null) {
-      params.upscale_scale = p.scale_factor.default;
-    }
-    if (p.max_frames && p.max_frames.default != null) {
-      params.upscale_max_frames = p.max_frames.default;
-    }
-    if (p.fps) params.fps = p.fps.default;
-    params.seed = '';
-    params.lora = '';
-    return;
-  }
   if (p.steps) params.steps = p.steps.default;
   if (p.guide_scale) params.guide_scale = p.guide_scale.default;
   if (p.shift) params.shift = p.shift.default;
@@ -1490,12 +1593,6 @@ const hasCustomParams = computed(() => {
   const config = currentModelConfig.value;
   if (!config || !config.parameters) return false;
   const p = config.parameters;
-  if (videoWorkMode.value === 'upscale') {
-    if (p.scale_factor && params.upscale_scale !== p.scale_factor.default) return true;
-    if (p.max_frames && params.upscale_max_frames !== p.max_frames.default) return true;
-    if (params.seed) return true;
-    return false;
-  }
   if (p.steps && params.steps !== p.steps.default) return true;
   if (p.guide_scale && params.guide_scale !== p.guide_scale.default) return true;
   if (p.shift && params.shift !== p.shift.default) return true;
@@ -1523,11 +1620,8 @@ const presets = ref<Record<string, any>>({});
 const selectedPreset = ref('');
 
 const presetActionFilter = computed(() => {
-  if (videoWorkMode.value === 'animate') {
+  if (videoWorkMode.value === 'animate' || videoWorkMode.value === 'edit') {
     return new Set(['animate']);
-  }
-  if (videoWorkMode.value === 'upscale') {
-    return new Set(['upscale']);
   }
   return new Set(['create']);
 });
@@ -1603,8 +1697,12 @@ const loadPreset = () => {
   const preset = presets.value[selectedPreset.value];
   const app = preset.applies_to;
   const animateOnly = app.includes('animate') && !app.includes('create');
-  if (animateOnly && (videoWorkMode.value === 'create' || !hasAnimateReference())) {
+  if (animateOnly && videoWorkMode.value === 'create') {
     toast.warning($tt('video.presetNeedsAnimateSource'));
+  } else if (animateOnly && videoWorkMode.value === 'animate' && !hasAnimateReference()) {
+    toast.warning($tt('video.needStartImage'));
+  } else if (animateOnly && videoWorkMode.value === 'edit' && !hasEditReference()) {
+    toast.warning($tt('video.presetNeedsEditSource'));
   }
   if (preset.positive) {
     params.prompt = params.prompt
@@ -1723,7 +1821,7 @@ async function runGenerationTask(submitRes: unknown, modelStr: string) {
 }
 
 const startGeneration = async () => {
-  if (videoWorkMode.value !== 'upscale' && !String(params.prompt || '').trim()) {
+  if (!String(params.prompt || '').trim()) {
     toast.warning($tt('studio.enterPrompt'));
     return;
   }
@@ -1757,11 +1855,11 @@ const startGeneration = async () => {
   });
 
   if (videoWorkMode.value === 'animate' && !hasAnimateReference()) {
-    toast.warning($tt('video.needAnimateSource'));
+    toast.warning($tt('video.needStartImage'));
     return;
   }
-  if (videoWorkMode.value === 'upscale' && !sourceVideoSrc.value) {
-    toast.warning($tt('video.upscaleNeedSource'));
+  if (videoWorkMode.value === 'edit' && !hasEditReference()) {
+    toast.warning($tt('video.needEditSource'));
     return;
   }
 
@@ -1779,12 +1877,14 @@ const startGeneration = async () => {
     const meta = buildCanvasMeta();
     const modelStr = params.version ? `${params.model}:${params.version}` : params.model;
     let submitRes: any;
-    if (videoWorkMode.value === 'animate') {
-      const refPath = resolveAnimateSourcePath();
+    if (videoWorkMode.value === 'animate' || videoWorkMode.value === 'edit') {
+      const refPath = videoWorkMode.value === 'edit'
+        ? sourceVideoPath.value
+        : resolveAnimateSourcePath();
       let source_asset_id: string;
       if (refPath.startsWith('asset:')) {
         source_asset_id = refPath.slice('asset:'.length);
-      } else if (startImageSrc.value) {
+      } else if (videoWorkMode.value === 'animate' && startImageSrc.value) {
         const blob = await api.gen.urlToBlob(startImageSrc.value);
         const up = await api.gen.uploadAsset(
           new File([blob], 'start.png', { type: blob.type || 'image/png' })
@@ -1797,12 +1897,12 @@ const startGeneration = async () => {
           (blob.type && blob.type.includes('quicktime') && 'mov') ||
           'mp4';
         const up = await api.gen.uploadAsset(
-          new File([blob], `animate-src.${ext}`, { type: blob.type || 'video/mp4' })
+          new File([blob], `edit-src.${ext}`, { type: blob.type || 'video/mp4' })
         );
         source_asset_id = (up as any).id;
       }
       let tail_asset_id: string | undefined;
-      if (tailImageSrc.value) {
+      if (videoWorkMode.value === 'animate' && tailImageSrc.value) {
         const tp = tailImagePath.value;
         if (typeof tp === 'string' && tp.startsWith('asset:')) {
           tail_asset_id = tp.slice('asset:'.length);
@@ -1839,39 +1939,6 @@ const startGeneration = async () => {
         animateBody.adapters = adapters;
       }
       submitRes = await api.gen.createVideoEdit(animateBody);
-    } else if (videoWorkMode.value === 'upscale') {
-      let source_asset_id: string;
-      const vp = sourceVideoPath.value;
-      if (typeof vp === 'string' && vp.startsWith('asset:')) {
-        source_asset_id = vp.slice('asset:'.length);
-      } else {
-        const blob = await api.gen.urlToBlob(sourceVideoSrc.value);
-        const ext =
-          (blob.type && blob.type.includes('webm') && 'webm') ||
-          (blob.type && blob.type.includes('quicktime') && 'mov') ||
-          'mp4';
-        const up = await api.gen.uploadAsset(
-          new File([blob], `upscale-src.${ext}`, { type: blob.type || 'video/mp4' })
-        );
-        source_asset_id = (up as any).id;
-      }
-      const upscaleBody: Record<string, unknown> = {
-        model: modelStr,
-        source_asset_id,
-        scale: Number(params.upscale_scale) === 4 ? 4 : 2,
-        denoise: Number(params.upscale_denoise) || 0.3,
-        max_frames: Math.min(
-          4000,
-          Math.max(1, parseInt(String(params.upscale_max_frames), 10) || 300)
-        ),
-        metadata: { ...meta },
-        priority: 'normal',
-      };
-      const sd = params.seed ? parseInt(String(params.seed), 10) : null;
-      if (sd != null && !Number.isNaN(sd)) {
-        (upscaleBody.metadata as Record<string, unknown>).seed = sd;
-      }
-      submitRes = await api.gen.createVideoUpscale(upscaleBody);
     } else {
       const body: Record<string, unknown> = {
         model: modelStr,
@@ -1937,21 +2004,22 @@ function onGallerySelect(item: GalleryItem) {
   videoPreviewVisible.value = true;
 }
 
-watch(animateSourceMode, (mode, prev) => {
-  if (prev && mode !== 'first_frame' && sourceVideoPath.value && !startImagePath.value) {
+watch(videoWorkMode, (mode) => {
+  if (mode === 'animate') {
     clearAnimateVideoReference();
-    toast.warning($tt('video.animateVideoClearedForModel'));
+  } else if (mode === 'edit') {
+    clearAnimateImageReference();
+    tailImageSrc.value = '';
+    tailImagePath.value = '';
   }
-});
 
-watch(videoWorkMode, () => {
   const cfg = currentModelConfig.value;
   const acts = cfg && cfg.actions ? cfg.actions : {};
   let ok = true;
-  if (videoWorkMode.value === 'animate') {
+  if (mode === 'animate') {
     ok = videoSupportsAnimate(acts);
-  } else if (videoWorkMode.value === 'upscale') {
-    ok = videoSupportsUpscale(acts);
+  } else if (mode === 'edit') {
+    ok = videoVersionSupportsEdit({ modelKey: params.model, actions: acts });
   } else {
     ok = videoSupportsCreate(acts);
   }
@@ -1964,7 +2032,7 @@ watch(videoWorkMode, () => {
       loadModelDefaults();
       syncResolutionForModel(first.modelKey);
     }
-  } else if (videoWorkMode.value !== 'upscale') {
+  } else {
     syncResolutionForModel();
   }
 });
@@ -1998,7 +2066,7 @@ watch(
       params.lora = '';
       return;
     }
-    applyWanLightningComposerParams(params, row);
+    applyLoraComposeOverrides(params as Record<string, unknown>, row);
   },
 );
 
@@ -2064,9 +2132,16 @@ function onCreatePageKeydown(e: KeyboardEvent) {
   ) {
     return;
   }
-  if (e.key === 'Escape' && composerDrawerOpen.value) {
-    e.preventDefault();
-    closeComposerDrawer();
+  if (e.key === 'Escape') {
+    if (composerDrawerOpen.value) {
+      e.preventDefault();
+      closeComposerDrawer();
+      return;
+    }
+    if (showEditorDrawer.value) {
+      e.preventDefault();
+      showEditorDrawer.value = false;
+    }
     return;
   }
   if (e.key.toLowerCase() === 'c' && !e.metaKey && !e.ctrlKey && !e.altKey) {
@@ -2075,3 +2150,73 @@ function onCreatePageKeydown(e: KeyboardEvent) {
   }
 }
 </script>
+
+<style scoped>
+.studio-editor-drawer {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.studio-upscale-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.studio-video-upscale-preview {
+  flex-shrink: 0;
+  border-radius: var(--dq-radius-group);
+  overflow: hidden;
+  border: 0.5px solid var(--dq-glass-border);
+  background: var(--dq-fill-tertiary);
+}
+
+.studio-video-upscale-preview__media {
+  display: block;
+  width: 100%;
+  max-height: 220px;
+  object-fit: contain;
+  background: #000;
+}
+
+.studio-drawer-submit {
+  margin-top: auto;
+}
+</style>
+
+<style>
+.studio-video-editor-drawer .dq-drawer-body {
+  display: flex;
+  flex-direction: column;
+  padding: 16px 18px 20px;
+  overflow: hidden;
+}
+
+.studio-video-editor-drawer .studio-editor-drawer-pref-pane.dq-pref-pane {
+  border: 0.5px solid var(--dq-glass-border);
+  border-radius: var(--dq-radius-group);
+  background: var(--dq-glass-grouped-bg);
+  -webkit-backdrop-filter: var(--dq-glass-blur-light);
+  backdrop-filter: var(--dq-glass-blur-light);
+  overflow: hidden;
+}
+
+.studio-video-editor-drawer .studio-editor-drawer-pref-pane .dq-pref-row {
+  padding-left: 16px;
+  padding-right: 16px;
+}
+
+.studio-video-editor-drawer .studio-editor-drawer-pref-pane .dq-pref-row:first-child {
+  border-top: none;
+  padding-top: 12px;
+}
+
+.studio-video-editor-drawer .studio-editor-drawer-pref-pane .dq-pref-row:last-child {
+  padding-bottom: 12px;
+}
+</style>

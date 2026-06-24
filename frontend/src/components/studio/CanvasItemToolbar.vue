@@ -57,7 +57,7 @@
       <DqIconButton
         type="text"
         size="xs"
-        :label="$t('action.video.animate')"
+        :label="$t('action.video.edit')"
         @click="$emit('action', 'quick-animate-video')"
       >
         <DqIcon :size="14"><VideoCamera /></DqIcon>

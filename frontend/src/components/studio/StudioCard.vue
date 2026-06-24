@@ -108,7 +108,32 @@
                   <DqIcon :size="14"><Download /></DqIcon>
                 </DqIconButton>
               </ComposerIconTip>
-              <template v-else-if="isVideo">
+              <template v-if="media === 'video' && isImage">
+                <ComposerIconTip :content="$t('action.video.animate')">
+                  <DqIconButton
+                    type="text"
+                    size="sm"
+                    :label="$t('action.video.animate')"
+                    @click.stop="emitAction('animate')"
+                  >
+                    <DqIcon :size="14"><VideoCamera /></DqIcon>
+                  </DqIconButton>
+                </ComposerIconTip>
+              </template>
+              <template v-if="isVideo">
+                <ComposerIconTip
+                  v-if="media === 'video'"
+                  :content="$t('action.video.edit')"
+                >
+                  <DqIconButton
+                    type="text"
+                    size="sm"
+                    :label="$t('action.video.edit')"
+                    @click.stop="emitAction('video-edit')"
+                  >
+                    <DqIcon :size="14"><VideoCamera /></DqIcon>
+                  </DqIconButton>
+                </ComposerIconTip>
                 <ComposerIconTip :content="$t('action.video.upscale')">
                   <DqIconButton
                     type="text"
@@ -186,6 +211,43 @@
                   </DqIconButton>
                 </ComposerIconTip>
               </template>
+              <template v-else-if="media === 'video' && isImage">
+                <ComposerIconTip :content="$t('action.video.animate')">
+                  <DqIconButton
+                    type="text"
+                    size="sm"
+                    :label="$t('action.video.animate')"
+                    @click.stop="emitAction('animate')"
+                  >
+                    <DqIcon :size="14"><VideoCamera /></DqIcon>
+                  </DqIconButton>
+                </ComposerIconTip>
+              </template>
+              <template v-else-if="isVideo">
+                <ComposerIconTip
+                  v-if="media === 'video'"
+                  :content="$t('action.video.edit')"
+                >
+                  <DqIconButton
+                    type="text"
+                    size="sm"
+                    :label="$t('action.video.edit')"
+                    @click.stop="emitAction('video-edit')"
+                  >
+                    <DqIcon :size="14"><VideoCamera /></DqIcon>
+                  </DqIconButton>
+                </ComposerIconTip>
+                <ComposerIconTip :content="$t('action.video.upscale')">
+                  <DqIconButton
+                    type="text"
+                    size="sm"
+                    :label="$t('action.video.upscale')"
+                    @click.stop="emitAction('upscale')"
+                  >
+                    <DqIcon :size="14"><ZoomIn /></DqIcon>
+                  </DqIconButton>
+                </ComposerIconTip>
+              </template>
               <ComposerIconTip :content="$t('gallery.lineage')">
                 <DqIconButton
                   type="text"
@@ -251,6 +313,7 @@ import {
   Headset,
   Picture,
   Plus,
+  VideoCamera,
   VideoPlay,
   ZoomIn,
 } from '@danqing/dq-shell';

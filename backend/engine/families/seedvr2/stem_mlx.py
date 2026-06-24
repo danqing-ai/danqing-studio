@@ -611,11 +611,21 @@ def restore_video_chunk_spatiotemporal(
     eval_fn(decoded)
     if decoded.ndim == 4:
         decoded = decoded[:, :, None, :, :]
-    _, _, t_dec, _, _ = decoded.shape
+
+    t_in = int(processed.shape[2])
+    t_dec = int(decoded.shape[2])
+    if t_dec < t_in:
+        raise RuntimeError(
+            f"SeedVR2 VAE decode returned {t_dec} temporal slice(s) for {t_in} input frame(s); "
+            "cannot align restored chunk."
+        )
+    if t_dec > t_in:
+        decoded = decoded[:, :, :t_in, :, :]
+
     decoded = decoded[:, :, :, :true_h, :true_w]
-    style = processed[:, :, :, :true_h, :true_w]
+    style = processed[:, :, :t_in, :true_h, :true_w]
     corrected_slices: list[mx.array] = []
-    for ti in range(int(t_dec)):
+    for ti in range(t_in):
         d4 = decoded[:, :, ti, :, :]
         s4 = style[:, :, ti, :, :]
         corrected_slices.append(SeedVR2Util.apply_color_correction(d4, s4))

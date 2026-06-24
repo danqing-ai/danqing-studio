@@ -290,16 +290,16 @@ class SettingsService(ISettingsService):
                     )
                 if not ok:
                     continue
-            params = getattr(config, "parameters", None) or {}
+            from backend.catalog.lora_meta import lora_adapter_picklist_row
+
             out.append(
-                {
-                    "kind": "lora",
-                    "id": key,
-                    "name": (config.name or {}).get("zh") or (config.name or {}).get("en") or key,
-                    "base_model": lora_base,
-                    "source": "registry",
-                    "wan_lightning_distill": bool(params.get("wan_lightning_distill")),
-                }
+                lora_adapter_picklist_row(
+                    config,
+                    lora_id=key,
+                    name=(config.name or {}).get("zh") or (config.name or {}).get("en") or key,
+                    base_model=lora_base,
+                    source="registry",
+                )
             )
         from backend.engine.training.user_lora_registry import list_user_loras
 

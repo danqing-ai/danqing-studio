@@ -60,6 +60,8 @@ def api_action_frozenset(actions: Any, *, media: str) -> FrozenSet[str]:
             s.add("generate")
         if actions.get("animate") is not None:
             s.add("edit")
+        if actions.get("upscale") is not None:
+            s.add("upscale")
         return frozenset(s)
     if media == "audio":
         s: set[str] = set()

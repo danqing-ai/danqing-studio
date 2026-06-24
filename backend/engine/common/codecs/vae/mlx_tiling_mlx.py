@@ -34,6 +34,9 @@ class VAETiler:
         tile_overlap: tuple[int, int] = (64, 64),
         spatial_scale: int = 8,
     ) -> mx.array:
+        if image.ndim == 5:
+            return encode_fn(image)
+
         B, _, H, W = image.shape
 
         if B != 1:
@@ -237,6 +240,10 @@ class VAEUtil:
         image: mx.array,
         tiling_config: TilingConfig | None = None,
     ) -> mx.array:
+        # Spatiotemporal volumes (B,C,T,H,W) must use the 3D VAE directly; spatial tiling is 2D-only.
+        if image.ndim == 5:
+            return vae.encode(image)
+
         if tiling_config is not None and tiling_config.vae_encode_tiled:
             return VAETiler.encode_image_tiled(
                 image=image,

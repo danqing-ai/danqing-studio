@@ -115,13 +115,13 @@
           <DqOption
             v-for="l in compatibleLoras"
             :key="String(l.id)"
-            :label="loraOptionLabel(l)"
+            :label="loraOptionLabelForRow(l)"
             :value="String(l.id)"
           />
         </DqSelect>
       </div>
-      <p v-if="selectedLightningLora" class="video-advanced-fields__lora-hint">
-        {{ $t('studio.wanLightningLoraHint') }}
+      <p v-if="selectedLoraHintKey" class="video-advanced-fields__lora-hint">
+        {{ $t(selectedLoraHintKey) }}
       </p>
       <div v-if="params.lora" class="video-advanced-fields__item">
         <div class="video-advanced-fields__head">
@@ -148,10 +148,10 @@ import type { SegmentComposeParams } from '@/composables/useLongVideoSegmentComp
 import type { NormalizedParamSpec } from '@/utils/registryParamSchema';
 import {
   findCompatibleLora,
-  isWanLightningLoraEntry,
-  videoLoraOptionLabel,
-  type WanCompatibleLora,
-} from '@/utils/wanVideoLora';
+  loraHintKey,
+  loraOptionLabel,
+  type CompatibleLoraRow,
+} from '@/utils/loraAdapterMeta';
 
 const props = defineProps<{
   params: SegmentComposeParams;
@@ -200,18 +200,18 @@ const showGuideScale = computed(() => {
 
 const showNumFrames = computed(() => Boolean(props.paramSchema.num_frames));
 
-function loraOptionLabel(l: Record<string, unknown>): string {
+function loraOptionLabelForRow(l: Record<string, unknown>): string {
   if (l.source === 'user_trained') {
-    return videoLoraOptionLabel(l as WanCompatibleLora, $t('studio.myLoraTag'));
+    return loraOptionLabel(l as CompatibleLoraRow, $t('studio.myLoraTag'));
   }
-  return videoLoraOptionLabel(l as WanCompatibleLora);
+  return loraOptionLabel(l as CompatibleLoraRow);
 }
 
-const selectedLightningLora = computed(() => {
+const selectedLoraHintKey = computed(() => {
   const id = String(props.params.lora || '');
-  if (!id) return false;
-  const row = findCompatibleLora((props.compatibleLoras || []) as WanCompatibleLora[], id);
-  return isWanLightningLoraEntry(row);
+  if (!id) return null;
+  const row = findCompatibleLora((props.compatibleLoras || []) as CompatibleLoraRow[], id);
+  return loraHintKey(row);
 });
 
 function randomizeSeed() {

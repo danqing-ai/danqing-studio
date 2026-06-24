@@ -408,6 +408,7 @@
     "video": {
       "create": "文生视频",
       "animate": "图生视频",
+      "edit": "视频编辑",
       "upscale": "视频修复",
       "upscaleDesc": "选择 SeedVR2 视频修复模型与源视频，设置倍率、去噪与帧数上限后提交（无需提示词）；走时空 latent 复原以提升帧间一致性。",
       "startImage": "起始图片"
@@ -533,7 +534,9 @@
     "restoreDefaults": "恢复默认配置",
     "loraLabel": "LoRA",
     "noLora": "不使用 LoRA",
-    "wanLightningLoraHint": "Lightning LoRA 含高噪/低噪双分片，引擎按步自动合并；固定 4 步、无 CFG、Shift=5。",
+    "loraHint": {
+      "videoStepDistillMoe": "该 LoRA 含高噪/低噪双分片，引擎按步自动合并；参数以注册表 compose_overrides 为准。"
+    },
     "myLoraTag": "我的 LoRA",
     "pickLoraToAdd": "选择 LoRA 添加…",
     "uploadFailed": "图片上传失败: {msg}",
@@ -799,7 +802,9 @@
     "presetTagT2I": "[文生图]",
     "presetTagI2I": "[图生图]",
     "noLora": "不使用 LoRA",
-    "wanLightningLoraHint": "Lightning LoRA 含高噪/低噪双分片，引擎按步自动合并；固定 4 步、无 CFG、Shift=5。",
+    "loraHint": {
+      "videoStepDistillMoe": "该 LoRA 含高噪/低噪双分片，引擎按步自动合并；参数以注册表 compose_overrides 为准。"
+    },
     "myLoraTag": "我的 LoRA",
     "pickLoraToAdd": "选择 LoRA 添加…",
     "seedPlaceholder": "随机",
@@ -874,7 +879,13 @@
     "title": "AI 视频创作",
     "modeCreate": "文生视频",
     "modeAnimate": "图生视频",
+    "modeEdit": "视频编辑",
     "modeUpscale": "视频修复",
+    "editSourceTitle": "源视频",
+    "editSourceHint": "上传或选择要编辑的源视频，配合提示词做风格迁移、局部编辑等。",
+    "needEditSource": "请先上传或选择源视频。",
+    "presetNeedsEditSource": "该预设面向视频编辑，请先添加源视频。",
+    "animateUseEditModeForVideo": "图生视频仅支持图片起始帧；请切换到「视频编辑」并选择源视频。",
     "modeLongVideo": "长视频",
     "longVideoOpenStudio": "打开长视频工作台 →",
     "longVideoHeroTitle": "从一段梗概开始",
@@ -1111,7 +1122,7 @@
     "runtimeClipSecs": "成片时长（帧数 ÷ 帧率）约 {sec} 秒",
     "runtimeGenWarning": "本地视频生成通常需要数分钟至十余分钟，可离开本页并在顶栏任务队列查看进度。",
     "runtimeModelSize": "当前权重版本约 {size}（磁盘），请预留足够 Apple 统一内存。",
-    "needStartImage": "「动画化」请先上传或选择起始图片。",
+    "needStartImage": "图生视频请先上传或选择起始图片。",
     "needAnimateSource": "请先上传或选择源视频或起始图片。",
     "presetNeedsAnimateSource": "该预设面向图生视频/视频编辑，请先添加源视频或起始图",
     "animateVideoNeedsFirstFrameModel": "当前模型仅支持图片起始帧；请选择支持源视频的编辑模型（如 Bernini-R）。",

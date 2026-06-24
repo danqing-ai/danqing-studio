@@ -106,7 +106,7 @@ class WanMoETransformer:
                 continue
             merge_wan_lora_into_expert(
                 expert,
-                side=side if spec.get("lightning") else None,
+                side=side if spec.get("moe_shards") else None,
                 lora_id=lora_id,
                 strength=float(spec["strength"]),
                 bundle_root=spec["bundle"],
@@ -133,20 +133,19 @@ class WanMoETransformer:
         specs: list[dict[str, Any]] = []
         for item in adapters or ():
             lora_id, strength = adapter_id_weight(item)
-            mid, bundle, lightning = resolve_wan_lora_bundle(
+            mid, bundle, moe_shards = resolve_wan_lora_bundle(
                 lora_id,
                 base_model_id=base_model_id,
                 project_root=project_root,
                 registry=registry,
             )
-            if lightning:
+            if moe_shards:
                 specs.append(
                     {
                         "lora_id": mid,
                         "strength": strength,
                         "bundle": bundle,
-                        "lightning": True,
-                        "side": None,
+                        "moe_shards": True,
                         "on_log": on_log,
                     }
                 )
@@ -156,8 +155,7 @@ class WanMoETransformer:
                         "lora_id": mid,
                         "strength": strength,
                         "bundle": bundle,
-                        "lightning": False,
-                        "side": None,
+                        "moe_shards": False,
                         "on_log": on_log,
                     }
                 )

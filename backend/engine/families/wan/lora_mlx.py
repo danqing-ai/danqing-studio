@@ -9,7 +9,6 @@ import mlx.core as mx
 from backend.core.contracts import parse_model_version
 from backend.catalog.lora_meta import (
     adapters_include_video_step_distill,
-    lora_base_compatible,
     lora_moe_shards,
 )
 from backend.engine.common.bundle.lora_mlx import (
@@ -222,7 +221,7 @@ def resolve_wan_lora_bundle(
     project_root: Path,
     registry: Any,
 ) -> tuple[str, Path, bool]:
-    """Return ``(mid, bundle_path, is_lightning_moe)`` for one adapter id."""
+    """Return ``(mid, bundle_path, moe_shards)`` for one adapter id."""
     mid, ver = parse_model_version(lora_id)
     entry = registry.require(mid)
     raw = getattr(entry, "raw", None) or {}

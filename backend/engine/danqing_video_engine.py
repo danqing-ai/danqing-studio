@@ -217,17 +217,13 @@ class DanQingVideoEngine(IVideoEngine):
 
         on_progress = make_pipeline_progress_callback(ctx)
 
-        def on_log(lvl, msg):
-            from backend.core.contracts import LogEvent
-            ctx.on_log(LogEvent(level=lvl, message=msg))
-
         result = await asyncio.to_thread(
             dispatch_video_upscale,
             **self._dispatch_kwargs(runtime, ctx),
             request=request,
             exec_ctx=ctx,
             on_progress=on_progress,
-            on_log=on_log,
+            on_log=ctx.on_log,
         )
         if result is None:
             return EngineResult(primary_asset_id="", metadata={"status": "cancelled"})

@@ -74,9 +74,10 @@ class SeedVR2LatentCreator:
         if encoded_latent.ndim == 4:
             encoded_latent = encoded_latent[:, :, None, :, :]
 
-        height = encoded_latent.shape[3]
-        width = encoded_latent.shape[4]
-        mask = mx.ones((1, 1, 1, height, width))
+        t = int(encoded_latent.shape[2])
+        height = int(encoded_latent.shape[3])
+        width = int(encoded_latent.shape[4])
+        mask = mx.ones((1, 1, t, height, width))
         condition_with_mask = mx.concatenate([encoded_latent, mask], axis=1)
         return condition_with_mask
 

@@ -664,6 +664,7 @@ class DownloadService(IDownloadService):
         from backend.services.hunyuan_ms_bundle import (
             ensure_hunyuan_ms_bundle_assembled,
             hunyuan_assembled_bundle_patterns,
+            hunyuan_bundle_ready_patterns,
             hunyuan_raw_download_patterns,
             is_hunyuan_ms_bundle_assembled,
         )
@@ -672,11 +673,11 @@ class DownloadService(IDownloadService):
             return False
         try:
             if is_hunyuan_ms_bundle_assembled(dest):
-                return not _missing_bundle_patterns(dest, hunyuan_assembled_bundle_patterns())
+                return not _missing_bundle_patterns(dest, hunyuan_bundle_ready_patterns(variant))
             if _missing_bundle_patterns(dest, hunyuan_raw_download_patterns(variant)):
                 return False
             ensure_hunyuan_ms_bundle_assembled(dest, variant)
-            return not _missing_bundle_patterns(dest, hunyuan_assembled_bundle_patterns())
+            return not _missing_bundle_patterns(dest, hunyuan_bundle_ready_patterns(variant))
         except RuntimeError:
             return False
 

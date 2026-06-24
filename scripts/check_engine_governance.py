@@ -555,10 +555,33 @@ def check_registry() -> list[str]:
                     "hunyuan-video-1.5-i2v-720p-distill: hunyuan_ms_variant must be 720p_i2v_distilled_sparse"
                 )
             patterns = ver.get("allow_patterns") if isinstance(ver, dict) else None
-            if not isinstance(patterns, list) or "image_encoder/**" not in patterns:
+            if isinstance(patterns, list) and "image_encoder/**" in patterns:
                 failures.append(
-                    "hunyuan-video-1.5-i2v-720p-distill: allow_patterns must include image_encoder/**"
+                    "hunyuan-video-1.5-i2v-720p-distill: image_encoder/** must come from "
+                    "FLUX.1-Redux-dev bundle_repos, not Tencent-Hunyuan allow_patterns"
                 )
+            bundle = ver.get("bundle_repos") if isinstance(ver, dict) else None
+            if not isinstance(bundle, list) or len(bundle) < 4:
+                failures.append(
+                    "hunyuan-video-1.5-i2v-720p-distill: bundle_repos must include "
+                    "Hunyuan + SigLIP (FLUX Redux) + Qwen + ByT5"
+                )
+            elif isinstance(bundle, list):
+                siglip = next(
+                    (
+                        item
+                        for item in bundle
+                        if isinstance(item, dict)
+                        and item.get("repo_id") == "black-forest-labs/FLUX.1-Redux-dev"
+                    ),
+                    None,
+                )
+                siglip_patterns = siglip.get("allow_patterns") if isinstance(siglip, dict) else None
+                if not isinstance(siglip_patterns, list) or "image_encoder/**" not in siglip_patterns:
+                    failures.append(
+                        "hunyuan-video-1.5-i2v-720p-distill: FLUX.1-Redux-dev bundle_repos entry "
+                        "must include image_encoder/**"
+                    )
         params = i2v_distill.get("parameters", {})
         if params.get("supports_guidance") is not False:
             failures.append("hunyuan-video-1.5-i2v-720p-distill: parameters.supports_guidance must be false")
