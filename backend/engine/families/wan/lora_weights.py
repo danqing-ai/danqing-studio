@@ -82,6 +82,8 @@ def wan_lora_param_key(module_name: str) -> str:
     name = module_name
     if name.startswith("transformer."):
         name = name[len("transformer.") :]
+    if name.startswith("diffusion_model."):
+        name = name[len("diffusion_model.") :]
     name = re.sub(r"\.attn1\.to_q\.", ".self_attn.q.", name)
     name = re.sub(r"\.attn1\.to_k\.", ".self_attn.k.", name)
     name = re.sub(r"\.attn1\.to_v\.", ".self_attn.v.", name)
@@ -92,6 +94,8 @@ def wan_lora_param_key(module_name: str) -> str:
     name = re.sub(r"\.attn2\.to_out\.0\.", ".cross_attn.o.", name)
     name = name.replace(".ffn.net.0.proj.", ".ffn.layer_0.")
     name = name.replace(".ffn.net.2.", ".ffn.layer_2.")
+    name = re.sub(r"\.ffn\.0(?=\.|$)", ".ffn.layer_0", name)
+    name = re.sub(r"\.ffn\.2(?=\.|$)", ".ffn.layer_2", name)
     if name.endswith(".delta"):
         return name.replace(".delta", ".weight")
     if not name.endswith(".weight"):

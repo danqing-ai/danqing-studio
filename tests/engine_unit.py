@@ -5266,6 +5266,14 @@ class ArchitectureWrapUpTests(unittest.TestCase):
         groups = remap_wan_lora_keys(weights)
         self.assertIn("blocks.0.self_attn.q", groups)
         self.assertEqual(wan_lora_param_key("blocks.0.self_attn.q"), "blocks.0.self_attn.q.weight")
+        self.assertEqual(
+            wan_lora_param_key("diffusion_model.blocks.0.cross_attn.k"),
+            "blocks.0.cross_attn.k.weight",
+        )
+        self.assertEqual(
+            wan_lora_param_key("diffusion_model.blocks.3.ffn.0"),
+            "blocks.3.ffn.layer_0.weight",
+        )
 
     def test_lora_registry_meta(self) -> None:
         from types import SimpleNamespace
