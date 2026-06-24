@@ -5667,6 +5667,43 @@ class ArchitectureWrapUpTests(unittest.TestCase):
             self.assertTrue(cfg.dual_model)
             self.assertEqual(cfg.dim, 3072)
 
+    def test_merge_wan_config_moe_reads_expert_config(self) -> None:
+        import json
+
+        from backend.engine.config.model_configs import WanConfig, merge_wan_bundle_config
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            high = root / "high_noise_model"
+            low = root / "low_noise_model"
+            high.mkdir()
+            low.mkdir()
+            (high / "config.json").write_text(
+                json.dumps(
+                    {
+                        "_class_name": "WanModel",
+                        "dim": 5120,
+                        "ffn_dim": 13824,
+                        "num_heads": 40,
+                        "num_layers": 40,
+                        "in_dim": 36,
+                        "out_dim": 16,
+                        "model_type": "i2v",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (root / "Wan2.1_VAE.pth").write_bytes(b"")
+            cfg = WanConfig()
+            merge_wan_bundle_config(cfg, root)
+            self.assertTrue(cfg.dual_model)
+            self.assertEqual(cfg.dim, 5120)
+            self.assertEqual(cfg.depth, 40)
+            self.assertEqual(cfg.num_heads, 40)
+            self.assertEqual(cfg.dim_in, 36)
+            self.assertEqual(cfg.dim_out, 16)
+            self.assertEqual(cfg.vae_z_dim, 16)
+
     def test_video_ltx_distilled_flag(self) -> None:
         from types import SimpleNamespace
 

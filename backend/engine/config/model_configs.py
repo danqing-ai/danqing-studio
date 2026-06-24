@@ -612,10 +612,19 @@ def merge_wan_config_from_bundle(config: WanConfig, bundle_root: Path | None) ->
         return
     from backend.engine.pipelines.video_bundle_layout import wan_is_moe_bundle
 
-    if wan_is_moe_bundle(bundle_root):
+    is_moe = wan_is_moe_bundle(bundle_root)
+    if is_moe:
         config.dual_model = True
 
     candidates = [bundle_root / "config.json", bundle_root / "transformer" / "config.json"]
+    if is_moe:
+        # ModelScope / Wan-AI 14B MoE releases ship per-expert config under high/low dirs.
+        candidates.extend(
+            [
+                bundle_root / "high_noise_model" / "config.json",
+                bundle_root / "low_noise_model" / "config.json",
+            ]
+        )
     cfg_path = next((p for p in candidates if p.is_file()), None)
     if cfg_path is None:
         return
