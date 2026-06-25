@@ -231,6 +231,9 @@ class WanModelMLX(TransformerBase):
         self._cached_cross_kv = None
         self._rope_cos_sin = None
         self._rope_grid_key = None
+        # I2V conditioning is per-run; clear so cached models do not leak into T2V.
+        self._i2v_cond = None
+        self._i2v_mask = None
 
     def after_load_weights(self, bundle_root=None) -> None:
         super().after_load_weights(bundle_root)

@@ -1782,6 +1782,8 @@ class HunyuanWeightTests(unittest.TestCase):
 
         _, t2v_cond = model.before_denoise(latents, timesteps, None)
         self.assertNotIn("wan_expand_timesteps", t2v_cond)
+        self.assertIsNone(model._inner._i2v_cond)
+        self.assertIsNone(model._inner._i2v_mask)
 
         i2v_cond_in = {
             "wan_i2v": True,
@@ -1791,6 +1793,16 @@ class HunyuanWeightTests(unittest.TestCase):
         _, i2v_cond = model.before_denoise(latents, timesteps, None, **i2v_cond_in)
         self.assertTrue(i2v_cond.get("wan_expand_timesteps"))
         self.assertIsNotNone(i2v_cond.get("wan_i2v_mask"))
+        self.assertIsNotNone(model._inner._i2v_cond)
+        self.assertIsNotNone(model._inner._i2v_mask)
+
+        # Cached Wan models must not leak I2V state into a later T2V run.
+        _, t2v_cond2 = model.before_denoise(latents, timesteps, None)
+        self.assertNotIn("wan_expand_timesteps", t2v_cond2)
+        self.assertIsNone(model._inner._i2v_cond)
+        self.assertIsNone(model._inner._i2v_mask)
+        rebound = model._inner.reblend_i2v_latents(latents)
+        self.assertTrue(mx.array_equal(rebound, latents))
 
     def test_wan_umt5_weights_load(self) -> None:
         from pathlib import Path
