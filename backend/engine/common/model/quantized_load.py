@@ -9,14 +9,120 @@ from backend.engine.common.model.base import _assign_param_tensor, _mlx_affine_i
 _QUANT_AFFINE_FIELDS = frozenset({"scales", "biases"})
 
 
+def _iter_quantized_children(obj: Any) -> list[tuple[Any, Any]]:
+    """Yield ``(key, child)`` pairs for module-tree walks (``key`` is str or int)."""
+    from importlib import import_module
+
+    nn = import_module("mlx.nn")
+    if isinstance(obj, (nn.Linear, nn.QuantizedLinear)):
+        return []
+    out: list[tuple[Any, Any]] = []
+    if isinstance(obj, (list, tuple)):
+        for i, item in enumerate(obj):
+            out.append((i, item))
+        return out
+    if isinstance(obj, nn.Module):
+        for name, child in obj.children().items():
+            out.append((name, child))
+        return out
+    for attr_name in dir(obj):
+        if attr_name.startswith("_") or attr_name in ("ctx", "config"):
+            continue
+        try:
+            attr = getattr(obj, attr_name)
+        except Exception:
+            continue
+        if attr is None or isinstance(attr, (int, float, str, bool, type)):
+            continue
+        if isinstance(attr, (nn.Module, nn.Linear)) or isinstance(attr, (list, tuple)):
+            out.append((attr_name, attr))
+        elif hasattr(attr, "__dict__") and not isinstance(attr, type):
+            out.append((attr_name, attr))
+    return out
+
+
+def _replace_module_instance(root: Any, old: Any, new: Any) -> None:
+    """Swap ``old`` for ``new`` on its parent (``to_quantized`` returns a new module)."""
+    stack: list[tuple[Any, Any, Any]] = [(root, None, None)]
+    while stack:
+        node, parent, key = stack.pop()
+        if node is old:
+            if parent is None:
+                raise RuntimeError("cannot replace root module instance")
+            if isinstance(key, int):
+                parent[key] = new
+            else:
+                setattr(parent, key, new)
+            return
+        for child_key, child in _iter_quantized_children(node):
+            if isinstance(child, (list, tuple)):
+                for i, item in enumerate(child):
+                    stack.append((item, child, i))
+            else:
+                stack.append((child, node, child_key))
+    raise RuntimeError("Could not locate module instance to replace in model tree")
+
+
+def _quantized_load_submodules(obj: Any) -> list[Any]:
+    """Collect nested MLX modules / lists for flat-base linear lookup."""
+    return [child for _, child in _iter_quantized_children(obj)]
+
+
+def _find_nn_linear_by_weight(root: Any, weight: Any) -> Any | None:
+    from importlib import import_module
+
+    nn = import_module("mlx.nn")
+    stack = [root]
+    seen: set[int] = set()
+    while stack:
+        node = stack.pop()
+        nid = id(node)
+        if nid in seen:
+            continue
+        seen.add(nid)
+        if isinstance(node, nn.Linear):
+            try:
+                if node.weight is weight:
+                    return node
+            except Exception:
+                pass
+        stack.extend(_quantized_load_submodules(node))
+    return None
+
+
+def _linear_for_flat_base(model: Any, base: str) -> Any | None:
+    """Resolve flat ``_param_map`` base (e.g. ``head.1``) to the owning ``nn.Linear``."""
+    param_map = getattr(model, "_param_map", None)
+    if not param_map:
+        return None
+    target = param_map.get(f"{base}.weight")
+    if target is None:
+        return None
+    return _find_nn_linear_by_weight(model, target)
+
+
 def _resolve_module_attr(root: Any, key: str) -> tuple[Any, str]:
     parts = key.split(".")
     if len(parts) < 2:
         raise RuntimeError(f"Invalid quantized module key: {key!r}")
+    attr = parts[-1]
+    base = ".".join(parts[:-1])
+    if attr in _QUANT_AFFINE_FIELDS:
+        linear = _linear_for_flat_base(root, base)
+        if linear is not None:
+            return linear, attr
     obj: Any = root
     for part in parts[:-1]:
-        obj = obj[int(part)] if part.isdigit() else getattr(obj, part)
-    return obj, parts[-1]
+        if part.isdigit() and isinstance(obj, (list, tuple)):
+            obj = obj[int(part)]
+        elif part.isdigit() and hasattr(obj, "__getitem__") and not isinstance(obj, (str, bytes)):
+            try:
+                obj = obj[int(part)]
+            except (IndexError, KeyError, TypeError):
+                obj = getattr(obj, part)
+        else:
+            obj = getattr(obj, part)
+    return obj, attr
 
 
 def _assign_quant_affine_field(root: Any, key: str, tensor: Any) -> None:
@@ -84,15 +190,27 @@ def apply_quantized_skeleton(
 
     for base in sorted(bases):
         _quantize_linear_at_base(model, base, bits=bits, group_size=group_size)
+        if hasattr(model, "_build_param_map"):
+            model._build_param_map()
 
 
 def _quantize_linear_at_base(root: Any, base: str, *, bits: int, group_size: int) -> None:
     from importlib import import_module
 
     nn = import_module("mlx.nn")
-    obj: Any = root
-    for part in base.split("."):
-        obj = obj[int(part)] if part.isdigit() else getattr(obj, part)
+    obj = _linear_for_flat_base(root, base)
+    if obj is None:
+        obj = root
+        for part in base.split("."):
+            if part.isdigit() and isinstance(obj, (list, tuple)):
+                obj = obj[int(part)]
+            elif part.isdigit() and hasattr(obj, "__getitem__") and not isinstance(obj, (str, bytes)):
+                try:
+                    obj = obj[int(part)]
+                except (IndexError, KeyError, TypeError):
+                    obj = getattr(obj, part)
+            else:
+                obj = getattr(obj, part)
     if not isinstance(obj, nn.Linear):
         raise RuntimeError(
             f"Affine-quant checkpoint base {base!r} does not map to nn.Linear "
@@ -104,7 +222,8 @@ def _quantize_linear_at_base(root: Any, base: str, *, bits: int, group_size: int
             f"Cannot quantize {base!r} for inference: in_features={in_features} "
             f"is not divisible by group_size={group_size}"
         )
-    obj.to_quantized(bits=bits, group_size=group_size)
+    quantized = obj.to_quantized(bits=bits, group_size=group_size)
+    _replace_module_instance(root, obj, quantized)
 
 
 def load_weights_quantized_inference(

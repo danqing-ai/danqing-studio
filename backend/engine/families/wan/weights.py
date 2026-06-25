@@ -50,11 +50,9 @@ def remap_wan_weights(weights: dict) -> dict:
         if new_key.startswith("transformer."):
             new_key = new_key[len("transformer.") :]
         new_key = _remap_diffusers_to_wan(new_key) if diffusers else new_key
-        # Original Wan FFN keys
-        new_key = new_key.replace(".ffn.0.weight", ".ffn.layer_0.weight")
-        new_key = new_key.replace(".ffn.0.bias", ".ffn.layer_0.bias")
-        new_key = new_key.replace(".ffn.2.weight", ".ffn.layer_2.weight")
-        new_key = new_key.replace(".ffn.2.bias", ".ffn.layer_2.bias")
+        # Original Wan FFN keys (dense + MLX affine quant sidecars)
+        for old, new in ((".ffn.0.", ".ffn.layer_0."), (".ffn.2.", ".ffn.layer_2.")):
+            new_key = new_key.replace(old, new)
         new_key = new_key.replace(".norm_q.weight", ".norm_q.weight")
         # Official Wan ``Head`` module: ``head.head`` linear → flat ``head.1`` (see ``_param_map``).
         new_key = new_key.replace("head.head.", "head.1.")

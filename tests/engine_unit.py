@@ -2580,6 +2580,20 @@ class HunyuanWeightTests(unittest.TestCase):
         self.assertEqual(out["head.modulation"], "m")
         self.assertEqual(out["blocks.0.self_attn.q.weight"], "q")
 
+    def test_remap_wan_weights_ffn_affine_sidecars(self) -> None:
+        from backend.engine.families.wan.weights import remap_wan_weights
+
+        out = remap_wan_weights(
+            {
+                "blocks.0.ffn.0.scales": "s0",
+                "blocks.0.ffn.0.biases": "b0",
+                "blocks.0.ffn.2.weight": "w2",
+            }
+        )
+        self.assertEqual(out["blocks.0.ffn.layer_0.scales"], "s0")
+        self.assertEqual(out["blocks.0.ffn.layer_0.biases"], "b0")
+        self.assertEqual(out["blocks.0.ffn.layer_2.weight"], "w2")
+
     def test_wan_t2v_skips_expand_timesteps(self) -> None:
         """T2V must not set wan_expand_timesteps (scalar adaLN); I2V requires it."""
         import mlx.core as mx

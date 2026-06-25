@@ -27,6 +27,15 @@ from backend.persistence.asset_store import SQLiteAssetStore
 from backend.scheduler.task_dispatch import dispatch_task
 
 
+def _task_error_message(exc: BaseException) -> str:
+    msg = str(exc)
+    if msg:
+        return msg
+    if isinstance(exc, KeyError) and exc.args:
+        return f"KeyError: {exc.args[0]!r}"
+    return repr(exc) or exc.__class__.__name__
+
+
 class TaskScheduler:
     def __init__(
         self,
@@ -446,10 +455,11 @@ class TaskScheduler:
             trace.mark_cancelled()
             self._tasks.mark_cancelled(tid)
         except Exception as e:
+            err = _task_error_message(e)
             if trace.failure is None:
-                trace.set_failure(classify_exception_message(str(e)), detail=str(e))
-            self._tasks.mark_failed(tid, str(e))
-            self._tasks.append_log(tid, str(e), "error")
+                trace.set_failure(classify_exception_message(err), detail=err)
+            self._tasks.mark_failed(tid, err)
+            self._tasks.append_log(tid, err, "error")
         finally:
             try:
                 trace.save(self._work_dir(tid) / "trace.json")
