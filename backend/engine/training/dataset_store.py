@@ -121,6 +121,27 @@ def _dataset_dir(root: Path, dataset_id: str) -> Path:
     return root / dataset_id
 
 
+def validate_dataset_id(dataset_id: str) -> str:
+    dataset_id = (dataset_id or "").strip()
+    if not dataset_id or dataset_id.startswith("_") or "/" in dataset_id or "\\" in dataset_id:
+        raise ValueError(f"Invalid dataset id {dataset_id!r}")
+    return dataset_id
+
+
+def resolve_dataset_file(dataset_dir: Path, file_rel: str) -> tuple[Path, str]:
+    """Resolve a dataset-relative file path; reject traversal outside ``dataset_dir``."""
+    rel = (file_rel or "").strip().replace("\\", "/")
+    if not rel or rel.startswith("/") or ".." in Path(rel).parts:
+        raise ValueError(f"Invalid dataset file path {file_rel!r}")
+    root = dataset_dir.resolve()
+    candidate = (root / rel).resolve()
+    try:
+        rel_key = str(candidate.relative_to(root)).replace("\\", "/")
+    except ValueError as e:
+        raise ValueError(f"Invalid dataset file path {file_rel!r}") from e
+    return candidate, rel_key
+
+
 def new_dataset_id() -> str:
     return "ds_" + secrets.token_hex(8)
 
@@ -319,10 +340,14 @@ def update_dataset_captions(
 
 
 def remove_dataset_image(workspace_root: Path, dataset_id: str, file_rel: str) -> dict[str, Any]:
+    dataset_id = validate_dataset_id(dataset_id)
     path = _dataset_dir(datasets_root(workspace_root), dataset_id)
+    if not (path / "meta.json").is_file():
+        raise FileNotFoundError(f"Dataset {dataset_id!r} not found")
+    _, rel_key = resolve_dataset_file(path, file_rel)
     rows = _read_train_jsonl(path / "train.jsonl")
-    rows = [r for r in rows if r["image"] != file_rel]
-    img_path = path / file_rel
+    rows = [r for r in rows if r["image"] != rel_key]
+    img_path, _ = resolve_dataset_file(path, rel_key)
     if img_path.is_file():
         img_path.unlink()
     _write_train_jsonl(path / "train.jsonl", rows)
@@ -331,9 +356,7 @@ def remove_dataset_image(workspace_root: Path, dataset_id: str, file_rel: str) -
 
 def delete_dataset(workspace_root: Path, dataset_id: str) -> None:
     """Remove a training dataset directory from the workspace."""
-    dataset_id = (dataset_id or "").strip()
-    if not dataset_id or dataset_id.startswith("_") or "/" in dataset_id or "\\" in dataset_id:
-        raise ValueError(f"Invalid dataset id {dataset_id!r}")
+    dataset_id = validate_dataset_id(dataset_id)
     path = _dataset_dir(datasets_root(workspace_root), dataset_id)
     if not (path / "meta.json").is_file():
         raise FileNotFoundError(f"Dataset {dataset_id!r} not found")

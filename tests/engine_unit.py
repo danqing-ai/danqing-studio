@@ -3956,6 +3956,34 @@ class LoraDatasetStoreTests(unittest.TestCase):
             with self.assertRaises(FileNotFoundError):
                 dataset_store.get_dataset(root, dataset_id)
 
+    def test_resolve_dataset_file_rejects_traversal(self) -> None:
+        from backend.engine.training.dataset_store import resolve_dataset_file
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ds_dir = root / "datasets" / "ds_test"
+            ds_dir.mkdir(parents=True)
+            (ds_dir / "images").mkdir()
+            (ds_dir / "images" / "ok.png").write_bytes(b"png")
+            ok_path, rel = resolve_dataset_file(ds_dir, "images/ok.png")
+            self.assertEqual(rel, "images/ok.png")
+            self.assertTrue(ok_path.is_file())
+            with self.assertRaises(ValueError):
+                resolve_dataset_file(ds_dir, "../../escape.png")
+
+    def test_remove_dataset_image_rejects_traversal(self) -> None:
+        from backend.engine.training import dataset_store
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ds = dataset_store.create_dataset(root, name="safe")
+            dataset_id = ds["id"]
+            secret = root / "secret.txt"
+            secret.write_text("keep", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                dataset_store.remove_dataset_image(root, dataset_id, "../../secret.txt")
+            self.assertTrue(secret.is_file())
+
 
 class LoraQualityTests(unittest.TestCase):
     def test_parse_vlm_audit_output(self) -> None:
