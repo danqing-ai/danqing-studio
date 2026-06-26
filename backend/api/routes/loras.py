@@ -221,6 +221,8 @@ def delete_dataset_image(dataset_id: str, file_path: str):
         return dataset_store.remove_dataset_image(root, dataset_id, file_path)
     except FileNotFoundError as e:
         raise HTTPException(404, detail={"code": "not_found", "message": str(e)}) from e
+    except ValueError as e:
+        raise HTTPException(400, detail={"code": "invalid", "message": str(e)}) from e
 
 
 @router.post("/datasets/{dataset_id}/import-assets", status_code=201)
@@ -438,7 +440,16 @@ def dataset_image_file(dataset_id: str, file_path: str):
     from fastapi.responses import FileResponse
 
     root = _paths().get_project_root()
-    path = root / "datasets" / dataset_id / file_path
+    try:
+        dataset_id = dataset_store.validate_dataset_id(dataset_id)
+        dataset_dir = dataset_store.datasets_root(root) / dataset_id
+        if not (dataset_dir / "meta.json").is_file():
+            raise FileNotFoundError(f"Dataset {dataset_id!r} not found")
+        path, _ = dataset_store.resolve_dataset_file(dataset_dir, file_path)
+    except FileNotFoundError as e:
+        raise HTTPException(404, detail={"code": "not_found", "message": str(e)}) from e
+    except ValueError as e:
+        raise HTTPException(400, detail={"code": "invalid", "message": str(e)}) from e
     if not path.is_file():
         raise HTTPException(404, detail={"code": "not_found", "message": "image not found"})
     return FileResponse(path)
@@ -448,6 +459,11 @@ def dataset_image_file(dataset_id: str, file_path: str):
 def training_artifact_file(task_id: str, filename: str, sched: TaskScheduler = Depends(get_task_scheduler)):
     from fastapi.responses import FileResponse
 
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(
+            400,
+            detail={"code": "invalid", "message": "filename must not contain path separators or .."},
+        )
     work = sched.task_work_dir(task_id)
     candidates = [
         work / filename,
