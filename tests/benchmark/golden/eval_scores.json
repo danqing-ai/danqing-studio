@@ -15,6 +15,20 @@
       "model_id": "cogview4-6b",
       "action": "rewrite",
       "calibrated_at": "2026-06-10"
+    },
+    "hidream-o1-image-dev:P1:create": {
+      "reward": 0.2197541892528534,
+      "prompt_id": "P1",
+      "model_id": "hidream-o1-image-dev",
+      "action": "create",
+      "calibrated_at": "2026-06-27"
+    },
+    "hidream-o1-image-dev:E2:rewrite": {
+      "reward": 0.1951654851436615,
+      "prompt_id": "E2",
+      "model_id": "hidream-o1-image-dev",
+      "action": "rewrite",
+      "calibrated_at": "2026-06-27"
     }
   }
 }

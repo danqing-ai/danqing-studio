@@ -73,7 +73,16 @@ def _encode_hunyuan(
     if bundle_root is None:
         return None
     if image_tensor.ndim == 4:
-        image_tensor = ctx.unsqueeze(image_tensor, axis=2)
+        # Pipeline passes PIL-derived BHWC float RGB; Hunyuan 3D VAE expects BCTHW.
+        channels_last = int(image_tensor.shape[-1]) in (1, 3, 4)
+        channels_first = int(image_tensor.shape[1]) in (1, 3, 4)
+        if channels_last and not channels_first:
+            image_tensor = ctx.permute(image_tensor, (0, 3, 1, 2))
+        elif not channels_first:
+            raise RuntimeError(
+                f"Hunyuan VAE encode expected BHWC or BCHW 4D tensor, got shape {tuple(image_tensor.shape)}"
+            )
+        image_tensor = ctx.expand_dims(image_tensor, axis=2)
     return encode_hunyuan_rgb_to_latents(ctx, image_tensor, bundle_root)
 
 

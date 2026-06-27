@@ -93,12 +93,6 @@ def build_ernie_mistral3_encoder(
     load_fn: Any | None = None,
 ) -> _Mistral3TextCore:
     model_dir = Path(model_path)
-    config_path = model_dir / "config.json"
-    if not config_path.is_file():
-        raise RuntimeError(f"ERNIE text encoder config missing: {config_path}")
-    with open(config_path, encoding="utf-8") as f:
-        raw_cfg = json.load(f)
-
     weights: dict = {}
     for sf in sorted(model_dir.glob("*.safetensors")):
         weights.update(load_weights_dict(load_fn, str(sf)))
@@ -112,9 +106,42 @@ def build_ernie_mistral3_encoder(
             if shard_path.is_file():
                 weights.update(load_weights_dict(load_fn, str(shard_path)))
 
+    config_path = model_dir / "config.json"
+    if config_path.is_file():
+        with open(config_path, encoding="utf-8") as f:
+            raw_cfg = json.load(f)
+    elif not weights:
+        raise RuntimeError(f"ERNIE text encoder config missing: {config_path}")
+    else:
+        # mlx-community bundles may omit config.json; ModelArgs defaults match ERNIE-Image Ministral-3.
+        raw_cfg = {"text_config": {}}
+
     core = _Mistral3TextCore(raw_cfg)
     sanitized = core.sanitize(weights)
-    core._model.load_weights(list(sanitized.items()), strict=False)
+
+    from backend.engine.common.bundle.quant_inference import resolve_inference_weight_mode_from_bundle
+    from backend.engine.common.bundle.safetensors_affine_quant import read_bundle_affine_bits_if_quantized
+    from backend.engine.common.model.quantized_load import load_weights_quantized_inference
+
+    bundle_affine_bits = read_bundle_affine_bits_if_quantized(weights, model_dir)
+    te_mode = resolve_inference_weight_mode_from_bundle(
+        ctx,
+        weight_keys=frozenset(sanitized.keys()),
+        bundle_affine_bits=bundle_affine_bits,
+    )
+    if te_mode.kind == "quantized" and te_mode.bits in (4, 8):
+        load_weights_quantized_inference(
+            core._model,
+            list(sanitized.items()),
+            strict=False,
+            ctx=ctx,
+            bundle_affine_bits=bundle_affine_bits,
+            bits=int(te_mode.bits),
+            group_size=int(te_mode.group_size),
+            module_root=core._model,
+        )
+    else:
+        core._model.load_weights(list(sanitized.items()), strict=False)
     ctx.eval(core._model.parameters())
     return core
 

@@ -10,6 +10,7 @@ from typing import Any, Callable
 
 from backend.core.contracts import (
     ExecutionContext,
+    VideoAvatarRequest,
     VideoEditRequest,
     VideoGenerationRequest,
     parse_size,
@@ -25,7 +26,7 @@ from backend.engine.contracts import (
 )
 from backend.engine.families._video_backbone import plugin_video_backbone_model_if_ready
 from backend.engine.inference.video_denoise import run_video_denoise
-from backend.engine.inference.video_two_stage import run_family_video_generator
+from backend.engine.inference.video_two_stage import run_family_video_avatar, run_family_video_generator
 from backend.engine.pipelines.pipeline_progress import pipeline_graph_step
 from backend.engine.sessions._context import MediaRunContext, ResolvedRun
 from backend.engine.pipelines.video_run_common import (
@@ -36,6 +37,7 @@ from backend.engine.pipelines.video_run_common import (
     prepare_video_bundle_and_schedule,
     resolve_fps,
     resolve_num_frames,
+    uses_family_video_avatar,
     uses_family_video_generator,
     vae_encode_frame,
     video_encode_load_and_condition,
@@ -441,6 +443,33 @@ def _maybe_run_video_family_generator(
             request,
             ctx_exec,
             is_edit=is_edit,
+            on_progress=on_progress,
+            on_log=on_log,
+        )
+
+
+def _maybe_run_video_family_avatar(
+    pipeline: Any,
+    request: VideoAvatarRequest,
+    ctx_exec: ExecutionContext,
+    resolved: ResolvedRun,
+    *,
+    phase_cm: PhaseCmFactory,
+    on_progress: Callable | None,
+    on_log: Callable | None,
+) -> Any:
+    """Return family_avatar result when configured; otherwise ``_NOT_GENERATOR``."""
+    entry = resolved.registry_entry
+    family = resolved.family_id
+    config = get_config_class(family)()
+    apply_video_registry_config_overrides(pipeline, entry, config)
+    if not uses_family_video_avatar(config):
+        return _NOT_GENERATOR
+    with phase_cm("infer"):
+        return run_family_video_avatar(
+            pipeline,
+            request,
+            ctx_exec,
             on_progress=on_progress,
             on_log=on_log,
         )

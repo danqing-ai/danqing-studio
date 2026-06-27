@@ -62,6 +62,8 @@ def api_action_frozenset(actions: Any, *, media: str) -> FrozenSet[str]:
             s.add("edit")
         if actions.get("upscale") is not None:
             s.add("upscale")
+        if actions.get("avatar") is not None:
+            s.add("avatar")
         return frozenset(s)
     if media == "audio":
         s: set[str] = set()

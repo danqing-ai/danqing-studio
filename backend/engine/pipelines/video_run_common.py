@@ -11,6 +11,7 @@ import numpy as np
 
 from backend.core.contracts import (
     ExecutionContext,
+    VideoAvatarRequest,
     VideoEditRequest,
     VideoGenerationRequest,
     parse_model_version,
@@ -20,8 +21,10 @@ from backend.core.contracts import (
 from backend.engine._transformer_registry import (
     encode_video_hunyuan_dual_cfg_batch as _encode_video_hunyuan_dual_cfg_batch_fn,
     encode_video_prompt as _encode_video_prompt_fn,
+    get_video_avatar_factory as _get_video_avatar_factory,
     get_video_generation_factory as _get_video_generation_factory,
     merge_video_lora_adapters as _merge_video_lora_adapters,
+    validate_video_avatar_params,
     validate_video_generation_params,
 )
 from backend.engine.common.bundle.layout import t5_encoder_bundle_paths
@@ -90,11 +93,16 @@ def configure_ltx_text_encoder_paths(pipeline, entry, config) -> None:
     """Resolve registry-declared Gemma 3 root under ``models/Text/…``."""
     inject_ltx_text_encoder_paths(entry, config, pipeline._project_root)
 
-def resolved_original_video_bundle_root(pipeline, entry) -> Path | None:
-    """Registry ``versions.original.local_path`` for the same model (T5 fallback for MLX-only trees)."""
+def resolved_fp16_video_bundle_root(pipeline, entry) -> Path | None:
+    """Registry full-weight ``local_path`` for the same model (T5 fallback for MLX-only trees)."""
+    from backend.core.version_keys import resolve_full_bundle_version_key
+
     raw = getattr(entry, "raw", {}) or {}
     versions = raw.get("versions") or {}
-    ob = versions.get("original")
+    base_key = resolve_full_bundle_version_key(versions)
+    if not base_key:
+        return None
+    ob = versions.get(base_key)
     if not isinstance(ob, dict):
         return None
     lp = (ob.get("local_path") or "").strip()
@@ -103,8 +111,9 @@ def resolved_original_video_bundle_root(pipeline, entry) -> Path | None:
     p = _resolve_project_path_fn(pipeline._project_root, lp)
     return p if p.is_dir() else None
 
+
 def effective_t5_bundle_root(pipeline, entry, bundle_root: Path | None, config: Any) -> Path | None:
-    """Prefer current version bundle; if T5 dirs are missing (typical MLX-forge flat HF), use ``original``."""
+    """Prefer current version bundle; if T5 dirs are missing (typical MLX-forge flat HF), use full-weight tier."""
     if bundle_root is None or not bundle_root.is_dir():
         return None
     try:
@@ -114,7 +123,7 @@ def effective_t5_bundle_root(pipeline, entry, bundle_root: Path | None, config: 
             t5_encoder_bundle_paths(bundle_root)
         return bundle_root
     except RuntimeError as err:
-        alt = resolved_original_video_bundle_root(pipeline, entry)
+        alt = resolved_fp16_video_bundle_root(pipeline, entry)
         if alt is not None:
             if bool(getattr(config, "uses_wan_t5_bundle", False)):
                 wan_t5_bundle_paths(alt)
@@ -123,7 +132,7 @@ def effective_t5_bundle_root(pipeline, entry, bundle_root: Path | None, config: 
             return alt
         raise RuntimeError(
             f"T5 text encoder assets not found under {bundle_root}, "
-            f"and no installed ``original`` registry version for ``{entry.id}``."
+            f"and no installed full-weight registry version for ``{entry.id}``."
             + (
                 " Wan bundles require ``models_t5*.pth`` and ``google/umt5-xxl``."
                 if bool(getattr(config, "uses_wan_t5_bundle", False))
@@ -194,6 +203,9 @@ def apply_video_registry_config_overrides(pipeline, entry: Any, config: Any) -> 
         "low_ram_streaming",
         "ltx_stage2_steps",
         "video_edit_source_mode",
+        "video_pipeline_shape",
+        "bernini_renderer",
+        "use_src_id_rotary_emb",
     ):
         val = _registry_scalar_default_fn(entry, param_key, None)
         if val is not None:
@@ -222,6 +234,15 @@ def apply_video_registry_config_overrides(pipeline, entry: Any, config: Any) -> 
     vst = _registry_scalar_default_fn(entry, "vae_spatial_tiling", None)
     if vst is not None:
         config.vae_spatial_tiling = bool(vst)
+    br = _registry_scalar_default_fn(entry, "bernini_renderer", None)
+    if br is not None:
+        config.bernini_renderer = bool(br)
+    vps = _registry_scalar_default_fn(entry, "video_pipeline_shape", None)
+    if vps is not None:
+        config.video_pipeline_shape = str(vps)
+    usre = _registry_scalar_default_fn(entry, "use_src_id_rotary_emb", None)
+    if usre is not None:
+        config.use_src_id_rotary_emb = bool(usre)
     if getattr(config, "inject_text_encoder_paths", False):
         configure_hunyuan_text_encoder_paths(pipeline, entry, config)
         configure_ltx_text_encoder_paths(pipeline, entry, config)
@@ -241,7 +262,12 @@ def prepare_video_bundle_and_schedule(pipeline,
 ) -> tuple[Path | None, int, int, int, float, bool, str]:
     bundle_root = _local_bundle_root_fn(pipeline._project_root, entry, version_key or None)
     validate_bundle_graph_step(
-        bundle_root, family=family, model_id=model_key, on_log=on_log
+        bundle_root,
+        family=family,
+        model_id=model_key,
+        on_log=on_log,
+        registry_entry=entry,
+        project_root=pipeline._project_root,
     )
     merge_video_bundle_config(config, bundle_root)
     w, h = snap_wan_pixel_dims_if_needed(pipeline, config, w, h, on_log=on_log)
@@ -540,6 +566,10 @@ def finalize_video_from_latents(pipeline,
 def uses_family_video_generator(config: Any) -> bool:
     return str(getattr(config, "video_pipeline_shape", "dit_standard") or "dit_standard") == "family_generator"
 
+
+def uses_family_video_avatar(config: Any) -> bool:
+    return str(getattr(config, "video_pipeline_shape", "dit_standard") or "dit_standard") == "family_avatar"
+
 def execute_family_video_generator(pipeline,
     request: VideoGenerationRequest | VideoEditRequest,
     ctx_exec: ExecutionContext,
@@ -586,16 +616,42 @@ def execute_family_video_generator(pipeline,
     )
 
     if bundle_root is None or not bundle_root.is_dir():
-        raise RuntimeError(f"LTX 2.3 bundle not found for {request.model!r}")
+        raise RuntimeError(f"Video model bundle not found for {request.model!r}")
 
+    source_video_path: str | None = None
+    source_image_path: str | None = None
     image_path: str | None = None
+    reference_image_paths: list[str] = []
+    ref_ids = list(getattr(request, "reference_asset_ids", None) or [])
+    meta_refs = getattr(request, "metadata", None) or {}
+    if not ref_ids and isinstance(meta_refs.get("reference_asset_ids"), list):
+        ref_ids = [str(x) for x in meta_refs["reference_asset_ids"]]
+
+    if ref_ids:
+        from backend.engine.contracts.video_runtime_contracts import resolve_video_reference_asset_paths
+
+        reference_image_paths = resolve_video_reference_asset_paths(
+            pipeline._asset_store, ref_ids,
+        )
+
     if is_edit:
-        if not request.source_asset_id:
-            raise RuntimeError("LTX 2.3 image-to-video requires source_asset_id")
-        src = pipeline._asset_store.get_file_path(request.source_asset_id)
-        if src is None or not src.exists():
-            raise RuntimeError(f"Source image asset not found: {request.source_asset_id!r}")
-        image_path = str(src)
+        if bool(getattr(config, "bernini_renderer", False)):
+            from backend.engine.contracts.video_runtime_contracts import resolve_bernini_source_paths
+
+            work = Path(ctx_exec.work_dir)
+            source_video_path, source_image_path = resolve_bernini_source_paths(
+                pipeline._asset_store,
+                request,
+                config,
+                work_dir=work,
+            )
+        else:
+            if not request.source_asset_id:
+                raise RuntimeError("Video edit requires source_asset_id")
+            src = pipeline._asset_store.get_file_path(request.source_asset_id)
+            if src is None or not src.exists():
+                raise RuntimeError(f"Source image asset not found: {request.source_asset_id!r}")
+            image_path = str(src)
 
     if on_log:
         on_log(
@@ -647,7 +703,10 @@ def execute_family_video_generator(pipeline,
         and request.long_video is not None
         and (request.long_video.opening_prompt or "").strip()
     ):
-        raise RuntimeError("LTX 2.3 generation requires a non-empty prompt")
+        if family == "ltx":
+            raise RuntimeError("LTX 2.3 generation requires a non-empty prompt")
+        if not bool(getattr(config, "bernini_renderer", False)):
+            raise RuntimeError("Video generation requires a non-empty prompt")
 
     long_spec = getattr(request, "long_video", None) if not is_edit else None
     lv_fps = float(fps)
@@ -684,21 +743,33 @@ def execute_family_video_generator(pipeline,
             on_progress=on_progress,
         )
     else:
-        result_path = generator.generate_and_save(
-            prompt=prompt,
-            output_path=out_path,
-            width=w,
-            height=h,
-            num_frames=num_frames,
-            fps=float(fps),
-            seed=seed,
-            steps=steps,
-            guidance=guidance,
-            step_distill=step_distill,
-            image_path=image_path,
-            on_log=on_log,
-            on_progress=on_progress,
-        )
+        gen_kwargs: dict[str, Any] = {
+            "prompt": prompt,
+            "output_path": out_path,
+            "width": w,
+            "height": h,
+            "num_frames": num_frames,
+            "fps": float(fps),
+            "seed": seed,
+            "steps": steps,
+            "guidance": guidance,
+            "step_distill": step_distill,
+            "negative_prompt": getattr(request, "negative_prompt", None) or "",
+            "on_log": on_log,
+            "on_progress": on_progress,
+        }
+        if bool(getattr(config, "bernini_renderer", False)):
+            gen_kwargs.update(
+                {
+                    "source_video_path": source_video_path,
+                    "source_image_path": source_image_path,
+                    "reference_image_paths": reference_image_paths,
+                    "is_edit": is_edit,
+                }
+            )
+        else:
+            gen_kwargs["image_path"] = image_path
+        result_path = generator.generate_and_save(**gen_kwargs)
 
     if ctx_exec.cancel_token.is_cancelled():
         return None
@@ -726,6 +797,152 @@ def execute_family_video_generator(pipeline,
         metadata["fps"] = int(lv_fps)
     metadata.update(work_title_metadata(getattr(request, "title", None)))
     return result_path, metadata
+
+
+def execute_family_video_avatar(
+    pipeline,
+    request: VideoAvatarRequest,
+    ctx_exec: ExecutionContext,
+    *,
+    on_progress: Callable | None = None,
+    on_log: Callable | None = None,
+) -> tuple[str, dict[str, Any]] | None:
+    """Shape C avatar generation — audio-driven digital human."""
+    model_key, version_key = parse_model_version(request.model)
+    w, h = parse_size(request.size)
+    entry = pipeline._registry.require(model_key)
+    family = require_entry_family(entry, model_id=model_key)
+    config_cls = get_config_class(family)
+    config = config_cls()
+    num_frames = resolve_num_frames(pipeline, request, entry)
+    fps = resolve_fps(pipeline, request, entry)
+    seed = request.seed if request.seed is not None else random.randint(0, 2 ** 32 - 1)
+
+    apply_video_registry_config_overrides(pipeline, entry, config)
+    if not uses_family_video_avatar(config):
+        raise RuntimeError(
+            f"Internal error: execute_family_video_avatar called for "
+            f"video_pipeline_shape={getattr(config, 'video_pipeline_shape', '')!r} "
+            f"(family={family!r})"
+        )
+
+    if ctx_exec.cancel_token.is_cancelled():
+        return None
+
+    bundle_root = _local_bundle_root_fn(pipeline._project_root, entry, version_key or None)
+    validate_bundle_graph_step(
+        bundle_root,
+        family=family,
+        model_id=model_key,
+        on_log=on_log,
+        registry_entry=entry,
+        project_root=pipeline._project_root,
+    )
+    merge_video_bundle_config(config, bundle_root)
+    w, h = snap_wan_pixel_dims_if_needed(pipeline, config, w, h, on_log=on_log)
+    validate_generate_geometry(pipeline, config, w, h, num_frames)
+
+    steps_default = _registry_scalar_default_fn(entry, "steps", getattr(config, "default_infer_steps", 8))
+    steps = int(request.steps) if request.steps is not None else int(steps_default)
+    steps = max(1, steps)
+    validate_video_avatar_params(family, entry=entry, config=config)
+
+    if not request.reference_asset_id:
+        raise RuntimeError("Video avatar requires reference_asset_id (portrait image)")
+    if not request.audio_asset_id:
+        raise RuntimeError("Video avatar requires audio_asset_id (voice track)")
+
+    ref_path = pipeline._asset_store.get_file_path(request.reference_asset_id)
+    if ref_path is None or not ref_path.exists():
+        raise RuntimeError(f"Reference image asset not found: {request.reference_asset_id!r}")
+    audio_path = pipeline._asset_store.get_file_path(request.audio_asset_id)
+    if audio_path is None or not audio_path.exists():
+        raise RuntimeError(f"Audio asset not found: {request.audio_asset_id!r}")
+
+    if bundle_root is None or not bundle_root.is_dir():
+        raise RuntimeError(f"Video avatar model bundle not found for {request.model!r}")
+
+    if on_log:
+        on_log(
+            "info",
+            " ".join(
+                [
+                    f"infer model={model_key}",
+                    f"family={family}",
+                    f"version={version_key or 'default'}",
+                    f"size={w}x{h}",
+                    f"frames={num_frames}",
+                    f"fps={fps}",
+                    f"seed={seed}",
+                    f"steps={steps}",
+                    "mode=video_avatar",
+                    "video_pipeline_shape=family_avatar",
+                ]
+            ),
+        )
+
+    factory = _get_video_avatar_factory(family)
+    generator = factory(
+        pipeline.ctx,
+        bundle_root,
+        config=config,
+        entry=entry,
+        version_key=version_key,
+    )
+    generator.load()
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    work = Path(ctx_exec.work_dir)
+    work.mkdir(parents=True, exist_ok=True)
+    out_path = str(work / f"{model_key}_{seed}_{timestamp}.mp4")
+
+    pipeline_graph_step("denoise", on_log)
+    progress_total_steps = max(1, int(steps))
+    emit_phase(on_progress, phase="generate", progress=0.05, n_steps=progress_total_steps)
+
+    if ctx_exec.cancel_token.is_cancelled():
+        return None
+
+    result_path = generator.generate_and_save(
+        prompt=(request.prompt or "").strip() or " ",
+        output_path=out_path,
+        reference_image_path=str(ref_path),
+        audio_path=str(audio_path),
+        width=w,
+        height=h,
+        num_frames=num_frames,
+        fps=float(fps),
+        seed=seed,
+        steps=steps,
+        negative_prompt=request.negative_prompt or "",
+        on_log=on_log,
+        on_progress=on_progress,
+    )
+
+    if ctx_exec.cancel_token.is_cancelled():
+        return None
+
+    pipeline_graph_step("save_asset", on_log)
+    emit_complete(on_progress, progress_total_steps)
+
+    metadata = {
+        "model": request.model,
+        "seed": seed,
+        "prompt": request.prompt,
+        "negative_prompt": request.negative_prompt or "",
+        "steps": steps,
+        "num_frames": num_frames,
+        "fps": fps,
+        "width": w,
+        "height": h,
+        "mime_type": "video/mp4",
+        "video_pipeline_shape": "family_avatar",
+        "reference_asset_id": request.reference_asset_id,
+        "audio_asset_id": request.audio_asset_id,
+    }
+    metadata.update(work_title_metadata(getattr(request, "title", None)))
+    return result_path, metadata
+
 
 def prepare_t5_context(pipeline, config: Any) -> None:
     pipeline._video_config = config

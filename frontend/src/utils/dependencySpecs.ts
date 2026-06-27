@@ -45,7 +45,9 @@ export function isDependencyReady(
   }
   const versions = detailedStatus?.[spec.modelId]?.versions;
   if (versions?.[spec.version]?.ready) return true;
-  // ``shared`` encoders satisfied when full ``original`` is installed.
-  if (spec.version === 'shared' && versions?.original?.ready) return true;
+  // ``shared`` encoders satisfied when a full-weight tier (``fp16`` / ``encoders``) is installed.
+  if (spec.version === 'shared') {
+    if (versions?.fp16?.ready || versions?.encoders?.ready) return true;
+  }
   return false;
 }

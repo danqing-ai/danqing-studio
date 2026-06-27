@@ -683,6 +683,34 @@ def _read_vae_config(bundle_root: Path) -> dict[str, Any]:
         return json.load(f)
 
 
+def _remap_hunyuan_vae_native_keys(weights: dict[str, mx.array]) -> dict[str, mx.array]:
+    """ModelScope native VAE keys → diffusers-style keys expected by ``_assign_*_weights``."""
+    import re
+
+    if not weights:
+        return weights
+    sample = next(iter(weights))
+    if sample.startswith("down_blocks.") or sample.startswith("up_blocks."):
+        return weights
+
+    out: dict[str, mx.array] = {}
+    for key, value in weights.items():
+        nk = key
+        nk = re.sub(r"^down\.(\d+)\.block\.(\d+)\.", r"down_blocks.\1.resnets.\2.", nk)
+        nk = re.sub(r"^down\.(\d+)\.downsample\.conv\.", r"down_blocks.\1.downsamplers.0.conv.", nk)
+        nk = re.sub(r"^up\.(\d+)\.block\.(\d+)\.", r"up_blocks.\1.resnets.\2.", nk)
+        nk = re.sub(r"^up\.(\d+)\.upsample\.conv\.", r"up_blocks.\1.upsamplers.0.conv.", nk)
+        nk = re.sub(r"^mid\.block_1\.", "mid_block.resnets.0.", nk)
+        nk = re.sub(r"^mid\.block_2\.", "mid_block.resnets.1.", nk)
+        nk = re.sub(r"^mid\.attn_1\.q\.", "mid_block.attentions.0.to_q.", nk)
+        nk = re.sub(r"^mid\.attn_1\.k\.", "mid_block.attentions.0.to_k.", nk)
+        nk = re.sub(r"^mid\.attn_1\.v\.", "mid_block.attentions.0.to_v.", nk)
+        nk = re.sub(r"^mid\.attn_1\.norm\.", "mid_block.attentions.0.norm.", nk)
+        nk = re.sub(r"^mid\.attn_1\.proj_out\.", "mid_block.attentions.0.proj_out.", nk)
+        out[nk] = value
+    return out
+
+
 def load_vae_bundle_weights(
     bundle_root: Path, *, load_fn: Any | None = None
 ) -> tuple[dict[str, mx.array], dict[str, mx.array], dict[str, Any]]:
@@ -709,6 +737,9 @@ def load_vae_bundle_weights(
         raise RuntimeError(
             "No tensors with prefix `encoder.` found in VAE safetensors — cannot load HunyuanVideo encoder."
         )
+
+    enc_weights = _remap_hunyuan_vae_native_keys(enc_weights)
+    dec_weights = _remap_hunyuan_vae_native_keys(dec_weights)
 
     return enc_weights, dec_weights, vae_cfg
 

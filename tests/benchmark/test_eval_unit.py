@@ -96,6 +96,18 @@ class EvalCaseExpansionTests(unittest.TestCase):
         self.assertEqual(case.steps, 4)
         self.assertEqual(case.timeout_sec, 900)
 
+    def test_expand_cases_set_eval_version_key(self) -> None:
+        from tests.benchmark.registry_utils import resolve_eval_version_key
+
+        cases = expand_eval_cases(profile="smoke")
+        if not cases:
+            return
+        case = cases[0]
+        expected = resolve_eval_version_key(case.model_id)
+        self.assertEqual(case.version_key, expected)
+        if expected:
+            self.assertIn(":", case.model_field)
+
 
 class IntegrityTests(unittest.TestCase):
     def test_valid_png_passes(self) -> None:
@@ -164,6 +176,65 @@ class JudgeThresholdTests(unittest.TestCase):
             assert reward is not None
             self.assertGreater(reward, 0.15)
             self.assertLess(reward, 0.35)
+
+
+class EvalVersionResolutionTests(unittest.TestCase):
+    def test_prefers_installed_full_over_quant(self) -> None:
+        from tests.benchmark.registry_utils import resolve_eval_version_key
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            full = root / "models" / "Image" / "demo-fp16"
+            quant = root / "models" / "Image" / "demo-int4"
+            full.mkdir(parents=True)
+            quant.mkdir(parents=True)
+            (full / "transformer.safetensors").write_bytes(b"x" * 2048)
+            (quant / "transformer.safetensors").write_bytes(b"x" * 2048)
+            reg = {
+                "models": {
+                    "demo": {
+                        "family": "flux2",
+                        "versions": {
+                            "fp16": {
+                                "local_path": "models/Image/demo-fp16",
+                                "source_type": "full",
+                            },
+                            "int4": {
+                                "local_path": "models/Image/demo-int4",
+                                "source_type": "derived",
+                            },
+                        },
+                    }
+                }
+            }
+            vk = resolve_eval_version_key("demo", reg=reg, data_root=root)
+            self.assertEqual(vk, "fp16")
+
+    def test_uses_quant_when_only_quant_installed(self) -> None:
+        from tests.benchmark.registry_utils import resolve_eval_version_key
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            quant = root / "models" / "Video" / "demo-mlx-q4"
+            quant.mkdir(parents=True)
+            (quant / "transformer.safetensors").write_bytes(b"x" * 2048)
+            reg = {
+                "models": {
+                    "demo": {
+                        "family": "ltx",
+                        "versions": {
+                            "mlx-q4": {
+                                "local_path": "models/Video/demo-mlx-q4",
+                                "source_type": "full",
+                                "quantization": {"bits": 4},
+                                "default": True,
+                            },
+                        },
+                    }
+                }
+            }
+            vk = resolve_eval_version_key("demo", reg=reg, data_root=root)
+            self.assertEqual(vk, "mlx-q4")
 
 
 class RunnerMockJudgeTests(unittest.TestCase):

@@ -398,7 +398,12 @@ def flux2_preprocess_latents_for_decode(
     pw = vae_weights.get("post_quant_conv.weight")
     pb = vae_weights.get("post_quant_conv.bias")
     if pw is not None and pb is not None:
-        latents = ctx.conv2d(latents, ctx.permute(pw, (0, 2, 3, 1)), stride=1, padding=0)
+        pw_shape = tuple(int(x) for x in pw.shape)
+        if len(pw_shape) == 4 and pw_shape[1] == pw_shape[2] == 1:
+            kernel = pw
+        else:
+            kernel = ctx.permute(pw, (0, 2, 3, 1))
+        latents = ctx.conv2d(latents, kernel, stride=1, padding=0)
         latents = latents + pb.reshape(1, 1, 1, -1)
 
     return ctx.permute(latents, (0, 3, 1, 2))
@@ -418,6 +423,11 @@ def infer_latent_channels(vae_cfg: dict[str, Any], vae_weights: dict[str, Any], 
     lc = vae_cfg.get("latent_channels")
     if lc is not None:
         return int(lc)
+    for wkey in ("decoder.conv_in.weight", "conv_in.weight"):
+        if wkey in vae_weights:
+            sh = getattr(vae_weights[wkey], "shape", ())
+            if len(sh) == 4:
+                return int(sh[-1])
     wkey = "encoder.conv_out.weight"
     if wkey in vae_weights:
         sh = getattr(vae_weights[wkey], "shape", ())
@@ -438,6 +448,42 @@ def read_vae_dir_config(vae_dir: Path | None) -> tuple[dict[str, Any], float, fl
         scaling_factor = float(vae_cfg.get("scaling_factor", 1.0))
         shift_factor = float(vae_cfg.get("shift_factor", 0.0))
     return vae_cfg, scaling_factor, shift_factor
+
+
+def infer_flux2_vae_config(vae_weights: dict[str, Any]) -> dict[str, Any] | None:
+    """Infer ``AutoencoderKLFlux2`` metadata when mlx-community bundles omit ``vae/config.json``."""
+    if not vae_weights:
+        return None
+    if "bn.running_mean" not in vae_weights and "post_quant_conv.weight" not in vae_weights:
+        return None
+    return {
+        "_class_name": "AutoencoderKLFlux2",
+        "batch_norm_eps": 1e-4,
+        "use_quant_conv": True,
+        "use_post_quant_conv": True,
+        "latent_channels": 32,
+    }
+
+
+def resolve_vae_bundle_config(
+    vae_dir: Path | None,
+    *,
+    vae_weights: dict[str, Any] | None = None,
+    ctx: RuntimeContext | None = None,
+) -> tuple[dict[str, Any], float, float]:
+    """Merge on-disk ``config.json`` with weight-based inference (Flux2 mlx bundles)."""
+    vae_cfg, scaling_factor, shift_factor = read_vae_dir_config(vae_dir)
+    if str(vae_cfg.get("_class_name") or "").strip():
+        return vae_cfg, scaling_factor, shift_factor
+    weights = vae_weights
+    if weights is None and vae_dir and vae_dir.exists() and ctx is not None:
+        weights = load_vae_weight_dict(ctx, vae_dir)
+    inferred = infer_flux2_vae_config(weights or {})
+    if inferred is None:
+        return vae_cfg, scaling_factor, shift_factor
+    merged = dict(inferred)
+    merged.update(vae_cfg)
+    return merged, scaling_factor, shift_factor
 
 
 def release_vae_decoder_memory(ctx: RuntimeContext, vae: Any | None) -> None:
@@ -474,11 +520,17 @@ def load_vae_weight_dict(
 
 
 def flux2_quant_preprocess_gate(vae_cfg: dict[str, Any], vae_weights: dict[str, Any]) -> bool:
-    use_quant = bool(vae_cfg.get("use_quant_conv", False))
-    use_post = bool(vae_cfg.get("use_post_quant_conv", False))
-    return (use_quant or use_post) and (
+    has_flux2_quant_tensors = (
         "bn.running_mean" in vae_weights or "post_quant_conv.weight" in vae_weights
     )
+    if not has_flux2_quant_tensors:
+        return False
+    use_quant = bool(vae_cfg.get("use_quant_conv", False))
+    use_post = bool(vae_cfg.get("use_post_quant_conv", False))
+    if use_quant or use_post:
+        return True
+    # mlx-community Flux2 bundles ship quant VAE tensors without config.json flags.
+    return not vae_cfg.get("latent_channels") and not use_quant and not use_post
 
 
 def apply_flux2_latent_preprocess_if_enabled(
@@ -557,7 +609,7 @@ def create_loaded_vae_decoder(
 ) -> tuple[VAEDecoder, dict[str, Any], list[Any], list[Any]]:
     from backend.engine.common.codecs.vae.weight_remap import load_vae_decoder_from_weights
 
-    channels = latents.shape[1] if getattr(latents, "ndim", 0) >= 4 else default_channels
+    channels = infer_latent_channels(vae_cfg or {}, vae_weights, default=default_channels)
     vae = VAEDecoder(
         latent_channels=channels,
         ctx=ctx,
@@ -582,12 +634,29 @@ def vae_forward_to_pil(ctx: RuntimeContext, vae: Any, latents: Any):
     return Image.fromarray(vae_output_to_uint8_hwc(vae.forward(latents), ctx))
 
 
+def _flatten_mlx_parameters_tree(node: Any, prefix: str, result: dict) -> None:
+    """Flatten nested ``mlx.nn.Module.parameters()`` dict/list trees to dotted keys."""
+    if isinstance(node, dict):
+        for name, child in node.items():
+            key = f"{prefix}.{name}" if prefix else name
+            _flatten_mlx_parameters_tree(child, key, result)
+        return
+    if isinstance(node, (list, tuple)):
+        for i, child in enumerate(node):
+            key = f"{prefix}.{i}" if prefix else str(i)
+            _flatten_mlx_parameters_tree(child, key, result)
+        return
+    if prefix:
+        result[prefix] = node
+
+
 def _collect_nn_params(obj: Any, prefix: str, result: dict):
     if hasattr(obj, 'parameters') and callable(obj.parameters):
         try:
-            for pname, ptensor in obj.parameters().items():
-                result[f"{prefix}.{pname}" if prefix else pname] = ptensor
-            return
+            params = obj.parameters()
+            if isinstance(params, dict):
+                _flatten_mlx_parameters_tree(params, prefix, result)
+                return
         except Exception: pass
     for attr_name in sorted(dir(obj)):
         if attr_name.startswith('_') or attr_name in ('ctx', '_param_map', '_built'):

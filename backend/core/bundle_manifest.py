@@ -118,6 +118,18 @@ FAMILY_BUNDLE_CONTRACTS: dict[str, FamilyBundleContract] = {
         required=frozenset({"transformer", "tokenizer"}),
         optional=frozenset(),
     ),
+    "longcat": FamilyBundleContract(
+        required=frozenset({"transformer", "text_encoder", "vae"}),
+        optional=frozenset({"tokenizer"}),
+    ),
+    "longcat_avatar": FamilyBundleContract(
+        required=frozenset({"transformer", "text_encoder", "vae", "audio_encoder"}),
+        optional=frozenset({"tokenizer"}),
+    ),
+    "hidream_o1": FamilyBundleContract(
+        required=frozenset({"transformer", "tokenizer"}),
+        optional=frozenset(),
+    ),
 }
 
 
@@ -153,6 +165,7 @@ def scan_components(bundle_root: Path) -> dict[str, list[str]]:
         "vae": [],
         "tokenizer": [],
         "image_encoder": [],
+        "audio_encoder": [],
     }
 
     for path in sorted(bundle_root.rglob("*")):
@@ -192,6 +205,11 @@ def scan_components(bundle_root: Path) -> dict[str, list[str]]:
                 components["image_encoder"].append(_rel_path(bundle_root, path))
             continue
 
+        if "audio_encoder" in rel_lower or name_lower.startswith("audio_encoder"):
+            if suffix_lower in weight_suffixes:
+                components["audio_encoder"].append(_rel_path(bundle_root, path))
+            continue
+
         if "/vae/" in f"/{rel_lower}/" or rel_lower.startswith("vae/") or name_lower.startswith("vae."):
             if suffix_lower in weight_suffixes:
                 components["vae"].append(_rel_path(bundle_root, path))
@@ -200,7 +218,12 @@ def scan_components(bundle_root: Path) -> dict[str, list[str]]:
         if path.suffix.lower() == ".safetensors":
             if _ace_step_dit_safetensors(rel_lower, name_lower):
                 components["transformer"].append(_rel_path(bundle_root, path))
-            elif "text_encoder" in rel_lower or name_lower.startswith("connector"):
+            elif (
+                "t5_encoder" in name_lower
+                or name_lower.startswith("umt5")
+                or "text_encoder" in rel_lower
+                or name_lower.startswith("connector")
+            ):
                 components["text_encoder"].append(_rel_path(bundle_root, path))
             elif (
                 "vae" in rel_lower
@@ -212,6 +235,8 @@ def scan_components(bundle_root: Path) -> dict[str, list[str]]:
                 components["vae"].append(_rel_path(bundle_root, path))
             elif (
                 "transformer" in rel_lower
+                or rel_lower.startswith("dit/")
+                or "/dit/" in f"/{rel_lower}/"
                 or "diffusion" in name_lower
                 or "unet" in name_lower
                 or rel_lower.count("/") == 0
@@ -292,28 +317,19 @@ def assert_bundle_ready_for_family(
     *,
     family: str,
     model_id: str,
+    registry_entry: Any | None = None,
+    project_root: Path | None = None,
 ) -> None:
     """Fail loud when required bundle components are missing."""
+    _ = registry_entry, project_root
     if not bundle_root.is_dir():
         raise RuntimeError(
             f"Model {model_id!r} (family={family}): bundle directory missing at {bundle_root}"
         )
 
     contract = require_family_bundle_contract(family)
-    manifest = read_bundle_manifest(bundle_root)
-    if manifest is not None:
-        components = manifest.get("components") or {}
-        if not isinstance(components, dict):
-            raise RuntimeError(
-                f"Model {model_id!r}: invalid {MANIFEST_FILENAME} (components must be object)"
-            )
-        missing = missing_required_components(
-            {k: list(v) if isinstance(v, list) else [] for k, v in components.items()},
-            contract,
-        )
-    else:
-        components = scan_components(bundle_root)
-        missing = missing_required_components(components, contract)
+    components = scan_components(bundle_root)
+    missing = missing_required_components(components, contract)
 
     if missing:
         raise RuntimeError(
@@ -322,22 +338,20 @@ def assert_bundle_ready_for_family(
         )
 
 
-def bundle_component_status(bundle_root: Path, *, family: str) -> dict[str, Any] | None:
+def bundle_component_status(
+    bundle_root: Path,
+    *,
+    family: str,
+    version_config: dict[str, Any] | None = None,
+    project_root: Path | None = None,
+) -> dict[str, Any] | None:
     """Component presence for download center; None when family has no contract."""
+    _ = version_config, project_root
     contract = get_family_bundle_contract(family)
     if contract is None or not bundle_root.is_dir():
         return None
 
-    manifest = read_bundle_manifest(bundle_root)
-    if manifest is not None:
-        raw = manifest.get("components") or {}
-        components = {
-            k: list(v) if isinstance(v, list) else []
-            for k, v in raw.items()
-            if isinstance(k, str)
-        }
-    else:
-        components = scan_components(bundle_root)
+    components = scan_components(bundle_root)
 
     missing = missing_required_components(components, contract)
     tracked = sorted(contract.required | contract.optional)

@@ -15,12 +15,19 @@ from backend.core.contracts import (
     ImageUpscaleRequest,
     VideoEditRequest,
     VideoGenerationRequest,
+    VideoAvatarRequest,
     VideoUpscaleRequest,
 )
 from backend.engine.families._image_backbone import plugin_backbone_model_if_ready
 from backend.engine.pipelines.audio_create_phases import build_audio_create_run_context
 from backend.engine.pipelines.audio_edit_phases import build_audio_edit_run_context
-from backend.engine.pipelines.image_create_phases import build_create_run_context
+from backend.engine.pipelines.image_create_phases import (
+    _NOT_GENERATOR as _IMAGE_NOT_GENERATOR,
+    _maybe_run_image_family_generator,
+    build_create_run_context,
+)
+from backend.engine.pipelines.image_run_common import execute_family_image_generator, uses_family_image_generator
+from backend.engine.config.model_configs import apply_image_registry_config_overrides, get_config_class
 from backend.engine.families.qwen.edit_util import (
     QwenImageEditRunContext,
     persist_qwen_image_edit,
@@ -45,6 +52,7 @@ from backend.engine.pipelines.video_upscale_create_phases import (
 )
 from backend.engine.pipelines.video_create_phases import (
     _NOT_GENERATOR,
+    _maybe_run_video_family_avatar,
     _maybe_run_video_family_generator,
     build_video_create_run_context,
     persist_video_create,
@@ -168,6 +176,22 @@ def run_image_create_phased(
     on_log: Callable | None = None,
 ) -> list[tuple[str, dict[str, Any]]] | None:
     phase_cm = phase_cm_factory(resolved)
+    gen = _maybe_run_image_family_generator(
+        pipeline,
+        request,
+        exec_ctx,
+        resolved,
+        phase_cm=phase_cm,
+        on_progress=on_progress,
+        on_log=on_log,
+    )
+    if gen is not _IMAGE_NOT_GENERATOR:
+        if gen is None:
+            return None
+        if isinstance(gen, list):
+            return gen
+        return [gen]
+
     ctx = build_create_run_context(
         pipeline,
         request,
@@ -247,6 +271,21 @@ def run_image_edit_phased(
     on_log: Callable | None = None,
 ) -> tuple[str, dict[str, Any]] | None:
     phase_cm = phase_cm_factory(resolved)
+    entry = resolved.registry_entry
+    family = resolved.family_id
+    config = get_config_class(family)()
+    apply_image_registry_config_overrides(entry, config)
+    if uses_family_image_generator(config):
+        with phase_cm("infer"):
+            return execute_family_image_generator(
+                pipeline,
+                request,
+                exec_ctx,
+                is_edit=True,
+                on_progress=on_progress,
+                on_log=on_log,
+            )
+
     preloaded = plugin_backbone_model_if_ready(resolved.plugin, request=request)
 
     if request.operation in ("retouch", "extend"):
@@ -377,6 +416,33 @@ def run_video_edit_phased(
     if ctx is None:
         return None
     return _run_video_denoise_phased(resolved, pipeline, ctx)
+
+
+def run_video_avatar_phased(
+    pipeline: Any,
+    resolved: ResolvedRun,
+    request: VideoAvatarRequest,
+    exec_ctx: ExecutionContext,
+    *,
+    on_progress: Callable | None = None,
+    on_log: Callable | None = None,
+) -> tuple[str, dict[str, Any]] | None:
+    phase_cm = phase_cm_factory(resolved)
+    gen = _maybe_run_video_family_avatar(
+        pipeline,
+        request,
+        exec_ctx,
+        resolved,
+        phase_cm=phase_cm,
+        on_progress=on_progress,
+        on_log=on_log,
+    )
+    if gen is not _NOT_GENERATOR:
+        return gen
+    raise RuntimeError(
+        f"Model {request.model!r} does not use family_avatar pipeline "
+        "(check registry family and model_configs video_pipeline_shape)"
+    )
 
 
 def run_upscale_create_phased(

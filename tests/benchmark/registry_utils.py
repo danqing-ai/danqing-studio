@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Any, Iterator
 
+from backend.core.version_keys import is_quantized_registry_version
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 _REGISTRY_PATH = _REPO_ROOT / "default_config" / "models_registry.json"
 _WORKSPACE_POINTER = _REPO_ROOT / "default_config" / "workspace.pointer.json"
@@ -12,6 +14,9 @@ _WORKSPACE_POINTER = _REPO_ROOT / "default_config" / "workspace.pointer.json"
 EDIT_ACTIONS = frozenset({"rewrite", "retouch", "extend"})
 
 _MIN_SAFETENSORS_BYTES = 1024
+
+_EVAL_FULL_VERSION_ORDER: tuple[str, ...] = ("fp16", "bf16", "fp8", "mlx-bf16")
+_EVAL_QUANT_VERSION_ORDER: tuple[str, ...] = ("mlx-q4", "int4", "mlx-q8", "int8")
 
 
 def repo_root() -> Path:
@@ -63,36 +68,105 @@ def param_default(spec: dict[str, Any], name: str, fallback: float | int | str) 
     return fallback
 
 
-def resolve_default_bundle_dir(model_id: str, *, reg: dict[str, Any] | None = None) -> Path | None:
+def _version_bundle_dir(
+    vinfo: dict[str, Any],
+    *,
+    data_root: Path | None = None,
+) -> Path | None:
+    rel = str(vinfo.get("local_path") or "").strip()
+    if not rel:
+        return None
+    root = data_root or resolve_benchmark_data_root()
+    path = (root / rel).resolve() if not Path(rel).is_absolute() else Path(rel)
+    return path if path.is_dir() else None
+
+
+def _version_sort_key(version_key: str, *, quant_pool: bool) -> tuple[int, str]:
+    order = _EVAL_QUANT_VERSION_ORDER if quant_pool else _EVAL_FULL_VERSION_ORDER
+    try:
+        return (order.index(version_key), version_key)
+    except ValueError:
+        return (len(order), version_key)
+
+
+def _installed_version_rows(
+    model_id: str,
+    spec: dict[str, Any],
+    *,
+    data_root: Path | None = None,
+) -> list[tuple[str, dict[str, Any], Path]]:
+    versions = spec.get("versions") or {}
+    if not isinstance(versions, dict):
+        return []
+    root = data_root or resolve_benchmark_data_root()
+    rows: list[tuple[str, dict[str, Any], Path]] = []
+    for vk, vinfo in versions.items():
+        if not isinstance(vinfo, dict):
+            continue
+        path = _version_bundle_dir(vinfo, data_root=root)
+        if path is None:
+            continue
+        incomplete = _incomplete_download_reason(path)
+        if incomplete:
+            continue
+        rows.append((str(vk), vinfo, path))
+    return rows
+
+
+def resolve_eval_version_key(
+    model_id: str,
+    *,
+    reg: dict[str, Any] | None = None,
+    data_root: Path | None = None,
+) -> str | None:
+    """Pick eval version: prefer installed full weights, else installed quantized."""
     reg = reg or load_registry()
     spec = (reg.get("models") or {}).get(model_id)
     if not isinstance(spec, dict):
         return None
-    versions = spec.get("versions") or {}
-    if not isinstance(versions, dict):
+    installed = _installed_version_rows(model_id, spec, data_root=data_root)
+    if not installed:
         return None
 
-    chosen: dict[str, Any] | None = None
-    for _key, ver in versions.items():
-        if isinstance(ver, dict) and ver.get("default"):
-            chosen = ver
-            break
-    if chosen is None and isinstance(versions.get("fp16"), dict):
-        chosen = versions["fp16"]
-    if chosen is None:
-        for ver in versions.values():
-            if isinstance(ver, dict) and ver.get("local_path"):
-                chosen = ver
-                break
-    if not chosen:
-        return None
+    full_rows = [
+        row for row in installed if not is_quantized_registry_version(row[0], row[1])
+    ]
+    quant_rows = [
+        row for row in installed if is_quantized_registry_version(row[0], row[1])
+    ]
+    pool = full_rows if full_rows else quant_rows
+    quant_pool = not full_rows
+    best = min(pool, key=lambda row: _version_sort_key(row[0], quant_pool=quant_pool))
+    return best[0]
 
-    rel = str(chosen.get("local_path") or "").strip()
-    if not rel:
+
+def resolve_eval_bundle_dir(
+    model_id: str,
+    *,
+    reg: dict[str, Any] | None = None,
+    data_root: Path | None = None,
+) -> Path | None:
+    """On-disk bundle for eval: full when installed, quantized when that is all that exists."""
+    reg = reg or load_registry()
+    spec = (reg.get("models") or {}).get(model_id)
+    if not isinstance(spec, dict):
         return None
-    root = resolve_benchmark_data_root()
-    path = (root / rel).resolve() if not Path(rel).is_absolute() else Path(rel)
-    return path
+    version_key = resolve_eval_version_key(model_id, reg=reg, data_root=data_root)
+    if not version_key:
+        return None
+    vinfo = (spec.get("versions") or {}).get(version_key)
+    if not isinstance(vinfo, dict):
+        return None
+    return _version_bundle_dir(vinfo, data_root=data_root)
+
+
+def resolve_benchmark_model_bundle(model_id: str) -> Path | None:
+    """Installed bundle path for engine_unit / integration tests (same rule as eval)."""
+    return resolve_eval_bundle_dir(model_id)
+
+
+def resolve_default_bundle_dir(model_id: str, *, reg: dict[str, Any] | None = None) -> Path | None:
+    return resolve_eval_bundle_dir(model_id, reg=reg)
 
 
 def _incomplete_download_reason(bundle_root: Path) -> str | None:
@@ -127,7 +201,7 @@ def _bundle_manifest_module():
 
 def bundle_ready(model_id: str, *, reg: dict[str, Any] | None = None) -> tuple[bool, str]:
     """Return (ready, skip_reason). Uses FamilyBundleContract when family is known."""
-    path = resolve_default_bundle_dir(model_id, reg=reg)
+    path = resolve_eval_bundle_dir(model_id, reg=reg)
     if path is None or not path.is_dir():
         return False, "missing default bundle"
 

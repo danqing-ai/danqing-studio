@@ -568,6 +568,89 @@ class LLMService:
             return EnhanceResponse(enhanced_prompt=last_clean)
         return EnhanceResponse(enhanced_prompt=fallback or last_clean)
 
+    def analyze_long_video_chapter(
+        self,
+        request: "LongVideoChapterAnalyzeRequest",
+    ) -> "LongVideoChapterAnalyzeResponse":
+        from backend.core.contracts import (
+            LongVideoChapterAnalyzeRequest,
+            LongVideoChapterAnalyzeResponse,
+            LongVideoChapterSceneDTO,
+            LongVideoCharacterDTO,
+            LongVideoCharacterLookDTO,
+        )
+        from backend.engine.llm.chapter_analyze import run_chapter_analyze
+        from backend.engine.llm.storyboard import normalize_storyboard_locale
+        from backend.engine.llm.storyboard_cast import parse_character_roster, roster_to_dtos
+
+        think_active = self._think_is_active(self._resolve_enable_thinking(None))
+        locale = normalize_storyboard_locale(getattr(request, "locale", None))
+
+        def chat_fn(*, system: str, user: str, max_tokens: int) -> str:
+            resp = self.chat_completion(
+                ChatCompletionRequest(
+                    model=self._model_id,
+                    messages=[
+                        ChatMessage(role="system", content=system),
+                        ChatMessage(role="user", content=user),
+                    ],
+                    temperature=0.55,
+                    top_p=0.9,
+                    max_tokens=self._token_budget(max_tokens, think_active),
+                    stream=False,
+                )
+            )
+            return sanitize_enhanced_prompt(
+                resp.choices[0].message.content,
+                think_enabled=think_active,
+            )
+
+        try:
+            result = run_chapter_analyze(
+                chapter_text=request.chapter_text,
+                chapter_title=request.chapter_title,
+                locale=locale,
+                chat_fn=chat_fn,
+                think_apply=self._apply_think_mode_to_text,
+                token_budget=lambda b: self._token_budget(b, think_active),
+            )
+        except ValueError as exc:
+            raise RuntimeError(str(exc)) from exc
+
+        roster, style_anchor = parse_character_roster(result.character_anchor, locale=locale)
+        if result.style_anchor:
+            style_anchor = result.style_anchor
+        character_dtos: list[LongVideoCharacterDTO] = []
+        for row in roster_to_dtos(roster):
+            looks = [
+                LongVideoCharacterLookDTO(**lk)
+                for lk in (row.get("looks") or [])
+                if isinstance(lk, dict)
+            ]
+            character_dtos.append(
+                LongVideoCharacterDTO(
+                    id=str(row.get("id", "")),
+                    name=str(row.get("name", "")),
+                    default_look_id=str(row.get("default_look_id", "")),
+                    looks=looks,
+                )
+            )
+
+        scenes = [
+            LongVideoChapterSceneDTO(order=i + 1, beat=beat)
+            for i, beat in enumerate(result.beat_sheet)
+        ]
+        return LongVideoChapterAnalyzeResponse(
+            chapter_title=result.chapter_title,
+            synopsis=result.synopsis,
+            character_anchor=result.character_anchor,
+            style_anchor=style_anchor,
+            characters=character_dtos,
+            scene_beats=scenes,
+            scene_count=len(scenes),
+            llm_calls=result.llm_calls,
+        )
+
     def generate_long_video_storyboard(
         self,
         request: "LongVideoStoryboardRequest",
@@ -581,8 +664,9 @@ class LLMService:
             LongVideoCharacterLookDTO,
             LongVideoShotCastLookDTO,
         )
-        from backend.engine.common.long_video.plan import build_shot_plan
+        from backend.engine.common.long_video.plan import build_shot_plan, build_shot_plan_for_scenes
         from backend.engine.families.ltx.long_video_plan import LongVideoPlan, build_long_video_plan
+        from backend.engine.llm.chapter_analyze import MIN_SCENES as CHAPTER_MIN_SCENES
         from backend.engine.llm.storyboard_cast import (
             format_character_roster,
             parse_character_roster,
@@ -611,8 +695,18 @@ class LLMService:
         )
 
         raw = (request.prompt or "").strip()
-        if not raw:
+        is_chapter = (getattr(request, "source_mode", "brief") or "brief") == "chapter"
+        if not raw and not is_chapter:
             raise RuntimeError("long_video_storyboard requires a non-empty prompt")
+        if is_chapter:
+            scene_beats_in = [b.strip() for b in (request.scene_beats or []) if b and b.strip()]
+            if len(scene_beats_in) < CHAPTER_MIN_SCENES:
+                raise RuntimeError(
+                    "chapter storyboard requires scene_beats from chapter analysis "
+                    f"(at least {CHAPTER_MIN_SCENES})"
+                )
+            if not raw:
+                raw = scene_beats_in[0][:240]
 
         locale = normalize_storyboard_locale(getattr(request, "locale", None))
         lang_rule = storyboard_language_rule(locale)
@@ -624,23 +718,39 @@ class LLMService:
             segment_extend_sec=request.segment_extend_sec,
             reference_duration_sec=request.reference_duration_sec,
         )
-        shot_plan = build_shot_plan(
-            target_duration_sec=request.target_duration_sec,
-            segment_duration_sec=request.segment_duration_sec,
-        )
+        if is_chapter and request.use_shot_plan:
+            shot_plan = build_shot_plan_for_scenes(
+                scene_count=len(scene_beats_in),
+                segment_duration_sec=request.segment_duration_sec,
+            )
+            effective_target_duration = shot_plan.target_duration_sec
+        else:
+            shot_plan = build_shot_plan(
+                target_duration_sec=request.target_duration_sec,
+                segment_duration_sec=request.segment_duration_sec,
+            )
+            effective_target_duration = request.target_duration_sec
         expected_beats = shot_plan.shot_count if request.use_shot_plan else plan.total_segments
         llm_calls = 0
         think_active = self._think_is_active(self._resolve_enable_thinking(None))
 
         if request.use_shot_plan:
-            plan_user = (
-                f"Brief: {raw}\n"
-                f"Keyframe shots: {shot_plan.shot_count} "
-                f"(~{shot_plan.segment_duration_sec}s I2V clip per edge)\n"
-                f"Total target duration: {shot_plan.target_duration_sec}s\n"
-                f"Narrative budget: {shot_plan.narrative_budget}\n"
-                f"Write exactly {expected_beats} [Beat] lines after [Anchor] — one per keyframe."
-            )
+            if is_chapter:
+                plan_user = (
+                    f"Chapter synopsis: {raw}\n"
+                    f"Keyframe shots: {shot_plan.shot_count} (from chapter scene analysis)\n"
+                    f"Total duration: {effective_target_duration}s\n"
+                    f"Expand each chapter scene into one keyframe — preserve order."
+                )
+            else:
+                plan_user = (
+                    f"Brief: {raw}\n"
+                    f"Keyframe shots: {shot_plan.shot_count} "
+                    f"(~{shot_plan.segment_duration_sec}s I2V clip per edge)\n"
+                    f"Total target duration: {shot_plan.target_duration_sec}s\n"
+                    f"Narrative budget: {shot_plan.narrative_budget}\n"
+                    f"Write exactly {expected_beats} [Beat] lines after [Anchor] — one per keyframe."
+                )
             plan_system = LONG_VIDEO_PLAN_SHOT_SYSTEM_PROMPT
             expand_system = LONG_VIDEO_EXPAND_SHOT_SYSTEM_PROMPT
             continuity_system = LONG_VIDEO_CONTINUITY_SHOT_SYSTEM_PROMPT
@@ -662,36 +772,54 @@ class LLMService:
             plan_user += f"\nStyle: {request.style_positive.strip()}"
         plan_user += lang_suffix
 
-        plan_resp = self.chat_completion(
-            ChatCompletionRequest(
-                model=self._model_id,
-                messages=[
-                    ChatMessage(role="system", content=plan_system),
-                    ChatMessage(role="user", content=self._apply_think_mode_to_text(plan_user)),
-                ],
-                temperature=0.55,
-                top_p=0.9,
-                max_tokens=self._token_budget(600, think_active),
-                stream=False,
+        if is_chapter and request.use_shot_plan:
+            beat_sheet = list(scene_beats_in)
+            character_anchor = (request.prebuilt_character_anchor or "").strip()
+            if len(character_anchor) < 12:
+                character_anchor = raw[:240].strip()
+            style_anchor = (request.prebuilt_style_anchor or "").strip()
+            roster, parsed_style = parse_character_roster(character_anchor, locale=locale)
+            if not style_anchor and parsed_style:
+                style_anchor = parsed_style
+            character_anchor = apply_storyboard_anchor_locale(
+                format_character_roster(roster, style_anchor, locale=locale) if roster else character_anchor,
+                beat_sheet=beat_sheet[:expected_beats],
+                locale=locale,
             )
-        )
-        llm_calls += 1
-        plan_text = sanitize_enhanced_prompt(
-            plan_resp.choices[0].message.content,
-            think_enabled=think_active,
-        )
-        character_anchor, beat_sheet = parse_plan_script(plan_text, expected_beats=expected_beats)
-        if len(character_anchor.strip()) < 12:
-            character_anchor = raw[:240].strip()
-        roster, style_anchor = parse_character_roster(character_anchor, locale=locale)
-        character_anchor = apply_storyboard_anchor_locale(
-            format_character_roster(roster, style_anchor, locale=locale) if roster else character_anchor,
-            beat_sheet=beat_sheet[:expected_beats],
-            locale=locale,
-        )
-        if roster and not style_anchor:
-            _, style_anchor = parse_character_roster(character_anchor, locale=locale)
-        character_dtos = roster_to_dtos(roster)
+            if roster and not style_anchor:
+                _, style_anchor = parse_character_roster(character_anchor, locale=locale)
+            character_dtos = roster_to_dtos(roster)
+        else:
+            plan_resp = self.chat_completion(
+                ChatCompletionRequest(
+                    model=self._model_id,
+                    messages=[
+                        ChatMessage(role="system", content=plan_system),
+                        ChatMessage(role="user", content=self._apply_think_mode_to_text(plan_user)),
+                    ],
+                    temperature=0.55,
+                    top_p=0.9,
+                    max_tokens=self._token_budget(600, think_active),
+                    stream=False,
+                )
+            )
+            llm_calls += 1
+            plan_text = sanitize_enhanced_prompt(
+                plan_resp.choices[0].message.content,
+                think_enabled=think_active,
+            )
+            character_anchor, beat_sheet = parse_plan_script(plan_text, expected_beats=expected_beats)
+            if len(character_anchor.strip()) < 12:
+                character_anchor = raw[:240].strip()
+            roster, style_anchor = parse_character_roster(character_anchor, locale=locale)
+            character_anchor = apply_storyboard_anchor_locale(
+                format_character_roster(roster, style_anchor, locale=locale) if roster else character_anchor,
+                beat_sheet=beat_sheet[:expected_beats],
+                locale=locale,
+            )
+            if roster and not style_anchor:
+                _, style_anchor = parse_character_roster(character_anchor, locale=locale)
+            character_dtos = roster_to_dtos(roster)
 
         expand_expected = shot_plan.shot_count if request.use_shot_plan else plan.extend_pass_count
 
@@ -710,8 +838,12 @@ class LLMService:
                 + "\n".join(f"- {beat_sheet[i]}" for i in range(start, min(start + count, len(beat_sheet))))
                 + f"\n\nExpand shots {start + 1}..{start + count}. "
                 f"[Visual N] = scene-only; Anchor blocks are appended automatically before T2I."
-                + lang_suffix
             )
+            if is_chapter:
+                expand_user += (
+                    "\n\nThese beats come from a novel chapter — preserve order and narrative fidelity."
+                )
+            expand_user += lang_suffix
             expand_resp = self.chat_completion(
                 ChatCompletionRequest(
                     model=self._model_id,
@@ -896,7 +1028,7 @@ class LLMService:
                 "opening_prompt": opening_prompt,
                 "segment_prompts": segment_prompts,
                 "beat_sheet": beat_sheet,
-                "target_duration_sec": request.target_duration_sec,
+                "target_duration_sec": effective_target_duration,
                 "segment_duration_sec": request.segment_duration_sec,
                 "dual_pairs": dual_pairs or None,
                 "characters": character_dtos,

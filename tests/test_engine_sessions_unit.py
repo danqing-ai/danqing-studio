@@ -402,6 +402,8 @@ class EngineSessionsTests(unittest.TestCase):
         spec = FamilySpec(family_id="ltx", media="video")
         backbone = VideoPluginBackbone(spec)
         entry = MagicMock()
+        entry.parameters = {}
+        entry.raw = {}
         request = MagicMock(num_frames=None)
         should_load = backbone.bind_load_context(
             registry_entry=entry,
@@ -409,6 +411,25 @@ class EngineSessionsTests(unittest.TestCase):
             model_cache=None,
             bundle_root=Path("/tmp/bundle"),
             request=request,
+        )
+        self.assertFalse(should_load)
+        self.assertTrue(backbone._skip_load)
+
+    def test_image_plugin_skips_backbone_load_for_hidream_o1(self) -> None:
+        from backend.engine.families._image_backbone import ImagePluginBackbone
+        from backend.engine.protocols import FamilySpec
+
+        spec = FamilySpec(family_id="hidream_o1", media="image")
+        backbone = ImagePluginBackbone(spec)
+        entry = MagicMock()
+        entry.parameters = {}
+        entry.raw = {}
+        should_load = backbone.bind_load_context(
+            registry_entry=entry,
+            project_root=Path("/tmp"),
+            model_cache=None,
+            bundle_root=Path("/tmp/bundle"),
+            request=MagicMock(),
         )
         self.assertFalse(should_load)
         self.assertTrue(backbone._skip_load)

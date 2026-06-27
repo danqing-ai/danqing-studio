@@ -481,6 +481,28 @@ async def convert_model(request: ConvertModelRequest, http_request: Request):
             ),
         )
 
+    from_ver = versions.get(request.from_version)
+    if not from_ver:
+        raise HTTPException(
+            status_code=404,
+            detail=t("error.source_version_not_found", locale, version=request.from_version),
+        )
+    from_path = service._resolve_version_path(from_ver)
+    if not from_path.exists():
+        raise HTTPException(
+            status_code=400,
+            detail=t("error.source_version_not_ready", locale, version=request.from_version),
+        )
+    to_path = service._resolve_version_path(to_ver)
+    if to_path.exists():
+        return ConversionProgressResponse(
+            task_id=str(uuid.uuid4()),
+            status="completed",
+            progress=1.0,
+            stage="completed",
+            error_message="",
+        )
+
     progress_queue: asyncio.Queue = asyncio.Queue()
 
     async def on_progress(task: ConversionTask):
@@ -492,32 +514,42 @@ async def convert_model(request: ConvertModelRequest, http_request: Request):
                 request.model_name,
                 request.from_version,
                 request.to_version,
-                progress_callback=on_progress
+                progress_callback=on_progress,
             )
         except Exception as e:
-            await progress_queue.put(ConversionTask(
-                id="",
-                model_name=request.model_name,
-                from_version=request.from_version,
-                to_version=request.to_version,
-                status="failed",
-                progress=0,
-                stage="error",
-                error_message=str(e)
-            ))
+            await progress_queue.put(
+                ConversionTask(
+                    id=str(uuid.uuid4()),
+                    model_name=request.model_name,
+                    from_version=request.from_version,
+                    to_version=request.to_version,
+                    status="failed",
+                    progress=0,
+                    stage="error",
+                    error_message=str(e),
+                )
+            )
 
-    task = asyncio.create_task(do_conversion())
+    asyncio.create_task(do_conversion())
 
     first_progress = await progress_queue.get()
-    task_id = first_progress.id or str(uuid.uuid4())
-    await progress_queue.put(first_progress)
+    status_str = (
+        first_progress.status.value
+        if hasattr(first_progress.status, "value")
+        else str(first_progress.status)
+    )
+    if status_str == "failed" or first_progress.stage == "error":
+        raise HTTPException(
+            status_code=500,
+            detail=first_progress.error_message or t("error.conversion_failed", locale),
+        )
 
     return ConversionProgressResponse(
-        task_id=task_id,
-        status="running",
-        progress=0,
-        stage="pending",
-        error_message=""
+        task_id=first_progress.id,
+        status=status_str or "running",
+        progress=float(first_progress.progress or 0),
+        stage=first_progress.stage or "pending",
+        error_message=first_progress.error_message or "",
     )
 
 

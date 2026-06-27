@@ -495,6 +495,11 @@ export const api = {
       return response.data;
     },
 
+    async createVideoAvatar(body: Record<string, unknown>): Promise<unknown> {
+      const response = await client.post('/api/videos/avatars', body);
+      return response.data;
+    },
+
     async createVideoUpscale(body: Record<string, unknown>): Promise<unknown> {
       const response = await client.post('/api/videos/upscales', body);
       return response.data;
@@ -644,6 +649,10 @@ export const api = {
       style_positive?: string;
       locale?: string;
       use_shot_plan?: boolean;
+      source_mode?: 'brief' | 'chapter';
+      scene_beats?: string[];
+      prebuilt_character_anchor?: string;
+      prebuilt_style_anchor?: string;
     }): Promise<{
       character_anchor: string;
       style_anchor?: string;
@@ -669,6 +678,31 @@ export const api = {
       }>;
     }> {
       const response = await client.post('/api/chat/long-video-storyboard', body, {
+        timeout: LLM_MULTI_ROUND_TIMEOUT_MS,
+      });
+      return response.data;
+    },
+
+    async longVideoChapterAnalyze(body: {
+      chapter_text: string;
+      chapter_title?: string;
+      locale?: string;
+    }): Promise<{
+      chapter_title: string;
+      synopsis: string;
+      character_anchor: string;
+      style_anchor?: string;
+      characters?: Array<{
+        id: string;
+        name: string;
+        default_look_id: string;
+        looks: Array<{ id: string; label: string; body: string }>;
+      }>;
+      scene_beats: Array<{ order: number; title?: string; beat: string }>;
+      scene_count: number;
+      llm_calls: number;
+    }> {
+      const response = await client.post('/api/chat/long-video-chapter-analyze', body, {
         timeout: LLM_MULTI_ROUND_TIMEOUT_MS,
       });
       return response.data;

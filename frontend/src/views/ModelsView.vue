@@ -266,7 +266,6 @@
                   :uniform-source="uniformDownloadSource(model)"
                   :loading-keys="downloadingModels"
                   :can-download="canDownload(model)"
-                  :dependency-hint="getDependencyHint(model)"
                   :get-version-status="getVersionStatus"
                   :bundle-components-for="(verKey) => versionBundleComponents(model.id, verKey)"
                   @download="downloadVersion(model, $event)"
@@ -508,12 +507,6 @@ import { useI18n } from 'vue-i18n';
 import { toast, confirm } from '@/utils/feedback';
 import { api } from '@/utils/api';
 import { $tt, $mn, $md, $mvn } from '@/utils/i18n';
-import {
-  isDependencyReady,
-  parseDependencies,
-  type DependencySpec,
-  type RegistryDependency,
-} from '@/utils/dependencySpecs';
 import { openLoraTrainingRun } from '@/utils/loraTrainHandoff';
 import { modelInitialsFromName } from '@/utils/modelInitials';
 import { useRegistryStore } from '@/stores/registry';
@@ -559,7 +552,6 @@ interface ModelConfig {
   successor?: string;
   distilled_from?: string;
   distilled_variant?: string;
-  dependencies?: RegistryDependency[];
   versions?: Record<string, ModelVersion>;
   ready?: boolean;
 }
@@ -783,16 +775,29 @@ const activeDownloadCount = computed(() => {
 
 async function loadModelRegistry() {
   try {
-    const [registryData, statusData, detailedStatusData] = await Promise.all([
+    const [registryResult, statusResult, detailedResult] = await Promise.allSettled([
       registryStore.load(),
       api.settings.getModelsStatus(),
       api.settings.getModelsDetailedStatus(),
     ]);
-    const reg = registryData || { models: {}, categories: {} };
+    if (registryResult.status !== 'fulfilled' || !registryResult.value) {
+      throw registryResult.status === 'rejected' ? registryResult.reason : new Error('registry empty');
+    }
+    const reg = registryResult.value || { models: {}, categories: {} };
     modelRegistry.value = reg.models || {};
-    modelsStatus.value = statusData || {};
-    modelsDetailedStatus.value = detailedStatusData || {};
     categories.value = reg.categories || {};
+    if (statusResult.status === 'fulfilled') {
+      modelsStatus.value = (statusResult.value as Record<string, boolean>) || {};
+    } else {
+      console.error('Failed to load model status:', statusResult.reason);
+      modelsStatus.value = {};
+    }
+    if (detailedResult.status === 'fulfilled') {
+      modelsDetailedStatus.value = (detailedResult.value as typeof modelsDetailedStatus.value) || {};
+    } else {
+      console.error('Failed to load detailed model status:', detailedResult.reason);
+      modelsDetailedStatus.value = {};
+    }
   } catch (e) {
     console.error('Failed to load model registry:', e);
   }
@@ -1021,36 +1026,8 @@ function getModelName(modelId: string): string {
   return $mn(row, modelId);
 }
 
-function modelDependencies(model: ModelRow): DependencySpec[] {
-  return parseDependencies(model.dependencies);
-}
-
-function getDependencyDisplayName(spec: DependencySpec): string {
-  const cfg = modelRegistry.value[spec.modelId];
-  if (!cfg) return spec.modelId;
-  const row: ModelRow = { id: spec.modelId, ...cfg, ready: false };
-  if (spec.version && cfg.versions?.[spec.version]) {
-    return $mvn(spec.modelId, row, cfg.versions[spec.version]);
-  }
-  return $mn(row, spec.modelId);
-}
-
-function isDependencySatisfied(spec: DependencySpec): boolean {
-  return isDependencyReady(spec, modelsDetailedStatus.value, isModelReady);
-}
-
 function canDownload(_model: ModelRow): boolean {
-  // Registry dependencies are installed automatically by the backend before the main download.
   return true;
-}
-
-function getDependencyHint(model: ModelRow): string {
-  const deps = modelDependencies(model);
-  if (deps.length === 0) return '';
-  const missing = deps.filter((dep) => !isDependencySatisfied(dep));
-  if (missing.length === 0) return '';
-  const names = missing.map((d) => getDependencyDisplayName(d)).join('、');
-  return $tt('download.dependencyMissing', { models: names });
 }
 
 function modelStatusTitle(modelId: string): string {
@@ -1182,7 +1159,14 @@ async function quantizeVersion(model: ModelRow, versionKey: string) {
     connectConversionSSE(taskId, label, uiKey);
   } catch (e: any) {
     console.error('Quantize failed:', e);
-    toast.error($tt('download.quantizeFailed', { msg: e.message || String(e) }));
+    const detail = e?.response?.data?.detail;
+    const msg =
+      typeof detail === 'string'
+        ? detail
+        : Array.isArray(detail)
+          ? detail.map((d: any) => d?.msg || String(d)).join('; ')
+          : e.message || String(e);
+    toast.error($tt('download.quantizeFailed', { msg }));
     delete downloadingModels.value[uiKey];
   }
 }

@@ -27,10 +27,18 @@ def validate_bundle_graph_step(
     family: str,
     model_id: str,
     on_log: Callable[[str, str], None] | None,
+    registry_entry: Any | None = None,
+    project_root: Path | None = None,
 ) -> None:
     from backend.engine.common.bundle.layout import assert_media_bundle_ready
 
-    assert_media_bundle_ready(bundle_root, family=family, model_id=model_id)
+    assert_media_bundle_ready(
+        bundle_root,
+        family=family,
+        model_id=model_id,
+        registry_entry=registry_entry,
+        project_root=project_root,
+    )
     pipeline_graph_step(
         "validate_bundle",
         on_log,

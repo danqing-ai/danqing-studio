@@ -6,12 +6,17 @@ from typing import Any, Callable
 
 from backend.core.contracts import (
     ExecutionContext,
+    VideoAvatarRequest,
     VideoEditRequest,
     VideoGenerationRequest,
 )
 from backend.engine.pipelines.video_pipeline import VideoPipeline
 from backend.engine.sessions.media_session import MediaSession
-from backend.engine.sessions.phased_create import run_video_create_phased, run_video_edit_phased
+from backend.engine.sessions.phased_create import (
+    run_video_avatar_phased,
+    run_video_create_phased,
+    run_video_edit_phased,
+)
 from backend.engine.sessions.session_routing import family_has_registered_plugin
 
 
@@ -61,6 +66,24 @@ class VideoSession(MediaSession):
     ) -> Any:
         resolved, pipeline, log_cb = self._prepare(request, exec_ctx, on_log, log_tag="edit")
         return run_video_edit_phased(
+            pipeline,
+            resolved,
+            request,
+            exec_ctx,
+            on_progress=on_progress,
+            on_log=log_cb,
+        )
+
+    def run_avatar(
+        self,
+        request: VideoAvatarRequest,
+        exec_ctx: ExecutionContext,
+        *,
+        on_progress: Callable | None = None,
+        on_log: Callable | None = None,
+    ) -> Any:
+        resolved, pipeline, log_cb = self._prepare(request, exec_ctx, on_log, log_tag="avatar")
+        return run_video_avatar_phased(
             pipeline,
             resolved,
             request,

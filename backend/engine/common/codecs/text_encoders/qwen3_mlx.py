@@ -350,6 +350,32 @@ class Qwen3EncoderModel(nn.Module):
 _ZImageEncoderModel = Qwen3EncoderModel
 
 
+def _infer_qwen3_encoder_config_from_weights(weights: dict[str, Any]) -> dict[str, Any]:
+    """Infer Qwen3 text-encoder dims when ``config.json`` is missing (mlx-community bundles)."""
+    config: dict[str, Any] = {}
+    embed_scales = weights.get("embed_tokens.scales")
+    if embed_scales is not None and hasattr(embed_scales, "shape") and len(embed_scales.shape) >= 1:
+        num_groups = int(embed_scales.shape[-1])
+        if num_groups > 0:
+            config["hidden_size"] = num_groups * 64
+
+    max_layer = -1
+    for key in weights:
+        if not key.startswith("layers."):
+            continue
+        part = key.split(".", 2)[1]
+        if part.isdigit():
+            max_layer = max(max_layer, int(part))
+    if max_layer >= 0:
+        config["num_hidden_layers"] = max_layer + 1
+
+    gate = weights.get("layers.0.mlp.gate_proj.weight")
+    if gate is not None and hasattr(gate, "shape") and len(gate.shape) >= 1:
+        config["intermediate_size"] = int(gate.shape[0])
+
+    return config
+
+
 def build_zimage_mlx_encoder(
     model_path: str,
     ctx: Any,
@@ -376,6 +402,8 @@ def build_zimage_mlx_encoder(
     if config_path.exists():
         with open(config_path, encoding="utf-8") as f:
             config = json.load(f)
+    else:
+        config = _infer_qwen3_encoder_config_from_weights(weights)
 
     model = Qwen3EncoderModel(
         vocab_size=config.get("vocab_size", 151936),

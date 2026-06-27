@@ -29,6 +29,7 @@ class LTX23GeneratorProto(Protocol):
         guidance: float,
         step_distill: bool,
         image_path: str | None,
+        negative_prompt: str = "",
         on_log: Any | None,
         on_progress: Any | None = None,
     ) -> str: ...

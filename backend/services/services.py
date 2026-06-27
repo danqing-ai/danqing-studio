@@ -435,14 +435,31 @@ class SettingsService(ISettingsService):
                 )
 
                 if has_weights and family and not skips_full_family_bundle_contract(category):
-                    components = bundle_component_status(model_dir, family=family)
+                    components = bundle_component_status(
+                        model_dir,
+                        family=family,
+                        version_config=vc,
+                        project_root=self._path_resolver.get_project_root(),
+                    )
 
                 version_entry: dict[str, Any] = {
                     "status": "not_downloaded",
                     "label": "Not downloaded",
                     "ready": False,
                 }
-                if has_weights:
+                split_bundle = len(repo_paths) > 1
+                if split_bundle:
+                    # bundle_repos may split DiT/VAE/SigLIP from external text encoders
+                    # (e.g. Hunyuan I2V Qwen + ByT5). All paths were validated above.
+                    version_entry = {
+                        "status": "ready",
+                        "label": "Ready",
+                        "ready": True,
+                    }
+                    if components is not None:
+                        version_entry["bundle_components"] = components
+                    any_ready = True
+                elif has_weights:
                     if components is not None and not components.get("complete", True):
                         version_entry = {
                             "status": "incomplete",

@@ -641,6 +641,8 @@ class QwenImageDiTMLX(TransformerBase):
             ctx=load_ctx,
             bundle_affine_bits=bundle_affine_bits,
             inference_mode=inference_mode,
+            module_root=self.dit,
+            skeleton_key_prefix="dit.",
         )
         if inference_mode is None or getattr(inference_mode, "kind", "dense") != "quantized":
             self._cast_param_map_dtype(mx.bfloat16)

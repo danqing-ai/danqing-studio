@@ -17,6 +17,7 @@ from backend.core.contracts import (
     ImageUpscaleRequest,
     VideoEditRequest,
     VideoGenerationRequest,
+    VideoAvatarRequest,
     VideoLongGenerationRequest,
     VideoUpscaleRequest,
 )
@@ -80,7 +81,7 @@ class IVideoEngine(ABC):
 
     @abstractmethod
     def supports(self, model_id: str, action: str) -> bool:
-        """action: generate | edit | upscale"""
+        """action: generate | edit | avatar | upscale"""
         ...
 
     @abstractmethod
@@ -101,6 +102,10 @@ class IVideoEngine(ABC):
 
     @abstractmethod
     async def edit(self, request: VideoEditRequest, ctx: ExecutionContext) -> EngineResult:
+        pass
+
+    @abstractmethod
+    async def avatar(self, request: VideoAvatarRequest, ctx: ExecutionContext) -> EngineResult:
         pass
 
     @abstractmethod

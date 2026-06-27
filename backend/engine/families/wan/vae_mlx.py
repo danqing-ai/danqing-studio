@@ -1706,6 +1706,22 @@ def decode_wan_vae_latents(
     return sample
 
 
+def encode_wan_vae_volume(
+    ctx: RuntimeContext,
+    pixels_bcthw: mx.array,
+    bundle_root: Path | str,
+) -> mx.array:
+    """Encode RGB video ``[B,C,T,H,W]`` float ``[-1,1]`` to latents ``[B,C,T,h,w]``."""
+    vae = load_wan_vae(ctx, bundle_root)
+    if pixels_bcthw.ndim != 5:
+        raise RuntimeError(f"Wan VAE encode expects [B,C,T,H,W], got {pixels_bcthw.shape}")
+    logger.info("Wan VAE encode: pixel shape=%s", tuple(pixels_bcthw.shape))
+    latents = vae.model.encode(pixels_bcthw, (vae.scale_mean, vae.scale_inv_std))
+    ctx.eval(latents)
+    logger.info("Wan VAE encode done: latent shape=%s", tuple(latents.shape))
+    return latents
+
+
 def encode_wan_vae_image(
     ctx: RuntimeContext,
     image_chw: mx.array,

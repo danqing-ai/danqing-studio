@@ -110,7 +110,7 @@ const emit = defineEmits<{
   (e: 'batch-train-lora'): void;
   (e: 'clear-selection'): void;
   (e: 'update:viewMode', value: 'grid' | 'canvas'): void;
-  (e: 'composer-restore', snapshot: Record<string, string>): void;
+  (e: 'composer-restore', snapshot: import('@/types').CanvasComposerSnapshot): void;
   (e: 'open-composer'): void;
 }>();
 

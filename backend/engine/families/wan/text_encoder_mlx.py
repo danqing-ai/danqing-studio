@@ -182,11 +182,16 @@ class _UMT5Encoder(nn.Module):
 def _load_umt5_state_dict(
     checkpoint_path: Path, *, array_fn: Any | None = None
 ) -> dict[str, mx.array]:
-    from backend.engine.common.bundle.pytorch_bin_numpy import state_dict_to_numpy
+    from backend.engine.runtime.mlx_runtime import load_weights_dict
 
     logger.info("Loading Wan UMT5 weights from %s", checkpoint_path)
     if array_fn is None:
         array_fn = mx.array
+    if checkpoint_path.suffix.lower() == ".safetensors":
+        raw = load_weights_dict(None, str(checkpoint_path))
+        return {k: array_fn(v.astype(np.float32)) for k, v in raw.items()}
+    from backend.engine.common.bundle.pytorch_bin_numpy import state_dict_to_numpy
+
     sd = state_dict_to_numpy(checkpoint_path)
     out: dict[str, mx.array] = {}
     for k, v in sd.items():
@@ -348,6 +353,11 @@ def resolve_wan_umt5_pth(bundle_root: Path) -> tuple[Path, Path] | None:
         return None
     pth_candidates = sorted(root.glob("models_t5*.pth"))
     pth = next((p for p in pth_candidates if p.is_file()), None)
-    if pth is None:
-        return None
-    return pth, tok_dir
+    if pth is not None:
+        return pth, tok_dir
+    te_dir = root / "text_encoder"
+    if te_dir.is_dir():
+        te_shards = sorted(te_dir.glob("*.safetensors"))
+        if te_shards:
+            return te_shards[0], tok_dir
+    return None

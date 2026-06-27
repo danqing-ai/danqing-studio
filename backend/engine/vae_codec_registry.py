@@ -83,7 +83,7 @@ def _encode_flux2(
         infer_latent_channels,
         load_vae_weight_dict,
         prepare_vae_encoder_weight_items,
-        read_vae_dir_config,
+        resolve_vae_bundle_config,
     )
 
     if bundle_root is None:
@@ -91,10 +91,10 @@ def _encode_flux2(
     vae_dir = bundle_root / "vae"
     if not vae_dir.is_dir():
         raise RuntimeError(f"Flux2 VAE encode: no vae directory under {bundle_root}")
-    vae_cfg, _, _ = read_vae_dir_config(vae_dir)
     vae_weights = load_vae_weight_dict(ctx, vae_dir)
     if not vae_weights:
         raise RuntimeError(f"Flux2 VAE encode: no weights under {vae_dir}")
+    vae_cfg, _, _ = resolve_vae_bundle_config(vae_dir, vae_weights=vae_weights, ctx=ctx)
 
     scaling_factor = float(vae_cfg.get("scaling_factor", 1.0))
     shift_factor = float(vae_cfg.get("shift_factor", 0.0))
@@ -119,7 +119,10 @@ def _encode_flux2(
     if qw is None or qb is None:
         raise RuntimeError("Flux2 img2img: VAE checkpoint missing quant_conv.* tensors.")
     t_nhwc = ctx.permute(h64, (0, 2, 3, 1))
-    t_q = ctx.conv2d(t_nhwc, ctx.permute(qw, (0, 2, 3, 1)), stride=1, padding=0)
+    from backend.engine.common.codecs.vae.weight_remap import vae_conv_weight_for_runtime
+
+    qw_kernel = vae_conv_weight_for_runtime(ctx, qw)
+    t_q = ctx.conv2d(t_nhwc, qw_kernel, stride=1, padding=0)
     t_q = t_q + qb.reshape(1, 1, 1, -1)
     t_q = ctx.permute(t_q, (0, 3, 1, 2))
     mean = t_q[:, :latent_c]

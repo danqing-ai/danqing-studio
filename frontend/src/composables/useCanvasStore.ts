@@ -137,6 +137,11 @@ function normalizeComposerSnapshot(v: unknown): CanvasComposerSnapshot {
   ] as const) {
     if (typeof o[key] === 'string') snap[key] = o[key];
   }
+  if (Array.isArray(o.reference_image_paths)) {
+    snap.reference_image_paths = o.reference_image_paths.filter(
+      (p): p is string => typeof p === 'string' && p.length > 0,
+    );
+  }
   return snap;
 }
 
@@ -394,7 +399,7 @@ function createCanvasStore(media: CanvasMedia) {
   function setComposerSnapshot(patch: CanvasComposerSnapshot) {
     const next = normalizeComposerSnapshot(patch);
     for (const key of Object.keys(composerSnapshot)) {
-      delete (composerSnapshot as Record<string, string | undefined>)[key];
+      delete (composerSnapshot as Record<string, unknown>)[key];
     }
     Object.assign(composerSnapshot, next);
     schedulePersist();

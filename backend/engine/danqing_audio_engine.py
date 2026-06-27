@@ -16,14 +16,16 @@ from backend.core.contracts import (
 from backend.core.interfaces import IPathResolver
 from backend.core.media_interfaces import IAudioEngine
 from backend.core.model_registry import ModelRegistry
+from backend.core.version_keys import resolve_registry_version_key
 
 
 def _version_config(entry_raw: dict[str, Any], version_key: str) -> dict[str, Any]:
     versions = entry_raw.get("versions")
     if not isinstance(versions, dict) or not versions:
         return {}
-    if version_key and version_key in versions:
-        cfg = versions[version_key]
+    resolved = resolve_registry_version_key(versions, version_key or None)
+    if resolved and resolved in versions:
+        cfg = versions[resolved]
         return cfg if isinstance(cfg, dict) else {}
     for _k, cfg in versions.items():
         if isinstance(cfg, dict) and cfg.get("default"):

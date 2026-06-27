@@ -59,14 +59,12 @@ class HunyuanQwen25VLEncoder:
         input_ids, attn_mask = self._tokenizer.encode_batch(
             texts, max_length=max_length, add_special_tokens=False,
         )
-        array_fn = mx.array
-        if self._ctx is not None and hasattr(self._ctx, "array"):
-            array_fn = self._ctx.array
-        input_ids_mx = array_fn(input_ids)
-        attn_mask_mx = array_fn(attn_mask)
+        # Token ids must stay integral (ctx.array defaults to float32).
+        input_ids_mx = mx.array(input_ids, dtype=mx.int32)
+        attn_mask_mx = mx.array(attn_mask, dtype=mx.int32)
         hidden = self._encoder.encode_hidden_at(input_ids_mx, attn_mask_mx, layer_index=layer_index)
         run_eval(self._eval_fn, hidden)
-        emb = np.asarray(hidden[:, crop_start:], dtype=np.float32)
+        emb = np.asarray(hidden[:, crop_start:].astype(mx.float32), dtype=np.float32)
         mask = np.asarray(attn_mask[:, crop_start:], dtype=np.int32).astype(bool)
         run_clear_cache(self._clear_cache_fn)
         return emb, mask

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -259,10 +260,11 @@ def validate_edit_vae_latent_grid(
     bundle_root: Path | None,
     height: int,
     width: int,
+    ctx: Any | None = None,
 ) -> None:
     """Fail loud when rewrite img2img VAE grid does not match transformer latent grid."""
     from backend.engine.codecs import get_vae_encode_handler
-    from backend.engine.common.codecs.vae import read_vae_dir_config
+    from backend.engine.common.codecs.vae import resolve_vae_bundle_config
 
     vae_scale = int(getattr(config, "vae_scale", 8))
     enc_spatial_div = 8
@@ -270,7 +272,7 @@ def validate_edit_vae_latent_grid(
     enc_h, enc_w = height // enc_spatial_div, width // enc_spatial_div
 
     vae_dir_pre = (bundle_root / "vae") if bundle_root else None
-    vae_cfg_pre, _, _ = read_vae_dir_config(vae_dir_pre)
+    vae_cfg_pre, _, _ = resolve_vae_bundle_config(vae_dir_pre, ctx=ctx)
     vae_cls_pre = str(vae_cfg_pre.get("_class_name") or "")
     if get_vae_encode_handler(vae_cls_pre, entry_family=family) is not None:
         return
@@ -480,15 +482,15 @@ def load_image_vae_dir_cfg_weights(pipeline,
     entry,
     version_key: str | None,
 ) -> tuple[Path, dict[str, Any], dict[str, Any]]:
-    from backend.engine.common.codecs.vae import load_vae_weight_dict, read_vae_dir_config
+    from backend.engine.common.codecs.vae import load_vae_weight_dict, resolve_vae_bundle_config
 
     bundle_root = _local_bundle_root_fn(pipeline._project_root, entry, version_key)
     vae_dir = (bundle_root / "vae") if bundle_root else None
     if vae_dir is None or not vae_dir.exists():
         raise RuntimeError(f"VAE: no vae directory under bundle {bundle_root}")
 
-    vae_cfg, _, _ = read_vae_dir_config(vae_dir)
     vae_weights = load_vae_weight_dict(pipeline.ctx, vae_dir)
+    vae_cfg, _, _ = resolve_vae_bundle_config(vae_dir, vae_weights=vae_weights, ctx=pipeline.ctx)
     if not vae_weights:
         raise RuntimeError(f"VAE encode: no weights under {vae_dir}")
     return vae_dir, vae_cfg, vae_weights
@@ -1097,3 +1099,189 @@ def image_vae_decode(pipeline,
             release_vae_decoder_memory(ctx, vae)
             if on_log:
                 on_log("info", "vae_released_after_decode=yes")
+
+
+def uses_family_image_generator(config: Any) -> bool:
+    return str(getattr(config, "image_pipeline_shape", "dit_standard") or "dit_standard") == "family_generator"
+
+
+def execute_family_image_generator(
+    pipeline: Any,
+    request: ImageGenerationRequest | ImageEditRequest,
+    ctx_exec: ExecutionContext,
+    *,
+    is_edit: bool,
+    on_progress: Callable | None = None,
+    on_log: Callable | None = None,
+) -> tuple[str, dict[str, Any]] | list[tuple[str, dict[str, Any]]] | None:
+    """Shape C image generation — family-owned stack (T2I / edit / multi-ref)."""
+    import random
+
+    from backend.core.contracts import parse_size, work_title_metadata
+    from backend.engine._transformer_registry import get_image_generation_factory, validate_image_generation_params
+    from backend.engine.pipelines.pipeline_progress import emit_complete, pipeline_graph_step
+
+    model_key, version_key = parse_model_version(request.model)
+    entry = pipeline._registry.require(model_key)
+    family = require_entry_family(entry, model_id=model_key)
+    config_cls = get_config_class(family)
+    config = config_cls()
+    apply_image_registry_config_overrides(entry, config)
+
+    if not uses_family_image_generator(config):
+        raise RuntimeError(
+            f"Internal error: execute_family_image_generator called for "
+            f"image_pipeline_shape={getattr(config, 'image_pipeline_shape', '')!r} "
+            f"(family={family!r})"
+        )
+
+    if ctx_exec.cancel_token.is_cancelled():
+        return None
+
+    size_raw = getattr(request, "size", None)
+    if is_edit and not size_raw:
+        src_id = getattr(request, "source_asset_id", None)
+        if not src_id:
+            raise RuntimeError("Image edit requires source_asset_id")
+        src = pipeline._asset_store.get_file_path(src_id)
+        if src is None or not src.exists():
+            raise RuntimeError(f"Source image asset not found: {src_id!r}")
+        from PIL import Image
+
+        with Image.open(src) as im:
+            w, h = im.size
+    else:
+        w, h = parse_size(size_raw or "1024x1024")
+    steps = int(getattr(request, "steps", None) or registry_scalar_default(entry, "steps", 28) or 28)
+    guidance = float(getattr(request, "guidance", None) or registry_scalar_default(entry, "guidance", 1.0) or 1.0)
+    seed = request.seed if request.seed is not None else random.randint(0, 2**32 - 1)
+    n = max(1, int(getattr(request, "n", 1) or 1))
+
+    bundle_root = _local_bundle_root_fn(pipeline._project_root, entry, version_key)
+    if bundle_root is None or not bundle_root.is_dir():
+        raise RuntimeError(f"Image model bundle not found for {request.model!r}")
+
+    ref_paths: list[str] = []
+    if is_edit:
+        src_id = getattr(request, "source_asset_id", None)
+        if not src_id:
+            raise RuntimeError("Image edit requires source_asset_id")
+        src = pipeline._asset_store.get_file_path(src_id)
+        if src is None or not src.exists():
+            raise RuntimeError(f"Source image asset not found: {src_id!r}")
+        ref_paths = [str(src)]
+    else:
+        ref_ids = list(getattr(request, "reference_asset_ids", None) or [])
+        meta = getattr(request, "metadata", None) or {}
+        if not ref_ids and isinstance(meta.get("reference_asset_ids"), list):
+            ref_ids = [str(x) for x in meta["reference_asset_ids"]]
+        max_refs = int(getattr(config, "hidream_edit_max_refs", 3) or getattr(config, "edit_max_reference_images", 3) or 3)
+        for aid in ref_ids[:max_refs]:
+            p = pipeline._asset_store.get_file_path(aid)
+            if p is None or not p.exists():
+                raise RuntimeError(f"Reference image asset not found: {aid!r}")
+            ref_paths.append(str(p))
+
+    validate_image_generation_params(
+        family=family,
+        entry=entry,
+        config=config,
+        ref_image_paths=ref_paths or None,
+    )
+
+    factory = get_image_generation_factory(family)
+    gen = factory(
+        pipeline.ctx,
+        bundle_root,
+        config=config,
+        entry=entry,
+        version_key=version_key,
+    )
+
+    if on_log:
+        on_log(
+            "info",
+            " ".join(
+                [
+                    f"infer model={model_key}",
+                    f"family={family}",
+                    f"image_pipeline_shape=family_generator",
+                    f"size={w}x{h}",
+                    f"steps={steps}",
+                    f"seed={seed}",
+                    f"edit={is_edit}",
+                    f"refs={len(ref_paths)}",
+                ]
+            ),
+        )
+
+    pipeline_graph_step("load_model", on_log)
+    gen.load()
+
+    work = Path(ctx_exec.work_dir)
+    work.mkdir(parents=True, exist_ok=True)
+    if family == "hidream_o1":
+        from backend.engine.families.hidream_o1.generation_mlx import resolve_hidream_output_path
+
+        resolve_out = resolve_hidream_output_path
+    else:
+        from backend.engine.families.step1x_edit.generation_cuda import resolve_step1x_output_path
+
+        resolve_out = resolve_step1x_output_path
+    neg = getattr(request, "negative_prompt", None) or ""
+
+    results: list[tuple[str, dict[str, Any]]] = []
+    for i in range(n):
+        if ctx_exec.cancel_token.is_cancelled():
+            return results if results else None
+        batch_seed = seed + i
+        out_path = resolve_out(work, model_key, batch_seed)
+
+        batch_progress = on_progress
+        if n > 1 and on_progress is not None:
+            from backend.engine.pipelines.image_create_phases import _scale_progress
+
+            batch_progress = _scale_progress(on_progress, i, n)
+
+        pipeline_graph_step("denoise", on_log)
+        snap_resolution = bool(getattr(config, "hidream_snap_resolution", True))
+        if family == "hidream_o1" and os.environ.get("DANQING_BENCH_EVAL") == "1":
+            snap_resolution = False
+        saved = gen.generate_and_save(
+            prompt=request.prompt,
+            output_path=out_path,
+            width=w,
+            height=h,
+            seed=batch_seed,
+            steps=steps,
+            guidance=guidance,
+            negative_prompt=neg,
+            ref_image_paths=ref_paths or None,
+            snap_resolution=snap_resolution,
+            blend_seams=int(getattr(config, "hidream_blend_seams", 0) or 0),
+            on_log=on_log,
+            on_progress=batch_progress,
+            cancel_token=ctx_exec.cancel_token,
+        )
+
+        pipeline_graph_step("save_asset", on_log)
+        metadata = {
+            "model": request.model,
+            "seed": batch_seed,
+            "prompt": request.prompt,
+            "negative_prompt": neg,
+            "steps": steps,
+            "guidance": guidance,
+            "width": w,
+            "height": h,
+            "mime_type": "image/png",
+        }
+        if is_edit and getattr(request, "source_asset_id", None):
+            metadata["source_asset_id"] = request.source_asset_id
+        metadata.update(work_title_metadata(getattr(request, "title", None)))
+        results.append((saved, metadata))
+
+    emit_complete(on_progress, n_steps=steps)
+    if n == 1:
+        return results[0]
+    return results

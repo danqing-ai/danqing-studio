@@ -80,7 +80,7 @@ def _find_nn_linear_by_weight(root: Any, weight: Any) -> Any | None:
         if nid in seen:
             continue
         seen.add(nid)
-        if isinstance(node, nn.Linear):
+        if isinstance(node, (nn.Linear, nn.QuantizedLinear)):
             try:
                 if node.weight is weight:
                     return node
@@ -145,6 +145,66 @@ def _assign_quant_affine_field(root: Any, key: str, tensor: Any) -> None:
     setattr(parent, attr, value)
 
 
+def _module_at_base(root: Any, base: str) -> Any:
+    obj: Any = root
+    for part in base.split("."):
+        if part.isdigit() and isinstance(obj, (list, tuple)):
+            obj = obj[int(part)]
+        elif part.isdigit() and hasattr(obj, "__getitem__") and not isinstance(obj, (str, bytes)):
+            try:
+                obj = obj[int(part)]
+            except (IndexError, KeyError, TypeError):
+                obj = getattr(obj, part)
+        else:
+            obj = getattr(obj, part)
+    return obj
+
+
+def _partition_quant_bases(
+    root: Any,
+    bases: set[str],
+    *,
+    param_map_model: Any | None = None,
+    skeleton_key_prefix: str = "",
+) -> tuple[set[str], set[str]]:
+    """Split affine-quant bases into ``nn.Linear`` vs ``nn.Embedding`` targets."""
+    from importlib import import_module
+
+    nn = import_module("mlx.nn")
+    linear_bases: set[str] = set()
+    embedding_bases: set[str] = set()
+    holder = param_map_model if param_map_model is not None else root
+    param_map = getattr(holder, "_param_map", None)
+    for base in bases:
+        lin = _linear_for_flat_base(holder, base) if param_map else None
+        if lin is not None:
+            if isinstance(lin, nn.Linear):
+                linear_bases.add(base)
+            else:
+                raise RuntimeError(
+                    f"Affine-quant checkpoint base {base!r} maps to {type(lin).__name__}; "
+                    "expected nn.Linear."
+                )
+            continue
+        skeleton_base = _strip_skeleton_prefix(base, skeleton_key_prefix)
+        try:
+            mod = _module_at_base(root, skeleton_base)
+        except AttributeError as exc:
+            raise RuntimeError(
+                f"Affine-quant checkpoint base {base!r} does not resolve on model tree"
+            ) from exc
+        if isinstance(mod, nn.Embedding):
+            embedding_bases.add(base)
+        elif isinstance(mod, nn.Linear):
+            linear_bases.add(base)
+        else:
+            raise RuntimeError(
+                f"Affine-quant checkpoint base {base!r} maps to {type(mod).__name__}; "
+                "only nn.Linear and nn.Embedding are supported."
+            )
+    return linear_bases, embedding_bases
+
+
 def collect_affine_quant_bases(weight_dict: dict[str, Any]) -> set[str]:
     bases: set[str] = set()
     for key in weight_dict:
@@ -171,6 +231,8 @@ def apply_quantized_skeleton(
     if isinstance(model, nn.Module):
         def _predicate(path: str, module: Any) -> bool:
             if path not in bases:
+                return False
+            if isinstance(module, nn.Embedding):
                 return False
             if not isinstance(module, nn.Linear):
                 raise RuntimeError(
@@ -226,6 +288,18 @@ def _quantize_linear_at_base(root: Any, base: str, *, bits: int, group_size: int
     _replace_module_instance(root, obj, quantized)
 
 
+def _strip_skeleton_prefix(key: str, prefix: str) -> str:
+    if prefix and key.startswith(prefix):
+        return key[len(prefix) :]
+    return key
+
+
+def _strip_skeleton_prefix_from_bases(bases: set[str], prefix: str) -> set[str]:
+    if not prefix:
+        return bases
+    return {_strip_skeleton_prefix(base, prefix) for base in bases}
+
+
 def load_weights_quantized_inference(
     model: Any,
     weights: list[tuple[str, Any]],
@@ -236,6 +310,7 @@ def load_weights_quantized_inference(
     bits: int,
     group_size: int = 64,
     module_root: Any | None = None,
+    skeleton_key_prefix: str = "",
 ) -> tuple[list[str], list[str]]:
     """Load affine-quantized weights for low-VRAM inference (packed tensors, no dequantize)."""
     if hasattr(model, "_build_param_map"):
@@ -298,14 +373,43 @@ def load_weights_quantized_inference(
 
         nn = import_module("mlx.nn")
         skeleton_root = model if isinstance(model, nn.Module) else model
-    apply_quantized_skeleton(skeleton_root, bases, bits=bits, group_size=group_size)
+    linear_bases, embedding_bases = _partition_quant_bases(
+        skeleton_root,
+        bases,
+        param_map_model=model,
+        skeleton_key_prefix=skeleton_key_prefix,
+    )
+    skeleton_linear_bases = _strip_skeleton_prefix_from_bases(linear_bases, skeleton_key_prefix)
+    skeleton_embedding_bases = _strip_skeleton_prefix_from_bases(embedding_bases, skeleton_key_prefix)
+    apply_quantized_skeleton(
+        skeleton_root, skeleton_linear_bases, bits=bits, group_size=group_size
+    )
+    if hasattr(model, "_built"):
+        model._built = False
     if hasattr(model, "_build_param_map"):
+        if hasattr(model, "_param_map"):
+            model._param_map.clear()
         model._build_param_map()
     else:
         from backend.engine.common.codecs.vae.decoder import _collect_nn_params
 
         model._param_map = {}
         _collect_nn_params(model, "", model._param_map)
+
+    embedding_loaded: list[str] = []
+    for base in sorted(embedding_bases):
+        group = scales_map[base]
+        dense = ctx.dequantize(
+            group["weight"],
+            group["scales"],
+            group.get("biases"),
+            group_size,
+            bits,
+        )
+        skeleton_base = _strip_skeleton_prefix(base, skeleton_key_prefix)
+        emb = _module_at_base(skeleton_root, skeleton_base)
+        _assign_param_tensor(emb.weight, dense)
+        embedding_loaded.append(f"{base}.weight")
 
     for param_key in model._param_map:
         if not param_key.endswith(".bias"):
@@ -315,10 +419,10 @@ def load_weights_quantized_inference(
             continue
         if param_key in weight_dict:
             continue
-        raise RuntimeError(
-            f"Quantized checkpoint is missing dense bias tensor {param_key!r} (base {base!r}). "
-            "Re-convert from the fp16/bf16 source with a fixed converter."
-        )
+        if f"{base}.biases" in weight_dict:
+            continue
+        # Prequantized bundles may omit all-zero dense biases; keep initialized defaults.
+        continue
 
     loaded: list[str] = []
     skipped: list[str] = []
@@ -326,11 +430,13 @@ def load_weights_quantized_inference(
         field = key.rsplit(".", 1)[-1]
         if field in _QUANT_AFFINE_FIELDS:
             base = key[: -(len(field) + 1)]
-            if base not in bases:
+            if base not in linear_bases:
                 skipped.append(key)
                 continue
             try:
-                parent, attr = _resolve_module_attr(skeleton_root, key)
+                parent, attr = _resolve_module_attr(
+                    skeleton_root, _strip_skeleton_prefix(key, skeleton_key_prefix)
+                )
             except (AttributeError, IndexError, RuntimeError) as exc:
                 skipped.append(f"{key} module_missing: {exc}")
                 continue
@@ -341,11 +447,17 @@ def load_weights_quantized_inference(
             if tuple(current.shape) != tuple(tensor.shape):
                 skipped.append(f"{key} shape_mismatch: {current.shape} vs {tensor.shape}")
                 continue
-            _assign_quant_affine_field(skeleton_root, key, tensor)
+            _assign_quant_affine_field(
+                skeleton_root, _strip_skeleton_prefix(key, skeleton_key_prefix), tensor
+            )
             loaded.append(key)
             continue
 
         if key not in model._param_map:
+            skipped.append(key)
+            continue
+        base = key.rsplit(".", 1)[0]
+        if field == "weight" and base in embedding_bases:
             skipped.append(key)
             continue
         param = model._param_map[key]
@@ -355,6 +467,8 @@ def load_weights_quantized_inference(
         _assign_param_tensor(param, tensor)
         loaded.append(key)
 
+    loaded.extend(embedding_loaded)
+
     loaded_set = set(loaded)
     missing = [
         k
@@ -363,7 +477,7 @@ def load_weights_quantized_inference(
     ]
     missing_bases = sorted(
         base
-        for base in bases
+        for base in linear_bases
         if f"{base}.scales" not in loaded_set
         or (
             f"{base}.biases" in weight_dict

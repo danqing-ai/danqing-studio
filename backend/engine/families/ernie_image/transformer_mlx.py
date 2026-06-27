@@ -12,6 +12,7 @@ import mlx.nn as nn
 from backend.engine.common.model.base import TransformerBase
 from backend.engine.common.ops.attention import scaled_dot_product_attention_bhsd_mx
 from backend.engine.common.ops.embeddings import sinusoidal_timestep_proj
+from backend.engine.families.ernie_image.weights import _squeeze_x_embedder_proj_weight
 from backend.engine.config.model_configs import ErnieImageConfig
 from backend.engine.runtime._base import RuntimeContext
 
@@ -328,10 +329,12 @@ class ErnieImageDiTMLX(TransformerBase):
                     new_key = new_key[len(prefix) :]
             new_key = new_key.replace(".to_out.0.", ".to_out_0.")
             new_key = new_key.replace("adaLN_modulation.1.", "adaLN_modulation.linear.")
+            if new_key.startswith("adaln_modulation."):
+                new_key = "adaLN_modulation.linear." + new_key[len("adaln_modulation.") :]
             if new_key.startswith("time_proj."):
                 continue
             if new_key == "x_embedder.proj.weight" and hasattr(tensor, "ndim") and int(tensor.ndim) == 4:
-                tensor = tensor.squeeze(-1).squeeze(-1)
+                tensor = _squeeze_x_embedder_proj_weight(tensor)
             remapped[new_key] = tensor
         return remapped
 
@@ -366,6 +369,7 @@ class ErnieImageDiTMLX(TransformerBase):
             ctx=ctx,
             bundle_affine_bits=bundle_affine_bits,
             inference_mode=inference_mode,
+            module_root=self._core,
         )
         self._build_param_map()
         return loaded, skipped

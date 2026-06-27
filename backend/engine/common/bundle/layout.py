@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 
 def t5_encoder_bundle_paths(bundle_root: Path | None) -> tuple[str, str]:
@@ -55,6 +56,8 @@ def assert_media_bundle_ready(
     *,
     family: str,
     model_id: str,
+    registry_entry: Any | None = None,
+    project_root: Path | None = None,
 ) -> None:
     """Fail loud when required bundle components are missing (image/video pipelines)."""
     if bundle_root is None:
@@ -64,4 +67,10 @@ def assert_media_bundle_ready(
         )
     from backend.core.bundle_manifest import assert_bundle_ready_for_family
 
-    assert_bundle_ready_for_family(bundle_root, family=family, model_id=model_id)
+    assert_bundle_ready_for_family(
+        bundle_root,
+        family=family,
+        model_id=model_id,
+        registry_entry=registry_entry,
+        project_root=project_root,
+    )

@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 REG = ROOT / "default_config" / "models_registry.json"
 KNOWN = {"danqing-image", "danqing-video", "danqing-audio", "danqing-llm"}
 REGISTRY_IMAGE_ACTION_KEYS = frozenset({"create", "rewrite", "retouch", "extend", "upscale"})
-REGISTRY_VIDEO_ACTION_KEYS = frozenset({"create", "animate", "upscale"})
+REGISTRY_VIDEO_ACTION_KEYS = frozenset({"create", "animate", "avatar", "upscale"})
 REGISTRY_AUDIO_ACTION_KEYS = frozenset({"create", "cover", "repaint"})
 REGISTRY_LLM_ACTION_KEYS = frozenset({"chat", "enhance", "describe"})
 I18N_ZH = ROOT / "frontend" / "src" / "locales" / "zh.json"
@@ -225,6 +225,13 @@ def main():
     )
     if rc != 0:
         failures.append(f"check_registry_i18n.py failed (exit {rc})")
+
+    rc = subprocess.call(
+        [sys.executable, str(ROOT / "scripts" / "normalize_registry_version_keys.py"), "--check"],
+        cwd=ROOT,
+    )
+    if rc != 0:
+        failures.append(f"normalize_registry_version_keys.py --check failed (exit {rc})")
 
     rc = subprocess.call(
         [sys.executable, str(ROOT / "scripts" / "check_frontend_governance.py")],

@@ -34,7 +34,8 @@
     },
     {
       "id": "E2",
-      "text": "make the colors more vivid and saturated"
+      "text": "make the colors more vivid and saturated",
+      "judge_floor": 0.17
     }
   ],
   "upscale": {

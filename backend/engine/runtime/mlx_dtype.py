@@ -9,6 +9,14 @@ def _mlx_core() -> Any:
     return importlib.import_module("mlx.core")
 
 
+def mlx_linear_compute_dtype(linear: Any) -> Any:
+    """Activation/compute dtype for ``nn.Linear`` or ``nn.QuantizedLinear``."""
+    nn = importlib.import_module("mlx.nn")
+    if isinstance(linear, nn.QuantizedLinear):
+        return linear.scales.dtype
+    return linear.weight.dtype
+
+
 def cast_floating_mx_tree(obj: Any, dtype: Any) -> Any:
     mx = _mlx_core()
     if isinstance(obj, dict):

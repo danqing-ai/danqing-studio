@@ -67,12 +67,22 @@
         />
 
         <LongVideoBriefPanel
+          :source-mode="project?.source_mode ?? 'brief'"
           :brief="project?.brief ?? ''"
+          :chapter-text="project?.chapter_text ?? ''"
+          :chapter-title="project?.chapter_title ?? ''"
+          :chapter-analysis="project?.chapter_analysis ?? null"
           :target-duration-sec="project?.target_duration_sec ?? 60"
           :segment-duration-sec="project?.segment_duration_sec ?? 5"
           :expanding="isStoryboardExpanding"
+          :analyzing="isChapterAnalyzing"
+          @update:source-mode="onSourceModeChange"
           @update:brief="patchProjectField('brief', $event)"
+          @update:chapter-text="patchProjectField('chapter_text', $event)"
+          @update:chapter-title="patchProjectField('chapter_title', $event)"
+          @update:chapter-analysis="patchProjectField('chapter_analysis', $event)"
           @update:target-duration-sec="patchProjectField('target_duration_sec', $event)"
+          @analyze-chapter="onChapterAnalyze"
           @expand="onStoryboardExpand"
         />
 
@@ -183,7 +193,7 @@ import { toast, confirm } from '@/utils/feedback';
 import { api, taskIdFromSubmitResponse } from '@/utils/api';
 import { $tt } from '@/utils/i18n';
 import { useTasksStore } from '@/stores/tasks';
-import type { LongVideoChainMode, LongVideoCharacter, LongVideoProjectState, LongVideoProjectSummary, LongVideoShotCastLook, LongVideoShotState, SystemInfo } from '@/types';
+import type { LongVideoChainMode, LongVideoCharacter, LongVideoChapterAnalysis, LongVideoProjectState, LongVideoProjectSummary, LongVideoShotCastLook, LongVideoShotState, SystemInfo } from '@/types';
 import LongVideoBriefPanel from '@/components/long-video/LongVideoBriefPanel.vue';
 import LongVideoCastPanel from '@/components/long-video/LongVideoCastPanel.vue';
 import LongVideoSettingsPanel from '@/components/long-video/LongVideoSettingsPanel.vue';
@@ -251,7 +261,7 @@ const {
   pickOutputSizeForModel,
   loadRegistry,
 } = useLongVideoRegistry();
-const { enhance, isEnhancing, storyboardLongVideo, isStoryboardExpanding } = useComposerLlm();
+const { enhance, isEnhancing, storyboardLongVideo, isStoryboardExpanding, analyzeLongVideoChapter, isChapterAnalyzing } = useComposerLlm();
 const { locale: uiLocale } = useI18n();
 const { galleryItems, loadGallery } = useStudioGallery('image');
 
@@ -536,9 +546,133 @@ function storyboardShotsFromResponse(
   }));
 }
 
+async function onChapterAnalyze() {
+  const lv = project.value;
+  if (!lv) return;
+  const text = (lv.chapter_text || '').trim();
+  if (!text) {
+    toast.warning($tt('video.longVideoChapterNeedText'));
+    return;
+  }
+
+  const result = await analyzeLongVideoChapter(
+    {
+      chapter_text: text,
+      chapter_title: (lv.chapter_title || '').trim(),
+      locale: uiLocale.value,
+    },
+    { quietSuccess: true },
+  );
+  if (!result?.scene_beats?.length) return;
+
+  const scene_beats = result.scene_beats.map((s) => ({
+    order: s.order,
+    title: s.title || '',
+    beat: s.beat || '',
+  }));
+  const segmentDurationSec = lv.segment_duration_sec ?? 5;
+  const targetDuration = scene_beats.length * segmentDurationSec;
+  const rosterPatch = hydrateCharacterRoster(
+    {
+      characters: (result.characters ?? []) as LongVideoCharacter[],
+      character_anchor: result.character_anchor || '',
+      style_anchor: result.style_anchor || '',
+    },
+    uiLocale.value.startsWith('zh') ? 'zh' : 'en',
+  );
+  const analysis: LongVideoChapterAnalysis = {
+    synopsis: result.synopsis || '',
+    scene_beats,
+    character_anchor: rosterPatch.character_anchor,
+    style_anchor: rosterPatch.style_anchor,
+    characters: rosterPatch.characters,
+  };
+  longVideoProject.patchProject({
+    chapter_analysis: analysis,
+    target_duration_sec: targetDuration,
+    character_anchor: rosterPatch.character_anchor,
+    characters: rosterPatch.characters,
+    style_anchor: rosterPatch.style_anchor,
+    brief: result.synopsis || lv.brief,
+  });
+  toast.info($tt('video.longVideoChapterAnalyzeReady', { n: scene_beats.length }));
+}
+
+function onSourceModeChange(mode: 'brief' | 'chapter') {
+  patchProjectField('source_mode', mode);
+}
+
 async function onStoryboardExpand() {
   const lv = project.value;
   if (!lv) return;
+  const sourceMode = lv.source_mode ?? 'brief';
+  const segmentDurationSec = lv.segment_duration_sec ?? 5;
+
+  if (sourceMode === 'chapter') {
+    const analysis = lv.chapter_analysis;
+    const beats = (analysis?.scene_beats ?? []).map((s) => s.beat.trim()).filter(Boolean);
+    if (beats.length < 2) {
+      toast.warning($tt('video.longVideoChapterNeedAnalysis'));
+      return;
+    }
+
+    const hasExistingWork = lv.shots.some(
+      (s) => s.visual_prompt?.trim() || s.motion_prompt?.trim() || s.keyframe_asset_id || s.segment_asset_id,
+    );
+    if (hasExistingWork) {
+      try {
+        await confirm(
+          $tt('video.longVideoStoryboardOverwriteConfirm'),
+          $tt('video.storyboardExpand'),
+          { type: 'warning' },
+        );
+      } catch {
+        return;
+      }
+    }
+
+    const targetDuration = beats.length * segmentDurationSec;
+    const result = await storyboardLongVideo(
+      {
+        prompt: analysis?.synopsis || beats[0],
+        target_duration_sec: targetDuration,
+        segment_duration_sec: segmentDurationSec,
+        use_shot_plan: true,
+        locale: uiLocale.value,
+        source_mode: 'chapter',
+        scene_beats: beats,
+        prebuilt_character_anchor: analysis?.character_anchor || lv.character_anchor || '',
+        prebuilt_style_anchor: analysis?.style_anchor || lv.style_anchor || '',
+      },
+      { quietSuccess: true },
+    );
+    if (!result?.shots?.length) return;
+
+    const shotsNext = storyboardShotsFromResponse(result.shots, segmentDurationSec);
+    const rosterPatch = hydrateCharacterRoster(
+      {
+        characters: (result.characters ?? analysis?.characters ?? []) as LongVideoCharacter[],
+        character_anchor: result.character_anchor || analysis?.character_anchor || '',
+        style_anchor: result.style_anchor || analysis?.style_anchor || '',
+      },
+      uiLocale.value.startsWith('zh') ? 'zh' : 'en',
+    );
+    longVideoProject.setProject(
+      applyStoryboardShots(
+        {
+          ...lv,
+          target_duration_sec: targetDuration,
+          character_anchor: rosterPatch.character_anchor,
+          characters: rosterPatch.characters,
+          style_anchor: rosterPatch.style_anchor,
+        },
+        shotsNext,
+      ),
+    );
+    toast.info($tt('video.longVideoStoryboardReady'));
+    return;
+  }
+
   const brief = (lv.brief || '').trim();
   if (!brief) {
     toast.warning($tt('video.longVideoNeedBrief'));
@@ -560,7 +694,6 @@ async function onStoryboardExpand() {
     }
   }
 
-  const segmentDurationSec = lv.segment_duration_sec ?? 5;
   const result = await storyboardLongVideo(
     {
       prompt: brief,

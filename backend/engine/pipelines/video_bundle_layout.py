@@ -102,18 +102,40 @@ def wan_is_moe_bundle(bundle_root: Path) -> bool:
     """True when bundle has Wan 14B high/low noise expert directories."""
     if not bundle_root.is_dir():
         return False
-    return (
-        (bundle_root / "high_noise_model").is_dir()
-        and (bundle_root / "low_noise_model").is_dir()
-    )
+    if (bundle_root / "high_noise_model").is_dir() and (bundle_root / "low_noise_model").is_dir():
+        return True
+    # ByteDance Bernini-R / mlx-community MoE diffusers layout (pre-assembly).
+    high = bundle_root / "transformer"
+    low = bundle_root / "transformer_2"
+    if high.is_dir() and low.is_dir():
+        return bool(wan_moe_expert_shards(bundle_root, "high")) and bool(
+            wan_moe_expert_shards(bundle_root, "low")
+        )
+    return False
+
+
+def _wan_moe_expert_dir(bundle_root: Path, expert: str) -> Path:
+    if expert == "high":
+        candidates = (
+            bundle_root / "high_noise_model",
+            bundle_root / "transformer",
+        )
+    elif expert == "low":
+        candidates = (
+            bundle_root / "low_noise_model",
+            bundle_root / "transformer_2",
+        )
+    else:
+        raise RuntimeError(f"wan_moe_expert_shards: expert must be 'high' or 'low', got {expert!r}")
+    for path in candidates:
+        if path.is_dir():
+            return path
+    return candidates[0]
 
 
 def wan_moe_expert_shards(bundle_root: Path, expert: str) -> list[Path]:
     """Return safetensors for one MoE expert (``high`` or ``low``)."""
-    if expert not in {"high", "low"}:
-        raise RuntimeError(f"wan_moe_expert_shards: expert must be 'high' or 'low', got {expert!r}")
-    sub = "high_noise_model" if expert == "high" else "low_noise_model"
-    expert_dir = bundle_root / sub
+    expert_dir = _wan_moe_expert_dir(bundle_root, expert)
     if not expert_dir.is_dir():
         return []
     shards = sorted(expert_dir.glob("*.safetensors"))
@@ -125,15 +147,41 @@ def wan_moe_expert_shards(bundle_root: Path, expert: str) -> list[Path]:
     return sorted(expert_dir.glob("diffusion_pytorch_model*.safetensors"))
 
 
+def _wan_root_transformer_safetensors(bundle_root: Path) -> list[Path]:
+    """Root-level DiT shards (mlx-community / mlx-video flat Wan ports)."""
+    candidates = [
+        "model.safetensors",
+        "transformer.safetensors",
+    ]
+    out: list[Path] = []
+    for name in candidates:
+        p = bundle_root / name
+        if p.is_file():
+            out.append(p)
+    shards = sorted(bundle_root.glob("diffusion_pytorch_model*.safetensors"))
+    if shards:
+        out.extend(shards)
+    # De-dupe while preserving order.
+    seen: set[str] = set()
+    unique: list[Path] = []
+    for p in out:
+        key = str(p.resolve())
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(p)
+    return unique
+
+
 def wan_flat_transformer_shards(bundle_root: Path) -> list[Path]:
     """Original Wan bundle: ``diffusion_pytorch_model*.safetensors`` at bundle root."""
     if not bundle_root.is_dir():
         return []
     if wan_is_moe_bundle(bundle_root):
         return []
-    shards = sorted(bundle_root.glob("diffusion_pytorch_model*.safetensors"))
-    if shards:
-        return shards
+    root_sf = _wan_root_transformer_safetensors(bundle_root)
+    if root_sf:
+        return root_sf
     pth = sorted(bundle_root.glob("diffusion_pytorch_model*.pth"))
     if pth:
         return pth

@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import ClassVar, List, Any
 
 from backend.core.contracts import (
-    EngineResult, ExecutionContext, VideoEditRequest,
+    EngineResult, ExecutionContext, VideoAvatarRequest, VideoEditRequest,
     VideoGenerationRequest, VideoLongGenerationRequest, VideoUpscaleRequest, parse_model_version,
 )
 from backend.core.media_interfaces import IVideoEngine
@@ -25,6 +25,7 @@ from backend.engine.common.long_video.validate import (
 from .runtime._base import RuntimeContext
 from .sessions.engine_dispatch import (
     dispatch_long_video,
+    dispatch_video_avatar,
     dispatch_video_create,
     dispatch_video_edit,
     dispatch_video_upscale,
@@ -201,6 +202,41 @@ class DanQingVideoEngine(IVideoEngine):
         aid = ctx.asset_store.create_from_file(
             Path(output_path), kind="video", mime_type="video/mp4",
             source_task_id=ctx.task_id, metadata=metadata, source_action="animate",
+            parent_asset_id=parent_id, relation_type=relation,
+        )
+        return EngineResult(primary_asset_id=aid, asset_ids=[aid], output_paths=[output_path])
+
+    async def avatar(self, request: VideoAvatarRequest, ctx: ExecutionContext) -> EngineResult:
+        import asyncio
+        if not self.supports(request.model, "avatar"):
+            mid = request.model.split(":", 1)[0]
+            raise RuntimeError(
+                f"Model {mid!r} does not support video avatar for this engine; "
+                "see config/models_registry.json actions."
+            )
+        runtime = self._resolve_runtime(request.model)
+        on_progress = make_pipeline_progress_callback(ctx)
+
+        result = await asyncio.to_thread(
+            dispatch_video_avatar,
+            **self._dispatch_kwargs(runtime, ctx),
+            request=request,
+            exec_ctx=ctx,
+            on_progress=on_progress,
+            on_log=ctx.on_log,
+        )
+        if result is None:
+            return EngineResult(primary_asset_id="", metadata={"status": "cancelled"})
+
+        output_path, metadata = result
+        parent_id, relation = resolve_lineage(
+            request.metadata,
+            parent_asset_id=request.reference_asset_id,
+            relation_type="avatar",
+        )
+        aid = ctx.asset_store.create_from_file(
+            Path(output_path), kind="video", mime_type="video/mp4",
+            source_task_id=ctx.task_id, metadata=metadata, source_action="avatar",
             parent_asset_id=parent_id, relation_type=relation,
         )
         return EngineResult(primary_asset_id=aid, asset_ids=[aid], output_paths=[output_path])

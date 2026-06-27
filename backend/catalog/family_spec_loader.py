@@ -13,7 +13,7 @@ _VALID_PARADIGMS: frozenset[str] = frozenset(
     {"diffusion", "flow_matching", "block_ar", "two_stage", "job"}
 )
 _VALID_LAYOUTS: frozenset[str] = frozenset(
-    {"nchw", "packed_seq", "qwen_grid", "video_5d", "audio_1d"}
+    {"nchw", "packed_seq", "qwen_grid", "video_5d", "audio_1d", "pixel_patch"}
 )
 _VALID_CFG: frozenset[str] = frozenset({"fused", "batched", "dual", "none"})
 _VALID_MEDIA: frozenset[str] = frozenset({"image", "video", "audio"})
@@ -162,6 +162,8 @@ def family_spec_from_model_config(
         latent_layout = "packed_seq"
     elif getattr(config, "encoder_step_kwargs", None) == "qwen_image":
         latent_layout = "qwen_grid"
+    elif family_id == "hidream_o1":
+        latent_layout = "pixel_patch"
 
     cfg_mode: CfgMode = "dual"
     if getattr(config, "use_mlx_cfg_fusion", False):

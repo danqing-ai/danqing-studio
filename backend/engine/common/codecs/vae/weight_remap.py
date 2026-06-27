@@ -4,19 +4,40 @@ from __future__ import annotations
 from typing import Any
 
 
+def vae_conv_weight_is_mlx_nhwc(weight: Any) -> bool:
+    """True when a 4D conv weight is already ``(O, kH, kW, I)`` (mlx-community layout)."""
+    sh = getattr(weight, "shape", ())
+    if len(sh) != 4:
+        return False
+    o, a, b, c = (int(sh[i]) for i in range(4))
+    if a <= 7 and b <= 7 and c > 7:
+        return True
+    return bool(a <= 7 and b <= 7 and c <= 7 and o > c)
+
+
+def vae_conv_weight_for_runtime(ctx: Any, weight: Any) -> Any:
+    """Map diffusers ``(O,I,kH,kW)`` to runtime NHWC; pass through mlx-community weights."""
+    if vae_conv_weight_is_mlx_nhwc(weight):
+        return weight
+    return ctx.permute(weight, (0, 2, 3, 1))
+
+
 def remap_vae_weights(weights: dict) -> dict:
     """将 diffusers 格式 VAE 权重键映射为 DanQing VAEDecoder 键名。
 
     diffusers 格式:
-        decoder.conv_in.weight (shape: [O, kH, kW, I])
+        decoder.conv_in.weight (shape: [O, kH, kW, I] in diffusers — [O, I, kH, kW] for PyTorch)
         decoder.mid_block.resnets.0.norm1.weight
         decoder.up_blocks.3.resnets.2.conv2.weight
 
     DanQing 格式:
-        conv_in.weight (shape: [O, I, kH, kW] — MLX Conv2d)
+        conv_in.weight (shape: [O, kH, kW, I] — MLX Conv2d)
         mid_resnet1.norm1.weight
         up4_resnets.2.conv2.weight
+
+    mlx-community affine-quant bundles already use MLX Conv2d layout; skip the 4D transpose.
     """
+    mlx_conv_layout = any(k.endswith(".scales") for k in weights)
     remapped = {}
     up_block_map = {0: "up1", 1: "up2", 2: "up3", 3: "up4"}
 
@@ -48,9 +69,10 @@ def remap_vae_weights(weights: dict) -> dict:
         new_key = new_key.replace("mid_block.attentions.0.to_k", "mid_attn.to_k")
         new_key = new_key.replace("mid_block.attentions.0.to_v", "mid_attn.to_v")
         new_key = new_key.replace("mid_block.attentions.0.to_out.0", "mid_attn.to_out")
+        new_key = new_key.replace("mid_block.attentions.0.to_out", "mid_attn.to_out")
 
         # Conv2d weight: diffusers (O, I, kH, kW) → MLX (O, kH, kW, I)
-        if ".weight" in new_key and tensor.ndim == 4:
+        if not mlx_conv_layout and ".weight" in new_key and tensor.ndim == 4:
             tensor = tensor.transpose(0, 2, 3, 1)
 
         remapped[new_key] = tensor

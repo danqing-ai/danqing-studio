@@ -17,7 +17,11 @@ def bootstrap_family_plugins() -> None:
     from backend.engine.families.flux1.plugin import register_flux1_plugin
     from backend.engine.families.flux2.plugin import register_flux2_plugin
     from backend.engine.families.hunyuan.plugin import register_hunyuan_plugin
+    from backend.engine.families.hidream_o1.plugin import register_hidream_o1_plugin
+    from backend.engine.families.step1x_edit.plugin import register_step1x_edit_plugin
     from backend.engine.families.ltx.plugin import register_ltx_plugin
+    from backend.engine.families.longcat.plugin import register_longcat_plugin
+    from backend.engine.families.longcat_avatar.plugin import register_longcat_avatar_plugin
     from backend.engine.families.qwen.plugin import register_qwen_image_plugin
     from backend.engine.families.seedvr2.plugin import register_seedvr2_plugin
     from backend.engine.families.esrgan.plugin import register_esrgan_plugin
@@ -33,7 +37,11 @@ def bootstrap_family_plugins() -> None:
     register_cogview4_plugin()
     register_wan_plugin()
     register_ltx_plugin()
+    register_longcat_plugin()
+    register_longcat_avatar_plugin()
     register_hunyuan_plugin()
+    register_hidream_o1_plugin()
+    register_step1x_edit_plugin()
     register_seedvr2_plugin()
     register_esrgan_plugin()
     register_ace_step_plugin()

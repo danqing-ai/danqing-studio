@@ -279,6 +279,7 @@ class TransformerBase:
         bundle_affine_bits: int | None = None,
         inference_mode: WeightInferenceMode | None = None,
         module_root: Any | None = None,
+        skeleton_key_prefix: str = "",
     ):
         """Default weight loading (via _param_map).
 
@@ -315,6 +316,7 @@ class TransformerBase:
                 bits=int(inference_mode.bits),
                 group_size=int(inference_mode.group_size),
                 module_root=module_root,
+                skeleton_key_prefix=skeleton_key_prefix,
             )
 
         if not hasattr(self, '_param_map'):

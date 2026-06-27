@@ -17,16 +17,15 @@ _MEMORY_TIER_LOW = 16.0
 _MEMORY_TIER_MID = 32.0
 
 _VERSION_PREF_MLX = (
-    "mlx-4bit",
-    "community-4bit",
+    "mlx-q4",
     "int4",
-    "mlx-8bit",
+    "mlx-q8",
     "int8",
     "fp16",
-    "original",
+    "bf16",
     "xl-sft",
 )
-_VERSION_PREF_CUDA = ("int4", "int8", "fp16", "original", "xl-sft")
+_VERSION_PREF_CUDA = ("int4", "int8", "fp16", "bf16", "fp8", "xl-sft")
 
 _PREFERRED_MODEL_ORDER: dict[str, dict[str, tuple[str, ...]]] = {
     "image": {

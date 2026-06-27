@@ -20,6 +20,7 @@
     "target_version_not_found": "Target version '{version}' not found",
     "source_version_not_ready": "Source version '{version}' is not ready, please download first",
     "cannot_determine_quantization": "Cannot determine quantization bits: {version}",
+    "conversion_failed": "Model quantization failed",
     "target_version_not_derived": "Version '{version}' is not declared as a local derived quant target (registry must set source_type: derived)",
     "derived_version_missing_parent": "Derived version '{version}' is missing from_version parent declaration",
     "derived_version_parent_mismatch": "Derived version '{version}' expects parent '{expected}', got '{got}'",

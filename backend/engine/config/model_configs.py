@@ -73,7 +73,7 @@ class Flux2Config:
     supports_guidance: bool = True
     requires_sigma_shift: bool = True
     supports_img2img: bool = True
-    supports_edit: bool = False
+    supports_edit: bool = True
     encoder_type: str = "flux2"
     text_encoder_out_layers: tuple = (9, 18, 27)  # Flux2 Qwen3 takes 3 layers concatenated
     enable_thinking: bool = False     # Reference: Flux2KleinWeightDefinition explicitly disables
@@ -382,6 +382,45 @@ class EsrganConfig:
     default_tile: int = 256
 
 
+@dataclass
+class HiDreamO1Config:
+    """HiDream-O1-Image — Qwen3-VL pixel-patch UiT (MLX, no VAE).
+
+    Shape C family generator: mlx-vlm backbone + custom diffusion heads.
+    Dev variant uses 28-step distilled schedule; Full uses 50 steps.
+    """
+    image_pipeline_shape: str = "family_generator"
+    encoder_type: str = "qwen3_vl"
+    supports_guidance: bool = False
+    supports_img2img: bool = True
+    vae_scale: int = 32
+    patch_size: int = 32
+    default_scheduler: str = "flash_flow_match"
+    hidream_noise_scale: float = 7.5
+    hidream_noise_clip_std: float = 2.5
+    hidream_custom_timesteps: tuple[int, ...] | None = None
+    hidream_quantized_no_edit: bool = False
+    hidream_edit_max_refs: int = 3
+    edit_use_vl_vision: bool = True
+    hidream_snap_resolution: bool = True
+
+
+@dataclass
+class Step1XEditConfig:
+    """Step1X-Edit v1.1 — Qwen2.5-VL + DiT image edit (MLX / CUDA native inference)."""
+    image_pipeline_shape: str = "family_generator"
+    encoder_type: str = "qwen2_vl"
+    supports_guidance: bool = True
+    supports_img2img: bool = True
+    vae_scale: int = 8
+    step1x_version: str = "v1.1"
+    step1x_variant: str = ""
+    step1x_dit_filename: str = ""
+    step1x_max_length: int = 640
+    step1x_size_level: int = 512
+    edit_max_reference_images: int = 1
+
+
 # =========================================================================
 # Audio models
 # =========================================================================
@@ -537,6 +576,55 @@ class LTXConfig:
 
 
 @dataclass
+class LongCatConfig:
+    """LongCat-Video (Meituan 13.6B, mlx-community MLX port).
+
+    Shape C family generator: Wan 2.1 VAE + umT5-XXL + LongCat DiT.
+    ``step_distill`` / registry ``cfg_step_lora`` enables 8-step cfg_step_lora path.
+    """
+    video_pipeline_shape: str = "family_generator"
+    encoder_type: str = "wan_umt5"
+    supports_guidance: bool = True
+    supports_img2img: bool = True
+    vae_scale: int = 8
+    temporal_vae_scale: int = 4
+    video_vae_backend: str = "wan"
+    default_scheduler: str = "flow_match_euler"
+    scheduler_shift: float = 12.0
+    default_infer_steps: int = 8
+    default_fps: int = 15
+    cfg_step_lora_default: bool = True
+    cfg_step_lora_steps: int = 8
+    supports_long_video: bool = False
+    geometry_check: str = "generic"
+
+
+@dataclass
+class LongCatAvatarConfig:
+    """LongCat-Video-Avatar 1.5 (audio-driven digital human, ATI2V / AT2V).
+
+    Shape C family_avatar generator: Wan VAE + umT5 + Whisper + Avatar DiT + DMD 8-step.
+    """
+    video_pipeline_shape: str = "family_avatar"
+    encoder_type: str = "wan_umt5"
+    supports_guidance: bool = False
+    supports_img2img: bool = False
+    vae_scale: int = 8
+    temporal_vae_scale: int = 4
+    video_vae_backend: str = "wan"
+    default_scheduler: str = "flow_match_euler"
+    scheduler_shift: float = 7.0
+    num_train_timesteps: int = 1000
+    default_infer_steps: int = 8
+    default_fps: int = 25
+    default_num_frames: int = 93
+    default_text_guidance: float = 4.0
+    default_audio_guidance: float = 4.0
+    supports_long_video: bool = False
+    geometry_check: str = "generic"
+
+
+@dataclass
 class WanConfig:
     """Wan Video series (Wan2.1 / Wan2.2).
 
@@ -603,7 +691,14 @@ class WanConfig:
     # Velocity scale calibration - None means no scaling (model output matches scheduler assumption)
     wan_velocity_scale: float | None = None
     # ``first_frame`` allows animate/edit with a video asset (extract frame 0 via ffmpeg).
+    # ``source_video`` encodes the full source clip for Bernini V2V / RV2V.
     video_edit_source_mode: str = "image_only"
+    # Shape C family-owned stack (Bernini-R renderer).
+    video_pipeline_shape: str = "dit_standard"
+    bernini_renderer: bool = False
+    use_src_id_rotary_emb: bool = False
+    interpolate_src_id: bool = True
+    max_trained_src_id: int = 5
 
 
 def merge_wan_config_from_bundle(config: WanConfig, bundle_root: Path | None) -> None:
@@ -623,6 +718,8 @@ def merge_wan_config_from_bundle(config: WanConfig, bundle_root: Path | None) ->
             [
                 bundle_root / "high_noise_model" / "config.json",
                 bundle_root / "low_noise_model" / "config.json",
+                bundle_root / "transformer" / "config.json",
+                bundle_root / "transformer_2" / "config.json",
             ]
         )
     cfg_path = next((p for p in candidates if p.is_file()), None)
@@ -654,6 +751,9 @@ def merge_wan_config_from_bundle(config: WanConfig, bundle_root: Path | None) ->
         "expand_timesteps": "expand_timesteps",
         "vae_scale": "vae_scale",
         "temporal_vae_scale": "temporal_vae_scale",
+        "use_src_id_rotary_emb": "use_src_id_rotary_emb",
+        "interpolate_src_id": "interpolate_src_id",
+        "max_trained_src_id": "max_trained_src_id",
     }
     for src, dst in key_map.items():
         if src in data:
@@ -785,6 +885,10 @@ def merge_hunyuan_transformer_config_from_bundle(config: HunyuanVideoConfig, bun
     except (OSError, json.JSONDecodeError) as e:
         raise RuntimeError(f"HunyuanVideo: cannot read transformer config {cfg_path}: {e}") from e
 
+    if "heads_num" in data or str(data.get("_class_name", "")).startswith("HunyuanVideo_1_5"):
+        _merge_hunyuan_modelscope_transformer_config(config, data, bundle_root)
+        return
+
     _INT_KEYS = (
         "num_attention_heads", "attention_head_dim", "in_channels", "out_channels",
         "num_layers", "num_refiner_layers", "patch_size", "patch_size_t",
@@ -815,6 +919,94 @@ def merge_hunyuan_transformer_config_from_bundle(config: HunyuanVideoConfig, bun
     object.__setattr__(config, "text_dim", int(getattr(config, "text_embed_dim", 3584)))
 
 
+def _infer_hunyuan_patch_in_channels(bundle_root: Path, data: dict[str, Any]) -> int | None:
+    """Read patch-embed input channels from checkpoint (ModelScope ``img_in`` or diffusers ``x_embedder``)."""
+    weight_path = bundle_root / "transformer" / "diffusion_pytorch_model.safetensors"
+    if not weight_path.is_file():
+        return None
+    try:
+        from safetensors import safe_open
+
+        with safe_open(str(weight_path), framework="numpy") as f:
+            for key in ("img_in.proj.weight", "x_embedder.proj.weight"):
+                if key not in f.keys():
+                    continue
+                tensor = f.get_tensor(key)
+                if getattr(tensor, "ndim", 0) != 5:
+                    continue
+                # PyTorch Conv3d [O, I, T, H, W]
+                return int(tensor.shape[1])
+    except Exception:
+        return None
+    return None
+
+
+def _merge_hunyuan_modelscope_transformer_config(
+    config: HunyuanVideoConfig,
+    data: dict[str, Any],
+    bundle_root: Path,
+) -> None:
+    """Map Tencent ModelScope ``transformer/<variant>/config.json`` into ``HunyuanVideoConfig``."""
+    heads = int(data.get("heads_num", getattr(config, "num_attention_heads", 16)))
+    hidden = int(data.get("hidden_size", getattr(config, "inner_dim", 2048)))
+    head_dim = hidden // heads if heads else int(getattr(config, "attention_head_dim", 128))
+
+    object.__setattr__(config, "num_attention_heads", heads)
+    object.__setattr__(config, "attention_head_dim", head_dim)
+    object.__setattr__(config, "inner_dim", hidden)
+
+    if "in_channels" in data:
+        inferred = _infer_hunyuan_patch_in_channels(bundle_root, data)
+        object.__setattr__(config, "in_channels", inferred if inferred is not None else int(data["in_channels"]))
+    if "out_channels" in data:
+        object.__setattr__(config, "out_channels", int(data["out_channels"]))
+
+    if "mm_double_blocks_depth" in data:
+        object.__setattr__(config, "num_layers", int(data["mm_double_blocks_depth"]))
+    # ``mm_single_blocks_depth`` is upstream single-stream depth, not Qwen token-refiner depth.
+
+    patch_raw = data.get("patch_size")
+    if isinstance(patch_raw, list) and patch_raw:
+        pts = [int(x) for x in patch_raw]
+        object.__setattr__(config, "patch_size_t", pts[0])
+        object.__setattr__(config, "patch_size", pts[1] if len(pts) > 1 else pts[0])
+    elif patch_raw is not None:
+        object.__setattr__(config, "patch_size", int(patch_raw))
+
+    if "text_states_dim" in data and data["text_states_dim"] is not None:
+        object.__setattr__(config, "text_embed_dim", int(data["text_states_dim"]))
+    if "text_states_dim_2" in data and data["text_states_dim_2"] is not None:
+        object.__setattr__(config, "text_embed_2_dim", int(data["text_states_dim_2"]))
+    if "vision_states_dim" in data and data["vision_states_dim"] is not None:
+        object.__setattr__(config, "image_embed_dim", int(data["vision_states_dim"]))
+
+    if "mlp_width_ratio" in data:
+        object.__setattr__(config, "mlp_ratio", float(data["mlp_width_ratio"]))
+    if "rope_theta" in data:
+        object.__setattr__(config, "rope_theta", float(data["rope_theta"]))
+    if "rope_dim_list" in data:
+        object.__setattr__(
+            config,
+            "rope_axes_dim",
+            tuple(int(x) for x in data["rope_dim_list"]),
+        )
+    if "ideal_task" in data and data["ideal_task"]:
+        object.__setattr__(config, "task_type", str(data["ideal_task"]))
+    if "use_meanflow" in data:
+        object.__setattr__(config, "use_meanflow", bool(data["use_meanflow"]))
+
+    qk_norm_type = str(data.get("qk_norm_type") or "").strip().lower()
+    if qk_norm_type:
+        object.__setattr__(
+            config,
+            "qk_norm",
+            "rms_norm" if qk_norm_type in {"rms", "rms_norm"} else qk_norm_type,
+        )
+
+    object.__setattr__(config, "dim_in", int(getattr(config, "out_channels", 32)))
+    object.__setattr__(config, "text_dim", int(getattr(config, "text_embed_dim", 3584)))
+
+
 # =========================================================================
 # Config registry: family → config class
 # =========================================================================
@@ -830,17 +1022,22 @@ FAMILY_CONFIG_MAP: dict[str, type] = {
     "cogview4": CogView4Config,
     "seedvr2": SeedVR2Config,
     "esrgan": EsrganConfig,
+    "hidream_o1": HiDreamO1Config,
+    "step1x_edit": Step1XEditConfig,
     # Audio
     "diffrhythm": DiffRhythmConfig,
     "ace_step": AceStepConfig,
     # Video
     "ltx": LTXConfig,
+    "longcat": LongCatConfig,
+    "longcat_avatar": LongCatAvatarConfig,
     "wan": WanConfig,
     "hunyuan": HunyuanVideoConfig,
 }
 
 IMAGE_FAMILY_REUSE_CONTRACT = frozenset({
     "flux1", "flux2", "z_image", "qwen_image", "ernie_image", "fibo", "cogview4", "seedvr2", "esrgan",
+    "hidream_o1", "step1x_edit",
 })
 
 
@@ -865,6 +1062,7 @@ def apply_image_registry_config_overrides(entry: Any, config: Any) -> None:
     for param_key in (
         "text_encoder_out_layers",
         "vae_scale",
+        "image_pipeline_shape",
         "enable_thinking",
         "latent_noise_dtype",
         "max_seq_len",
@@ -883,6 +1081,16 @@ def apply_image_registry_config_overrides(entry: Any, config: Any) -> None:
         "edit_max_reference_images",
         "patch_token_dim",
         "release_text_encoder_after_encode",
+        "hidream_quantized_no_edit",
+        "hidream_noise_scale",
+        "hidream_noise_clip_std",
+        "hidream_edit_max_refs",
+        "hidream_snap_resolution",
+        "step1x_version",
+        "step1x_variant",
+        "step1x_dit_filename",
+        "step1x_max_length",
+        "step1x_size_level",
     ):
         val = registry_scalar_default(entry, param_key, None)
         if val is not None and hasattr(config, param_key):

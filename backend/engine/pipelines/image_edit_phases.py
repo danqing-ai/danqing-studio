@@ -190,6 +190,7 @@ def build_image_edit_rewrite_context(
             bundle_root=bundle_root,
             height=h,
             width=w,
+            ctx=pipeline.ctx,
         )
         seed = request.seed if request.seed is not None else random.randint(0, 2 ** 32 - 1)
         reference_latent = encode_edit_reference_latent(

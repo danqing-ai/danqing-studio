@@ -883,26 +883,10 @@ class HunyuanVideoDiTMLX(TransformerBase):
         return out
 
     def sanitize(self, weights: dict) -> dict:
-        """Transform checkpoint keys to match ``HunyuanVideoDiTMLX._param_map``.
+        """Transform checkpoint keys to match ``HunyuanVideoDiTMLX._param_map``."""
+        from backend.engine.families.hunyuan.weights import remap_hunyuan_weights
 
-        Strips common checkpoint prefixes, removes LoRA keys, and converts
-        Conv3d patch weights from PyTorch ``[O,I,T,H,W]`` to MLX ``[O,T,H,W,I]`` layout.
-        """
-        remapped: dict = {}
-        for key, tensor in weights.items():
-            new_key = key
-            for prefix in ("transformer.", "model.transformer.", "module."):
-                if new_key.startswith(prefix):
-                    new_key = new_key[len(prefix):]
-                    break
-            new_key = new_key.replace(".default.", ".")
-            if ".lora_" in new_key or new_key.startswith("lora_"):
-                continue
-            if new_key == "x_embedder.proj.weight" and isinstance(tensor, mx.array) and tensor.ndim == 5:
-                # PyTorch Conv3d [O, I, T, H, W] → MLX [O, T, H, W, I]
-                tensor = mx.transpose(tensor, (0, 2, 3, 4, 1))
-            remapped[new_key] = tensor
-        return remapped
+        return remap_hunyuan_weights(weights)
 
     def load_weights(
         self,

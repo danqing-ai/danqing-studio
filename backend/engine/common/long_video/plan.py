@@ -50,3 +50,22 @@ def build_shot_plan(
         segment_durations_sec=durations,
         narrative_budget=narrative_budget_for_target(target),
     )
+
+
+def build_shot_plan_for_scenes(
+    *,
+    scene_count: int,
+    segment_duration_sec: float = 5.0,
+) -> ShotPlan:
+    """Shot count from chapter scene analysis; duration = scenes × segment length."""
+    seg = max(0.5, float(segment_duration_sec))
+    count = max(2, min(24, int(scene_count)))
+    target = count * seg
+    durations = tuple([seg] * count)
+    return ShotPlan(
+        target_duration_sec=target,
+        segment_duration_sec=seg,
+        shot_count=count,
+        segment_durations_sec=durations,
+        narrative_budget=narrative_budget_for_target(target),
+    )

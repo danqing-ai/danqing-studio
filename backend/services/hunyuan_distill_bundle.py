@@ -47,7 +47,7 @@ def assemble_hunyuan_distill_bundle(bundle_root: Path, variant: str) -> None:
     if not cfg.is_file():
         raise RuntimeError(
             f"Hunyuan distill bundle missing transformer/config.json under {root}. "
-            "Install hunyuan-video-1.5-shared encoders first."
+            "Re-download; bundle_repos must include Tencent-Hunyuan/HunyuanVideo-1.5 encoders."
         )
 
     index_path = root / "model_index.json"

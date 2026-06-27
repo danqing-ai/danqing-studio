@@ -788,6 +788,7 @@ class LTX23MlxGenerator:
         guidance: float,
         step_distill: bool,
         image_path: str | None,
+        negative_prompt: str = "",
         on_log: Callable[[str, str], None] | None,
         on_progress: Callable[..., None] | None = None,
     ) -> str:

@@ -80,7 +80,7 @@ const props = defineProps<{
 }>();
 
 const emit = defineEmits<{
-  (e: 'composer-restore', snapshot: Record<string, string>): void;
+  (e: 'composer-restore', snapshot: import('@/types').CanvasComposerSnapshot): void;
 }>();
 
 const store = useCanvasStore(props.media);

@@ -40,6 +40,8 @@ _TRANSFORMER = {
     "qwen_image": ("backend.engine.families.qwen.transformer",    "QwenImageTransformer"),
     "ernie_image": ("backend.engine.families.ernie_image.transformer", "ErnieImageTransformer"),
     "cogview4": ("backend.engine.families.cogview4.transformer", "CogView4Transformer"),
+    "hidream_o1": ("backend.engine.families.hidream_o1.transformer", "HiDreamO1Transformer"),
+    "step1x_edit": ("backend.engine.families.step1x_edit.transformer", "Step1XEditTransformer"),
 }
 
 # encoder_type → (模块路径, 类名)
@@ -520,16 +522,46 @@ def attach_image_conditioning(
 _VIDEO_TRANSFORMER = {
     "wan":       ("backend.engine.families.wan.transformer",       "WanTransformer"),
     "ltx":       ("backend.engine.families.ltx.transformer",       "LTXTransformer"),
+    "longcat":   ("backend.engine.families.longcat.transformer",   "LongCatTransformer"),
+    "longcat_avatar": ("backend.engine.families.longcat_avatar.transformer", "LongCatAvatarTransformer"),
     "hunyuan":   ("backend.engine.families.hunyuan.transformer",   "HunyuanVideoTransformer"),
 }
 
 # family → (module, factory_fn) for VideoPipeline Shape C (in-repo family generator)
 _VIDEO_GENERATION_FACTORY = {
     "ltx": ("backend.engine.families.ltx.generation", "create_ltx23_generator"),
+    "longcat": ("backend.engine.families.longcat.generation", "create_longcat_generator"),
+    "wan": ("backend.engine.families.wan.generation", "create_bernini_renderer_generator"),
+}
+
+_IMAGE_GENERATION_FACTORY = {
+    "hidream_o1": ("backend.engine.families.hidream_o1.generation", "create_hidream_o1_generator"),
+    "step1x_edit": ("backend.engine.families.step1x_edit.generation", "create_step1x_edit_generator"),
+}
+
+_IMAGE_GENERATION_VALIDATE = {
+    "hidream_o1": ("backend.engine.families.hidream_o1.generation", "validate_image_generation_params"),
+    "step1x_edit": ("backend.engine.families.step1x_edit.generation", "validate_image_generation_params"),
+}
+
+_VIDEO_AVATAR_FACTORY = {
+    "longcat_avatar": (
+        "backend.engine.families.longcat_avatar.generation",
+        "create_longcat_avatar_generator",
+    ),
 }
 
 _VIDEO_GENERATION_VALIDATE = {
     "ltx": ("backend.engine.families.ltx.generation", "validate_video_generation_params"),
+    "longcat": ("backend.engine.families.longcat.generation", "validate_video_generation_params"),
+    "wan": ("backend.engine.families.wan.generation", "validate_video_generation_params"),
+}
+
+_VIDEO_AVATAR_VALIDATE = {
+    "longcat_avatar": (
+        "backend.engine.families.longcat_avatar.generation",
+        "validate_video_avatar_params",
+    ),
 }
 
 _VIDEO_TRANSFORMER_WEIGHT_PREPARE = {
@@ -680,6 +712,60 @@ def get_video_generation_factory(family: str):
             f"VideoPipeline: no generation factory for family {family!r}; supported: {supported}"
         )
     return getattr(importlib.import_module(entry[0]), entry[1])
+
+
+def get_image_generation_factory(family: str):
+    import importlib
+
+    entry = _IMAGE_GENERATION_FACTORY.get(family)
+    if entry is None:
+        supported = ", ".join(sorted(_IMAGE_GENERATION_FACTORY.keys()))
+        raise RuntimeError(
+            f"ImagePipeline: no generation factory for family {family!r}; supported: {supported}"
+        )
+    return getattr(importlib.import_module(entry[0]), entry[1])
+
+
+def validate_image_generation_params(
+    *,
+    family: str,
+    entry: Any,
+    config: Any,
+    ref_image_paths: list[str] | None = None,
+    **kwargs: Any,
+) -> None:
+    import importlib
+
+    mod_entry = _IMAGE_GENERATION_VALIDATE.get(family)
+    if mod_entry is None:
+        return
+    fn = getattr(importlib.import_module(mod_entry[0]), mod_entry[1])
+    fn(entry=entry, config=config, ref_image_paths=ref_image_paths, **kwargs)
+
+
+def get_video_avatar_factory(family: str):
+    import importlib
+    entry = _VIDEO_AVATAR_FACTORY.get(family)
+    if entry is None:
+        supported = ", ".join(sorted(_VIDEO_AVATAR_FACTORY.keys()))
+        raise RuntimeError(
+            f"VideoPipeline: no avatar factory for family {family!r}; supported: {supported}"
+        )
+    return getattr(importlib.import_module(entry[0]), entry[1])
+
+
+def validate_video_avatar_params(
+    family: str,
+    *,
+    entry: Any,
+    config: Any,
+) -> None:
+    import importlib
+    mod_entry = _VIDEO_AVATAR_VALIDATE.get(family)
+    if mod_entry is None:
+        return
+    fn = getattr(importlib.import_module(mod_entry[0]), mod_entry[1])
+    fn(entry=entry, config=config)
 
 
 # =========================================================================

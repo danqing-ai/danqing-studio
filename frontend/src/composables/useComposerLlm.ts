@@ -85,6 +85,33 @@ export function useComposerLlm() {
   }
 
   const isStoryboardExpanding = ref(false);
+  const isChapterAnalyzing = ref(false);
+
+  async function analyzeLongVideoChapter(
+    body: {
+      chapter_text: string;
+      chapter_title?: string;
+      locale?: string;
+    },
+    opts?: { quietSuccess?: boolean },
+  ) {
+    isChapterAnalyzing.value = true;
+    try {
+      const result = await api.gen.longVideoChapterAnalyze(body);
+      if (!opts?.quietSuccess) {
+        toast.success($tt('video.longVideoChapterAnalyzeComplete'));
+      }
+      return result;
+    } catch (e) {
+      const msg = (e as { response?: { data?: { detail?: string } }; message?: string })?.response?.data?.detail
+        || (e as Error).message
+        || String(e);
+      toast.error($tt('video.longVideoChapterAnalyzeFailed', { msg }));
+      return null;
+    } finally {
+      isChapterAnalyzing.value = false;
+    }
+  }
 
   async function storyboardLongVideo(
     body: {
@@ -97,6 +124,10 @@ export function useComposerLlm() {
       style_positive?: string;
       locale?: string;
       use_shot_plan?: boolean;
+      source_mode?: 'brief' | 'chapter';
+      scene_beats?: string[];
+      prebuilt_character_anchor?: string;
+      prebuilt_style_anchor?: string;
     },
     opts?: { quietSuccess?: boolean },
   ) {
@@ -123,9 +154,11 @@ export function useComposerLlm() {
     isReversing,
     isGeneratingLyrics,
     isStoryboardExpanding,
+    isChapterAnalyzing,
     enhance,
     reversePrompt,
     generateLyrics,
+    analyzeLongVideoChapter,
     storyboardLongVideo,
   };
 }

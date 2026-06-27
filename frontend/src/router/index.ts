@@ -17,6 +17,11 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/VideoCreateView.vue'),
   },
   {
+    path: '/avatar_create',
+    name: 'avatar_create',
+    component: () => import('@/views/AvatarCreateView.vue'),
+  },
+  {
     path: '/long_video_create',
     name: 'long_video_create',
     component: () => import('@/views/LongVideoCreateView.vue'),

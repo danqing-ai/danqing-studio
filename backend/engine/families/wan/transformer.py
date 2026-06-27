@@ -83,6 +83,15 @@ class WanTransformer(DelegatingDiTStem):
                 cond["wan_i2v_mask"] = mask2_list[0]
         return latents, cond
 
+    def patch_latent_volume(self, latent: Any, source_id: float = 0.0, **kwargs: Any) -> Any:
+        return self._inner.patch_latent_volume(latent, source_id, **kwargs)
+
+    def forward_token_sequence(self, *args: Any, **kwargs: Any) -> Any:
+        return self._inner.forward_token_sequence(*args, **kwargs)
+
+    def unpatchify_token_grid(self, token_out: Any, grid: tuple[int, int, int]) -> Any:
+        return self._inner.unpatchify_token_grid(token_out, grid)
+
     def step_callback(self, step_idx: int, latents: Any, noise_pred: Any) -> None:
         del step_idx, noise_pred
 

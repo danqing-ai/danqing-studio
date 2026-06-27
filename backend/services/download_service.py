@@ -519,15 +519,15 @@ class DownloadService(IDownloadService):
         version: str | None,
     ) -> str | None:
         """Pick explicit version or registry default (``default: true``)."""
+        from backend.core.version_keys import resolve_registry_version_key
+
         versions = config.get("versions")
         if not isinstance(versions, dict) or not versions:
             return (version or "").strip() or None
         key = (version or "").strip()
-        if key and isinstance(versions.get(key), dict):
-            return key
-        for version_key, vinfo in versions.items():
-            if isinstance(vinfo, dict) and vinfo.get("default"):
-                return str(version_key)
+        resolved = resolve_registry_version_key(versions, key or None)
+        if resolved and isinstance(versions.get(resolved), dict):
+            return resolved
         return None
 
     @staticmethod
@@ -619,12 +619,26 @@ class DownloadService(IDownloadService):
         spec: dict[str, Any] | None,
         ver_config: dict[str, Any] | None = None,
     ) -> str | None:
-        for src in (spec, ver_config):
-            if not isinstance(src, dict):
-                continue
-            variant = src.get("hunyuan_ms_variant")
-            if variant:
-                return str(variant)
+        """Resolve ModelScope Hunyuan variant for assembly/readiness checks.
+
+        ``hunyuan_ms_variant`` on the version entry applies only to repos that
+        download the native ``transformer/<variant>/`` tree (``allow_patterns``
+        with a ``transformer/`` prefix). Do not inherit it for sibling
+        ``bundle_repos`` such as Qwen / ByT5 text encoders.
+        """
+        if not isinstance(spec, dict):
+            return None
+        own = spec.get("hunyuan_ms_variant")
+        if own:
+            return str(own)
+        patterns = spec.get("allow_patterns")
+        if isinstance(patterns, list) and any(
+            str(p).startswith("transformer/") for p in patterns
+        ):
+            if isinstance(ver_config, dict):
+                inherited = ver_config.get("hunyuan_ms_variant")
+                if inherited:
+                    return str(inherited)
         return None
 
     def _require_hunyuan_ms_bundle_complete(
@@ -814,7 +828,11 @@ class DownloadService(IDownloadService):
         if spec.version:
             version_keys.append(spec.version)
             if spec.version == "shared":
-                version_keys.append("original")
+                from backend.core.version_keys import resolve_full_bundle_version_key
+
+                base = resolve_full_bundle_version_key(versions)
+                if base:
+                    version_keys.append(base)
         else:
             version_keys = list(versions.keys())
 
@@ -846,6 +864,8 @@ class DownloadService(IDownloadService):
         *,
         ver_config: dict[str, Any],
         target: Path,
+        family: str | None = None,
+        category: str | None = None,
     ) -> bool:
         bundle_entries = bundle_repos_from_version(ver_config)
         if bundle_entries:
@@ -858,6 +878,12 @@ class DownloadService(IDownloadService):
                     continue
                 patterns = spec.get("allow_patterns")
                 pat_list = [str(p) for p in patterns] if isinstance(patterns, list) else None
+                if pat_list is None:
+                    from backend.services.services import SettingsService
+
+                    if not dest.is_dir() or not SettingsService._path_has_bundle_weights(dest):
+                        return False
+                    continue
                 if not _bundle_repo_is_complete(dest, pat_list):
                     return False
             return True
@@ -869,6 +895,18 @@ class DownloadService(IDownloadService):
         patterns = ver_config.get("allow_patterns")
         if isinstance(patterns, list) and patterns:
             return _bundle_repo_is_complete(target, [str(p) for p in patterns])
+
+        family_key = str(family or "").strip()
+        if family_key and target.is_dir():
+            from backend.core.bundle_manifest import (
+                bundle_component_status,
+                skips_full_family_bundle_contract,
+            )
+
+            if not skips_full_family_bundle_contract(str(category or "").strip()):
+                status = bundle_component_status(target, family=family_key)
+                if status is not None:
+                    return bool(status.get("complete"))
 
         return target.is_dir() and _calc_download_dir_bytes(target) >= 1024 ** 3
 
@@ -886,11 +924,16 @@ class DownloadService(IDownloadService):
         on_progress: Callable[[DownloadProgress], Any],
     ) -> bool:
         if not ver_config or not self._version_local_artifacts_ready(
-            ver_config=ver_config, target=target
+            ver_config=ver_config,
+            target=target,
+            family=str(config.get("family") or "").strip() or None,
+            category=str(config.get("category") or "").strip() or None,
         ):
             return False
 
         for spec in parse_dependencies(config.get("dependencies")):
+            if ver_config and ver_config.get("skip_dependencies"):
+                break
             if not self._dependency_is_ready(spec):
                 return False
 
@@ -967,24 +1010,9 @@ class DownloadService(IDownloadService):
         variant = ver_config.get("hunyuan_distill_variant")
         if not variant:
             return
-        from backend.services.hunyuan_distill_shared import link_hunyuan_distill_shared_assets
+        from backend.services.hunyuan_distill_shared import finalize_hunyuan_distill_bundle
 
-        def _resolve_dep_path(model_id: str, version_key: str) -> Path:
-            dep_cfg = self.get_model_download_config(model_id) or {}
-            versions = dep_cfg.get("versions") or {}
-            ver = versions.get(version_key)
-            if not isinstance(ver, dict):
-                raise KeyError(f"{model_id}:{version_key}")
-            local_path = ver.get("local_path")
-            if not isinstance(local_path, str) or not local_path.strip():
-                raise ValueError(f"{model_id}:{version_key} missing local_path")
-            return self._path_resolver.resolve_registry_local_path(local_path.strip())
-
-        link_hunyuan_distill_shared_assets(
-            distill_root=target,
-            variant=str(variant),
-            resolve_local_path=_resolve_dep_path,
-        )
+        finalize_hunyuan_distill_bundle(distill_root=target, variant=str(variant))
         from backend.services.hunyuan_distill_bundle import assemble_hunyuan_distill_bundle
 
         assemble_hunyuan_distill_bundle(target, str(variant))
@@ -995,55 +1023,28 @@ class DownloadService(IDownloadService):
         variant = ver_config.get("wan_distill_variant")
         if not variant:
             return
-        from backend.services.wan_distill_shared import link_wan_distill_shared_assets
+        from backend.services.wan_distill_shared import finalize_wan_distill_bundle
 
-        def _resolve_dep_path(model_id: str, version_key: str) -> Path:
-            dep_cfg = self.get_model_download_config(model_id) or {}
-            versions = dep_cfg.get("versions") or {}
-            ver = versions.get(version_key)
-            if not isinstance(ver, dict):
-                raise KeyError(f"{model_id}:{version_key}")
-            local_path = ver.get("local_path")
-            if not isinstance(local_path, str) or not local_path.strip():
-                raise ValueError(f"{model_id}:{version_key} missing local_path")
-            return self._path_resolver.resolve_registry_local_path(local_path.strip())
-
-        link_wan_distill_shared_assets(
-            distill_root=target,
-            variant=str(variant),
-            resolve_local_path=_resolve_dep_path,
-        )
+        finalize_wan_distill_bundle(distill_root=target, variant=str(variant))
         from backend.services.wan_distill_bundle import assemble_wan_distill_bundle
 
         assemble_wan_distill_bundle(target, str(variant))
 
     def _maybe_assemble_bernini_bundle(self, target: Path, ver_config: dict[str, Any] | None) -> None:
+        """Hoist Diffusers Bernini-R shards in-place; never symlink Wan shared encoders."""
         if not ver_config:
             return
         variant = ver_config.get("bernini_variant")
         if not variant:
             return
-        from backend.services.bernini_shared import link_bernini_shared_assets
-
-        def _resolve_dep_path(model_id: str, version_key: str) -> Path:
-            dep_cfg = self.get_model_download_config(model_id) or {}
-            versions = dep_cfg.get("versions") or {}
-            ver = versions.get(version_key)
-            if not isinstance(ver, dict):
-                raise KeyError(f"{model_id}:{version_key}")
-            local_path = ver.get("local_path")
-            if not isinstance(local_path, str) or not local_path.strip():
-                raise ValueError(f"{model_id}:{version_key} missing local_path")
-            return self._path_resolver.resolve_registry_local_path(local_path.strip())
-
-        link_bernini_shared_assets(
-            bernini_root=target,
-            variant=str(variant),
-            resolve_local_path=_resolve_dep_path,
-        )
+        if str(ver_config.get("source_type") or "").lower() == "prequantized":
+            return
+        root = Path(target)
+        if not (root / "transformer").is_dir() and not (root / "transformer_2").is_dir():
+            return
         from backend.services.bernini_bundle import assemble_bernini_bundle
 
-        assemble_bernini_bundle(target, str(variant))
+        assemble_bernini_bundle(root, str(variant))
 
     async def _finalize_version_install(
         self,
@@ -1100,7 +1101,14 @@ class DownloadService(IDownloadService):
         family = str(config.get("family") or "").strip()
         category = str(config.get("category") or "").strip()
         if family and target.is_dir() and not skips_full_family_bundle_contract(category):
+            from backend.core.bundle_manifest import assert_bundle_ready_for_family
+
             try:
+                assert_bundle_ready_for_family(
+                    target,
+                    family=family,
+                    model_id=model_name,
+                )
                 manifest_path = write_bundle_manifest(
                     target,
                     model_id=model_name,
@@ -1109,13 +1117,13 @@ class DownloadService(IDownloadService):
                 logger.info("Wrote bundle manifest: %s", manifest_path)
             except Exception as exc:
                 logger.error(
-                    "Failed to write bundle.manifest.json for %s at %s: %s",
+                    "Bundle validation or manifest write failed for %s at %s: %s",
                     model_name,
                     target,
                     exc,
                 )
                 raise RuntimeError(
-                    f"Post-download manifest generation failed for {model_name!r}: {exc}"
+                    f"Post-download bundle validation failed for {model_name!r}: {exc}"
                 ) from exc
 
     def _sync_download_bundle_repo(
@@ -1313,11 +1321,12 @@ class DownloadService(IDownloadService):
                 ))
 
         try:
-            await self._ensure_dependencies_installed(
-                model_name=model_name,
-                config=config,
-                progress_callback=progress_callback,
-            )
+            if not (ver_config and ver_config.get("skip_dependencies")):
+                await self._ensure_dependencies_installed(
+                    model_name=model_name,
+                    config=config,
+                    progress_callback=progress_callback,
+                )
 
             if ver_config and await self._try_finish_if_already_installed(
                 model_name=model_name,
@@ -1373,12 +1382,19 @@ class DownloadService(IDownloadService):
                         raise ConnectionError(
                             "Cannot connect to model download server (HF_ENDPOINT=%s), please check network connection" % os.environ.get("HF_ENDPOINT", "https://hf-mirror.com")
                         )
-                    # Let HF client use default tqdm, retain its log output
-                    return snapshot_download(
-                        repo_id=repo_id,
-                        local_dir=str(target),
-                        token=self._token,
-                    )
+                    allow_patterns = None
+                    if ver_config:
+                        from backend.services.hunyuan_ms_bundle import resolve_hunyuan_modelscope_allow_patterns
+
+                        allow_patterns = resolve_hunyuan_modelscope_allow_patterns(ver_config)
+                    kwargs: dict[str, Any] = {
+                        "repo_id": repo_id,
+                        "local_dir": str(target),
+                        "token": self._token,
+                    }
+                    if isinstance(allow_patterns, list) and allow_patterns:
+                        kwargs["allow_patterns"] = allow_patterns
+                    return snapshot_download(**kwargs)
 
                 download_future = loop.run_in_executor(None, do_download)
 
@@ -2185,24 +2201,15 @@ class DownloadService(IDownloadService):
                 shard_prefix: str,
                 single_output_file: Path | None,
             ) -> int:
-                import mlx.core as mx
+                from backend.core.derived_quant_mlx import quantize_and_save_sharded_inputs
 
-                from backend.core.derived_quant_mlx import (
-                    quantize_linear_weights_dict,
-                    save_quantized_weight_bundle,
-                )
-
-                weights: dict[str, Any] = {}
-                for sf in load_paths:
-                    weights.update(dict(mx.load(str(sf))))
-                if not weights:
-                    raise RuntimeError(f"No safetensors weights found in {load_paths!r}")
-                quantized = quantize_linear_weights_dict(weights, bits)
-                return save_quantized_weight_bundle(
-                    quantized,
+                if not load_paths:
+                    raise RuntimeError("No safetensors weight shards configured for quantization")
+                return quantize_and_save_sharded_inputs(
+                    load_paths,
+                    bits=bits,
                     output_dir=output_dir,
                     shard_prefix=shard_prefix,
-                    bits=bits,
                     single_output_file=single_output_file,
                 )
 
@@ -2218,6 +2225,23 @@ class DownloadService(IDownloadService):
                     single_output_file=plan.single_output_file,
                 )
                 total = len([k for k in plan.load_paths])
+
+                main_src = from_path / plan.output_dir.name
+                if main_src.is_dir():
+                    copy_component_companion_files(main_src, plan.output_dir)
+
+                for target in plan.expert_quant_targets:
+                    _quantize_target(
+                        target.load_paths,
+                        bits=int(quantize_bits),
+                        output_dir=target.output_dir,
+                        shard_prefix=target.output_shard_prefix,
+                        single_output_file=target.single_output_file,
+                    )
+                    copy_component_companion_files(
+                        from_path / target.subdir,
+                        to_path / target.subdir,
+                    )
 
                 for target in plan.component_targets:
                     _quantize_target(

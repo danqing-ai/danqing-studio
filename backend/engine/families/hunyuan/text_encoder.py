@@ -37,8 +37,7 @@ def _resolve_qwen_dirs(qwen_root: Path) -> tuple[Path, Path]:
         return root, root
     raise RuntimeError(
         f"HunyuanVideo Qwen bundle invalid under {root}. "
-        "Install models/Text/qwen2.5-vl-7b-instruct (ModelScope Qwen/Qwen2.5-VL-7B-Instruct) "
-        "or install hunyuan-video-1.5-shared encoders which includes it."
+        "Install models/Text/qwen2.5-vl-7b-instruct (ModelScope Qwen/Qwen2.5-VL-7B-Instruct)."
     )
 
 
@@ -53,8 +52,7 @@ def _resolve_byt5_dirs(byt5_root: Path) -> tuple[Path, Path]:
         return root, root
     raise RuntimeError(
         f"HunyuanVideo ByT5 bundle invalid under {root}. "
-        "Install models/Text/google-byt5-small (ModelScope google/byt5-small) "
-        "or install hunyuan-video-1.5-shared encoders which includes it."
+        "Install models/Text/byt5-small (ModelScope google/byt5-small)."
     )
 
 

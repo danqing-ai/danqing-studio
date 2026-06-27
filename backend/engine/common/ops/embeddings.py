@@ -215,7 +215,11 @@ def sinusoidal_timestep_proj(
     max_period: float = 10000.0,
 ) -> Any:
     """diffusers-style sinusoidal timestep projection (Flux1 / Hunyuan)."""
-    timesteps = ctx.reshape(timesteps.astype(ctx.float32()), (-1,))
+    if not hasattr(timesteps, "astype"):
+        timesteps = ctx.array([float(timesteps)], dtype=ctx.float32())
+    else:
+        timesteps = timesteps.astype(ctx.float32())
+    timesteps = ctx.reshape(timesteps, (-1,))
     half_dim = embedding_dim // 2
     denom = max(half_dim - downscale_freq_shift, 1e-8)
     exp_arg = -math.log(max_period) * ctx.arange(half_dim, dtype=ctx.float32()) / denom
@@ -399,6 +403,52 @@ def factorized_rope_concat_params(
         raise RuntimeError("factorized_rope_concat_params requires non-empty dims")
     parts = [factorized_rope_params(ops, max_seq_len, int(d), theta=theta) for d in dims]
     return ops.concat(parts, axis=1)
+
+
+def bernini_source_id_cos_sin(
+    ops: Any,
+    head_dim: int,
+    source_id: float,
+    *,
+    theta: float = 10000.0,
+    dtype: Any | None = None,
+) -> tuple[Any, Any]:
+    """SA-3D RoPE source-id phase as ``(cos, sin)`` with shape ``[1, head_dim//2]``."""
+    if head_dim % 2 != 0:
+        raise ValueError("bernini_source_id_cos_sin requires even head_dim")
+    import numpy as np
+
+    half = head_dim // 2
+    pos = float(source_id)
+    inv_freq = 1.0 / np.power(theta, np.arange(0, head_dim, 2, dtype=np.float64) / head_dim)
+    freqs = pos * inv_freq
+    cos = ops.array(np.cos(freqs).astype(np.float32))
+    sin = ops.array(np.sin(freqs).astype(np.float32))
+    if dtype is not None:
+        cos = cos.astype(dtype)
+        sin = sin.astype(dtype)
+    return cos, sin
+
+
+def bernini_modulate_rope_cos_sin(
+    ops: Any,
+    cos_spatial: Any,
+    sin_spatial: Any,
+    source_id: float,
+    *,
+    theta: float = 10000.0,
+) -> tuple[Any, Any]:
+    """Multiply spatial RoPE by per-source-id phase (Bernini SA-3D RoPE)."""
+    head_dim = int(cos_spatial.shape[-1]) * 2
+    cos_id, sin_id = bernini_source_id_cos_sin(
+        ops, head_dim, source_id, theta=theta, dtype=cos_spatial.dtype,
+    )
+  # Broadcast source-id across sequence positions.
+    cos_id = ops.broadcast_to(cos_id.reshape(1, 1, -1), cos_spatial.shape)
+    sin_id = ops.broadcast_to(sin_id.reshape(1, 1, -1), sin_spatial.shape)
+    out_cos = cos_spatial * cos_id - sin_spatial * sin_id
+    out_sin = sin_spatial * cos_id + cos_spatial * sin_id
+    return out_cos, out_sin
 
 
 def factorized_rope_precompute_cos_sin(

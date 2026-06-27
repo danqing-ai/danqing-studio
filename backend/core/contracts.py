@@ -168,6 +168,7 @@ class VideoGenerationRequest(BaseModel):
     adapters: list[AdapterRef] = Field(default_factory=list)
     priority: Literal["normal", "high"] = "normal"
     metadata: dict[str, Any] = Field(default_factory=dict)
+    reference_asset_ids: list[str] = Field(default_factory=list)
     long_video: Optional["VideoLongVideoSpec"] = None
 
 
@@ -244,6 +245,24 @@ class VideoLongGenerationRequest(BaseModel):
         return self
 
 
+class VideoAvatarRequest(BaseModel):
+    """Audio-driven digital human (LongCat-Avatar ATI2V / AT2V)."""
+
+    model: str
+    title: str = ""
+    prompt: str = ""
+    negative_prompt: str = ""
+    reference_asset_id: str
+    audio_asset_id: str
+    size: str = "512x512"
+    num_frames: int = 93
+    fps: int = 25
+    steps: Optional[int] = None
+    seed: Optional[int] = None
+    priority: Literal["normal", "high"] = "normal"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class VideoEditRequest(BaseModel):
     model: str
     operation: Literal["animate"] = "animate"
@@ -262,6 +281,7 @@ class VideoEditRequest(BaseModel):
     adapters: list[AdapterRef] = Field(default_factory=list)
     priority: Literal["normal", "high"] = "normal"
     metadata: dict[str, Any] = Field(default_factory=dict)
+    reference_asset_ids: list[str] = Field(default_factory=list)
 
 
 class VideoUpscaleRequest(BaseModel):
@@ -394,6 +414,29 @@ class LongVideoPlanDTO(BaseModel):
     narrative_budget: str
 
 
+class LongVideoChapterAnalyzeRequest(BaseModel):
+    chapter_text: str
+    chapter_title: str = ""
+    locale: str = ""
+
+
+class LongVideoChapterSceneDTO(BaseModel):
+    order: int
+    title: str = ""
+    beat: str = ""
+
+
+class LongVideoChapterAnalyzeResponse(BaseModel):
+    chapter_title: str
+    synopsis: str
+    character_anchor: str
+    style_anchor: str = ""
+    characters: list["LongVideoCharacterDTO"] = Field(default_factory=list)
+    scene_beats: list[LongVideoChapterSceneDTO] = Field(default_factory=list)
+    scene_count: int = 0
+    llm_calls: int = 0
+
+
 class LongVideoStoryboardRequest(BaseModel):
     prompt: str
     target_duration_sec: float = 60.0
@@ -404,6 +447,10 @@ class LongVideoStoryboardRequest(BaseModel):
     style_positive: str = ""
     locale: str = ""
     use_shot_plan: bool = True
+    source_mode: Literal["brief", "chapter"] = "brief"
+    scene_beats: list[str] = Field(default_factory=list)
+    prebuilt_character_anchor: str = ""
+    prebuilt_style_anchor: str = ""
 
 
 class LongVideoCharacterLookDTO(BaseModel):

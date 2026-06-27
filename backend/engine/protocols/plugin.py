@@ -7,7 +7,7 @@ from typing import Any, Callable, Literal
 
 from backend.engine.protocols.components import Backbone, EncodeResult, TextEncoder, VAE
 
-LatentLayout = Literal["nchw", "packed_seq", "qwen_grid", "video_5d", "audio_1d"]
+LatentLayout = Literal["nchw", "packed_seq", "qwen_grid", "video_5d", "audio_1d", "pixel_patch"]
 CfgMode = Literal["fused", "batched", "dual", "none"]
 ParadigmKind = Literal["diffusion", "flow_matching", "block_ar", "two_stage", "job"]
 

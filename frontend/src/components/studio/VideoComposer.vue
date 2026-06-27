@@ -36,6 +36,10 @@
       </RouterLink>
     </div>
 
+    <p v-if="berniniModeBanner" class="video-composer__bernini-banner">
+      {{ berniniModeBanner }}
+    </p>
+
     <!-- Prompt -->
     <div class="video-composer__prompt-block">
     <div class="video-composer__prompt-wrap">
@@ -119,6 +123,45 @@
             </DqIconButton>
           </ComposerIconTip>
         </div>
+      </div>
+
+      <div v-if="showBerniniReferences" class="video-composer__bernini-refs">
+        <span class="video-composer__bernini-refs-label">{{ $t('video.berniniRefTitle') }}</span>
+        <div class="video-composer__bernini-refs-row">
+          <div
+            v-for="(ref, idx) in extraReferenceMedia"
+            :key="ref.path"
+            class="video-composer__ref-pill video-composer__ref-pill--extra"
+          >
+            <img :src="ref.previewUrl" alt="" />
+            <span class="video-composer__ref-label">{{ ref.label || $t('video.berniniRefLabel') }}</span>
+            <ComposerIconTip :content="$t('create.composerTip.removeRef')">
+              <DqIconButton
+                type="text"
+                size="xs"
+                :aria-label="$tt('common.delete')"
+                @click="$emit('remove-extra-reference', idx)"
+              >
+                <DqIcon :size="10"><Close /></DqIcon>
+              </DqIconButton>
+            </ComposerIconTip>
+          </div>
+          <ComposerIconTip
+            v-if="extraReferenceMedia.length < berniniRefMax"
+            :content="$t('video.berniniRefPickTip')"
+          >
+            <DqIconButton
+              type="text"
+              size="xs"
+              class="video-composer__ref-add"
+              :aria-label="$t('video.berniniRefTitle')"
+              @click="$emit('pick-extra-reference')"
+            >
+              <DqIcon :size="14"><Picture /></DqIcon>
+            </DqIconButton>
+          </ComposerIconTip>
+        </div>
+        <p class="video-composer__bernini-refs-hint">{{ berniniRefsHint }}</p>
       </div>
 
       <!-- Preset / enhance (prompt corner, same as ImageComposer) -->
@@ -450,6 +493,12 @@ import {
   loraOptionLabel,
   type CompatibleLoraRow,
 } from '@/utils/loraAdapterMeta';
+import {
+  berniniMaxReferenceImages,
+  isBerniniRenderer,
+  supportsBerniniReferenceImages,
+  videoRequiresSourceVideo,
+} from '@/utils/videoEditSource';
 
 const props = defineProps<{
   modelValue: string;
@@ -489,6 +538,9 @@ const props = defineProps<{
   enhancing?: boolean;
   reversing?: boolean;
   tailReferenceMedia?: { type: 'image'; previewUrl: string; label: string } | null;
+  extraReferenceMedia?: Array<{ previewUrl: string; path: string; label?: string }>;
+  showBerniniReferences?: boolean;
+  berniniRefMax?: number;
   modelNotReady?: boolean;
   modelNotReadyName?: string;
   workModeOptions?: Array<{ label: string; value: string }>;
@@ -513,6 +565,8 @@ const emit = defineEmits<{
   (e: 'remove-reference'): void;
   (e: 'pick-tail-reference'): void;
   (e: 'remove-tail-reference'): void;
+  (e: 'pick-extra-reference'): void;
+  (e: 'remove-extra-reference', index: number): void;
   (e: 'model-change', value: string): void;
   (e: 'reset-defaults'): void;
   (e: 'go-download'): void;
@@ -593,6 +647,44 @@ const needsReferenceInput = computed(
   () => props.workMode === 'animate' || props.workMode === 'edit',
 );
 
+const showBerniniReferences = computed(
+  () => Boolean(props.showBerniniReferences) && supportsBerniniReferenceImages(paramSchema.value),
+);
+
+const extraReferenceMedia = computed(
+  () => props.extraReferenceMedia || [],
+);
+
+const berniniRefMax = computed(() => props.berniniRefMax ?? 5);
+
+const berniniModeBanner = computed(() => {
+  if (!isBerniniRenderer(paramSchema.value)) return '';
+  if (props.workMode === 'create') {
+    return extraReferenceMedia.value.length
+      ? $tt('video.berniniBannerR2v')
+      : $tt('video.berniniBannerT2v');
+  }
+  if (props.workMode === 'edit') {
+    return extraReferenceMedia.value.length
+      ? $tt('video.berniniBannerRv2v')
+      : $tt('video.berniniBannerV2v');
+  }
+  if (props.workMode === 'animate') {
+    return $tt('video.berniniBannerAnimate');
+  }
+  return '';
+});
+
+const berniniRefsHint = computed(() => {
+  if (props.workMode === 'create') {
+    return $tt('video.berniniRefHintCreate');
+  }
+  if (props.workMode === 'edit') {
+    return $tt('video.berniniRefHintEdit');
+  }
+  return $tt('video.berniniRefHint');
+});
+
 const paramSchema = computed(() => props.currentModelConfig?.parameters || {});
 
 function videoLoraLabel(l: Record<string, unknown>) {
@@ -629,7 +721,12 @@ const referenceMediaLabel = computed(() => {
 });
 
 const referenceMediaTip = computed(() => {
-  if (props.workMode === 'edit') return $tt('video.editSourceHint');
+  if (props.workMode === 'edit') {
+    if (videoRequiresSourceVideo(paramSchema.value)) {
+      return $tt('video.editSourceHintFull');
+    }
+    return $tt('video.editSourceHint');
+  }
   if (props.workMode === 'animate') return $t('create.composerTip.reversePromptVideo');
   return $t('create.composerTip.refImage');
 });
@@ -809,6 +906,47 @@ function onKeydown(e: KeyboardEvent) {
 
 .video-composer__ref-add:hover {
   opacity: 1;
+}
+
+.video-composer__bernini-banner {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--dq-label-secondary);
+}
+
+.video-composer__bernini-refs {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 4px 4px;
+}
+
+.video-composer__bernini-refs-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--dq-label-secondary);
+}
+
+.video-composer__bernini-refs-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.video-composer__bernini-refs-hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--dq-label-tertiary);
+}
+
+.video-composer__ref-pill--extra img {
+  width: 36px;
+  height: 36px;
+  object-fit: cover;
 }
 
 /* Preset picker inside textarea (bottom-right) */

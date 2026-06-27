@@ -195,17 +195,17 @@ DESCRIPTION_OVERRIDES: dict[str, dict[str, str]] = {
         "zh": "Qwen Image Edit 2511 LightX2V 蒸馏 LoRA（4 步或 8 步 BF16）。需配合 qwen-image-edit FP16 完整版；建议 CFG 1.0。",
         "en": "Qwen Image Edit 2511 LightX2V distill LoRA (4-step or 8-step BF16). Requires qwen-image-edit FP16; use CFG 1.0.",
     },
-    "hunyuan-video-1.5-shared": {
-        "zh": "HunyuanVideo 1.5 共享编码器（VAE + DiT 配置），供 LightX2V 蒸馏版依赖。",
-        "en": "HunyuanVideo 1.5 shared encoders (VAE + DiT config) for LightX2V distill models.",
+    "bernini-r-14b": {
+        "zh": "ByteDance Bernini-R 14B：文生视频、参考生视频、视频编辑与参考+视频编辑（SA-3D RoPE）；各版本均为完整自包含 bundle（DiT + UMT5 + VAE）。",
+        "en": "ByteDance Bernini-R 14B: T2V, R2V, V2V, RV2V (SA-3D RoPE); every tier is a self-contained bundle (DiT + UMT5 + VAE).",
     },
-    "wan-2.2-14b-shared": {
-        "zh": "Wan 2.2 14B 共享编码器（UMT5 + VAE），供 LightX2V / TurboDiffusion / Bernini 依赖。",
-        "en": "Wan 2.2 14B shared encoders (UMT5 + VAE) for LightX2V, TurboDiffusion, and Bernini models.",
+    "bernini-r-1.3b": {
+        "zh": "ByteDance Bernini-R 1.3B：文生视频、参考生视频、视频编辑（SA-3D RoPE）；各版本均为完整自包含 bundle（DiT + UMT5 + VAE）。",
+        "en": "ByteDance Bernini-R 1.3B: T2V, R2V, V2V (SA-3D RoPE); every tier is a self-contained bundle (DiT + UMT5 + VAE).",
     },
     "hunyuan-video-1.5-t2v-distill": {
-        "zh": "HunyuanVideo 1.5 文生视频 LightX2V 4 步真蒸馏（单文件 DiT，480p）；需先安装共享编码器。",
-        "en": "HunyuanVideo 1.5 T2V LightX2V 4-step true distill (single-file DiT, 480p); requires shared encoders.",
+        "zh": "HunyuanVideo 1.5 文生视频 LightX2V 4 步真蒸馏（单文件 DiT，480p）；完整自包含 bundle（DiT + VAE + 文本编码器）。",
+        "en": "HunyuanVideo 1.5 T2V LightX2V 4-step distill (480p); self-contained bundle (DiT + VAE + text encoders).",
     },
     "hunyuan-video-1.5-1080p-sr": {
         "zh": "HunyuanVideo 1.5 超分修复，1080p 超分变体。",
@@ -273,24 +273,76 @@ NAME_OVERRIDES: dict[str, dict[str, str]] = {
 }
 
 
+def _catalog_entry(model_entry: dict[str, Any]) -> dict[str, Any]:
+    catalog = model_entry.get("catalog")
+    return catalog if isinstance(catalog, dict) else model_entry
+
+
+def _distribution_entry(model_entry: dict[str, Any]) -> dict[str, Any]:
+    dist = model_entry.get("distribution")
+    return dist if isinstance(dist, dict) else model_entry
+
+
+def _standard_version_label(version_key: str) -> dict[str, str] | None:
+    """Machine version key → bilingual UI label (dtype / tier only)."""
+    vk = str(version_key or "").strip().lower()
+    if not vk:
+        return None
+
+    static: dict[str, tuple[str, str]] = {
+        "fp16": ("FP16", "FP16"),
+        "bf16": ("BF16", "BF16"),
+        "fp8": ("FP8", "FP8"),
+        "int4": ("INT4", "INT4"),
+        "int8": ("INT8", "INT8"),
+        "encoders": ("共享编码器", "Shared Encoders"),
+        "xl-sft": ("XL SFT (4B)", "XL SFT (4B)"),
+    }
+    if vk in static:
+        zh, en = static[vk]
+        return {"zh": zh, "en": en}
+
+    if vk == "mlx-bf16":
+        return {"zh": "MLX BF16", "en": "MLX BF16"}
+    if vk.startswith("mlx-bf16-"):
+        suffix = vk[len("mlx-bf16-") :].upper().replace("-", " ")
+        return {"zh": f"MLX BF16 {suffix}".strip(), "en": f"MLX BF16 {suffix}".strip()}
+
+    q4 = re.match(r"^mlx-q4(?:-(.+))?$", vk)
+    if q4:
+        suffix = (q4.group(1) or "").upper().replace("-", " ")
+        label = f"MLX Q4{f' {suffix}' if suffix else ''}"
+        return {"zh": label, "en": label}
+
+    q8 = re.match(r"^mlx-q8(?:-(.+))?$", vk)
+    if q8:
+        suffix = (q8.group(1) or "").upper().replace("-", " ")
+        label = f"MLX Q8{f' {suffix}' if suffix else ''}"
+        return {"zh": label, "en": label}
+
+    return None
+
+
 def _bit_label(version_key: str, bits: int | None, old_plain: str) -> str | None:
     vk = version_key.lower()
     text = old_plain.lower()
     if vk == "mlx-bf16" or "bf16" in text:
         return "BF16"
-    if bits == 6 or "6bit" in vk or "6-bit" in text or "6bit" in text:
-        return "6-bit"
-    if bits == 8 or vk.endswith("8bit") or vk == "mlx" or "8bit" in text or "int8" in text:
+    if bits == 8 or vk.endswith("q8") or vk == "mlx" or "8bit" in text or "int8" in text:
         return "8-bit"
-    if bits == 4 or "4bit" in vk or vk == "mlx-q4" or "4bit" in text or "int4" in text:
+    if bits == 4 or vk.endswith("q4") or "4bit" in vk or "4bit" in text or "int4" in text:
         return "4-bit"
     return None
 
 
 def _quant_variant(bit_label: str) -> dict[str, str]:
     if bit_label == "BF16":
-        return {"zh": "BF16", "en": "BF16"}
-    return {"zh": f"{bit_label} 量化版", "en": f"{bit_label} Quantized"}
+        return {"zh": "MLX BF16", "en": "MLX BF16"}
+    if bit_label == "8-bit":
+        return {"zh": "MLX Q8", "en": "MLX Q8"}
+    if bit_label == "4-bit":
+        return {"zh": "MLX Q4", "en": "MLX Q4"}
+    return {"zh": bit_label, "en": bit_label}
 
 
 def resolve_version_name(
@@ -298,6 +350,11 @@ def resolve_version_name(
     version_key: str,
     version_entry: dict[str, Any],
 ) -> dict[str, str]:
+    catalog = _catalog_entry(model_entry)
+    standard = _standard_version_label(version_key)
+    if standard is not None:
+        return standard
+
     source_type = str(version_entry.get("source_type") or "full")
     quant = version_entry.get("quantization") or {}
     bits = quant.get("bits") if isinstance(quant, dict) else None
@@ -308,42 +365,45 @@ def resolve_version_name(
         old_plain = str(old_name or "")
 
     vk = version_key.lower()
-    media = model_entry.get("media")
+    media = catalog.get("media")
+    catalog_type = str(catalog.get("type") or "").lower()
 
-    if vk == "original" or old_plain == "原始权重":
-        return {"zh": "原始权重", "en": "Original Weights"}
+    if catalog_type in ("lora", "controlnet") or re.match(r"^v[\w-]+$", vk) or re.search(r"\d+steps$", vk):
+        cleaned_zh = clean_user_text(old_plain, lang="zh")
+        cleaned_en = clean_user_text(
+            str(old_name.get("en") if isinstance(old_name, dict) else old_plain),
+            lang="en",
+        )
+        if cleaned_zh or cleaned_en:
+            return {
+                "zh": cleaned_zh or cleaned_en or version_key,
+                "en": cleaned_en or cleaned_zh or version_key,
+            }
 
-    if vk == "xl-sft":
-        return {"zh": "XL SFT (4B)", "en": "XL SFT (4B)"}
-
-    if media == "llm":
-        if vk == "int4":
-            return {"zh": "4-bit 量化版", "en": "4-bit Quantized"}
-        if vk == "fp16":
-            return {"zh": "FP16 完整版", "en": "FP16 Full"}
+    if media == "llm" and vk == "int4":
+        return {"zh": "INT4", "en": "INT4"}
 
     if source_type == "derived":
         if bits == 8 or vk == "int8":
-            return {"zh": "INT8 量化版", "en": "INT8 Quantized"}
+            return {"zh": "INT8", "en": "INT8"}
         if bits == 4 or vk == "int4":
-            return {"zh": "INT4 量化版", "en": "INT4 Quantized"}
+            return {"zh": "INT4", "en": "INT4"}
 
-    if source_type == "prequantized" or vk.startswith("mlx") or vk.startswith("community"):
+    if source_type == "prequantized" or vk.startswith("mlx-q") or vk.startswith("mlx-bf16"):
         bit_label = _bit_label(vk, bits, old_plain)
         if bit_label:
             return _quant_variant(bit_label)
 
-    if vk == "bf16" or old_plain.upper() == "BF16":
-        return {"zh": "BF16", "en": "BF16"}
-
-    if vk == "fp16" or old_plain in ("FP16", "FP16 完整版"):
-        if old_plain == "FP16 完整版":
-            return {"zh": "FP16 完整版", "en": "FP16 Full"}
-        return {"zh": "FP16", "en": "FP16"}
-
     cleaned = clean_user_text(old_plain, lang="zh")
     if cleaned:
-        return {"zh": cleaned, "en": clean_user_text(str(old_name.get("en") if isinstance(old_name, dict) else old_plain), lang="en") or cleaned}
+        return {
+            "zh": cleaned,
+            "en": clean_user_text(
+                str(old_name.get("en") if isinstance(old_name, dict) else old_plain),
+                lang="en",
+            )
+            or cleaned,
+        }
     return {"zh": version_key, "en": version_key}
 
 
@@ -456,17 +516,20 @@ def normalize_registry(data: dict[str, Any]) -> tuple[dict[str, Any], int]:
         if not isinstance(model_entry, dict):
             continue
 
-        new_name = normalize_name(model_id, model_entry)
-        if model_entry.get("name") != new_name:
-            model_entry["name"] = new_name
+        catalog = _catalog_entry(model_entry)
+        dist = _distribution_entry(model_entry)
+
+        new_name = normalize_name(model_id, catalog)
+        if catalog.get("name") != new_name:
+            catalog["name"] = new_name
             changes += 1
 
-        new_desc = normalize_description(model_id, model_entry)
-        if model_entry.get("description") != new_desc:
-            model_entry["description"] = new_desc
+        new_desc = normalize_description(model_id, catalog)
+        if catalog.get("description") != new_desc:
+            catalog["description"] = new_desc
             changes += 1
 
-        versions = model_entry.get("versions") or {}
+        versions = dist.get("versions") or {}
         if not isinstance(versions, dict):
             continue
         for version_key, version_entry in versions.items():

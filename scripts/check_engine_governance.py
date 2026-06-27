@@ -74,25 +74,36 @@ MODULATION_PATTERNS = (
 )
 
 HUNYUAN_REQUIRED_IDS = (
-    "hunyuan-video-1.5-shared",
     "hunyuan-video-1.5-t2v-distill",
     "hunyuan-video-1.5-1080p-sr",
 )
-WAN_SHARED_MODEL_ID = "wan-2.2-14b-shared"
+REMOVED_SHARED_MODEL_IDS = (
+    "hunyuan-video-1.5-shared",
+    "wan-2.2-14b-shared",
+)
 WAN_STEP_DISTILL_IDS = (
     "wan-2.2-i2v-14b-distill",
     "wan-2.2-t2v-14b-distill",
     "wan-2.2-i2v-14b-turbo",
-    "wan-2.2-t2v-14b-turbo",
+    "wan-2.2-t2v-14b-turbo-720p",
+    "wan-2.2-t2v-14b-turbo-480p",
     "wan-2.2-t2v-1.3b-turbo",
 )
 HUNYUAN_STEP_DISTILL_IDS = (
     "hunyuan-video-1.5-t2v-distill",
 )
-WAN_SHARED_DEPENDENT_IDS = WAN_STEP_DISTILL_IDS + (
-    "bernini-r-14b",
-    "bernini-r-1.3b",
+WAN_ENCODER_REPO_ID = "Wan-AI/Wan2.2-T2V-A14B"
+ADAPTER_CATEGORIES = frozenset({"controlnets", "loras"})
+ADAPTER_FORBIDDEN_BUNDLE_PREFIXES = (
+    "models/Image/",
+    "models/Video/",
+    "models/Text/",
 )
+ADAPTER_FORBIDDEN_BUNDLE_REPOS = frozenset({
+    "AI-ModelScope/FLUX.1-dev",
+    "black-forest-labs/FLUX.1-dev",
+    "Tongyi-MAI/Z-Image-Turbo",
+})
 HUNYUAN_REPO_ID = "Tencent-Hunyuan/HunyuanVideo-1.5"
 MAX_FAMILY_UNITS = 8
 DOCS = ROOT / "docs"
@@ -448,59 +459,97 @@ def check_registry() -> list[str]:
         if model.get("source") != "modelscope":
             failures.append(f"{mid}: source must be modelscope")
 
-    shared = models.get("hunyuan-video-1.5-shared")
-    if isinstance(shared, dict):
-        versions = shared.get("versions")
-        if not isinstance(versions, dict) or "encoders" not in versions:
-            failures.append("hunyuan-video-1.5-shared: versions.encoders is required")
-        else:
-            ver = versions["encoders"]
-            if not isinstance(ver, dict):
-                failures.append("hunyuan-video-1.5-shared: versions.encoders must be object")
-            elif not ver.get("hunyuan_ms_variant"):
-                failures.append("hunyuan-video-1.5-shared: versions.encoders.hunyuan_ms_variant is required")
-            bundle = ver.get("bundle_repos") if isinstance(ver, dict) else None
-            if not isinstance(bundle, list) or len(bundle) < 3:
-                failures.append("hunyuan-video-1.5-shared: bundle_repos must include Hunyuan + Qwen + ByT5")
-            patterns = ver.get("allow_patterns") if isinstance(ver, dict) else None
-            if isinstance(patterns, list) and "model_index.json" in patterns:
-                failures.append(
-                    "hunyuan-video-1.5-shared: allow_patterns must not include generated model_index.json"
-                )
+    for mid in REMOVED_SHARED_MODEL_IDS:
+        if mid in models:
+            failures.append(f"{mid}: shared install-only card removed (use self-contained model bundles)")
 
-    shared_wan = models.get(WAN_SHARED_MODEL_ID)
-    if isinstance(shared_wan, dict):
-        versions = shared_wan.get("versions")
-        if not isinstance(versions, dict) or "encoders" not in versions:
-            failures.append(f"{WAN_SHARED_MODEL_ID}: versions.encoders is required")
-        elif shared_wan.get("actions"):
-            failures.append(f"{WAN_SHARED_MODEL_ID}: actions must be empty (install-only)")
-
-    for mid in WAN_SHARED_DEPENDENT_IDS:
-        model = models.get(mid)
+    for mid, model in models.items():
         if not isinstance(model, dict):
             continue
         deps = model.get("dependencies")
-        if not isinstance(deps, list) or not deps:
-            failures.append(f"{mid}: dependencies must include {WAN_SHARED_MODEL_ID} encoders")
+        if isinstance(deps, list) and deps:
+            failures.append(f"{mid}: distribution.dependencies must be empty (use bundle_repos)")
+
+    def _bundle_has_repo(ver: dict, repo_id: str) -> bool:
+        bundle = ver.get("bundle_repos")
+        if not isinstance(bundle, list):
+            return False
+        for item in bundle:
+            if isinstance(item, dict) and item.get("repo_id") == repo_id:
+                return True
+        return False
+
+    for mid in WAN_STEP_DISTILL_IDS:
+        model = models.get(mid)
+        if not isinstance(model, dict):
             continue
-        first = deps[0] if isinstance(deps[0], dict) else {}
-        if first.get("model_id") != WAN_SHARED_MODEL_ID or first.get("version") != "encoders":
-            failures.append(f"{mid}: first dependency must be {WAN_SHARED_MODEL_ID} encoders")
+        versions = model.get("versions")
+        if not isinstance(versions, dict):
+            failures.append(f"{mid}: versions required for self-contained Wan bundle")
+            continue
+        ok = False
+        for ver in versions.values():
+            if isinstance(ver, dict) and _bundle_has_repo(ver, WAN_ENCODER_REPO_ID):
+                ok = True
+                break
+        if not ok:
+            failures.append(
+                f"{mid}: bundle_repos must include {WAN_ENCODER_REPO_ID} encoders"
+            )
+
+    for mid, model in models.items():
+        if not isinstance(model, dict):
+            continue
+        cat = str(model.get("category") or "")
+        if cat not in ADAPTER_CATEGORIES:
+            continue
+        if not str(model.get("base_model") or "").strip():
+            failures.append(f"{mid}: {cat} requires catalog.base_model (install base separately)")
+        versions = model.get("versions")
+        if not isinstance(versions, dict):
+            continue
+        for vk, ver in versions.items():
+            if not isinstance(ver, dict):
+                continue
+            bundle = ver.get("bundle_repos")
+            if not isinstance(bundle, list):
+                continue
+            for entry in bundle:
+                if not isinstance(entry, dict):
+                    continue
+                repo = str(entry.get("repo_id") or "")
+                lp = str(entry.get("local_path") or "")
+                if repo in ADAPTER_FORBIDDEN_BUNDLE_REPOS or any(
+                    lp.startswith(prefix) for prefix in ADAPTER_FORBIDDEN_BUNDLE_PREFIXES
+                ):
+                    failures.append(
+                        f"{mid}: versions.{vk} must not bundle base model ({repo or lp}); "
+                        "download adapter repo only"
+                    )
 
     distill = models.get("hunyuan-video-1.5-t2v-distill")
     if isinstance(distill, dict):
         versions = distill.get("versions")
-        if not isinstance(versions, dict) or "original" not in versions:
-            failures.append("hunyuan-video-1.5-t2v-distill: versions.original is required")
+        if not isinstance(versions, dict) or "bf16" not in versions:
+            failures.append("hunyuan-video-1.5-t2v-distill: versions.bf16 is required")
         else:
-            ver = versions["original"]
+            ver = versions["bf16"]
             if not isinstance(ver, dict):
-                failures.append("hunyuan-video-1.5-t2v-distill: versions.original must be object")
+                failures.append("hunyuan-video-1.5-t2v-distill: versions.bf16 must be object")
             elif not ver.get("hunyuan_distill_variant"):
-                failures.append("hunyuan-video-1.5-t2v-distill: versions.original.hunyuan_distill_variant is required")
+                failures.append("hunyuan-video-1.5-t2v-distill: versions.bf16.hunyuan_distill_variant is required")
             elif ver.get("repo_id") != "lightx2v/Hy1.5-Distill-Models":
                 failures.append("hunyuan-video-1.5-t2v-distill: repo_id must be lightx2v/Hy1.5-Distill-Models")
+            else:
+                bundle = ver.get("bundle_repos")
+                if not isinstance(bundle, list) or len(bundle) < 4:
+                    failures.append(
+                        "hunyuan-video-1.5-t2v-distill: bundle_repos must include DiT + Hunyuan + Qwen + ByT5"
+                    )
+                elif not _bundle_has_repo(ver, HUNYUAN_REPO_ID):
+                    failures.append(
+                        f"hunyuan-video-1.5-t2v-distill: bundle_repos must include {HUNYUAN_REPO_ID} encoders"
+                    )
         params = distill.get("parameters", {})
         if params.get("text_encoder_qwen_local") != "models/Text/qwen2.5-vl-7b-instruct":
             failures.append("hunyuan-video-1.5-t2v-distill: parameters.text_encoder_qwen_local mismatch")
@@ -510,19 +559,19 @@ def check_registry() -> list[str]:
     sr = models.get("hunyuan-video-1.5-1080p-sr")
     if isinstance(sr, dict):
         versions = sr.get("versions")
-        if not isinstance(versions, dict) or "original" not in versions:
-            failures.append("hunyuan-video-1.5-1080p-sr: versions.original is required")
+        if not isinstance(versions, dict) or "bf16" not in versions:
+            failures.append("hunyuan-video-1.5-1080p-sr: versions.bf16 is required")
         else:
-            ver = versions["original"]
+            ver = versions["bf16"]
             if not isinstance(ver, dict):
-                failures.append("hunyuan-video-1.5-1080p-sr: versions.original must be object")
+                failures.append("hunyuan-video-1.5-1080p-sr: versions.bf16 must be object")
             elif not ver.get("hunyuan_ms_variant"):
-                failures.append("hunyuan-video-1.5-1080p-sr: versions.original.hunyuan_ms_variant is required")
+                failures.append("hunyuan-video-1.5-1080p-sr: versions.bf16.hunyuan_ms_variant is required")
             elif ver.get("hunyuan_ms_variant") != "1080p_sr_distilled":
                 failures.append("hunyuan-video-1.5-1080p-sr: hunyuan_ms_variant must be 1080p_sr_distilled")
             patterns = ver.get("allow_patterns") if isinstance(ver, dict) else None
             if not isinstance(patterns, list) or not patterns:
-                failures.append("hunyuan-video-1.5-1080p-sr: versions.original.allow_patterns is required")
+                failures.append("hunyuan-video-1.5-1080p-sr: versions.bf16.allow_patterns is required")
             elif "transformer/1080p_sr_distilled/**" not in patterns:
                 failures.append(
                     "hunyuan-video-1.5-1080p-sr: allow_patterns must include transformer/1080p_sr_distilled/**"
@@ -544,12 +593,12 @@ def check_registry() -> list[str]:
     i2v_distill = models.get("hunyuan-video-1.5-i2v-720p-distill")
     if isinstance(i2v_distill, dict):
         versions = i2v_distill.get("versions")
-        if not isinstance(versions, dict) or "original" not in versions:
-            failures.append("hunyuan-video-1.5-i2v-720p-distill: versions.original is required")
+        if not isinstance(versions, dict) or "bf16" not in versions:
+            failures.append("hunyuan-video-1.5-i2v-720p-distill: versions.bf16 is required")
         else:
-            ver = versions["original"]
+            ver = versions["bf16"]
             if not isinstance(ver, dict):
-                failures.append("hunyuan-video-1.5-i2v-720p-distill: versions.original must be object")
+                failures.append("hunyuan-video-1.5-i2v-720p-distill: versions.bf16 must be object")
             elif ver.get("hunyuan_ms_variant") != "720p_i2v_distilled_sparse":
                 failures.append(
                     "hunyuan-video-1.5-i2v-720p-distill: hunyuan_ms_variant must be 720p_i2v_distilled_sparse"

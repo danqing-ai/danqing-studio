@@ -23,6 +23,8 @@ def plugin_backbone_model_if_ready(plugin: FamilyPlugin | None, *, request: Any)
     if getattr(request, "adapters", None):
         return None
     backbone = plugin.backbone
+    if getattr(backbone, "_skip_load", False):
+        return None
     model = getattr(backbone, "_model", None)
     if model is not None:
         return model
@@ -44,6 +46,7 @@ class ImagePluginBackbone:
         self._registry_entry: Any | None = None
         self._project_root: Path | None = None
         self._model_cache: Any | None = None
+        self._skip_load = False
 
     @property
     def model(self) -> Any:
@@ -59,13 +62,26 @@ class ImagePluginBackbone:
         registry_entry: Any,
         project_root: Path,
         model_cache: Any | None = None,
+        bundle_root: Path | None = None,
+        request: Any = None,
     ) -> bool:
+        _ = bundle_root, request
         self._registry_entry = registry_entry
         self._project_root = project_root
         self._model_cache = model_cache
+        config = get_config_class(self.spec.family_id)()
+        apply_image_registry_config_overrides(registry_entry, config)
+        if (
+            str(getattr(config, "image_pipeline_shape", "dit_standard") or "dit_standard")
+            == "family_generator"
+        ):
+            self._skip_load = True
+            return False
         return True
 
     def load(self, bundle: MediaBundle, platform: PlatformSession) -> None:
+        if self._skip_load:
+            return
         if self._registry_entry is None or self._project_root is None:
             raise RuntimeError(
                 f"ImagePluginBackbone({self.spec.family_id!r}): bind_load_context() required"

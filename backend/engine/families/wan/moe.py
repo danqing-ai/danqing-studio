@@ -228,6 +228,24 @@ class WanMoETransformer:
         step_idx = kwargs.pop("wan_denoise_step_idx", None)
         return self._ensure_expert(step_idx).forward(latents, timestep, txt_embeds=txt_embeds, **kwargs)
 
+    def patch_latent_volume(self, latent: Any, source_id: float = 0.0, **kwargs: Any) -> Any:
+        step_idx = kwargs.pop("wan_denoise_step_idx", 0)
+        expert = self._ensure_expert(step_idx)
+        inner = getattr(expert, "_inner", expert)
+        return inner.patch_latent_volume(latent, source_id, **kwargs)
+
+    def forward_token_sequence(self, *args: Any, **kwargs: Any) -> Any:
+        step_idx = kwargs.pop("wan_denoise_step_idx", 0)
+        expert = self._ensure_expert(step_idx)
+        inner = getattr(expert, "_inner", expert)
+        return inner.forward_token_sequence(*args, **kwargs)
+
+    def unpatchify_token_grid(self, token_out: Any, grid: tuple[int, int, int], **kwargs: Any) -> Any:
+        step_idx = kwargs.pop("wan_denoise_step_idx", 0)
+        expert = self._ensure_expert(step_idx)
+        inner = getattr(expert, "_inner", expert)
+        return inner.unpatchify_token_grid(token_out, grid)
+
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         return self.forward(*args, **kwargs)
 

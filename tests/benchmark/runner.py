@@ -123,6 +123,7 @@ class EvalRunner:
         env.setdefault("MLX_METAL_DEVICE_ONLY", "1")
         env["MLX_METAL_MEMORY_LIMIT"] = str(mlx_gb)
         env["DANQING_MLX_MEMORY_LIMIT_GB"] = str(mlx_gb)
+        env["DANQING_BENCH_EVAL"] = "1"
         env["PYTHONUNBUFFERED"] = "1"
         _ = case
         return env
@@ -143,7 +144,7 @@ class EvalRunner:
             _danqing_python(),
             str(cli),
             "--model",
-            case.model_id,
+            case.model_field,
             "--prompt",
             case.encoded_prompt,
             "--seed",
@@ -166,7 +167,7 @@ class EvalRunner:
             _danqing_python(),
             str(cli),
             "--model",
-            case.model_id,
+            case.model_field,
             "--operation",
             case.action,
             "--source-image",
@@ -200,7 +201,7 @@ class EvalRunner:
             _danqing_python(),
             str(cli),
             "--model",
-            case.model_id,
+            case.model_field,
             "--source-image",
             str(ensure_upscale_source()),
             "--scale-factor",
@@ -257,7 +258,8 @@ class EvalRunner:
             return res
 
         out_path = self._output_path(case)
-        print(f"[{case.id}] model={case.model_id} action={case.action} {case.width}x{case.height}")
+        vk = f":{case.version_key}" if case.version_key else ""
+        print(f"[{case.id}] model={case.model_id}{vk} action={case.action} {case.width}x{case.height}")
 
         t0 = time.time()
         gen_ok = self._run_generate(case, out_path)

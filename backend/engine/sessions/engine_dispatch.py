@@ -14,6 +14,7 @@ from backend.core.contracts import (
     ImageUpscaleRequest,
     VideoEditRequest,
     VideoGenerationRequest,
+    VideoAvatarRequest,
     VideoLongGenerationRequest,
     VideoUpscaleRequest,
     parse_model_version,
@@ -36,6 +37,7 @@ from backend.engine.sessions.upscale_session import (
     routes_to_upscale_session,
 )
 from backend.engine.sessions.video_session import VideoSession, routes_to_video_session
+from backend.engine.sessions.session_routing import routes_with_plugin_and_action
 from backend.engine.sessions.video_upscale_session import (
     VideoUpscaleSession,
     routes_to_video_upscale_session,
@@ -213,6 +215,34 @@ def dispatch_video_edit(
         task_id=exec_ctx.task_id,
     )
     return VideoSession(**_session_kwargs(runtime, registry, asset_store, model_cache, project_root)).run_edit(
+        request, exec_ctx, on_progress=on_progress, on_log=on_log
+    )
+
+
+def dispatch_video_avatar(
+    *,
+    runtime: Any,
+    registry: Any,
+    asset_store: Any,
+    model_cache: Any | None,
+    project_root: Path | None,
+    request: VideoAvatarRequest,
+    exec_ctx: ExecutionContext,
+    on_progress: Callable | None = None,
+    on_log: Callable | None = None,
+) -> Any:
+    assert_generation_family_has_plugin(request.model, registry, expected_media="video")
+    _require_session_route(
+        routes_with_plugin_and_action(
+            request.model,
+            registry,
+            expected_media="video",
+            api_action="avatar",
+        ),
+        model=request.model,
+        operation="video avatar",
+    )
+    return VideoSession(**_session_kwargs(runtime, registry, asset_store, model_cache, project_root)).run_avatar(
         request, exec_ctx, on_progress=on_progress, on_log=on_log
     )
 

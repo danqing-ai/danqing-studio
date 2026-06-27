@@ -5,6 +5,7 @@ import importlib
 from typing import Any
 from backend.engine.runtime._base import RuntimeContext
 from .decoder import ResnetBlock, SpatialAttention, _to_nchw, _to_nhwc, _vae_cuda_nchw
+from .weight_remap import vae_conv_weight_for_runtime
 
 
 class Downsample:
@@ -138,8 +139,8 @@ class VAEEncoder:
             k = k.replace('group_norm', 'norm')
             k = k.replace('.to_out.0.', '.to_out.')
             # Conv2d weight: diffusers (O, I, kH, kW) → runtime NHWC (O, kH, kW, I)
-            if '.weight' in k and tensor.ndim == 4:
-                tensor = self.ctx.permute(tensor, (0, 2, 3, 1))
+            if ".weight" in k and tensor.ndim == 4:
+                tensor = vae_conv_weight_for_runtime(self.ctx, tensor)
             if k in self._param_map:
                 p = self._param_map[k]
                 if p.shape == tensor.shape:

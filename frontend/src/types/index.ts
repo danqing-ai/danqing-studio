@@ -99,6 +99,7 @@ export interface SettingsData {
 export type PageKey =
   | 'image_create'
   | 'video_create'
+  | 'avatar_create'
   | 'long_video_create'
   | 'audio_create'
   | 'lora_train'
@@ -215,6 +216,8 @@ export interface CanvasComposerSnapshot {
   start_image_path?: string;
   tail_image_path?: string;
   source_video_path?: string;
+  /** Video: Bernini R2V / RV2V reference image paths. */
+  reference_image_paths?: string[];
   /** Audio: cover source asset path. */
   cover_source_path?: string;
   /** Image extend drawer: JSON array of direction strings. */
@@ -282,11 +285,29 @@ export type LongVideoSelection =
   | { kind: 'edge'; index: number }
   | null;
 
+export interface LongVideoChapterScene {
+  order: number;
+  title?: string;
+  beat: string;
+}
+
+export interface LongVideoChapterAnalysis {
+  synopsis: string;
+  scene_beats: LongVideoChapterScene[];
+  character_anchor?: string;
+  style_anchor?: string;
+  characters?: LongVideoCharacter[];
+}
+
 export interface LongVideoProjectState {
   version: 1;
   strategy: 'segmented_i2v' | 'latent_extend';
   title?: string;
   brief?: string;
+  source_mode?: 'brief' | 'chapter';
+  chapter_text?: string;
+  chapter_title?: string;
+  chapter_analysis?: LongVideoChapterAnalysis;
   target_duration_sec: number;
   /** Plan-round [Anchor] cached from last storyboard expand; reference only. */
   character_anchor?: string;

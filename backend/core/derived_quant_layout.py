@@ -11,7 +11,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
-from backend.engine.pipelines.video_bundle_layout import wan_flat_transformer_shards
+from backend.engine.pipelines.video_bundle_layout import (
+    wan_flat_transformer_shards,
+    wan_is_moe_bundle,
+    wan_moe_expert_shards,
+)
 
 
 @dataclass(frozen=True)
@@ -22,6 +26,17 @@ class ComponentQuantPlan:
     load_paths: tuple[Path, ...]
     output_dir: Path
     bits: int
+    output_shard_prefix: str = "model"
+    single_output_file: Path | None = None
+
+
+@dataclass(frozen=True)
+class ExpertQuantPlan:
+    """Additional DiT shard group (e.g. Wan 14B low-noise MoE expert)."""
+
+    subdir: str
+    load_paths: tuple[Path, ...]
+    output_dir: Path
     output_shard_prefix: str = "model"
     single_output_file: Path | None = None
 
@@ -38,6 +53,7 @@ class DerivedQuantPlan:
     copy_root_except_globs: tuple[str, ...]
     copy_entire_bundle_except_inputs: bool = False
     component_targets: tuple[ComponentQuantPlan, ...] = ()
+    expert_quant_targets: tuple[ExpertQuantPlan, ...] = ()
     exclude_subdirs: tuple[str, ...] = ()
 
 
@@ -196,6 +212,8 @@ def _attach_component_quant_targets(
         return plan
 
     quant_subdirs = {t.subdir for t in targets}
+    expert_subdirs = {t.subdir for t in plan.expert_quant_targets}
+    merged_exclude = tuple(sorted(set(plan.exclude_subdirs) | quant_subdirs | expert_subdirs))
     return DerivedQuantPlan(
         load_paths=plan.load_paths,
         output_dir=plan.output_dir,
@@ -205,7 +223,8 @@ def _attach_component_quant_targets(
         copy_root_except_globs=plan.copy_root_except_globs,
         copy_entire_bundle_except_inputs=plan.copy_entire_bundle_except_inputs,
         component_targets=tuple(targets),
-        exclude_subdirs=tuple(sorted(quant_subdirs)),
+        expert_quant_targets=plan.expert_quant_targets,
+        exclude_subdirs=merged_exclude,
     )
 
 
@@ -256,6 +275,9 @@ def _plan_diffusers_transformer(from_root: Path, to_root: Path) -> DerivedQuantP
 
 
 def _plan_wan_dit_shards(from_root: Path, to_root: Path) -> DerivedQuantPlan:
+    if wan_is_moe_bundle(from_root):
+        return _plan_wan_moe_dit_shards(from_root, to_root)
+
     load_paths = tuple(wan_flat_transformer_shards(from_root))
     if not load_paths:
         raise RuntimeError(
@@ -269,6 +291,34 @@ def _plan_wan_dit_shards(from_root: Path, to_root: Path) -> DerivedQuantPlan:
         single_output_file=None,
         copy_subdirs=(),
         copy_root_except_globs=("diffusion_pytorch_model*.safetensors",),
+    )
+
+
+def _plan_wan_moe_dit_shards(from_root: Path, to_root: Path) -> DerivedQuantPlan:
+    high_shards = tuple(wan_moe_expert_shards(from_root, "high"))
+    low_shards = tuple(wan_moe_expert_shards(from_root, "low"))
+    if not high_shards or not low_shards:
+        raise RuntimeError(
+            f"Wan 14B MoE bundle under {from_root} is missing high_noise_model/ or "
+            "low_noise_model/ safetensors shards."
+        )
+
+    return DerivedQuantPlan(
+        load_paths=high_shards,
+        output_dir=to_root / "high_noise_model",
+        output_shard_prefix="model",
+        single_output_file=None,
+        copy_subdirs=(),
+        copy_root_except_globs=(),
+        copy_entire_bundle_except_inputs=True,
+        expert_quant_targets=(
+            ExpertQuantPlan(
+                subdir="low_noise_model",
+                load_paths=low_shards,
+                output_dir=to_root / "low_noise_model",
+            ),
+        ),
+        exclude_subdirs=("high_noise_model", "low_noise_model"),
     )
 
 

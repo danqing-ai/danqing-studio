@@ -16,6 +16,7 @@ from backend.engine.common.ops.attention import (
     wan_attention,
 )
 from backend.engine.common.ops.embeddings import (
+    bernini_modulate_rope_cos_sin,
     factorized_rope_apply,
     factorized_rope_concat_params,
     factorized_rope_precompute_cos_sin,
@@ -30,6 +31,7 @@ from backend.engine.common.ops.norm import (
 )
 from backend.engine.config.model_configs import WanConfig
 from backend.engine.runtime._base import RuntimeContext
+from backend.engine.runtime.mlx_dtype import mlx_linear_compute_dtype
 
 from backend.engine.common.codecs.text_encoders.qwen3_mlx import MlxRMSNorm
 
@@ -64,7 +66,7 @@ class WanSelfAttention(nn.Module):
         attn_mask: mx.array | None = None,
     ) -> mx.array:
         b, s, n, d = x.shape[0], x.shape[1], self.num_heads, self.head_dim
-        w_dtype = self.q.weight.dtype
+        w_dtype = mlx_linear_compute_dtype(self.q)
         x_w = x.astype(w_dtype)
         fp32 = self.ctx.float32()
         q = self.norm_q(self.q(x_w)).reshape(b, s, n, d)
@@ -308,6 +310,173 @@ class WanModelMLX(TransformerBase):
         self._i2v_mask = mask
         self._i2v_side = side
 
+    def patch_latent_volume(
+        self,
+        latent: Any,
+        source_id: float = 0.0,
+        *,
+        apply_src_id_rope: bool | None = None,
+    ) -> tuple[Any, tuple[Any, Any], tuple[int, int, int], int]:
+        """Patch-embed VAE latent volume → ``(tokens[B,L,D], rope_cos_sin, grid, seq_len)``."""
+        ctx = self.ctx
+        if latent.ndim == 4:
+            latent = ctx.expand_dims(latent, 0)
+        if latent.ndim != 5:
+            raise RuntimeError(f"Wan patch_latent_volume expects [B,C,T,H,W], got {latent.shape}")
+
+        pt, ph, pw = self._patch_size
+        sample = latent[0]
+        c, f, h, w = (int(sample.shape[j]) for j in range(4))
+        if f % pt != 0 or h % ph != 0 or w % pw != 0:
+            raise RuntimeError(
+                f"Wan latent shape [C,T,H,W]=[{c},{f},{h},{w}] not divisible by patch_size={self._patch_size}"
+            )
+        f_out, h_out, w_out = f // pt, h // ph, w // pw
+        patch = sample.reshape(c, f_out, pt, h_out, ph, w_out, pw)
+        patch = patch.transpose(1, 3, 5, 0, 2, 4, 6)
+        flat = patch.reshape(f_out * h_out * w_out, -1)
+        tokens = self.patch_embedding(flat).astype(mlx_linear_compute_dtype(self.patch_embedding))
+        tokens = ctx.expand_dims(tokens, 0)
+        grid = (f_out, h_out, w_out)
+        seq_len = int(tokens.shape[1])
+
+        w_dtype = mlx_linear_compute_dtype(self.patch_embedding)
+        rope_cos_sin = factorized_rope_precompute_cos_sin(
+            mx, [grid], self._freqs, dtype=w_dtype,
+        )
+        use_src = apply_src_id_rope if apply_src_id_rope is not None else bool(
+            getattr(self.config, "use_src_id_rotary_emb", False)
+        )
+        if use_src:
+            cos_s, sin_s = rope_cos_sin
+            rope_cos_sin = bernini_modulate_rope_cos_sin(mx, cos_s, sin_s, float(source_id))
+        return tokens, rope_cos_sin, grid, seq_len
+
+    def unpatchify_token_grid(self, token_out: Any, grid: tuple[int, int, int]) -> Any:
+        """Unpatchify one sample token row ``[L, pt*ph*pw*c]`` → ``[C,T,H,W]``."""
+        ctx = self.ctx
+        f, h, w = grid
+        pt, ph, pw = self.patch_size
+        c = self.out_dim
+        seq_len = f * h * w
+        if token_out.ndim == 3:
+            token_out = token_out[0]
+        u = token_out[:seq_len]
+        tok = u.reshape(f, h, w, pt, ph, pw, c)
+        tok = ctx.einsum("fhwpqrc->cfphqwr", tok)
+        return tok.reshape(c, f * pt, h * ph, w * pw)
+
+    def forward_token_sequence(
+        self,
+        tokens: Any,
+        timestep: Any,
+        txt_embeds: Any,
+        *,
+        rope_cos_sin: tuple[Any, Any],
+        grid: tuple[int, int, int],
+        seq_len: int,
+        timestep_per_token: Any | None = None,
+    ) -> Any:
+        """Forward patch tokens ``[B,L,D]``; returns per-token predictions ``[B,L,pt*ph*pw*c]``."""
+        if txt_embeds is None:
+            raise RuntimeError("Wan forward_token_sequence requires txt_embeds.")
+        key = tuple(int(x) for x in txt_embeds.shape) + (id(txt_embeds),)
+        if not (
+            self._text_cache_key == key
+            and self._cached_context is not None
+            and self._cached_cross_kv is not None
+        ):
+            cfg = self.config
+            batch = pad_ragged_2d_sequences(
+                self.ctx,
+                [txt_embeds[i] for i in range(int(txt_embeds.shape[0]))],
+                target_len=cfg.text_len,
+                dtype=txt_embeds.dtype,
+                pad_value=0.0,
+            )
+            context = self.text_embedding[1](nn.GELU(approx="tanh")(self.text_embedding[0](batch)))
+            self._cached_context = context
+            self._cached_cross_kv = [blk.cross_attn.cross_kv(context) for blk in self.blocks]
+            self._text_cache_key = key
+
+        ctx = self.ctx
+        context = self._cached_context
+        cross_kv_list = self._cached_cross_kv
+        if context is None or cross_kv_list is None:
+            raise RuntimeError("Wan: text context cache missing.")
+
+        b = int(tokens.shape[0])
+        x = tokens
+        grid_sizes_list = [grid]
+        seq_lens_list = [int(seq_len)]
+
+        t_in = timestep_per_token if timestep_per_token is not None else timestep
+        if getattr(t_in, "ndim", 0) == 0:
+            t_in = ctx.reshape(t_in, (1,))
+        if int(getattr(t_in, "shape", (1,))[0]) == 1 and b > 1:
+            t_in = ctx.repeat(t_in, b, axis=0)
+
+        cfg = self.config
+        ndim = getattr(t_in, "ndim", 0)
+        if timestep_per_token is not None:
+            if ndim == 1:
+                t_in = ctx.reshape(t_in, (1, -1))
+            bt = int(t_in.shape[0])
+            seq_tok = int(t_in.shape[1])
+            flat_t = ctx.reshape(t_in, (-1,))
+            emb = sinusoidal_embedding_1d(ctx, cfg.freq_dim, flat_t)
+            emb = ctx.reshape(emb, (bt, seq_tok, cfg.freq_dim)).astype(ctx.float32())
+            e = self.time_embedding[1](nn.silu(self.time_embedding[0](emb)))
+            e0 = self.time_projection(nn.silu(e))
+            e0 = ctx.reshape(e0, (bt, seq_tok, 6, cfg.dim))
+        else:
+            if ndim == 0:
+                t_b = ctx.reshape(t_in, (1,))
+            elif ndim == 1:
+                t_b = t_in
+            elif ndim == 2 and int(t_in.shape[1]) == 1:
+                t_b = ctx.reshape(t_in, (-1,))
+            else:
+                raise RuntimeError(
+                    f"Wan scalar timestep expected [B] or scalar, got shape {getattr(t_in, 'shape', ())}"
+                )
+            t_b = t_b.astype(ctx.float32())
+            emb = sinusoidal_embedding_1d(ctx, cfg.freq_dim, t_b).astype(ctx.float32())
+            e = self.time_embedding[1](nn.silu(self.time_embedding[0](emb)))
+            e0 = self.time_projection(nn.silu(e))
+            e0 = ctx.reshape(e0, (int(t_b.shape[0]), 1, 6, cfg.dim))
+
+        freqs = self._freqs
+        if all(sl >= seq_len for sl in seq_lens_list):
+            attn_mask = None
+        else:
+            lens = ctx.array(seq_lens_list[:b], dtype=ctx.int32())
+            attn_mask = build_key_padding_mask_from_lengths(
+                ctx, lens, seq_len, mlx_linear_compute_dtype(self.patch_embedding),
+            )
+
+        for blk, cross_kv in zip(self.blocks, cross_kv_list):
+            x = blk(
+                x,
+                e0,
+                grid_sizes_list,
+                freqs,
+                context,
+                cross_kv=cross_kv,
+                rope_cos_sin=rope_cos_sin,
+                attn_mask=attn_mask,
+            )
+
+        if e.ndim == 2:
+            e_h = e[:, None, :]
+        else:
+            e_h = e
+        fp32 = ctx.float32()
+        mod = self.head_modulation.astype(fp32)[:, None, :, :] + e_h.astype(fp32)[:, :, None, :]
+        e_shift, e_scale = unpack_modulation_2table(mod)
+        x = self.head_norm(x).astype(fp32)
+        return self.head(apply_scale_shift(x, e_scale, e_shift, add_one=True))
+
     def reblend_i2v_latents(self, latents: Any) -> Any:
         if self._i2v_side is not None:
             return latents
@@ -388,7 +557,7 @@ class WanModelMLX(TransformerBase):
             patch = sample.reshape(c, f_out, pt, h_out, ph, w_out, pw)
             patch = patch.transpose(1, 3, 5, 0, 2, 4, 6)
             flat = patch.reshape(f_out * h_out * w_out, -1)
-            flat = self.patch_embedding(flat).astype(self.patch_embedding.weight.dtype)
+            flat = self.patch_embedding(flat).astype(mlx_linear_compute_dtype(self.patch_embedding))
             grid = (f_out, h_out, w_out)
             patches.append(flat)
             grid_sizes_list.append(grid)
@@ -441,7 +610,7 @@ class WanModelMLX(TransformerBase):
         if self._rope_grid_key == rope_key and self._rope_cos_sin is not None:
             rope_cos_sin = self._rope_cos_sin
         else:
-            w_dtype = self.patch_embedding.weight.dtype
+            w_dtype = mlx_linear_compute_dtype(self.patch_embedding)
             rope_cos_sin = factorized_rope_precompute_cos_sin(
                 mx, grid_sizes_list, self._freqs, dtype=w_dtype
             )
@@ -452,7 +621,9 @@ class WanModelMLX(TransformerBase):
             attn_mask = None
         else:
             lens = ctx.array(seq_lens_list[:b], dtype=ctx.int32())
-            attn_mask = build_key_padding_mask_from_lengths(ctx, lens, seq_len, self.patch_embedding.weight.dtype)
+            attn_mask = build_key_padding_mask_from_lengths(
+                ctx, lens, seq_len, mlx_linear_compute_dtype(self.patch_embedding)
+            )
 
         for blk, cross_kv in zip(self.blocks, cross_kv_list):
             x = blk(

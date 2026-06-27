@@ -22,14 +22,17 @@ from backend.engine._transformer_registry import (
 from backend.engine.contracts import FamilyRuntimeContract
 from backend.engine.pipelines.image_run_common import (
     build_image_vae_preview_session,
+    execute_family_image_generator,
     image_model_from_resolved_run,
     image_vae_decode,
     load_image_encoded_model,
     resolve_image_preview,
     resolve_image_steps_guidance,
     schedule_image_run,
+    uses_family_image_generator,
     warm_image_step_preview_decoders,
 )
+from backend.engine.config.model_configs import apply_image_registry_config_overrides, get_config_class
 from backend.engine.sessions._context import ResolvedRun
 from backend.engine.sessions._context import MediaRunContext
 from backend.engine.pipelines.pipeline_progress import (
@@ -561,4 +564,34 @@ def persist_create_image(
         meta.update(ctx.structural_output_meta)
     meta.update(work_title_metadata(ctx.request.title))
     return str(out_path), meta
+
+
+_NOT_GENERATOR = object()
+
+
+def _maybe_run_image_family_generator(
+    pipeline: Any,
+    request: ImageGenerationRequest,
+    ctx_exec: ExecutionContext,
+    resolved: ResolvedRun,
+    *,
+    phase_cm: PhaseCmFactory,
+    on_progress: Callable | None,
+    on_log: Callable | None,
+) -> Any:
+    entry = resolved.registry_entry
+    family = resolved.family_id
+    config = get_config_class(family)()
+    apply_image_registry_config_overrides(entry, config)
+    if not uses_family_image_generator(config):
+        return _NOT_GENERATOR
+    with phase_cm("infer"):
+        return execute_family_image_generator(
+            pipeline,
+            request,
+            ctx_exec,
+            is_edit=False,
+            on_progress=on_progress,
+            on_log=on_log,
+        )
 

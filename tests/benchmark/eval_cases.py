@@ -12,6 +12,7 @@ from .registry_utils import (
     iter_image_eval_models,
     load_registry,
     param_default,
+    resolve_eval_version_key,
 )
 
 Profile = Literal["smoke", "full"]
@@ -40,6 +41,8 @@ MODEL_TIMEOUT_SEC: dict[str, int] = {
     "fibo-lite": 900,
     "fibo-edit": 900,
     "fibo-edit-rmbg": 900,
+    "hidream-o1-image-dev": 3600,
+    "hidream-o1-image-full": 5400,
 }
 
 MODEL_STEPS_OVERRIDE: dict[str, int] = {
@@ -70,7 +73,15 @@ class EvalCase:
     timeout_sec: int = 600
     omit_image_strength: bool = False
     judge_floor: float | None = None
+    version_key: str | None = None
     extra: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def model_field(self) -> str:
+        vk = str(self.version_key or "").strip()
+        if vk:
+            return f"{self.model_id}:{vk}"
+        return self.model_id
 
     @property
     def encoded_prompt(self) -> str:
@@ -198,6 +209,7 @@ def expand_eval_cases(*, profile: Profile = "full", reg: dict[str, Any] | None =
         guidance = float(param_default(spec, "guidance", 3.5))
         timeout = _timeout_for(model_id)
         omit_strength = _omit_image_strength(model_id, family)
+        version_key = resolve_eval_version_key(model_id, reg=reg)
 
         if "create" in actions:
             for item in create_prompts:
@@ -217,6 +229,7 @@ def expand_eval_cases(*, profile: Profile = "full", reg: dict[str, Any] | None =
                         steps=steps,
                         guidance=guidance,
                         timeout_sec=timeout,
+                        version_key=version_key,
                     )
                 )
 
@@ -247,6 +260,7 @@ def expand_eval_cases(*, profile: Profile = "full", reg: dict[str, Any] | None =
                         guidance=guidance,
                         timeout_sec=timeout,
                         omit_image_strength=omit_strength,
+                        version_key=version_key,
                     )
                 )
 
@@ -264,6 +278,7 @@ def expand_eval_cases(*, profile: Profile = "full", reg: dict[str, Any] | None =
                     steps=1,
                     guidance=0.0,
                     timeout_sec=timeout,
+                    version_key=version_key,
                 )
             )
 

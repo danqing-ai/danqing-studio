@@ -112,6 +112,9 @@
         :enhancing="isEnhancing"
         :reversing="isReversing"
         :tail-reference-media="tailReferenceMedia"
+        :extra-reference-media="extraReferenceMedia"
+        :show-bernini-references="showBerniniReferences"
+        :bernini-ref-max="berniniRefMax"
         :current-model-config="currentModelConfig"
         :compatible-loras="compatibleLoras"
         :model-not-ready="selectedModelNotReady"
@@ -122,6 +125,8 @@
         @remove-reference="removeReference"
         @pick-tail-reference="showTailAssetPicker = true"
         @remove-tail-reference="removeTailImage"
+        @pick-extra-reference="showExtraRefPicker = true"
+        @remove-extra-reference="removeExtraReference"
         @model-change="onModelVersionChange"
         @reset-defaults="resetToDefaults"
         @go-download="goToDownload"
@@ -167,6 +172,15 @@
       </div>
     </div>
   </DqDrawer>
+
+  <!-- Extra reference images (Bernini R2V / RV2V) -->
+  <DqDialog v-model:open="showExtraRefPicker" :title="$t('video.berniniRefTitle')" width="70%">
+    <AssetPicker
+      accept-kind="image"
+      :recent-gallery="recentStartImages"
+      @pick="onExtraRefPick"
+    />
+  </DqDialog>
 
   <!-- Start image asset picker -->
   <DqDialog v-model:open="showAssetPicker" :title="assetPickerTitle" width="70%">
@@ -274,7 +288,10 @@ import {
 } from '@/utils/videoSizeStorage';
 import {
   animateReferenceAcceptKind,
+  berniniMaxReferenceImages,
   galleryPathIsVideo,
+  supportsBerniniReferenceImages,
+  videoRequiresSourceVideo,
   videoSupportsVideoEdit,
 } from '@/utils/videoEditSource';
 import { formatStoryboardScript } from '@/utils/videoStoryboardPrompt';
@@ -541,6 +558,7 @@ function persistComposerSnapshot() {
     start_image_path: startImagePath.value || undefined,
     tail_image_path: tailImagePath.value || undefined,
     source_video_path: sourceVideoPath.value || undefined,
+    reference_image_paths: extraRefPaths.value.length ? [...extraRefPaths.value] : undefined,
   });
 }
 
@@ -555,6 +573,7 @@ function onCanvasComposerRestore(snapshot: {
   start_image_path?: string;
   tail_image_path?: string;
   source_video_path?: string;
+  reference_image_paths?: string[];
 }) {
   if (!snapshot || typeof snapshot !== 'object') return;
   if (snapshot.prompt != null) params.prompt = snapshot.prompt;
@@ -592,6 +611,13 @@ function onCanvasComposerRestore(snapshot: {
     sourceVideoSrc.value = item && isVideoGalleryItem(item)
       ? api.gallery.getImageUrl(p.path)
       : p.previewUrl;
+  }
+  if (snapshot.reference_image_paths?.length) {
+    extraRefPaths.value = [...snapshot.reference_image_paths];
+    extraRefPreviews.value = snapshot.reference_image_paths.map((path) => {
+      const p = bindVideoAssetFromPath(path);
+      return p.previewUrl;
+    });
   }
   if (viewMode.value === 'canvas') {
     nextTick(() => syncCompositorOverlaysOnCanvasEnter());
@@ -969,9 +995,25 @@ const tailImagePath = ref('');
 const tailImageViewerVisible = ref(false);
 const sourceVideoSrc = ref('');
 const sourceVideoPath = ref('');
+const extraRefPaths = ref<string[]>([]);
+const extraRefPreviews = ref<string[]>([]);
+
+const berniniRefMax = berniniMaxReferenceImages();
+
+const showBerniniReferences = computed(() =>
+  supportsBerniniReferenceImages(currentModelConfig.value?.parameters),
+);
+
+const extraReferenceMedia = computed(() =>
+  extraRefPaths.value.map((path, idx) => ({
+    path,
+    previewUrl: extraRefPreviews.value[idx] || bindVideoAssetFromPath(path).previewUrl,
+    label: $tt('video.berniniRefLabel'),
+  })),
+);
 
 watch(
-  [startImagePath, tailImagePath, sourceVideoPath],
+  [startImagePath, tailImagePath, sourceVideoPath, extraRefPaths],
   () => {
     persistComposerSnapshot();
   }
@@ -979,6 +1021,7 @@ watch(
 
 const showAssetPicker = ref(false);
 const showTailAssetPicker = ref(false);
+const showExtraRefPicker = ref(false);
 
 function removeReference() {
   if (videoWorkMode.value === 'edit') {
@@ -991,6 +1034,42 @@ function removeReference() {
 function removeTailImage() {
   tailImageSrc.value = '';
   tailImagePath.value = '';
+}
+
+function onExtraRefPick(payload: { path: string; previewUrl: string }) {
+  if (extraRefPaths.value.length >= berniniRefMax) {
+    toast.warning($tt('video.berniniRefMax', { n: berniniRefMax }));
+    return;
+  }
+  if (extraRefPaths.value.includes(payload.path)) {
+    showExtraRefPicker.value = false;
+    return;
+  }
+  extraRefPaths.value.push(payload.path);
+  extraRefPreviews.value.push(payload.previewUrl || '');
+  showExtraRefPicker.value = false;
+}
+
+function removeExtraReference(index: number) {
+  extraRefPaths.value = extraRefPaths.value.filter((_, i) => i !== index);
+  extraRefPreviews.value = extraRefPreviews.value.filter((_, i) => i !== index);
+}
+
+async function resolveReferenceAssetIds(paths: string[]): Promise<string[]> {
+  const ids: string[] = [];
+  for (const path of paths) {
+    if (path.startsWith('asset:')) {
+      ids.push(path.slice('asset:'.length));
+      continue;
+    }
+    const preview = extraRefPreviews.value[extraRefPaths.value.indexOf(path)] || '';
+    const blob = await api.gen.urlToBlob(preview || bindVideoAssetFromPath(path).previewUrl);
+    const up = await api.gen.uploadAsset(
+      new File([blob], 'ref.png', { type: blob.type || 'image/png' }),
+    );
+    ids.push((up as { id: string }).id);
+  }
+  return ids;
 }
 
 function onModelVersionChange(val: string) {
@@ -1078,6 +1157,14 @@ function onStartAssetPick(payload: { path: string; previewUrl: string }) {
     return;
   }
   if (videoWorkMode.value === 'animate' && isVideo) {
+    if (videoRequiresSourceVideo(currentModelConfig.value?.parameters)) {
+      videoWorkMode.value = 'edit';
+      clearAnimateImageReference();
+      bindAnimateVideoPreview(payload.path, payload.previewUrl || '');
+      showAssetPicker.value = false;
+      toast.success($tt('video.autoSwitchedToEditForV2v'));
+      return;
+    }
     toast.warning($tt('video.animateUseEditModeForVideo'));
     return;
   }
@@ -1938,6 +2025,10 @@ const startGeneration = async () => {
       if (adapters.length > 0) {
         animateBody.adapters = adapters;
       }
+      const refIds = await resolveReferenceAssetIds(extraRefPaths.value);
+      if (refIds.length > 0) {
+        animateBody.reference_asset_ids = refIds;
+      }
       submitRes = await api.gen.createVideoEdit(animateBody);
     } else {
       const body: Record<string, unknown> = {
@@ -1958,6 +2049,10 @@ const startGeneration = async () => {
       const adapters = buildVideoAdapters();
       if (adapters.length > 0) {
         body.adapters = adapters;
+      }
+      const refIds = await resolveReferenceAssetIds(extraRefPaths.value);
+      if (refIds.length > 0) {
+        body.reference_asset_ids = refIds;
       }
       submitRes = await api.gen.createVideoGeneration(body);
     }
@@ -2100,6 +2195,16 @@ watch(durationOptions, (opts) => {
   }
   syncNumFramesFromDuration();
 });
+
+watch(
+  () => currentModelConfig.value?.parameters?.bernini_renderer,
+  (isBernini) => {
+    if (!isBernini) {
+      extraRefPaths.value = [];
+      extraRefPreviews.value = [];
+    }
+  },
+);
 
 watch(selectedModelVersion, (val) => {
   onModelVersionChange(val);

@@ -124,7 +124,7 @@ def resolve_blhd_attention_mask(
 
 def build_bidirectional_bool_attention_mask(ctx: Any, token_mask: Any) -> Any:
     """Build symmetric bool mask ``[B,1,S,S]`` from token keep mask ``[B,S]``."""
-    m = token_mask.astype(bool)
+    m = token_mask.astype(_bool_dtype(ctx))
     b = int(m.shape[0])
     s = int(m.shape[1])
     m1 = ctx.reshape(m, (b, 1, 1, s))
@@ -135,7 +135,7 @@ def build_bidirectional_bool_attention_mask(ctx: Any, token_mask: Any) -> Any:
 
 def left_pad_token_mask(ctx: Any, token_mask: Any, total_len: int) -> Any:
     """Left-pad token mask ``[B,S]`` to ``[B,total_len]`` with valid tokens."""
-    mask = token_mask.astype(bool)
+    mask = token_mask.astype(_bool_dtype(ctx))
     pad_len = int(total_len) - int(mask.shape[1])
     if pad_len <= 0:
         return mask

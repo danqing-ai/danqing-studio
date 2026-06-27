@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import unittest
 
-from backend.engine.common.long_video.plan import build_shot_plan
+from backend.engine.common.long_video.plan import build_shot_plan, build_shot_plan_for_scenes
 from backend.engine.families.ltx.long_video_plan import build_long_video_plan, compute_extend_pass_count
 from backend.engine.llm.storyboard import (
     apply_storyboard_output_locale,
@@ -42,6 +42,18 @@ class LongVideoPlanTests(unittest.TestCase):
         self.assertEqual(plan.extend_pass_count, 7)
         self.assertEqual(plan.total_segments, 8)
         self.assertEqual(plan.narrative_budget, "standard")
+
+    def test_build_shot_plan_for_scenes(self) -> None:
+        plan = build_shot_plan_for_scenes(scene_count=6, segment_duration_sec=5.0)
+        self.assertEqual(plan.shot_count, 6)
+        self.assertEqual(plan.target_duration_sec, 30.0)
+        self.assertEqual(len(plan.segment_durations_sec), 6)
+
+    def test_build_shot_plan_for_scenes_clamps(self) -> None:
+        low = build_shot_plan_for_scenes(scene_count=1, segment_duration_sec=5.0)
+        self.assertEqual(low.shot_count, 2)
+        high = build_shot_plan_for_scenes(scene_count=40, segment_duration_sec=5.0)
+        self.assertEqual(high.shot_count, 24)
 
     def test_expand_batches_when_many_passes(self) -> None:
         plan = build_long_video_plan(target_duration_sec=90, initial_duration_sec=8, segment_extend_sec=8)

@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from backend.core.bundle_repos import version_primary_local_path
+from backend.core.version_keys import resolve_registry_version_key
 
 
 def resolve_project_path(project_root: Path, local_path: str) -> Path:
@@ -40,8 +41,9 @@ def registry_scalar_default(entry: Any, key: str, fallback: Any) -> Any:
 def resolve_version_block(entry: Any, version_key: str | None) -> dict | None:
     raw = getattr(entry, "raw", {}) or {}
     versions = raw.get("versions") or {}
-    if version_key and version_key in versions and isinstance(versions[version_key], dict):
-        return versions[version_key]
+    resolved = resolve_registry_version_key(versions, version_key)
+    if resolved and resolved in versions and isinstance(versions[resolved], dict):
+        return versions[resolved]
     for vinfo in versions.values():
         if isinstance(vinfo, dict) and vinfo.get("default"):
             return vinfo

@@ -95,6 +95,21 @@ class WeightMapper:
                 # or optional weight (e.g., conv_shortcut) - that's OK
                 skipped_count += 1
 
+        # MLX affine-quant companions mirror mapped ``*.weight`` paths (.scales / .biases).
+        for hf_key, hf_tensor in hf_weights.items():
+            suffix = hf_key.rsplit(".", 1)[-1]
+            if suffix not in ("scales", "biases"):
+                continue
+            weight_hf = f"{hf_key.rsplit('.', 1)[0]}.weight"
+            targets = flat_mapping.get(weight_hf, [])
+            if not targets:
+                continue
+            for mlx_path, _ in targets:
+                base_mlx = mlx_path.rsplit(".", 1)[0]
+                companion = f"{base_mlx}.{suffix}"
+                WeightMapper._set_nested_value(mapped_weights, companion, hf_tensor)
+                mapped_count += 1
+
         # Optional: uncomment for debugging
         # print(f"✅ Mapped {mapped_count} weights, skipped {skipped_count}")
 
@@ -1110,10 +1125,32 @@ def _flatten_nested_params(obj: Any, prefix: str = "") -> dict[str, Any]:
     return flat
 
 
+_QWEN_PRECONVERTED_DIT_PREFIXES = (
+    "transformer_blocks.",
+    "img_in.",
+    "txt_in.",
+    "time_text_embed.",
+    "norm_out.",
+    "proj_out.",
+)
+
+
+def _pass_through_preconverted_qwen_dit_keys(flat: dict[str, Any], weights: dict) -> None:
+    """mlx-community bundles may already use DanQing ``dit.*`` flat keys (skip diffusers remap)."""
+    for key, tensor in weights.items():
+        if key.startswith("dit."):
+            flat.setdefault(key, tensor)
+            continue
+        if any(key.startswith(prefix) for prefix in _QWEN_PRECONVERTED_DIT_PREFIXES):
+            flat.setdefault(f"dit.{key}", tensor)
+
+
 def remap_qwen_transformer_weights(weights: dict) -> dict:
     """Diffusers-style flat checkpoint keys → DanQing flat keys under ``dit.*`` (Pipeline + remap_fn)."""
     nested = WeightMapper.apply_mapping(weights, QwenWeightMapping.get_transformer_mapping())
-    return _flatten_nested_params(nested, "dit")
+    flat = _flatten_nested_params(nested, "dit")
+    _pass_through_preconverted_qwen_dit_keys(flat, weights)
+    return flat
 
 
 _QWEN_LORA_AB = re.compile(

@@ -54,6 +54,10 @@ def uses_family_video_generator(config: Any) -> bool:
     return str(getattr(config, "video_pipeline_shape", "dit_standard") or "dit_standard") == "family_generator"
 
 
+def uses_family_video_avatar(config: Any) -> bool:
+    return str(getattr(config, "video_pipeline_shape", "dit_standard") or "dit_standard") == "family_avatar"
+
+
 def latent_frame_count_for_video(config: Any, requested_pixel_frames: int) -> int:
     tvs = getattr(config, "temporal_vae_scale", None)
     if tvs is not None and int(tvs) > 0:
@@ -77,6 +81,9 @@ def apply_video_registry_config_overrides(
         "low_ram_streaming",
         "ltx_stage2_steps",
         "video_edit_source_mode",
+        "video_pipeline_shape",
+        "bernini_renderer",
+        "use_src_id_rotary_emb",
     ):
         val = registry_scalar_default(entry, param_key, None)
         if val is not None:
@@ -165,7 +172,10 @@ def _load_wan_single_expert(
             return cached
 
     trans_cls = get_video_transformer_class(family)
-    model = trans_cls(config, ctx, num_frames=num_frames)
+    if family in ("wan", "ltx"):
+        model = trans_cls(config, ctx, num_frames=num_frames)
+    else:
+        model = trans_cls(config, ctx)
 
     model.load_weights(
         list(weights.items()),

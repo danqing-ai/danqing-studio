@@ -1,17 +1,13 @@
-"""Link Wan shared encoders into distill / turbo / Bernini bundles; write DiT ``config.json``."""
+"""Finalize Wan distill / turbo bundles after encoder shards are co-located in the install root."""
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
-
-WAN_SHARED_MODEL_ID = "wan-2.2-14b-shared"
 
 _T5_PTH = "models_t5_umt5-xxl-enc-bf16.pth"
 _VAE_PTH = "Wan2.1_VAE.pth"
 
-# Official Wan-AI bundle layout (T2V / I2V 14B share the same encoder files).
 _SHARED_FILES = (_T5_PTH, _VAE_PTH, "configuration.json")
 _SHARED_DIRS = ("google",)
 
@@ -83,33 +79,6 @@ def _config_key_for_variant(variant: str) -> str:
     return key
 
 
-def _shared_encoders_root(resolve_local_path: Callable[[str, str], Path]) -> Path:
-    root = Path(resolve_local_path(WAN_SHARED_MODEL_ID, "encoders"))
-    if not root.is_dir():
-        raise RuntimeError(
-            f"Install {WAN_SHARED_MODEL_ID!r} version encoders first (missing {root})."
-        )
-    t5 = root / _T5_PTH
-    if not t5.is_file() or t5.stat().st_size < 1024 ** 3:
-        raise RuntimeError(f"Wan shared encoders incomplete: missing or invalid {_T5_PTH} under {root}.")
-    for name in _SHARED_FILES:
-        if name == _T5_PTH:
-            continue
-        if not (root / name).is_file():
-            raise RuntimeError(f"Wan shared encoders incomplete: missing {name} under {root}.")
-    for name in _SHARED_DIRS:
-        if not (root / name).is_dir():
-            raise RuntimeError(f"Wan shared encoders incomplete: missing {name}/ under {root}.")
-    return root
-
-
-def _link(src: Path, dest: Path) -> None:
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    if dest.exists() or dest.is_symlink():
-        dest.unlink()
-    dest.symlink_to(src, target_is_directory=src.is_dir())
-
-
 def _write_transformer_config(bundle_root: Path, config_key: str) -> None:
     payload = _WAN_TRANSFORMER_CONFIGS[config_key]
     (Path(bundle_root) / "config.json").write_text(
@@ -118,23 +87,31 @@ def _write_transformer_config(bundle_root: Path, config_key: str) -> None:
     )
 
 
-def link_wan_distill_shared_assets(
-    *,
-    distill_root: Path,
-    variant: str,
-    resolve_local_path: Callable[[str, str], Path],
-) -> None:
-    """Symlink UMT5/VAE/tokenizer from ``wan-2.2-14b-shared``; write bundle ``config.json``."""
+def finalize_wan_distill_bundle(*, distill_root: Path, variant: str) -> None:
+    """Require UMT5/VAE/tokenizer in ``distill_root``; write bundle ``config.json``."""
     root = Path(distill_root)
     if not root.is_dir():
         raise RuntimeError(f"Wan distill bundle root not found: {root}")
 
-    shared = _shared_encoders_root(resolve_local_path)
-    config_key = _config_key_for_variant(variant)
-
+    t5 = root / _T5_PTH
+    if not t5.is_file() or t5.stat().st_size < 1024**3:
+        raise RuntimeError(
+            f"Wan distill bundle incomplete: missing or invalid {_T5_PTH} under {root}. "
+            "Re-download; bundle_repos must include Wan-AI/Wan2.2-T2V-A14B encoders."
+        )
     for name in _SHARED_FILES:
-        _link(shared / name, root / name)
+        if name == _T5_PTH:
+            continue
+        if not (root / name).is_file():
+            raise RuntimeError(
+                f"Wan distill bundle incomplete: missing {name} under {root}. "
+                "Re-download; bundle_repos must include Wan-AI/Wan2.2-T2V-A14B encoders."
+            )
     for name in _SHARED_DIRS:
-        _link(shared / name, root / name)
+        if not (root / name).is_dir():
+            raise RuntimeError(
+                f"Wan distill bundle incomplete: missing {name}/ under {root}. "
+                "Re-download; bundle_repos must include Wan-AI/Wan2.2-T2V-A14B encoders."
+            )
 
-    _write_transformer_config(root, config_key)
+    _write_transformer_config(root, _config_key_for_variant(variant))

@@ -101,6 +101,11 @@ def save_quantized_weight_bundle(
         for k in shard.keys():
             weight_map[k] = shard_name
 
+    _write_quantized_index(output_dir, weight_map, bits)
+    return linear_count
+
+
+def _write_quantized_index(output_dir: Path, weight_map: dict[str, str], bits: int) -> None:
     index_data = {
         "metadata": {"quantization_level": str(bits)},
         "weight_map": weight_map,
@@ -108,4 +113,78 @@ def save_quantized_weight_bundle(
     with open(output_dir / "model.safetensors.index.json", "w", encoding="utf-8") as f:
         json.dump(index_data, f, indent=2)
 
+
+def _release_mlx_memory() -> None:
+    import gc
+
+    gc.collect()
+    try:
+        import mlx.core as mx
+
+        if hasattr(mx, "clear_cache"):
+            mx.clear_cache()
+    except Exception:
+        pass
+
+
+def quantize_and_save_sharded_inputs(
+    load_paths: tuple[Path, ...] | list[Path],
+    *,
+    bits: int,
+    output_dir: Path,
+    shard_prefix: str = "model",
+    single_output_file: Path | None = None,
+) -> int:
+    """Quantize large multi-shard checkpoints one input file at a time.
+
+    Wan 14B MoE experts ship ~9GB safetensors per shard; loading all shards into
+    one dict can exceed unified memory. This path keeps peak RAM near one shard.
+    """
+    import mlx.core as mx
+
+    paths = tuple(load_paths)
+    if not paths:
+        raise RuntimeError("quantize_and_save_sharded_inputs: no input shards")
+
+    if single_output_file is not None and len(paths) == 1:
+        weights = dict(mx.load(str(paths[0])))
+        if not weights:
+            raise RuntimeError(f"No safetensors weights found in {paths[0]!r}")
+        quantized = quantize_linear_weights_dict(weights, bits)
+        del weights
+        count = save_quantized_weight_bundle(
+            quantized,
+            output_dir=output_dir,
+            shard_prefix=shard_prefix,
+            bits=bits,
+            single_output_file=single_output_file,
+        )
+        del quantized
+        _release_mlx_memory()
+        return count
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    weight_map: dict[str, str] = {}
+    linear_count = 0
+
+    for i, shard_path in enumerate(paths):
+        weights = dict(mx.load(str(shard_path)))
+        if not weights:
+            raise RuntimeError(f"No safetensors weights found in {shard_path!r}")
+        quantized = quantize_linear_weights_dict(weights, bits)
+        del weights
+
+        shard_name = f"{shard_prefix}_{i:05d}.safetensors"
+        mx.save_safetensors(
+            str(output_dir / shard_name),
+            quantized,
+            metadata={"quantization_level": str(bits)},
+        )
+        for key in quantized:
+            weight_map[key] = shard_name
+        linear_count += sum(1 for k in quantized if k.endswith(".scales"))
+        del quantized
+        _release_mlx_memory()
+
+    _write_quantized_index(output_dir, weight_map, bits)
     return linear_count

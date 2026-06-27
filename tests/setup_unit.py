@@ -7,6 +7,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 from backend.core.model_registry import ModelRegistry
+from backend.core.version_keys import (
+    canonical_version_key,
+    resolve_full_bundle_version_key,
+    resolve_registry_version_key,
+)
 from backend.services.setup_recommendations import (
     build_setup_recommendations,
     topological_install_order,
@@ -44,7 +49,7 @@ class SetupRecommendationsTests(unittest.TestCase):
         )
         image = next(s for s in rec.slots if s.slot == "image")
         self.assertIsNotNone(image.model_id)
-        self.assertIn(image.version_key or "", ("int4", "mlx-4bit", "mlx-8bit", "int8"))
+        self.assertIn(image.version_key or "", ("int4", "mlx-q4", "mlx-q8", "int8"))
 
     @patch("backend.services.setup_recommendations.PlatformInfo.detect", return_value=["mlx"])
     def test_high_memory_recommends_image_model(self, _detect):
@@ -85,6 +90,75 @@ class TopologicalInstallTests(unittest.TestCase):
         ordered = topological_install_order(items, self.registry)
         ids = [row["model_id"] for row in ordered]
         self.assertLess(ids.index("flux1-dev"), ids.index("flux-canny-controlnet"))
+
+
+class VersionKeyTests(unittest.TestCase):
+    def test_legacy_prequantized_aliases(self) -> None:
+        self.assertEqual(canonical_version_key("mlx-4bit"), "mlx-q4")
+        self.assertEqual(canonical_version_key("mlx-3bit"), "mlx-q4")
+        self.assertEqual(canonical_version_key("community-8bit"), "mlx-q8")
+        self.assertEqual(canonical_version_key("mlx-q6"), "mlx-q4")
+        self.assertEqual(canonical_version_key("mlx"), "mlx-q8")
+
+    def test_derived_mlx_int_aliases(self) -> None:
+        derived = {"source_type": "derived"}
+        self.assertEqual(canonical_version_key("mlx-int4", version_entry=derived), "int4")
+        self.assertEqual(canonical_version_key("mlx-int8", version_entry=derived), "int8")
+
+    def test_prequantized_mlx_int_aliases(self) -> None:
+        pre = {"source_type": "prequantized", "quantization": {"bits": 4}}
+        self.assertEqual(canonical_version_key("mlx-int4", version_entry=pre), "mlx-q4")
+
+    def test_resolve_registry_version_key(self) -> None:
+        versions = {
+            "mlx-q4": {"source_type": "prequantized", "default": True},
+            "int4": {"source_type": "derived"},
+        }
+        self.assertEqual(resolve_registry_version_key(versions, "mlx-4bit"), "mlx-q4")
+        self.assertEqual(resolve_registry_version_key(versions, None), "mlx-q4")
+
+    def test_legacy_vague_version_aliases(self) -> None:
+        versions = {
+            "fp16": {"source_type": "full", "default": True},
+            "int4": {"source_type": "derived", "from_version": "fp16"},
+        }
+        self.assertEqual(canonical_version_key("original"), "fp16")
+        self.assertEqual(canonical_version_key("quant"), "int8")
+        self.assertEqual(resolve_registry_version_key(versions, "original"), "fp16")
+        self.assertEqual(
+            resolve_full_bundle_version_key({"bf16": {"source_type": "full"}}),
+            "bf16",
+        )
+
+    def test_canonical_local_path_legacy_only(self) -> None:
+        from backend.core.version_keys import canonical_local_path
+
+        self.assertEqual(
+            canonical_local_path("models/Image/flux2-klein-4b-mlx-community-4bit", "mlx-q4"),
+            "models/Image/flux2-klein-4b-mlx-q4",
+        )
+        self.assertEqual(
+            canonical_local_path("models/Image/flux2-klein-4b-int4", "int4"),
+            "models/Image/flux2-klein-4b-int4",
+        )
+        self.assertEqual(
+            canonical_local_path("models/Video/longcat-video-mlx-q4", "mlx-q4"),
+            "models/Video/longcat-video-mlx-q4",
+        )
+
+    def test_is_quantized_registry_version(self) -> None:
+        from backend.core.version_keys import is_quantized_registry_version
+
+        self.assertTrue(is_quantized_registry_version("int4", {"source_type": "derived"}))
+        self.assertTrue(is_quantized_registry_version("mlx-q4", {"source_type": "prequantized"}))
+        self.assertTrue(
+            is_quantized_registry_version(
+                "mlx-q4",
+                {"source_type": "full", "quantization": {"bits": 4}},
+            )
+        )
+        self.assertFalse(is_quantized_registry_version("fp16", {"source_type": "full"}))
+        self.assertFalse(is_quantized_registry_version("mlx-bf16", {"source_type": "full"}))
 
 
 if __name__ == "__main__":

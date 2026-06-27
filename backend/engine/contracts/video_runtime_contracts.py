@@ -309,12 +309,69 @@ def resolve_video_edit_source_image(
         out = Path(work_dir) / f"edit_source_{asset_id}_frame0.png"
         extract_first_frame_image(Path(src_path), output_path=out)
         return Image.open(out).convert("RGB")
+    if is_video and str(mode or "image_only") == "source_video":
+        raise RuntimeError(
+            f"Video edit source {asset_id!r} is a video asset; use load_video_source_path for full V2V."
+        )
     if is_video:
         raise RuntimeError(
             f"Video edit source {asset_id!r} is a video asset; set registry video_edit_source_mode=first_frame "
             "or provide an image source_asset_id."
         )
     return Image.open(str(src_path)).convert("RGB")
+
+
+def resolve_video_reference_asset_paths(asset_store: Any, asset_ids: list[str]) -> list[str]:
+    """Resolve gallery asset ids to local file paths (fail loud on missing)."""
+    paths: list[str] = []
+    for asset_id in asset_ids:
+        aid = str(asset_id or "").strip()
+        if not aid:
+            continue
+        src = asset_store.get_file_path(aid)
+        if src is None or not Path(src).exists():
+            raise RuntimeError(f"Reference asset not found: {aid!r}")
+        paths.append(str(src))
+    return paths
+
+
+def resolve_bernini_source_paths(
+    asset_store: Any,
+    request: Any,
+    config: Any,
+    *,
+    work_dir: Path | None = None,
+) -> tuple[str | None, str | None]:
+    """Bernini edit sources: ``(full_video_path, first_frame_image_path)``."""
+    mode = str(getattr(config, "video_edit_source_mode", "image_only") or "image_only")
+    asset_id = str(getattr(request, "source_asset_id", "") or "").strip()
+    if not asset_id:
+        return None, None
+    src = asset_store.get_file_path(asset_id)
+    if src is None or not Path(src).exists():
+        raise RuntimeError(f"Video edit source asset not found: {asset_id!r}")
+
+    record = asset_store.get_asset_record(asset_id) if hasattr(asset_store, "get_asset_record") else None
+    mime = str((record or {}).get("mime_type") or "").lower()
+    kind = str((record or {}).get("kind") or "").lower()
+    is_video = mime.startswith("video/") or kind == "video"
+
+    if is_video and mode == "source_video":
+        return str(src), None
+    if is_video and mode == "first_frame":
+        img = resolve_video_edit_source_image(
+            asset_store, asset_id, mode="first_frame", work_dir=work_dir,
+        )
+        if work_dir is None:
+            raise RuntimeError("Bernini first_frame source requires work_dir.")
+        out = Path(work_dir) / f"bernini_source_{asset_id}_frame0.png"
+        img.save(out)
+        return None, str(out)
+    if is_video:
+        raise RuntimeError(
+            f"Video source {asset_id!r} requires video_edit_source_mode=source_video or first_frame."
+        )
+    return None, str(src)
 
 
 def video_i2v_encode_failure_message(config: Any) -> str:

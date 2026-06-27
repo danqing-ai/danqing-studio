@@ -260,7 +260,7 @@ class IDownloadService(ABC):
 
         Args:
             model_name: model key
-            from_version: source version key (e.g. ``fp16``, ``original``)
+            from_version: source version key (e.g. ``fp16``, ``bf16``)
             to_version: target version key (e.g. ``int4``, ``int8``)
             progress_callback: progress callback function
 

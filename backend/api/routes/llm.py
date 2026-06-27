@@ -18,6 +18,8 @@ from backend.core.contracts import (
     EnhanceRequest,
     ImageToPromptRequest,
     ImageToPromptResponse,
+    LongVideoChapterAnalyzeRequest,
+    LongVideoChapterAnalyzeResponse,
     LongVideoStoryboardRequest,
     LongVideoStoryboardResponse,
     VisualAnalyzeRequest,
@@ -125,6 +127,26 @@ async def long_video_storyboard(
     req = request.model_copy(update={"locale": locale})
     try:
         return await asyncio.to_thread(service.generate_long_video_storyboard, req)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.post("/api/chat/long-video-chapter-analyze")
+async def long_video_chapter_analyze(
+    request: LongVideoChapterAnalyzeRequest,
+    http_request: Request,
+    service: LLMService = Depends(get_llm_service),
+):
+    """Analyze a novel chapter into synopsis, cast anchor, and visual scene beats."""
+    if not service.is_available():
+        raise HTTPException(
+            status_code=503,
+            detail="LLM model not installed. Install via Models page.",
+        )
+    locale = _resolve_storyboard_locale(http_request, request.locale)
+    req = request.model_copy(update={"locale": locale})
+    try:
+        return await asyncio.to_thread(service.analyze_long_video_chapter, req)
     except (RuntimeError, ValueError) as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 

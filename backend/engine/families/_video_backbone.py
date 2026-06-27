@@ -10,6 +10,7 @@ from backend.engine.pipelines.video_model_load import (
     load_video_transformer,
     prepare_video_config,
     resolve_video_num_frames,
+    uses_family_video_avatar,
     uses_family_video_generator,
 )
 from backend.engine.platform.session import PlatformSession
@@ -74,7 +75,7 @@ class VideoPluginBackbone:
             bundle_root,
             project_root=project_root,
         )
-        if uses_family_video_generator(config):
+        if uses_family_video_generator(config) or uses_family_video_avatar(config):
             self._skip_load = True
             return False
         pixel_frames = resolve_video_num_frames(request, registry_entry)

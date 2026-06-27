@@ -48,7 +48,7 @@ export interface LightweightSplit {
 
 function isFourBitLightweight(row: VersionRow): boolean {
   const label = versionNamePlain(row.ver.name);
-  return /(?:^|-)4bit$|int4/i.test(row.verKey) || /4\s*bit|int4/i.test(label);
+  return /(?:^|-)q4$|(?:^|-)4bit$|int4/i.test(row.verKey) || /4\s*bit|int4/i.test(label);
 }
 
 /** 轻量版默认只展示推荐位（default → 4bit → 首个），其余收进「更多」。 */
@@ -187,8 +187,10 @@ export function simplifyPrequantizedName(name: string, source: string): string {
 
 export function shortDerivedLabel(verKey: string, name: string): string {
   const key = verKey.toLowerCase();
-  if (key === 'mlx-int8' || key.endsWith('-int8')) return 'MLX INT8';
-  if (key === 'mlx-int4' || key.endsWith('-int4')) return 'MLX INT4';
+  if (key === 'int8' || key.endsWith('-int8')) return 'INT8';
+  if (key === 'int4' || key.endsWith('-int4')) return 'INT4';
+  if (key === 'mlx-q8' || key.endsWith('-q8')) return 'Q8';
+  if (key === 'mlx-q4' || key.endsWith('-q4')) return 'Q4';
   const upper = verKey.toUpperCase();
   if (/^INT[48]$/.test(upper)) return upper;
   const match = name.match(/INT[48]/i);
