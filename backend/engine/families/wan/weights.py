@@ -8,6 +8,27 @@ def _is_diffusers_wan(weights: dict) -> bool:
     return any("attn1" in k for k in weights)
 
 
+def _is_bernini_mlx_port(weights: dict) -> bool:
+    """mlx-community Bernini-R flat ports (``ffn.fc1`` / ``patch_embedding_proj``)."""
+    return any(".ffn.fc1" in k for k in weights) or any(
+        k.startswith("patch_embedding_proj") for k in weights
+    )
+
+
+def _remap_bernini_mlx_to_wan(key: str) -> str:
+    new_key = key
+    new_key = new_key.replace("patch_embedding_proj.", "patch_embedding.")
+    new_key = new_key.replace("text_embedding_0.", "text_embedding.0.")
+    new_key = new_key.replace("text_embedding_1.", "text_embedding.2.")
+    new_key = new_key.replace("time_embedding_0.", "time_embedding.0.")
+    new_key = new_key.replace("time_embedding_1.", "time_embedding.2.")
+    if new_key.startswith("time_projection.") and not new_key.startswith("time_projection.1."):
+        new_key = new_key.replace("time_projection.", "time_projection.1.", 1)
+    new_key = new_key.replace(".ffn.fc1.", ".ffn.layer_0.")
+    new_key = new_key.replace(".ffn.fc2.", ".ffn.layer_2.")
+    return new_key
+
+
 def _patch_embedding_weight_to_linear(key: str, tensor) -> tuple[str, object]:
     """Conv3d patch kernel → ``Linear`` weight for Wan patchify.
 
@@ -44,12 +65,16 @@ def _remap_diffusers_to_wan(key: str) -> str:
 def remap_wan_weights(weights: dict) -> dict:
     """Map checkpoint keys to ``WanModelMLX._param_map`` flat names."""
     diffusers = _is_diffusers_wan(weights)
+    bernini_mlx = _is_bernini_mlx_port(weights)
     remapped: dict = {}
     for key, tensor in weights.items():
         new_key = key
         if new_key.startswith("transformer."):
             new_key = new_key[len("transformer.") :]
-        new_key = _remap_diffusers_to_wan(new_key) if diffusers else new_key
+        if bernini_mlx:
+            new_key = _remap_bernini_mlx_to_wan(new_key)
+        elif diffusers:
+            new_key = _remap_diffusers_to_wan(new_key)
         # Original Wan FFN keys (dense + MLX affine quant sidecars)
         for old, new in ((".ffn.0.", ".ffn.layer_0."), (".ffn.2.", ".ffn.layer_2.")):
             new_key = new_key.replace(old, new)

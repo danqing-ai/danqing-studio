@@ -30,7 +30,7 @@ handling + parameter update) is in `pipeline_mlx.py`.
 
 from __future__ import annotations
 
-from typing import Iterable
+from typing import Any, Iterable
 
 import mlx.core as mx
 
@@ -117,11 +117,83 @@ def compute_merged_delta(group: dict[str, mx.array], multiplier: float = 1.0) ->
     return (multiplier * alpha_scale) * delta
 
 
+def _is_quantized_affine_weight(weight: mx.array) -> bool:
+    dtype = getattr(weight, "dtype", None)
+    dtype_text = str(getattr(dtype, "name", dtype) or dtype or "")
+    shape = getattr(weight, "shape", ())
+    return "uint32" in dtype_text and len(shape) == 2
+
+
+def _module_at_path(root: Any, path: str) -> Any:
+    obj = root
+    for part in path.split("."):
+        obj = obj[int(part)] if part.isdigit() else getattr(obj, part)
+    return obj
+
+
+def _set_module_at_path(root: Any, path: str, module: Any) -> None:
+    parts = path.split(".")
+    parent = root
+    for part in parts[:-1]:
+        parent = parent[int(part)] if part.isdigit() else getattr(parent, part)
+    setattr(parent, parts[-1], module)
+
+
+def _merge_quantized_linear_lora(
+    mx_model: Any,
+    module_path: str,
+    group: dict[str, mx.array],
+    *,
+    multiplier: float,
+    bits: int = 4,
+    group_size: int = 64,
+) -> None:
+    from importlib import import_module
+
+    from backend.engine.common.model.base import _mlx_affine_infer_bits_and_group_size
+    from mlx.utils import tree_flatten
+
+    nn = import_module("mlx.nn")
+    mod = _module_at_path(mx_model, module_path)
+    if not hasattr(mod, "weight") or not hasattr(mod, "scales"):
+        raise RuntimeError(
+            f"LongCat LoRA target {module_path!r} is {type(mod).__name__}; "
+            "expected a linear layer with weight/scales."
+        )
+    if not _is_quantized_affine_weight(mod.weight):
+        raise RuntimeError(f"LongCat LoRA target {module_path!r} is not affine-quantized")
+
+    delta = compute_merged_delta(group, multiplier=multiplier).astype(mx.float32)
+    bits_eff, gs = _mlx_affine_infer_bits_and_group_size(
+        mod.weight,
+        mod.scales,
+        dense_weight_shape=tuple(delta.shape),
+        weight_key=f"{module_path}.weight",
+        bundle_affine_bits=bits,
+    )
+    dense_w = mx.dequantize(mod.weight, mod.scales, mod.biases, gs, bits_eff)
+    dense_updated = dense_w.astype(mx.float32) + delta
+
+    mod_params = dict(tree_flatten(mod.parameters()))
+    bias_param = mod_params.get("bias")
+    in_features = int(dense_updated.shape[1])
+    out_features = int(dense_updated.shape[0])
+    linear = nn.Linear(in_features, out_features, bias=bias_param is not None)
+    linear.weight = dense_updated.astype(dense_w.dtype)
+    if bias_param is not None:
+        linear.bias = bias_param
+    q_linear = linear.to_quantized(bits=bits_eff, group_size=gs)
+    _set_module_at_path(mx_model, module_path, q_linear)
+
+
 def merge_lora_into_model(
     mx_model,
     lora_state_dict: dict[str, mx.array],
     multiplier: float = 1.0,
     target_prefix: str = "",
+    *,
+    quant_bits: int | None = None,
+    quant_group_size: int = 64,
 ) -> dict[str, list[str]]:
     """Pre-merge a LoRA into the MLX model's base weights in-place.
 
@@ -146,6 +218,8 @@ def merge_lora_into_model(
 
     applied: list[str] = []
     unmapped: list[str] = []
+    quantized_paths: list[str] = []
+    dense_updated = False
 
     for module_path, group in grouped.items():
         weight_key = (
@@ -155,6 +229,14 @@ def merge_lora_into_model(
             unmapped.append(module_path)
             continue
         base_w = params[weight_key]
+        if _is_quantized_affine_weight(base_w):
+            if quant_bits is None:
+                raise RuntimeError(
+                    f"LongCat cfg_step_lora cannot merge into quantized layer {module_path!r} "
+                    "without quant_bits (pre-quantized bundle)."
+                )
+            quantized_paths.append(module_path)
+            continue
         delta = compute_merged_delta(group, multiplier=multiplier).astype(base_w.dtype)
         if delta.shape != base_w.shape:
             raise ValueError(
@@ -163,9 +245,21 @@ def merge_lora_into_model(
             )
         params[weight_key] = base_w + delta
         applied.append(module_path)
+        dense_updated = True
 
-    # Push the updated params back
-    mx_model.update(tree_unflatten(list(params.items())))
+    if dense_updated:
+        mx_model.update(tree_unflatten(list(params.items())))
+
+    for module_path in quantized_paths:
+        _merge_quantized_linear_lora(
+            mx_model,
+            module_path if not target_prefix else f"{target_prefix}.{module_path}",
+            grouped[module_path],
+            multiplier=multiplier,
+            bits=int(quant_bits or 4),
+            group_size=quant_group_size,
+        )
+        applied.append(module_path)
     mx.eval(mx_model.parameters())  # materialize the merged tensors
 
     return {"applied": applied, "unmapped": unmapped}

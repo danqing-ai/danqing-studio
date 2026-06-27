@@ -142,7 +142,18 @@ def merge_cfg_step_lora(
     with safe_open(str(lora_path), framework="numpy") as f:
         for key in f.keys():
             state_dict[key] = mx.array(f.get_tensor(key))
-    result = merge_lora_into_model(dit, state_dict, multiplier=1.0)
+    dit_cfg_path = variant_dir / "dit" / "config.json"
+    quant_cfg = {}
+    if dit_cfg_path.is_file():
+        quant_cfg = json.loads(dit_cfg_path.read_text(encoding="utf-8")).get("quantization") or {}
+    quant_bits = quant_cfg.get("bits")
+    result = merge_lora_into_model(
+        dit,
+        state_dict,
+        multiplier=1.0,
+        quant_bits=int(quant_bits) if quant_bits is not None else None,
+        quant_group_size=int(quant_cfg.get("group_size", 64)),
+    )
     if len(result.get("applied") or []) == 0:
         raise RuntimeError("LongCat cfg_step_lora merge applied zero modules")
     if on_log:

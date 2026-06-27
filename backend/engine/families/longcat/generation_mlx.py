@@ -198,7 +198,7 @@ class LongCatMlxGenerator:
                 num_cond_latents=num_cond_latents,
             )
             latents = scheduler.step(noise_pred, step_idx, latents)
-            emit_denoise_progress(on_progress, step_idx=step_idx + 1, n_steps=n_steps)
+            emit_denoise_progress(on_progress, step_idx + 1, n_steps)
 
         return latents
 
@@ -280,7 +280,7 @@ class LongCatMlxGenerator:
         )
 
         n_steps = max(1, sampler_cfg.num_sampling_steps)
-        emit_denoise_progress(on_progress, step_idx=0, n_steps=n_steps)
+        emit_denoise_progress(on_progress, 0, n_steps)
 
         if image_path:
             ref_image = bundle_load.load_reference_image(Path(image_path), height, width)

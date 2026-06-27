@@ -652,8 +652,9 @@ def encode_video_prompt(
         paths = resolve_wan_umt5_pth(bundle_root)
         if paths is None:
             raise RuntimeError(
-                f"Wan UMT5 encoder requires original bundle with models_t5_umt5-xxl-enc-bf16.pth "
-                f"and google/umt5-xxl tokenizer at {bundle_root}"
+                f"Wan UMT5 encoder requires checkpoint (models_t5*.pth, text_encoder/*.safetensors, "
+                f"or t5_encoder.safetensors) and UMT5 tokenizer under {bundle_root} "
+                f"(or a sibling video bundle with tokenizer/)"
             )
         checkpoint_pth, tokenizer_dir = paths
         text_len = int(getattr(config, "text_len", 512))

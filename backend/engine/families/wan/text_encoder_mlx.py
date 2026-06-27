@@ -179,6 +179,48 @@ class _UMT5Encoder(nn.Module):
         return self.norm(x)
 
 
+def _looks_like_tokenizer_dir(path: Path) -> bool:
+    if not path.is_dir():
+        return False
+    marker_files = (
+        "tokenizer_config.json",
+        "tokenizer.json",
+        "spiece.model",
+    )
+    return any((path / m).is_file() for m in marker_files)
+
+
+def _resolve_umt5_tokenizer_dir(bundle_root: Path) -> Path | None:
+    tok_candidates = [
+        bundle_root / "google" / "umt5-xxl",
+        bundle_root / "umt5-xxl",
+        bundle_root / "tokenizer",
+    ]
+    tok_dir = next((p for p in tok_candidates if _looks_like_tokenizer_dir(p)), None)
+    if tok_dir is not None:
+        return tok_dir
+    video_root = bundle_root.parent
+    if video_root.is_dir():
+        for sibling in sorted(video_root.iterdir()):
+            if not sibling.is_dir() or sibling.resolve() == bundle_root.resolve():
+                continue
+            for rel in ("google/umt5-xxl", "umt5-xxl", "tokenizer"):
+                candidate = sibling / rel
+                if _looks_like_tokenizer_dir(candidate):
+                    return candidate
+    return None
+
+
+def _remap_wan_umt5_mlx_weights(weights: dict[str, mx.array]) -> dict[str, mx.array]:
+    """mlx-community Bernini / Wan flat ports: ``ffn.gate_proj`` → ``ffn.gate.0``."""
+    if not any(".ffn.gate_proj." in k for k in weights):
+        return weights
+    remapped: dict[str, mx.array] = {}
+    for key, tensor in weights.items():
+        remapped[key.replace(".ffn.gate_proj.", ".ffn.gate.0.")] = tensor
+    return remapped
+
+
 def _load_umt5_state_dict(
     checkpoint_path: Path, *, array_fn: Any | None = None
 ) -> dict[str, mx.array]:
@@ -189,7 +231,13 @@ def _load_umt5_state_dict(
         array_fn = mx.array
     if checkpoint_path.suffix.lower() == ".safetensors":
         raw = load_weights_dict(None, str(checkpoint_path))
-        return {k: array_fn(v.astype(np.float32)) for k, v in raw.items()}
+        out: dict[str, mx.array] = {}
+        for k, v in raw.items():
+            if isinstance(v, mx.array):
+                out[k] = v.astype(mx.float32)
+            else:
+                out[k] = array_fn(np.asarray(v, dtype=np.float32))
+        return _remap_wan_umt5_mlx_weights(out)
     from backend.engine.common.bundle.pytorch_bin_numpy import state_dict_to_numpy
 
     sd = state_dict_to_numpy(checkpoint_path)
@@ -333,22 +381,7 @@ def resolve_wan_umt5_pth(bundle_root: Path) -> tuple[Path, Path] | None:
     if not root.is_dir():
         return None
 
-    def _looks_like_tokenizer_dir(path: Path) -> bool:
-        if not path.is_dir():
-            return False
-        marker_files = (
-            "tokenizer_config.json",
-            "tokenizer.json",
-            "spiece.model",
-        )
-        return any((path / m).is_file() for m in marker_files)
-
-    tok_candidates = [
-        root / "google" / "umt5-xxl",
-        root / "umt5-xxl",
-        root / "tokenizer",
-    ]
-    tok_dir = next((p for p in tok_candidates if _looks_like_tokenizer_dir(p)), None)
+    tok_dir = _resolve_umt5_tokenizer_dir(root)
     if tok_dir is None:
         return None
     pth_candidates = sorted(root.glob("models_t5*.pth"))
@@ -360,4 +393,7 @@ def resolve_wan_umt5_pth(bundle_root: Path) -> tuple[Path, Path] | None:
         te_shards = sorted(te_dir.glob("*.safetensors"))
         if te_shards:
             return te_shards[0], tok_dir
+    flat_t5 = root / "t5_encoder.safetensors"
+    if flat_t5.is_file():
+        return flat_t5, tok_dir
     return None

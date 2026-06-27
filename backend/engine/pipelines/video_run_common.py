@@ -675,12 +675,17 @@ def execute_family_video_generator(pipeline,
         )
 
     factory = _get_video_generation_factory(family)
+    factory_kwargs: dict[str, Any] = {
+        "config": config,
+        "entry": entry,
+        "version_key": version_key,
+    }
+    if family == "wan":
+        factory_kwargs["project_root"] = pipeline._project_root
     generator = factory(
         pipeline.ctx,
         bundle_root,
-        config=config,
-        entry=entry,
-        version_key=version_key,
+        **factory_kwargs,
     )
     generator.load()
 

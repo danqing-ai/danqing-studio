@@ -43,6 +43,9 @@
     "setup_workspace_not_configured": "Complete workspace setup first",
     "lora_search_failed": "LoRA search failed: {msg}"
   },
+  "avatar": {
+    "ttsBackendNotImplemented": "TTS backend is not implemented yet."
+  },
   "log": {
     "generating_step": "Generating... step {step}/{total}",
     "generation_complete": "Generation complete",

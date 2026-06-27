@@ -173,8 +173,8 @@
     </div>
   </DqDrawer>
 
-  <!-- Extra reference images (Bernini R2V / RV2V) -->
-  <DqDialog v-model:open="showExtraRefPicker" :title="$t('video.berniniRefTitle')" width="70%">
+  <!-- Extra reference images -->
+  <DqDialog v-model:open="showExtraRefPicker" :title="$t('create.refImage')" width="70%">
     <AssetPicker
       accept-kind="image"
       :recent-gallery="recentStartImages"
@@ -1008,7 +1008,6 @@ const extraReferenceMedia = computed(() =>
   extraRefPaths.value.map((path, idx) => ({
     path,
     previewUrl: extraRefPreviews.value[idx] || bindVideoAssetFromPath(path).previewUrl,
-    label: $tt('video.berniniRefLabel'),
   })),
 );
 

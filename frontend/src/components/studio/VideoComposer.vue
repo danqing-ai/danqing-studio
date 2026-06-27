@@ -36,10 +36,6 @@
       </RouterLink>
     </div>
 
-    <p v-if="berniniModeBanner" class="video-composer__bernini-banner">
-      {{ berniniModeBanner }}
-    </p>
-
     <!-- Prompt -->
     <div class="video-composer__prompt-block">
     <div class="video-composer__prompt-wrap">
@@ -52,13 +48,23 @@
         class="video-composer__prompt"
         @keydown="onKeydown"
       />
-      <!-- Reference media: start + tail images (animate) or source video (edit) -->
-      <div v-if="needsReferenceInput" class="video-composer__ref-area">
-        <div class="video-composer__ref-slot">
+      <!-- Reference media inside textarea: start/tail/source video + Bernini refs -->
+      <div v-if="showRefArea" class="video-composer__ref-area">
+        <div v-if="needsReferenceInput" class="video-composer__ref-slot">
           <div v-if="referenceMedia" class="video-composer__ref-pill">
-            <img v-if="referenceMedia.type === 'image'" :src="referenceMedia.previewUrl" />
-            <video v-else-if="referenceMedia.type === 'video'" :src="referenceMedia.previewUrl" />
-            <span class="video-composer__ref-label">{{ referenceMedia.label }}</span>
+            <ComposerIconTip :content="primaryRefHoverTip">
+              <img
+                v-if="referenceMedia.type === 'image'"
+                :src="referenceMedia.previewUrl"
+                alt=""
+                class="video-composer__ref-thumb"
+              />
+              <video
+                v-else-if="referenceMedia.type === 'video'"
+                :src="referenceMedia.previewUrl"
+                class="video-composer__ref-thumb"
+              />
+            </ComposerIconTip>
             <ComposerIconTip
               v-if="workMode === 'animate' && referenceMedia.type === 'image' && referenceAssetId"
               :content="$t('create.composerTip.reversePromptVideo')"
@@ -84,7 +90,7 @@
               </DqIconButton>
             </ComposerIconTip>
           </div>
-          <ComposerIconTip v-else :content="referenceMediaTip">
+          <ComposerIconTip v-else :content="primaryRefHoverTip">
             <DqIconButton
               type="text"
               size="xs"
@@ -98,8 +104,9 @@
         </div>
         <div v-if="workMode === 'animate'" class="video-composer__ref-slot">
           <div v-if="tailReferenceMedia" class="video-composer__ref-pill">
-            <img :src="tailReferenceMedia.previewUrl" />
-            <span class="video-composer__ref-label">{{ tailReferenceMedia.label }}</span>
+            <ComposerIconTip :content="$t('video.tailFrameTitle')">
+              <img :src="tailReferenceMedia.previewUrl" alt="" class="video-composer__ref-thumb" />
+            </ComposerIconTip>
             <ComposerIconTip :content="$t('create.composerTip.removeRef')">
               <DqIconButton
                 type="text"
@@ -123,45 +130,43 @@
             </DqIconButton>
           </ComposerIconTip>
         </div>
-      </div>
-
-      <div v-if="showBerniniReferences" class="video-composer__bernini-refs">
-        <span class="video-composer__bernini-refs-label">{{ $t('video.berniniRefTitle') }}</span>
-        <div class="video-composer__bernini-refs-row">
+        <template v-if="showBerniniReferences">
           <div
             v-for="(ref, idx) in extraReferenceMedia"
             :key="ref.path"
-            class="video-composer__ref-pill video-composer__ref-pill--extra"
+            class="video-composer__ref-slot"
           >
-            <img :src="ref.previewUrl" alt="" />
-            <span class="video-composer__ref-label">{{ ref.label || $t('video.berniniRefLabel') }}</span>
-            <ComposerIconTip :content="$t('create.composerTip.removeRef')">
-              <DqIconButton
-                type="text"
-                size="xs"
-                :aria-label="$tt('common.delete')"
-                @click="$emit('remove-extra-reference', idx)"
-              >
-                <DqIcon :size="10"><Close /></DqIcon>
-              </DqIconButton>
-            </ComposerIconTip>
+            <div class="video-composer__ref-pill">
+              <ComposerIconTip :content="$t('create.refImgPreview')">
+                <img :src="ref.previewUrl" alt="" class="video-composer__ref-thumb" />
+              </ComposerIconTip>
+              <ComposerIconTip :content="$t('create.composerTip.removeRef')">
+                <DqIconButton
+                  type="text"
+                  size="xs"
+                  :aria-label="$tt('common.delete')"
+                  @click="$emit('remove-extra-reference', idx)"
+                >
+                  <DqIcon :size="10"><Close /></DqIcon>
+                </DqIconButton>
+              </ComposerIconTip>
+            </div>
           </div>
           <ComposerIconTip
             v-if="extraReferenceMedia.length < berniniRefMax"
-            :content="$t('video.berniniRefPickTip')"
+            :content="$t('create.refImgPreview')"
           >
             <DqIconButton
               type="text"
               size="xs"
               class="video-composer__ref-add"
-              :aria-label="$t('video.berniniRefTitle')"
+              :aria-label="$t('create.refImage')"
               @click="$emit('pick-extra-reference')"
             >
               <DqIcon :size="14"><Picture /></DqIcon>
             </DqIconButton>
           </ComposerIconTip>
-        </div>
-        <p class="video-composer__bernini-refs-hint">{{ berniniRefsHint }}</p>
+        </template>
       </div>
 
       <!-- Preset / enhance (prompt corner, same as ImageComposer) -->
@@ -494,10 +499,7 @@ import {
   type CompatibleLoraRow,
 } from '@/utils/loraAdapterMeta';
 import {
-  berniniMaxReferenceImages,
-  isBerniniRenderer,
   supportsBerniniReferenceImages,
-  videoRequiresSourceVideo,
 } from '@/utils/videoEditSource';
 
 const props = defineProps<{
@@ -651,39 +653,15 @@ const showBerniniReferences = computed(
   () => Boolean(props.showBerniniReferences) && supportsBerniniReferenceImages(paramSchema.value),
 );
 
+const showRefArea = computed(
+  () => needsReferenceInput.value || showBerniniReferences.value,
+);
+
 const extraReferenceMedia = computed(
   () => props.extraReferenceMedia || [],
 );
 
 const berniniRefMax = computed(() => props.berniniRefMax ?? 5);
-
-const berniniModeBanner = computed(() => {
-  if (!isBerniniRenderer(paramSchema.value)) return '';
-  if (props.workMode === 'create') {
-    return extraReferenceMedia.value.length
-      ? $tt('video.berniniBannerR2v')
-      : $tt('video.berniniBannerT2v');
-  }
-  if (props.workMode === 'edit') {
-    return extraReferenceMedia.value.length
-      ? $tt('video.berniniBannerRv2v')
-      : $tt('video.berniniBannerV2v');
-  }
-  if (props.workMode === 'animate') {
-    return $tt('video.berniniBannerAnimate');
-  }
-  return '';
-});
-
-const berniniRefsHint = computed(() => {
-  if (props.workMode === 'create') {
-    return $tt('video.berniniRefHintCreate');
-  }
-  if (props.workMode === 'edit') {
-    return $tt('video.berniniRefHintEdit');
-  }
-  return $tt('video.berniniRefHint');
-});
 
 const paramSchema = computed(() => props.currentModelConfig?.parameters || {});
 
@@ -720,15 +698,10 @@ const referenceMediaLabel = computed(() => {
   return $tt('create.refImage');
 });
 
-const referenceMediaTip = computed(() => {
-  if (props.workMode === 'edit') {
-    if (videoRequiresSourceVideo(paramSchema.value)) {
-      return $tt('video.editSourceHintFull');
-    }
-    return $tt('video.editSourceHint');
-  }
-  if (props.workMode === 'animate') return $t('create.composerTip.reversePromptVideo');
-  return $t('create.composerTip.refImage');
+const primaryRefHoverTip = computed(() => {
+  if (props.workMode === 'edit') return $tt('video.editSourceTitle');
+  if (props.workMode === 'animate') return $tt('video.composerStartFrame');
+  return $t('create.refImgPreview');
 });
 
 const shortcutHint = computed(() => {
@@ -886,17 +859,12 @@ function onKeydown(e: KeyboardEvent) {
   border: 1px solid var(--dq-border-subtle);
 }
 
-.video-composer__ref-pill img,
-.video-composer__ref-pill video {
+.video-composer__ref-thumb {
+  display: block;
   width: 20px;
   height: 20px;
   object-fit: cover;
   border-radius: 3px;
-}
-
-.video-composer__ref-label {
-  font-size: 11px;
-  color: var(--dq-label-secondary);
 }
 
 .video-composer__ref-add {
@@ -906,47 +874,6 @@ function onKeydown(e: KeyboardEvent) {
 
 .video-composer__ref-add:hover {
   opacity: 1;
-}
-
-.video-composer__bernini-banner {
-  margin: 0 0 8px;
-  font-size: 12px;
-  line-height: 1.45;
-  color: var(--dq-label-secondary);
-}
-
-.video-composer__bernini-refs {
-  margin-top: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 0 4px 4px;
-}
-
-.video-composer__bernini-refs-label {
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--dq-label-secondary);
-}
-
-.video-composer__bernini-refs-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-}
-
-.video-composer__bernini-refs-hint {
-  margin: 0;
-  font-size: 11px;
-  line-height: 1.4;
-  color: var(--dq-label-tertiary);
-}
-
-.video-composer__ref-pill--extra img {
-  width: 36px;
-  height: 36px;
-  object-fit: cover;
 }
 
 /* Preset picker inside textarea (bottom-right) */

@@ -19,6 +19,14 @@
     </div>
 
     <div class="avatar-composer__refs">
+      <div class="avatar-composer__mode-switch">
+        <DqSegmented
+          v-model="localMode"
+          block
+          :options="modeOptions"
+        />
+      </div>
+
       <div class="avatar-composer__ref-block">
         <div class="avatar-composer__ref-label">{{ $tt('avatar.portrait') }}</div>
         <div v-if="portraitPreview" class="avatar-composer__ref-pill">
@@ -28,13 +36,13 @@
             <DqIcon :size="10"><Close /></DqIcon>
           </DqIconButton>
         </div>
-        <DqButton v-else size="sm" @click="$emit('pick-portrait')">
-          <DqIcon><Picture /></DqIcon>
+        <DqButton v-else size="sm" class="avatar-composer__ref-btn" @click="$emit('pick-portrait')">
+          <DqIcon :size="14"><Picture /></DqIcon>
           {{ $tt('avatar.pickPortrait') }}
         </DqButton>
       </div>
 
-      <div class="avatar-composer__ref-block">
+      <div v-if="localMode === 'lip_sync'" class="avatar-composer__ref-block">
         <div class="avatar-composer__ref-label">{{ $tt('avatar.voiceTrack') }}</div>
         <div v-if="audioLabel" class="avatar-composer__ref-pill">
           <DqIcon :size="14"><Microphone /></DqIcon>
@@ -43,10 +51,22 @@
             <DqIcon :size="10"><Close /></DqIcon>
           </DqIconButton>
         </div>
-        <DqButton v-else size="sm" @click="$emit('pick-audio')">
-          <DqIcon><Microphone /></DqIcon>
+        <DqButton v-else size="sm" class="avatar-composer__ref-btn" @click="$emit('pick-audio')">
+          <DqIcon :size="14"><Microphone /></DqIcon>
           {{ $tt('avatar.pickAudio') }}
         </DqButton>
+      </div>
+
+      <div v-else class="avatar-composer__script-block">
+        <DqInput
+          v-model="localScriptText"
+          type="textarea"
+          :rows="4"
+          :placeholder="$tt('avatar.scriptPlaceholder')"
+          resize="none"
+          class="avatar-composer__script"
+        />
+        <p class="avatar-composer__script-hint">{{ $tt('avatar.scriptHint') }}</p>
       </div>
     </div>
 
@@ -143,6 +163,7 @@
 // @ts-nocheck — registry param schema is dynamic
 import { computed } from 'vue';
 import { Close, Microphone, Picture } from '@danqing/dq-shell';
+import { DqSegmented } from '@danqing/dq-ui';
 import { $tt } from '@/utils/i18n';
 
 const props = withDefaults(
@@ -151,6 +172,8 @@ const props = withDefaults(
     title: string;
     model: string;
     resolution: string;
+    mode: 'lip_sync' | 'script';
+    scriptText: string;
     params: Record<string, unknown>;
     generating?: boolean;
     canGenerate?: boolean;
@@ -167,6 +190,8 @@ const props = withDefaults(
     generating: false,
     canGenerate: false,
     generateLabel: '',
+    mode: 'lip_sync',
+    scriptText: '',
     modelOptions: () => [],
     resolutionOptions: () => [],
     currentModelConfig: null,
@@ -182,6 +207,8 @@ const emit = defineEmits<{
   (e: 'update:title', v: string): void;
   (e: 'update:model', v: string): void;
   (e: 'update:resolution', v: string): void;
+  (e: 'update:mode', v: 'lip_sync' | 'script'): void;
+  (e: 'update:scriptText', v: string): void;
   (e: 'update:params', v: Record<string, unknown>): void;
   (e: 'generate'): void;
   (e: 'pick-portrait'): void;
@@ -207,6 +234,19 @@ const localResolution = computed({
   get: () => props.resolution,
   set: (v: string) => emit('update:resolution', v),
 });
+const localMode = computed({
+  get: () => props.mode,
+  set: (v: 'lip_sync' | 'script') => emit('update:mode', v),
+});
+const localScriptText = computed({
+  get: () => props.scriptText,
+  set: (v: string) => emit('update:scriptText', v),
+});
+
+const modeOptions = computed(() => [
+  { label: $tt('avatar.modeLipSync'), value: 'lip_sync' },
+  { label: $tt('avatar.modeScript'), value: 'script' },
+]);
 
 const paramSchema = computed(() => ((props.currentModelConfig?.parameters as Record<string, unknown>) || {}));
 const showSeedField = computed(() => paramSchema.value.seed_support !== false);
@@ -217,45 +257,87 @@ function patchParams(patch: Record<string, unknown>) {
 </script>
 
 <style scoped>
+.avatar-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  container-type: inline-size;
+  box-sizing: border-box;
+}
+
 .avatar-composer__title {
-  margin-bottom: var(--dq-space-3);
+  margin: 0;
+}
+
+.avatar-composer__title :deep(.dq-input) {
+  font-size: 13px;
+  border-radius: var(--dq-radius-input);
 }
 
 .avatar-composer__prompt-wrap {
-  margin-bottom: var(--dq-space-3);
+  margin: 0;
+}
+
+.avatar-composer__prompt :deep(.dq-input--textarea) {
+  border-radius: var(--dq-radius-group);
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 10px 12px 32px;
+  min-height: 7rem;
+  max-height: 14rem;
+  resize: none;
+  overflow-y: auto;
+  transition: border-color 0.15s ease, background 0.15s ease;
 }
 
 .avatar-composer__refs {
-  display: grid;
-  gap: var(--dq-space-3);
-  margin-bottom: var(--dq-space-4);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 8px;
 }
 
 .avatar-composer__ref-block {
-  display: grid;
-  gap: var(--dq-space-2);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .avatar-composer__ref-label {
-  font-size: var(--dq-font-size-sm);
-  color: var(--dq-color-text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--dq-label-secondary);
+  line-height: 1.3;
+}
+
+.avatar-composer__ref-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  font-size: 12px;
+  padding: 6px 10px;
 }
 
 .avatar-composer__ref-pill {
   display: inline-flex;
   align-items: center;
-  gap: var(--dq-space-2);
-  padding: var(--dq-space-1) var(--dq-space-2);
-  border-radius: var(--dq-radius-md);
-  background: var(--dq-color-fill-secondary);
+  gap: 6px;
+  padding: 3px 8px 3px 3px;
+  background: var(--dq-fill-secondary);
+  border-radius: 6px;
+  border: 1px solid var(--dq-border-subtle);
   max-width: 100%;
 }
 
 .avatar-composer__ref-thumb {
-  width: 32px;
-  height: 32px;
+  width: 24px;
+  height: 24px;
   object-fit: cover;
-  border-radius: var(--dq-radius-sm);
+  border-radius: 4px;
 }
 
 .avatar-composer__ref-name {
@@ -264,32 +346,97 @@ function patchParams(patch: Record<string, unknown>) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--dq-font-size-sm);
+  font-size: 11px;
+  color: var(--dq-label-secondary);
+}
+
+.avatar-composer__mode-switch {
+  margin: 0;
+}
+
+.avatar-composer__mode-switch :deep(.dq-segmented) {
+  width: 100%;
+}
+
+.avatar-composer__mode-switch :deep(.dq-segmented__item) {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 5px 8px;
+  font-size: 12px;
+}
+
+.avatar-composer__script-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.avatar-composer__script :deep(.dq-input--textarea) {
+  border-radius: var(--dq-radius-group);
+  font-size: 13px;
+  line-height: 1.5;
+  padding: 10px 12px;
+  min-height: 6rem;
+  max-height: 12rem;
+  resize: none;
+  overflow-y: auto;
+}
+
+.avatar-composer__script-hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--dq-label-tertiary);
 }
 
 .avatar-composer__row {
-  display: grid;
-  gap: var(--dq-space-2);
-  margin-bottom: var(--dq-space-3);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
 }
 
 .avatar-composer__field-label {
-  font-size: var(--dq-font-size-sm);
-  color: var(--dq-color-text-secondary);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--dq-label-secondary);
+  line-height: 1.3;
+}
+
+.avatar-composer__row :deep(.dq-input),
+.avatar-composer__row :deep(.dq-select),
+.avatar-composer__row :deep(.dq-input-number) {
+  font-size: 12px;
 }
 
 .avatar-composer__row--inline {
-  grid-template-columns: 96px 1fr;
+  display: grid;
+  grid-template-columns: 80px 1fr;
   align-items: center;
+  gap: 10px;
+}
+
+.avatar-composer__row--inline .avatar-composer__field-label {
+  margin: 0;
 }
 
 .avatar-composer__advanced {
-  display: grid;
-  gap: var(--dq-space-3);
-  margin-bottom: var(--dq-space-3);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.avatar-composer__advanced .avatar-composer__row {
+  margin-bottom: 0;
 }
 
 .avatar-composer__footer {
-  margin-top: var(--dq-space-4);
+  margin-top: 8px;
+}
+
+.avatar-composer__footer :deep(.dq-button) {
+  font-size: 13px;
+  min-height: 36px;
 }
 </style>

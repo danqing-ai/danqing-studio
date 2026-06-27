@@ -28,6 +28,7 @@ from backend.engine.pipelines.video_bundle_layout import (
     resolve_video_transformer_weight_sources,
     wan_is_moe_bundle,
     wan_moe_expert_shards,
+    wan_moe_expert_tensor_root,
 )
 
 
@@ -281,7 +282,7 @@ def load_wan_moe_video_transformer(
             version_key=version_key,
             num_frames=num_frames,
             shard_paths=high_shards,
-            tensor_root=bundle_root / "high_noise_model",
+            tensor_root=wan_moe_expert_tensor_root(bundle_root, "high"),
             model_cache=expert_cache,
             cache_key_suffix=f"{base_key_suffix}-high",
             on_log=on_log,
@@ -299,7 +300,7 @@ def load_wan_moe_video_transformer(
             version_key=version_key,
             num_frames=num_frames,
             shard_paths=low_shards,
-            tensor_root=bundle_root / "low_noise_model",
+            tensor_root=wan_moe_expert_tensor_root(bundle_root, "low"),
             model_cache=expert_cache,
             cache_key_suffix=f"{base_key_suffix}-low",
             on_log=on_log,
@@ -362,9 +363,13 @@ def load_video_transformer(
     num_frames: int,
     model_cache: ModelCache | None = None,
     on_log: Any | None = None,
+    bundle_root: Path | None = None,
 ) -> Any | None:
     """Load video transformer weights from bundle (registry-driven)."""
-    bundle_root = local_bundle_root(project_root, entry, version_key)
+    if bundle_root is None:
+        bundle_root = local_bundle_root(project_root, entry, version_key)
+    elif not bundle_root.is_dir():
+        return None
     if family == "wan" and bundle_root is not None and wan_is_moe_bundle(bundle_root):
         return load_wan_moe_video_transformer(
             ctx=ctx,

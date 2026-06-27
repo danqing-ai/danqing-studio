@@ -751,6 +751,7 @@ def merge_wan_config_from_bundle(config: WanConfig, bundle_root: Path | None) ->
         "expand_timesteps": "expand_timesteps",
         "vae_scale": "vae_scale",
         "temporal_vae_scale": "temporal_vae_scale",
+        "vae_z_dim": "vae_z_dim",
         "use_src_id_rotary_emb": "use_src_id_rotary_emb",
         "interpolate_src_id": "interpolate_src_id",
         "max_trained_src_id": "max_trained_src_id",

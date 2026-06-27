@@ -8644,7 +8644,8 @@
         }
       },
       "actions": {
-        "avatar": {}
+        "avatar": {},
+        "avatar_script": {}
       },
       "ui": {
         "parameters": {

@@ -15,9 +15,10 @@ from backend.core.contracts import (
     ImageEditRequest,
     ImageGenerationRequest,
     ImageUpscaleRequest,
+    VideoAvatarRequest,
+    VideoAvatarScriptRequest,
     VideoEditRequest,
     VideoGenerationRequest,
-    VideoAvatarRequest,
     VideoLongGenerationRequest,
     VideoUpscaleRequest,
 )
@@ -81,7 +82,7 @@ class IVideoEngine(ABC):
 
     @abstractmethod
     def supports(self, model_id: str, action: str) -> bool:
-        """action: generate | edit | avatar | upscale"""
+        """action: generate | edit | avatar | avatar_script | upscale"""
         ...
 
     @abstractmethod
@@ -106,6 +107,13 @@ class IVideoEngine(ABC):
 
     @abstractmethod
     async def avatar(self, request: VideoAvatarRequest, ctx: ExecutionContext) -> EngineResult:
+        pass
+
+    @abstractmethod
+    async def avatar_script(
+        self, request: VideoAvatarScriptRequest, ctx: ExecutionContext
+    ) -> EngineResult:
+        """Text-script-driven avatar video (TTS → lip-sync). Phase 1 placeholder."""
         pass
 
     @abstractmethod

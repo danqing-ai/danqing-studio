@@ -7,6 +7,7 @@ from backend.api.routes.submit_helpers import submit_media_task
 from backend.core import task_kinds as TK
 from backend.core.contracts import (
     VideoAvatarRequest,
+    VideoAvatarScriptRequest,
     VideoEditRequest,
     VideoGenerationRequest,
     VideoLongGenerationRequest,
@@ -104,6 +105,22 @@ async def post_video_avatar(
         media="video",
         api_action="avatar",
         task_kind=TK.VIDEO_AVATAR,
+        sched=sched,
+        engines=engines,
+    )
+
+
+@router.post("/avatars/script", status_code=202)
+async def post_video_avatar_script(
+    body: VideoAvatarScriptRequest,
+    sched: TaskScheduler = Depends(get_task_scheduler),
+    engines: EngineRegistry = Depends(get_engine_registry),
+):
+    return await submit_media_task(
+        body=body,
+        media="video",
+        api_action="avatar_script",
+        task_kind=TK.VIDEO_AVATAR_SCRIPT,
         sched=sched,
         engines=engines,
     )

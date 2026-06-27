@@ -263,6 +263,41 @@ class VideoAvatarRequest(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class VideoAvatarScriptRequest(BaseModel):
+    """Text-script-driven digital human: portrait + script -> TTS audio -> lip-sync video.
+
+    Phase 1: fully stubbed; the engine raises RuntimeError to fail loud.
+    Phase 2: TTS family will synthesize audio before delegating to avatar().
+    """
+
+    model: str
+    title: str = ""
+    prompt: str = ""
+    negative_prompt: str = ""
+    reference_asset_id: str
+    script_text: str = Field(
+        ...,
+        min_length=1,
+        max_length=2000,
+        description="Spoken script to be synthesized into audio.",
+    )
+    tts_model: str = Field(
+        default="",
+        description="Optional TTS model id; reserved for phase 2.",
+    )
+    voice_id: str = Field(
+        default="",
+        description="Optional voice id; reserved for phase 2.",
+    )
+    size: str = "512x512"
+    num_frames: int = 93
+    fps: int = 25
+    steps: Optional[int] = None
+    seed: Optional[int] = None
+    priority: Literal["normal", "high"] = "normal"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class VideoEditRequest(BaseModel):
     model: str
     operation: Literal["animate"] = "animate"

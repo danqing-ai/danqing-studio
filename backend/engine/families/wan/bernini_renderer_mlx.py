@@ -89,14 +89,15 @@ class BerniniRendererMLX:
         config: WanConfig | None = None,
         entry: Any | None = None,
         version_key: str | None = None,
+        project_root: Path | None = None,
     ) -> None:
         self.ctx = ctx
         self.bundle_root = Path(bundle_root)
         self.config = config or WanConfig()
         self.entry = entry
         self.version_key = version_key
+        self._project_root = Path(project_root) if project_root is not None else self.bundle_root
         self._model: Any | None = None
-        self._project_root = Path(__file__).resolve().parents[4]
 
     def load(self) -> None:
         if self.entry is not None:
@@ -114,12 +115,16 @@ class BerniniRendererMLX:
             entry=self.entry,
             version_key=self.version_key,
             project_root=self._project_root,
+            bundle_root=self.bundle_root,
             num_frames=num_frames,
             model_cache=None,
             on_log=None,
         )
         if self._model is None:
-            raise RuntimeError(f"Failed to load Bernini-R transformer from {self.bundle_root}")
+            raise RuntimeError(
+                f"Failed to load Bernini-R transformer from {self.bundle_root} "
+                "(no DiT shards found under transformer/ or model.safetensors at bundle root)."
+            )
 
     def _encode_text(
         self,
@@ -477,7 +482,7 @@ class BerniniRendererMLX:
         if on_progress is not None:
             emit_complete(on_progress, n_steps)
 
-        pipeline_stub = type("P", (), {"ctx": ctx})()
+        pipeline_stub = type("P", (), {"ctx": ctx, "_project_root": self._project_root})()
         if on_log is not None:
             on_log("info", "Decoding Bernini-R latents (VAE)...")
         frames = vae_decode_video(

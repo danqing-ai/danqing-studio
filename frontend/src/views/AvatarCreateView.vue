@@ -68,10 +68,14 @@
       :resolution-options="resolutionSelectOptions"
       :current-model-config="currentModelConfig"
       :show-negative-prompt="supportsNegativePrompt"
+      :mode="mode"
+      :script-text="scriptText"
       :portrait-preview="portraitPreviewUrl"
       :portrait-label="portraitLabel"
       :audio-label="audioLabel"
       @update:params="applyComposerParams"
+      @update:mode="mode = $event"
+      @update:script-text="scriptText = $event"
       @generate="onGenerate"
       @pick-portrait="openPortraitPicker"
       @remove-portrait="clearPortrait"
@@ -161,6 +165,8 @@ const audioLabel = ref('');
 const audioFile = ref<File | null>(null);
 const selectedModelVersion = ref('');
 const selectedResolution = ref('512x512');
+const mode = ref<'lip_sync' | 'script'>('lip_sync');
+const scriptText = ref('');
 
 const params = reactive({
   title: '',
@@ -280,7 +286,8 @@ const submitDisabled = computed(() => {
   if (generating.value) return true;
   if (!params.model || !modelReady.value) return true;
   if (!portraitAssetId.value && !portraitFile.value) return true;
-  if (!audioAssetId.value && !audioFile.value) return true;
+  if (mode.value === 'lip_sync' && !audioAssetId.value && !audioFile.value) return true;
+  if (mode.value === 'script' && !scriptText.value.trim()) return true;
   return false;
 });
 
@@ -482,26 +489,19 @@ async function onGenerate() {
   generating.value = true;
   try {
     const refId = await resolveAssetId(portraitAssetId.value, portraitFile.value);
-    const audId = await resolveAssetId(audioAssetId.value, audioFile.value);
     if (!refId) {
       toast.warning($tt('avatar.needPortrait'));
       generating.value = false;
       return;
     }
-    if (!audId) {
-      toast.warning($tt('avatar.needAudio'));
-      generating.value = false;
-      return;
-    }
 
     const modelField = params.version ? `${params.model}:${params.version}` : params.model;
-    const body: Record<string, unknown> = {
+    const commonBody: Record<string, unknown> = {
       model: modelField,
       title: params.title || '',
       prompt: params.prompt || '',
       negative_prompt: params.negative_prompt || '',
       reference_asset_id: refId,
-      audio_asset_id: audId,
       size: `${params.width}x${params.height}`,
       num_frames: params.num_frames,
       fps: params.fps,
@@ -509,7 +509,32 @@ async function onGenerate() {
       seed: params.seed,
     };
 
-    const submitRes = await api.gen.createVideoAvatar(body);
+    let submitRes: unknown;
+    if (mode.value === 'script') {
+      const text = scriptText.value.trim();
+      if (!text) {
+        toast.warning($tt('avatar.needScript'));
+        generating.value = false;
+        return;
+      }
+      submitRes = await api.gen.createVideoAvatarScript({
+        ...commonBody,
+        script_text: text,
+        tts_model: '',
+        voice_id: '',
+      });
+    } else {
+      const audId = await resolveAssetId(audioAssetId.value, audioFile.value);
+      if (!audId) {
+        toast.warning($tt('avatar.needAudio'));
+        generating.value = false;
+        return;
+      }
+      submitRes = await api.gen.createVideoAvatar({
+        ...commonBody,
+        audio_asset_id: audId,
+      });
+    }
     await runGenerationTask(submitRes);
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);

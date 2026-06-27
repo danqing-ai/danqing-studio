@@ -60,11 +60,23 @@ _WAN22_VAE_STD = [
 
 
 def _conv3d_weight_torch_to_mlx(w: mx.array) -> mx.array:
-    return mx.transpose(w, (0, 2, 3, 4, 1))
+    if w.ndim != 5:
+        return w
+    out, d1, d2, d3, d4 = (int(x) for x in w.shape)
+    # PyTorch (O, I, kT, kH, kW): channel dim at index 1, kernel at 2–4.
+    if d2 in (1, 3, 5, 7) and d3 in (1, 3, 5, 7) and d4 in (1, 3, 5, 7) and d1 > d4:
+        return mx.transpose(w, (0, 2, 3, 4, 1))
+    # Already MLX / mlx-community layout (O, kT, kH, kW, I).
+    return w
 
 
 def _conv2d_weight_torch_to_mlx(w: mx.array) -> mx.array:
-    return mx.transpose(w, (0, 2, 3, 1))
+    if w.ndim != 4:
+        return w
+    out, d1, d2, d3 = (int(x) for x in w.shape)
+    if d2 in (1, 3, 5, 7) and d3 in (1, 3, 5, 7) and d1 > d3:
+        return mx.transpose(w, (0, 2, 3, 1))
+    return w
 
 
 def _ncthw_to_ndhwc(x: mx.array) -> mx.array:
@@ -1508,8 +1520,17 @@ def _load_vae_state_dict(
             merged = {k: v.astype(mx.float32) for k, v in merged.items()}
             return _normalize_vae_state_dict(merged)
 
+    root_vae = bundle_root / "vae.safetensors"
+    if root_vae.is_file():
+        merged = load_weights_dict(load_fn, str(root_vae))
+        if merged:
+            logger.info("Loading Wan VAE weights from %s (%d tensors)", root_vae, len(merged))
+            merged = {k: v.astype(mx.float32) for k, v in merged.items()}
+            return _normalize_vae_state_dict(merged)
+
     raise RuntimeError(
-        f"Wan VAE weights not found under {bundle_root}: expected Wan2.2_VAE.pth or vae/*.safetensors"
+        f"Wan VAE weights not found under {bundle_root}: "
+        "expected Wan2.2_VAE.pth, vae/*.safetensors, or vae.safetensors"
     )
 
 

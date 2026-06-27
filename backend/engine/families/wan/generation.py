@@ -40,6 +40,7 @@ def create_bernini_renderer_generator(
     config: WanConfig | None = None,
     entry: Any | None = None,
     version_key: str | None = None,
+    project_root: Path | None = None,
 ) -> BerniniRendererProto:
     backend = getattr(ctx, "backend", "mlx")
     if backend != "mlx":
@@ -62,6 +63,7 @@ def create_bernini_renderer_generator(
         config=config,
         entry=entry,
         version_key=version_key,
+        project_root=project_root,
     )
 
 

@@ -10,11 +10,13 @@ from pathlib import Path
 from typing import ClassVar, List, Any
 
 from backend.core.contracts import (
-    EngineResult, ExecutionContext, VideoAvatarRequest, VideoEditRequest,
+    EngineResult, ExecutionContext,
+    VideoAvatarRequest, VideoAvatarScriptRequest, VideoEditRequest,
     VideoGenerationRequest, VideoLongGenerationRequest, VideoUpscaleRequest, parse_model_version,
 )
 from backend.core.media_interfaces import IVideoEngine
 from backend.core.interfaces import IPathResolver
+from backend.core.i18n import t
 from .cache import ModelCache
 from .lineage import resolve_lineage, video_edit_relation_type
 from .progress_bridge import make_pipeline_progress_callback
@@ -240,6 +242,24 @@ class DanQingVideoEngine(IVideoEngine):
             parent_asset_id=parent_id, relation_type=relation,
         )
         return EngineResult(primary_asset_id=aid, asset_ids=[aid], output_paths=[output_path])
+
+    async def avatar_script(
+        self, request: VideoAvatarScriptRequest, ctx: ExecutionContext
+    ) -> EngineResult:
+        """Phase 1: fail-loud placeholder for script-to-avatar workflow.
+
+        In phase 2 this will synthesize audio via a TTS family and then delegate
+        to :meth:`avatar` with the generated audio asset.
+        """
+        if not self.supports(request.model, "avatar_script"):
+            mid = request.model.split(":", 1)[0]
+            raise RuntimeError(
+                f"Model {mid!r} does not support video avatar script for this engine; "
+                "see config/models_registry.json actions."
+            )
+        raise RuntimeError(
+            t("avatar.ttsBackendNotImplemented", ctx.locale)
+        )
 
     async def upscale(self, request: VideoUpscaleRequest, ctx: ExecutionContext) -> EngineResult:
         if not self.supports(request.model, "upscale"):

@@ -102,6 +102,10 @@ def wan_is_moe_bundle(bundle_root: Path) -> bool:
     """True when bundle has Wan 14B high/low noise expert directories."""
     if not bundle_root.is_dir():
         return False
+    if (bundle_root / "high_noise_model.safetensors").is_file() and (
+        bundle_root / "low_noise_model.safetensors"
+    ).is_file():
+        return True
     if (bundle_root / "high_noise_model").is_dir() and (bundle_root / "low_noise_model").is_dir():
         return True
     # ByteDance Bernini-R / mlx-community MoE diffusers layout (pre-assembly).
@@ -133,8 +137,30 @@ def _wan_moe_expert_dir(bundle_root: Path, expert: str) -> Path:
     return candidates[0]
 
 
+def _wan_moe_flat_root_shard(bundle_root: Path, expert: str) -> Path | None:
+    if expert == "high":
+        name = "high_noise_model.safetensors"
+    elif expert == "low":
+        name = "low_noise_model.safetensors"
+    else:
+        raise RuntimeError(f"_wan_moe_flat_root_shard: expert must be 'high' or 'low', got {expert!r}")
+    path = bundle_root / name
+    return path if path.is_file() else None
+
+
+def wan_moe_expert_tensor_root(bundle_root: Path, expert: str) -> Path:
+    """Directory passed to affine-quant metadata readers for one MoE expert."""
+    flat = _wan_moe_flat_root_shard(bundle_root, expert)
+    if flat is not None:
+        return bundle_root
+    return _wan_moe_expert_dir(bundle_root, expert)
+
+
 def wan_moe_expert_shards(bundle_root: Path, expert: str) -> list[Path]:
     """Return safetensors for one MoE expert (``high`` or ``low``)."""
+    flat = _wan_moe_flat_root_shard(bundle_root, expert)
+    if flat is not None:
+        return [flat]
     expert_dir = _wan_moe_expert_dir(bundle_root, expert)
     if not expert_dir.is_dir():
         return []

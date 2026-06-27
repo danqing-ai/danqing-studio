@@ -607,7 +607,14 @@
     "pickPortrait": "Pick portrait",
     "pickAudio": "Pick audio",
     "needPortrait": "Select a portrait reference image first",
-    "needAudio": "Select a voice audio track first"
+    "needAudio": "Select a voice audio track first",
+    "modeLipSync": "Lip Sync",
+    "modeScript": "Script",
+    "script": "Script text",
+    "scriptPlaceholder": "Enter the script your avatar will speak...",
+    "scriptHint": "The app will synthesize speech and generate a lip-sync video (coming soon).",
+    "needScript": "Enter a script first",
+    "ttsBackendNotImplemented": "TTS backend is not implemented yet."
   },
   "audio": {
     "title": "Audio Create",
@@ -894,6 +901,7 @@
     "modeEdit": "Video edit",
     "modeUpscale": "Video restoration",
     "editSourceTitle": "Source video",
+    "composerStartFrame": "Start frame",
     "editSourceHint": "Upload or pick the source video to edit; combine with your prompt for style transfer, local edits, etc.",
     "needEditSource": "Upload or pick a source video first.",
     "presetNeedsEditSource": "This preset is for video edit—add a source video first.",

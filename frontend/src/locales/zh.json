@@ -607,7 +607,14 @@
     "pickPortrait": "选择人像",
     "pickAudio": "选择音频",
     "needPortrait": "请先选择人像参考图",
-    "needAudio": "请先选择配音音频"
+    "needAudio": "请先选择配音音频",
+    "modeLipSync": "对口型",
+    "modeScript": "念台词",
+    "script": "台词文本",
+    "scriptPlaceholder": "输入要由数字人念出的台词，例如：大家好，今天为大家介绍一款新产品……",
+    "scriptHint": "系统将自动把台词转为配音并生成对口型视频（即将上线）。",
+    "needScript": "请先输入台词文本",
+    "ttsBackendNotImplemented": "TTS 后端尚未实现，敬请期待。"
   },
   "audio": {
     "title": "音频创作",
@@ -894,6 +901,7 @@
     "modeEdit": "视频编辑",
     "modeUpscale": "视频修复",
     "editSourceTitle": "源视频",
+    "composerStartFrame": "首帧图",
     "editSourceHint": "上传或选择要编辑的源视频，配合提示词做风格迁移、局部编辑等。",
     "needEditSource": "请先上传或选择源视频。",
     "presetNeedsEditSource": "该预设面向视频编辑，请先添加源视频。",

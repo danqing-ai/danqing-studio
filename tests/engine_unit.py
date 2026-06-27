@@ -1091,6 +1091,7 @@ class LtxWeightTests(unittest.TestCase):
         self.assertIsNotNone(entry)
         self.assertEqual(entry.family, "longcat_avatar")
         self.assertIn("avatar", entry.actions)
+        self.assertIn("avatar_script", entry.actions)
 
     def test_ltx_timestep_embedder_callable(self) -> None:
         import mlx.core as mx
@@ -2754,6 +2755,61 @@ class HunyuanWeightTests(unittest.TestCase):
         self.assertEqual(out["blocks.0.ffn.layer_0.scales"], "s0")
         self.assertEqual(out["blocks.0.ffn.layer_0.biases"], "b0")
         self.assertEqual(out["blocks.0.ffn.layer_2.weight"], "w2")
+
+    def test_remap_wan_weights_bernini_mlx_ffn_fc(self) -> None:
+        from backend.engine.families.wan.weights import remap_wan_weights
+
+        out = remap_wan_weights(
+            {
+                "blocks.3.ffn.fc2.weight": "w",
+                "blocks.3.ffn.fc2.scales": "s",
+                "blocks.3.ffn.fc1.bias": "b",
+                "patch_embedding_proj.weight": "p",
+                "text_embedding_0.weight": "t0",
+                "text_embedding_1.weight": "t1",
+                "time_embedding_0.weight": "e0",
+                "time_embedding_1.weight": "e1",
+                "time_projection.weight": "tp",
+            }
+        )
+        self.assertEqual(out["blocks.3.ffn.layer_2.weight"], "w")
+        self.assertEqual(out["blocks.3.ffn.layer_2.scales"], "s")
+        self.assertEqual(out["blocks.3.ffn.layer_0.bias"], "b")
+        self.assertEqual(out["patch_embedding.weight"], "p")
+        self.assertEqual(out["text_embedding.0.weight"], "t0")
+        self.assertEqual(out["text_embedding.2.weight"], "t1")
+        self.assertEqual(out["time_embedding.0.weight"], "e0")
+        self.assertEqual(out["time_embedding.2.weight"], "e1")
+        self.assertEqual(out["time_projection.1.weight"], "tp")
+
+    def test_resolve_wan_umt5_flat_bernini_bundle(self) -> None:
+        from backend.engine.families.wan.text_encoder_mlx import (
+            _remap_wan_umt5_mlx_weights,
+            resolve_wan_umt5_pth,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            video_root = Path(tmp) / "Video"
+            bernini = video_root / "bernini-r-1.3b-mlx-q4"
+            longcat = video_root / "longcat-video-mlx-q4"
+            bernini.mkdir(parents=True)
+            longcat.mkdir(parents=True)
+            (bernini / "t5_encoder.safetensors").write_bytes(b"x")
+            tok = longcat / "tokenizer"
+            tok.mkdir()
+            (tok / "tokenizer_config.json").write_text("{}", encoding="utf-8")
+
+            resolved = resolve_wan_umt5_pth(bernini)
+            self.assertIsNotNone(resolved)
+            ckpt, tok_dir = resolved
+            self.assertEqual(ckpt.name, "t5_encoder.safetensors")
+            self.assertTrue(tok_dir.is_dir())
+
+        remapped = _remap_wan_umt5_mlx_weights(
+            {"blocks.0.ffn.gate_proj.weight": "g", "blocks.0.ffn.fc1.weight": "f"}
+        )
+        self.assertEqual(remapped["blocks.0.ffn.gate.0.weight"], "g")
+        self.assertEqual(remapped["blocks.0.ffn.fc1.weight"], "f")
 
     def test_mlx_linear_compute_dtype_quantized(self) -> None:
         from importlib import import_module
@@ -5833,6 +5889,7 @@ class ArchitectureWrapUpTests(unittest.TestCase):
         from backend.engine.pipelines.video_bundle_layout import (
             wan_is_moe_bundle,
             wan_moe_expert_shards,
+            wan_moe_expert_tensor_root,
         )
 
         with tempfile.TemporaryDirectory() as td:
@@ -5846,6 +5903,17 @@ class ArchitectureWrapUpTests(unittest.TestCase):
             self.assertTrue(wan_is_moe_bundle(root))
             self.assertEqual([high / "model.safetensors"], wan_moe_expert_shards(root, "high"))
             self.assertEqual([low / "model.safetensors"], wan_moe_expert_shards(root, "low"))
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "high_noise_model.safetensors").write_bytes(b"h")
+            (root / "low_noise_model.safetensors").write_bytes(b"l")
+            self.assertTrue(wan_is_moe_bundle(root))
+            self.assertEqual(
+                [root / "high_noise_model.safetensors"],
+                wan_moe_expert_shards(root, "high"),
+            )
+            self.assertEqual(wan_moe_expert_tensor_root(root, "high"), root)
 
     def test_resolve_wan_umt5_text_encoder_safetensors(self) -> None:
         from backend.engine.families.wan.text_encoder_mlx import resolve_wan_umt5_pth
@@ -5895,6 +5963,61 @@ class ArchitectureWrapUpTests(unittest.TestCase):
         self.assertEqual(len(linear), 8)
         self.assertAlmostEqual(linear[0], 1.0)
         self.assertAlmostEqual(linear[-1], 5.0)
+
+    def test_load_video_transformer_accepts_explicit_bundle_root(self) -> None:
+        from unittest import mock
+
+        from backend.engine.config.model_configs import WanConfig
+        from backend.engine.pipelines.video_model_load import load_video_transformer
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            ws = Path(tmp) / "workspace"
+            bundle = ws / "models" / "Video" / "bernini-r-1.3b-mlx-q4"
+            bundle.mkdir(parents=True)
+            (bundle / "model.safetensors").write_bytes(b"x")
+
+            class _Entry:
+                id = "bernini-r-1.3b"
+                raw = {
+                    "versions": {
+                        "mlx-q4": {"local_path": "models/Video/bernini-r-1.3b-mlx-q4"},
+                    }
+                }
+
+            entry = _Entry()
+            config = WanConfig()
+
+            missing_repo = load_video_transformer(
+                ctx=object(),
+                family="wan",
+                config=config,
+                entry=entry,
+                version_key="mlx-q4",
+                project_root=repo,
+                num_frames=81,
+            )
+            self.assertIsNone(missing_repo)
+
+            with mock.patch(
+                "backend.engine.pipelines.video_model_load._load_wan_single_expert",
+                return_value="loaded",
+            ) as load_fn:
+                resolved = load_video_transformer(
+                    ctx=object(),
+                    family="wan",
+                    config=config,
+                    entry=entry,
+                    version_key="mlx-q4",
+                    project_root=repo,
+                    num_frames=81,
+                    bundle_root=bundle,
+                )
+            self.assertEqual(resolved, "loaded")
+            load_fn.assert_called_once()
+            shard_paths = load_fn.call_args.kwargs["shard_paths"]
+            self.assertEqual(len(shard_paths), 1)
+            self.assertEqual(shard_paths[0].name, "model.safetensors")
 
     def test_hunyuan_i2v_download_patterns_and_siglip_bundle(self) -> None:
         from backend.services.hunyuan_ms_bundle import (

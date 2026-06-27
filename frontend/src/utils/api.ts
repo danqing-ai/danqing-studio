@@ -500,6 +500,11 @@ export const api = {
       return response.data;
     },
 
+    async createVideoAvatarScript(body: Record<string, unknown>): Promise<unknown> {
+      const response = await client.post('/api/videos/avatars/script', body);
+      return response.data;
+    },
+
     async createVideoUpscale(body: Record<string, unknown>): Promise<unknown> {
       const response = await client.post('/api/videos/upscales', body);
       return response.data;
