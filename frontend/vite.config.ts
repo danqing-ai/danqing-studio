@@ -23,6 +23,11 @@ export default defineConfig({
         target: `http://127.0.0.1:${process.env.DQ_BACKEND_PORT || 7800}`,
         changeOrigin: true,
       },
+      // OpenAI-compatible LLM/VLM routes (not under /api)
+      '/v1': {
+        target: `http://127.0.0.1:${process.env.DQ_BACKEND_PORT || 7800}`,
+        changeOrigin: true,
+      },
     },
   },
   build: {

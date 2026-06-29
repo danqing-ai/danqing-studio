@@ -177,5 +177,6 @@ async def run_engine_task(
 class _NullAssetStore:
     """CLI 不需要持久化资产时的空实现。"""
     def create_from_file(self, *a, **kw): return "cli_ast"
+    def ensure_group(self, *a, **kw): return {"id": a[0] if a else "cli_grp"}
     def get(self, *a, **kw): return None
     def list_assets(self, *a, **kw): return []

@@ -769,6 +769,11 @@ def merge_wan_config_from_bundle(config: WanConfig, bundle_root: Path | None) ->
         ps = data["patch_size"]
         if isinstance(ps, (list, tuple)) and len(ps) == 3:
             object.__setattr__(config, "patch_size", tuple(int(x) for x in ps))
+    if "vae_stride" in data:
+        vs = data["vae_stride"]
+        if isinstance(vs, (list, tuple)) and len(vs) >= 2:
+            config.temporal_vae_scale = int(vs[0])
+            config.vae_scale = int(vs[1])
     if "model_type" in data and str(data["model_type"]).lower() in ("ti2v", "t2v", "i2v"):
         object.__setattr__(config, "model_type", str(data["model_type"]).lower())
 
@@ -802,6 +807,25 @@ def merge_wan_vae_config_from_bundle(config: WanConfig, bundle_root: Path | None
         config.vae_z_dim = 16
         config.vae_scale = 8
         config.temporal_vae_scale = 4
+        return
+
+    # Bernini-R / mlx-community flat bundles: root ``vae.safetensors`` + ``config.json`` ``vae_stride``.
+    root_vae = bundle_root / "vae.safetensors"
+    root_cfg = bundle_root / "config.json"
+    if root_vae.is_file() and root_cfg.is_file():
+        try:
+            data = json.loads(root_cfg.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            raise RuntimeError(f"Wan: cannot read bundle config {root_cfg}: {e}") from e
+        vs = data.get("vae_stride")
+        if isinstance(vs, (list, tuple)) and len(vs) >= 2:
+            config.temporal_vae_scale = int(vs[0])
+            config.vae_scale = int(vs[1])
+        if "vae_z_dim" in data:
+            z = int(data["vae_z_dim"])
+            config.vae_z_dim = z
+            config.dim_in = z
+            config.dim_out = z
 
 
 def merge_wan_bundle_config(config: WanConfig, bundle_root: Path | None) -> None:

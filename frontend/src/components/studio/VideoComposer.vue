@@ -237,21 +237,20 @@
     </div>
 
     <!-- Toolbar -->
-    <div class="video-composer__toolbar">
-      <div class="video-composer__toolbar-left">
-        <!-- Mode selector -->
+    <ComposerToolbar>
+      <template #mode>
         <DqSegmented
           :model-value="localWorkMode"
           size="small"
           :options="workModeOptions"
           @update:model-value="localWorkMode = $event"
         />
-
-        <!-- Model selector -->
+      </template>
+      <template #controls>
         <DqSelect
           v-model="localModel"
           size="small"
-          class="video-composer__select video-composer__select--model"
+          class="studio-composer-toolbar__select studio-composer-toolbar__select--model"
           @change="(val: string) => emit('model-change', val)"
         >
           <DqOption
@@ -272,12 +271,11 @@
           </DqOption>
         </DqSelect>
 
-        <!-- Size selector -->
         <DqSelect
           v-if="sizeOptions.length > 0"
           v-model="localSize"
           size="small"
-          class="video-composer__select video-composer__select--size"
+          class="studio-composer-toolbar__select studio-composer-toolbar__select--size"
         >
           <DqOption
             v-for="opt in sizeOptions"
@@ -287,23 +285,20 @@
           />
         </DqSelect>
 
-        <!-- Duration -->
         <DqSelect
           v-model="localDuration"
           size="small"
-          class="video-composer__select video-composer__select--duration"
+          class="studio-composer-toolbar__select studio-composer-toolbar__select--duration"
         >
           <DqOption v-for="opt in durationOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
         </DqSelect>
-      </div>
-
-      <div class="video-composer__toolbar-right">
-        <!-- Batch count -->
+      </template>
+      <template #actions>
         <DqSelect
           v-if="showBatchCount"
           v-model="localBatchCount"
           size="small"
-          class="video-composer__select video-composer__select--batch"
+          class="studio-composer-toolbar__select studio-composer-toolbar__select--batch"
         >
           <DqOption
             v-for="n in 4"
@@ -313,19 +308,18 @@
           />
         </DqSelect>
 
-        <!-- Generate button -->
         <DqButton
           type="primary"
           size="sm"
-          class="video-composer__generate"
+          class="studio-composer-toolbar__generate"
           :disabled="generating || !canGenerate"
           @click="$emit('generate')"
         >
           <DqIcon :size="14"><MagicStick /></DqIcon>
           <span>{{ generating ? $tt('create.generating') : generateLabel }}</span>
         </DqButton>
-      </div>
-    </div>
+      </template>
+    </ComposerToolbar>
 
     <ComposerAdvancedCollapsible
       v-model:open="advancedOpen"
@@ -477,6 +471,7 @@
 import { ref, computed } from 'vue';
 import { RouterLink } from 'vue-router';
 import ComposerAdvancedCollapsible from './ComposerAdvancedCollapsible.vue';
+import ComposerToolbar from './ComposerToolbar.vue';
 import ComposerPromptApplyStrip from './ComposerPromptApplyStrip.vue';
 import ComposerIconTip from './ComposerIconTip.vue';
 import { useI18n } from 'vue-i18n';
@@ -793,7 +788,6 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 .video-composer__title :deep(.dq-input) {
-  font-size: 13px;
   border-radius: var(--dq-radius-input);
 }
 
@@ -817,7 +811,7 @@ function onKeydown(e: KeyboardEvent) {
 
 .video-composer__prompt :deep(.dq-input--textarea) {
   border-radius: var(--dq-radius-group);
-  font-size: 14px;
+  font-size: var(--dq-font-size-body);
   line-height: 1.5;
   padding: 10px 12px 32px;
   min-height: 7.5rem;
@@ -908,50 +902,6 @@ function onKeydown(e: KeyboardEvent) {
   to { transform: rotate(360deg); }
 }
 
-/* Toolbar — drawer: stack controls vertically */
-.video-composer__toolbar {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 10px;
-  flex-shrink: 0;
-}
-
-.video-composer__toolbar-left,
-.video-composer__toolbar-right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  width: 100%;
-}
-
-.video-composer__toolbar-left :deep(.dq-segmented) {
-  flex: 1 1 100%;
-  width: 100%;
-}
-
-.video-composer__toolbar-right {
-  justify-content: flex-end;
-}
-
-.video-composer__select {
-  width: auto;
-}
-
-.video-composer__select--model {
-  flex: 1 1 100%;
-  width: 100%;
-  max-width: none;
-  min-width: 0;
-}
-
-.video-composer__select--size,
-.video-composer__select--duration {
-  flex: 1 1 calc(50% - 4px);
-  min-width: 120px;
-}
-
 .video-composer__size-ratio {
   font-variant-numeric: tabular-nums;
 }
@@ -959,24 +909,7 @@ function onKeydown(e: KeyboardEvent) {
 .video-composer__size-aspect {
   margin-left: 8px;
   opacity: 0.65;
-  font-size: 11px;
-}
-
-.video-composer__select--duration {
-  min-width: 60px;
-}
-
-/* Generate button */
-.video-composer__generate {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  flex: 1;
-  justify-content: center;
-  min-height: 36px;
-  padding: 8px 16px;
-  font-weight: 600;
-  font-size: 13px;
+  font-size: var(--dq-font-size-caption);
 }
 
 /* Advanced panel (inside drawer) */
@@ -1009,7 +942,7 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 .video-composer__field label {
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 500;
   color: var(--dq-label-secondary);
   white-space: nowrap;
@@ -1024,7 +957,7 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 .video-composer__field-val {
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-secondary);
   min-width: 32px;
   text-align: right;
@@ -1038,7 +971,7 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 .video-composer__frames-formula {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
   white-space: nowrap;
 }
@@ -1058,7 +991,7 @@ function onKeydown(e: KeyboardEvent) {
 
 .video-composer__lora-hint {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   line-height: 1.45;
   color: var(--dq-label-tertiary);
 }
@@ -1072,7 +1005,7 @@ function onKeydown(e: KeyboardEvent) {
 .video-composer__tail-hint,
 .video-composer__param-note {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
   line-height: 1.4;
 }
@@ -1081,7 +1014,7 @@ function onKeydown(e: KeyboardEvent) {
 .video-composer__hint {
   text-align: right;
   margin-top: 2px;
-  font-size: 10px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
   opacity: 0;
   transition: opacity 0.2s;
@@ -1100,7 +1033,7 @@ function onKeydown(e: KeyboardEvent) {
 }
 
 .video-composer__long-link-anchor {
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-accent);
   text-decoration: none;
 }

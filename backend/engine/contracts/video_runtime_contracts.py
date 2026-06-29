@@ -356,9 +356,17 @@ def resolve_bernini_source_paths(
     kind = str((record or {}).get("kind") or "").lower()
     is_video = mime.startswith("video/") or kind == "video"
 
-    if is_video and mode == "source_video":
+    meta = getattr(request, "metadata", None)
+    relation = ""
+    if isinstance(meta, dict):
+        relation = str(meta.get("relation_type") or "").strip().lower()
+    # UI ``animate`` (图生视频) must not encode full source clips even when the canvas
+    # node is a video asset (quick-animate binds asset:video as the start reference).
+    i2v_intent = relation == "animate"
+
+    if is_video and mode == "source_video" and not i2v_intent:
         return str(src), None
-    if is_video and mode == "first_frame":
+    if is_video and (mode == "first_frame" or i2v_intent):
         img = resolve_video_edit_source_image(
             asset_store, asset_id, mode="first_frame", work_dir=work_dir,
         )

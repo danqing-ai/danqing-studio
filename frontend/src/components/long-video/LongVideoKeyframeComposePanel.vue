@@ -224,7 +224,7 @@ function onStyleCommand(name: string) {
 }
 
 .lv-kf-compose__prompt :deep(textarea) {
-  font-size: 13px;
+  font-size: var(--dq-font-size-body);
   line-height: 1.55;
   min-height: 168px;
   max-height: 320px;
@@ -281,7 +281,7 @@ function onStyleCommand(name: string) {
   border: none;
   background: none;
   padding: 4px 0;
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 500;
   color: var(--dq-label-secondary);
   cursor: pointer;
@@ -292,7 +292,7 @@ function onStyleCommand(name: string) {
 }
 
 .lv-kf-compose__chevron {
-  font-size: 10px;
+  font-size: var(--dq-font-size-caption);
   line-height: 1;
   transition: transform 0.2s ease;
   color: var(--dq-label-tertiary);

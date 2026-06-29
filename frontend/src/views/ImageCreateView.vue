@@ -36,15 +36,20 @@
       <StudioCanvas
         v-if="viewMode === 'grid'"
         :items="galleryItems"
+        :groups="galleryGroups"
         :active-tasks="activeImageTasks"
         :loading="galleryLoading"
         :has-more="galleryHasMore"
         media="image"
+        :group-mode="groupMode"
+        :selected-group-id="selectedGroupId"
         :has-active-filters="hasActiveFilters"
         :selection-mode="selectionMode"
         :selected-paths="selectedPaths"
         :all-selected="allLoadedSelected"
         @select="onGallerySelect"
+        @enter-group="enterGroup"
+        @exit-group="exitGroup"
         @card-action="onCardAction"
         @reset-filters="resetGalleryFilters"
         @load-more="loadGallery(false)"
@@ -409,6 +414,9 @@ watch(viewMode, (mode) => {
 
 function onViewModeChange(mode: 'grid' | 'canvas') {
   if (viewMode.value === mode) return;
+  if (mode === 'canvas' && selectedGroupId.value) {
+    exitGroup();
+  }
   const batchPaths =
     mode === 'canvas' && selectedPaths.value.size > 0
       ? Array.from(selectedPaths.value)
@@ -983,8 +991,11 @@ async function loadCompatibleAdapters(modelKey: string) {
 
 const {
   galleryItems,
+  galleryGroups,
   galleryLoading,
   galleryHasMore,
+  groupMode,
+  selectedGroupId,
   filterTime,
   filterModels,
   selectionMode,
@@ -995,6 +1006,8 @@ const {
   hasActiveFilters,
   loadGallery,
   refreshGallery,
+  enterGroup,
+  exitGroup,
   onCanvasScroll,
   resetGalleryFilters,
   toggleSelect,
@@ -2580,7 +2593,7 @@ function onCreatePageKeydown(e: KeyboardEvent) {
 
 .studio-retouch-fill-hint {
   margin: 0 16px 8px;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   line-height: 1.45;
   color: var(--dq-label-tertiary);
 }

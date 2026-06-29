@@ -245,7 +245,7 @@ defineExpose({ scrollToTop, canvasRef, layoutRef });
 }
 
 .studio-composer-bar__toggle-icon {
-  font-size: 10px;
+  font-size: var(--dq-font-size-caption);
   line-height: 1;
 }
 

@@ -19,10 +19,10 @@
     </div>
 
     <div class="avatar-composer__refs">
-      <div class="avatar-composer__mode-switch">
+      <div class="avatar-composer__mode-switch studio-composer-mode-switch">
         <DqSegmented
           v-model="localMode"
-          block
+          size="small"
           :options="modeOptions"
         />
       </div>
@@ -272,7 +272,6 @@ function patchParams(patch: Record<string, unknown>) {
 }
 
 .avatar-composer__title :deep(.dq-input) {
-  font-size: 13px;
   border-radius: var(--dq-radius-input);
 }
 
@@ -282,7 +281,6 @@ function patchParams(patch: Record<string, unknown>) {
 
 .avatar-composer__prompt :deep(.dq-input--textarea) {
   border-radius: var(--dq-radius-group);
-  font-size: 13px;
   line-height: 1.5;
   padding: 10px 12px 32px;
   min-height: 7rem;
@@ -306,7 +304,7 @@ function patchParams(patch: Record<string, unknown>) {
 }
 
 .avatar-composer__ref-label {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 500;
   color: var(--dq-label-secondary);
   line-height: 1.3;
@@ -318,7 +316,7 @@ function patchParams(patch: Record<string, unknown>) {
   justify-content: center;
   gap: 6px;
   width: 100%;
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   padding: 6px 10px;
 }
 
@@ -346,23 +344,12 @@ function patchParams(patch: Record<string, unknown>) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-secondary);
 }
 
 .avatar-composer__mode-switch {
   margin: 0;
-}
-
-.avatar-composer__mode-switch :deep(.dq-segmented) {
-  width: 100%;
-}
-
-.avatar-composer__mode-switch :deep(.dq-segmented__item) {
-  flex: 1 1 0;
-  min-width: 0;
-  padding: 5px 8px;
-  font-size: 12px;
 }
 
 .avatar-composer__script-block {
@@ -373,7 +360,7 @@ function patchParams(patch: Record<string, unknown>) {
 
 .avatar-composer__script :deep(.dq-input--textarea) {
   border-radius: var(--dq-radius-group);
-  font-size: 13px;
+  font-size: var(--dq-font-size-body);
   line-height: 1.5;
   padding: 10px 12px;
   min-height: 6rem;
@@ -384,7 +371,7 @@ function patchParams(patch: Record<string, unknown>) {
 
 .avatar-composer__script-hint {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   line-height: 1.4;
   color: var(--dq-label-tertiary);
 }
@@ -397,16 +384,15 @@ function patchParams(patch: Record<string, unknown>) {
 }
 
 .avatar-composer__field-label {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 500;
   color: var(--dq-label-secondary);
   line-height: 1.3;
 }
 
 .avatar-composer__row :deep(.dq-input),
-.avatar-composer__row :deep(.dq-select),
-.avatar-composer__row :deep(.dq-input-number) {
-  font-size: 12px;
+.avatar-composer__row :deep(.dq-select) {
+  font-size: var(--dq-font-size-caption);
 }
 
 .avatar-composer__row--inline {
@@ -436,7 +422,6 @@ function patchParams(patch: Record<string, unknown>) {
 }
 
 .avatar-composer__footer :deep(.dq-button) {
-  font-size: 13px;
   min-height: 36px;
 }
 </style>

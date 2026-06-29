@@ -149,13 +149,13 @@ onBeforeUnmount(onUp);
 }
 
 .canvas-staging__label {
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 600;
   color: var(--dq-label-primary);
 }
 
 .canvas-staging__hint {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-secondary);
   text-align: center;
   padding: 0 12px;
@@ -164,6 +164,6 @@ onBeforeUnmount(onUp);
 
 .canvas-staging__snap-btn {
   margin-top: 4px;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
 }
 </style>

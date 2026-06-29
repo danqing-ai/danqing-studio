@@ -1,5 +1,10 @@
 import { ref } from 'vue';
-import { api } from '@/utils/api';
+import { api, type LongVideoChapterAnalyzeResult } from '@/utils/api';
+import {
+  enhancePromptViaChat,
+  generateLyricsViaChat,
+  imageToPromptViaChat,
+} from '@/utils/llmMessages';
 import { $tt } from '@/utils/i18n';
 import { toast } from '@/utils/feedback';
 
@@ -13,21 +18,16 @@ export function useComposerLlm() {
     prompt: string,
     stylePositive?: string,
     targetAction?: string,
-    modelId?: string,
+    _modelId?: string,
     options?: { quietSuccess?: boolean },
   ): Promise<string | null> {
     isEnhancing.value = true;
     try {
-      const result = await api.gen.enhancePrompt({
-        prompt,
-        style_positive: stylePositive,
-        target_action: targetAction,
-        model_id: modelId,
-      });
+      const text = await enhancePromptViaChat(prompt, { stylePositive, targetAction });
       if (!options?.quietSuccess) {
         toast.success($tt('create.enhanceComplete'));
       }
-      return result.enhanced_prompt;
+      return text;
     } catch (e) {
       const err = e as { code?: string; message?: string; response?: { data?: { detail?: string } } };
       const msg = err.response?.data?.detail
@@ -44,11 +44,11 @@ export function useComposerLlm() {
   async function reversePrompt(assetId: string, options?: { quietSuccess?: boolean }): Promise<string | null> {
     isReversing.value = true;
     try {
-      const result = await api.gen.imageToPrompt(assetId);
+      const text = await imageToPromptViaChat(assetId);
       if (!options?.quietSuccess) {
         toast.success($tt('create.reverseComplete'));
       }
-      return result.prompt;
+      return text;
     } catch (e) {
       const msg = (e as { response?: { data?: { detail?: string } }; message?: string })?.response?.data?.detail
         || (e as Error).message
@@ -63,8 +63,7 @@ export function useComposerLlm() {
   async function generateLyrics(prompt: string, options?: { quietSuccess?: boolean }): Promise<string | null> {
     isGeneratingLyrics.value = true;
     try {
-      const result = await api.gen.generateLyrics({ prompt });
-      const lyrics = (result.lyrics || '').trim();
+      const lyrics = await generateLyricsViaChat(prompt);
       if (!lyrics) {
         toast.error($tt('audio.lyricsGenFailed', { msg: $tt('audio.lyricsGenEmpty') }));
         return null;
@@ -92,12 +91,16 @@ export function useComposerLlm() {
       chapter_text: string;
       chapter_title?: string;
       locale?: string;
+      target_duration_sec?: number;
+      segment_duration_sec?: number;
+      max_clip_sec?: number;
+      long_video_project_id?: string;
     },
-    opts?: { quietSuccess?: boolean },
-  ) {
+    opts?: { quietSuccess?: boolean; onProgress?: (phase: string, message: string) => void },
+  ): Promise<LongVideoChapterAnalyzeResult | null> {
     isChapterAnalyzing.value = true;
     try {
-      const result = await api.gen.longVideoChapterAnalyze(body);
+      const result = await api.gen.longVideoChapterAnalyzeStream(body, opts?.onProgress);
       if (!opts?.quietSuccess) {
         toast.success($tt('video.longVideoChapterAnalyzeComplete'));
       }
@@ -114,21 +117,7 @@ export function useComposerLlm() {
   }
 
   async function storyboardLongVideo(
-    body: {
-      prompt: string;
-      target_duration_sec: number;
-      initial_duration_sec?: number;
-      segment_extend_sec?: number;
-      segment_duration_sec?: number;
-      reference_duration_sec?: number;
-      style_positive?: string;
-      locale?: string;
-      use_shot_plan?: boolean;
-      source_mode?: 'brief' | 'chapter';
-      scene_beats?: string[];
-      prebuilt_character_anchor?: string;
-      prebuilt_style_anchor?: string;
-    },
+    body: Parameters<typeof api.gen.longVideoStoryboard>[0],
     opts?: { quietSuccess?: boolean },
   ) {
     isStoryboardExpanding.value = true;

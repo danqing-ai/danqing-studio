@@ -503,14 +503,14 @@ function truncate(text: string, length: number): string {
 }
 
 .studio-card__audio-label {
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 600;
   letter-spacing: 0.02em;
   z-index: 1;
 }
 
 .studio-card__audio-dur {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 500;
   opacity: 0.8;
   color: var(--dq-label-tertiary);
@@ -591,13 +591,13 @@ function truncate(text: string, length: number): string {
 }
 
 .studio-card__overlay-res {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 500;
   color: var(--dq-label-secondary);
 }
 
 .studio-card__overlay-model {
-  font-size: 10px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -612,7 +612,7 @@ function truncate(text: string, length: number): string {
 }
 
 .studio-card__prompt {
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-secondary);
   overflow: hidden;
   text-overflow: ellipsis;

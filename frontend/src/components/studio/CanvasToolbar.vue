@@ -207,7 +207,7 @@ function onMoreCommand(cmd: string) {
 }
 
 .canvas-toolbar__title {
-  font-size: 10px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 600;
   color: var(--dq-label-tertiary);
   writing-mode: vertical-rl;
@@ -229,7 +229,7 @@ function onMoreCommand(cmd: string) {
 }
 
 .canvas-toolbar__zoom-label {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-secondary);
   width: 36px;
   text-align: center;
@@ -247,7 +247,7 @@ function onMoreCommand(cmd: string) {
 }
 
 .canvas-toolbar__menu-hint {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-secondary);
   white-space: normal;
   line-height: 1.35;
@@ -256,13 +256,13 @@ function onMoreCommand(cmd: string) {
 }
 
 .canvas-toolbar__menu-section {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 600;
   color: var(--dq-label-primary);
 }
 
 .canvas-toolbar__zoom-out-icon {
-  font-size: 16px;
+  font-size: var(--dq-font-size-title);
   font-weight: 600;
   line-height: 1;
   display: inline-flex;

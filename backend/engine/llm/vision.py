@@ -8,23 +8,16 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from backend.core.contracts import ChatMessage
+from backend.engine.llm.prompts.system import (
+    IMAGE_TO_PROMPT_INSTRUCTION,
+    VIDEO_FRAME_TO_PROMPT_INSTRUCTION,
+    VISION_DESCRIBE_PROMPT,
+)
+
 logger = logging.getLogger(__name__)
 
 VLM_MAX_IMAGE_EDGE = 768
-
-VISION_DESCRIBE_PROMPT = """You are a creative studio assistant. Describe this visual asset in 2-4 concise sentences
-for an artist's canvas board note. Cover subject, style, lighting, composition, and one concrete next-step suggestion.
-Match Chinese if the scene or any overlaid text is primarily Chinese. Output ONLY the note text."""
-
-IMAGE_TO_PROMPT_INSTRUCTION = """You are an expert AI art prompt engineer. Analyze this image and write a detailed English
-prompt suitable for text-to-image generation models (Flux, SDXL, etc.).
-Include subject, composition, lighting, color palette, art style, mood, camera angle, and fine details.
-Output ONLY the prompt text — no quotes, headings, or explanation."""
-
-VIDEO_FRAME_TO_PROMPT_INSTRUCTION = """You are an expert AI video prompt engineer. This image is a keyframe or reference
-for video generation. Write a detailed English prompt describing the scene plus implied motion, camera movement, and
-temporal atmosphere suitable for image-to-video models.
-Output ONLY the prompt text — no quotes, headings, or explanation."""
 
 
 def mlx_vlm_importable() -> bool:
@@ -79,6 +72,122 @@ def _release_vlm_model(model: Any, processor: Any) -> None:
         mx.clear_cache()
     except Exception:
         pass
+
+
+def analyze_image_files_batch_messages(
+    image_paths: list[Path],
+    model_dir: Path,
+    *,
+    messages: list[ChatMessage],
+    metadata_hint: str = "",
+    max_tokens: int = 256,
+    temperature: float = 0.4,
+) -> list[str]:
+    """Run batch VLM with OpenAI-style messages (system + user text; images from paths)."""
+    from backend.engine.llm.message_content import extract_vision_instruction
+
+    instruction = extract_vision_instruction(messages)
+    return analyze_image_files_batch(
+        image_paths,
+        model_dir,
+        instruction=instruction,
+        metadata_hint=metadata_hint,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
+
+
+def analyze_image_file_messages(
+    image_path: Path,
+    model_dir: Path,
+    *,
+    messages: list[ChatMessage],
+    metadata_hint: str = "",
+    max_tokens: int = 256,
+    temperature: float = 0.4,
+) -> str:
+    texts = analyze_image_files_batch_messages(
+        [image_path],
+        model_dir,
+        messages=messages,
+        metadata_hint=metadata_hint,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
+    return texts[0]
+
+
+def analyze_images_multi(
+    image_paths: list[Path],
+    model_dir: Path,
+    *,
+    instruction: str,
+    metadata_hint: str = "",
+    max_tokens: int = 256,
+    temperature: float = 0.4,
+) -> str:
+    """Single VLM inference with multiple images in one prompt."""
+    if not image_paths:
+        raise RuntimeError("analyze_images_multi requires at least one image")
+    if not vision_weights_ready(model_dir):
+        raise RuntimeError(f"Vision model weights not found under {model_dir}")
+
+    try:
+        import mlx.core as mx
+        from mlx_vlm import generate, load
+        from mlx_vlm.prompt_utils import apply_chat_template
+        from mlx_vlm.utils import load_config
+    except ImportError as exc:
+        raise RuntimeError(
+            "mlx-vlm is not installed. Install with: pip install mlx-vlm"
+        ) from exc
+
+    prompt = instruction.strip()
+    if metadata_hint.strip():
+        prompt += f"\n\nOptional metadata context:\n{metadata_hint.strip()}"
+
+    model, processor = load(str(model_dir))
+    config = load_config(str(model_dir))
+    temp_paths: list[Path] = []
+    try:
+        image_refs: list[str] = []
+        for image_path in image_paths:
+            if not image_path.is_file():
+                raise RuntimeError(f"Vision analyze image not found: {image_path}")
+            use_path, is_temp = prepare_image_for_vlm(image_path)
+            if is_temp:
+                temp_paths.append(use_path)
+            image_refs.append(str(use_path))
+        formatted = apply_chat_template(
+            processor,
+            config,
+            prompt,
+            num_images=len(image_refs),
+        )
+        raw = generate(
+            model,
+            processor,
+            formatted,
+            image_refs,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            verbose=False,
+        )
+        text = _coerce_vlm_output_text(raw)
+        if not text:
+            raise RuntimeError("Vision model returned empty output for multi-image request")
+        try:
+            mx.clear_cache()
+        except Exception:
+            pass
+        return text
+    finally:
+        _release_vlm_model(model, processor)
+        for tmp in temp_paths:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def analyze_image_files_batch(

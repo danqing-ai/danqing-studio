@@ -307,7 +307,7 @@ watch(
 }
 
 .gen-task-log-panel__title {
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -316,7 +316,7 @@ watch(
 }
 
 .gen-task-log-panel__count {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 600;
   line-height: 1;
   padding: 3px 7px;
@@ -333,7 +333,7 @@ watch(
 }
 
 .gen-task-log-panel__toggle {
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-secondary);
 }
 
@@ -373,13 +373,13 @@ watch(
 .gen-task-log-panel__progress-text {
   flex: 1;
   min-width: 0;
-  font-size: 13px;
+  font-size: var(--dq-font-size-body);
   font-weight: 500;
   color: var(--dq-label-primary);
 }
 
 .gen-task-log-panel__progress-time {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   font-variant-numeric: tabular-nums;
   color: var(--dq-label-tertiary);
   flex-shrink: 0;
@@ -404,7 +404,7 @@ watch(
   margin: 0;
   padding: 10px 12px;
   border-radius: var(--dq-radius-control);
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   line-height: 1.5;
   color: var(--dq-label-secondary);
   white-space: pre-wrap;
@@ -466,7 +466,7 @@ watch(
 .gen-task-log-panel__section-label {
   margin: 0;
   padding: 8px 12px 0;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -485,14 +485,14 @@ watch(
 
 .gen-task-log-panel__empty-title {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--dq-font-size-body);
   font-weight: 500;
   color: var(--dq-label-secondary);
 }
 
 .gen-task-log-panel__empty-hint {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   line-height: 1.45;
   color: var(--dq-label-tertiary);
   max-width: 28em;
@@ -579,7 +579,7 @@ watch(
 .gen-task-log-panel__label {
   flex: 1;
   min-width: 0;
-  font-size: 13px;
+  font-size: var(--dq-font-size-body);
   line-height: 1.4;
   font-weight: 500;
   color: var(--dq-label-primary);
@@ -588,7 +588,7 @@ watch(
 
 .gen-task-log-panel__entry--technical .gen-task-log-panel__label {
   font-weight: 400;
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-secondary);
 }
 
@@ -602,7 +602,7 @@ watch(
 
 .gen-task-log-panel__time {
   flex-shrink: 0;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   font-variant-numeric: tabular-nums;
   color: var(--dq-label-tertiary);
   padding-top: 2px;
@@ -623,7 +623,7 @@ watch(
   border-radius: var(--dq-radius-control);
   background: var(--dq-fill-on-glass);
   border: 0.5px solid var(--dq-glass-border);
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   line-height: 1.3;
 }
 
@@ -638,7 +638,7 @@ watch(
 
 .gen-task-log-panel__detail {
   margin: 6px 0 0;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   line-height: 1.45;
   color: var(--dq-label-tertiary);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;

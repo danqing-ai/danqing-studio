@@ -4,6 +4,7 @@
       <StudioGalleryFilters
         :filter-time="filterTime"
         :filter-models="filterModels"
+        :search-text="searchText"
         :time-options="timeOptions"
         :model-options="allModelOptions"
         :selection-mode="selectionMode"
@@ -13,8 +14,12 @@
         :supports-canvas="false"
         canvas-media="video"
         :composer-busy="generating || activeVideoTasks.length > 0"
+        :show-model-filter="false"
+        :show-search="true"
+        :search-placeholder="$tt('avatar.searchPlaceholder')"
         @update:filter-time="filterTime = $event"
         @update:filter-models="filterModels = $event"
+        @update:search-text="searchText = $event"
         @refresh="refreshGallery"
         @toggle-selection-mode="toggleSelectionMode"
         @select-all="selectAllLoaded"
@@ -190,6 +195,7 @@ const {
   galleryHasMore,
   filterTime,
   filterModels,
+  searchText,
   timeOptions,
   allModelOptions,
   selectionMode,
@@ -205,7 +211,10 @@ const {
   batchDeleteSelected,
   clearSelection,
   deleteItem,
-} = useStudioGallery('video');
+} = useStudioGallery('video', {
+  sourceAction: ['avatar', 'avatar_script'],
+  searchFields: ['title', 'prompt'],
+});
 
 const videoPreviewVisible = ref(false);
 const selectedVideoIndex = ref(0);

@@ -169,21 +169,20 @@
     </div>
 
     <!-- Toolbar -->
-    <div class="audio-composer__toolbar">
-      <div class="audio-composer__toolbar-left">
-        <!-- Work mode -->
+    <ComposerToolbar>
+      <template #mode>
         <DqSegmented
           :model-value="localWorkMode"
           size="small"
           :options="workModeOptions"
           @update:model-value="localWorkMode = $event"
         />
-
-        <!-- Model selector -->
+      </template>
+      <template #controls>
         <DqSelect
           v-model="localModel"
           size="small"
-          class="audio-composer__select audio-composer__select--model"
+          class="studio-composer-toolbar__select studio-composer-toolbar__select--model"
           @change="(val: string) => emit('model-change', val)"
         >
           <DqOption
@@ -204,11 +203,10 @@
           </DqOption>
         </DqSelect>
 
-        <!-- Duration -->
         <DqSelect
           v-model="localDuration"
           size="small"
-          class="audio-composer__select audio-composer__select--duration"
+          class="studio-composer-toolbar__select studio-composer-toolbar__select--duration"
         >
           <DqOption
             v-for="opt in durationOptions"
@@ -217,14 +215,12 @@
             :value="opt.value"
           />
         </DqSelect>
-      </div>
-
-      <div class="audio-composer__toolbar-right">
-        <!-- Batch count -->
+      </template>
+      <template #actions>
         <DqSelect
           v-model="localBatchCount"
           size="small"
-          class="audio-composer__select audio-composer__select--batch"
+          class="studio-composer-toolbar__select studio-composer-toolbar__select--batch"
         >
           <DqOption
             v-for="n in 4"
@@ -234,19 +230,18 @@
           />
         </DqSelect>
 
-        <!-- Generate button -->
         <DqButton
           type="primary"
           size="sm"
-          class="audio-composer__generate"
+          class="studio-composer-toolbar__generate"
           :disabled="generating || !canGenerate"
           @click="$emit('generate')"
         >
           <DqIcon :size="16"><MagicStick /></DqIcon>
           <span>{{ generating ? $tt('audio.generating') : generateLabel }}</span>
         </DqButton>
-      </div>
-    </div>
+      </template>
+    </ComposerToolbar>
 
     <ComposerAdvancedCollapsible
       v-model:open="advancedOpen"
@@ -447,6 +442,7 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
 import ComposerAdvancedCollapsible from './ComposerAdvancedCollapsible.vue';
+import ComposerToolbar from './ComposerToolbar.vue';
 import ComposerPromptApplyStrip from './ComposerPromptApplyStrip.vue';
 import ComposerIconTip from './ComposerIconTip.vue';
 import { useI18n } from 'vue-i18n';
@@ -794,7 +790,6 @@ function onPromptKeydown(e: KeyboardEvent) {
 }
 
 .audio-composer__title :deep(.dq-input) {
-  font-size: 13px;
   border-radius: var(--dq-radius-input);
 }
 
@@ -810,7 +805,7 @@ function onPromptKeydown(e: KeyboardEvent) {
 
 .audio-composer__prompt :deep(.dq-input--textarea) {
   border-radius: var(--dq-radius-group);
-  font-size: 14px;
+  font-size: var(--dq-font-size-body);
   line-height: 1.5;
   padding: 10px 12px 32px;
   min-height: 7.5rem;
@@ -840,7 +835,7 @@ function onPromptKeydown(e: KeyboardEvent) {
 }
 
 .audio-composer__ref-label {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-secondary);
 }
 
@@ -862,59 +857,8 @@ function onPromptKeydown(e: KeyboardEvent) {
   align-items: center;
 }
 
-/* Toolbar — drawer: stack controls vertically */
-.audio-composer__toolbar {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 10px;
-}
-
-.audio-composer__toolbar-left,
-.audio-composer__toolbar-right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  width: 100%;
-}
-
-.audio-composer__toolbar-left :deep(.dq-segmented) {
-  flex: 1 1 100%;
-  width: 100%;
-}
-
-.audio-composer__toolbar-right {
-  justify-content: flex-end;
-}
-
-.audio-composer__select {
-  width: auto;
-}
-
-.audio-composer__select--model {
-  flex: 1 1 100%;
-  width: 100%;
-  max-width: none;
-  min-width: 0;
-}
-
-.audio-composer__select--duration {
-  flex: 1 1 calc(50% - 4px);
-  min-width: 120px;
-}
-
-.audio-composer__select--batch {
-  flex: 0 0 auto;
-  min-width: 50px;
-}
-
-.audio-composer__model-label {
-  flex: 1;
-}
-
 .audio-composer__model-badge {
-  font-size: 10px;
+  font-size: var(--dq-font-size-caption);
   padding: 0 4px;
   height: 16px;
   line-height: 16px;
@@ -944,7 +888,7 @@ function onPromptKeydown(e: KeyboardEvent) {
 }
 
 .audio-composer__lyrics-label {
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 600;
   color: var(--dq-label-secondary);
 }
@@ -956,7 +900,7 @@ function onPromptKeydown(e: KeyboardEvent) {
 
 .audio-composer__lyrics :deep(.dq-input--textarea) {
   border-radius: var(--dq-radius-group);
-  font-size: 14px;
+  font-size: var(--dq-font-size-body);
   line-height: 1.5;
   padding: 10px 12px;
   min-height: 5.5rem;
@@ -968,21 +912,9 @@ function onPromptKeydown(e: KeyboardEvent) {
 
 .audio-composer__lyrics-hint {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   line-height: 1.45;
   color: var(--dq-label-tertiary);
-}
-
-.audio-composer__generate {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  flex: 1;
-  justify-content: center;
-  min-height: 36px;
-  padding: 8px 16px;
-  font-weight: 600;
-  font-size: 13px;
 }
 
 /* Advanced panel */
@@ -1015,7 +947,7 @@ function onPromptKeydown(e: KeyboardEvent) {
 }
 
 .audio-composer__field label {
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 500;
   color: var(--dq-label-secondary);
   white-space: nowrap;
@@ -1030,7 +962,7 @@ function onPromptKeydown(e: KeyboardEvent) {
 }
 
 .audio-composer__field-val {
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-secondary);
   min-width: 32px;
   text-align: right;
@@ -1061,7 +993,7 @@ function onPromptKeydown(e: KeyboardEvent) {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-secondary);
 }
 
@@ -1074,7 +1006,7 @@ function onPromptKeydown(e: KeyboardEvent) {
 }
 
 .audio-composer__fidelity-label {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
   white-space: nowrap;
   flex-shrink: 0;
@@ -1087,7 +1019,7 @@ function onPromptKeydown(e: KeyboardEvent) {
 
 .audio-composer__fidelity-hint {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
   line-height: 1.4;
 }

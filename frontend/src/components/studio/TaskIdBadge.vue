@@ -63,7 +63,7 @@ async function onCopy() {
 }
 
 .task-id-badge__label {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 600;
   letter-spacing: 0.03em;
   text-transform: uppercase;
@@ -73,7 +73,7 @@ async function onCopy() {
 
 .task-id-badge__value {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   line-height: 1.35;
   padding: 2px 6px;
   border-radius: 4px;
@@ -93,7 +93,7 @@ async function onCopy() {
 .task-id-badge__hint {
   flex: 1 1 100%;
   margin: 0;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   line-height: 1.45;
   color: var(--dq-label-tertiary);
 }

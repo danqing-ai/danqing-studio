@@ -246,7 +246,7 @@ function onMouseDown(e: MouseEvent) {
 }
 
 .canvas-item__audio-title {
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   text-align: center;
   line-height: 1.3;
   opacity: 0.9;
@@ -259,7 +259,7 @@ function onMouseDown(e: MouseEvent) {
   max-width: calc(100% - 12px);
   padding: 2px 6px;
   border-radius: 4px;
-  font-size: 10px;
+  font-size: var(--dq-font-size-caption);
   line-height: 1.2;
   background: rgba(0, 0, 0, 0.62);
   color: #fff;
@@ -275,7 +275,7 @@ function onMouseDown(e: MouseEvent) {
   right: 6px;
   padding: 2px 6px;
   border-radius: 4px;
-  font-size: 10px;
+  font-size: var(--dq-font-size-caption);
   background: rgba(0, 0, 0, 0.55);
   color: #fff;
 }
@@ -284,7 +284,7 @@ function onMouseDown(e: MouseEvent) {
 .canvas-item__note,
 .canvas-item__label {
   margin-top: 4px;
-  font-size: 10px;
+  font-size: var(--dq-font-size-caption);
   line-height: 1.35;
   color: var(--dq-label-secondary);
   max-width: 100%;

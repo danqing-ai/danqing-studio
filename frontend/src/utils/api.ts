@@ -4,10 +4,19 @@ import type {
   CanvasSessionDetail,
   CanvasSessionState,
   CanvasSessionSummary,
+  CharacterVisibility,
+  FirstFrameStrategy,
+  GalleryGroup,
   GalleryItem,
+  LongVideoChainMode,
+  LongVideoFlfMode,
   LongVideoProjectDetail,
   LongVideoProjectState,
   LongVideoProjectSummary,
+  LongVideoSegmentRole,
+  LongVideoShotCastLook,
+  LongVideoShotSceneLook,
+  LongVideoStartFrameMode,
   QueueState,
   RegistryData,
   SettingsData,
@@ -26,9 +35,131 @@ const LLM_REQUEST_TIMEOUT_MS = 180_000;
 /** Multi-round LLM (Plan → Expand batches → Continuity), e.g. long-video storyboard. */
 const LLM_MULTI_ROUND_TIMEOUT_MS = 300_000;
 
+/** OpenAI chat.completion response. */
+export type ChatCompletionResult = {
+  id: string;
+  object: string;
+  created: number;
+  model: string;
+  choices: Array<{ message: { role: string; content: string } }>;
+  usage?: Record<string, unknown>;
+};
+
+export function completionText(res: ChatCompletionResult): string {
+  return (res.choices?.[0]?.message?.content ?? '').trim();
+}
+
+export type LongVideoChapterAnalyzeShot = {
+  id?: string;
+  order?: number;
+  visual_prompt?: string;
+  motion_prompt?: string;
+  video_prompt?: string;
+  start_visual_prompt?: string;
+  end_visual_prompt?: string;
+  anchor_visual_prompt?: string;
+  segment_role?: LongVideoSegmentRole;
+  start_frame_mode?: LongVideoStartFrameMode;
+  segment_group_id?: string;
+  segment_group_index?: number;
+  face_anchor_shot_id?: string;
+  flf_mode?: LongVideoFlfMode;
+  end_frame_sync_anchor?: boolean;
+  chain_mode?: LongVideoChainMode;
+  scene_prompt?: string;
+  cast_looks?: LongVideoShotCastLook[];
+  scene_look?: LongVideoShotSceneLook;
+  duration_sec?: number;
+  first_frame_visibility?: CharacterVisibility;
+  end_visibility?: CharacterVisibility;
+  characters_on_screen?: string[];
+  clip_start_state?: string;
+  clip_end_state?: string;
+  first_frame_requirement?: string;
+  camera_zone_id?: string;
+  first_frame_strategy?: FirstFrameStrategy;
+  location?: string;
+  narrative_beat_index?: number;
+  shot_size?: string;
+};
+
+export type LongVideoChapterAnalyzeResult = {
+  chapter_title: string;
+  synopsis: string;
+  mood?: string;
+  character_anchor: string;
+  style_anchor?: string;
+  characters?: Array<{
+    id: string;
+    name: string;
+    default_look_id: string;
+    looks: Array<{ id: string; label: string; body: string }>;
+  }>;
+  scenes?: Array<{
+    id: string;
+    name: string;
+    default_look_id: string;
+    looks: Array<{ id: string; label: string; body: string }>;
+  }>;
+  scene_beats: Array<{ order: number; title?: string; beat: string }>;
+  scene_count: number;
+  shots?: LongVideoChapterAnalyzeShot[];
+  parse_phases?: Array<{ phase: string; message?: string }>;
+  quality_warnings?: string[];
+  quality_issues?: Array<{
+    code: string;
+    message: string;
+    severity?: 'warning' | 'critical';
+    shot_index?: number | null;
+    beat_index?: number | null;
+  }>;
+  llm_calls: number;
+  parse_run_id?: string;
+  long_video_project_id?: string;
+};
+
+export type LongVideoProjectActivityItem = {
+  id: string;
+  project_id: string;
+  category: string;
+  event_type: string;
+  phase?: string;
+  status?: string;
+  summary?: string;
+  task_id?: string | null;
+  parse_run_id?: string | null;
+  shot_id?: string;
+  detail?: Record<string, unknown>;
+  created_at: string;
+};
+
+export type LongVideoParseRunDetail = {
+  parse_run_id: string;
+  project_id: string;
+  status: string;
+  started_at?: string;
+  completed_at?: string;
+  summary?: string;
+  detail?: Record<string, unknown>;
+  phases?: Array<{ phase?: string; message?: string; at?: string }>;
+  events?: LongVideoProjectActivityItem[];
+};
+
 const client = axios.create({
   baseURL: API_BASE,
   timeout: DEFAULT_REQUEST_TIMEOUT_MS,
+  paramsSerializer: (params) => {
+    const searchParams = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+      if (value === undefined || value === null) continue;
+      if (Array.isArray(value)) {
+        value.forEach((v) => searchParams.append(key, String(v)));
+      } else {
+        searchParams.append(key, String(value));
+      }
+    }
+    return searchParams.toString();
+  },
 });
 
 client.interceptors.request.use((config) => {
@@ -128,6 +259,31 @@ export const api = {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
       return response.data;
+    },
+
+    async listGroups(
+      kind: 'image' | 'video' | 'audio' | null = null,
+      limit = 100,
+      offset = 0,
+    ): Promise<GalleryGroup[]> {
+      const params: Record<string, unknown> = { limit, offset };
+      if (kind) params.kind = kind;
+      const response = await client.get('/api/assets/groups', { params });
+      const rows = (response.data.items || []).map((g: Record<string, unknown>) => ({
+        id: String(g.id || ''),
+        title: String(g.title || ''),
+        kind: String(g.kind || 'mixed'),
+        asset_count: Number(g.asset_count || 0),
+        preview_assets: ((g.preview_assets as unknown[]) || []).map((a) => assetRowToGalleryItem(a as AssetRow)),
+        created_at: String(g.created_at || ''),
+        updated_at: String(g.updated_at || ''),
+        metadata: (g.metadata as Record<string, unknown>) || {},
+      }));
+      return rows;
+    },
+
+    groupFileUrl(groupId: string): string {
+      return `${API_BASE}/api/assets/groups/${encodeURIComponent(groupId)}`;
     },
   },
 
@@ -632,14 +788,30 @@ export const api = {
       return eventSource;
     },
 
-    async enhancePrompt(body: {
-      prompt: string;
-      style_positive?: string;
-      target_action?: string;
-      model_id?: string;
-    }): Promise<{ enhanced_prompt: string }> {
-      const response = await client.post('/api/chat/enhance', body, {
-        timeout: LLM_REQUEST_TIMEOUT_MS,
+    async chatCompletion(body: {
+      model?: string;
+      messages: Array<{
+        role: string;
+        content:
+          | string
+          | Array<
+              | { type: 'text'; text: string }
+              | { type: 'image_url'; image_url: { url: string } }
+            >;
+      }>;
+      temperature?: number;
+      max_tokens?: number;
+      stream?: boolean;
+      top_p?: number;
+    }): Promise<ChatCompletionResult> {
+      const response = await client.post('/v1/chat/completions', body, {
+        timeout: body.messages.some(
+          (m) =>
+            Array.isArray(m.content) &&
+            m.content.some((p) => p.type === 'image_url'),
+        )
+          ? LLM_REQUEST_TIMEOUT_MS
+          : DEFAULT_REQUEST_TIMEOUT_MS,
       });
       return response.data;
     },
@@ -658,10 +830,22 @@ export const api = {
       scene_beats?: string[];
       prebuilt_character_anchor?: string;
       prebuilt_style_anchor?: string;
+      prebuilt_scenes?: Array<{
+        id: string;
+        name: string;
+        default_look_id: string;
+        looks: Array<{ id: string; label: string; body: string }>;
+      }>;
     }): Promise<{
       character_anchor: string;
       style_anchor?: string;
       characters?: Array<{
+        id: string;
+        name: string;
+        default_look_id: string;
+        looks: Array<{ id: string; label: string; body: string }>;
+      }>;
+      scenes?: Array<{
         id: string;
         name: string;
         default_look_id: string;
@@ -680,6 +864,8 @@ export const api = {
         motion_prompt: string;
         scene_prompt?: string;
         cast_looks?: Array<{ character_id: string; look_id: string }>;
+        scene_look?: { scene_id: string; look_id: string };
+        duration_sec?: number;
       }>;
     }> {
       const response = await client.post('/api/chat/long-video-storyboard', body, {
@@ -692,109 +878,117 @@ export const api = {
       chapter_text: string;
       chapter_title?: string;
       locale?: string;
-    }): Promise<{
-      chapter_title: string;
-      synopsis: string;
-      character_anchor: string;
-      style_anchor?: string;
-      characters?: Array<{
-        id: string;
-        name: string;
-        default_look_id: string;
-        looks: Array<{ id: string; label: string; body: string }>;
-      }>;
-      scene_beats: Array<{ order: number; title?: string; beat: string }>;
-      scene_count: number;
-      llm_calls: number;
-    }> {
+      target_duration_sec?: number;
+      segment_duration_sec?: number;
+      max_clip_sec?: number;
+      long_video_project_id?: string;
+    }): Promise<LongVideoChapterAnalyzeResult> {
       const response = await client.post('/api/chat/long-video-chapter-analyze', body, {
         timeout: LLM_MULTI_ROUND_TIMEOUT_MS,
       });
-      return response.data;
+      return response.data as LongVideoChapterAnalyzeResult;
     },
 
-    async generateLyrics(body: {
-      prompt: string;
-      style_positive?: string;
-    }): Promise<{ lyrics: string }> {
-      const response = await client.post('/api/chat/lyrics', body, {
-        timeout: LLM_REQUEST_TIMEOUT_MS,
+    async longVideoChapterAnalyzeStream(
+      body: {
+        chapter_text: string;
+        chapter_title?: string;
+        locale?: string;
+        target_duration_sec?: number;
+        segment_duration_sec?: number;
+        max_clip_sec?: number;
+        long_video_project_id?: string;
+      },
+      onProgress?: (phase: string, message: string) => void,
+    ): Promise<LongVideoChapterAnalyzeResult> {
+      const lang = getItem(DQ_STORAGE.LANG) || 'zh';
+      const res = await fetch('/api/chat/long-video-chapter-analyze/stream', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept-Language': lang,
+        },
+        body: JSON.stringify(body),
       });
-      return response.data;
+      if (!res.ok) {
+        let detail = res.statusText;
+        try {
+          const errBody = (await res.json()) as { detail?: string };
+          if (errBody.detail) detail = String(errBody.detail);
+        } catch {
+          /* ignore */
+        }
+        throw new Error(detail);
+      }
+      if (!res.body) {
+        throw new Error('empty stream body');
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let finalResult: LongVideoChapterAnalyzeResult | null = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const chunks = buffer.split('\n\n');
+        buffer = chunks.pop() ?? '';
+        for (const chunk of chunks) {
+          const line = chunk.split('\n').find((l) => l.startsWith('data: '));
+          if (!line) continue;
+          const payload = JSON.parse(line.slice(6)) as {
+            event?: string;
+            phase?: string;
+            message?: string;
+            detail?: string;
+            data?: LongVideoChapterAnalyzeResult;
+          };
+          if (payload.event === 'progress' && payload.phase) {
+            onProgress?.(payload.phase, payload.message ?? payload.phase);
+          } else if (payload.event === 'result' && payload.data) {
+            finalResult = payload.data;
+          } else if (payload.event === 'error') {
+            throw new Error(payload.detail || 'chapter analyze failed');
+          }
+        }
+      }
+      if (!finalResult) {
+        throw new Error('chapter analyze stream ended without result');
+      }
+      return finalResult;
     },
 
-    async getLLMModelInfo(): Promise<{
+    async getLlmModelInfo(): Promise<{
       model_id: string;
       name: string | { zh?: string; en?: string };
       available: boolean;
-      vision?: {
-        model_id: string;
-        name: string | { zh?: string; en?: string };
-        available: boolean;
-        mlx_vlm_installed?: boolean;
-      };
     }> {
-      const response = await client.get('/api/chat/model');
+      const response = await client.get('/v1/llm/model');
       return response.data;
     },
 
-    async describeCanvasNode(
-      assetId: string,
-      opts?: { preferVision?: boolean }
-    ): Promise<{ note: string; vision_used?: boolean }> {
-      const response = await client.post(
-        '/api/chat/describe-node',
-        {
-          asset_id: assetId,
-          prefer_vision: opts?.preferVision !== false,
-        },
-        { timeout: LLM_REQUEST_TIMEOUT_MS },
-      );
-      return response.data;
-    },
-
-    async imageToPrompt(assetId: string): Promise<{ prompt: string; vision_used?: boolean }> {
-      const response = await client.post(
-        '/api/chat/image-to-prompt',
-        { asset_id: assetId },
-        { timeout: LLM_REQUEST_TIMEOUT_MS },
-      );
-      return response.data;
-    },
-
-    async visualAnalyze(
-      assetId: string,
-      question: string,
-    ): Promise<{ answer: string; vision_used?: boolean }> {
-      const response = await client.post(
-        '/api/chat/visual-analyze',
-        {
-          asset_id: assetId,
-          question,
-        },
-        { timeout: LLM_REQUEST_TIMEOUT_MS },
-      );
-      return response.data;
-    },
-
-    async chatCompletion(body: {
-      model?: string;
-      messages: { role: string; content: string }[];
-      temperature?: number;
-      max_tokens?: number;
-      stream?: boolean;
-      top_p?: number;
-    }): Promise<{
-      id: string;
-      choices: { message: { role: string; content: string } }[];
+    async getVisionModelInfo(): Promise<{
+      model_id: string;
+      name: string | { zh?: string; en?: string };
+      available: boolean;
+      mlx_vlm_installed?: boolean;
     }> {
-      const response = await client.post('/v1/chat/completions', body);
+      const response = await client.get('/v1/vision/model');
       return response.data;
     },
 
     async *chatCompletionStream(body: {
       model?: string;
-      messages: { role: string; content: string }[];
+      messages: Array<{
+        role: string;
+        content:
+          | string
+          | Array<
+              | { type: 'text'; text: string }
+              | { type: 'image_url'; image_url: { url: string } }
+            >;
+      }>;
       temperature?: number;
       max_tokens?: number;
       top_p?: number;
@@ -921,6 +1115,45 @@ export const api = {
 
     async deleteProject(projectId: string): Promise<void> {
       await client.delete(`/api/long-video/projects/${encodeURIComponent(projectId)}`);
+    },
+
+    async listProjectActivity(
+      projectId: string,
+      params?: {
+        limit?: number;
+        offset?: number;
+        category?: string;
+        phase?: string;
+        event_type?: string;
+        parse_run_id?: string;
+        task_id?: string;
+        shot_id?: string;
+      },
+    ): Promise<{ items: LongVideoProjectActivityItem[]; total: number }> {
+      const response = await client.get(
+        `/api/long-video/projects/${encodeURIComponent(projectId)}/activity`,
+        { params },
+      );
+      return response.data as { items: LongVideoProjectActivityItem[]; total: number };
+    },
+
+    async getParseRun(
+      projectId: string,
+      parseRunId: string,
+    ): Promise<LongVideoParseRunDetail> {
+      const response = await client.get(
+        `/api/long-video/projects/${encodeURIComponent(projectId)}/activity/parse-runs/${encodeURIComponent(parseRunId)}`,
+      );
+      return response.data as LongVideoParseRunDetail;
+    },
+
+    async sceneGroundingDepthFromAsset(body: {
+      source_asset_id: string;
+      width?: number;
+      height?: number;
+    }): Promise<{ depth_asset_id: string; panorama_asset_id: string }> {
+      const response = await client.post('/api/long-video/scene-grounding/depth-from-asset', body);
+      return response.data as { depth_asset_id: string; panorama_asset_id: string };
     },
   },
 

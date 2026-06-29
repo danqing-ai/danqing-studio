@@ -9,6 +9,7 @@
       <StudioGalleryFilters
         :filter-time="filterTime"
         :filter-models="filterModels"
+        :search-text="searchText"
         :time-options="timeOptions"
         :model-options="allModelOptions"
         :selection-mode="selectionMode"
@@ -18,8 +19,12 @@
         :supports-canvas="true"
         canvas-media="video"
         :composer-busy="activeVideoTasks.length > 0"
+        :show-model-filter="true"
+        :show-search="true"
+        :search-placeholder="$tt('video.searchPlaceholder')"
         @update:filter-time="filterTime = $event"
         @update:filter-models="filterModels = $event"
+        @update:search-text="searchText = $event"
         @refresh="refreshGallery"
         @toggle-selection-mode="toggleSelectionMode"
         @select-all="selectAllLoaded"
@@ -35,15 +40,20 @@
       <StudioCanvas
         v-if="viewMode === 'grid'"
         :items="galleryItems"
+        :groups="galleryGroups"
         :active-tasks="activeVideoTasks"
         :loading="galleryLoading"
         :has-more="galleryHasMore"
         media="video"
+        :group-mode="groupMode"
+        :selected-group-id="selectedGroupId"
         :has-active-filters="hasActiveFilters"
         :selection-mode="selectionMode"
         :selected-paths="selectedPaths"
         :all-selected="allLoadedSelected"
         @select="onGallerySelect"
+        @enter-group="enterGroup"
+        @exit-group="exitGroup"
         @card-action="onCardAction"
         @reset-filters="resetGalleryFilters"
         @load-more="loadGallery(false)"
@@ -415,6 +425,9 @@ watch(viewMode, (mode) => {
 
 function onViewModeChange(mode: 'grid' | 'canvas') {
   if (viewMode.value === mode) return;
+  if (mode === 'canvas' && selectedGroupId.value) {
+    exitGroup();
+  }
   const batchPaths =
     mode === 'canvas' && selectedPaths.value.size > 0
       ? Array.from(selectedPaths.value)
@@ -598,6 +611,9 @@ function onCanvasComposerRestore(snapshot: {
     const p = bindVideoAssetFromPath(snapshot.start_image_path);
     startImagePath.value = p.path;
     startImageSrc.value = p.previewUrl;
+    if (snapshot.mode === 'animate') {
+      clearAnimateVideoReference();
+    }
   }
   if (snapshot.tail_image_path) {
     const p = bindVideoAssetFromPath(snapshot.tail_image_path);
@@ -628,13 +644,16 @@ function buildCanvasMeta(extra: Record<string, unknown> = {}): Record<string, un
   const meta: Record<string, unknown> = { ...extra };
   const sid = videoCanvas.sessionId.value;
   if (sid) meta.canvas_session_id = sid;
+  if (videoWorkMode.value === 'animate' || videoWorkMode.value === 'edit') {
+    meta.relation_type = videoWorkMode.value === 'edit' ? 'edit' : 'animate';
+  }
   const parentPath =
     canvasSelectedItem.value?.path || videoCanvas.activeAssetPath.value || '';
   if (parentPath.startsWith('asset:')) {
     meta.parent_asset_id = parentPath.slice('asset:'.length);
-    if (videoWorkMode.value === 'animate' || videoWorkMode.value === 'edit') {
-      meta.relation_type = videoWorkMode.value === 'edit' ? 'edit' : 'animate';
-    } else meta.relation_type = 'create';
+    if (videoWorkMode.value === 'create') {
+      meta.relation_type = 'create';
+    }
   }
   return meta;
 }
@@ -685,10 +704,14 @@ const previewVideoSubtitle = computed(() => {
 
 const {
   galleryItems,
+  galleryGroups,
   galleryLoading,
   galleryHasMore,
+  groupMode,
+  selectedGroupId,
   filterTime,
   filterModels,
+  searchText,
   selectionMode,
   selectedPaths,
   allLoadedSelected,
@@ -697,6 +720,8 @@ const {
   hasActiveFilters,
   loadGallery,
   refreshGallery,
+  enterGroup,
+  exitGroup,
   onCanvasScroll,
   resetGalleryFilters,
   toggleSelect,
@@ -1157,17 +1182,18 @@ function onStartAssetPick(payload: { path: string; previewUrl: string }) {
   }
   if (videoWorkMode.value === 'animate' && isVideo) {
     if (videoRequiresSourceVideo(currentModelConfig.value?.parameters)) {
-      videoWorkMode.value = 'edit';
-      clearAnimateImageReference();
-      bindAnimateVideoPreview(payload.path, payload.previewUrl || '');
+      clearAnimateVideoReference();
+      startImageSrc.value = payload.previewUrl || '';
+      startImagePath.value = payload.path;
+      void syncResolutionForStartImage(payload.previewUrl || '');
       showAssetPicker.value = false;
-      toast.success($tt('video.autoSwitchedToEditForV2v'));
       return;
     }
     toast.warning($tt('video.animateUseEditModeForVideo'));
     return;
   }
 
+  clearAnimateVideoReference();
   startImageSrc.value = payload.previewUrl || '';
   startImagePath.value = payload.path;
   void syncResolutionForStartImage(payload.previewUrl || '');
@@ -1185,6 +1211,7 @@ function fillComposerFromCanvasItem(path: string) {
 function onCanvasUseAsStartFrame(payload: { path: string; previewUrl: string; quiet?: boolean }) {
   if (payload.quiet) fillComposerFromCanvasItem(payload.path);
   videoWorkMode.value = 'animate';
+  clearAnimateVideoReference();
   startImageSrc.value = payload.previewUrl || '';
   startImagePath.value = payload.path;
   void syncResolutionForStartImage(payload.previewUrl || '');

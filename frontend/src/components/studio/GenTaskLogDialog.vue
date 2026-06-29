@@ -32,7 +32,7 @@ defineProps<{
 .gen-task-log-dialog__empty {
   padding: 24px 8px;
   text-align: center;
-  font-size: 13px;
+  font-size: var(--dq-font-size-body);
   color: var(--dq-label-tertiary);
 }
 

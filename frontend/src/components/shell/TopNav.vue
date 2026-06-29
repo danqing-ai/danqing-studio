@@ -247,7 +247,7 @@ function openQueue() {
   background: var(--dq-glass-tooltip-bg);
   border: 0.5px solid var(--dq-glass-border);
   border-radius: 7px;
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 500;
   color: var(--dq-label-primary);
   white-space: nowrap;
@@ -294,7 +294,7 @@ function openQueue() {
   min-width: 14px;
   height: 14px;
   padding: 0 3px;
-  font-size: 9px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 700;
   border-radius: 7px;
 }

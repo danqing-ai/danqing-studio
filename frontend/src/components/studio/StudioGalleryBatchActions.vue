@@ -64,7 +64,7 @@ defineEmits<{
 }
 
 .studio-gallery-batch-actions__count {
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 600;
   color: var(--dq-label-primary);
   white-space: nowrap;

@@ -1498,7 +1498,7 @@ onUnmounted(() => {
 }
 .models-page__merged-title {
   margin: 0 0 10px;
-  font-size: 14px;
+  font-size: var(--dq-font-size-body);
   font-weight: 600;
 }
 .models-page__merged-items {
@@ -1511,7 +1511,7 @@ onUnmounted(() => {
   justify-content: space-between;
   gap: 12px;
   padding: 6px 0;
-  font-size: 13px;
+  font-size: var(--dq-font-size-body);
   border-bottom: 1px solid var(--dq-border-subtle);
 }
 .models-page__merged-item:last-child {
@@ -1520,7 +1520,7 @@ onUnmounted(() => {
 .models-page__merged-id {
   color: var(--dq-label-secondary);
   font-family: var(--dq-font-mono, monospace);
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
 }
 .trained-loras-page__empty {
   display: flex;

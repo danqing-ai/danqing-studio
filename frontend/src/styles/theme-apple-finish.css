@@ -49,7 +49,7 @@ html.dark .asset-picker__library-badge {
  position: absolute;
  right: 4px;
  bottom: 4px;
- font-size: 9px;
+ font-size: var(--dq-font-size-caption);
  padding: 2px 5px;
  border-radius: 4px;
  background: var(--dq-overlay-heavy);
@@ -170,7 +170,6 @@ html.dark .model-ver-btn.dq-btn,
 html.dark .model-ver-btn.dq-btn {
  height: 30px;
  padding: 0 10px;
- font-size: 12px;
  font-weight: 500;
  border-radius: 8px;
  display: inline-flex;
@@ -188,7 +187,6 @@ html.dark .model-ver-btn.dq-btn {
 }
 
 html.dark .model-ver-btn__icon.dq-icon {
- font-size: 14px;
  margin: 0;
 }
 
@@ -289,7 +287,6 @@ html.dark .models-toolbar-btn.dq-btn,
 html.dark .models-toolbar-btn.dq-btn {
  height: 34px;
  padding: 0 12px;
- font-size: 13px;
  font-weight: 500;
  border-radius: 9px;
  display: inline-flex;
@@ -303,7 +300,6 @@ html.dark .models-toolbar-btn.dq-btn > span {
 }
 
 html.dark .models-toolbar-btn__icon.dq-icon {
- font-size: 15px;
  margin: 0;
 }
 

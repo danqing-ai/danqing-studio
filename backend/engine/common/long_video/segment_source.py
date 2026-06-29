@@ -6,8 +6,9 @@ from typing import Any, Literal
 
 from backend.core.contracts import LongVideoShotSpec, VideoEditRequest
 from backend.engine.common.video.stitch import extract_last_frame_image
+from backend.engine.group_utils import resolve_asset_group_id, resolve_group_id_from_asset
 
-LongVideoChainMode = Literal["keyframe_only", "last_frame"]
+LongVideoChainMode = Literal["keyframe_only", "last_frame", "reference_r2v"]
 
 
 def effective_shot_chain_mode(
@@ -15,7 +16,9 @@ def effective_shot_chain_mode(
     default: LongVideoChainMode = "keyframe_only",
 ) -> LongVideoChainMode:
     mode = getattr(shot, "chain_mode", None)
-    if mode in ("keyframe_only", "last_frame"):
+    if mode == "first_last":
+        return "keyframe_only"
+    if mode in ("keyframe_only", "last_frame", "reference_r2v"):
         return mode
     return default
 
@@ -49,6 +52,7 @@ def resolve_segment_i2v_source_asset_id(
     shot_work.mkdir(parents=True, exist_ok=True)
     last_frame = shot_work / "last_frame.png"
     extract_last_frame_image(seg_video, output_path=last_frame)
+    group_id = resolve_group_id_from_asset(asset_store, prev_segment_asset_id)
     return asset_store.create_from_file(
         last_frame,
         kind="image",
@@ -58,6 +62,7 @@ def resolve_segment_i2v_source_asset_id(
         source_action="create",
         parent_asset_id=prev_segment_asset_id,
         relation_type="frame_extract",
+        group_id=group_id,
     )
 
 
@@ -68,10 +73,16 @@ def resolve_long_video_edit_chain_source(
     work_dir: Path,
     task_id: str,
 ) -> VideoEditRequest:
-    """Apply ``last_frame`` chain from request metadata before a standalone segment edit."""
+    """Apply chain modes from request metadata before a standalone segment edit."""
     meta = request.metadata or {}
     mode = meta.get("long_video_chain_mode")
     prev_id = (meta.get("long_video_prev_segment_asset_id") or "").strip()
+
+    if mode == "first_last":
+        raise RuntimeError(
+            "long_video segment edit: first_last chain is deprecated; use keyframe_only or last_frame"
+        )
+
     if mode != "last_frame" or not prev_id:
         return request
 
@@ -86,6 +97,9 @@ def resolve_long_video_edit_chain_source(
     last_frame = work / "last_frame.png"
     extract_last_frame_image(seg_video, output_path=last_frame)
     shot_id = meta.get("long_video_shot_id") or ""
+    group_id = resolve_asset_group_id(meta, asset_store) or resolve_group_id_from_asset(
+        asset_store, prev_id
+    )
     source_id = asset_store.create_from_file(
         last_frame,
         kind="image",
@@ -95,5 +109,6 @@ def resolve_long_video_edit_chain_source(
         source_action="create",
         parent_asset_id=prev_id,
         relation_type="frame_extract",
+        group_id=group_id,
     )
     return request.model_copy(update={"source_asset_id": source_id})

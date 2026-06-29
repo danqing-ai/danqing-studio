@@ -1,7 +1,7 @@
 import { ref, watch } from 'vue';
 import type { LongVideoProjectState, LongVideoSelection } from '@/types';
 import { DQ_STORAGE, getItem, setItem } from '@/utils/storage';
-import { defaultLongVideoProject } from '@/utils/longVideoProject';
+import { defaultLongVideoProject, migrateLongVideoProject } from '@/utils/longVideoProject';
 
 const DEBOUNCE_MS = 400;
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
@@ -11,8 +11,8 @@ function loadFromStorage(): LongVideoProjectState | null {
     const raw = getItem(DQ_STORAGE.LONG_VIDEO_PROJECT);
     if (!raw) return null;
     const parsed = JSON.parse(raw) as LongVideoProjectState;
-    if (parsed?.version === 1) {
-      return defaultLongVideoProject(parsed);
+    if (parsed?.version === 1 || parsed?.version === 2) {
+      return defaultLongVideoProject(migrateLongVideoProject(parsed));
     }
   } catch {
     /* ignore */

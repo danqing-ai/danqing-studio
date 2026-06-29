@@ -64,7 +64,7 @@ const truncated = computed(() => {
 
 .composer-prompt-apply__preview {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   line-height: 1.45;
   color: var(--dq-label-secondary);
   display: -webkit-box;

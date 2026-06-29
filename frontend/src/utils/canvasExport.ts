@@ -10,6 +10,7 @@ import type {
   GalleryItem,
 } from '@/types';
 import { api } from '@/utils/api';
+import { describeCanvasNodeViaChat } from '@/utils/llmMessages';
 import {
   assetIdFromGalleryPath,
   isAudioGalleryItem,
@@ -471,8 +472,7 @@ export function assetIdFromPath(path: string): string {
 
 export async function describeCanvasNode(
   assetId: string,
-  opts?: { preferVision?: boolean }
+  opts?: { preferVision?: boolean; locale?: string },
 ): Promise<{ note: string; visionUsed: boolean }> {
-  const res = await api.gen.describeCanvasNode(assetId, opts);
-  return { note: res.note, visionUsed: !!res.vision_used };
+  return describeCanvasNodeViaChat(assetId, { preferVision: opts?.preferVision });
 }

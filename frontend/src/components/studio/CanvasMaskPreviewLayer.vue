@@ -66,7 +66,7 @@ const boxStyle = computed(() => {
   right: 6px;
   padding: 2px 6px;
   border-radius: 4px;
-  font-size: 9px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 700;
   letter-spacing: 0.04em;
   background: rgba(233, 69, 96, 0.85);

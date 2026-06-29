@@ -215,7 +215,7 @@ function importOne(path: string) {
 
 .canvas-gallery-picker__hint {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-secondary);
   line-height: 1.45;
 }
@@ -229,7 +229,7 @@ function importOne(path: string) {
 
 .canvas-gallery-picker__count {
   margin-left: auto;
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
   font-variant-numeric: tabular-nums;
 }
@@ -321,7 +321,7 @@ function importOne(path: string) {
   top: 6px;
   right: 6px;
   z-index: 2;
-  font-size: 10px;
+  font-size: var(--dq-font-size-caption);
   padding: 2px 6px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--dq-bg-page) 82%, transparent);
@@ -332,7 +332,7 @@ function importOne(path: string) {
 .canvas-gallery-picker__caption {
   flex: 0 0 auto;
   padding: 0 8px 8px;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-secondary);
   line-height: 1.3;
   overflow: hidden;

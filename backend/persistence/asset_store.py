@@ -231,6 +231,17 @@ class SQLiteAssetStore(IAssetStore):
                     CREATE INDEX IF NOT EXISTS idx_assets_kind ON assets(kind);
                     CREATE INDEX IF NOT EXISTS idx_assets_task ON assets(source_task_id);
                     CREATE INDEX IF NOT EXISTS idx_assets_created ON assets(created_at);
+
+                    CREATE TABLE IF NOT EXISTS asset_groups (
+                        id TEXT PRIMARY KEY,
+                        title TEXT NOT NULL,
+                        kind TEXT NOT NULL,
+                        metadata TEXT,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_asset_groups_kind ON asset_groups(kind);
+                    CREATE INDEX IF NOT EXISTS idx_asset_groups_updated ON asset_groups(updated_at);
                     """
                 )
                 # Schema migration: add parent_asset_id and relation_type for lineage tracking
@@ -240,6 +251,11 @@ class SQLiteAssetStore(IAssetStore):
                     conn.execute("ALTER TABLE assets ADD COLUMN relation_type TEXT")
                     conn.execute(
                         "CREATE INDEX IF NOT EXISTS idx_assets_parent ON assets(parent_asset_id)"
+                    )
+                if "group_id" not in cols:
+                    conn.execute("ALTER TABLE assets ADD COLUMN group_id TEXT")
+                    conn.execute(
+                        "CREATE INDEX IF NOT EXISTS idx_assets_group ON assets(group_id)"
                     )
                 conn.commit()
 
@@ -254,6 +270,7 @@ class SQLiteAssetStore(IAssetStore):
         source_action: Optional[str] = None,
         parent_asset_id: Optional[str] = None,
         relation_type: Optional[str] = None,
+        group_id: Optional[str] = None,
     ) -> str:
         aid = "ast_" + uuid.uuid4().hex[:24]
         ext = src_path.suffix or ".bin"
@@ -317,9 +334,9 @@ class SQLiteAssetStore(IAssetStore):
                 INSERT INTO assets (
                     id, kind, mime_type, file_path, thumbnail_path,
                     width, height, duration_seconds, source_task_id, source_action, metadata, created_at,
-                    parent_asset_id, relation_type
+                    parent_asset_id, relation_type, group_id
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     aid,
@@ -336,6 +353,7 @@ class SQLiteAssetStore(IAssetStore):
                     datetime.now().isoformat(),
                     parent_asset_id,
                     relation_type,
+                    group_id,
                 ),
             )
             conn.commit()
@@ -358,7 +376,7 @@ class SQLiteAssetStore(IAssetStore):
                 """
                 SELECT id, kind, mime_type, file_path, thumbnail_path,
                        width, height, duration_seconds, source_task_id, source_action,
-                       metadata, created_at, parent_asset_id, relation_type
+                       metadata, created_at, parent_asset_id, relation_type, group_id
                 FROM assets WHERE id = ?
                 """,
                 (asset_id,),
@@ -393,6 +411,7 @@ class SQLiteAssetStore(IAssetStore):
             "metadata": meta,
             "parent_asset_id": row["parent_asset_id"],
             "relation_type": row["relation_type"],
+            "group_id": row["group_id"],
         }
 
     def get_file_path(self, asset_id: str) -> Path:
@@ -533,11 +552,16 @@ class SQLiteAssetStore(IAssetStore):
         *,
         kind: Optional[str] = None,
         source_task_id: Optional[str] = None,
+        source_action: Optional[str] = None,
+        source_action_in: Optional[list[str]] = None,
         parent_asset_id: Optional[str] = None,
+        group_id: Optional[str] = None,
+        exclude_grouped: bool = False,
         created_after: Optional[str] = None,
         created_before: Optional[str] = None,
         model: Optional[str] = None,
         search: Optional[str] = None,
+        search_fields: Optional[list[str]] = None,
         exclude_upload_refs: bool = False,
         exclude_step_previews: bool = True,
         sort_by: str = "created_at",
@@ -553,9 +577,21 @@ class SQLiteAssetStore(IAssetStore):
         if source_task_id is not None and source_task_id != "":
             where.append("source_task_id = ?")
             args.append(source_task_id)
+        if source_action is not None and source_action != "":
+            where.append("source_action = ?")
+            args.append(source_action)
+        if source_action_in:
+            placeholders = ",".join("?" * len(source_action_in))
+            where.append(f"source_action IN ({placeholders})")
+            args.extend(source_action_in)
         if parent_asset_id is not None and parent_asset_id != "":
             where.append("parent_asset_id = ?")
             args.append(parent_asset_id)
+        if group_id is not None and group_id != "":
+            where.append("group_id = ?")
+            args.append(group_id)
+        if exclude_grouped:
+            where.append("group_id IS NULL")
         if created_after:
             where.append("created_at >= ?")
             args.append(created_after)
@@ -566,8 +602,16 @@ class SQLiteAssetStore(IAssetStore):
             where.append("(metadata LIKE ?)")
             args.append(f'%"model": "{model}"%')
         if search:
-            where.append("(metadata LIKE ?)")
-            args.append(f"%{search}%")
+            terms = [t.strip() for t in search.split() if t.strip()]
+            if terms:
+                fields = search_fields or ["title", "prompt"]
+                field_clauses: list[str] = []
+                for field in fields:
+                    for term in terms:
+                        field_clauses.append(f"(metadata LIKE ?)")
+                        args.append(f'%"{field}": "%{term}%"')
+                if field_clauses:
+                    where.append("(" + " OR ".join(field_clauses) + ")")
         if exclude_upload_refs:
             where.append("NOT (COALESCE(source_task_id, '') = '' AND source_action = 'upload')")
         if exclude_step_previews:
@@ -582,7 +626,7 @@ class SQLiteAssetStore(IAssetStore):
         sql = (
             "SELECT id, kind, mime_type, file_path, thumbnail_path, "
             "width, height, duration_seconds, source_task_id, source_action, metadata, created_at, "
-            "parent_asset_id, relation_type "
+            "parent_asset_id, relation_type, group_id "
             "FROM assets WHERE "
             + " AND ".join(where)
             + f" ORDER BY {order_col} {order_dir} LIMIT ? OFFSET ?"
@@ -619,9 +663,225 @@ class SQLiteAssetStore(IAssetStore):
                     "metadata": meta,
                     "parent_asset_id": r["parent_asset_id"],
                     "relation_type": r["relation_type"],
+                    "group_id": r["group_id"],
                 }
             )
         return out
+
+    # ------------------------------------------------------------------
+    # Asset groups
+    # ------------------------------------------------------------------
+
+    def ensure_group(
+        self,
+        group_id: str,
+        *,
+        title: str = "",
+        kind: str = "mixed",
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        """Ensure an asset group exists; create it if missing."""
+        now = datetime.now().isoformat()
+        meta = json.dumps(metadata or {}, ensure_ascii=False)
+        title_clean = (title or "").strip() or "Group"
+        with self._lock:
+            conn = self._conn()
+            row = conn.execute(
+                "SELECT id FROM asset_groups WHERE id = ?", (group_id,)
+            ).fetchone()
+            if row is None:
+                conn.execute(
+                    """
+                    INSERT INTO asset_groups (id, title, kind, metadata, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (group_id, title_clean, kind, meta, now, now),
+                )
+                conn.commit()
+        return self.get_group(group_id) or {
+            "id": group_id,
+            "title": title_clean,
+            "kind": kind,
+            "metadata": metadata or {},
+            "created_at": now,
+            "updated_at": now,
+        }
+
+    def get_group(self, group_id: str) -> Optional[dict[str, Any]]:
+        with self._conn() as conn:
+            row = conn.execute(
+                """
+                SELECT id, title, kind, metadata, created_at, updated_at
+                FROM asset_groups WHERE id = ?
+                """,
+                (group_id,),
+            ).fetchone()
+        if not row:
+            return None
+        meta: dict[str, Any] = {}
+        try:
+            meta = json.loads(row["metadata"] or "{}")
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return {
+            "id": row["id"],
+            "title": row["title"],
+            "kind": row["kind"],
+            "metadata": meta,
+            "created_at": row["created_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    def update_group(
+        self,
+        group_id: str,
+        *,
+        title: Optional[str] = None,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> Optional[dict[str, Any]]:
+        existing = self.get_group(group_id)
+        if not existing:
+            return None
+        now = datetime.now().isoformat()
+        new_title = title.strip() if title is not None else existing["title"]
+        new_meta = metadata if metadata is not None else existing["metadata"]
+        with self._lock:
+            conn = self._conn()
+            conn.execute(
+                """
+                UPDATE asset_groups
+                SET title = ?, metadata = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (new_title, json.dumps(new_meta, ensure_ascii=False), now, group_id),
+            )
+            conn.commit()
+        return {
+            **existing,
+            "title": new_title,
+            "metadata": new_meta,
+            "updated_at": now,
+        }
+
+    def delete_group(self, group_id: str, *, unlink_assets: bool = False) -> bool:
+        """Delete a group. When unlink_assets is True, assets keep their files but lose group_id."""
+        with self._lock:
+            conn = self._conn()
+            if unlink_assets:
+                conn.execute(
+                    "UPDATE assets SET group_id = NULL WHERE group_id = ?",
+                    (group_id,),
+                )
+            else:
+                # Delete member assets too
+                rows = conn.execute(
+                    "SELECT id FROM assets WHERE group_id = ?", (group_id,)
+                ).fetchall()
+                for r in rows:
+                    self.delete(r["id"])
+            cur = conn.execute("DELETE FROM asset_groups WHERE id = ?", (group_id,))
+            conn.commit()
+            return cur.rowcount > 0
+
+    def list_groups(
+        self,
+        *,
+        kind: Optional[str] = None,
+        exclude_empty: bool = True,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        where = ["1=1"]
+        args: list[Any] = []
+        if kind:
+            # Long-video project groups are stored as ``mixed`` but appear in image/video galleries.
+            where.append("(kind = ? OR kind = 'mixed')")
+            args.append(kind)
+        sql = (
+            "SELECT id, title, kind, metadata, created_at, updated_at "
+            "FROM asset_groups WHERE "
+            + " AND ".join(where)
+            + " ORDER BY updated_at DESC LIMIT ? OFFSET ?"
+        )
+        args.extend([limit, offset])
+        with self._conn() as conn:
+            rows = conn.execute(sql, args).fetchall()
+        out: list[dict[str, Any]] = []
+        for row in rows:
+            if exclude_empty and self.count_group_assets(row["id"], kind=kind) == 0:
+                continue
+            meta: dict[str, Any] = {}
+            try:
+                meta = json.loads(row["metadata"] or "{}")
+            except (json.JSONDecodeError, TypeError):
+                pass
+            out.append(
+                {
+                    "id": row["id"],
+                    "title": row["title"],
+                    "kind": row["kind"],
+                    "metadata": meta,
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"],
+                }
+            )
+        return out
+
+    def list_group_preview_assets(
+        self,
+        group_id: str,
+        *,
+        kind: Optional[str] = None,
+        limit: int = 4,
+    ) -> list[dict[str, Any]]:
+        """Return the first N assets of a group for card preview."""
+        return self.list_assets(
+            group_id=group_id,
+            kind=kind,
+            exclude_upload_refs=True,
+            exclude_step_previews=True,
+            sort_by="created_at",
+            sort_order="desc",
+            limit=limit,
+            offset=0,
+        )
+
+    def count_group_assets(self, group_id: str, *, kind: Optional[str] = None) -> int:
+        where = ["group_id = ?"]
+        args: list[Any] = [group_id]
+        if kind:
+            where.append("kind = ?")
+            args.append(kind)
+        with self._conn() as conn:
+            row = conn.execute(
+                f"SELECT COUNT(*) AS n FROM assets WHERE {' AND '.join(where)}",
+                args,
+            ).fetchone()
+        return row["n"] if row else 0
+
+    def set_asset_group(self, asset_id: str, group_id: Optional[str]) -> bool:
+        with self._lock:
+            conn = self._conn()
+            cur = conn.execute(
+                "UPDATE assets SET group_id = ? WHERE id = ?",
+                (group_id, asset_id),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+
+    def list_ungrouped_assets(
+        self,
+        *,
+        kind: Optional[str] = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        return self.list_assets(
+            kind=kind,
+            exclude_grouped=True,
+            limit=limit,
+            offset=offset,
+        )
 
     def get_lineage(self, asset_id: str) -> dict[str, Any]:
         """查询资产的谱系树：当前节点 + 祖先链 + 后代树。"""

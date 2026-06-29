@@ -920,6 +920,95 @@ class VideoRuntimeContractTests(unittest.TestCase):
         self.assertIsNotNone(get_video_decode_handler("wan"))
         self.assertEqual(video_encoder_type(wan), "t5")
 
+    def test_bernini_resolve_animate_video_uses_first_frame(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from PIL import Image
+
+        from backend.engine.config.model_configs import WanConfig
+        from backend.engine.contracts.video_runtime_contracts import resolve_bernini_source_paths
+
+        class _Store:
+            def __init__(self, video_path: Path) -> None:
+                self._video_path = video_path
+
+            def get_file_path(self, asset_id: str) -> Path | None:
+                if asset_id == "ast_video":
+                    return self._video_path
+                return None
+
+            def get_asset_record(self, asset_id: str) -> dict[str, str]:
+                return {"mime_type": "video/mp4", "kind": "video"}
+
+        with tempfile.TemporaryDirectory() as td:
+            video = Path(td) / "clip.mp4"
+            video.write_bytes(b"\x00")
+            store = _Store(video)
+            cfg = WanConfig()
+            cfg.video_edit_source_mode = "source_video"
+            work = Path(td) / "work"
+            work.mkdir()
+            request_animate = SimpleNamespace(
+                source_asset_id="ast_video",
+                metadata={"relation_type": "animate"},
+            )
+            with patch(
+                "backend.engine.contracts.video_runtime_contracts.resolve_video_edit_source_image",
+                return_value=Image.new("RGB", (8, 8)),
+            ):
+                video_path, image_path = resolve_bernini_source_paths(
+                    store, request_animate, cfg, work_dir=work,
+                )
+            self.assertIsNone(video_path)
+            self.assertTrue(str(image_path).endswith("bernini_source_ast_video_frame0.png"))
+
+            request_edit = SimpleNamespace(
+                source_asset_id="ast_video",
+                metadata={"relation_type": "edit"},
+            )
+            video_path, image_path = resolve_bernini_source_paths(
+                store, request_edit, cfg, work_dir=work,
+            )
+            self.assertEqual(video_path, str(video))
+            self.assertIsNone(image_path)
+
+    def test_bernini_resolve_image_asset_is_i2v_source(self) -> None:
+        import tempfile
+        from pathlib import Path
+        from types import SimpleNamespace
+
+        from backend.engine.config.model_configs import WanConfig
+        from backend.engine.contracts.video_runtime_contracts import resolve_bernini_source_paths
+
+        class _Store:
+            def __init__(self, image_path: Path) -> None:
+                self._image_path = image_path
+
+            def get_file_path(self, asset_id: str) -> Path | None:
+                if asset_id == "ast_img":
+                    return self._image_path
+                return None
+
+            def get_asset_record(self, asset_id: str) -> dict[str, str]:
+                return {"mime_type": "image/png", "kind": "image"}
+
+        with tempfile.TemporaryDirectory() as td:
+            img = Path(td) / "start.png"
+            img.write_bytes(b"\x89PNG")
+            store = _Store(img)
+            cfg = WanConfig()
+            cfg.video_edit_source_mode = "source_video"
+            request = SimpleNamespace(
+                source_asset_id="ast_img",
+                metadata={"relation_type": "animate"},
+            )
+            video_path, image_path = resolve_bernini_source_paths(store, request, cfg, work_dir=Path(td))
+            self.assertIsNone(video_path)
+            self.assertEqual(image_path, str(img))
+
 
 class MlxAffineQuantInferenceTests(unittest.TestCase):
     def test_infer_8bit_from_dense_shape(self) -> None:
@@ -3025,6 +3114,10 @@ class HunyuanWeightTests(unittest.TestCase):
         self.assertFalse(
             _needs_wan_spatial_tiling(80, 80, params, enabled=False),
         )
+        params8 = _wan_vae_tile_params({}, spatial_scale=8)
+        self.assertTrue(
+            _needs_wan_spatial_tiling(160, 88, params8, enabled=True),
+        )
 
         import mlx.core as mx
 
@@ -3970,6 +4063,19 @@ class BundleManifestTests(unittest.TestCase):
             self.assertIn("transformer", components)
             assert_bundle_ready_for_family(root, family="esrgan", model_id="real-esrgan-x4plus")
 
+    def test_assert_bundle_ready_qwen3_llm_flat_layout(self) -> None:
+        from backend.core.bundle_manifest import assert_bundle_ready_for_family, scan_components
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "model.safetensors").write_bytes(b"x")
+            (root / "tokenizer.json").write_text("{}", encoding="utf-8")
+
+            components = scan_components(root)
+            self.assertIn("transformer", components)
+            self.assertIn("tokenizer", components)
+            assert_bundle_ready_for_family(root, family="qwen3", model_id="qwen3.5-4b")
+
     def test_scan_components_longcat_nested_layout(self) -> None:
         from backend.core.bundle_manifest import assert_bundle_ready_for_family, scan_components
         from backend.engine.common.bundle.layout import assert_media_bundle_ready
@@ -4410,7 +4516,7 @@ class LLMServiceTests(unittest.TestCase):
     def test_get_model_info_reads_registry_name(self) -> None:
         svc = self._load_service()
         info = svc.get_model_info()
-        self.assertEqual(info["model_id"], "qwen3-4b-thinking-2507")
+        self.assertEqual(info["model_id"], "qwen3.5-4b")
         self.assertIsInstance(info["name"], dict)
         self.assertIn("zh", info["name"])
         self.assertIn("en", info["name"])
@@ -4434,7 +4540,7 @@ class LLMServiceTests(unittest.TestCase):
             default_model_vlm="qwen2.5-vl-7b-instruct",
         )
         self.assertTrue(normalize_app_llm_settings(settings, registry))
-        self.assertEqual(settings.default_model_llm, "qwen3-4b-thinking-2507")
+        self.assertEqual(settings.default_model_llm, "qwen3.5-4b")
         self.assertEqual(settings.default_model_vlm, "qwen3-vl-4b-instruct")
         self.assertEqual(resolve_llm_model_id(settings, registry), settings.default_model_llm)
         self.assertEqual(resolve_vlm_model_id(settings, registry), settings.default_model_vlm)
@@ -5933,12 +6039,31 @@ class ArchitectureWrapUpTests(unittest.TestCase):
             self.assertEqual(tok_dir, tok)
 
     def test_bernini_guidance_mode_resolution(self) -> None:
-        from backend.engine.families.wan.bernini_renderer_mlx import _resolve_guidance_mode
+        from backend.engine.families.wan.bernini_renderer_mlx import (
+            _bernini_user_task_label,
+            _resolve_guidance_mode,
+        )
 
         self.assertEqual(_resolve_guidance_mode(False, False), "t2v")
         self.assertEqual(_resolve_guidance_mode(False, True), "r2v")
         self.assertEqual(_resolve_guidance_mode(True, False), "v2v_chain")
         self.assertEqual(_resolve_guidance_mode(True, True), "rv2v")
+        self.assertEqual(
+            _bernini_user_task_label(
+                source_video_path=None,
+                source_image_path="/tmp/start.png",
+                ref_latents=[],
+            ),
+            "i2v",
+        )
+        self.assertEqual(
+            _bernini_user_task_label(
+                source_video_path="/tmp/src.mp4",
+                source_image_path=None,
+                ref_latents=[],
+            ),
+            "v2v",
+        )
 
     def test_bernini_source_id_rope_modulate(self) -> None:
         import mlx.core as mx
@@ -5955,6 +6080,72 @@ class ArchitectureWrapUpTests(unittest.TestCase):
         id_cos, id_sin = bernini_source_id_cos_sin(mx, 16, 2.0)
         self.assertEqual(tuple(out_cos.shape), (4, 1, 8))
         self.assertGreater(float(mx.max(id_cos)), 0.0)
+
+    def test_factorized_rope_apply_concat_precomputed_length(self) -> None:
+        import mlx.core as mx
+
+        from backend.engine.common.ops.embeddings import factorized_rope_apply
+
+        grid = (19, 40, 22)
+        grid_len = 19 * 40 * 22
+        cond_len = 4 * 40 * 22
+        total = grid_len + cond_len
+        cos = mx.ones((total, 1, 8))
+        sin = mx.zeros((total, 1, 8))
+        q = mx.ones((1, total, 2, 16))
+        out = factorized_rope_apply(
+            mx, q, [grid], mx.zeros((1024, 8, 2)), precomputed_cos_sin=(cos, sin),
+        )
+        self.assertEqual(tuple(out.shape), (1, total, 2, 16))
+
+    def test_merge_wan_config_vae_stride(self) -> None:
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from backend.engine.config.model_configs import WanConfig, merge_wan_bundle_config
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "config.json").write_text(
+                json.dumps(
+                    {
+                        "vae_stride": [4, 8, 8],
+                        "vae_z_dim": 16,
+                        "dim": 512,
+                        "num_layers": 1,
+                        "num_heads": 4,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (root / "vae.safetensors").write_bytes(b"x")
+            cfg = WanConfig()
+            merge_wan_bundle_config(cfg, root)
+            self.assertEqual(cfg.vae_scale, 8)
+            self.assertEqual(cfg.temporal_vae_scale, 4)
+            self.assertEqual(cfg.vae_z_dim, 16)
+
+    def test_bernini_align_latent_volume(self) -> None:
+        import mlx.core as mx
+
+        from backend.engine.families.wan.bernini_renderer_mlx import _align_latent_volume
+
+        ctx = type(
+            "C",
+            (),
+            {
+                "squeeze": staticmethod(lambda a, axis: mx.squeeze(a, axis)),
+                "repeat": staticmethod(lambda a, n, axis: mx.repeat(a, n, axis=axis)),
+                "concat": staticmethod(lambda parts, axis: mx.concatenate(parts, axis=axis)),
+                "zeros": staticmethod(lambda shape, dtype: mx.zeros(shape, dtype=dtype)),
+            },
+        )()
+        latent = mx.zeros((16, 4, 80, 44))
+        out = _align_latent_volume(
+            ctx, latent, channels=16, frames=19, height=80, width=44,
+        )
+        self.assertEqual(tuple(out.shape), (16, 19, 80, 44))
 
     def test_bernini_source_ids_interpolate(self) -> None:
         from backend.engine.families.wan.bernini_renderer_mlx import _make_source_ids
@@ -6441,10 +6632,16 @@ class LoraQualityTests(unittest.TestCase):
     def test_caption_dataset_image_concept_prefixes_subject_visibly(self) -> None:
         from pathlib import Path
 
+        from backend.core.contracts import ChatMessage
+        from backend.engine.llm.message_content import flatten_text_content
         from backend.engine.training.lora_auto_caption import caption_dataset_image
 
-        def fake_analyze(_path: Path, _instruction: str) -> str:
-            self.assertIn("杨紫", _instruction)
+        def fake_analyze(_path: Path, messages: list[ChatMessage]) -> str:
+            user = next((m for m in messages if m.role == "user"), None)
+            blob = flatten_text_content(user.content if user else "")
+            self.assertIn("杨紫", blob)
+            system = next((m for m in messages if m.role == "system"), None)
+            self.assertNotIn("杨紫", flatten_text_content(system.content if system else ""))
             return "半身照，白色连衣裙，自然光"
 
         caption = caption_dataset_image(
@@ -6459,10 +6656,13 @@ class LoraQualityTests(unittest.TestCase):
     def test_caption_dataset_image_without_trigger_does_not_prefix_dataset_name(self) -> None:
         from pathlib import Path
 
+        from backend.core.contracts import ChatMessage
+        from backend.engine.llm.message_content import flatten_text_content
         from backend.engine.training.lora_auto_caption import caption_dataset_image
 
-        def fake_analyze(_path: Path, _instruction: str) -> str:
-            self.assertIn("No trigger word is configured", _instruction)
+        def fake_analyze(_path: Path, messages: list[ChatMessage]) -> str:
+            user = next((m for m in messages if m.role == "user"), None)
+            self.assertIn("No trigger word configured", flatten_text_content(user.content if user else ""))
             return "半身照，白色连衣裙，自然光"
 
         caption = caption_dataset_image(
@@ -6479,7 +6679,7 @@ class LoraQualityTests(unittest.TestCase):
 
         from backend.engine.training.lora_auto_caption import caption_dataset_image
 
-        def fake_analyze(_path: Path, _instruction: str) -> str:
+        def fake_analyze(_path: Path, _messages: list) -> str:
             return "陈钰琪 半身照，白色连衣裙，室内自然光"
 
         caption = caption_dataset_image(
@@ -6495,22 +6695,31 @@ class LoraQualityTests(unittest.TestCase):
     def test_concept_auto_caption_filters_smoothing_texture_labels(self) -> None:
         from pathlib import Path
 
+        from backend.core.contracts import ChatMessage
         from backend.engine.training.lora_auto_caption import (
             build_concept_auto_caption_instruction,
+            build_concept_caption_messages,
             caption_dataset_image,
             normalize_scene_caption,
         )
 
         instruction = build_concept_auto_caption_instruction("陈钰琪")
-        self.assertIn("Do NOT describe skin texture", instruction)
+        self.assertIn("skin texture", instruction.lower())
+        msgs = build_concept_caption_messages("陈钰琪")
+        system = next(m for m in msgs if m.role == "system")
+        user = next(m for m in msgs if m.role == "user")
+        self.assertIn("skin texture", system.content.lower())
+        self.assertIn("陈钰琪", user.content)
+        self.assertNotIn("陈钰琪", system.content)
         cleaned = normalize_scene_caption(
             "半身照，光滑皮肤，白色连衣裙，smooth skin，室内自然光",
             subject_name="陈钰琪",
         )
         self.assertEqual(cleaned, "半身照，白色连衣裙，室内自然光")
 
-        def fake_analyze(_path: Path, _instruction: str) -> str:
-            self.assertIn("Do NOT describe skin texture", _instruction)
+        def fake_analyze(_path: Path, messages: list[ChatMessage]) -> str:
+            system = next(m for m in messages if m.role == "system")
+            self.assertIn("skin texture", system.content.lower())
             return "半身照，光滑皮肤，白色连衣裙，smooth skin，室内自然光"
 
         caption = caption_dataset_image(
@@ -6533,10 +6742,10 @@ class LoraQualityTests(unittest.TestCase):
 
         from backend.engine.training.lora_auto_caption import caption_dataset_image
 
-        calls: list[str] = []
+        calls: list[list[ChatMessage]] = []
 
-        def fake_analyze(_path: Path, _instruction: str) -> str:
-            calls.append(_instruction)
+        def fake_analyze(_path: Path, messages: list[ChatMessage]) -> str:
+            calls.append(messages)
             if len(calls) == 1:
                 return "!" * 100
             return "半身照，白色衬衫，室内"
@@ -6554,12 +6763,20 @@ class LoraQualityTests(unittest.TestCase):
     def test_caption_dataset_images_batch_retries_garbage_in_second_pass(self) -> None:
         from pathlib import Path
 
+        from backend.core.contracts import ChatMessage
         from backend.engine.training.lora_auto_caption import caption_dataset_images_batch
 
-        calls: list[tuple[str, int]] = []
+        calls: list[tuple[int, str]] = []
 
-        def fake_batch(image_paths: list[Path], instruction: str, max_tokens=128, temperature=0.2) -> list[str]:
-            calls.append((instruction, len(image_paths)))
+        def fake_batch(
+            image_paths: list[Path],
+            messages: list[ChatMessage],
+            max_tokens=128,
+            temperature=0.2,
+        ) -> list[str]:
+            del max_tokens, temperature
+            role = next((m.role for m in messages if m.role == "system"), "")
+            calls.append((len(image_paths), role))
             if len(calls) == 1:
                 return ["!" * 80, "半身照，红色连衣裙"]
             return ["半身照，白色衬衫"]

@@ -524,14 +524,14 @@ defineExpose({ viewportRef });
 
 .canvas-viewport__empty-title {
   margin: 0 0 8px;
-  font-size: 15px;
+  font-size: var(--dq-font-size-title);
   font-weight: 600;
   color: var(--dq-label-primary);
 }
 
 .canvas-viewport__empty-hint {
   margin: 0 0 12px;
-  font-size: 13px;
+  font-size: var(--dq-font-size-body);
   color: var(--dq-label-secondary);
   line-height: 1.5;
 }
@@ -540,7 +540,7 @@ defineExpose({ viewportRef });
   margin: 0 0 12px;
   padding-left: 1.2rem;
   text-align: left;
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-secondary);
   line-height: 1.6;
 }
@@ -550,7 +550,7 @@ defineExpose({ viewportRef });
   padding: 10px 12px;
   list-style: none;
   text-align: left;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-secondary);
   line-height: 1.55;
   border-radius: 8px;

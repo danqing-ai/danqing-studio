@@ -118,6 +118,14 @@ FAMILY_BUNDLE_CONTRACTS: dict[str, FamilyBundleContract] = {
         required=frozenset({"transformer", "tokenizer"}),
         optional=frozenset(),
     ),
+    "qwen3": FamilyBundleContract(
+        required=frozenset({"transformer", "tokenizer"}),
+        optional=frozenset(),
+    ),
+    "qwen3_vl": FamilyBundleContract(
+        required=frozenset({"transformer", "tokenizer"}),
+        optional=frozenset(),
+    ),
     "longcat": FamilyBundleContract(
         required=frozenset({"transformer", "text_encoder", "vae"}),
         optional=frozenset({"tokenizer"}),

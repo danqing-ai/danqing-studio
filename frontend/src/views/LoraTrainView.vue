@@ -795,8 +795,8 @@ async function refreshDatasetHealth(id?: string) {
 
 async function refreshVisionAvailability() {
   try {
-    const info = await api.gen.getLLMModelInfo();
-    visionAvailable.value = Boolean(info?.vision?.available);
+    const info = await api.gen.getVisionModelInfo();
+    visionAvailable.value = Boolean(info?.available);
   } catch {
     visionAvailable.value = false;
   }
@@ -1363,7 +1363,7 @@ onMounted(async () => {
 
 .lora-train-page__rail-title {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--dq-font-size-title);
   font-weight: 700;
   letter-spacing: -0.02em;
   color: var(--dq-label-primary);
@@ -1371,7 +1371,7 @@ onMounted(async () => {
 
 .lora-train-page__rail-sub {
   margin: 4px 0 0;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   line-height: 1.45;
   color: var(--dq-label-tertiary);
 }
@@ -1426,7 +1426,7 @@ onMounted(async () => {
   width: 22px;
   height: 22px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 700;
   background: var(--dq-fill-tertiary);
   color: var(--dq-label-secondary);
@@ -1472,7 +1472,7 @@ onMounted(async () => {
 }
 
 .lora-train-page__step-label {
-  font-size: 13px;
+  font-size: var(--dq-font-size-body);
   font-weight: 500;
   color: var(--dq-label-secondary);
 }
@@ -1490,7 +1490,7 @@ onMounted(async () => {
 }
 
 .lora-train-page__chip-title {
-  font-size: 10px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 600;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -1505,7 +1505,7 @@ onMounted(async () => {
 }
 
 .lora-train-page__chip {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   line-height: 1.4;
   color: var(--dq-label-primary);
   padding: 4px 8px;
@@ -1520,7 +1520,7 @@ onMounted(async () => {
 
 .lora-train-page__history-fold summary {
   cursor: pointer;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 600;
   color: var(--dq-label-tertiary);
   letter-spacing: 0.03em;
@@ -1563,13 +1563,13 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   line-height: 1.4;
   color: var(--dq-label-tertiary);
 }
 
 .lora-train-page__mem-text strong {
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-primary);
 }
 
@@ -1631,7 +1631,7 @@ onMounted(async () => {
 
 .lora-train-page__stage-title {
   margin: 0;
-  font-size: 22px;
+  font-size: var(--dq-font-size-display);
   font-weight: 700;
   letter-spacing: -0.035em;
   color: var(--dq-label-primary);
@@ -1639,7 +1639,7 @@ onMounted(async () => {
 
 .lora-train-page__stage-desc {
   margin: 6px 0 0;
-  font-size: 13px;
+  font-size: var(--dq-font-size-body);
   line-height: 1.5;
   color: var(--dq-label-tertiary);
   max-width: 56ch;
@@ -1683,7 +1683,7 @@ onMounted(async () => {
 }
 
 .lora-train-page__footer-step {
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 600;
   color: var(--dq-label-tertiary);
   font-variant-numeric: tabular-nums;
@@ -1741,7 +1741,7 @@ onMounted(async () => {
   height: 44px;
   flex-shrink: 0;
   border-radius: 12px;
-  font-size: 13px;
+  font-size: var(--dq-font-size-body);
   font-weight: 700;
   letter-spacing: 0.02em;
   background: var(--dq-fill-tertiary);
@@ -1767,7 +1767,7 @@ onMounted(async () => {
 }
 
 .lora-model-tile__name {
-  font-size: 14px;
+  font-size: var(--dq-font-size-body);
   font-weight: 600;
   color: var(--dq-label-primary);
   letter-spacing: -0.02em;
@@ -1777,7 +1777,7 @@ onMounted(async () => {
 }
 
 .lora-model-tile__meta {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
 }
 
@@ -1794,7 +1794,7 @@ onMounted(async () => {
   flex-shrink: 0;
   border-radius: 999px;
   border: 1.5px solid var(--dq-border);
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 700;
   color: transparent;
   transition: all 0.15s ease;
@@ -1838,19 +1838,19 @@ onMounted(async () => {
 }
 
 .lora-train-page__preset-name {
-  font-size: 14px;
+  font-size: var(--dq-font-size-body);
   font-weight: 600;
   color: var(--dq-label-primary);
 }
 
 .lora-train-page__preset-desc {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   line-height: 1.45;
   color: var(--dq-label-tertiary);
 }
 
 .lora-train-page__preset-stats {
-  font-size: 10px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 600;
   color: var(--dq-accent);
   margin-top: 2px;
@@ -1873,7 +1873,7 @@ onMounted(async () => {
 
 .lora-train-page__custom-guide-text {
   margin: 0 0 8px;
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   line-height: 1.5;
   color: var(--dq-label-secondary);
 }
@@ -1881,7 +1881,7 @@ onMounted(async () => {
 .lora-train-page__custom-guide-list {
   margin: 0;
   padding-left: 1.1rem;
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   line-height: 1.5;
   color: var(--dq-label-secondary);
 }
@@ -1896,13 +1896,13 @@ onMounted(async () => {
 
 .lora-train-page__prompt-warn p {
   margin: 0 0 8px;
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   line-height: 1.45;
 }
 
 .lora-train-page__preset-detail-label {
   display: block;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 600;
   color: var(--dq-label-secondary);
   margin-bottom: 8px;
@@ -1912,7 +1912,7 @@ onMounted(async () => {
   display: flex;
   flex-wrap: wrap;
   gap: 8px 18px;
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-primary);
 }
 
@@ -1923,14 +1923,14 @@ onMounted(async () => {
 
 .lora-train-page__field-hint {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
   line-height: 1.4;
 }
 
 .lora-train-page__confirm-intro {
   margin: 0 0 14px;
-  font-size: 13px;
+  font-size: var(--dq-font-size-body);
   color: var(--dq-label-secondary);
   line-height: 1.5;
 }
@@ -1947,7 +1947,7 @@ onMounted(async () => {
 }
 
 .lora-train-page__label {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 600;
   letter-spacing: 0.02em;
   color: var(--dq-label-secondary);
@@ -1989,7 +1989,7 @@ onMounted(async () => {
 
 .lora-train-page__advanced {
   margin-top: 4px;
-  font-size: 13px;
+  font-size: var(--dq-font-size-body);
   color: var(--dq-label-secondary);
 }
 
@@ -2015,7 +2015,7 @@ onMounted(async () => {
   border-radius: 12px;
   background: color-mix(in srgb, var(--dq-bg-base) 50%, var(--dq-fill-secondary));
   border: 0.5px solid var(--dq-border-subtle);
-  font-size: 13px;
+  font-size: var(--dq-font-size-body);
 }
 
 .lora-train-page__summary span {
@@ -2035,7 +2035,7 @@ onMounted(async () => {
 
 .lora-train-page__confirm-preview-label {
   display: block;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 600;
   color: var(--dq-label-secondary);
   margin-bottom: 8px;
@@ -2065,7 +2065,7 @@ onMounted(async () => {
   border-radius: 10px;
   background: var(--dq-fill-tertiary);
   border: 0.5px dashed var(--dq-border);
-  font-size: 13px;
+  font-size: var(--dq-font-size-body);
   font-weight: 600;
   color: var(--dq-label-tertiary);
 }

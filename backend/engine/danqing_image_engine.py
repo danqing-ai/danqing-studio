@@ -14,6 +14,7 @@ from backend.core.contracts import (
 )
 from backend.core.media_interfaces import IImageEngine
 from backend.core.interfaces import IPathResolver
+from backend.engine.group_utils import resolve_asset_group_id
 from .cache import ModelCache
 from .lineage import image_edit_relation_type, resolve_lineage
 from .progress_bridge import make_pipeline_progress_callback
@@ -107,6 +108,7 @@ class DanQingImageEngine(IImageEngine):
             return EngineResult(primary_asset_id="", metadata={"status": "cancelled"})
 
         parent_id, relation = resolve_lineage(request.metadata)
+        group_id = resolve_asset_group_id(request.metadata, ctx.asset_store)
         if isinstance(result, list):
             asset_ids: list[str] = []
             output_paths: list[str] = []
@@ -115,6 +117,7 @@ class DanQingImageEngine(IImageEngine):
                     Path(output_path), kind="image", mime_type="image/png",
                     source_task_id=ctx.task_id, metadata=metadata, source_action="create",
                     parent_asset_id=parent_id, relation_type=relation,
+                    group_id=group_id,
                 )
                 asset_ids.append(aid)
                 output_paths.append(output_path)
@@ -129,6 +132,7 @@ class DanQingImageEngine(IImageEngine):
             Path(output_path), kind="image", mime_type="image/png",
             source_task_id=ctx.task_id, metadata=metadata, source_action="create",
             parent_asset_id=parent_id, relation_type=relation,
+            group_id=group_id,
         )
         return EngineResult(primary_asset_id=aid, asset_ids=[aid], output_paths=[output_path])
 
@@ -162,11 +166,13 @@ class DanQingImageEngine(IImageEngine):
                 request.operation, rewrite_mode=request.rewrite_mode or ""
             ),
         )
+        group_id = resolve_asset_group_id(request.metadata, ctx.asset_store)
         aid = ctx.asset_store.create_from_file(
             Path(output_path), kind="image", mime_type="image/png",
             source_task_id=ctx.task_id, metadata=metadata,
             source_action=request.operation,
             parent_asset_id=parent_id, relation_type=relation,
+            group_id=group_id,
         )
         return EngineResult(primary_asset_id=aid, asset_ids=[aid], output_paths=[output_path])
 
@@ -194,10 +200,12 @@ class DanQingImageEngine(IImageEngine):
             return EngineResult(primary_asset_id="", metadata={"status": "cancelled"})
 
         output_path, metadata = result
+        group_id = resolve_asset_group_id(request.metadata, ctx.asset_store)
         aid = ctx.asset_store.create_from_file(
             Path(output_path), kind="image", mime_type="image/png",
             source_task_id=ctx.task_id, metadata=metadata, source_action="upscale",
             parent_asset_id=request.source_asset_id, relation_type="upscale",
+            group_id=group_id,
         )
         return EngineResult(primary_asset_id=aid, asset_ids=[aid], output_paths=[output_path])
 

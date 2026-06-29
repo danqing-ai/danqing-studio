@@ -6,17 +6,15 @@ import re
 from pathlib import Path
 from typing import Any, Callable
 
-_STYLE_AUTO_CAPTION_INSTRUCTION = """You caption ONE image for DreamBooth **style** LoRA training.
-Describe the visual style: art medium, rendering, color palette, line work, texture, mood, composition.
-Do NOT identify people by name. Use concise comma-separated phrases.
-Ignore any watermarks, logos, or text overlaid on the image.
-Use Chinese if the artwork is Chinese-centric; otherwise English.
-Output ONLY the style description — no quotes, headings, or labels."""
-
-_STYLE_AUTO_CAPTION_RETRY_INSTRUCTION = """Describe this image's visual style in 3-8 short comma-separated phrases for LoRA training.
-Focus on: art medium, color palette, rendering technique, mood.
-Ignore watermarks and text. No names, no punctuation-only output.
-Use Chinese if appropriate. Output ONLY the style phrases."""
+from backend.core.contracts import ChatMessage
+from backend.engine.llm.chat_invoke import build_text_messages
+from backend.engine.llm.message_content import extract_vision_instruction
+from backend.engine.llm.prompts.system import (
+    CONCEPT_LORA_CAPTION_RETRY_SYSTEM,
+    CONCEPT_LORA_CAPTION_SYSTEM,
+    STYLE_LORA_CAPTION_RETRY_SYSTEM,
+    STYLE_LORA_CAPTION_SYSTEM,
+)
 
 _LEGACY_TEMPLATE_MARKERS = (
     "a photo of",
@@ -44,6 +42,9 @@ _BANNED_BEAUTY_TEXTURE_TERMS = (
     "waxy skin",
 )
 
+VisionAnalyzeFn = Callable[[Path, list[ChatMessage]], str]
+VisionBatchAnalyzeFn = Callable[..., list[str]]
+
 
 def _count_meaningful_chars(text: str) -> int:
     return sum(1 for ch in text if ch.isalnum() or "\u4e00" <= ch <= "\u9fff")
@@ -66,43 +67,66 @@ def is_usable_scene_caption(text: str, *, min_meaningful: int = 2) -> bool:
     return True
 
 
-def build_concept_auto_caption_instruction(subject_name: str) -> str:
+def build_concept_caption_messages(subject_name: str) -> list[ChatMessage]:
     subject = (subject_name or "").strip()
-    subject_line = (
-        f"Training trigger word: {subject}\nDo NOT include the trigger word in your output."
-        if subject
-        else "No trigger word is configured. Do NOT identify or name the person in your output."
+    parts = ["## Task", "Caption the attached photo."]
+    if subject:
+        parts.extend(
+            [
+                "",
+                "## Training trigger word",
+                f"{subject} (do NOT include in output)",
+            ]
+        )
+        if any("\u4e00" <= ch <= "\u9fff" for ch in subject):
+            parts.extend(["", "## Output language", "Use Chinese phrases in the caption body."])
+    else:
+        parts.extend(
+            [
+                "",
+                "## Note",
+                "No trigger word configured. Do not identify or name the person.",
+            ]
+        )
+    return build_text_messages(system=CONCEPT_LORA_CAPTION_SYSTEM, user="\n".join(parts))
+
+
+def build_concept_caption_retry_messages() -> list[ChatMessage]:
+    return build_text_messages(
+        system=CONCEPT_LORA_CAPTION_RETRY_SYSTEM,
+        user="## Task\nCaption the attached photo.",
     )
-    return f"""You caption ONE photo for DreamBooth person/face LoRA training.
-{subject_line}
 
-Describe only what is visible using concise comma-separated phrases:
-- shot type (特写/胸像/半身/全身, or close-up, bust, half-body, full-body)
-- image orientation (竖版/横版/正方形, or portrait/landscape/square) — include if notable
-- clothing, accessories, hairstyle
-- expression, pose, gaze direction
-- background and environment
-- lighting (natural light, studio, golden hour, etc.)
 
-Rules for special cases:
-- If multiple people appear, describe ONLY the most prominent/central person; mention "多人合照" briefly but do NOT describe other people in detail.
-- Ignore any text, watermarks, logos, or UI elements overlaid on the image.
-- If the photo appears to be a selfie or mirror shot, note it (自拍/镜前照 or selfie/mirror shot).
-- Do NOT describe skin texture or beauty-retouching qualities such as 光滑皮肤/无瑕肌肤/smooth skin/flawless skin/poreless/airbrushed.
-- Do NOT turn natural skin details such as moles, freckles, acne, or blemishes into labels.
+def build_style_caption_messages() -> list[ChatMessage]:
+    return build_text_messages(
+        system=STYLE_LORA_CAPTION_SYSTEM,
+        user="## Task\nCaption the attached image.",
+    )
 
-Use Chinese phrases if the subject name is Chinese; otherwise English.
-Never output repeated punctuation, filler characters, or refusal text.
-If the image is unclear, give a brief best-effort description (e.g. 半身人像, 户外照片).
-Output ONLY the scene description — no quotes, headings, labels, or the subject name."""
+
+def build_style_caption_retry_messages() -> list[ChatMessage]:
+    return build_text_messages(
+        system=STYLE_LORA_CAPTION_RETRY_SYSTEM,
+        user="## Task\nCaption the attached image.",
+    )
+
+
+def build_concept_auto_caption_instruction(subject_name: str) -> str:
+    """Legacy VLM flat prompt — prefer ``build_concept_caption_messages``."""
+    return extract_vision_instruction(build_concept_caption_messages(subject_name))
 
 
 def build_style_auto_caption_instruction() -> str:
-    return _STYLE_AUTO_CAPTION_INSTRUCTION
+    return extract_vision_instruction(build_style_caption_messages())
 
 
 def build_style_auto_caption_retry_instruction() -> str:
-    return _STYLE_AUTO_CAPTION_RETRY_INSTRUCTION
+    return extract_vision_instruction(build_style_caption_retry_messages())
+
+
+def build_concept_auto_caption_retry_instruction() -> str:
+    return extract_vision_instruction(build_concept_caption_retry_messages())
 
 
 def _has_cjk(text: str) -> bool:
@@ -120,18 +144,6 @@ def resolve_lora_subject_name(meta: dict[str, Any]) -> str:
     return trigger if trigger and not _looks_like_legacy_template(trigger) else ""
 
 
-_CONCEPT_AUTO_CAPTION_RETRY_INSTRUCTION = """Describe this photo in 3-8 short comma-separated phrases for LoRA training.
-Do NOT identify, infer, or include any person's name.
-Include: shot type, clothing, background, lighting.
-Do NOT describe skin texture or beauty-retouching qualities such as 光滑皮肤, smooth skin, flawless skin, poreless, or airbrushed.
-Use Chinese if appropriate. No punctuation-only output, no exclamation marks, no filler.
-Output ONLY the description phrases."""
-
-
-def build_concept_auto_caption_retry_instruction() -> str:
-    return _CONCEPT_AUTO_CAPTION_RETRY_INSTRUCTION
-
-
 def clean_scene_caption(raw: str, *, subject_name: str = "") -> str:
     text = (raw or "").strip()
     if not text:
@@ -142,17 +154,17 @@ def clean_scene_caption(raw: str, *, subject_name: str = "") -> str:
         if key.strip().upper() in {"DESCRIPTION", "SCENE", "CAPTION", "OUTPUT", "STYLE"}:
             text = val.strip()
     text = text.strip().strip('"\'')
-    # Strip common English VLM preambles
     text = re.sub(
         r"^(the scene (is|shows)|description:|the image (shows|depicts|displays)|this (photo|image) (shows|depicts))\s*",
-        "", text, flags=re.I,
+        "",
+        text,
+        flags=re.I,
     ).strip()
-    # Strip common Chinese VLM preambles
     text = re.sub(
         r"^(图片(展示了|显示了|描绘了)|照片(展示了|显示了|描绘了)|画面(展示了|显示了|中有|中有))\s*",
-        "", text,
+        "",
+        text,
     ).strip()
-    # Strip colon-separated Chinese labels
     text = re.sub(r"^(描述|场景|画面描述|风格描述)\s*[：:]\s*", "", text).strip()
 
     subject = (subject_name or "").strip()
@@ -216,32 +228,53 @@ def compose_person_caption(subject_name: str, scene: str) -> str:
     return f"{subject}{sep}{scene}"
 
 
+def _default_batch_analyze(
+    image_paths: list[Path],
+    messages: list[ChatMessage],
+    model_dir: Path,
+    *,
+    max_tokens: int = 128,
+    temperature: float = 0.2,
+) -> list[str]:
+    from backend.engine.llm.vision import analyze_image_files_batch_messages
+
+    return analyze_image_files_batch_messages(
+        image_paths,
+        model_dir,
+        messages=messages,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
+
+
 def caption_dataset_image(
     path: Path,
     model_dir: Path,
     *,
     audit_kind: str = "concept",
     subject_name: str = "",
-    analyze_fn: Callable[[Path, str], str] | None = None,
+    analyze_fn: VisionAnalyzeFn | None = None,
 ) -> str:
     if analyze_fn is not None:
-        def _analyze(image_path: Path, instruction: str, *, temperature: float = 0.2) -> str:
-            return analyze_fn(image_path, instruction)
+
+        def _analyze(image_path: Path, messages: list[ChatMessage], *, temperature: float = 0.2) -> str:
+            del temperature
+            return analyze_fn(image_path, messages)
 
         kind = (audit_kind or "concept").strip().lower()
         if kind == "style":
-            raw = _analyze(path, build_style_auto_caption_instruction())
+            raw = _analyze(path, build_style_caption_messages())
             scene = normalize_scene_caption(raw)
             if not scene:
-                raw_retry = _analyze(path, build_style_auto_caption_retry_instruction(), temperature=0.1)
+                raw_retry = _analyze(path, build_style_caption_retry_messages())
                 scene = normalize_scene_caption(raw_retry)
             return scene or "style reference"
 
         subject = (subject_name or "").strip()
-        raw = _analyze(path, build_concept_auto_caption_instruction(subject))
+        raw = _analyze(path, build_concept_caption_messages(subject))
         scene = normalize_scene_caption(raw, subject_name=subject)
         if not scene:
-            raw_retry = _analyze(path, build_concept_auto_caption_retry_instruction(), temperature=0.1)
+            raw_retry = _analyze(path, build_concept_caption_retry_messages())
             scene = normalize_scene_caption(raw_retry, subject_name=subject)
         return compose_person_caption(subject, scene)
 
@@ -265,27 +298,37 @@ def caption_dataset_images_batch(
     *,
     audit_kind: str = "concept",
     subject_name: str = "",
-    batch_analyze_fn: Callable[..., list[str]] | None = None,
+    batch_analyze_fn: VisionBatchAnalyzeFn | None = None,
 ) -> list[str]:
     """Caption many images with one VLM load per pass (primary + optional retry pass)."""
     if not paths:
         return []
 
-    from backend.engine.llm.vision import analyze_image_files_batch
-
-    analyze_batch = batch_analyze_fn or (
-        lambda image_paths, instruction, max_tokens=128, temperature=0.2: analyze_image_files_batch(
+    def analyze_batch(
+        image_paths: list[Path],
+        messages: list[ChatMessage],
+        *,
+        max_tokens: int = 128,
+        temperature: float = 0.2,
+    ) -> list[str]:
+        if batch_analyze_fn is not None:
+            return batch_analyze_fn(
+                image_paths,
+                messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+            )
+        return _default_batch_analyze(
             image_paths,
+            messages,
             model_dir,
-            instruction=instruction,
             max_tokens=max_tokens,
             temperature=temperature,
         )
-    )
 
     kind = (audit_kind or "concept").strip().lower()
     if kind == "style":
-        raw_list = analyze_batch(paths, build_style_auto_caption_instruction())
+        raw_list = analyze_batch(paths, build_style_caption_messages())
         style_captions: list[str | None] = [None] * len(paths)
         retry_paths_style: list[Path] = []
         retry_indices_style: list[int] = []
@@ -297,15 +340,18 @@ def caption_dataset_images_batch(
                 retry_paths_style.append(paths[idx])
                 retry_indices_style.append(idx)
         if retry_paths_style:
-            retry_inst = build_style_auto_caption_retry_instruction()
-            raw_retry = analyze_batch(retry_paths_style, retry_inst, max_tokens=128, temperature=0.1)
+            raw_retry = analyze_batch(
+                retry_paths_style,
+                build_style_caption_retry_messages(),
+                max_tokens=128,
+                temperature=0.1,
+            )
             for idx, raw in zip(retry_indices_style, raw_retry, strict=False):
                 style_captions[idx] = normalize_scene_caption(raw) or "style reference"
         return [cap if cap is not None else "style reference" for cap in style_captions]
 
     subject = (subject_name or "").strip()
-    primary_inst = build_concept_auto_caption_instruction(subject)
-    raw_list = analyze_batch(paths, primary_inst, max_tokens=128, temperature=0.2)
+    raw_list = analyze_batch(paths, build_concept_caption_messages(subject), max_tokens=128, temperature=0.2)
 
     captions: list[str | None] = [None] * len(paths)
     retry_paths: list[Path] = []
@@ -320,8 +366,12 @@ def caption_dataset_images_batch(
             retry_indices.append(idx)
 
     if retry_paths:
-        retry_inst = build_concept_auto_caption_retry_instruction()
-        raw_retry = analyze_batch(retry_paths, retry_inst, max_tokens=128, temperature=0.1)
+        raw_retry = analyze_batch(
+            retry_paths,
+            build_concept_caption_retry_messages(),
+            max_tokens=128,
+            temperature=0.1,
+        )
         for idx, raw in zip(retry_indices, raw_retry, strict=False):
             captions[idx] = compose_person_caption(subject, raw)
 
@@ -338,5 +388,3 @@ def caption_dataset_images_batch(
             "Retry auto-caption or edit captions manually."
         )
     return [str(cap).strip() for cap in captions]
-
-

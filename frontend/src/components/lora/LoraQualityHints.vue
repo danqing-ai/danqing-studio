@@ -192,7 +192,7 @@ function hintText(hint: LoraQualityHint): string {
 .lora-quality-hints__list {
   margin: 0;
   padding-left: 1.1rem;
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   line-height: 1.5;
   color: var(--dq-label-secondary);
 }
@@ -216,13 +216,13 @@ function hintText(hint: LoraQualityHint): string {
 
 .lora-quality-hints__stats {
   margin: 8px 0 0;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
 }
 
 .lora-quality-hints__per-image {
   margin-top: 10px;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-secondary);
 }
 
@@ -272,7 +272,7 @@ function hintText(hint: LoraQualityHint): string {
 }
 
 .lora-quality-hints__vlm-hint {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
 }
 </style>

@@ -246,13 +246,13 @@ function randomizeSeed() {
 
 .video-advanced-fields__head label,
 .video-advanced-fields__label {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 600;
   color: var(--dq-label-secondary);
 }
 
 .video-advanced-fields__val {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 600;
   color: var(--dq-label-primary);
   font-variant-numeric: tabular-nums;
@@ -268,7 +268,7 @@ function randomizeSeed() {
 
 .video-advanced-fields__note {
   margin: 0;
-  font-size: 10px;
+  font-size: var(--dq-font-size-caption);
   line-height: 1.45;
   color: var(--dq-label-tertiary);
 }
@@ -296,7 +296,7 @@ function randomizeSeed() {
 
 .video-advanced-fields__lora-hint {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   line-height: 1.45;
   color: var(--dq-label-tertiary);
 }

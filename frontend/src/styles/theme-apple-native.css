@@ -211,7 +211,7 @@ html.dark .settings-model-tab--macos {
 
 html.dark .settings-page--macos .settings-model-tab--macos .settings-group-block-title,
 html.dark .settings-page--macos .settings-model-tab--macos .settings-group-block-title-row .settings-group-block-title {
- font-size: 11px;
+ font-size: var(--dq-font-size-caption);
  font-weight: 600;
  letter-spacing: 0;
  text-transform: none;
@@ -228,14 +228,14 @@ html.dark .settings-model-hero-panel.settings-grouped-form--model {
 }
 
 html.dark .settings-page--macos .settings-model-tab--macos .settings-overview--inset .settings-overview__title {
- font-size: 17px;
+ font-size: var(--dq-font-size-body);
  font-weight: 600;
  letter-spacing: -0.02em;
 }
 
 html.dark .settings-page--macos .settings-model-tab--macos .settings-overview--inset .settings-overview__desc {
  color: var(--dq-label-desc);
- font-size: 12px;
+ font-size: var(--dq-font-size-caption);
  line-height: 1.45;
 }
 

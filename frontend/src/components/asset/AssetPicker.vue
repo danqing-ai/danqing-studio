@@ -391,7 +391,7 @@ function selectLibraryRow(row: { id: string; previewUrl: string }) {
   position: absolute;
   right: 2px;
   bottom: 2px;
-  font-size: 10px;
+  font-size: var(--dq-font-size-caption);
   padding: 1px 4px;
   border-radius: 4px;
   background: var(--dq-mask);

@@ -129,21 +129,20 @@
     </div>
 
     <!-- Toolbar -->
-    <div class="image-composer__toolbar">
-      <div class="image-composer__toolbar-left">
-        <!-- Mode selector (optional) -->
+    <ComposerToolbar>
+      <template #mode>
         <DqSegmented
           v-if="modeOptions && modeOptions.length > 0"
           v-model="localMode"
           size="small"
           :options="modeOptions"
         />
-
-        <!-- Model selector -->
+      </template>
+      <template #controls>
         <DqSelect
           v-model="localModel"
           size="small"
-          class="image-composer__select image-composer__select--model"
+          class="studio-composer-toolbar__select studio-composer-toolbar__select--model"
           @change="(val: string) => emit('model-change', val)"
         >
           <DqOption
@@ -164,12 +163,11 @@
           </DqOption>
         </DqSelect>
 
-        <!-- Size selector (txt2img only; img2img 输出尺寸跟随源图) -->
         <DqSelect
           v-if="!isImg2imgMode && !lockSize"
           v-model="localSize"
           size="small"
-          class="image-composer__select image-composer__select--size"
+          class="studio-composer-toolbar__select studio-composer-toolbar__select--size"
         >
           <DqOption
             v-for="opt in sizeOptions"
@@ -178,13 +176,12 @@
             :label="formatResolutionOptionLabel(opt)"
           />
         </DqSelect>
-      </div>
-
-      <div class="image-composer__toolbar-right">
+      </template>
+      <template #actions>
         <DqSelect
           v-model="localBatchCount"
           size="small"
-          class="image-composer__select image-composer__select--batch"
+          class="studio-composer-toolbar__select studio-composer-toolbar__select--batch"
         >
           <DqOption
             v-for="n in 4"
@@ -194,19 +191,18 @@
           />
         </DqSelect>
 
-        <!-- Generate button -->
         <DqButton
           type="primary"
           size="sm"
-          class="image-composer__generate"
+          class="studio-composer-toolbar__generate"
           :disabled="!canGenerate || submitting"
           @click="$emit('generate')"
         >
           <DqIcon :size="14"><MagicStick /></DqIcon>
           <span>{{ primaryActionLabel }}</span>
         </DqButton>
-      </div>
-    </div>
+      </template>
+    </ComposerToolbar>
 
     <ComposerAdvancedCollapsible
       v-model:open="advancedOpen"
@@ -241,6 +237,7 @@
 <script setup lang="ts">
 import { ref, computed, withDefaults } from 'vue';
 import ComposerAdvancedCollapsible from './ComposerAdvancedCollapsible.vue';
+import ComposerToolbar from './ComposerToolbar.vue';
 import ImageComposerAdvancedFields from './ImageComposerAdvancedFields.vue';
 import ComposerPromptApplyStrip from './ComposerPromptApplyStrip.vue';
 import ComposerSuccessorHintStrip from './ComposerSuccessorHintStrip.vue';
@@ -495,7 +492,6 @@ function onStyleCommand(command: string) {
 }
 
 .image-composer__title :deep(.dq-input) {
-  font-size: 13px;
   border-radius: var(--dq-radius-input);
 }
 
@@ -512,7 +508,7 @@ function onStyleCommand(command: string) {
 
 .image-composer__prompt :deep(.dq-input--textarea) {
   border-radius: var(--dq-radius-group);
-  font-size: 14px;
+  font-size: var(--dq-font-size-body);
   line-height: 1.5;
   padding: 10px 12px 32px;
   min-height: 4.5rem;
@@ -572,7 +568,7 @@ function onStyleCommand(command: string) {
 
 .image-composer__control-hint {
   margin: 0;
-  font-size: 10px;
+  font-size: var(--dq-font-size-caption);
   line-height: 1.4;
   color: var(--dq-label-tertiary);
 }
@@ -613,67 +609,8 @@ function onStyleCommand(command: string) {
   to { transform: rotate(360deg); }
 }
 
-/* Toolbar — drawer: stack controls vertically */
-.image-composer__toolbar {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 10px;
-}
-
-.image-composer__toolbar-left,
-.image-composer__toolbar-right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  width: 100%;
-}
-
-.image-composer__toolbar-left :deep(.dq-segmented) {
-  flex: 1 1 100%;
-  width: 100%;
-}
-
-.image-composer__toolbar-right {
-  justify-content: flex-end;
-}
-
-.image-composer__select {
-  width: auto;
-}
-
-.image-composer__select--model {
-  flex: 1 1 100%;
-  width: 100%;
-  max-width: none;
-  min-width: 0;
-}
-
-.image-composer__select--size {
-  flex: 1 1 calc(50% - 4px);
-  min-width: 120px;
-}
-
-.image-composer__select--batch {
-  flex: 0 0 auto;
-  min-width: 50px;
-}
-
-/* Model dropdown item */
-.image-composer__model-option {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.image-composer__model-label {
-  flex: 1;
-}
-
 .image-composer__model-badge {
-  font-size: 10px;
+  font-size: var(--dq-font-size-caption);
   padding: 0 4px;
   height: 16px;
   line-height: 16px;
@@ -686,22 +623,9 @@ function onStyleCommand(command: string) {
 
 .image-composer__size-pixel {
   margin-left: 6px;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
   opacity: 0.8;
-}
-
-/* Generate button */
-.image-composer__generate {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  flex: 1;
-  justify-content: center;
-  min-height: 36px;
-  padding: 8px 16px;
-  font-weight: 600;
-  font-size: 13px;
 }
 
 /* Advanced panel (inside drawer) */
@@ -734,7 +658,7 @@ function onStyleCommand(command: string) {
 }
 
  .image-composer__field label {
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 500;
   color: var(--dq-label-secondary);
   white-space: nowrap;
@@ -749,7 +673,7 @@ function onStyleCommand(command: string) {
 }
 
 .image-composer__field-val {
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-secondary);
   min-width: 32px;
   text-align: right;

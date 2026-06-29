@@ -688,12 +688,12 @@ defineExpose({ getMaskBlob, clearMask });
 }
 
 .editor-empty__lead {
-  font-size: 14px;
+  font-size: var(--dq-font-size-body);
   font-weight: 500;
 }
 
 .editor-empty__subhint {
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   opacity: 0.7;
 }
 
@@ -720,13 +720,13 @@ defineExpose({ getMaskBlob, clearMask });
 }
 
 .toolbar-label {
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-secondary);
   white-space: nowrap;
 }
 
 .toolbar-val {
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-secondary);
   min-width: 32px;
   text-align: right;

@@ -27,7 +27,7 @@ class SettingsResponse(BaseModel):
     default_model_image: str = ""
     default_model_video: str = ""
     default_model_audio: str = ""
-    default_model_llm: str = "qwen3-4b-thinking-2507"
+    default_model_llm: str = "qwen3.5-4b"
     default_model_vlm: str = "qwen3-vl-4b-instruct"
     default_model_llm_think: bool = False
     auto_save_prompts: bool

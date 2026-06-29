@@ -44,9 +44,9 @@ _PREFERRED_MODEL_ORDER: dict[str, dict[str, tuple[str, ...]]] = {
         "high": ("ace-step-xl-sft",),
     },
     "llm": {
-        "low": ("qwen3-4b-thinking-2507",),
-        "mid": ("qwen3-4b-thinking-2507",),
-        "high": ("qwen3-4b-thinking-2507",),
+        "low": ("qwen3.5-4b",),
+        "mid": ("qwen3.5-4b",),
+        "high": ("qwen3.5-4b",),
     },
     "vlm": {
         "low": ("qwen3-vl-4b-instruct",),

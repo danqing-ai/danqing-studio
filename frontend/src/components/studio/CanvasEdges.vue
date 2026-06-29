@@ -95,7 +95,7 @@ const edgeLines = computed(() => {
 }
 
 .canvas-edges__label {
-  font-size: 10px;
+  font-size: var(--dq-font-size-caption);
   fill: var(--dq-label-secondary);
   text-anchor: middle;
 }

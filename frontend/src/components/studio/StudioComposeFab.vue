@@ -79,7 +79,7 @@ const actionLabel = computed(() => {
 }
 
 .studio-compose-fab__action {
-  font-size: 13px;
+  font-size: var(--dq-font-size-body);
   font-weight: 600;
   color: var(--dq-accent);
   white-space: nowrap;

@@ -111,9 +111,9 @@ function onAddCharacter(characterId: string) {
 }
 
 function removeCharacter(characterId: string) {
-  const base = (props.castLooks?.length ? props.castLooks : resolvedCast.value).filter(
-    (c) => c.character_id !== characterId,
-  );
-  emitCast(base);
+  const base = props.castLooks?.length
+    ? [...props.castLooks]
+    : [...resolvedCast.value];
+  emitCast(base.filter((c) => c.character_id !== characterId));
 }
 </script>

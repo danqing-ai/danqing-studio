@@ -147,14 +147,14 @@ async function commitRename() {
 }
 
 .studio-canvas-session-controls__sync {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-secondary);
   white-space: nowrap;
   padding-left: 4px;
 }
 
 .studio-canvas-session-controls__loading {
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-secondary);
   white-space: nowrap;
 }

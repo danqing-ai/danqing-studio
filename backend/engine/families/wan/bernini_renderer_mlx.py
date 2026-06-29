@@ -40,6 +40,54 @@ def _concat_rope(ctx: Any, parts: list[tuple[Any, Any]]) -> tuple[Any, Any]:
     return cos, sin
 
 
+def _align_latent_volume(
+    ctx: Any,
+    latent: Any,
+    *,
+    channels: int,
+    frames: int,
+    height: int,
+    width: int,
+) -> Any:
+    """Crop or edge-pad ``[C,T,H,W]`` to match the denoise noise tensor."""
+    if latent.ndim == 5:
+        latent = ctx.squeeze(latent, 0)
+    if latent.ndim != 4:
+        raise RuntimeError(
+            f"Bernini latent align expects [C,T,H,W], got {getattr(latent, 'shape', ())}"
+        )
+    c, t, h, w = (int(latent.shape[i]) for i in range(4))
+    if c != channels:
+        raise RuntimeError(
+            f"Bernini V2V latent channel mismatch: encoded {c}, expected {channels}"
+        )
+    if t > frames:
+        latent = latent[:, :frames, :, :]
+    elif t < frames:
+        if t < 1:
+            raise RuntimeError("Bernini V2V source latent has zero temporal frames")
+        pad = ctx.repeat(latent[:, -1:, :, :], frames - t, axis=1)
+        latent = ctx.concat([latent, pad], axis=1)
+    if h > height:
+        off = (h - height) // 2
+        latent = latent[:, :, off : off + height, :]
+    elif h < height:
+        pad = ctx.zeros((channels, frames, height - h, w), dtype=latent.dtype)
+        latent = ctx.concat([latent, pad], axis=2)
+    _, _, h2, w2 = (int(latent.shape[i]) for i in range(4))
+    if w2 > width:
+        off = (w2 - width) // 2
+        latent = latent[:, :, :, off : off + width]
+    elif w2 < width:
+        pad = ctx.zeros((channels, frames, h2, width - w2), dtype=latent.dtype)
+        latent = ctx.concat([latent, pad], axis=3)
+    out = (int(latent.shape[0]), int(latent.shape[1]), int(latent.shape[2]), int(latent.shape[3]))
+    expected = (channels, frames, height, width)
+    if out != expected:
+        raise RuntimeError(f"Bernini V2V latent align failed: got {out}, expected {expected}")
+    return latent
+
+
 def _make_source_ids(n: int, *, interpolate: bool, max_trained: int) -> list[float]:
     if n <= 0:
         return []
@@ -54,6 +102,22 @@ def _resolve_guidance_mode(has_video: bool, has_refs: bool) -> GuidanceMode:
     if has_video:
         return "v2v_chain"
     if has_refs:
+        return "r2v"
+    return "t2v"
+
+
+def _bernini_user_task_label(
+    *,
+    source_video_path: str | None,
+    source_image_path: str | None,
+    ref_latents: list[Any],
+) -> str:
+    """User-facing task kind (distinct from internal CFG mode names)."""
+    if source_video_path:
+        return "v2v"
+    if source_image_path:
+        return "rv2v" if ref_latents else "i2v"
+    if ref_latents:
         return "r2v"
     return "t2v"
 
@@ -283,13 +347,22 @@ class BerniniRendererMLX:
         text_emb: Any,
         step_idx: int,
     ) -> Any:
+        del model, step_idx
+        tokens = combo["tokens"]
+        tok_len = int(tokens.shape[1])
+        rope_len = int(combo["rope"][0].shape[0])
+        if tok_len != rope_len:
+            raise RuntimeError(
+                f"Bernini token/RoPE length mismatch: tokens={tok_len}, rope={rope_len}, "
+                f"cond_len={combo['cond_len']}, noisy_len={combo['noisy_len']}"
+            )
         pred_tokens = inner.forward_token_sequence(
-            combo["tokens"],
+            tokens,
             timestep,
             text_emb,
             rope_cos_sin=combo["rope"],
             grid=combo["grid"],
-            seq_len=int(combo["seq_len"]),
+            seq_len=tok_len,
         )
         cond_len = int(combo["cond_len"])
         noisy_pred = pred_tokens[:, cond_len:]
@@ -366,8 +439,16 @@ class BerniniRendererMLX:
         video_latents: list[Any] = []
         ref_latents: list[Any] = []
         if source_video_path:
+            encoded = self._encode_source_video(source_video_path, width, height, num_frames, fps)
             video_latents.append(
-                self._encode_source_video(source_video_path, width, height, num_frames, fps)
+                _align_latent_volume(
+                    ctx,
+                    encoded,
+                    channels=latent_c,
+                    frames=latent_frames,
+                    height=latent_h,
+                    width=latent_w,
+                )
             )
         if source_image_path:
             video_latents.append(
@@ -379,11 +460,23 @@ class BerniniRendererMLX:
             )
 
         mode = _resolve_guidance_mode(bool(video_latents), bool(ref_latents))
+        user_task = _bernini_user_task_label(
+            source_video_path=source_video_path,
+            source_image_path=source_image_path,
+            ref_latents=ref_latents,
+        )
+        if source_video_path:
+            source_kind = "video"
+        elif source_image_path:
+            source_kind = "image"
+        else:
+            source_kind = "none"
         if on_log is not None:
             on_log(
                 "info",
-                f"Bernini-R task={mode} video_sources={len(video_latents)} "
-                f"ref_images={len(ref_latents)} size={width}x{height} frames={num_frames}",
+                f"Bernini-R task={user_task} cfg={mode} source={source_kind} "
+                f"video_sources={len(video_latents)} ref_images={len(ref_latents)} "
+                f"size={width}x{height} frames={num_frames}",
             )
 
         interp = bool(getattr(config, "interpolate_src_id", True))
@@ -473,6 +566,11 @@ class BerniniRendererMLX:
             noisy = scheduler.step(noise_pred, t, noisy, return_dict=False)
             if isinstance(noisy, tuple):
                 noisy = noisy[0]
+
+            # MLX lazy graph: materialize latents each step (standard video denoise uses MemoryGuard).
+            ctx.eval(noisy)
+            if (step_idx + 1) % 4 == 0:
+                ctx.clear_cache()
 
             if on_progress is not None:
                 emit_denoise_progress(on_progress, step_idx + 1, n_steps)

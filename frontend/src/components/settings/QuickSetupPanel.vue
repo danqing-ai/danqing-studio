@@ -283,7 +283,7 @@ defineExpose({
 }
 .settings-section-desc--muted {
   margin-top: -4px;
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
 }
 </style>

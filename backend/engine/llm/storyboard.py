@@ -160,14 +160,27 @@ def _sanitize_shot_field(text: str, index: int, *, character_anchor: str = "") -
     return _pick_shot_line(text, index, character_anchor=character_anchor)
 
 
-def _pairs_usable(pairs: list[tuple[str, str]], shot_count: int) -> bool:
+def _pairs_usable(
+    pairs: list[tuple[str, str]],
+    shot_count: int,
+    *,
+    beat_sheet: list[str] | None = None,
+) -> bool:
     if len(pairs) < shot_count or shot_count <= 0:
         return False
+    beats = beat_sheet or []
     slice_pairs = pairs[:shot_count]
     visuals = [
-        _pick_shot_line(v, i, character_anchor="", beat_sheet=None)
+        resolve_shot_scene_for_index(
+            index=i,
+            raw_visual=v,
+            beat_sheet=beats,
+            character_anchor="",
+        )
         for i, (v, _) in enumerate(slice_pairs)
     ]
+    if any(not is_valid_shot_scene_text(v) for v in visuals):
+        return False
     if any(len(v) < 6 for v in visuals):
         return False
     if any(_contains_beat_markers(v) for v in visuals):
@@ -217,19 +230,29 @@ def coalesce_dual_pairs(
         return dual_pairs_from_beats(beat_sheet, shot_count, character_anchor=character_anchor)
     normalized: list[tuple[str, str]] = []
     for i, (visual, motion) in enumerate(pairs[:shot_count]):
-        v = _pick_shot_line(visual, i, character_anchor=character_anchor, beat_sheet=beat_sheet)
+        v = resolve_shot_scene_for_index(
+            index=i,
+            raw_visual=visual,
+            beat_sheet=beat_sheet,
+            character_anchor=character_anchor,
+        )
         m = _pick_shot_line(motion, i, character_anchor=character_anchor, beat_sheet=beat_sheet)
-        if not v and beat_sheet and i < len(beat_sheet):
-            v = beat_sheet[i]
-        if _looks_like_motion_only(v) and beat_sheet and i < len(beat_sheet):
-            v = beat_sheet[i]
-        if not m and beat_sheet:
-            m = beat_sheet[i + 1] if i + 1 < len(beat_sheet) else (v or beat_sheet[i])
-        normalized.append((v or beat_sheet[i] if beat_sheet and i < len(beat_sheet) else m, m or v))
+        if not is_valid_shot_scene_text(m) or m.strip() == v.strip():
+            from backend.engine.llm.motion_prompt import motion_prompt_from_beat
+
+            nxt = beat_sheet[i + 1] if i + 1 < len(beat_sheet) else v
+            m = motion_prompt_from_beat(v, beat=v, next_visual=nxt)
+        if not m:
+            m = v
+        normalized.append((v, m))
     padded = _pad_pairs(normalized, shot_count, fallback=beat_sheet)
-    if padded and len({(m or "")[:60] for _, m in padded}) == 1 and beat_sheet:
+    visual_keys = {(v or "")[:80] for v, _ in padded}
+    motion_keys = {(m or "")[:60] for _, m in padded}
+    if padded and beat_sheet and (
+        len(visual_keys) < min(3, shot_count) or len(motion_keys) == 1
+    ):
         return dual_pairs_from_beats(beat_sheet, shot_count, character_anchor=character_anchor)
-    if _pairs_usable(padded, shot_count):
+    if _pairs_usable(padded, shot_count, beat_sheet=beat_sheet):
         return padded
     return dual_pairs_from_beats(beat_sheet, shot_count, character_anchor=character_anchor)
 
@@ -311,10 +334,10 @@ def parse_dual_shot_script(
     motions: dict[int, str] = {}
     for m in _VISUAL_RE.finditer(raw):
         idx = int(m.group(1) or len(visuals) + 1)
-        visuals[idx] = m.group(2).strip()
+        visuals[idx] = _strip_leaked_instructions(m.group(2).strip())
     for m in _MOTION_RE.finditer(raw):
         idx = int(m.group(1) or len(motions) + 1)
-        motions[idx] = m.group(2).strip()
+        motions[idx] = _strip_leaked_instructions(m.group(2).strip())
     if visuals or motions:
         beats_from_raw = [m.group(2).strip() for m in _BEAT_RE.finditer(raw)]
         only_visual_one = max(visuals.keys(), default=0) <= 1 and bool(visuals.get(1))
@@ -355,8 +378,11 @@ def dual_pairs_from_beats(
     shot_count: int,
     *,
     character_anchor: str = "",
+    locale: str | None = None,
 ) -> list[tuple[str, str]]:
     """Build visual/motion pairs from plan beats when Expand LLM output is unusable."""
+    from backend.engine.llm.motion_prompt import motion_prompt_from_beat
+
     if shot_count <= 0:
         return []
     beats = [b.strip() for b in beat_sheet if b and b.strip()]
@@ -365,7 +391,13 @@ def dual_pairs_from_beats(
     beats = _pad_strings(beats, shot_count, label="beat fallback", fallback=beats or None)
     pairs: list[tuple[str, str]] = []
     for i, visual in enumerate(beats[:shot_count]):
-        motion = beats[i + 1] if i + 1 < len(beats) else visual
+        nxt = beats[i + 1] if i + 1 < len(beats) else visual
+        motion = motion_prompt_from_beat(
+            visual,
+            beat=visual,
+            next_visual=nxt,
+            locale=locale,
+        )
         pairs.append((visual, motion))
     return pairs
 
@@ -391,7 +423,7 @@ def storyboard_shot_pairs_ok(
     style_anchor: str = "",
     locale: str | None = None,
 ) -> bool:
-    if not _pairs_usable(pairs, shot_count):
+    if not _pairs_usable(pairs, shot_count, beat_sheet=beat_sheet):
         return False
     if len(beat_sheet) < shot_count:
         return False
@@ -442,6 +474,118 @@ def storyboard_quality_ok(
     return True
 
 
+_INSTRUCTION_MARKERS = (
+    "必须点名",
+    "输出格式",
+    "cast roster",
+    "角色阵容",
+    "Do not invent",
+    "预建的 beat",
+    "Narrative budget",
+    "honor shot-size",
+    "Downstream code",
+    "Every on-screen character MUST",
+    "CRITICAL:",
+    "然后是角色",
+    "每个块是",
+    "budget:",
+    "Output constraints",
+    "Output language",
+    "然后是 【画风】",
+    "关键帧时刻",
+    "compact=快速",
+)
+
+
+def find_instruction_leaks(text: str) -> list[str]:
+    """Return instruction/locale markers present in model output (parse quality)."""
+    blob = text or ""
+    return [marker for marker in _INSTRUCTION_MARKERS if marker in blob]
+
+
+def _strip_leaked_instructions(text: str) -> str:
+    """Remove locale-block / format-rule echo from LLM expand output."""
+    raw = (text or "").strip()
+    if not raw:
+        return ""
+    if KEYFRAME_REF_DIVIDER in raw:
+        head = raw.split(KEYFRAME_REF_DIVIDER, 1)[0].strip()
+        if head:
+            raw = head
+    lines: list[str] = []
+    for line in raw.splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        if s.startswith("- ") and any(m in s for m in _INSTRUCTION_MARKERS):
+            continue
+        if any(m in s for m in _INSTRUCTION_MARKERS):
+            continue
+        lines.append(s)
+    cleaned = " ".join(lines).strip()
+    return cleaned or raw.splitlines()[0].strip() if raw.splitlines() else raw
+
+
+def is_valid_shot_scene_text(text: str) -> bool:
+    """Reject LLM instruction leakage and non-scene boilerplate."""
+    raw = (text or "").strip()
+    if len(raw) < 8 or len(raw) > 480:
+        return False
+    lower = raw.lower()
+    for marker in _INSTRUCTION_MARKERS:
+        if marker.lower() in lower or marker in raw:
+            return False
+    bullet_lines = [ln for ln in raw.splitlines() if ln.strip().startswith(("-", "•", "*"))]
+    if len(bullet_lines) >= 2:
+        return False
+    if raw.count("---") >= 2:
+        return False
+    if re.match(r"^【本帧】\s*(必须|不要|如果用户|预算)", raw):
+        return False
+    return True
+
+
+def normalize_shot_scene_text(text: str, *, fallback: str = "") -> str:
+    """Pick a clean per-shot scene line; prefer structured beats over expand noise."""
+    for candidate in (
+        extract_keyframe_shot_scene(text),
+        (text or "").strip(),
+        (fallback or "").strip(),
+    ):
+        c = (candidate or "").strip()
+        if c and is_valid_shot_scene_text(c):
+            return c
+    fb = (fallback or "").strip()
+    if fb:
+        return fb
+    raw = extract_keyframe_shot_scene(text) or (text or "").strip()
+    return raw[:240].strip()
+
+
+def chapter_beats_ready_for_shots(beats: list[str]) -> bool:
+    cleaned = [b.strip() for b in beats if b and b.strip()]
+    if len(cleaned) < 2:
+        return False
+    return all(is_valid_shot_scene_text(b) for b in cleaned)
+
+
+def resolve_shot_scene_for_index(
+    *,
+    index: int,
+    raw_visual: str,
+    beat_sheet: list[str],
+    character_anchor: str = "",
+) -> str:
+    beat = beat_sheet[index].strip() if index < len(beat_sheet) else ""
+    picked = _pick_shot_line(
+        raw_visual,
+        index,
+        character_anchor=character_anchor,
+        beat_sheet=beat_sheet,
+    )
+    return normalize_shot_scene_text(picked, fallback=beat)
+
+
 KEYFRAME_REF_DIVIDER = "---"
 
 _CHARACTER_BLOCK_ZH = re.compile(r"【角色·([^】]+)】\s*(.+)", re.S)
@@ -453,6 +597,29 @@ _SHOT_SCENE_EN = re.compile(r"\[Shot\]\s*(.+)", re.I | re.S)
 _SHOT_SCENE_HEAD_ZH = re.compile(r"^【本帧】\s*(.+)", re.S)
 _SHOT_SCENE_HEAD_EN = re.compile(r"^\[Shot\]\s*(.+)", re.I | re.S)
 _STYLE_LABELS = frozenset({"画风", "风格", "style", "look", "palette", "film"})
+
+_LEGACY_CHARACTER_CLAUSE_ZH = re.compile(
+    r"^([\u4e00-\u9fffA-Za-z·]{2,10})[，,]\s*(.+)$",
+    re.S,
+)
+_LEGACY_CHARACTER_CLAUSE_EN = re.compile(
+    r"^([A-Za-z][A-Za-z\s'.-]{1,24})\s*[,，]\s*(.+)$",
+    re.S,
+)
+
+
+def _parse_legacy_character_clause(raw: str) -> tuple[str, str] | None:
+    """Legacy anchor line: ``赵今麦，白T恤，黑色短发`` → (name, body)."""
+    text = (raw or "").strip()
+    if not text or text.startswith("【") or text.startswith("["):
+        return None
+    m = _LEGACY_CHARACTER_CLAUSE_ZH.match(text)
+    if m:
+        return m.group(1).strip(), m.group(2).strip()
+    m = _LEGACY_CHARACTER_CLAUSE_EN.match(text)
+    if m:
+        return m.group(1).strip(), m.group(2).strip()
+    return None
 
 
 def storyboard_anchor_format_rule(locale: str) -> str:
@@ -528,13 +695,10 @@ def parse_anchor_blocks(character_anchor: str) -> list[tuple[str, str, str]]:
         if m:
             blocks.append(("style", m.group(1).strip(), m.group(2).strip()))
             continue
-        name_m = re.match(r"^([^，,：:]{1,16})[，,：:]\s*(.+)", raw, re.S)
-        if name_m:
-            name = name_m.group(1).strip()
-            body = name_m.group(2).strip()
-            if name in _STYLE_LEAD_WORDS or name in ("画风", "风格"):
-                blocks.append(("style", name, body))
-            else:
+        legacy = _parse_legacy_character_clause(raw)
+        if legacy:
+            name, body = legacy
+            if name and body:
                 blocks.append(("character", name, body))
             continue
         blocks.append(("other", "", raw))
@@ -877,14 +1041,18 @@ def build_structured_shots(
     segment_duration_sec: float,
     dual_pairs: list[tuple[str, str]] | None = None,
     characters: list[dict] | None = None,
+    scenes: list[dict] | None = None,
     style_anchor: str = "",
     locale: str | None = None,
-) -> list[dict[str, str | int]]:
-    plan = build_shot_plan(
+    shot_plan: ShotPlan | None = None,
+) -> list[dict[str, str | int | float]]:
+    plan = shot_plan or build_shot_plan(
         target_duration_sec=target_duration_sec,
         segment_duration_sec=segment_duration_sec,
+        beat_texts=beat_sheet[: max(len(beat_sheet), 1)],
     )
-    shots: list[dict[str, str | int]] = []
+    durations = plan.segment_durations_sec
+    shots: list[dict[str, str | int | float]] = []
     pairs = list(dual_pairs or [])
     if pairs:
         pairs = coalesce_dual_pairs(
@@ -898,30 +1066,50 @@ def build_structured_shots(
         motion = ""
         if pairs and i < len(pairs):
             visual, motion = pairs[i]
-            visual = _pick_shot_line(
-                visual, i, character_anchor=character_anchor, beat_sheet=beat_sheet
+            visual = resolve_shot_scene_for_index(
+                index=i,
+                raw_visual=visual,
+                beat_sheet=beat_sheet,
+                character_anchor=character_anchor,
             )
             motion = _pick_shot_line(
                 motion, i, character_anchor=character_anchor, beat_sheet=beat_sheet
             )
+            if not is_valid_shot_scene_text(motion) or motion.strip() == visual.strip():
+                from backend.engine.llm.motion_prompt import motion_prompt_from_beat
+
+                nxt = beat_sheet[i + 1] if i + 1 < len(beat_sheet) else visual
+                motion = motion_prompt_from_beat(visual, beat=beat_sheet[i] if i < len(beat_sheet) else visual, next_visual=nxt, locale=locale)
         elif i < len(beat_sheet):
-            visual = beat_sheet[i]
-            motion = beat_sheet[i + 1] if i + 1 < len(beat_sheet) else visual
+            visual = normalize_shot_scene_text(beat_sheet[i], fallback=beat_sheet[i])
+            from backend.engine.llm.motion_prompt import motion_prompt_from_beat
+
+            nxt = beat_sheet[i + 1] if i + 1 < len(beat_sheet) else beat_sheet[i]
+            motion = motion_prompt_from_beat(
+                visual,
+                beat=beat_sheet[i],
+                next_visual=nxt,
+                locale=locale,
+            )
         elif i < len(segment_prompts):
             motion = segment_prompts[i]
             visual = motion
         visual = _strip_beat_markers(visual)
         if _contains_beat_markers(visual) or len(_split_beat_marked_lines(visual)) > 1:
             if i < len(beat_sheet):
-                visual = beat_sheet[i]
+                visual = normalize_shot_scene_text(beat_sheet[i], fallback=beat_sheet[i])
         if _looks_like_motion_only(visual) and i < len(beat_sheet):
-            visual = beat_sheet[i]
+            visual = normalize_shot_scene_text(beat_sheet[i], fallback=beat_sheet[i])
+        if not is_valid_shot_scene_text(visual) and i < len(beat_sheet):
+            visual = normalize_shot_scene_text(beat_sheet[i], fallback=beat_sheet[i])
         shots.append(
             {
                 "id": f"shot_{i:02d}",
                 "order": i,
                 "visual_prompt": visual.strip(),
                 "motion_prompt": (motion or visual).strip(),
+                "scene_prompt": visual.strip(),
+                "duration_sec": float(durations[i]) if i < len(durations) else float(segment_duration_sec),
             }
         )
     return _apply_cast_and_appearance_lock(
@@ -929,6 +1117,7 @@ def build_structured_shots(
         character_anchor=character_anchor,
         beat_sheet=beat_sheet,
         characters=characters,
+        scenes=scenes,
         style_anchor=style_anchor,
         locale=locale,
     )
@@ -940,9 +1129,10 @@ def _apply_cast_and_appearance_lock(
     character_anchor: str,
     beat_sheet: list[str],
     characters: list[dict] | None = None,
+    scenes: list[dict] | None = None,
     style_anchor: str = "",
     locale: str | None = None,
-) -> list[dict[str, str | int | list]]:
+) -> list[dict[str, str | int | list | dict | None]]:
     from backend.engine.llm.storyboard_cast import (
         cast_looks_to_dtos,
         compose_keyframe_with_cast,
@@ -950,36 +1140,41 @@ def _apply_cast_and_appearance_lock(
         infer_shot_cast_looks,
         parse_character_roster,
     )
+    from backend.engine.llm.storyboard_scenes import (
+        dtos_to_roster as dtos_to_scene_roster,
+        infer_shot_scene_look,
+        scene_look_to_dtos,
+    )
 
     roster = dtos_to_roster(characters) if characters else parse_character_roster(character_anchor, locale=locale)[0]
+    scene_roster = dtos_to_scene_roster(scenes) if scenes else []
     style = (style_anchor or "").strip()
     if not style and character_anchor.strip():
         style = parse_character_roster(character_anchor, locale=locale)[1]
-    if not roster:
+    if not roster and not scene_roster:
         return apply_storyboard_appearance_lock(shots, character_anchor=character_anchor)
 
     prev_cast = None
-    locked: list[dict[str, str | int | list]] = []
+    prev_scene = None
+    locked: list[dict[str, str | int | list | dict | None]] = []
     for i, shot in enumerate(shots):
         raw_visual = str(shot.get("visual_prompt", "")).strip()
-        scene = extract_keyframe_shot_scene(raw_visual) or raw_visual
-        beat = beat_sheet[i].strip() if i < len(beat_sheet) else scene
-        cast = infer_shot_cast_looks(scene=scene, beat=beat, characters=roster, prev=prev_cast)
+        beat = beat_sheet[i].strip() if i < len(beat_sheet) else ""
+        scene = normalize_shot_scene_text(raw_visual, fallback=beat)
+        if not scene and beat:
+            scene = beat
+        cast = infer_shot_cast_looks(scene=scene, beat=beat or scene, characters=roster, prev=prev_cast)
         prev_cast = cast
-        visual = compose_keyframe_with_cast(
-            scene,
-            characters=roster,
-            cast=cast,
-            style_anchor=style,
-            locale=locale,
-            character_anchor=character_anchor,
-        )
+        scene_binding = infer_shot_scene_look(beat=beat or scene, scenes=scene_roster, prev=prev_scene)
+        prev_scene = scene_binding
         locked.append(
             {
                 **shot,
                 "scene_prompt": scene,
                 "cast_looks": cast_looks_to_dtos(cast),
+                "scene_look": scene_look_to_dtos(scene_binding),
                 "visual_prompt": scene,
+                "motion_prompt": str(shot.get("motion_prompt", "")).strip() or scene,
             }
         )
     return locked
@@ -1007,6 +1202,7 @@ def prompt_locale(text: str) -> str:
 
 
 def storyboard_language_rule(locale: str) -> str:
+    """Deprecated for system prompts — use ``storyboard_user_locale_block`` in user messages."""
     loc = normalize_storyboard_locale(locale)
     pronoun_rule = (
         "CRITICAL: Each [Visual]/[Motion]/[Beat] is sent to image/video models alone — "

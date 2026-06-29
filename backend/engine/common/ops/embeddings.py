@@ -493,34 +493,35 @@ def factorized_rope_apply(
 
     if precomputed_cos_sin is not None:
         cos_f, sin_f = precomputed_cos_sin
-        f0, h0, w0 = grid_sizes[0]
-        seq_len = int(f0 * h0 * w0)
+        rope_len = int(cos_f.shape[0])
+        if rope_len != s:
+            f0, h0, w0 = grid_sizes[0]
+            grid_len = int(f0 * h0 * w0)
+            raise RuntimeError(
+                f"factorized_rope_apply: precomputed RoPE length {rope_len} != "
+                f"token sequence {s} (single-grid length {grid_len}, grid={grid_sizes[0]})"
+            )
+        seq_len = rope_len
         all_same = all(grid_sizes[i] == grid_sizes[0] for i in range(1, b)) if b > 1 else True
 
         if all_same:
-            x_seq = x[:, :seq_len].reshape(b, seq_len, -1, half_d, 2)
+            x_seq = x.reshape(b, seq_len, -1, half_d, 2)
             x_real = x_seq[..., 0]
             x_imag = x_seq[..., 1]
             out_real = x_real * cos_f - x_imag * sin_f
             out_imag = x_real * sin_f + x_imag * cos_f
-            x_rotated = ops.stack([out_real, out_imag], axis=-1).reshape(b, seq_len, -1, d)
-            if seq_len < s:
-                x_rotated = ops.concatenate([x_rotated, x[:, seq_len:]], axis=1)
-            return x_rotated
+            return ops.stack([out_real, out_imag], axis=-1).reshape(b, seq_len, -1, d)
 
         outputs = []
         for i in range(b):
-            f, h, w = grid_sizes[i]
-            sl = int(f * h * w)
-            x_i = x[i, :sl].reshape(sl, -1, half_d, 2)
+            x_i = x[i, :seq_len].reshape(seq_len, -1, half_d, 2)
             x_real = x_i[..., 0]
             x_imag = x_i[..., 1]
             out_real = x_real * cos_f - x_imag * sin_f
             out_imag = x_real * sin_f + x_imag * cos_f
-            x_rotated = ops.stack([out_real, out_imag], axis=-1).reshape(sl, -1, d)
-            if sl < s:
-                x_rotated = ops.concatenate([x_rotated, x[i, sl:]], axis=0)
-            outputs.append(x_rotated)
+            outputs.append(
+                ops.stack([out_real, out_imag], axis=-1).reshape(seq_len, -1, d)
+            )
         return ops.stack(outputs)
 
     if freqs.dtype != x.dtype:

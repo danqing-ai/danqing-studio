@@ -105,7 +105,7 @@ watch(
   justify-content: space-between;
   gap: 8px;
   padding: 10px 12px;
-  font-size: 13px;
+  font-size: var(--dq-font-size-body);
   font-weight: 600;
   border-bottom: 1px solid var(--dq-border-subtle);
 }
@@ -118,7 +118,7 @@ watch(
 }
 
 .canvas-lineage-sidebar__hint {
-  font-size: 10px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 400;
   color: var(--dq-label-tertiary);
 }
@@ -137,7 +137,7 @@ watch(
   justify-content: center;
   gap: 8px;
   padding: 24px 16px;
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-secondary);
   text-align: center;
 }

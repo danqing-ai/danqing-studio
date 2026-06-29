@@ -1,5 +1,10 @@
 import { ref } from 'vue';
-import { api } from '@/utils/api';
+import {
+  analyzeReferenceViaChat,
+  enhancePromptViaChat,
+  generateLyricsViaChat,
+  imageToPromptViaChat,
+} from '@/utils/llmMessages';
 
 export type CreativeMedia = 'image' | 'video' | 'audio';
 
@@ -45,50 +50,31 @@ export async function runCreativeTask(task: CreativeTask): Promise<CreativeTask>
   try {
     switch (task.kind) {
       case 'enhance_image': {
-        const res = await api.gen.enhancePrompt({
-          prompt: task.input,
-          target_action: 'image_create',
-        });
-        return { ...running, status: 'done', output: res.enhanced_prompt };
+        const output = await enhancePromptViaChat(task.input, { targetAction: 'image_create' });
+        return { ...running, status: 'done', output };
       }
       case 'enhance_video': {
-        const res = await api.gen.enhancePrompt({
-          prompt: task.input,
-          target_action: 'video_create',
-        });
-        return { ...running, status: 'done', output: res.enhanced_prompt };
+        const output = await enhancePromptViaChat(task.input, { targetAction: 'video_create' });
+        return { ...running, status: 'done', output };
       }
       case 'enhance_music_brief': {
-        const res = await api.gen.enhancePrompt({
-          prompt: task.input,
-          target_action: 'audio_create',
-        });
-        return { ...running, status: 'done', output: res.enhanced_prompt };
+        const output = await enhancePromptViaChat(task.input, { targetAction: 'audio_create' });
+        return { ...running, status: 'done', output };
       }
       case 'generate_lyrics': {
-        const res = await api.gen.generateLyrics({ prompt: task.input });
-        return { ...running, status: 'done', output: res.lyrics };
+        const output = await generateLyricsViaChat(task.input);
+        return { ...running, status: 'done', output };
       }
       case 'image_to_prompt': {
         if (!task.assetId) throw new Error('asset required');
-        const res = await api.gen.imageToPrompt(task.assetId);
-        return {
-          ...running,
-          status: 'done',
-          output: res.prompt,
-          visionUsed: res.vision_used,
-        };
+        const output = await imageToPromptViaChat(task.assetId);
+        return { ...running, status: 'done', output, visionUsed: true };
       }
       case 'analyze_reference': {
         if (!task.assetId) throw new Error('asset required');
         if (!task.input.trim()) throw new Error('question required');
-        const res = await api.gen.visualAnalyze(task.assetId, task.input);
-        return {
-          ...running,
-          status: 'done',
-          output: res.answer,
-          visionUsed: res.vision_used,
-        };
+        const output = await analyzeReferenceViaChat(task.assetId, task.input);
+        return { ...running, status: 'done', output, visionUsed: true };
       }
       default:
         throw new Error(`unknown task kind: ${task.kind}`);

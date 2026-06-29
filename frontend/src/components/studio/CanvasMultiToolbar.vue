@@ -117,7 +117,7 @@ const toolbarStyle = computed(() => ({
 }
 
 .canvas-multi-toolbar__count {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-secondary);
   padding: 0 4px;
   white-space: nowrap;
@@ -132,7 +132,7 @@ const toolbarStyle = computed(() => ({
 }
 
 .canvas-multi-toolbar__glyph {
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   line-height: 1;
   width: 14px;
   text-align: center;

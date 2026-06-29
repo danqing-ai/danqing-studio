@@ -357,14 +357,20 @@ onMounted(async () => {
   tasksStore.ensureQueuePoller();
 
   appEvents.on('open-global-task-queue', onOpenGlobalTaskQueue);
+  appEvents.on('open-task-log', onOpenTaskLog);
 });
 
 function onOpenGlobalTaskQueue(_: void) {
   showGlobalQueueDrawer.value = true;
 }
 
+function onOpenTaskLog(payload: { taskId: string }) {
+  openQueueTaskLogs(payload.taskId);
+}
+
 onBeforeUnmount(() => {
   appEvents.off('open-global-task-queue', onOpenGlobalTaskQueue);
+  appEvents.off('open-task-log', onOpenTaskLog);
   if (sysInfoInterval) {
     clearInterval(sysInfoInterval);
   }
@@ -402,7 +408,7 @@ provide('systemInfo', systemInfo);
 }
 .dq-app-setup-hint__text {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--dq-font-size-body);
   line-height: 1.5;
   color: var(--dq-label-secondary);
   flex: 1;

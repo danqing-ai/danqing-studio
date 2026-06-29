@@ -13,6 +13,7 @@
       :segment-duration-options="segmentDurationOptions"
       :keyframe-generating="keyframeGenerating"
       :segment-generating="segmentGenerating"
+      :segment-model-supports-r2v="segmentModelSupportsR2v"
       :visual-polishing="visualPolishing"
       :motion-polishing="motionPolishing"
       :output-size-label="outputSizeLabel"
@@ -39,8 +40,14 @@
       :inpaint-mask-image="inpaintMaskImage"
       :can-generate-keyframe="canGenerateKeyframe"
       :characters="characters"
+      :scenes="scenes"
+      :character-anchor="characterAnchor"
+      :style-anchor="styleAnchor"
+      :project-id="projectId"
+      :parse-run-id="parseRunId"
       @update-visual="(i, v) => $emit('update-visual', i, v)"
       @update-cast-looks="(i, v) => $emit('update-cast-looks', i, v)"
+      @update-scene-look="(i, v) => $emit('update-scene-look', i, v)"
       @update-motion="(i, v) => $emit('update-motion', i, v)"
       @update-duration="(i, v) => $emit('update-duration', i, v)"
       @update-chain-mode="(i, v) => $emit('update-chain-mode', i, v)"
@@ -52,10 +59,7 @@
       @pick-keyframe-gallery="$emit('pick-keyframe-gallery', $event)"
       @clear-keyframe="$emit('clear-keyframe', $event)"
       @clear-segment="$emit('clear-segment', $event)"
-      @insert-keyframe-before="$emit('insert-keyframe-before', $event)"
-      @insert-keyframe-after="$emit('insert-keyframe-after', $event)"
-      @remove-keyframe="$emit('remove-keyframe', $event)"
-      @select-node="$emit('select-node', $event)"
+      @select-segment="$emit('select-segment', $event)"
       @polish-visual="$emit('polish-visual', $event)"
       @polish-motion="$emit('polish-motion', $event)"
       @pick-reference="$emit('pick-reference')"
@@ -76,7 +80,7 @@ import { useI18n } from 'vue-i18n';
 import LongVideoInspector from './LongVideoInspector.vue';
 import type { KeyframeComposeParams } from '@/composables/useLongVideoKeyframeCompose';
 import type { SegmentComposeParams } from '@/composables/useLongVideoSegmentCompose';
-import type { LongVideoChainMode, LongVideoCharacter, LongVideoSelection, LongVideoShotCastLook, LongVideoShotState } from '@/types';
+import type { LongVideoChainMode, LongVideoCharacter, LongVideoScene, LongVideoSelection, LongVideoShotCastLook, LongVideoShotSceneLook, LongVideoShotState } from '@/types';
 import type { NormalizedParamSpec } from '@/utils/registryParamSchema';
 
 const props = defineProps<{
@@ -86,6 +90,7 @@ const props = defineProps<{
   segmentDurationOptions: number[];
   keyframeGenerating?: boolean;
   segmentGenerating?: boolean;
+  segmentModelSupportsR2v?: boolean;
   visualPolishing?: boolean;
   motionPolishing?: boolean;
   outputSizeLabel?: string;
@@ -112,12 +117,18 @@ const props = defineProps<{
   inpaintMaskImage?: { previewUrl: string; path: string } | null;
   canGenerateKeyframe?: boolean;
   characters?: LongVideoCharacter[];
+  scenes?: LongVideoScene[];
+  characterAnchor?: string;
+  styleAnchor?: string;
+  projectId?: string;
+  parseRunId?: string;
 }>();
 
 defineEmits<{
   (e: 'update:open', value: boolean): void;
   (e: 'update-visual', index: number, value: string): void;
   (e: 'update-cast-looks', index: number, value: LongVideoShotCastLook[]): void;
+  (e: 'update-scene-look', index: number, value: LongVideoShotSceneLook | undefined): void;
   (e: 'update-motion', index: number, value: string): void;
   (e: 'update-duration', index: number, value: number): void;
   (e: 'update-chain-mode', index: number, value: LongVideoChainMode): void;
@@ -129,10 +140,7 @@ defineEmits<{
   (e: 'pick-keyframe-gallery', index: number): void;
   (e: 'clear-keyframe', index: number): void;
   (e: 'clear-segment', index: number): void;
-  (e: 'insert-keyframe-before', index: number): void;
-  (e: 'insert-keyframe-after', index: number): void;
-  (e: 'remove-keyframe', index: number): void;
-  (e: 'select-node', index: number): void;
+  (e: 'select-segment', index: number): void;
   (e: 'polish-visual', index: number): void;
   (e: 'polish-motion', index: number): void;
   (e: 'pick-reference'): void;
@@ -148,16 +156,11 @@ defineEmits<{
 const { t: $tt } = useI18n();
 
 const panelTitle = computed(() => {
-  if (props.selection?.kind === 'node') {
-    return $tt('video.longVideoKeyframeEdit', { n: props.selection.index + 1 });
+  const sel = props.selection;
+  if (!sel || (sel.kind !== 'segment' && sel.kind !== 'clip')) {
+    return $tt('video.longVideoInspectorTitle');
   }
-  if (props.selection?.kind === 'edge') {
-    return $tt('video.longVideoSegmentEdit', {
-      from: props.selection.index + 1,
-      to: props.selection.index + 2,
-    });
-  }
-  return $tt('video.longVideoInspectorTitle');
+  return $tt('video.longVideoKeyframeEdit', { n: sel.index + 1 });
 });
 </script>
 

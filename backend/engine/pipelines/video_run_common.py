@@ -645,6 +645,13 @@ def execute_family_video_generator(pipeline,
                 config,
                 work_dir=work,
             )
+            if on_log is not None:
+                on_log(
+                    "info",
+                    "Bernini-R source resolved "
+                    f"asset={getattr(request, 'source_asset_id', '')!r} "
+                    f"video={source_video_path is not None} image={source_image_path is not None}",
+                )
         else:
             if not request.source_asset_id:
                 raise RuntimeError("Video edit requires source_asset_id")
@@ -1263,6 +1270,7 @@ def vae_decode_video(pipeline,
             registry_scalar_default=_registry_scalar_default_fn,
             on_post_progress=on_post_progress,
             on_post_log=on_post_log,
+            pipeline_config=config,
         )
 
     from backend.engine.common.bundle.quant_inference import resolve_component_inference_weight_mode

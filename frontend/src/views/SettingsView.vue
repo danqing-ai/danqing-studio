@@ -149,7 +149,7 @@ const settings = reactive<Record<string, unknown>>({
   theme: 'apple-dark',
   auto_save_prompts: true,
   output_format: 'png',
-  default_model_llm: 'qwen3-4b-thinking-2507',
+  default_model_llm: 'qwen3.5-4b',
   default_model_vlm: 'qwen3-vl-4b-instruct',
   default_model_llm_think: false,
   mlx_memory_limit: 120,
@@ -501,7 +501,7 @@ onUnmounted(() => {
 }
 
 .settings-sidebar-desc {
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
   margin: 6px 0 10px 0;
   line-height: 1.4;

@@ -439,7 +439,7 @@ function fmtTime(ts: string): string {
   justify-content: center;
   height: 100%;
   color: var(--dq-label-tertiary);
-  font-size: 13px;
+  font-size: var(--dq-font-size-body);
 }
 
 .lineage-graph__viewport {
@@ -502,7 +502,7 @@ function fmtTime(ts: string): string {
 
 .lineage-graph__edge-label {
   fill: var(--dq-label-tertiary);
-  font-size: 10px;
+  font-size: var(--dq-font-size-caption);
   text-anchor: middle;
   pointer-events: none;
 }
@@ -580,7 +580,7 @@ function fmtTime(ts: string): string {
 }
 
 .lineage-graph__dim {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-primary);
   font-weight: 600;
   white-space: nowrap;
@@ -589,7 +589,7 @@ function fmtTime(ts: string): string {
 }
 
 .lineage-graph__time {
-  font-size: 10px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
   white-space: nowrap;
   overflow: hidden;
@@ -598,7 +598,7 @@ function fmtTime(ts: string): string {
 
 .lineage-graph__rel-tag {
   display: inline-block;
-  font-size: 10px;
+  font-size: var(--dq-font-size-caption);
   padding: 1px 6px;
   border-radius: 4px;
   background: var(--dq-accent-tint);
@@ -609,7 +609,7 @@ function fmtTime(ts: string): string {
 
 .lineage-graph__canvas-tag {
   display: inline-block;
-  font-size: 9px;
+  font-size: var(--dq-font-size-caption);
   padding: 1px 5px;
   border-radius: 4px;
   background: color-mix(in srgb, var(--dq-accent) 14%, transparent);

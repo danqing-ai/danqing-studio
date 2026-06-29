@@ -121,7 +121,7 @@ async function confirm() {
 }
 .dq-workspace-setup-hint {
   margin: 0 0 16px;
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
 }
 .dq-workspace-setup-input-row {
@@ -129,7 +129,7 @@ async function confirm() {
 }
 .dq-workspace-setup-from {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   line-height: 1.45;
   color: var(--dq-label-tertiary);
 }

@@ -1,6 +1,7 @@
 .PHONY: help clean clean-download-cache lint dev start stop test test-integration \
 	frontend-install frontend-dev frontend-build frontend-typecheck frontend-canvas-unit \
 	bench-setup bench-download-judge bench-eval bench-eval-smoke bench-eval-case bench-eval-calibrate \
+	chapter-parse-bench chapter-parse-bench-test \
 	check-consistency check-models-registry-contracts check-ep-boundary check-theme-legacy check-ui-compat check-engine-rules check-engine-imports check-engine-family-layout check-engine-family-primitives check-engine-attention-paths check-engine-sdpa-paths check-engine-rope-paths check-engine-modulation-paths check-frontend-governance check-weight-parity check-engine-governance verify-engine-stack \
 	sync-models-registry \
 	strip-el-tokens test-engine-unit \
@@ -63,6 +64,18 @@ bench-eval-case:
 
 bench-eval-calibrate:
 	$(BENCH_PY) -m tests.benchmark eval --all --profile full --calibrate
+
+# Fixed long-video chapter parse speed/quality cases (wukong + rainy_night; requires local LLM).
+CASE ?= all
+RUNS ?= 1
+CHAPTER_PARSE_BENCH_OUT := tests/benchmark/outputs/chapter_parse_bench.json
+
+chapter-parse-bench:
+	@mkdir -p tests/benchmark/outputs
+	PYTHONPATH=. $(PYTHON) -m tests.chapter_parse_benchmark --case $(CASE) --runs $(RUNS) --out $(CHAPTER_PARSE_BENCH_OUT)
+
+chapter-parse-bench-test:
+	PYTHONPATH=. $(PYTHON) tests/chapter_parse_benchmark_test.py
 
 # ============================================================================
 # Frontend
@@ -290,6 +303,8 @@ help:
 	@echo ""
 	@echo "Benchmark:"
 	@echo "  bench-setup / bench-download-judge / bench-eval / bench-eval-smoke / bench-eval-case"
+	@echo "  chapter-parse-bench [CASE=all|wukong|rainy_night] [RUNS=1] — fixed LLM parse speed cases"
+	@echo "  chapter-parse-bench-test — unittest gates (skips if no LLM)"
 	@echo ""
 	@echo "Frontend:  frontend-install | frontend-dev | frontend-build | frontend-typecheck | frontend-canvas-unit"
 	@echo "Dev:       dev | start | stop"

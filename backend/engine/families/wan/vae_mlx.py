@@ -1699,10 +1699,17 @@ def decode_wan_vae_latents(
     vae_cfg = _read_wan_vae_config(Path(bundle_root))
     tile_params = _wan_vae_tile_params(vae_cfg, spatial_scale)
     _, _, _, lh, lw = latents_bcthw.shape
+    needs_tiling = _needs_wan_spatial_tiling(int(lh), int(lw), tile_params, enabled=True)
+    use_tiling = bool(spatial_tiling) or needs_tiling
+    if needs_tiling and not spatial_tiling and on_log is not None:
+        on_log(
+            f"Wan VAE auto-enabled spatial tiling (latent {lh}x{lw}, "
+            f"tile {tile_params.tile_latent_min_height}x{tile_params.tile_latent_min_width})"
+        )
 
     _stage(0.02)
-    if _needs_wan_spatial_tiling(int(lh), int(lw), tile_params, enabled=spatial_tiling):
-        if on_log is not None:
+    if use_tiling:
+        if spatial_tiling and on_log is not None:
             on_log(
                 f"Wan VAE spatial tiling enabled (latent {lh}x{lw}, "
                 f"tile {tile_params.tile_latent_min_height}x{tile_params.tile_latent_min_width})"

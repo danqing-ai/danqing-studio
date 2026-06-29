@@ -3,22 +3,43 @@ import { useI18n } from 'vue-i18n';
 import { api } from '@/utils/api';
 import { confirm, toast } from '@/utils/feedback';
 import { $tt } from '@/utils/i18n';
-import type { GalleryItem } from '@/types';
+import type { GalleryGroup, GalleryItem } from '@/types';
 
 const GALLERY_PAGE_SIZE = 40;
+const GROUP_PAGE_SIZE = 40;
 
-export function useStudioGallery(mediaKind: 'image' | 'video' | 'audio') {
+export interface UseStudioGalleryOptions {
+  sourceAction?: string | string[];
+  hideModelFilter?: boolean;
+  searchFields?: string[];
+  defaultGroupMode?: boolean;
+}
+
+export function useStudioGallery(
+  mediaKind: 'image' | 'video' | 'audio',
+  options: UseStudioGalleryOptions = {},
+) {
   const { t: $t } = useI18n();
 
   const galleryItems = ref<GalleryItem[]>([]);
+  const galleryGroups = ref<GalleryGroup[]>([]);
   const galleryLoading = ref(false);
   const galleryHasMore = ref(true);
   const galleryOffset = ref(0);
+  const groupOffset = ref(0);
+  const groupsHasMore = ref(true);
+  const itemsHasMore = ref(true);
+
+  const groupMode = ref<boolean>(options.defaultGroupMode ?? ((mediaKind === 'image' || mediaKind === 'video') && !options.sourceAction));
+  const selectedGroupId = ref<string | null>(null);
 
   const filterTime = ref('all');
   const filterModels = ref<string[]>([]);
+  const searchText = ref('');
   const selectionMode = ref(false);
   const selectedItems = ref<GalleryItem[]>([]);
+
+  const isGroupView = computed(() => groupMode.value && !selectedGroupId.value);
 
   const timeOptions = computed(() => [
     { value: 'all', label: $t('gallery.dateAll') },
@@ -36,7 +57,7 @@ export function useStudioGallery(mediaKind: 'image' | 'video' | 'audio') {
   });
 
   const hasActiveFilters = computed(() => {
-    return filterTime.value !== 'all' || filterModels.value.length > 0;
+    return filterTime.value !== 'all' || filterModels.value.length > 0 || searchText.value.trim() !== '';
   });
 
   const selectedPaths = computed(() => new Set(selectedItems.value.map((it) => it.path)));
@@ -45,8 +66,8 @@ export function useStudioGallery(mediaKind: 'image' | 'video' | 'audio') {
     return galleryItems.value.length > 0 && galleryItems.value.every((it) => selectedPaths.value.has(it.path));
   });
 
-  function buildGalleryFilterParams() {
-    const params: Record<string, unknown> = { kind: mediaKind };
+  function buildTimeFilterParams(): Record<string, unknown> {
+    const params: Record<string, unknown> = {};
     if (filterTime.value !== 'all') {
       const now = new Date();
       let date: Date | undefined;
@@ -65,8 +86,67 @@ export function useStudioGallery(mediaKind: 'image' | 'video' | 'audio') {
         params.created_after = date.toISOString();
       }
     }
+    return params;
+  }
+
+  function buildUngroupedFilterParams() {
+    const params: Record<string, unknown> = {
+      kind: mediaKind,
+      exclude_grouped: true,
+    };
+    Object.assign(params, buildTimeFilterParams());
     if (filterModels.value.length > 0) {
       params.model = filterModels.value[0];
+    }
+    if (options.sourceAction) {
+      if (Array.isArray(options.sourceAction)) {
+        if (options.sourceAction.length === 1) {
+          params.source_action = options.sourceAction[0];
+        } else if (options.sourceAction.length > 1) {
+          params.source_action_in = options.sourceAction;
+        }
+      } else {
+        params.source_action = options.sourceAction;
+      }
+    }
+    const q = searchText.value.trim();
+    if (q) {
+      params.search = q;
+      if (options.searchFields) {
+        params.search_fields = options.searchFields;
+      }
+    }
+    return params;
+  }
+
+  function buildGalleryFilterParams() {
+    const params: Record<string, unknown> = { kind: mediaKind };
+    if (selectedGroupId.value) {
+      params.group_id = selectedGroupId.value;
+    } else if (groupMode.value) {
+      params.exclude_grouped = true;
+    }
+    Object.assign(params, buildTimeFilterParams());
+    if (filterModels.value.length > 0) {
+      params.model = filterModels.value[0];
+    }
+    if (options.sourceAction) {
+      if (Array.isArray(options.sourceAction)) {
+        if (options.sourceAction.length === 1) {
+          params.source_action = options.sourceAction[0];
+        } else if (options.sourceAction.length > 1) {
+          params.source_action_in = options.sourceAction;
+        }
+      } else {
+        params.source_action = options.sourceAction;
+      }
+    }
+    const q = searchText.value.trim();
+    if (q) {
+      params.search = q;
+      if (options.searchFields) {
+        params.search_fields = options.searchFields;
+      }
     }
     return params;
   }
@@ -80,7 +160,11 @@ export function useStudioGallery(mediaKind: 'image' | 'video' | 'audio') {
     if (galleryLoading.value) return;
     if (reset) {
       galleryItems.value = [];
+      galleryGroups.value = [];
       galleryOffset.value = 0;
+      groupOffset.value = 0;
+      groupsHasMore.value = true;
+      itemsHasMore.value = true;
       galleryHasMore.value = true;
       clearSelection();
     }
@@ -88,17 +172,69 @@ export function useStudioGallery(mediaKind: 'image' | 'video' | 'audio') {
 
     galleryLoading.value = true;
     try {
-      const options = buildGalleryFilterParams();
-      const rows = await api.gallery.listImages(GALLERY_PAGE_SIZE, galleryOffset.value, options);
-      if (reset) {
-        galleryItems.value = rows || [];
+      if (isGroupView.value) {
+        // Root group view: project cards + ungrouped tiles side by side.
+        const fetches: Promise<void>[] = [];
+
+        if (groupsHasMore.value) {
+          fetches.push(
+            (async () => {
+              const rows = await api.gallery.listGroups(
+                mediaKind,
+                GROUP_PAGE_SIZE,
+                groupOffset.value,
+              );
+              if (reset) {
+                galleryGroups.value = rows || [];
+              } else {
+                galleryGroups.value.push(...(rows || []));
+              }
+              if ((rows || []).length < GROUP_PAGE_SIZE) {
+                groupsHasMore.value = false;
+              } else {
+                groupOffset.value += GROUP_PAGE_SIZE;
+              }
+            })(),
+          );
+        }
+
+        if (itemsHasMore.value) {
+          fetches.push(
+            (async () => {
+              const rows = await api.gallery.listImages(
+                GALLERY_PAGE_SIZE,
+                galleryOffset.value,
+                buildUngroupedFilterParams(),
+              );
+              if (reset) {
+                galleryItems.value = rows || [];
+              } else {
+                galleryItems.value.push(...(rows || []));
+              }
+              if ((rows || []).length < GALLERY_PAGE_SIZE) {
+                itemsHasMore.value = false;
+              } else {
+                galleryOffset.value += GALLERY_PAGE_SIZE;
+              }
+            })(),
+          );
+        }
+
+        await Promise.all(fetches);
+        galleryHasMore.value = groupsHasMore.value || itemsHasMore.value;
       } else {
-        galleryItems.value.push(...(rows || []));
-      }
-      if ((rows || []).length < GALLERY_PAGE_SIZE) {
-        galleryHasMore.value = false;
-      } else {
-        galleryOffset.value += GALLERY_PAGE_SIZE;
+        const options = buildGalleryFilterParams();
+        const rows = await api.gallery.listImages(GALLERY_PAGE_SIZE, galleryOffset.value, options);
+        if (reset) {
+          galleryItems.value = rows || [];
+        } else {
+          galleryItems.value.push(...(rows || []));
+        }
+        if ((rows || []).length < GALLERY_PAGE_SIZE) {
+          galleryHasMore.value = false;
+        } else {
+          galleryOffset.value += GALLERY_PAGE_SIZE;
+        }
       }
     } catch (e) {
       console.error('Failed to load gallery:', e);
@@ -109,6 +245,22 @@ export function useStudioGallery(mediaKind: 'image' | 'video' | 'audio') {
   }
 
   function refreshGallery() {
+    loadGallery(true);
+  }
+
+  function enterGroup(groupId: string) {
+    selectedGroupId.value = groupId;
+    loadGallery(true);
+  }
+
+  function exitGroup() {
+    selectedGroupId.value = null;
+    loadGallery(true);
+  }
+
+  function setGroupMode(enabled: boolean) {
+    groupMode.value = enabled;
+    selectedGroupId.value = null;
     loadGallery(true);
   }
 
@@ -123,6 +275,7 @@ export function useStudioGallery(mediaKind: 'image' | 'video' | 'audio') {
   function resetGalleryFilters() {
     filterTime.value = 'all';
     filterModels.value = [];
+    searchText.value = '';
   }
 
   function isSelected(item: GalleryItem) {
@@ -208,16 +361,21 @@ export function useStudioGallery(mediaKind: 'image' | 'video' | 'audio') {
     }
   }
 
-  watch([filterTime, filterModels], () => {
+  watch([filterTime, filterModels, searchText], () => {
     loadGallery(true);
   });
 
   return {
     galleryItems,
+    galleryGroups,
     galleryLoading,
     galleryHasMore,
+    groupMode,
+    selectedGroupId,
+    isGroupView,
     filterTime,
     filterModels,
+    searchText,
     selectionMode,
     selectedItems,
     selectedPaths,
@@ -227,6 +385,9 @@ export function useStudioGallery(mediaKind: 'image' | 'video' | 'audio') {
     hasActiveFilters,
     loadGallery,
     refreshGallery,
+    enterGroup,
+    exitGroup,
+    setGroupMode,
     onCanvasScroll,
     resetGalleryFilters,
     isSelected,

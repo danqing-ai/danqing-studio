@@ -1,51 +1,89 @@
 <template>
-  <div class="lv-inspector">
-    <!-- Node -->
-    <div v-if="selection?.kind === 'node' && selectedShot" class="lv-inspector__body">
-      <section class="lv-inspector__canvas lv-inspector__canvas--sticky">
+  <div v-if="selection" class="lv-inspector">
+    <div class="lv-inspector__tabs">
+      <DqSegmented
+        v-model="activeTab"
+        block
+        class="lv-inspector-segmented dq-segmented--sm"
+        :options="inspectorTabOptions"
+      />
+    </div>
+
+    <!-- 分镜图 -->
+    <div v-show="activeTab === 'frame' && selectedShot" class="lv-inspector__body">
+      <DqAlert
+        v-if="isTailChainSegment"
+        type="info"
+        :closable="false"
+        class="lv-inspector__tail-hint"
+        :title="tailChainHint"
+      />
+
+      <DqAlert
+        v-else-if="isPostAnchorLinkedStart"
+        type="info"
+        :closable="false"
+        class="lv-inspector__tail-hint"
+        :title="$tt('video.longVideoPostAnchorStartHint')"
+      />
+
+      <section v-if="showFramePreview" class="lv-inspector__canvas lv-inspector__canvas--sticky">
         <div class="lv-inspector__media-head">
           <div v-if="outputSizeLabel" class="lv-inspector__meta">
             <span class="lv-inspector__meta-size">{{ outputSizeLabel }}</span>
+            <span v-if="roleLabel" class="lv-inspector__meta-dot" aria-hidden="true">·</span>
+            <span v-if="roleLabel" class="lv-inspector__meta-size">{{ roleLabel }}</span>
           </div>
-          <div class="lv-inspector__tools">
+          <div v-if="showFrameCompose" class="lv-inspector__tools">
             <button
               type="button"
               class="lv-inspector__tool"
               :disabled="keyframeGenerating"
-              :title="$tt('video.longVideoImportFromGallery')"
-              @click="$emit('pick-keyframe-gallery', selection.index)"
+              @click="$emit('pick-keyframe-gallery', segmentIndex)"
             >
               <DqIcon :size="14"><PictureFilled /></DqIcon>
               <span>{{ $tt('video.longVideoGalleryShort') }}</span>
             </button>
             <button
-              v-if="selectedShot.keyframe_asset_id"
+              v-if="selectedShot?.keyframe_asset_id"
               type="button"
               class="lv-inspector__tool lv-inspector__tool--danger"
               :disabled="keyframeGenerating"
-              :title="$tt('video.longVideoClearKeyframe')"
-              @click="$emit('clear-keyframe', selection.index)"
+              @click="$emit('clear-keyframe', segmentIndex)"
             >
               <DqIcon :size="14"><Delete /></DqIcon>
               <span>{{ $tt('video.longVideoClearShort') }}</span>
             </button>
           </div>
+          <DqButton
+            v-if="isPostAnchorLinkedStart && faceAnchorIndex != null"
+            type="text"
+            size="xs"
+            @click="$emit('select-segment', faceAnchorIndex!)"
+          >
+            {{ $tt('video.longVideoJumpToAnchor') }}
+          </DqButton>
         </div>
-
         <div
-          v-if="previewUrl || keyframeGenerating"
           class="lv-inspector__preview"
-          :class="{ 'is-generating': keyframeGenerating }"
+          :class="{ 'is-generating': keyframeGenerating && showFrameCompose }"
         >
-          <img v-if="previewUrl" class="lv-inspector__img" :src="previewUrl" alt="" />
-          <div v-if="keyframeGenerating" class="lv-inspector__loading" aria-live="polite">
+          <img v-if="framePreviewUrl" class="lv-inspector__img" :src="framePreviewUrl" alt="" />
+          <div v-if="keyframeGenerating && showFrameCompose" class="lv-inspector__loading" aria-live="polite">
             <DqIcon :size="24"><Loading /></DqIcon>
           </div>
         </div>
       </section>
 
-      <LongVideoKeyframeComposePanel
-        :prompt="shotSceneText"
+      <p v-if="firstFrameRequirementText" class="lv-inspector__requirement">
+        <span class="lv-inspector__requirement-label">{{ $tt('video.longVideoFirstFrameRequirement') }}</span>
+        {{ firstFrameRequirementText }}
+      </p>
+      <p v-if="visibilitySummary" class="lv-inspector__vis-meta">{{ visibilitySummary }}</p>
+
+      <LongVideoAnchorComposePanel
+        v-if="showFrameCompose && isFaceAnchor"
+        :prompt="keyframePromptText"
         :model="composeModel"
         :mode="composeMode ?? 'text2img'"
         :params="composeParams"
@@ -62,9 +100,9 @@
         :compatible-control-nets="compatibleControlNets"
         :control-net-runtime-available="controlNetRuntimeAvailable"
         :enhancing="visualPolishing"
-        @update:prompt="$emit('update-visual', selection.index, $event)"
+        @update:prompt="$emit('update-visual', segmentIndex, $event)"
         @update:mode="$emit('update-compose-mode', $event)"
-        @generate="$emit('generate-keyframe', selection.index)"
+        @generate="$emit('generate-keyframe', segmentIndex)"
         @pick-reference="$emit('pick-reference')"
         @remove-reference="$emit('remove-reference')"
         @pick-control="$emit('pick-control')"
@@ -74,165 +112,243 @@
         @pick-inpaint-mask="$emit('pick-inpaint-mask')"
         @remove-inpaint-mask="$emit('remove-inpaint-mask')"
         @reset-defaults="$emit('reset-compose-defaults')"
-        @enhance="$emit('polish-visual', selection.index)"
+        @enhance="$emit('polish-visual', segmentIndex)"
       >
         <template #after-prompt>
           <LongVideoCastLookPanel
             v-if="characters.length"
             :characters="characters"
-            :cast-looks="selectedShot.cast_looks ?? []"
-            :scene-text="shotSceneText"
-            :select-id-prefix="`lv-cast-${selection.index}`"
-            @update:cast-looks="$emit('update-cast-looks', selection.index, $event)"
+            :cast-looks="selectedShot?.cast_looks ?? []"
+            :scene-text="shotCastMatchTextValue"
+            :select-id-prefix="`lv-cast-${segmentIndex}`"
+            @update:cast-looks="$emit('update-cast-looks', segmentIndex, $event)"
           />
-          <p v-else class="lv-inspector__cast-empty">{{ $tt('video.longVideoCastLooksNeedRoster') }}</p>
+          <LongVideoSceneLookPanel
+            v-if="(scenes ?? []).length"
+            :scenes="scenes ?? []"
+            :scene-look="selectedShot?.scene_look"
+            :beat-text="shotSceneBeatText"
+            :select-id-prefix="`lv-scene-anchor-${segmentIndex}`"
+            @update:scene-look="$emit('update-scene-look', segmentIndex, $event)"
+          />
+          <LongVideoGenerationPromptPreview
+            :preview="keyframeT2iPromptPreview"
+            :mode-hint="keyframePromptModeHint"
+          />
+          <LongVideoT2iProvenancePanel
+            :provenance="keyframeT2iProvenance"
+            :parse-run-id="parseRunId"
+          />
+        </template>
+      </LongVideoAnchorComposePanel>
+
+      <LongVideoKeyframeComposePanel
+        v-else-if="showFrameCompose"
+        :prompt="keyframePromptText"
+        :model="composeModel"
+        :mode="composeMode ?? 'text2img'"
+        :params="composeParams"
+        :generating="keyframeGenerating"
+        :can-generate="canGenerateKeyframe"
+        :styles="composeStyles"
+        :show-negative-prompt="composeShowNegativePrompt"
+        :reference-image="referenceImage"
+        :control-image="controlImage"
+        :inpaint-source-image="inpaintSourceImage"
+        :inpaint-mask-image="inpaintMaskImage"
+        :current-model-config="composeModelConfig"
+        :compatible-loras="compatibleLoras"
+        :compatible-control-nets="compatibleControlNets"
+        :control-net-runtime-available="controlNetRuntimeAvailable"
+        :enhancing="visualPolishing"
+        @update:prompt="$emit('update-visual', segmentIndex, $event)"
+        @update:mode="$emit('update-compose-mode', $event)"
+        @generate="$emit('generate-keyframe', segmentIndex)"
+        @pick-reference="$emit('pick-reference')"
+        @remove-reference="$emit('remove-reference')"
+        @pick-control="$emit('pick-control')"
+        @remove-control="$emit('remove-control')"
+        @pick-inpaint-source="$emit('pick-inpaint-source')"
+        @remove-inpaint-source="$emit('remove-inpaint-source')"
+        @pick-inpaint-mask="$emit('pick-inpaint-mask')"
+        @remove-inpaint-mask="$emit('remove-inpaint-mask')"
+        @reset-defaults="$emit('reset-compose-defaults')"
+        @enhance="$emit('polish-visual', segmentIndex)"
+      >
+        <template #after-prompt>
+          <LongVideoSceneLookPanel
+            v-if="(scenes ?? []).length"
+            :scenes="scenes ?? []"
+            :scene-look="selectedShot?.scene_look"
+            :beat-text="shotSceneBeatText"
+            :select-id-prefix="`lv-scene-${segmentIndex}`"
+            @update:scene-look="$emit('update-scene-look', segmentIndex, $event)"
+          />
+          <LongVideoCastLookPanel
+            v-if="characters.length"
+            :characters="characters"
+            :cast-looks="selectedShot?.cast_looks ?? []"
+            :scene-text="shotCastMatchTextValue"
+            :select-id-prefix="`lv-cast-${segmentIndex}`"
+            @update:cast-looks="$emit('update-cast-looks', segmentIndex, $event)"
+          />
+          <LongVideoGenerationPromptPreview
+            :preview="keyframeT2iPromptPreview"
+            :mode-hint="keyframePromptModeHint"
+          />
+          <LongVideoT2iProvenancePanel
+            :provenance="keyframeT2iProvenance"
+            :parse-run-id="parseRunId"
+          />
         </template>
       </LongVideoKeyframeComposePanel>
 
-      <footer class="lv-inspector__footer lv-inspector__footer--node">
-        <p v-if="selection.index > 0" class="lv-inspector__footer-hint">
-          {{ $tt('video.longVideoInsertKeyframeHint') }}
-        </p>
-        <DqButton
-          v-if="selection.index === 0"
-          type="default"
-          block
-          @click="$emit('insert-keyframe-before', selection.index)"
-        >
-          {{ $tt('video.longVideoInsertKeyframeBeforeFirst') }}
-        </DqButton>
-        <DqButton
-          type="text"
-          block
-          class="lv-inspector__danger-btn"
-          :disabled="!canRemoveKeyframe"
-          :title="canRemoveKeyframe ? '' : $tt('video.longVideoRemoveKeyframeMin')"
-          @click="$emit('remove-keyframe', selection.index)"
-        >
-          {{ $tt('video.longVideoRemoveKeyframe') }}
-        </DqButton>
-      </footer>
-    </div>
-
-    <!-- Edge (segment between keyframes) -->
-    <div v-else-if="selection?.kind === 'edge' && edgeShot" class="lv-inspector__body">
-      <section class="lv-inspector__canvas lv-inspector__canvas--sticky">
-        <div class="lv-inspector__media-head">
-          <div class="lv-inspector__meta">
-            <span class="lv-inspector__meta-range">{{ edgeRangeLabel }}</span>
-            <span class="lv-inspector__meta-dot" aria-hidden="true">·</span>
-            <span class="lv-inspector__meta-size">{{ edgeDurationLabel }}</span>
-            <template v-if="segmentModelLabel">
-              <span class="lv-inspector__meta-dot" aria-hidden="true">·</span>
-              <span class="lv-inspector__meta-size">{{ segmentModelLabel }}</span>
-            </template>
-          </div>
-          <div class="lv-inspector__tools">
-            <button
-              v-if="edgeShot.segment_asset_id"
-              type="button"
-              class="lv-inspector__tool lv-inspector__tool--danger"
-              :disabled="segmentGenerating"
-              :title="$tt('video.longVideoClearSegment')"
-              @click="$emit('clear-segment', selection.index)"
-            >
-              <DqIcon :size="14"><Delete /></DqIcon>
-              <span>{{ $tt('video.longVideoClearShort') }}</span>
-            </button>
-          </div>
-        </div>
-
-        <div
-          class="lv-inspector__preview"
-          :class="{ 'is-generating': segmentGenerating, 'is-empty': !edgeSegmentVideoUrl && !segmentGenerating }"
-        >
-          <video
-            v-if="edgeSegmentVideoUrl"
-            class="lv-inspector__segment-video"
-            :src="edgeSegmentVideoUrl"
-            controls
-            playsinline
-            preload="metadata"
-          />
-          <div v-else-if="!segmentGenerating" class="lv-inspector__edge-preview">
-            <button
-              type="button"
-              class="lv-inspector__edge-thumb"
-              :title="$tt('video.longVideoKeyframeEdit', { n: selection.index + 1 })"
-              @click="$emit('select-node', selection.index)"
-            >
-              <img v-if="edgeFromUrl" :src="edgeFromUrl" alt="" />
-              <span v-else class="lv-inspector__edge-ph">#{{ selection.index + 1 }}</span>
-            </button>
-            <span class="lv-inspector__edge-arrow" aria-hidden="true">→</span>
-            <button
-              type="button"
-              class="lv-inspector__edge-thumb"
-              :title="$tt('video.longVideoKeyframeEdit', { n: selection.index + 2 })"
-              @click="$emit('select-node', selection.index + 1)"
-            >
-              <img v-if="edgeToUrl" :src="edgeToUrl" alt="" />
-              <span v-else class="lv-inspector__edge-ph">#{{ selection.index + 2 }}</span>
-            </button>
-          </div>
-          <div v-if="segmentGenerating" class="lv-inspector__loading" aria-live="polite">
-            <DqIcon :size="24"><Loading /></DqIcon>
-          </div>
-        </div>
-      </section>
-
-      <LongVideoSegmentComposePanel
-        :motion-prompt="edgeShot.motion_prompt"
-        :duration-sec="edgeDurationSec"
-        :duration-options="segmentDurationOptions"
-        :chain-mode="edgeChainMode"
-        :can-use-last-frame="edgeCanUseLastFrame"
-        :params="segmentComposeParams"
-        :param-schema="segmentParamSchema"
-        :num-frames="edgeNumFrames"
-        :generating="segmentGenerating"
-        :can-generate="canGenerateEdgeSegment"
-        :can-polish="canPolishMotion"
-        :polishing="motionPolishing"
-        :missing-keyframe="!edgeShot.keyframe_asset_id"
-        :show-negative-prompt="segmentShowNegativePrompt"
-        :show-seed-field="segmentShowSeedField"
-        :show-lora="segmentShowLora"
-        :compatible-loras="segmentCompatibleLoras"
-        @update:motion="$emit('update-motion', selection.index, $event)"
-        @update:duration="$emit('update-duration', selection.index, $event)"
-        @update:chain-mode="$emit('update-chain-mode', selection.index, $event)"
-        @generate="$emit('generate-segment', selection.index)"
-        @polish="$emit('polish-motion', selection.index)"
-        @reset-defaults="$emit('reset-segment-defaults')"
+      <DqAlert
+        v-if="isFaceAnchor && selectedShot && !selectedShot.keyframe_asset_id && showFrameCompose"
+        type="warning"
+        :closable="false"
+        :title="$tt('video.longVideoAnchorMissingWarn')"
       />
-
-      <footer class="lv-inspector__footer lv-inspector__footer--edge">
-        <DqButton
-          type="text"
-          block
-          class="lv-inspector__secondary-btn"
-          @click="$emit('insert-keyframe-after', selection.index)"
-        >
-          {{ $tt('video.longVideoInsertKeyframeHere', { from: selection.index + 1, to: selection.index + 2 }) }}
-        </DqButton>
-      </footer>
     </div>
+
+    <!-- 分镜视频 -->
+    <div v-show="activeTab === 'clip'" class="lv-inspector__body">
+      <p v-if="!selectedShot" class="lv-inspector__tab-empty">
+        {{ $tt('video.longVideoInspectorClipEmpty') }}
+      </p>
+      <template v-else>
+        <section class="lv-inspector__canvas lv-inspector__canvas--sticky">
+          <div class="lv-inspector__media-head">
+            <div class="lv-inspector__meta">
+              <span class="lv-inspector__meta-range">#{{ segmentIndex + 1 }}</span>
+              <span class="lv-inspector__meta-dot" aria-hidden="true">·</span>
+              <span class="lv-inspector__meta-size">{{ segmentDurationLabel }}</span>
+              <template v-if="segmentModelLabel">
+                <span class="lv-inspector__meta-dot" aria-hidden="true">·</span>
+                <span class="lv-inspector__meta-size">{{ segmentModelLabel }}</span>
+              </template>
+            </div>
+            <div class="lv-inspector__tools">
+              <button
+                v-if="selectedShot.segment_asset_id"
+                type="button"
+                class="lv-inspector__tool lv-inspector__tool--danger"
+                :disabled="segmentGenerating"
+                @click="$emit('clear-segment', segmentIndex)"
+              >
+                <DqIcon :size="14"><Delete /></DqIcon>
+                <span>{{ $tt('video.longVideoClearShort') }}</span>
+              </button>
+            </div>
+          </div>
+          <div
+            class="lv-inspector__preview"
+            :class="{ 'is-generating': segmentGenerating, 'is-empty': !segmentVideoUrl && !segmentGenerating }"
+          >
+            <video
+              v-if="segmentVideoUrl"
+              class="lv-inspector__segment-video"
+              :src="segmentVideoUrl"
+              controls
+              playsinline
+              preload="metadata"
+            />
+            <p v-else-if="!segmentGenerating" class="lv-inspector__clip-empty">
+              {{ $tt('video.longVideoSegmentPreviewEmpty') }}
+            </p>
+            <div v-if="segmentGenerating" class="lv-inspector__loading" aria-live="polite">
+              <DqIcon :size="24"><Loading /></DqIcon>
+            </div>
+          </div>
+        </section>
+
+        <LongVideoSegmentComposePanel
+          :motion-prompt="segmentVideoPrompt"
+          :duration-sec="segmentDurationSec"
+          :duration-options="segmentDurationOptions"
+          :chain-mode="clipChainMode"
+          :can-use-last-frame="canUseLastFrame"
+          :can-use-reference-r2v="canUseReferenceR2v"
+          :params="segmentComposeParams"
+          :param-schema="segmentParamSchema"
+          :num-frames="segmentNumFrames"
+          :generating="segmentGenerating"
+          :can-generate="canGenerateSegment"
+          :can-polish="canPolishMotion"
+          :polishing="motionPolishing"
+          :missing-keyframe="segmentMissingKeyframe"
+          :missing-anchor="segmentMissingAnchor"
+          :show-negative-prompt="segmentShowNegativePrompt"
+          :show-seed-field="segmentShowSeedField"
+          :show-lora="segmentShowLora"
+          :compatible-loras="segmentCompatibleLoras"
+          @update:motion="$emit('update-motion', segmentIndex, $event)"
+          @update:duration="$emit('update-duration', segmentIndex, $event)"
+          @update:chain-mode="$emit('update-chain-mode', segmentIndex, $event)"
+          @generate="$emit('generate-segment', segmentIndex)"
+          @polish="$emit('polish-motion', segmentIndex)"
+          @reset-defaults="$emit('reset-segment-defaults')"
+        />
+        <LongVideoGenerationPromptPreview
+          :preview="segmentI2vPromptPreview"
+          :mode-hint="$tt('video.longVideoGenerationPromptI2vHint')"
+        />
+      </template>
+    </div>
+
+    <LongVideoRelatedTasks
+      v-if="selectedShot?.id"
+      :project-id="projectId"
+      :shot-id="selectedShot.id"
+      :refresh-token="relatedTasksRefreshToken"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { Delete, Loading, PictureFilled } from '@danqing/dq-shell';
 import { api } from '@/utils/api';
-import { keyframeThumbnailUrl, MIN_LONG_VIDEO_KEYFRAMES, numFramesForDurationSec, shotDurationSec, effectiveShotChainMode, extractKeyframeShotScene } from '@/utils/longVideoProject';
+import {
+  keyframeGenerationPrompt,
+  keyframePromptContextForShot,
+  buildKeyframeT2iProvenance,
+  keyframeThumbnailUrl,
+  numFramesForDurationSec,
+  shotDurationSec,
+  shotKeyframeText,
+  shotNeedsKeyframe,
+  shotVideoPrompt,
+  segmentVideoSubmitPreview,
+  canGenerateSegmentShot,
+  effectiveShotChainMode,
+  extractKeyframeShotScene,
+  findFaceAnchorShot,
+  shotCastMatchText,
+  segmentRoleLabelKey,
+  visibilityShortLabel,
+} from '@/utils/longVideoProject';
+import LongVideoAnchorComposePanel from './LongVideoAnchorComposePanel.vue';
 import LongVideoCastLookPanel from './LongVideoCastLookPanel.vue';
+import LongVideoSceneLookPanel from './LongVideoSceneLookPanel.vue';
+import LongVideoGenerationPromptPreview from './LongVideoGenerationPromptPreview.vue';
+import LongVideoT2iProvenancePanel from './LongVideoT2iProvenancePanel.vue';
 import LongVideoKeyframeComposePanel from './LongVideoKeyframeComposePanel.vue';
 import LongVideoSegmentComposePanel from './LongVideoSegmentComposePanel.vue';
+import LongVideoRelatedTasks from './LongVideoRelatedTasks.vue';
 import type { KeyframeComposeParams } from '@/composables/useLongVideoKeyframeCompose';
 import type { SegmentComposeParams } from '@/composables/useLongVideoSegmentCompose';
-import type { LongVideoChainMode, LongVideoCharacter, LongVideoSelection, LongVideoShotCastLook, LongVideoShotState } from '@/types';
+import type {
+  LongVideoChainMode,
+  LongVideoCharacter,
+  LongVideoInspectorTab,
+  LongVideoScene,
+  LongVideoSelection,
+  LongVideoShotCastLook,
+  LongVideoShotSceneLook,
+  LongVideoShotState,
+} from '@/types';
 import type { NormalizedParamSpec } from '@/utils/registryParamSchema';
 
 const props = defineProps<{
@@ -240,6 +356,7 @@ const props = defineProps<{
   selection: LongVideoSelection;
   segmentDurationOptions: number[];
   segmentModelLabel?: string;
+  segmentModelSupportsR2v?: boolean;
   segmentComposeParams: SegmentComposeParams;
   segmentParamSchema: Record<string, NormalizedParamSpec>;
   segmentCompatibleLoras?: Record<string, unknown>[];
@@ -267,11 +384,17 @@ const props = defineProps<{
   inpaintMaskImage?: { previewUrl: string; path: string } | null;
   canGenerateKeyframe?: boolean;
   characters?: LongVideoCharacter[];
+  scenes?: LongVideoScene[];
+  characterAnchor?: string;
+  styleAnchor?: string;
+  projectId?: string;
+  parseRunId?: string;
 }>();
 
 defineEmits<{
   (e: 'update-visual', index: number, value: string): void;
   (e: 'update-cast-looks', index: number, value: LongVideoShotCastLook[]): void;
+  (e: 'update-scene-look', index: number, value: LongVideoShotSceneLook | undefined): void;
   (e: 'update-motion', index: number, value: string): void;
   (e: 'update-duration', index: number, value: number): void;
   (e: 'update-chain-mode', index: number, value: LongVideoChainMode): void;
@@ -283,10 +406,7 @@ defineEmits<{
   (e: 'pick-keyframe-gallery', index: number): void;
   (e: 'clear-keyframe', index: number): void;
   (e: 'clear-segment', index: number): void;
-  (e: 'insert-keyframe-before', index: number): void;
-  (e: 'insert-keyframe-after', index: number): void;
-  (e: 'remove-keyframe', index: number): void;
-  (e: 'select-node', index: number): void;
+  (e: 'select-segment', index: number): void;
   (e: 'polish-visual', index: number): void;
   (e: 'polish-motion', index: number): void;
   (e: 'pick-reference'): void;
@@ -299,83 +419,213 @@ defineEmits<{
   (e: 'remove-inpaint-mask'): void;
 }>();
 
-const { t: $tt } = useI18n();
+const { t: $tt, locale } = useI18n();
 
-const canRemoveKeyframe = computed(() => props.shots.length > MIN_LONG_VIDEO_KEYFRAMES);
+const activeTab = ref<LongVideoInspectorTab>('frame');
 
-const selectedShot = computed(() => {
-  if (props.selection?.kind !== 'node') return null;
-  return props.shots[props.selection.index] ?? null;
+const segmentIndex = computed(() => {
+  if (!props.selection) return 0;
+  if (props.selection.kind === 'segment' || props.selection.kind === 'clip') return props.selection.index;
+  return 0;
 });
+
+const selectedShot = computed(() => props.shots[segmentIndex.value] ?? null);
+
+const relatedTasksRefreshToken = computed(() =>
+  `${props.keyframeGenerating ? 1 : 0}:${props.segmentGenerating ? 1 : 0}:${selectedShot.value?.id ?? ''}`,
+);
+
+const roleLabel = computed(() => {
+  const role = selectedShot.value?.segment_role;
+  if (!role || role === 'keyframe') return '';
+  return $tt(segmentRoleLabelKey(role));
+});
+
+const inspectorTabOptions = computed(() => [
+  {
+    label: $tt('video.longVideoInspectorTabFrame'),
+    value: 'frame' as LongVideoInspectorTab,
+    disabled: false,
+  },
+  {
+    label: $tt('video.longVideoInspectorTabClip'),
+    value: 'clip' as LongVideoInspectorTab,
+    disabled: !selectedShot.value || !shotVideoPrompt(selectedShot.value),
+  },
+]);
+
+watch(
+  () => props.selection,
+  (sel) => {
+    if (!sel) return;
+    activeTab.value = sel.kind === 'clip' ? 'clip' : 'frame';
+  },
+  { immediate: true },
+);
 
 const characters = computed(() => props.characters ?? []);
 
-const shotSceneText = computed(() => {
-  if (!selectedShot.value) return '';
-  return (
-    selectedShot.value.scene_prompt ||
-    extractKeyframeShotScene(selectedShot.value.visual_prompt)
-  ).trim();
-});
+const isFaceAnchor = computed(() => selectedShot.value?.segment_role === 'face_anchor');
 
-const edgeShot = computed(() => {
-  if (props.selection?.kind !== 'edge') return null;
-  return props.shots[props.selection.index] ?? null;
-});
+const isTailChainSegment = computed(() => !shotNeedsKeyframe(selectedShot.value ?? undefined));
 
-const edgeDurationSec = computed(() => shotDurationSec(edgeShot.value ?? undefined));
-
-const edgeChainMode = computed(() =>
-  effectiveShotChainMode(edgeShot.value ?? undefined, props.defaultChainMode),
+const isPostAnchorLinkedStart = computed(
+  () =>
+    selectedShot.value?.segment_role === 'post_anchor' ||
+    selectedShot.value?.start_frame_mode === 'anchor_link',
 );
 
-const edgeCanUseLastFrame = computed(() => {
-  if (props.selection?.kind !== 'edge') return false;
-  const idx = props.selection.index;
-  return idx > 0 && Boolean(props.shots[idx - 1]?.segment_asset_id);
+const showFrameCompose = computed(
+  () => shotNeedsKeyframe(selectedShot.value ?? undefined) && !isPostAnchorLinkedStart.value,
+);
+
+const showFramePreview = computed(
+  () => showFrameCompose.value || isPostAnchorLinkedStart.value || Boolean(framePreviewUrl.value),
+);
+
+const tailChainHint = computed(() => {
+  if (selectedShot.value?.segment_role === 'tail_continuation') {
+    return $tt('video.longVideoSegmentTailFrameNoKeyframe');
+  }
+  return $tt('video.longVideoSegmentTailFrameHint');
 });
 
-const edgeNumFrames = computed(() => {
-  if (props.selection?.kind !== 'edge') return 0;
+const firstFrameRequirementText = computed(() =>
+  (selectedShot.value?.first_frame_requirement || '').trim(),
+);
+
+const visibilitySummary = computed(() => {
+  const shot = selectedShot.value;
+  if (!shot?.first_frame_visibility) return '';
+  const start = visibilityShortLabel(shot.first_frame_visibility);
+  const end = shot.end_visibility ? visibilityShortLabel(shot.end_visibility) : '';
+  return end && end !== start
+    ? $tt('video.longVideoVisibilityRange', { start, end })
+    : $tt('video.longVideoVisibilityStart', { vis: start });
+});
+
+const faceAnchorShot = computed(() =>
+  selectedShot.value ? findFaceAnchorShot(props.shots, selectedShot.value) : undefined,
+);
+
+const faceAnchorIndex = computed(() => {
+  const anchor = faceAnchorShot.value;
+  if (!anchor) return null;
+  return props.shots.findIndex((s) => s.id === anchor.id);
+});
+
+const shotSceneBeatText = computed(() => {
+  const shot = selectedShot.value;
+  if (!shot) return '';
+  return (shot.scene_prompt || extractKeyframeShotScene(shot.visual_prompt)).trim();
+});
+
+const shotCastMatchTextValue = computed(() =>
+  selectedShot.value ? shotCastMatchText(selectedShot.value) : '',
+);
+
+const keyframePromptText = computed(() => shotKeyframeText(selectedShot.value ?? undefined));
+
+const keyframeT2iPromptPreview = computed(() => {
+  if (!selectedShot.value || !showFrameCompose.value) return '';
+  const visual = keyframePromptText.value;
+  if (!visual && !(props.characters?.length)) return '';
+  return keyframeGenerationPrompt(visual, keyframePromptCtx.value);
+});
+
+const keyframePromptCtx = computed(() => {
+  if (!selectedShot.value) return { characterAnchor: props.characterAnchor ?? '' };
+  return keyframePromptContextForShot(selectedShot.value, {
+    character_anchor: props.characterAnchor,
+    characters: props.characters,
+    scenes: props.scenes,
+    style_anchor: props.styleAnchor,
+  });
+});
+
+const keyframeT2iProvenance = computed(() => {
+  if (!selectedShot.value || !showFrameCompose.value) return null;
+  const visual = keyframePromptText.value;
+  if (!visual && !(props.characters?.length)) return null;
+  return buildKeyframeT2iProvenance(visual, keyframePromptCtx.value);
+});
+
+const keyframePromptModeHint = computed(() => {
+  if ((props.composeMode ?? 'text2img') === 'img2img') {
+    return $tt('video.longVideoGenerationPromptImg2imgHint');
+  }
+  return $tt('video.longVideoGenerationPromptT2iHint');
+});
+
+const clipChainMode = computed(() => {
+  const raw = effectiveShotChainMode(selectedShot.value ?? undefined, props.defaultChainMode);
+  return raw === 'first_last' ? 'keyframe_only' : raw;
+});
+
+const canUseLastFrame = computed(() => {
+  const idx = segmentIndex.value;
+  if (idx <= 0) return false;
+  return Boolean(props.shots[idx - 1]?.segment_asset_id);
+});
+
+const canUseReferenceR2v = computed(() => props.segmentModelSupportsR2v ?? false);
+
+const segmentVideoPrompt = computed(() => shotVideoPrompt(selectedShot.value ?? undefined));
+
+const segmentI2vPromptPreview = computed(() => {
+  const shot = selectedShot.value;
+  if (!shot || activeTab.value !== 'clip') return '';
+  return segmentVideoSubmitPreview(shot, props.shots, {
+    chainMode: props.defaultChainMode,
+    locale: String(locale.value).startsWith('zh') ? 'zh' : 'en',
+    shotIndex: segmentIndex.value,
+  });
+});
+
+const segmentDurationSec = computed(() => shotDurationSec(selectedShot.value ?? undefined));
+
+const segmentNumFrames = computed(() => {
   const schema = props.segmentParamSchema.num_frames;
   return numFramesForDurationSec(
-    edgeDurationSec.value,
+    segmentDurationSec.value,
     props.segmentComposeParams.fps,
     schema as { min?: number; max?: number; step?: number } | undefined,
   );
 });
 
-const edgeDurationLabel = computed(() =>
-  $tt('video.longVideoSegmentDurationSec', { sec: edgeDurationSec.value }),
+const segmentDurationLabel = computed(() =>
+  $tt('video.longVideoSegmentDurationSec', { sec: segmentDurationSec.value }),
 );
 
-const edgeRangeLabel = computed(() => {
-  if (props.selection?.kind !== 'edge') return '';
-  const idx = props.selection.index;
-  return `#${idx + 1} → #${idx + 2}`;
-});
-
-const edgeSegmentVideoUrl = computed(() => {
-  const id = edgeShot.value?.segment_asset_id;
+const segmentVideoUrl = computed(() => {
+  const id = selectedShot.value?.segment_asset_id;
   return id ? `/api/assets/${id}/file` : '';
 });
 
-const canPolishMotion = computed(() => {
-  if (props.selection?.kind !== 'edge') return false;
-  const idx = props.selection.index;
-  const left = props.shots[idx]?.visual_prompt?.trim();
-  const right = props.shots[idx + 1]?.visual_prompt?.trim();
-  const motion = edgeShot.value?.motion_prompt?.trim();
-  return Boolean(motion || left || right);
+const canPolishMotion = computed(() => Boolean(segmentVideoPrompt.value));
+
+const canGenerateSegment = computed(() =>
+  canGenerateSegmentShot(
+    { shots: props.shots, chain_mode: props.defaultChainMode, characters: props.characters },
+    segmentIndex.value,
+  ),
+);
+
+const segmentMissingAnchor = computed(() => {
+  const shot = selectedShot.value;
+  if (!shot) return false;
+  if (shot.start_frame_mode === 'anchor_link' || shot.segment_role === 'post_anchor') {
+    return !faceAnchorShot.value?.keyframe_asset_id;
+  }
+  return false;
 });
 
-const canGenerateEdgeSegment = computed(() => {
-  if (props.selection?.kind !== 'edge') return false;
-  const idx = props.selection.index;
-  const shot = props.shots[idx];
-  if (!shot?.keyframe_asset_id) return false;
-  const motion = (shot.motion_prompt || shot.visual_prompt || '').trim();
-  return Boolean(motion);
+const segmentMissingKeyframe = computed(() => {
+  const shot = selectedShot.value;
+  if (!shot) return true;
+  if (clipChainMode.value === 'last_frame' || !shotNeedsKeyframe(shot)) return false;
+  if (shot.start_frame_mode === 'anchor_link') return false;
+  return !shot.keyframe_asset_id;
 });
 
 function thumbForAsset(assetId: string | undefined) {
@@ -383,19 +633,11 @@ function thumbForAsset(assetId: string | undefined) {
   return keyframeThumbnailUrl(assetId, (p) => api.gallery.getImageUrl(p));
 }
 
-const edgeFromUrl = computed(() => {
-  if (props.selection?.kind !== 'edge') return '';
-  return thumbForAsset(props.shots[props.selection.index]?.keyframe_asset_id);
-});
-
-const edgeToUrl = computed(() => {
-  if (props.selection?.kind !== 'edge') return '';
-  return thumbForAsset(props.shots[props.selection.index + 1]?.keyframe_asset_id);
-});
-
-const previewUrl = computed(() => {
-  if (!selectedShot.value?.keyframe_asset_id) return '';
-  return keyframeThumbnailUrl(selectedShot.value.keyframe_asset_id, (p) => api.gallery.getImageUrl(p));
+const framePreviewUrl = computed(() => {
+  if (isPostAnchorLinkedStart.value) {
+    return thumbForAsset(faceAnchorShot.value?.keyframe_asset_id);
+  }
+  return thumbForAsset(selectedShot.value?.keyframe_asset_id);
 });
 </script>
 
@@ -407,6 +649,17 @@ const previewUrl = computed(() => {
   min-height: 0;
 }
 
+.lv-inspector__tab-empty {
+  margin: 12px 0;
+  font-size: var(--dq-font-size-caption);
+  line-height: 1.5;
+  color: var(--dq-label-tertiary);
+}
+
+.lv-inspector__tail-hint {
+  margin: 0 0 8px;
+}
+
 .lv-inspector__body {
   flex: 1;
   min-height: 0;
@@ -415,13 +668,6 @@ const previewUrl = computed(() => {
   flex-direction: column;
   gap: 14px;
   padding: 4px 2px 12px;
-}
-
-.lv-inspector__cast-empty {
-  margin: -4px 0 0;
-  font-size: 11px;
-  line-height: 1.4;
-  color: var(--dq-label-tertiary);
 }
 
 .lv-inspector__canvas {
@@ -464,8 +710,6 @@ const previewUrl = computed(() => {
   height: 100%;
   object-fit: cover;
   display: block;
-  border: none;
-  outline: none;
 }
 
 .lv-inspector__segment-video {
@@ -475,56 +719,16 @@ const previewUrl = computed(() => {
   display: block;
 }
 
-.lv-inspector__edge-preview {
+.lv-inspector__clip-empty {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
   height: 100%;
-  padding: 14px;
-  box-sizing: border-box;
-}
-
-.lv-inspector__edge-thumb {
-  flex: 1;
-  max-width: 42%;
-  aspect-ratio: 16 / 9;
-  border-radius: 8px;
-  overflow: hidden;
-  padding: 0;
-  border: 0.5px solid var(--dq-glass-border, var(--dq-border-subtle));
-  background: color-mix(in srgb, var(--dq-surface-elevated) 50%, transparent);
-  cursor: pointer;
-  transition: border-color 0.15s, box-shadow 0.15s;
-}
-
-.lv-inspector__edge-thumb:hover {
-  border-color: color-mix(in srgb, var(--dq-accent) 45%, var(--dq-border-subtle));
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--dq-accent) 12%, transparent);
-}
-
-.lv-inspector__edge-thumb img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-
-.lv-inspector__edge-ph {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: 100%;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--dq-label-tertiary);
-}
-
-.lv-inspector__edge-arrow {
-  flex-shrink: 0;
-  font-size: 14px;
-  font-weight: 700;
+  margin: 0;
+  padding: 16px 20px;
+  text-align: center;
+  font-size: var(--dq-font-size-caption);
+  line-height: 1.5;
   color: var(--dq-label-tertiary);
 }
 
@@ -545,10 +749,9 @@ const previewUrl = computed(() => {
   border-radius: 7px;
   background: color-mix(in srgb, var(--dq-glass-floating-bar-bg, var(--dq-surface-elevated)) 85%, transparent);
   color: var(--dq-label-secondary);
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 500;
   cursor: pointer;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
 
 .lv-inspector__tool:hover:not(:disabled) {
@@ -573,13 +776,11 @@ const previewUrl = computed(() => {
   align-items: center;
   justify-content: center;
   background: color-mix(in srgb, var(--dq-surface-base) 62%, transparent);
-  backdrop-filter: var(--dq-glass-blur-light);
-  -webkit-backdrop-filter: var(--dq-glass-blur-light);
   color: var(--dq-accent);
 }
 
 .lv-inspector__preview.is-generating .lv-inspector__segment-video,
-.lv-inspector__preview.is-generating .lv-inspector__edge-preview {
+.lv-inspector__preview.is-generating .lv-inspector__clip-empty {
   opacity: 0.35;
 }
 
@@ -592,55 +793,19 @@ const previewUrl = computed(() => {
 }
 
 .lv-inspector__meta-range {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   color: var(--dq-label-secondary);
 }
 
 .lv-inspector__meta-dot {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
 }
 
 .lv-inspector__meta-size {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
-}
-
-.lv-inspector__footer {
-  margin-top: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding-top: 12px;
-  border-top: 0.5px solid var(--dq-glass-border, var(--dq-border-subtle));
-}
-
-.lv-inspector__footer-hint {
-  margin: 0;
-  font-size: 11px;
-  line-height: 1.45;
-  color: var(--dq-label-tertiary);
-  text-align: center;
-}
-
-.lv-inspector__danger-btn,
-.lv-inspector__secondary-btn {
-  color: var(--dq-label-tertiary) !important;
-}
-
-.lv-inspector__danger-btn:hover:not(:disabled) {
-  color: var(--dq-danger) !important;
-  background: color-mix(in srgb, var(--dq-danger) 8%, transparent) !important;
-}
-
-.lv-inspector__secondary-btn:hover:not(:disabled) {
-  color: var(--dq-accent) !important;
-  background: color-mix(in srgb, var(--dq-accent) 8%, transparent) !important;
-}
-
-.lv-inspector__danger-btn:disabled {
-  opacity: 0.4;
 }
 </style>

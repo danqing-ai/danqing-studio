@@ -17,6 +17,7 @@ from backend.core.contracts import (
 from backend.core.media_interfaces import IVideoEngine
 from backend.core.interfaces import IPathResolver
 from backend.core.i18n import t
+from backend.engine.group_utils import resolve_asset_group_id
 from .cache import ModelCache
 from .lineage import resolve_lineage, video_edit_relation_type
 from .progress_bridge import make_pipeline_progress_callback
@@ -116,10 +117,12 @@ class DanQingVideoEngine(IVideoEngine):
 
         output_path, metadata = result
         parent_id, relation = resolve_lineage(request.metadata)
+        group_id = resolve_asset_group_id(request.metadata, ctx.asset_store)
         aid = ctx.asset_store.create_from_file(
             Path(output_path), kind="video", mime_type="video/mp4",
             source_task_id=ctx.task_id, metadata=metadata, source_action="create",
             parent_asset_id=parent_id, relation_type=relation,
+            group_id=group_id,
         )
         return EngineResult(primary_asset_id=aid, asset_ids=[aid], output_paths=[output_path])
 
@@ -166,10 +169,12 @@ class DanQingVideoEngine(IVideoEngine):
 
         output_path, metadata = result
         parent_id, relation = resolve_lineage(request.metadata)
+        group_id = resolve_asset_group_id(request.metadata, ctx.asset_store)
         aid = ctx.asset_store.create_from_file(
             Path(output_path), kind="video", mime_type="video/mp4",
             source_task_id=ctx.task_id, metadata=metadata, source_action="long_video",
             parent_asset_id=parent_id, relation_type=relation,
+            group_id=group_id,
         )
         return EngineResult(primary_asset_id=aid, asset_ids=[aid], output_paths=[output_path])
 
@@ -201,10 +206,12 @@ class DanQingVideoEngine(IVideoEngine):
             parent_asset_id=request.source_asset_id,
             relation_type=video_edit_relation_type(request.operation),
         )
+        group_id = resolve_asset_group_id(request.metadata, ctx.asset_store)
         aid = ctx.asset_store.create_from_file(
             Path(output_path), kind="video", mime_type="video/mp4",
             source_task_id=ctx.task_id, metadata=metadata, source_action="animate",
             parent_asset_id=parent_id, relation_type=relation,
+            group_id=group_id,
         )
         return EngineResult(primary_asset_id=aid, asset_ids=[aid], output_paths=[output_path])
 
@@ -236,10 +243,12 @@ class DanQingVideoEngine(IVideoEngine):
             parent_asset_id=request.reference_asset_id,
             relation_type="avatar",
         )
+        group_id = resolve_asset_group_id(request.metadata, ctx.asset_store)
         aid = ctx.asset_store.create_from_file(
             Path(output_path), kind="video", mime_type="video/mp4",
             source_task_id=ctx.task_id, metadata=metadata, source_action="avatar",
             parent_asset_id=parent_id, relation_type=relation,
+            group_id=group_id,
         )
         return EngineResult(primary_asset_id=aid, asset_ids=[aid], output_paths=[output_path])
 
@@ -290,10 +299,12 @@ class DanQingVideoEngine(IVideoEngine):
             parent_asset_id=request.source_asset_id,
             relation_type="upscale",
         )
+        group_id = resolve_asset_group_id(request.metadata, ctx.asset_store)
         aid = ctx.asset_store.create_from_file(
             Path(output_path), kind="video", mime_type="video/mp4",
             source_task_id=ctx.task_id, metadata=metadata, source_action="upscale",
             parent_asset_id=parent_id, relation_type=relation,
+            group_id=group_id,
         )
         return EngineResult(primary_asset_id=aid, asset_ids=[aid], output_paths=[output_path])
 

@@ -489,7 +489,7 @@ onBeforeUnmount(() => {
 
 .gallery-preview-caption__text {
   margin: 0 0 4px;
-  font-size: 13px;
+  font-size: var(--dq-font-size-body);
   line-height: 1.45;
   color: var(--dq-label-primary);
   display: -webkit-box;
@@ -500,7 +500,7 @@ onBeforeUnmount(() => {
 
 .gallery-preview-caption__meta {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
   letter-spacing: 0.01em;
 }
@@ -514,7 +514,7 @@ onBeforeUnmount(() => {
   background: var(--dq-glass-tooltip-bg);
   color: var(--dq-label-secondary);
   border-radius: var(--dq-radius-pill);
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   font-variant-numeric: tabular-nums;
   z-index: 10;
   border: 0.5px solid var(--dq-glass-border);
@@ -550,7 +550,7 @@ onBeforeUnmount(() => {
 }
 
 .gallery-preview-detail__label {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 600;
   letter-spacing: 0.03em;
   text-transform: uppercase;
@@ -559,7 +559,7 @@ onBeforeUnmount(() => {
 
 .gallery-preview-detail__prompt {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--dq-font-size-body);
   line-height: 1.5;
   color: var(--dq-label-primary);
   word-break: break-word;
@@ -578,7 +578,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
 }
 
 .gallery-preview-detail__meta-row dt {

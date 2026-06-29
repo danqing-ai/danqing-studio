@@ -10,6 +10,7 @@ from backend.engine.llm.storyboard import (
     _LABELED_BLOCK_ZH,
     _STYLE_BLOCK_EN,
     _STYLE_LABELS,
+    _parse_legacy_character_clause,
     _split_anchor_raw_blocks,
     extract_keyframe_shot_scene,
     normalize_storyboard_locale,
@@ -20,6 +21,27 @@ _LOOK_TRIPLE_ZH = re.compile(r"^【角色·([^·】]+)·([^】]+)】\s*(.+)", re
 _LOOK_TRIPLE_EN = re.compile(r"^\[Character:\s*([^|]+)\|\s*([^\]]+)\]\s*(.+)", re.I | re.S)
 _LOOK_TAG_ZH = re.compile(r"([^（(]+)[（(]([^）)]+)[）)]")
 _LOOK_TAG_EN = re.compile(r"([A-Za-z\u4e00-\u9fff][^\s,]+)\s*\(([^)]+)\)")
+_NAME_LOOK_TAG_RE = re.compile(r"([\u4e00-\u9fffA-Za-z·]{2,24})[（(]([^）)]+)[）)]")
+_INVALID_CHARACTER_NAME_MARKERS = (
+    "收到",
+    "遭遇",
+    "穿过",
+    "攀登",
+    "坠入",
+    "之后",
+    "然后",
+    "短信",
+    "挑战",
+    "云端",
+    "山顶",
+)
+
+
+def _is_valid_character_name(name: str) -> bool:
+    n = (name or "").strip()
+    if not n or len(n) > 10:
+        return False
+    return not any(marker in n for marker in _INVALID_CHARACTER_NAME_MARKERS)
 
 
 @dataclass
@@ -27,6 +49,7 @@ class CharacterLook:
     id: str
     label: str
     body: str
+    role: str = ""
 
 
 @dataclass
@@ -50,6 +73,103 @@ def _stable_id(prefix: str, key: str) -> str:
 
 def _default_look_label(locale: str) -> str:
     return "默认" if normalize_storyboard_locale(locale) == "zh" else "default"
+
+
+_INVALID_LOOK_LABELS = frozenset(
+    {
+        "",
+        "无标签",
+        "（无标签）",
+        "(无标签)",
+        "无",
+        "未命名",
+        "（未命名）",
+        "(未命名)",
+        "untagged",
+        "untitled",
+        "default",
+        "none",
+        "n/a",
+        "na",
+        "-",
+        "—",
+    }
+)
+
+
+def is_placeholder_look_label(label: str) -> bool:
+    raw = (label or "").strip()
+    if not raw:
+        return True
+    if raw in _INVALID_LOOK_LABELS:
+        return True
+    lowered = raw.lower()
+    if lowered in {x.lower() for x in _INVALID_LOOK_LABELS if x}:
+        return True
+    if lowered.startswith("<") and lowered.endswith(">"):
+        return True
+    return "无标签" in raw or "untagged" in lowered
+
+
+def infer_look_labels_for_character(name: str, beat_sheet: list[str] | None) -> list[str]:
+    if not name or not beat_sheet:
+        return []
+    labels: list[str] = []
+    seen: set[str] = set()
+    for beat in beat_sheet:
+        for m in _LOOK_TAG_ZH.finditer(beat or ""):
+            if m.group(1).strip() != name:
+                continue
+            lbl = m.group(2).strip()
+            if lbl and lbl not in seen and not is_placeholder_look_label(lbl):
+                seen.add(lbl)
+                labels.append(lbl)
+    return labels
+
+
+def _wardrobe_slug(wardrobe: str, *, max_len: int = 8) -> str:
+    w = re.sub(r"\s+", "", (wardrobe or "").strip())
+    if not w:
+        return ""
+    return w[:max_len]
+
+
+def normalize_look_label(
+    label: str,
+    *,
+    locale: str,
+    name: str = "",
+    wardrobe: str = "",
+    beat_sheet: list[str] | None = None,
+    look_index: int = 0,
+) -> str:
+    raw = (label or "").strip()
+    if not is_placeholder_look_label(raw):
+        return raw
+    from_beats = infer_look_labels_for_character(name, beat_sheet)
+    if from_beats:
+        idx = min(max(look_index, 0), len(from_beats) - 1)
+        return from_beats[idx]
+    slug = _wardrobe_slug(wardrobe)
+    if slug:
+        return slug
+    return _default_look_label(locale)
+
+
+def strip_name_look_tags(text: str) -> str:
+    """Remove Name（…） / Name(...) inline tags; keep bare character names."""
+    raw = (text or "").strip()
+    if not raw:
+        return raw
+    return _NAME_LOOK_TAG_RE.sub(r"\1", raw)
+
+
+def find_name_look_tags(text: str) -> list[tuple[str, str]]:
+    return [
+        (m.group(1).strip(), m.group(2).strip())
+        for m in _NAME_LOOK_TAG_RE.finditer(text or "")
+        if m.group(1).strip()
+    ]
 
 
 def parse_character_roster(
@@ -100,18 +220,25 @@ def parse_character_roster(
         if m:
             style = m.group(2).strip()
             continue
-        name_m = re.match(r"^([^，,：:]{1,16})[，,：:]\s*(.+)", block, re.S)
-        if name_m:
-            name, body = name_m.group(1).strip(), name_m.group(2).strip()
-            if name in ("画风", "风格") or name.lower() in _STYLE_LABELS:
-                style = body
-            else:
-                _add_look(by_name, name, default_label, body, default_label)
-            continue
-        if not style:
+        if not style and _looks_like_style_only_block(block):
             style = block
+            continue
+        legacy = _parse_legacy_character_clause(block)
+        if legacy:
+            name, body = legacy
+            _add_look(by_name, name, default_label, body, default_label)
+            continue
 
     return list(by_name.values()), style
+
+
+def _looks_like_style_only_block(block: str) -> bool:
+    s = (block or "").strip()
+    if not s or len(s) > 120:
+        return False
+    if s.startswith("【") or s.startswith("["):
+        return False
+    return any(k in s for k in ("胶片", "色调", "镜头", "film", "palette", "35mm"))
 
 
 def _add_look(
@@ -121,13 +248,15 @@ def _add_look(
     body: str,
     default_label: str,
 ) -> None:
-    if not name or not body:
+    if not name or not body or not _is_valid_character_name(name):
         return
     char_id = _stable_id("char", name)
     if name not in by_name:
         by_name[name] = StoryboardCharacter(id=char_id, name=name, looks=[], default_look_id="")
     ch = by_name[name]
-    label = look_label.strip() or default_label
+    label = look_label.strip()
+    if is_placeholder_look_label(label):
+        label = default_label
     look_id = _stable_id("look", f"{name}|{label}")
     if any(lk.id == look_id for lk in ch.looks):
         return
@@ -164,7 +293,15 @@ def roster_to_dtos(characters: list[StoryboardCharacter]) -> list[dict]:
                 "id": ch.id,
                 "name": ch.name,
                 "default_look_id": ch.default_look_id,
-                "looks": [{"id": lk.id, "label": lk.label, "body": lk.body} for lk in ch.looks],
+                "looks": [
+                    {
+                        "id": lk.id,
+                        "label": lk.label,
+                        "body": lk.body,
+                        **({"role": lk.role} if lk.role else {}),
+                    }
+                    for lk in ch.looks
+                ],
             }
         )
     return out
@@ -174,7 +311,12 @@ def dtos_to_roster(items: list[dict]) -> list[StoryboardCharacter]:
     chars: list[StoryboardCharacter] = []
     for row in items or []:
         looks = [
-            CharacterLook(id=str(lk.get("id", "")), label=str(lk.get("label", "")), body=str(lk.get("body", "")))
+            CharacterLook(
+                id=str(lk.get("id", "")),
+                label=str(lk.get("label", "")),
+                body=str(lk.get("body", "")),
+                role=str(lk.get("role") or ""),
+            )
             for lk in (row.get("looks") or [])
             if lk.get("body")
         ]
@@ -222,28 +364,172 @@ def infer_look_label_from_text(text: str, character_name: str) -> str | None:
     return None
 
 
+_LEAD_ROLE_VALUES = frozenset({"lead", "protagonist", "主角"})
+_ROLE_IN_BODY_RE = re.compile(r"(?:定位|Role)\s*[：:]\s*(\S+)", re.I)
+
+
+def _normalize_role_token(value: str) -> str:
+    return (value or "").strip().lower()
+
+
+def is_lead_character_role(role: str, *, body: str = "") -> bool:
+    token = _normalize_role_token(role)
+    if token in _LEAD_ROLE_VALUES:
+        return True
+    m = _ROLE_IN_BODY_RE.search(body or "")
+    if m and _normalize_role_token(m.group(1)) in _LEAD_ROLE_VALUES:
+        return True
+    return False
+
+
+def _label_scene_hint_score(label: str, hints: list[str]) -> float:
+    """Score look label against scene entity names / location hints (substring, language-agnostic)."""
+    label = (label or "").strip()
+    if not label or not hints:
+        return 0.0
+    best = 0.0
+    for hint in hints:
+        h = (hint or "").strip()
+        if not h:
+            continue
+        if label in h or h in label:
+            return 1.0
+        for n in range(min(len(label), 8), 1, -1):
+            for i in range(0, len(label) - n + 1):
+                frag = label[i : i + n]
+                if len(frag) >= 2 and frag in h:
+                    best = max(best, n / max(len(label), 1))
+                    break
+    return best
+
+
+def infer_look_id_for_context(
+    character: StoryboardCharacter,
+    context: str,
+    *,
+    scene_hints: list[str] | None = None,
+) -> str | None:
+    """Pick a look when narrative/location/scene tokens overlap look labels (names-only; no inline tags)."""
+    if len(character.looks) <= 1:
+        return None
+    from backend.engine.common.long_video.prompt_overlap import prompt_token_coverage
+
+    hint_blob = " ".join(h.strip() for h in (scene_hints or []) if h and h.strip())
+    ctxt = "\n".join(p for p in ((context or "").strip(), hint_blob) if p).strip()
+    if not ctxt:
+        return None
+    best_id: str | None = None
+    best_score = 0.0
+    for lk in character.looks:
+        label = (lk.label or "").strip()
+        if not label or is_placeholder_look_label(label):
+            continue
+        score = 1.0 if label in ctxt else prompt_token_coverage(ctxt, label)
+        if hint_blob and label in hint_blob:
+            score = max(score, 0.9)
+        score = max(score, _label_scene_hint_score(label, scene_hints or []))
+        body_snip = (lk.body or "")[:80]
+        if body_snip:
+            score = max(score, prompt_token_coverage(ctxt, body_snip) * 0.85)
+        if score > best_score:
+            best_score = score
+            best_id = lk.id
+    if best_score >= 0.34:
+        return best_id
+    return None
+
+
 def infer_shot_cast_looks(
     *,
     scene: str,
     beat: str,
     characters: list[StoryboardCharacter],
     prev: list[ShotCastLook] | None = None,
+    on_screen_names: list[str] | None = None,
+    scene_hints: list[str] | None = None,
 ) -> list[ShotCastLook]:
-    """Pick outfit per on-screen character from beat tags, else carry previous/default."""
+    """Bind on-screen characters to looks: prev shot, context label overlap, else default."""
     prev_map = {c.character_id: c.look_id for c in (prev or [])}
+    context = "\n".join(p for p in (scene or "", beat or "") if p).strip()
     cast: list[ShotCastLook] = []
-    for ch in characters_on_screen(scene or beat, characters):
-        hint = infer_look_label_from_text(beat, ch.name) or infer_look_label_from_text(scene, ch.name)
-        look_id = prev_map.get(ch.id) or ch.default_look_id
-        if hint:
-            matched = _match_look_by_hint(ch, hint)
-            if matched:
-                look_id = matched.id
+    if on_screen_names:
+        name_set = {n.strip() for n in on_screen_names if n.strip()}
+        screen_chars = [ch for ch in characters if ch.name in name_set]
+    else:
+        screen_chars = characters_on_screen(context, characters)
+    for ch in screen_chars:
+        look_id = prev_map.get(ch.id)
+        if not look_id:
+            look_id = infer_look_id_for_context(ch, context, scene_hints=scene_hints)
+        if not look_id:
+            look_id = ch.default_look_id
         if not look_id and ch.looks:
             look_id = ch.looks[0].id
         if look_id:
             cast.append(ShotCastLook(character_id=ch.id, look_id=look_id))
     return cast
+
+
+def _extra_look_label(name: str, *, locale: str) -> str:
+    loc = normalize_storyboard_locale(locale)
+    raw = (name or "").strip()
+    if loc == "zh":
+        return raw if 2 <= len(raw) <= 8 else "出镜"
+    return raw if 2 <= len(raw) <= 16 else "on_screen"
+
+
+def _extra_look_body(*, locale: str) -> str:
+    loc = normalize_storyboard_locale(locale)
+    if loc == "zh":
+        return "定位：extra | 外貌：按镜头画面呈现"
+    return "Role: extra | Appearance: as shown in frame"
+
+
+def supplement_roster_from_shots(
+    character_dtos: list[dict],
+    shots: list[dict],
+    *,
+    locale: str = "zh",
+) -> list[dict]:
+    """Add minimal roster rows for on-screen names missing from the cast roster (generic extras)."""
+    from backend.engine.llm.storyboard import normalize_storyboard_locale as _norm_loc
+
+    loc = _norm_loc(locale)
+    roster = dtos_to_roster(character_dtos)
+    known = {ch.name for ch in roster if ch.name}
+    on_screen: set[str] = set()
+    for shot in shots or []:
+        for name in shot.get("characters_on_screen") or []:
+            n = str(name).strip()
+            if n and _is_valid_character_name(n):
+                on_screen.add(n)
+    if not on_screen:
+        return list(character_dtos)
+
+    out = [dict(row) for row in character_dtos]
+    for name in sorted(on_screen):
+        if name in known:
+            continue
+        label = _extra_look_label(name, locale=loc)
+        look_id = _stable_id("look", f"{name}|{label}")
+        char_id = _stable_id("char", name)
+        out.append(
+            {
+                "id": char_id,
+                "name": name,
+                "default_look_id": look_id,
+                "looks": [
+                    {
+                        "id": look_id,
+                        "label": label,
+                        "body": _extra_look_body(locale=loc),
+                        "role": "extra",
+                    }
+                ],
+            }
+        )
+        known.add(name)
+    return out
 
 
 def cast_looks_to_dtos(cast: list[ShotCastLook]) -> list[dict]:

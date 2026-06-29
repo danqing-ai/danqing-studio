@@ -902,7 +902,11 @@ watch(media, () => {
 
 onMounted(async () => {
   try {
-    modelInfo.value = await api.gen.getLLMModelInfo();
+    const [llm, vision] = await Promise.all([
+      api.gen.getLlmModelInfo(),
+      api.gen.getVisionModelInfo(),
+    ]);
+    modelInfo.value = { ...llm, vision };
   } catch {
     // ignore
   }
@@ -949,7 +953,7 @@ onMounted(async () => {
 }
 
 .copilot-page__sidebar-intro {
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
   margin: 0 0 12px;
   line-height: 1.45;
@@ -971,7 +975,7 @@ onMounted(async () => {
 }
 
 .copilot-page__nav-label {
-  font-size: 10px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -991,7 +995,7 @@ onMounted(async () => {
 }
 
 .copilot-page__status-model {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
   line-height: 1.35;
   word-break: break-word;
@@ -999,7 +1003,7 @@ onMounted(async () => {
 
 .copilot-page__status-vision {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
   line-height: 1.4;
 }
@@ -1054,14 +1058,14 @@ onMounted(async () => {
 
 .copilot-page__page-desc {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--dq-font-size-body);
   line-height: 1.5;
   color: var(--dq-label-tertiary);
   max-width: 720px;
 }
 
 .copilot-page__shortcut-hint {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
   align-self: center;
 }
@@ -1080,7 +1084,7 @@ onMounted(async () => {
 
 .copilot-page__banner p {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-secondary);
 }
 
@@ -1120,7 +1124,7 @@ onMounted(async () => {
 }
 
 .copilot-page__label {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 500;
   color: var(--dq-label-secondary);
 }
@@ -1163,13 +1167,13 @@ onMounted(async () => {
 }
 
 .copilot-page__asset-id {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
   word-break: break-all;
 }
 
 .copilot-page__presets-label {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
 }
 
@@ -1186,7 +1190,7 @@ onMounted(async () => {
   border: 0.5px solid var(--dq-border);
   background: transparent;
   color: var(--dq-label-secondary);
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   cursor: pointer;
 }
 
@@ -1225,7 +1229,7 @@ onMounted(async () => {
   border-radius: 10px;
   background: var(--dq-surface-inset);
   border: 0.5px solid var(--dq-glass-border);
-  font-size: 13px;
+  font-size: var(--dq-font-size-body);
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
@@ -1253,14 +1257,14 @@ onMounted(async () => {
 
 .copilot-page__cards-title {
   margin: 0 0 2px;
-  font-size: 14px;
+  font-size: var(--dq-font-size-body);
   font-weight: 600;
   color: var(--dq-label-primary);
 }
 
 .copilot-page__cards-desc {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
 }
 
@@ -1317,7 +1321,7 @@ onMounted(async () => {
 
 .copilot-page__card-title {
   display: block;
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 600;
   color: var(--dq-label-primary);
   margin-bottom: 4px;
@@ -1326,7 +1330,7 @@ onMounted(async () => {
 .copilot-page__card-input,
 .copilot-page__card-output {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   line-height: 1.45;
   color: var(--dq-label-secondary);
   overflow: hidden;
@@ -1337,7 +1341,7 @@ onMounted(async () => {
 
 .copilot-page__card-error {
   margin: 4px 0 0;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-danger, #ff3b30);
 }
 

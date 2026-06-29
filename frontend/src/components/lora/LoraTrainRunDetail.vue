@@ -269,8 +269,8 @@ async function refreshArtifacts(force = false) {
 
 async function refreshVisionAvailability() {
   try {
-    const info = await api.gen.getLLMModelInfo();
-    visionAvailable.value = Boolean(info?.vision?.available);
+    const info = await api.gen.getVisionModelInfo();
+    visionAvailable.value = Boolean(info?.available);
   } catch {
     visionAvailable.value = false;
   }
@@ -451,7 +451,7 @@ onUnmounted(() => {
 
 .lora-run-detail__title {
   margin: 0;
-  font-size: 16px;
+  font-size: var(--dq-font-size-title);
   font-weight: 600;
   color: var(--dq-label-primary);
 }
@@ -464,14 +464,14 @@ onUnmounted(() => {
 
 .lora-run-detail__progress-msg {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-secondary);
   line-height: 1.4;
 }
 
 .lora-run-detail__step-hint {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
 }
 
@@ -481,7 +481,7 @@ onUnmounted(() => {
   border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--dq-danger) 10%, var(--dq-fill-secondary));
   border: 0.5px solid color-mix(in srgb, var(--dq-danger) 30%, transparent);
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-primary);
   line-height: 1.45;
   word-break: break-word;
@@ -500,14 +500,14 @@ onUnmounted(() => {
 
 .lora-run-detail__queue-hint p {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-secondary);
   line-height: 1.45;
 }
 
 .lora-run-detail__section-title {
   margin: 0 0 10px;
-  font-size: 13px;
+  font-size: var(--dq-font-size-body);
   font-weight: 600;
   color: var(--dq-label-primary);
 }
@@ -518,7 +518,7 @@ onUnmounted(() => {
 
 .lora-run-detail__resume-hint {
   margin: 0 0 10px;
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-secondary);
   line-height: 1.45;
 }
@@ -567,7 +567,7 @@ onUnmounted(() => {
 
 .lora-run-registered {
   margin: 8px 0 0;
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
 }
 

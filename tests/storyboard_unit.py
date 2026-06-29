@@ -3,18 +3,25 @@ from __future__ import annotations
 
 import unittest
 
-from backend.engine.common.long_video.plan import build_shot_plan, build_shot_plan_for_scenes
+from backend.engine.common.long_video.plan import (
+    allocate_shot_durations,
+    build_shot_plan,
+    build_shot_plan_for_scenes,
+)
 from backend.engine.families.ltx.long_video_plan import build_long_video_plan, compute_extend_pass_count
 from backend.engine.llm.storyboard import (
     apply_storyboard_output_locale,
     build_structured_shots,
+    chapter_beats_ready_for_shots,
     coalesce_dual_pairs,
     dual_pairs_from_beats,
     expand_batches_for_plan,
+    is_valid_shot_scene_text,
     merge_visual_with_character_anchor,
     compose_keyframe_visual_prompt,
     is_structured_keyframe_visual,
     KEYFRAME_REF_DIVIDER,
+    normalize_shot_scene_text,
     normalize_character_anchor,
     parse_anchor_blocks,
     parse_dual_shot_script,
@@ -22,6 +29,7 @@ from backend.engine.llm.storyboard import (
     parse_plan_script,
     prompt_leads_with_standalone_pronoun,
     prompt_locale,
+    resolve_shot_scene_for_index,
     storyboard_prompts_self_contained,
     storyboard_quality_ok,
     storyboard_shot_pairs_ok,
@@ -46,8 +54,19 @@ class LongVideoPlanTests(unittest.TestCase):
     def test_build_shot_plan_for_scenes(self) -> None:
         plan = build_shot_plan_for_scenes(scene_count=6, segment_duration_sec=5.0)
         self.assertEqual(plan.shot_count, 6)
-        self.assertEqual(plan.target_duration_sec, 30.0)
         self.assertEqual(len(plan.segment_durations_sec), 6)
+        self.assertAlmostEqual(plan.target_duration_sec, 30.0, delta=6.0)
+
+    def test_allocate_shot_durations_soft_budget(self) -> None:
+        durations = allocate_shot_durations(
+            scene_count=10,
+            target_duration_sec=45,
+            default_segment_sec=5,
+            beat_texts=["远景建立镜头"] + ["沙漠大战决斗长镜头"] * 9,
+        )
+        self.assertEqual(len(durations), 10)
+        self.assertGreater(sum(durations), 30)
+        self.assertGreater(durations[1], durations[0])
 
     def test_build_shot_plan_for_scenes_clamps(self) -> None:
         low = build_shot_plan_for_scenes(scene_count=1, segment_duration_sec=5.0)
@@ -486,6 +505,65 @@ class StoryboardAppearanceTests(unittest.TestCase):
         names = [n for k, n, _ in blocks if k == "character"]
         self.assertIn("赵今麦", names)
         self.assertIn("孙悟空", names)
+
+
+class StoryboardSceneTextTests(unittest.TestCase):
+    def test_rejects_instruction_leakage(self) -> None:
+        garbage = "【本帧】必须点名可见角色，输出格式为..."
+        self.assertFalse(is_valid_shot_scene_text(garbage))
+        self.assertFalse(is_valid_shot_scene_text("必须点名可见角色"))
+
+    def test_accepts_structured_beat(self) -> None:
+        beat = "【远景】晨曦下，赵今麦站在木屋前，手持手机"
+        self.assertTrue(is_valid_shot_scene_text(beat))
+
+    def test_chapter_beats_ready(self) -> None:
+        beats = [
+            "【远景】晨曦下，赵今麦站在木屋前",
+            "【中景】木屋内，赵今麦坐在桌前看手机",
+            "【特写】赵今麦凝视着手机屏幕上的胜率提示",
+        ]
+        self.assertTrue(chapter_beats_ready_for_shots(beats))
+        self.assertFalse(chapter_beats_ready_for_shots(["【本帧】必须点名"] * 3))
+
+    def test_normalize_prefers_clean_beat_over_garbage(self) -> None:
+        garbage = "【本帧】必须点名可见角色\n【远景】云雾山顶，赵今麦穿红薄外套"
+        beat = "【远景】云雾山顶，赵今麦穿红薄外套"
+        self.assertEqual(normalize_shot_scene_text(garbage, fallback=beat), beat)
+
+    def test_coalesce_falls_back_when_expand_duplicated(self) -> None:
+        beats = [
+            "【远景】晨曦下，赵今麦站在木屋前",
+            "【中景】木屋内，赵今麦坐在桌前",
+            "【特写】赵今麦凝视手机屏幕",
+        ]
+        instruction = "【本帧】必须点名可见角色"
+        dup_pairs = [(instruction, instruction)] * 3
+        out = coalesce_dual_pairs(dup_pairs, beats, 3)
+        visuals = [v for v, _ in out]
+        self.assertEqual(len(set(visuals)), 3)
+        self.assertTrue(all(is_valid_shot_scene_text(v) for v in visuals))
+
+    def test_build_structured_shots_from_beats(self) -> None:
+        beats = [
+            "【远景】晨曦下，赵今麦站在木屋前",
+            "【中景】木屋内，赵今麦坐在桌前",
+            "【特写】赵今麦凝视手机屏幕",
+        ]
+        pairs = dual_pairs_from_beats(beats, 3)
+        shots = build_structured_shots(
+            character_anchor="【角色·赵今麦·日常】黑色长发，白色T恤",
+            opening_prompt=beats[0],
+            segment_prompts=beats[1:],
+            beat_sheet=beats,
+            target_duration_sec=15,
+            segment_duration_sec=5,
+            dual_pairs=pairs,
+        )
+        self.assertEqual(len(shots), 3)
+        scenes = [str(s["scene_prompt"]) for s in shots]
+        self.assertEqual(len(set(scenes)), 3)
+        self.assertTrue(all(is_valid_shot_scene_text(s) for s in scenes))
 
 
 class StoryboardPronounQualityTests(unittest.TestCase):

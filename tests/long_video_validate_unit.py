@@ -4,7 +4,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import MagicMock
 
-from backend.core.contracts import VideoLongGenerationRequest, VideoLongVideoSpec
+from backend.core.contracts import LongVideoShotSpec, VideoLongGenerationRequest, VideoLongVideoSpec
 from backend.engine.common.long_video.validate import (
     LongVideoValidationError,
     validate_long_video_request,
@@ -21,22 +21,29 @@ def _req(**lv_kw) -> VideoLongGenerationRequest:
 
 
 class LongVideoValidateTests(unittest.TestCase):
-    def test_segmented_i2v_requires_keyframe_model(self) -> None:
-        req = _req(keyframe_model="")
+    def test_segmented_i2v_requires_assemble_only(self) -> None:
+        req = _req(keyframe_model="z-image-turbo")
         video = MagicMock()
-        video.supports.return_value = True
         with self.assertRaises(LongVideoValidationError) as ctx:
             validate_long_video_request(req, video_engine=video, image_engine=MagicMock())
         self.assertEqual(ctx.exception.code, "invalid")
+        self.assertIn("assemble_only", ctx.exception.message)
 
-    def test_segmented_i2v_checks_capabilities(self) -> None:
-        req = _req(keyframe_model="z-image-turbo")
+    def test_segmented_i2v_assemble_requires_segment_assets(self) -> None:
+        req = VideoLongGenerationRequest(
+            model="wan-2.2-i2v-14b",
+            prompt="test",
+            metadata={"long_video_phase": "assemble_only"},
+            long_video=VideoLongVideoSpec(
+                strategy="segmented_i2v",
+                shots=[LongVideoShotSpec(id="shot_00", order=0, segment_asset_id="")],
+            ),
+        )
         video = MagicMock()
-        video.supports.side_effect = lambda mid, act: act == "edit"
-        image = MagicMock()
-        image.supports.return_value = True
-        kf = validate_long_video_request(req, video_engine=video, image_engine=image)
-        self.assertEqual(kf, "z-image-turbo")
+        with self.assertRaises(LongVideoValidationError) as ctx:
+            validate_long_video_request(req, video_engine=video)
+        self.assertEqual(ctx.exception.code, "invalid")
+        self.assertIn("segment_asset_id", ctx.exception.message)
 
     def test_assemble_only_requires_shots(self) -> None:
         req = VideoLongGenerationRequest(

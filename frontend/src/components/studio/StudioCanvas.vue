@@ -1,7 +1,19 @@
 <template>
   <div class="studio-canvas">
+    <!-- Group navigation (only when browsing inside a project group) -->
+    <div v-if="groupMode && selectedGroupId" class="studio-canvas__group-bar">
+      <DqButton
+        type="text"
+        size="sm"
+        class="studio-canvas__exit-group-btn"
+        @click="$emit('exit-group')"
+      >
+        {{ $t('gallery.exitGroup') }}
+      </DqButton>
+    </div>
+
     <!-- Empty state -->
-    <div v-if="items.length === 0 && !loading" class="studio-canvas__empty">
+    <div v-if="displayItems.length === 0 && !loading" class="studio-canvas__empty">
       <DqEmpty :description="emptyMessage" />
       <DqButton v-if="!hasActiveFilters" type="primary" @click="$emit('open-composer')">
         {{ $t('gallery.emptyComposeCta') }}
@@ -58,28 +70,34 @@
       :task-id="logTaskId"
     />
 
-    <!-- Completed items grouped by time -->
+    <!-- Gallery grid: project groups and ungrouped assets share one timeline -->
     <div
-      v-for="group in groupedItems"
-      :key="group.label"
+      v-for="section in canvasTimeSections"
+      :key="section.label"
       class="studio-canvas__section"
     >
       <div class="studio-canvas__section-header">
-        {{ group.label }}
+        {{ section.label }}
       </div>
       <div class="studio-canvas__grid">
-        <StudioCard
-          v-for="item in group.items"
-          :key="item.path"
-          :item="item"
-          :media="media"
-          :selection-mode="selectionMode"
-          :selected="isItemSelected(item)"
-          :gallery-canvas-mode="media === 'image' || media === 'video' || media === 'audio'"
-          @click="handleCardClick(item, $event)"
-          @toggle-select="$emit('toggle-select', item)"
-          @action="$emit('card-action', $event)"
-        />
+        <template v-for="cell in section.cells" :key="cellKey(cell)">
+          <StudioGroupCard
+            v-if="cell.kind === 'group'"
+            :group="cell.group"
+            @click="$emit('enter-group', cell.group.id)"
+          />
+          <StudioCard
+            v-else
+            :item="cell.item"
+            :media="media"
+            :selection-mode="selectionMode"
+            :selected="isItemSelected(cell.item)"
+            :gallery-canvas-mode="media === 'image' || media === 'video' || media === 'audio'"
+            @click="handleCardClick(cell.item, $event)"
+            @toggle-select="$emit('toggle-select', cell.item)"
+            @action="$emit('card-action', $event)"
+          />
+        </template>
       </div>
     </div>
 
@@ -89,14 +107,14 @@
     </div>
 
     <!-- Load more -->
-    <div v-else-if="hasMore && items.length > 0" class="studio-canvas__load-more">
+    <div v-else-if="hasMore && displayItems.length > 0" class="studio-canvas__load-more">
       <DqButton size="sm" @click="$emit('load-more')">
         {{ $t('common.loadMore') }}
       </DqButton>
     </div>
 
     <!-- End of list -->
-    <div v-if="!hasMore && items.length > 0" class="studio-canvas__end">
+    <div v-if="!hasMore && displayItems.length > 0" class="studio-canvas__end">
       {{ $t('gallery.noMore') }}
     </div>
   </div>
@@ -112,17 +130,21 @@ import {
   buildLogDisplayItems,
   latestProgressItem,
 } from '@/utils/genTaskLog';
-import type { GalleryItem, Task } from '@/types';
+import type { GalleryGroup, GalleryItem, Task } from '@/types';
 import StudioCard from './StudioCard.vue';
+import StudioGroupCard from './StudioGroupCard.vue';
 import ActiveTaskCard from './ActiveTaskCard.vue';
 import GenTaskLogDialog from './GenTaskLogDialog.vue';
 
 const props = defineProps<{
   items: GalleryItem[];
+  groups?: GalleryGroup[];
   activeTasks: Task[];
   loading: boolean;
   hasMore: boolean;
   media: 'image' | 'video' | 'audio';
+  groupMode?: boolean;
+  selectedGroupId?: string | null;
   hasActiveFilters?: boolean;
   selectionMode?: boolean;
   selectedPaths?: Set<string>;
@@ -139,6 +161,8 @@ const emit = defineEmits<{
   (e: 'batch-delete'): void;
   (e: 'clear-selection'): void;
   (e: 'open-composer'): void;
+  (e: 'enter-group', groupId: string): void;
+  (e: 'exit-group'): void;
 }>();
 
 const { t: $t } = useI18n();
@@ -146,6 +170,9 @@ const tasksStore = useTasksStore();
 const showTaskLogs = ref(false);
 /** Persists after task leaves queue so logs stay viewable on failure. */
 const logTaskId = ref<string | null>(null);
+
+const isGroupView = computed(() => props.groupMode && !props.selectedGroupId);
+const displayItems = computed(() => (isGroupView.value ? [...(props.groups || []), ...props.items] : props.items));
 
 const primaryRunningTaskId = computed(() => {
   const running = props.activeTasks.find((task) => task.status === 'running');
@@ -206,51 +233,107 @@ const emptyMessage = computed(() => {
   if (props.hasActiveFilters) {
     return $t('gallery.emptyFiltered');
   }
+  if (isGroupView.value) {
+    return $t('gallery.empty');
+  }
   return $t('gallery.empty');
 });
 
-interface Group {
-  label: string;
-  items: GalleryItem[];
+interface GalleryGridCell {
+  kind: 'group';
+  group: GalleryGroup;
+  sortAt: number;
 }
 
-const groupedItems = computed(() => {
-  const groups: Group[] = [];
+interface GalleryItemCell {
+  kind: 'item';
+  item: GalleryItem;
+  sortAt: number;
+}
+
+type CanvasGridCell = GalleryGridCell | GalleryItemCell;
+
+interface CanvasTimeSection {
+  label: string;
+  cells: CanvasGridCell[];
+}
+
+function parseSortTime(iso: string | undefined): number {
+  if (!iso) return 0;
+  const t = new Date(iso).getTime();
+  return Number.isFinite(t) ? t : 0;
+}
+
+function groupActivityTime(group: GalleryGroup): number {
+  let best = parseSortTime(group.updated_at || group.created_at);
+  for (const preview of group.preview_assets || []) {
+    best = Math.max(best, parseSortTime(preview.created_at));
+  }
+  return best;
+}
+
+function bucketForTime(
+  sortAt: number,
+  today: Date,
+  yesterday: Date,
+  weekAgo: Date,
+  monthAgo: Date,
+): 'today' | 'yesterday' | 'week' | 'month' | 'earlier' {
+  const date = new Date(sortAt);
+  if (date >= today) return 'today';
+  if (date >= yesterday) return 'yesterday';
+  if (date >= weekAgo) return 'week';
+  if (date >= monthAgo) return 'month';
+  return 'earlier';
+}
+
+const canvasTimeSections = computed((): CanvasTimeSection[] => {
   const now = new Date();
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const yesterday = new Date(today.getTime() - 24 * 60 * 60 * 1000);
   const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
   const monthAgo = new Date(today.getTime() - 30 * 24 * 60 * 60 * 1000);
 
-  const todayItems: GalleryItem[] = [];
-  const yesterdayItems: GalleryItem[] = [];
-  const weekItems: GalleryItem[] = [];
-  const monthItems: GalleryItem[] = [];
-  const earlierItems: GalleryItem[] = [];
+  const buckets: Record<string, CanvasGridCell[]> = {
+    today: [],
+    yesterday: [],
+    week: [],
+    month: [],
+    earlier: [],
+  };
 
-  props.items.forEach((item) => {
-    const date = new Date(item.created_at);
-    if (date >= today) {
-      todayItems.push(item);
-    } else if (date >= yesterday) {
-      yesterdayItems.push(item);
-    } else if (date >= weekAgo) {
-      weekItems.push(item);
-    } else if (date >= monthAgo) {
-      monthItems.push(item);
-    } else {
-      earlierItems.push(item);
+  const cells: CanvasGridCell[] = [];
+
+  if (isGroupView.value) {
+    for (const group of props.groups || []) {
+      cells.push({ kind: 'group', group, sortAt: groupActivityTime(group) });
     }
-  });
+  }
+  for (const item of props.items) {
+    cells.push({ kind: 'item', item, sortAt: parseSortTime(item.created_at) });
+  }
 
-  if (todayItems.length) groups.push({ label: $t('gallery.groupToday'), items: todayItems });
-  if (yesterdayItems.length) groups.push({ label: $t('gallery.groupYesterday'), items: yesterdayItems });
-  if (weekItems.length) groups.push({ label: $t('gallery.groupThisWeek'), items: weekItems });
-  if (monthItems.length) groups.push({ label: $t('gallery.groupThisMonth'), items: monthItems });
-  if (earlierItems.length) groups.push({ label: $t('gallery.groupEarlier'), items: earlierItems });
+  cells.sort((a, b) => b.sortAt - a.sortAt);
 
-  return groups;
+  for (const cell of cells) {
+    const bucket = bucketForTime(cell.sortAt, today, yesterday, weekAgo, monthAgo);
+    buckets[bucket].push(cell);
+  }
+
+  const sections: CanvasTimeSection[] = [];
+  if (buckets.today.length) sections.push({ label: $t('gallery.groupToday'), cells: buckets.today });
+  if (buckets.yesterday.length) {
+    sections.push({ label: $t('gallery.groupYesterday'), cells: buckets.yesterday });
+  }
+  if (buckets.week.length) sections.push({ label: $t('gallery.groupThisWeek'), cells: buckets.week });
+  if (buckets.month.length) sections.push({ label: $t('gallery.groupThisMonth'), cells: buckets.month });
+  if (buckets.earlier.length) sections.push({ label: $t('gallery.groupEarlier'), cells: buckets.earlier });
+  return sections;
 });
+
+function cellKey(cell: CanvasGridCell): string {
+  return cell.kind === 'group' ? `group:${cell.group.id}` : cell.item.path;
+}
 
 function isItemSelected(item: GalleryItem) {
   return props.selectedPaths?.has(item.path) ?? false;
@@ -270,6 +353,23 @@ function handleCardClick(item: GalleryItem, event: MouseEvent) {
   width: 100%;
 }
 
+.studio-canvas__group-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  min-height: 28px;
+}
+
+.studio-canvas__group-hint {
+  font-size: var(--dq-font-size-caption);
+  color: var(--dq-label-tertiary);
+}
+
+.studio-canvas__exit-group-btn {
+  font-weight: 500;
+}
+
 .studio-canvas__empty {
   display: flex;
   flex-direction: column;
@@ -287,7 +387,7 @@ function handleCardClick(item: GalleryItem, event: MouseEvent) {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -334,7 +434,7 @@ function handleCardClick(item: GalleryItem, event: MouseEvent) {
   align-items: center;
   gap: 8px;
   min-width: 0;
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -342,7 +442,7 @@ function handleCardClick(item: GalleryItem, event: MouseEvent) {
 }
 
 .studio-canvas__active-hint {
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 500;
   letter-spacing: normal;
   text-transform: none;
@@ -354,7 +454,7 @@ function handleCardClick(item: GalleryItem, event: MouseEvent) {
 
 .studio-canvas__logs-btn {
   flex-shrink: 0;
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
 }
 
 .studio-canvas__section--log-recall {
@@ -403,7 +503,7 @@ function handleCardClick(item: GalleryItem, event: MouseEvent) {
 .studio-canvas__end {
   text-align: center;
   padding: 24px;
-  font-size: 13px;
+  font-size: var(--dq-font-size-body);
   color: var(--dq-label-tertiary);
 }
 

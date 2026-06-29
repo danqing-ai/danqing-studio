@@ -32,6 +32,11 @@
           value="last_frame"
           :disabled="!canUseLastFrame"
         />
+        <DqOption
+          v-if="canUseReferenceR2v"
+          :label="$tt('video.longVideoChainReferenceR2v')"
+          value="reference_r2v"
+        />
       </DqSelect>
     </div>
 
@@ -87,7 +92,7 @@
     />
 
     <p v-if="!canGenerate && missingKeyframe" class="lv-seg-compose__warn">
-      {{ $tt('video.longVideoNeedKeyframeForSegment') }}
+      {{ missingAnchor ? $tt('video.longVideoNeedAnchorForSegment') : $tt('video.longVideoNeedKeyframeForSegment') }}
     </p>
 
     <DqButton
@@ -119,6 +124,7 @@ const props = defineProps<{
   durationOptions: number[];
   chainMode: LongVideoChainMode;
   canUseLastFrame?: boolean;
+  canUseReferenceR2v?: boolean;
   params: SegmentComposeParams;
   paramSchema: Record<string, NormalizedParamSpec>;
   numFrames: number;
@@ -127,6 +133,7 @@ const props = defineProps<{
   canPolish?: boolean;
   polishing?: boolean;
   missingKeyframe?: boolean;
+  missingAnchor?: boolean;
   showNegativePrompt?: boolean;
   showSeedField?: boolean;
   showLora?: boolean;
@@ -145,11 +152,11 @@ defineEmits<{
 const { t: $tt } = useI18n();
 const advancedOpen = ref(false);
 
-const chainModeHint = computed(() =>
-  props.chainMode === 'last_frame'
-    ? $tt('video.longVideoChainModeHintLastFrame')
-    : $tt('video.longVideoChainModeHintKeyframeOnly'),
-);
+const chainModeHint = computed(() => {
+  if (props.chainMode === 'last_frame') return $tt('video.longVideoChainModeHintLastFrame');
+  if (props.chainMode === 'reference_r2v') return $tt('video.longVideoChainModeHintReferenceR2v');
+  return $tt('video.longVideoChainModeHintKeyframeOnly');
+});
 </script>
 
 <style scoped>
@@ -168,7 +175,7 @@ const chainModeHint = computed(() =>
 }
 
 .lv-seg-compose__meta-label {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 600;
   letter-spacing: 0.02em;
   color: var(--dq-label-secondary);
@@ -183,7 +190,7 @@ const chainModeHint = computed(() =>
 
 .lv-seg-compose__hint {
   margin: -4px 0 0;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   line-height: 1.45;
   color: var(--dq-label-tertiary);
 }
@@ -193,7 +200,7 @@ const chainModeHint = computed(() =>
 }
 
 .lv-seg-compose__prompt :deep(textarea) {
-  font-size: 13px;
+  font-size: var(--dq-font-size-body);
   line-height: 1.55;
   min-height: 168px;
   max-height: 320px;
@@ -223,7 +230,7 @@ const chainModeHint = computed(() =>
   border: none;
   background: none;
   padding: 4px 0;
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 500;
   color: var(--dq-label-secondary);
   cursor: pointer;
@@ -234,7 +241,7 @@ const chainModeHint = computed(() =>
 }
 
 .lv-seg-compose__chevron {
-  font-size: 10px;
+  font-size: var(--dq-font-size-caption);
   line-height: 1;
   transition: transform 0.2s ease;
   color: var(--dq-label-tertiary);
@@ -246,7 +253,7 @@ const chainModeHint = computed(() =>
 
 .lv-seg-compose__warn {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   line-height: 1.45;
   color: color-mix(in srgb, var(--dq-warning, #e6a23c) 85%, var(--dq-label-secondary));
 }

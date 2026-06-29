@@ -13,6 +13,17 @@ export interface GalleryItem {
   metadata: Record<string, unknown>;
 }
 
+export interface GalleryGroup {
+  id: string;
+  title: string;
+  kind: string;
+  asset_count: number;
+  preview_assets: GalleryItem[];
+  created_at: string;
+  updated_at: string;
+  metadata: Record<string, unknown>;
+}
+
 export interface AssetRow {
   id: string;
   path?: string;
@@ -238,13 +249,33 @@ export interface CanvasComposerSnapshot {
   fill_edit_guidance?: string;
 }
 
-export type LongVideoChainMode = 'keyframe_only' | 'last_frame';
+export type LongVideoChainMode = 'keyframe_only' | 'last_frame' | 'first_last' | 'reference_r2v';
+
+export type LongVideoSegmentRole =
+  | 'establishing'
+  | 'pre_anchor'
+  | 'face_anchor'
+  | 'post_anchor'
+  | 'keyframe'
+  | 'tail_continuation';
+
+export type LongVideoFlfMode = 'none' | 'first_last' | 'continuation';
 
 export interface LongVideoCharacterLook {
   id: string;
   label: string;
   body: string;
+  /** Manual vision backfill for keyframe outfit injection (does not replace body). */
+  vision_description?: string;
+  /** Cast portrait / reference image (gallery asset). */
+  reference_asset_id?: string;
+  lora_id?: string;
+  portrait_prompt?: string;
 }
+
+export type LongVideoEditorTab = 'script' | 'cast' | 'scenes' | 'storyboard';
+
+export type LongVideoInspectorTab = 'frame' | 'clip';
 
 export interface LongVideoCharacter {
   id: string;
@@ -253,20 +284,75 @@ export interface LongVideoCharacter {
   default_look_id: string;
 }
 
+export interface LongVideoSceneLook {
+  id: string;
+  label: string;
+  body: string;
+  /** Manual vision backfill for keyframe environment injection (does not replace body). */
+  vision_description?: string;
+  /** Scene / set-piece reference image (gallery asset). */
+  reference_asset_id?: string;
+  /** Cached T2I prompt for scene reference generation only. */
+  environment_prompt?: string;
+}
+
+export interface LongVideoScene {
+  id: string;
+  name: string;
+  looks: LongVideoSceneLook[];
+  default_look_id: string;
+  spatial_layout_json?: Record<string, unknown>;
+  grounding_panorama_asset_id?: string;
+  grounding_depth_asset_id?: string;
+}
+
+export interface LongVideoShotSceneLook {
+  scene_id: string;
+  look_id: string;
+}
+
 export interface LongVideoShotCastLook {
   character_id: string;
   look_id: string;
 }
+
+export type LongVideoStartFrameMode = 'keyframe' | 'prev_segment_tail' | 'anchor_link';
+
+export type CharacterVisibility = 'invisible' | 'silhouette' | 'partial' | 'full_face';
+
+export type FirstFrameStrategy =
+  | 'direct_reuse_portrait'
+  | 'scene_composite'
+  | 'reuse_prev_tail'
+  | 'img2img_light'
+  | 't2i_from_grounding'
+  | 'causal_generate';
 
 export interface LongVideoShotState {
   id: string;
   order: number;
   visual_prompt: string;
   motion_prompt: string;
+  /** Full clip description (video-first parse). */
+  video_prompt?: string;
+  /** t=0 still derived from video_prompt. */
+  start_visual_prompt?: string;
+  end_visual_prompt?: string;
+  anchor_visual_prompt?: string;
+  segment_role: LongVideoSegmentRole;
+  start_frame_mode: LongVideoStartFrameMode;
+  segment_group_id?: string;
+  segment_group_index?: number;
+  face_anchor_shot_id?: string;
+  flf_mode?: LongVideoFlfMode;
+  end_frame_sync_anchor?: boolean;
+  end_frame_asset_id?: string;
   /** Scene-only prompt from Expand (without cast reference blocks). */
   scene_prompt?: string;
   /** Per-character outfit selection for this keyframe. */
   cast_looks?: LongVideoShotCastLook[];
+  /** Per-shot scene entity / variant binding. */
+  scene_look?: LongVideoShotSceneLook;
   keyframe_asset_id?: string;
   /** Optional img2img reference for keyframe generation. */
   reference_asset_id?: string;
@@ -274,16 +360,37 @@ export interface LongVideoShotState {
   status?: 'draft' | 'keyframe_ready' | 'segment_ready' | 'failed';
   error?: string;
   seed?: number;
-  /** Per-edge I2V chain mode (#i→#i+1); falls back to project ``chain_mode`` when unset. */
+  /** Per-edge I2V chain mode; falls back to project ``chain_mode`` when unset. */
   chain_mode?: LongVideoChainMode;
   /** Per-shot segment length (seconds); defaults to 5 when generating. */
   duration_sec?: number;
+  first_frame_visibility?: CharacterVisibility;
+  end_visibility?: CharacterVisibility;
+  characters_on_screen?: string[];
+  clip_start_state?: string;
+  clip_end_state?: string;
+  first_frame_requirement?: string;
+  camera_zone_id?: string;
+  first_frame_strategy?: FirstFrameStrategy;
+  /** Parsed beat location (distinct from full scene_prompt when present). */
+  location?: string;
+  /** Source beat index in chapter scene_beats. */
+  narrative_beat_index?: number;
+  shot_size?: string;
 }
 
 export type LongVideoSelection =
-  | { kind: 'node'; index: number }
-  | { kind: 'edge'; index: number }
+  | { kind: 'segment'; index: number }
+  | { kind: 'clip'; index: number }
+  | { kind: 'beat_group'; groupId: string }
   | null;
+
+export interface LongVideoBeatGroup {
+  groupId: string;
+  beatIndex: number;
+  title: string;
+  shotIndices: number[];
+}
 
 export interface LongVideoChapterScene {
   order: number;
@@ -293,18 +400,72 @@ export interface LongVideoChapterScene {
 
 export interface LongVideoChapterAnalysis {
   synopsis: string;
+  mood?: string;
   scene_beats: LongVideoChapterScene[];
   character_anchor?: string;
   style_anchor?: string;
   characters?: LongVideoCharacter[];
+  scenes?: LongVideoScene[];
+  /** Input-driven parse quality notices (non-blocking). */
+  quality_warnings?: string[];
+  quality_issues?: Array<{
+    code: string;
+    message: string;
+    severity?: 'warning' | 'critical';
+    shot_index?: number | null;
+    beat_index?: number | null;
+  }>;
+  /** Latest script parse run id (prun_*), for project activity lookup. */
+  parse_run_id?: string;
+  last_parse_at?: string;
+  /** Cached parse phase trail from last analyze response. */
+  parse_phases?: Array<{ phase: string; message?: string }>;
+  /** Latest per-shot T2I assembly provenance (keyed by shot id). */
+  shot_t2i_provenance?: Record<string, KeyframeT2iProvenance>;
+  /** Rolling parse run snapshots (newest last, max 5). */
+  parse_history?: LongVideoParseHistoryEntry[];
+}
+
+export type KeyframeT2iProvenanceSkipReason =
+  | 'face_anchor'
+  | 'close_up'
+  | 'token_coverage_sufficient'
+  | 'narrative_already_covered'
+  | 'empty_narrative';
+
+export interface KeyframeT2iProvenance {
+  narrative_merged: boolean;
+  narrative_skip_reason?: KeyframeT2iProvenanceSkipReason;
+  narrative_token_coverage?: number;
+  /** How shot.location was folded into sceneNarrative (token/overlap rules). */
+  location_merge?: 'none' | 'prepended' | 'scene_only';
+  first_frame_requirement_merged: boolean;
+  ffr_clauses_total?: number;
+  ffr_clauses_merged?: number;
+  scene_parts: Array<{
+    source: 'beat_narrative' | 'first_frame_requirement' | 'visual_prompt' | 'location';
+    text_preview: string;
+  }>;
+  composed_scene_line: string;
+}
+
+export interface LongVideoParseHistoryEntry {
+  parse_run_id: string;
+  at: string;
+  shot_count: number;
+  provenance_by_shot_id: Record<string, KeyframeT2iProvenance>;
 }
 
 export interface LongVideoProjectState {
-  version: 1;
+  version: 1 | 2;
   strategy: 'segmented_i2v' | 'latent_extend';
+  /** Main editor tab: script source → cast roster → scene roster → storyboard timeline. */
+  editor_tab?: LongVideoEditorTab;
   title?: string;
+  script_text?: string;
+  /** @deprecated use script_text */
   brief?: string;
-  source_mode?: 'brief' | 'chapter';
+  /** @deprecated use script_text */
   chapter_text?: string;
   chapter_title?: string;
   chapter_analysis?: LongVideoChapterAnalysis;
@@ -313,8 +474,12 @@ export interface LongVideoProjectState {
   character_anchor?: string;
   /** Structured cast roster from storyboard expand (multi-look per character). */
   characters?: LongVideoCharacter[];
+  /** Structured scene / location roster (multi-variant per place). */
+  scenes?: LongVideoScene[];
   style_anchor?: string;
   character_lora_id?: string;
+  /** Optional model override for cast portrait generation (defaults to keyframe_model). */
+  portrait_model?: string;
   keyframe_model: string;
   segment_video_model: string;
   segment_duration_sec: number;
@@ -376,16 +541,4 @@ export interface CanvasSessionDetail {
   state: CanvasSessionState;
   created_at: string;
   updated_at: string;
-}
-
-export interface EnhanceRequest {
-  prompt: string;
-  style_positive?: string;
-  style_negative?: string;
-  target_action?: string;
-  model_id?: string;
-}
-
-export interface EnhanceResponse {
-  enhanced_prompt: string;
 }

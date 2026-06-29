@@ -181,7 +181,7 @@ class LongVideoShotSpec(BaseModel):
     segment_asset_id: str | None = None
     duration_sec: float | None = None
     seed: int | None = None
-    chain_mode: Literal["keyframe_only", "last_frame"] | None = None
+    chain_mode: Literal["keyframe_only", "last_frame", "first_last", "reference_r2v"] | None = None
     status: Literal["draft", "keyframe_ready", "segment_ready", "failed"] = "draft"
     error: str | None = None
 
@@ -193,7 +193,7 @@ class VideoLongVideoSpec(BaseModel):
     segment_video_model: str = ""
     segment_duration_sec: float = 5.0
     overlap_frames: int = 4
-    chain_mode: Literal["keyframe_only", "last_frame"] = "keyframe_only"
+    chain_mode: Literal["keyframe_only", "last_frame", "first_last", "reference_r2v"] = "keyframe_only"
     character_anchor: str = ""
     character_lora_id: str | None = None
     keyframe_adapters: list[AdapterRef] = Field(default_factory=list)
@@ -380,9 +380,26 @@ class AudioEditRequest(BaseModel):
 # ----- LLM / Chat -----
 
 
+class ChatContentPartText(BaseModel):
+    type: Literal["text"] = "text"
+    text: str
+
+
+class ChatImageUrl(BaseModel):
+    url: str
+
+
+class ChatContentPartImageUrl(BaseModel):
+    type: Literal["image_url"] = "image_url"
+    image_url: ChatImageUrl
+
+
+ChatMessageContent = str | list[ChatContentPartText | ChatContentPartImageUrl]
+
+
 class ChatMessage(BaseModel):
     role: Literal["system", "user", "assistant"]
-    content: str
+    content: ChatMessageContent
 
 
 class ChatCompletionRequest(BaseModel):
@@ -402,6 +419,7 @@ class ChatChoice(BaseModel):
 
 class ChatCompletionResponse(BaseModel):
     id: str
+    object: str = "chat.completion"
     created: int
     model: str
     choices: list[ChatChoice]
@@ -453,6 +471,15 @@ class LongVideoChapterAnalyzeRequest(BaseModel):
     chapter_text: str
     chapter_title: str = ""
     locale: str = ""
+    target_duration_sec: float = 60.0
+    segment_duration_sec: float = 5.0
+    max_clip_sec: float = 10.0
+    long_video_project_id: str = ""
+
+
+class LongVideoChapterParsePhaseDTO(BaseModel):
+    phase: str
+    message: str = ""
 
 
 class LongVideoChapterSceneDTO(BaseModel):
@@ -461,15 +488,51 @@ class LongVideoChapterSceneDTO(BaseModel):
     beat: str = ""
 
 
+class LongVideoParseQualityIssueDTO(BaseModel):
+    code: str
+    message: str
+    severity: Literal["warning", "critical"] = "warning"
+    shot_index: int | None = None
+    beat_index: int | None = None
+
+
 class LongVideoChapterAnalyzeResponse(BaseModel):
     chapter_title: str
     synopsis: str
+    mood: str = ""
     character_anchor: str
     style_anchor: str = ""
     characters: list["LongVideoCharacterDTO"] = Field(default_factory=list)
+    scenes: list["LongVideoSceneDTO"] = Field(default_factory=list)
     scene_beats: list[LongVideoChapterSceneDTO] = Field(default_factory=list)
     scene_count: int = 0
+    shots: list[LongVideoStoryboardShotDTO] = Field(default_factory=list)
+    parse_phases: list[LongVideoChapterParsePhaseDTO] = Field(default_factory=list)
+    quality_warnings: list[str] = Field(default_factory=list)
+    quality_issues: list[LongVideoParseQualityIssueDTO] = Field(default_factory=list)
     llm_calls: int = 0
+    parse_run_id: str = ""
+    long_video_project_id: str = ""
+
+
+class LongVideoProjectActivityDTO(BaseModel):
+    id: str
+    project_id: str
+    category: str
+    event_type: str
+    phase: str = ""
+    status: str = ""
+    summary: str = ""
+    task_id: str | None = None
+    parse_run_id: str | None = None
+    shot_id: str = ""
+    detail: dict[str, Any] = Field(default_factory=dict)
+    created_at: str
+
+
+class LongVideoProjectActivityListResponse(BaseModel):
+    items: list[LongVideoProjectActivityDTO] = Field(default_factory=list)
+    total: int = 0
 
 
 class LongVideoStoryboardRequest(BaseModel):
@@ -486,6 +549,7 @@ class LongVideoStoryboardRequest(BaseModel):
     scene_beats: list[str] = Field(default_factory=list)
     prebuilt_character_anchor: str = ""
     prebuilt_style_anchor: str = ""
+    prebuilt_scenes: list["LongVideoSceneDTO"] = Field(default_factory=list)
 
 
 class LongVideoCharacterLookDTO(BaseModel):
@@ -501,8 +565,29 @@ class LongVideoCharacterDTO(BaseModel):
     default_look_id: str = ""
 
 
+class LongVideoSceneLookDTO(BaseModel):
+    id: str
+    label: str = "默认"
+    body: str = ""
+
+
+class LongVideoSceneDTO(BaseModel):
+    id: str
+    name: str
+    looks: list[LongVideoSceneLookDTO] = Field(default_factory=list)
+    default_look_id: str = ""
+    spatial_layout_json: dict = Field(default_factory=dict)
+    grounding_panorama_asset_id: str = ""
+    grounding_depth_asset_id: str = ""
+
+
 class LongVideoShotCastLookDTO(BaseModel):
     character_id: str
+    look_id: str
+
+
+class LongVideoShotSceneLookDTO(BaseModel):
+    scene_id: str
     look_id: str
 
 
@@ -511,8 +596,47 @@ class LongVideoStoryboardShotDTO(BaseModel):
     order: int = 0
     visual_prompt: str = ""
     motion_prompt: str = ""
+    video_prompt: str = ""
+    start_visual_prompt: str = ""
+    end_visual_prompt: str = ""
+    anchor_visual_prompt: str = ""
+    segment_role: Literal[
+        "establishing",
+        "pre_anchor",
+        "face_anchor",
+        "post_anchor",
+        "keyframe",
+        "tail_continuation",
+    ] = "keyframe"
+    start_frame_mode: Literal["keyframe", "prev_segment_tail", "anchor_link"] = "keyframe"
+    segment_group_id: str = ""
+    segment_group_index: int = 0
+    face_anchor_shot_id: str = ""
+    flf_mode: Literal["none", "first_last", "continuation"] = "none"
+    end_frame_sync_anchor: bool = False
+    chain_mode: Literal["keyframe_only", "last_frame", "first_last", "reference_r2v"] | None = None
     scene_prompt: str = ""
     cast_looks: list[LongVideoShotCastLookDTO] = Field(default_factory=list)
+    scene_look: LongVideoShotSceneLookDTO | None = None
+    duration_sec: float | None = None
+    first_frame_visibility: Literal["invisible", "silhouette", "partial", "full_face"] = "full_face"
+    end_visibility: Literal["invisible", "silhouette", "partial", "full_face"] = "full_face"
+    characters_on_screen: list[str] = Field(default_factory=list)
+    clip_start_state: str = ""
+    clip_end_state: str = ""
+    first_frame_requirement: str = ""
+    camera_zone_id: str = ""
+    first_frame_strategy: Literal[
+        "direct_reuse_portrait",
+        "scene_composite",
+        "reuse_prev_tail",
+        "img2img_light",
+        "t2i_from_grounding",
+        "causal_generate",
+    ] = "t2i_from_grounding"
+    location: str = ""
+    shot_size: str = ""
+    narrative_beat_index: int | None = None
 
 
 class LongVideoStoryboardResponse(BaseModel):
@@ -525,34 +649,8 @@ class LongVideoStoryboardResponse(BaseModel):
     llm_calls: int
     shots: list[LongVideoStoryboardShotDTO] = Field(default_factory=list)
     characters: list[LongVideoCharacterDTO] = Field(default_factory=list)
+    scenes: list[LongVideoSceneDTO] = Field(default_factory=list)
     style_anchor: str = ""
-
-
-class ImageToPromptRequest(BaseModel):
-    asset_id: str
-    prefer_vision: bool = True
-
-
-class ImageToPromptResponse(BaseModel):
-    prompt: str
-    vision_used: bool = False
-
-
-class DescribeNodeResponse(BaseModel):
-    """Canvas node note from vision model and/or text LLM metadata."""
-
-    note: str
-    vision_used: bool = False
-
-
-class VisualAnalyzeRequest(BaseModel):
-    asset_id: str
-    question: str = ""
-
-
-class VisualAnalyzeResponse(BaseModel):
-    answer: str
-    vision_used: bool = False
 
 
 # ----- Tools (offline model ops) -----
@@ -718,6 +816,10 @@ def new_asset_id() -> str:
 
 def new_task_id() -> str:
     return "tsk_" + secrets.token_hex(12)
+
+
+def new_parse_run_id() -> str:
+    return "prun_" + secrets.token_hex(12)
 
 
 def parse_model_version(model_field: str) -> tuple[str, str]:

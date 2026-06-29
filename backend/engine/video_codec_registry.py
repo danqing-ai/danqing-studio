@@ -120,12 +120,22 @@ def _decode_wan(
     registry_scalar_default: Callable[[Any, str, Any], Any],
     on_post_progress: Callable[[float], None] | None,
     on_post_log: Callable[[str], None] | None,
+    pipeline_config: Any | None = None,
 ) -> list:
     from backend.engine.families.wan.vae import decode_wan_latents_to_pil_frames
 
     bundle_root = local_bundle_root(entry, version_key)
-    spatial = bool(registry_scalar_default(entry, "vae_spatial_tiling", False))
-    spatial_scale = int(registry_scalar_default(entry, "vae_scale", 16) or 16)
+    cfg = pipeline_config
+    spatial = bool(
+        getattr(cfg, "vae_spatial_tiling", None)
+        if cfg is not None and getattr(cfg, "vae_spatial_tiling", None) is not None
+        else registry_scalar_default(entry, "vae_spatial_tiling", False)
+    )
+    spatial_scale = int(
+        getattr(cfg, "vae_scale", None)
+        if cfg is not None and getattr(cfg, "vae_scale", None) is not None
+        else registry_scalar_default(entry, "vae_scale", 16) or 16
+    )
     return decode_wan_latents_to_pil_frames(
         ctx,
         latents,

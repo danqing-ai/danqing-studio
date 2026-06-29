@@ -31,7 +31,7 @@
             type="button"
             class="lv-sidebar-card__delete"
             :title="$tt('common.delete')"
-            @click="$emit('delete', item.id)"
+            @click.stop="$emit('delete', item.id)"
           >
             <DqIcon :size="14"><Delete /></DqIcon>
           </button>
@@ -100,7 +100,7 @@ function formatUpdated(iso: string): string {
 }
 
 .lv-sidebar-card__title {
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -117,7 +117,7 @@ function formatUpdated(iso: string): string {
 
 .lv-sidebar-card__hint {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--dq-font-size-body);
   line-height: 1.5;
   color: var(--dq-label-tertiary);
   text-align: center;
@@ -171,7 +171,7 @@ function formatUpdated(iso: string): string {
 }
 
 .lv-sidebar-card__name {
-  font-size: 13px;
+  font-size: var(--dq-font-size-body);
   font-weight: 600;
   color: var(--dq-label-primary);
   overflow: hidden;
@@ -181,7 +181,7 @@ function formatUpdated(iso: string): string {
 }
 
 .lv-sidebar-card__meta {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
 }
 

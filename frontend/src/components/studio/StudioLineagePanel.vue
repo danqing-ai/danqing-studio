@@ -96,7 +96,7 @@ watch(
 .studio-lineage__hint {
   margin: 0;
   padding: 8px 16px 0;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
   line-height: 1.4;
 }
@@ -115,6 +115,6 @@ watch(
   gap: 8px;
   padding: 32px 24px;
   color: var(--dq-label-secondary);
-  font-size: 13px;
+  font-size: var(--dq-font-size-body);
 }
 </style>

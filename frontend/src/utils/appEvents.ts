@@ -4,6 +4,7 @@
  */
 export type AppEventMap = {
   'open-global-task-queue': void;
+  'open-task-log': { taskId: string };
 };
 
 type Handler<K extends keyof AppEventMap> = (payload: AppEventMap[K]) => void;
@@ -42,4 +43,11 @@ export const appEvents = {
 /** Open the global task queue drawer (shell). */
 export function openGlobalTaskQueue(): void {
   appEvents.emit('open-global-task-queue', undefined as void);
+}
+
+/** Open generation task log dialog for a task id. */
+export function openTaskLog(taskId: string): void {
+  const id = String(taskId || '').trim();
+  if (!id) return;
+  appEvents.emit('open-task-log', { taskId: id });
 }

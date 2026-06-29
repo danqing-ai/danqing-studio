@@ -207,7 +207,7 @@ function notePreview(note: string | undefined, max = 48): string {
   justify-content: space-between;
   gap: 8px;
   padding: 10px 12px;
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 600;
   border-bottom: 1px solid var(--dq-border-subtle);
 }
@@ -220,7 +220,7 @@ function notePreview(note: string | undefined, max = 48): string {
 }
 
 .canvas-session-graph__stats {
-  font-size: 10px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 400;
   color: var(--dq-label-tertiary);
 }
@@ -246,7 +246,7 @@ function notePreview(note: string | undefined, max = 48): string {
   justify-content: center;
   gap: 10px;
   padding: 16px;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-secondary);
   text-align: center;
 }
@@ -280,7 +280,7 @@ function notePreview(note: string | undefined, max = 48): string {
 
 .canvas-session-graph__branch {
   flex-shrink: 0;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
   width: 10px;
 }
@@ -302,7 +302,7 @@ function notePreview(note: string | undefined, max = 48): string {
 }
 
 .canvas-session-graph__name {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-primary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -310,7 +310,7 @@ function notePreview(note: string | undefined, max = 48): string {
 }
 
 .canvas-session-graph__parent {
-  font-size: 9px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -318,7 +318,7 @@ function notePreview(note: string | undefined, max = 48): string {
 }
 
 .canvas-session-graph__note {
-  font-size: 9px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-secondary);
   font-style: italic;
   overflow: hidden;
@@ -328,7 +328,7 @@ function notePreview(note: string | undefined, max = 48): string {
 
 .canvas-session-graph__relation {
   flex-shrink: 0;
-  font-size: 9px;
+  font-size: var(--dq-font-size-caption);
   padding: 2px 5px;
   border-radius: 4px;
   background: color-mix(in srgb, var(--dq-accent) 12%, transparent);
@@ -336,7 +336,7 @@ function notePreview(note: string | undefined, max = 48): string {
 }
 
 .canvas-session-graph__children {
-  font-size: 10px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
   flex-shrink: 0;
 }

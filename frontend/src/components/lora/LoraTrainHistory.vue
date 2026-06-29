@@ -195,7 +195,7 @@ defineExpose({
 }
 
 .lora-train-history__title {
-  font-size: 10px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -203,7 +203,7 @@ defineExpose({
 }
 
 .lora-train-history--page .lora-train-history__title {
-  font-size: 14px;
+  font-size: var(--dq-font-size-body);
   font-weight: 600;
   letter-spacing: normal;
   text-transform: none;
@@ -218,7 +218,7 @@ defineExpose({
   height: 22px;
   padding: 0 7px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 600;
   color: var(--dq-label-secondary);
   background: var(--dq-fill-tertiary);
@@ -349,14 +349,14 @@ defineExpose({
 }
 
 .lora-train-history__item-name {
-  font-size: 13px;
+  font-size: var(--dq-font-size-body);
   font-weight: 600;
   color: var(--dq-label-primary);
   word-break: break-word;
 }
 
 .lora-train-history--page .lora-train-history__item-name {
-  font-size: 14px;
+  font-size: var(--dq-font-size-body);
 }
 
 .lora-train-history__registered {
@@ -367,7 +367,7 @@ defineExpose({
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
 }
 
@@ -377,7 +377,7 @@ defineExpose({
 
 .lora-train-history__chevron {
   flex-shrink: 0;
-  font-size: 14px;
+  font-size: var(--dq-font-size-body);
   color: var(--dq-label-quaternary);
   transition: transform 0.15s ease, color 0.15s ease;
 }

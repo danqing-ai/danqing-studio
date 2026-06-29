@@ -66,7 +66,7 @@ const navTitle = computed(() => `${props.navLabel} ${props.targetName}`.trim());
   background: transparent;
   color: var(--dq-text-link, var(--dq-primary));
   font: inherit;
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   line-height: 1.4;
   cursor: pointer;
   text-align: left;
@@ -97,7 +97,7 @@ const navTitle = computed(() => `${props.navLabel} ${props.targetName}`.trim());
 
 .model-catalog-relation__nav-arrow {
   flex-shrink: 0;
-  font-size: 14px;
+  font-size: var(--dq-font-size-body);
   line-height: 1;
 }
 </style>

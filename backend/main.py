@@ -29,6 +29,7 @@ from backend.persistence.stores import JsonConfigStore, JsonPresetStore
 from backend.persistence.asset_store import SQLiteAssetStore
 from backend.persistence.canvas_session_store import CanvasSessionStore
 from backend.persistence.long_video_project_store import LongVideoProjectStore
+from backend.persistence.long_video_activity_store import LongVideoActivityStore
 from backend.persistence.v3_task_store import V3TaskStore
 from backend.core.model_registry import ModelRegistry
 from backend.engine.engine_registry import EngineRegistry
@@ -226,8 +227,10 @@ def _setup_dependencies():
     asset_store = SQLiteAssetStore(v3_db, asset_root)
     canvas_session_store = CanvasSessionStore(v3_db)
     long_video_project_store = LongVideoProjectStore(v3_db)
+    long_video_activity_store = LongVideoActivityStore(v3_db)
     container.register_instance(CanvasSessionStore, canvas_session_store)
     container.register_instance(LongVideoProjectStore, long_video_project_store)
+    container.register_instance(LongVideoActivityStore, long_video_activity_store)
 
     scheduler = TaskScheduler(
         path_resolver=path_resolver,
@@ -235,6 +238,7 @@ def _setup_dependencies():
         asset_store=asset_store,
         engine_registry=engine_registry,
         config_store=config_store,
+        activity_store=long_video_activity_store,
     )
 
     download_service = DownloadService(path_resolver, config_store)

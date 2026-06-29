@@ -408,7 +408,7 @@ watch(
 }
 
 .composer-advanced-fields__field label {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 500;
   color: var(--dq-label-secondary);
   white-space: nowrap;
@@ -432,7 +432,7 @@ watch(
 }
 
 .composer-advanced-fields__inline label {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 500;
   color: var(--dq-label-secondary);
   min-width: 72px;
@@ -459,7 +459,7 @@ watch(
 }
 
 .composer-advanced-fields__val {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-secondary);
   min-width: 28px;
   text-align: right;
@@ -481,7 +481,7 @@ watch(
 
 .composer-advanced-fields__hint {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   line-height: 1.45;
   color: var(--dq-label-tertiary);
 }

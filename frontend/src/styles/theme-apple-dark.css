@@ -84,7 +84,7 @@ html.dark .studio-surface-card .dq-surface-card__header {
 }
 
 html.dark .studio-surface-card .dq-surface-card__header .card-title {
- font-size: 15px;
+ font-size: var(--dq-font-size-title);
  font-weight: 600;
  letter-spacing: -0.02em;
  margin-bottom: 12px;
@@ -237,7 +237,7 @@ html.dark .models-page .page-header {
 }
 
 html.dark .models-page .page-title {
- font-size: 22px;
+ font-size: var(--dq-font-size-display);
  font-weight: 700;
  letter-spacing: -0.04em;
 }
@@ -461,7 +461,7 @@ html.dark .settings-version-item.is-selected {
 }
 
 html.dark .settings-version-item__name {
- font-size: 14px;
+ font-size: var(--dq-font-size-body);
  font-weight: 600;
  letter-spacing: -0.02em;
 }
@@ -482,7 +482,7 @@ html.dark .asset-picker__actions .dq-btn {
 }
 
 html.dark .asset-picker__recent-label {
- font-size: 11px;
+ font-size: var(--dq-font-size-caption);
  font-weight: 600;
  letter-spacing: 0.04em;
  text-transform: uppercase;
@@ -507,7 +507,7 @@ html.dark .asset-picker__thumb:focus-visible {
 
 /* 任务队列抽屉：列表单元格 */
 html.dark .dq-task-queue-heading {
- font-size: 12px;
+ font-size: var(--dq-font-size-caption);
  font-weight: 600;
  letter-spacing: 0.04em;
  text-transform: uppercase;
@@ -519,7 +519,7 @@ html.dark .dq-task-queue-heading--primary {
 }
 
 html.dark .dq-task-queue-kind {
- font-size: 15px;
+ font-size: var(--dq-font-size-title);
  font-weight: 600;
  letter-spacing: -0.02em;
 }
@@ -591,7 +591,7 @@ html.dark .download-queue {
 
 
 html.dark .models-page__sidebar-card .card-title {
- font-size: 17px;
+ font-size: var(--dq-font-size-body);
  font-weight: 600;
  letter-spacing: -0.03em;
 }
@@ -629,5 +629,5 @@ html.dark .settings-preset-tag:hover {
 html.dark .log-container {
  border-radius: var(--dq-radius-group);
  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
- font-size: 12px;
+ font-size: var(--dq-font-size-caption);
 }

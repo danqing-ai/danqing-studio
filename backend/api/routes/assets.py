@@ -2,6 +2,7 @@
 
 import uuid
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Body, Depends, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
@@ -24,6 +25,21 @@ class AssetReconcileRequest(BaseModel):
         False,
         description="同时删除误入库的去噪步进预览（metadata.preview=true）；与 dry_run 无关，会真实删库",
     )
+
+
+class AssetGroupCreateRequest(BaseModel):
+    title: str = ""
+    kind: str = "mixed"
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class AssetGroupUpdateRequest(BaseModel):
+    title: str | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class AssetSetGroupRequest(BaseModel):
+    group_id: str | None = None
 
 
 @router.post("", status_code=201)
@@ -62,10 +78,15 @@ class BatchDeleteRequest(BaseModel):
 async def list_assets(
     kind: str | None = Query(None),
     source_task_id: str | None = Query(None, description="仅列出该任务产出的资产"),
+    source_action: str | None = Query(None, description="按 source_action 精确筛选"),
+    source_action_in: list[str] | None = Query(None, description="按 source_action 多值筛选（逗号分隔）"),
+    group_id: str | None = Query(None, description="仅列出指定分组的资产"),
+    exclude_grouped: bool = Query(False, description="排除已归属分组的资产"),
     created_after: str | None = Query(None, description="ISO8601：created_at 下界（含）"),
     created_before: str | None = Query(None, description="ISO8601：created_at 上界（含）"),
     model: str | None = Query(None, description="按 metadata.model 筛选"),
     search: str | None = Query(None, description="搜索 metadata 中的关键词"),
+    search_fields: list[str] | None = Query(None, description="指定搜索字段（如 title,prompt），默认 title,prompt"),
     exclude_upload_refs: bool = Query(False, description="排除创作页上传的参考图/蒙版（source_task_id 为空且 source_action 为 upload）"),
     exclude_step_previews: bool = Query(
         True,
@@ -82,11 +103,16 @@ async def list_assets(
         "items": store.list_assets(
             kind=kind,
             source_task_id=source_task_id,
+            source_action=source_action,
+            source_action_in=source_action_in,
             parent_asset_id=parent_asset_id,
+            group_id=group_id,
+            exclude_grouped=exclude_grouped,
             created_after=created_after,
             created_before=created_before,
             model=model,
             search=search,
+            search_fields=search_fields,
             exclude_upload_refs=exclude_upload_refs,
             exclude_step_previews=exclude_step_previews,
             sort_by=sort_by,
@@ -97,6 +123,104 @@ async def list_assets(
         "limit": limit,
         "offset": offset,
     }
+
+
+# ------------------------------------------------------------------------------
+# Asset groups — must be defined before /{asset_id} catch-all routes
+# ------------------------------------------------------------------------------
+
+@router.get("/groups")
+async def list_asset_groups(
+    kind: str | None = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    store: SQLiteAssetStore = Depends(get_asset_store),
+):
+    groups = store.list_groups(kind=kind, limit=limit, offset=offset)
+    for g in groups:
+        g["asset_count"] = store.count_group_assets(g["id"], kind=kind)
+        g["preview_assets"] = store.list_group_preview_assets(g["id"], kind=kind, limit=4)
+    return {"items": groups, "limit": limit, "offset": offset}
+
+
+@router.post("/groups", status_code=201)
+async def create_asset_group(
+    body: AssetGroupCreateRequest,
+    store: SQLiteAssetStore = Depends(get_asset_store),
+):
+    gid = "grp_" + uuid.uuid4().hex[:20]
+    return store.ensure_group(
+        gid,
+        title=body.title,
+        kind=body.kind,
+        metadata=body.metadata,
+    )
+
+
+@router.get("/groups/{group_id}")
+async def get_asset_group(
+    group_id: str,
+    store: SQLiteAssetStore = Depends(get_asset_store),
+):
+    group = store.get_group(group_id)
+    if not group:
+        raise HTTPException(404, "asset group not found")
+    group["asset_count"] = store.count_group_assets(group_id)
+    group["preview_assets"] = store.list_group_preview_assets(group_id, limit=4)
+    return group
+
+
+@router.get("/groups/{group_id}/assets")
+async def list_group_assets(
+    group_id: str,
+    kind: str | None = Query(None),
+    limit: int = Query(40, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+    store: SQLiteAssetStore = Depends(get_asset_store),
+):
+    """List assets belonging to a group (optionally filtered by media kind)."""
+    if not store.get_group(group_id):
+        raise HTTPException(404, "asset group not found")
+    return {
+        "items": store.list_assets(
+            group_id=group_id,
+            kind=kind,
+            exclude_upload_refs=True,
+            exclude_step_previews=True,
+            sort_by="created_at",
+            sort_order="desc",
+            limit=limit,
+            offset=offset,
+        ),
+        "limit": limit,
+        "offset": offset,
+    }
+
+
+@router.put("/groups/{group_id}")
+async def update_asset_group(
+    group_id: str,
+    body: AssetGroupUpdateRequest,
+    store: SQLiteAssetStore = Depends(get_asset_store),
+):
+    group = store.update_group(
+        group_id,
+        title=body.title,
+        metadata=body.metadata,
+    )
+    if not group:
+        raise HTTPException(404, "asset group not found")
+    return group
+
+
+@router.delete("/groups/{group_id}", status_code=204)
+async def delete_asset_group(
+    group_id: str,
+    unlink_assets: bool = Query(False, description="为 true 时保留资产并移除分组归属"),
+    store: SQLiteAssetStore = Depends(get_asset_store),
+):
+    if not store.delete_group(group_id, unlink_assets=unlink_assets):
+        raise HTTPException(404, "asset group not found")
 
 
 @router.get("/{asset_id}/lineage")
@@ -178,3 +302,14 @@ async def batch_delete_assets(
 @router.delete("/{asset_id}")
 async def delete_asset(asset_id: str, store: SQLiteAssetStore = Depends(get_asset_store)):
     return {"ok": store.delete(asset_id)}
+
+
+@router.patch("/{asset_id}/group")
+async def set_asset_group(
+    asset_id: str,
+    body: AssetSetGroupRequest,
+    store: SQLiteAssetStore = Depends(get_asset_store),
+):
+    if not store.set_asset_group(asset_id, body.group_id):
+        raise HTTPException(404, "asset not found")
+    return {"ok": True}

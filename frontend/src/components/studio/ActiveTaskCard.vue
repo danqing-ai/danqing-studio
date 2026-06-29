@@ -226,7 +226,7 @@ function truncate(text: string, length: number): string {
 }
 
 .active-task-card__status-text {
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 500;
 }
 
@@ -254,7 +254,7 @@ function truncate(text: string, length: number): string {
   padding: 2px 8px;
   background: var(--dq-overlay-card);
   color: var(--dq-label-on-media);
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 500;
   border-radius: 4px;
   backdrop-filter: var(--dq-glass-blur-light);
@@ -271,7 +271,7 @@ function truncate(text: string, length: number): string {
 }
 
 .active-task-card__prompt {
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-secondary);
   overflow: hidden;
   text-overflow: ellipsis;

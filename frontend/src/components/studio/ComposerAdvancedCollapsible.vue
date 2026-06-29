@@ -72,7 +72,7 @@ defineExpose({ rootRef });
   border: none;
   background: none;
   padding: 4px 0;
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 500;
   color: var(--dq-label-secondary);
   cursor: pointer;
@@ -91,7 +91,7 @@ defineExpose({ rootRef });
 }
 
 .composer-advanced-collapse__chevron {
-  font-size: 10px;
+  font-size: var(--dq-font-size-caption);
   line-height: 1;
   transition: transform 0.2s ease;
   color: var(--dq-label-tertiary);

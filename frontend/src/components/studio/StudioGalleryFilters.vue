@@ -14,6 +14,7 @@
   </DqSelect>
 
   <DqSelect
+    v-if="showModelFilter !== false"
     :model-value="filterModels"
     size="small"
     multiple
@@ -24,6 +25,16 @@
   >
     <DqOption v-for="m in modelOptions" :key="m" :label="m" :value="m" />
   </DqSelect>
+
+  <DqInput
+    v-if="showSearch"
+    :model-value="searchText"
+    size="small"
+    class="studio-gallery-filters__search"
+    :placeholder="searchPlaceholder || $t('gallery.searchPlaceholder')"
+    clearable
+    @update:model-value="$emit('update:searchText', $event)"
+  />
 
   <DqButton
     type="primary"
@@ -89,6 +100,7 @@ import type { CanvasMedia } from '@/composables/useCanvasStore';
 const props = defineProps<{
   filterTime: string;
   filterModels: string[];
+  searchText?: string;
   timeOptions: { label: string; value: string }[];
   modelOptions: string[];
   selectionMode?: boolean;
@@ -98,11 +110,15 @@ const props = defineProps<{
   supportsCanvas?: boolean;
   canvasMedia?: CanvasMedia;
   composerBusy?: boolean;
+  showModelFilter?: boolean;
+  showSearch?: boolean;
+  searchPlaceholder?: string;
 }>();
 
 const emit = defineEmits<{
   (e: 'update:filterTime', value: string): void;
   (e: 'update:filterModels', value: string[]): void;
+  (e: 'update:searchText', value: string): void;
   (e: 'refresh'): void;
   (e: 'toggle-selection-mode'): void;
   (e: 'select-all'): void;
@@ -130,6 +146,16 @@ function onViewModeChange(mode: 'grid' | 'canvas') {
   flex: 1 1 auto;
   min-width: 0;
   max-width: 280px;
+}
+
+.studio-gallery-filters__search {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 320px;
+}
+
+.studio-gallery-filters__search :deep(.dq-input) {
+  font-size: var(--dq-font-size-caption);
 }
 
 .studio-gallery-filters__compose {
@@ -172,7 +198,7 @@ function onViewModeChange(mode: 'grid' | 'canvas') {
 }
 
 .studio-gallery-filters__view-label {
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 500;
   color: var(--dq-label-secondary);
   white-space: nowrap;

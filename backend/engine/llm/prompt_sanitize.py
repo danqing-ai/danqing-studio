@@ -157,6 +157,11 @@ def prompt_enhance_quality_ok(text: str) -> bool:
     return True
 
 
+def sanitize_structured_llm_response(text: str, *, think_enabled: bool = False) -> str:
+    """Return post-thinking LLM content for JSON/schema tasks (no prompt-length trimming)."""
+    return extract_final_llm_content(text, think_enabled=think_enabled).strip()
+
+
 def sanitize_enhanced_prompt(text: str, *, think_enabled: bool = False) -> str:
     """Trim enhanced prompts after mlx-lm generation."""
     raw = _strip_wrapping_quotes(extract_final_llm_content(text, think_enabled=think_enabled))

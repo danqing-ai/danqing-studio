@@ -6,11 +6,7 @@ import json
 from typing import Any
 
 from backend.core.contracts import ChatCompletionRequest, ChatMessage
-
-_DIAGNOSE_SYSTEM = """You diagnose failed or slow AI generation tasks in DanQing Studio.
-Given structured JSON (task status, pipeline graph nodes, failure code, log excerpts), respond in the user's locale.
-Be concise: root cause hypothesis, which pipeline phase failed, and 2-4 actionable checks.
-Do not invent model weights paths; only use fields present in the input."""
+from backend.engine.llm.prompts.system import TASK_DIAGNOSE_SYSTEM
 
 
 def _compact_bundle(bundle: dict[str, Any]) -> dict[str, Any]:
@@ -39,14 +35,18 @@ def llm_diagnose_task(bundle: dict[str, Any], llm_service: Any, *, locale: str =
     if llm_service is None:
         raise RuntimeError("LLM service is not configured")
     compact = _compact_bundle(bundle)
-    user_loc = "Respond in Chinese." if locale.startswith("zh") else "Respond in English."
+    user_loc = (
+        "## Output language\nRespond in Simplified Chinese (简体中文)."
+        if locale.startswith("zh")
+        else "## Output language\nRespond in English."
+    )
     request = ChatCompletionRequest(
         model=getattr(llm_service, "_model_id", "") or "",
         messages=[
-            ChatMessage(role="system", content=_DIAGNOSE_SYSTEM),
+            ChatMessage(role="system", content=TASK_DIAGNOSE_SYSTEM),
             ChatMessage(
                 role="user",
-                content=f"{user_loc}\n\n```json\n{json.dumps(compact, ensure_ascii=False)}\n```",
+                content=f"{user_loc}\n\n## Diagnostic bundle\n```json\n{json.dumps(compact, ensure_ascii=False)}\n```",
             ),
         ],
         temperature=0.2,

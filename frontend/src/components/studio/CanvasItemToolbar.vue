@@ -277,7 +277,7 @@ const toolbarStyle = computed(() => {
 }
 
 .canvas-item-toolbar__label {
-  font-size: 10px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 600;
   color: var(--dq-label-tertiary);
   padding: 0 4px 0 2px;
@@ -293,7 +293,7 @@ const toolbarStyle = computed(() => {
 }
 
 .canvas-item-toolbar__menu-hint {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-secondary);
   white-space: normal;
   line-height: 1.35;

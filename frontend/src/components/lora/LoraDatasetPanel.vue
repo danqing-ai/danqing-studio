@@ -828,7 +828,7 @@ defineExpose({
 }
 
 .lora-dataset-panel__list-title {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 600;
   color: var(--dq-label-secondary);
   letter-spacing: 0.02em;
@@ -836,7 +836,7 @@ defineExpose({
 
 .lora-dataset-panel__persist-note {
   margin: 0;
-  font-size: 10px;
+  font-size: var(--dq-font-size-caption);
   line-height: 1.45;
   color: var(--dq-label-tertiary);
 }
@@ -923,7 +923,7 @@ defineExpose({
 }
 
 .lora-dataset-panel__list-name {
-  font-size: 13px;
+  font-size: var(--dq-font-size-body);
   font-weight: 500;
   color: var(--dq-label-primary);
   word-break: break-word;
@@ -934,7 +934,7 @@ defineExpose({
   flex-wrap: wrap;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
 }
 
@@ -969,7 +969,7 @@ defineExpose({
 
 .lora-dataset-panel__field-hint {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
   line-height: 1.4;
 }
@@ -1042,14 +1042,14 @@ defineExpose({
 
 .lora-dataset-panel__dropzone-title {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--dq-font-size-body);
   font-weight: 500;
   color: var(--dq-label-primary);
 }
 
 .lora-dataset-panel__dropzone-hint {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
 }
 
@@ -1102,7 +1102,7 @@ defineExpose({
   bottom: 4px;
   padding: 2px 6px;
   border-radius: var(--radius-sm);
-  font-size: 10px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 600;
   line-height: 1.2;
   color: #fff;
@@ -1127,7 +1127,7 @@ defineExpose({
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
 }
 
@@ -1172,21 +1172,21 @@ defineExpose({
 }
 
 .lora-dataset-panel__label {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 500;
   color: var(--dq-label-secondary);
 }
 
 .lora-dataset-panel__field-hint {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
   line-height: 1.4;
 }
 
 .lora-dataset-panel__import-hint {
   margin: 0 0 12px;
-  font-size: 13px;
+  font-size: var(--dq-font-size-body);
   color: var(--dq-label-tertiary);
 }
 
@@ -1206,7 +1206,7 @@ defineExpose({
   border-radius: var(--radius-sm);
   background: var(--dq-fill-secondary);
   border: 0.5px solid var(--dq-border-subtle);
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-secondary);
 }
 

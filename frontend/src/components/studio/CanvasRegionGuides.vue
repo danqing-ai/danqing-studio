@@ -120,7 +120,7 @@ const overlayLinks = computed(() => {
 }
 
 .canvas-region-guides__staging-label {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 600;
   fill: var(--dq-warning);
   opacity: 0.9;
@@ -134,7 +134,7 @@ const overlayLinks = computed(() => {
 }
 
 .canvas-region-guides__link-label {
-  font-size: 9px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 700;
   fill: var(--dq-warning);
   opacity: 0.85;

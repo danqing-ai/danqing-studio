@@ -8,7 +8,7 @@ import json
 from collections import defaultdict, deque
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import TYPE_CHECKING, Any, Literal, Optional
 
 from backend.core.contracts import (
     CancelToken,
@@ -25,6 +25,9 @@ from backend.observability.graph_runtime import graph_id_for_task_kind
 from backend.observability.trace import RunTrace
 from backend.persistence.asset_store import SQLiteAssetStore
 from backend.scheduler.task_dispatch import dispatch_task
+
+if TYPE_CHECKING:
+    from backend.persistence.long_video_activity_store import LongVideoActivityStore
 
 
 def _task_error_message(exc: BaseException) -> str:
@@ -45,12 +48,14 @@ class TaskScheduler:
         asset_store: SQLiteAssetStore,
         engine_registry: EngineRegistry,
         config_store: Optional[IConfigStore] = None,
+        activity_store: Optional["LongVideoActivityStore"] = None,
     ):
         self._paths = path_resolver
         self._tasks = task_store
         self._assets = asset_store
         self._engines = engine_registry
         self._config = config_store
+        self._activity_store = activity_store
         self._pq: asyncio.PriorityQueue = asyncio.PriorityQueue()
         self._seq = itertools.count()
         self._heap_lock = asyncio.Lock()
@@ -144,6 +149,7 @@ class TaskScheduler:
             priority=50 if priority == "high" else 100,
             status=TaskStatus.QUEUED,
         )
+        self._record_task_activity("task_submitted", tid, kind, model_id, params, status=TaskStatus.QUEUED.value)
         async with self._heap_lock:
             await self._pq.put((band, next(self._seq), tid))
         return {
@@ -478,3 +484,60 @@ class TaskScheduler:
             self._progress_meta.pop(tid, None)
             self._tokens.pop(tid, None)
             self._realtime_queues.pop(tid, None)
+            self._record_task_finished(tid)
+
+    def _record_task_activity(
+        self,
+        event_type: str,
+        task_id: str,
+        task_kind: str,
+        model_id: str,
+        params: dict[str, Any],
+        *,
+        status: str = "",
+        result: dict[str, Any] | None = None,
+        error_message: str = "",
+    ) -> None:
+        if self._activity_store is None:
+            return
+        from backend.engine.common.long_video.activity import record_task_activity
+
+        record_task_activity(
+            self._activity_store,
+            event_type=event_type,
+            task_id=task_id,
+            task_kind=task_kind,
+            model_id=model_id,
+            params=params,
+            status=status,
+            result=result,
+            error_message=error_message,
+        )
+
+    def _record_task_finished(self, task_id: str) -> None:
+        if self._activity_store is None:
+            return
+        row = self._tasks.get_task(task_id)
+        if not row:
+            return
+        status = str(row.get("status") or "")
+        if status == TaskStatus.COMPLETED.value:
+            event_type = "task_completed"
+        elif status == TaskStatus.FAILED.value:
+            event_type = "task_failed"
+        elif status == TaskStatus.CANCELLED.value:
+            event_type = "task_cancelled"
+        else:
+            return
+        params = row.get("params") if isinstance(row.get("params"), dict) else {}
+        result = row.get("result") if isinstance(row.get("result"), dict) else None
+        self._record_task_activity(
+            event_type,
+            task_id,
+            str(row.get("kind") or ""),
+            str(row.get("model_id") or ""),
+            params,
+            status=status,
+            result=result,
+            error_message=str(row.get("error_message") or ""),
+        )

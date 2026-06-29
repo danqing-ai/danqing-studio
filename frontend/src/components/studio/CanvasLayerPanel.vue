@@ -373,7 +373,7 @@ const layerList = computed(() => {
 
 .canvas-layer__section-title {
   padding: 12px 16px 6px;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -383,7 +383,7 @@ const layerList = computed(() => {
 .canvas-layer__rename-hint {
   margin: 0;
   padding: 0 16px 8px;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-secondary);
   line-height: 1.4;
 }
@@ -454,7 +454,7 @@ const layerList = computed(() => {
 }
 
 .canvas-layer__name {
-  font-size: 13px;
+  font-size: var(--dq-font-size-body);
   font-weight: 500;
   color: var(--dq-label-primary);
   white-space: nowrap;
@@ -467,12 +467,12 @@ const layerList = computed(() => {
 }
 
 .canvas-layer__dim {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-secondary);
 }
 
 .canvas-layer__note {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-secondary);
   line-height: 1.35;
   display: -webkit-box;
@@ -517,7 +517,7 @@ const layerList = computed(() => {
 }
 
 .canvas-layer__opacity-label {
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-secondary);
 }
 
@@ -548,7 +548,7 @@ const layerList = computed(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 18px;
+  font-size: var(--dq-font-size-display);
   color: var(--dq-accent);
   background: color-mix(in srgb, var(--dq-accent) 10%, transparent);
   flex-shrink: 0;

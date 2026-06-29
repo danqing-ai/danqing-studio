@@ -141,7 +141,7 @@ function formatMs(ms: number): string {
 
 .task-pipeline-graph__empty {
   color: var(--dq-label-secondary);
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   padding: 8px 4px;
 }
 
@@ -299,20 +299,20 @@ function formatMs(ms: number): string {
 }
 
 .task-pipeline-graph__label {
-  font-size: 13px;
+  font-size: var(--dq-font-size-body);
   line-height: 1.35;
   color: var(--dq-label-primary);
 }
 
 .task-pipeline-graph--compact .task-pipeline-graph__label {
-  font-size: 10px;
+  font-size: var(--dq-font-size-caption);
   line-height: 1.25;
   word-break: keep-all;
 }
 
 .task-pipeline-graph__dur {
   flex-shrink: 0;
-  font-size: 11px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
   font-variant-numeric: tabular-nums;
 }
@@ -338,12 +338,12 @@ function formatMs(ms: number): string {
 }
 
 .task-pipeline-graph__progress-label {
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-secondary);
 }
 
 .task-pipeline-graph__progress-value {
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
   font-variant-numeric: tabular-nums;
 }
@@ -365,7 +365,7 @@ function formatMs(ms: number): string {
 
 .task-pipeline-graph__diagnose {
   align-self: flex-end;
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   padding: 5px 12px;
   border-radius: var(--dq-radius-control);
   border: 0.5px solid var(--dq-glass-border);
@@ -383,7 +383,7 @@ function formatMs(ms: number): string {
   margin: 0;
   padding: 10px 12px;
   border-radius: var(--dq-radius-control);
-  font-size: 12px;
+  font-size: var(--dq-font-size-caption);
   line-height: 1.5;
   color: var(--dq-label-secondary);
   white-space: pre-wrap;
