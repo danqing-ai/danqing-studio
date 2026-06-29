@@ -219,6 +219,11 @@ def apply_workspace(request: ApplyWorkspaceRequest, req: Request):
     service.update_settings(settings)
 
     restart_required = new_root.resolve() != old_root.resolve()
+    if restart_required:
+        from backend.utils.workspace_rebind import rebind_workspace_after_relocation
+
+        rebind_workspace_after_relocation(path_resolver)
+
     return {
         "success": True,
         "restart_required": restart_required,
