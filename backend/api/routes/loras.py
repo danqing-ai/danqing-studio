@@ -36,7 +36,7 @@ from backend.engine.training.presets import (
 from backend.engine.training.user_lora_registry import delete_user_lora, list_user_loras, register_user_lora
 from backend.persistence.asset_store import SQLiteAssetStore
 from backend.scheduler.task_scheduler import TaskScheduler
-from backend.utils.path_utils import get_memory_gb
+from backend.utils.path_utils import get_memory_gb, resolve_path_under
 
 router = APIRouter(prefix="/api/loras", tags=["loras"])
 
@@ -384,7 +384,8 @@ def trainable_models():
 
 def _resolve_resume_adapter(body: LoraTrainingRequest, sched: TaskScheduler) -> LoraTrainingRequest:
     if body.resume_from:
-        return body
+        path = _validate_training_checkpoint_path(body.resume_from)
+        return body.model_copy(update={"resume_from": str(path)})
     task_id = (body.resume_task_id or "").strip()
     checkpoint = (body.resume_checkpoint or "").strip()
     if not task_id and not checkpoint:
@@ -413,6 +414,41 @@ def _resolve_resume_adapter(body: LoraTrainingRequest, sched: TaskScheduler) -> 
             },
         )
     return body.model_copy(update={"resume_from": str(path)})
+
+
+def _validate_training_checkpoint_path(resume_from: str) -> Path:
+    root = _paths().get_project_root()
+    raw = (resume_from or "").strip()
+    if not raw:
+        raise HTTPException(
+            400,
+            detail={"code": "invalid_resume", "message": "resume_from is required"},
+        )
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = (root / path).resolve()
+    else:
+        path = path.resolve()
+    work_root = (_paths().get_outputs_dir() / "work").resolve()
+    if not path.is_relative_to(work_root):
+        raise HTTPException(
+            400,
+            detail={"code": "invalid_resume", "message": "resume_from must be under outputs/work"},
+        )
+    if path.parent.name != "adapters" or path.suffix.lower() != ".safetensors":
+        raise HTTPException(
+            400,
+            detail={
+                "code": "invalid_resume",
+                "message": "resume_from must point to an adapters/*.safetensors checkpoint",
+            },
+        )
+    if not path.is_file():
+        raise HTTPException(
+            404,
+            detail={"code": "resume_not_found", "message": f"Checkpoint not found: {path.name}"},
+        )
+    return path
 
 
 @router.get("/training/requirements")
@@ -478,7 +514,11 @@ def dataset_image_file(dataset_id: str, file_path: str):
     from fastapi.responses import FileResponse
 
     root = _paths().get_project_root()
-    path = root / "datasets" / dataset_id / file_path
+    dataset_root = (root / "datasets" / dataset_id).resolve()
+    try:
+        path = resolve_path_under(dataset_root, file_path)
+    except ValueError as e:
+        raise HTTPException(400, detail={"code": "invalid_path", "message": str(e)}) from e
     if not path.is_file():
         raise HTTPException(404, detail={"code": "not_found", "message": "image not found"})
     return FileResponse(path)
@@ -488,12 +528,13 @@ def dataset_image_file(dataset_id: str, file_path: str):
 def training_artifact_file(task_id: str, filename: str, sched: TaskScheduler = Depends(get_task_scheduler)):
     from fastapi.responses import FileResponse
 
-    work = sched.task_work_dir(task_id)
-    candidates = [
-        work / filename,
-        work / "adapters" / filename,
-    ]
-    for path in candidates:
+    work = sched.task_work_dir(task_id).resolve()
+    candidates = [filename, f"adapters/{filename}"]
+    for rel in candidates:
+        try:
+            path = resolve_path_under(work, rel)
+        except ValueError:
+            continue
         if path.is_file() and path.suffix.lower() in {".png", ".safetensors", ".json"}:
             return FileResponse(path)
     raise HTTPException(404, detail={"code": "not_found", "message": "artifact not found"})
