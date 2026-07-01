@@ -15,6 +15,7 @@ from backend.engine._transformer_registry import _instantiate_image_text_encoder
 from backend.engine.common.codecs.vae import VAEEncoder, infer_latent_channels, prepare_vae_encoder_weight_items
 from backend.engine.config.model_configs import apply_image_registry_config_overrides, get_config_class
 from backend.engine.contracts import local_bundle_root
+from backend.engine.contracts.pipeline_registry import registry_scalar_default
 from backend.engine.families.z_image.weights import remap_zimage_lora_keys
 from backend.engine.pipelines.image_model_load import load_image_transformer
 from backend.engine.training.crop import prepare_training_rgb_image, resolve_training_resolution
@@ -30,7 +31,7 @@ from backend.engine.training.dit_training_loss import (
     combine_instance_prior_loss,
     flow_match_mse,
     merge_prior_cache_tensors,
-    sample_noisy_latent,
+    sample_noisy_latent_shifted,
     sample_noisy_latent_turbo,
     sample_prior_latent,
 )
@@ -51,6 +52,11 @@ from backend.engine.training.z_image_turbo_adapter import (
 )
 
 _Z_IMAGE_TRAINABLE_IDS = frozenset({"z-image", "z-image-turbo"})
+
+# Z-Image base inference uses FlowMatchEulerScheduler with a static sigma shift (registry
+# ``scheduler_shift``, default 6.0). Training must sample σ from the same shifted distribution
+# or the high-σ structure/identity region stays under-trained and LoRAs fail to memorize faces.
+_Z_IMAGE_BASE_SIGMA_SHIFT = 6.0
 
 
 def _model_id(base_model: str) -> str:
@@ -167,6 +173,7 @@ def _training_loss(
     timestep_high: int = 9,
     timestep_bias: str = "uniform",
     resolution: tuple[int, int] = (512, 512),
+    sigma_shift: float = 1.0,
 ) -> mx.array:
     if turbo:
         x_t, eps, t = sample_noisy_latent_turbo(
@@ -180,7 +187,7 @@ def _training_loss(
             timestep_bias=timestep_bias,
         )
     else:
-        x_t, eps, t = sample_noisy_latent(x0, ctx)
+        x_t, eps, t = sample_noisy_latent_shifted(x0, ctx, sigma_shift=sigma_shift)
     pred = model(x_t, timestep=0, txt_embeds=cap, sigmas=t)
     b = x0.shape[0]
     sigma = mx.reshape(t, (b,) + (1,) * (x0.ndim - 1)).astype(ctx.bfloat16())
@@ -200,7 +207,7 @@ def _training_loss(
             timestep_bias=timestep_bias,
         )
     else:
-        x_tp, epsp, tp = sample_noisy_latent(x0p, ctx)
+        x_tp, epsp, tp = sample_noisy_latent_shifted(x0p, ctx, sigma_shift=sigma_shift)
     predp = model(x_tp, timestep=0, txt_embeds=prior_cap, sigmas=tp)
     sigmap = mx.reshape(tp, (b,) + (1,) * (x0.ndim - 1)).astype(ctx.bfloat16())
     prior = flow_match_mse(predp, x0p, epsp, sigma=sigmap, min_snr_gamma=min_snr_gamma)
@@ -406,6 +413,15 @@ def run_z_image_dreambooth_training(
             f"Z-Image training runner expects family z_image (model {base_model_id!r} is {entry.family!r})"
         )
 
+    # Base training samples σ with the same static shift the base scheduler uses at inference
+    # (registry ``scheduler_shift``, default 6.0). Turbo aligns via its inference sigma band and
+    # keeps shift-neutral sampling here.
+    base_sigma_shift = (
+        1.0
+        if is_turbo
+        else float(registry_scalar_default(entry, "scheduler_shift", _Z_IMAGE_BASE_SIGMA_SHIFT))
+    )
+
     preset = resolve_preset(request.preset, base_model=request.base_model)
     cfg = merge_training_request_config(request, preset)
     train_runtime = parse_lora_train_runtime_config(cfg, defaults=preset)
@@ -569,6 +585,13 @@ def run_z_image_dreambooth_training(
             f"[{train_runtime.timestep_low}-{train_runtime.timestep_high}] "
             f"modules={train_runtime.lora_module_keys or 'all'}",
         )
+    else:
+        _log(
+            exec_ctx,
+            "info",
+            f"Base Z-Image training: shift-matched σ sampling (sigma_shift={base_sigma_shift:g}) "
+            "aligned to inference scheduler for identity/face fidelity",
+        )
 
     prior_latents: Any | None = None
     if train_runtime.prior_loss_weight > 0 and class_prompt:
@@ -626,6 +649,7 @@ def run_z_image_dreambooth_training(
             timestep_high=train_runtime.timestep_high,
             timestep_bias=train_runtime.timestep_bias,
             resolution=resolution,
+            sigma_shift=base_sigma_shift,
         )
 
     def preview_at(step: int) -> None:

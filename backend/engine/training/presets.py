@@ -142,7 +142,11 @@ Z_IMAGE_TURBO_MFLUX_CORE: dict[str, Any] = {
     "timestep_high": 9,
     "timestep_bias": "uniform",
     "optimizer": "adamw",
-    "min_snr_gamma": 5.0,
+    # Turbo trains only inside the low/mid-σ inference band. min-SNR-γ uses the ε-prediction
+    # weighting, which disproportionately suppresses the low-σ (high-SNR) end of that band —
+    # exactly where skin texture / high-frequency detail is learned — producing over-smoothed
+    # ("磨皮") skin. Keep the plain flow-match objective (matches mflux/AI-Toolkit turbo).
+    "min_snr_gamma": 0.0,
     "prior_loss_weight": 0.0,
 }
 
