@@ -28,12 +28,15 @@ from backend.engine.training.lora_layers import (
 )
 from backend.engine.training.dit_training_loss import (
     CLASS_PRIOR_LATENT_COUNT,
+    _sample_turbo_band_indices,
+    apply_static_sigma_shift,
     combine_instance_prior_loss,
     flow_match_mse,
     merge_prior_cache_tensors,
     sample_noisy_latent_shifted,
     sample_noisy_latent_turbo,
     sample_prior_latent,
+    turbo_training_sigmas,
 )
 from backend.engine.training.latent_cache import LatentCache
 from backend.engine.training.lora_train_loop import run_dit_lora_train_loop
@@ -382,6 +385,137 @@ def _generate_progress_image(
     return (arr * 255).astype(np.uint8)
 
 
+def _fmt_floats(values: Any, fmt: str = "%.3f") -> str:
+    import numpy as np
+
+    return "[" + ", ".join(fmt % float(v) for v in np.asarray(values).reshape(-1)) + "]"
+
+
+def _log_training_sigma_distribution(
+    exec_ctx: ExecutionContext,
+    ctx: Any,
+    *,
+    is_turbo: bool,
+    sigma_shift: float,
+    resolution: tuple[int, int],
+    train_runtime: Any,
+) -> None:
+    """Log the σ distribution training actually samples (confirms base shift / turbo band)."""
+    import numpy as np
+
+    n = 4096
+    try:
+        if is_turbo:
+            sigmas = turbo_training_sigmas(
+                ctx,
+                infer_steps=train_runtime.turbo_infer_steps,
+                width=resolution[0],
+                height=resolution[1],
+            )
+            n_s = int(sigmas.shape[0])
+            lo = max(0, min(int(train_runtime.timestep_low) - 1, n_s - 1))
+            hi = max(lo, min(int(train_runtime.timestep_high) - 1, n_s - 1))
+            band = sigmas[lo : hi + 1]
+            idx = _sample_turbo_band_indices(n, int(band.shape[0]), bias=train_runtime.timestep_bias)
+            s = band[idx]
+            mx.eval(band, s)
+            header = (
+                f"turbo band[{train_runtime.timestep_low}-{train_runtime.timestep_high}] "
+                f"bias={train_runtime.timestep_bias} band_σ={_fmt_floats(band)}"
+            )
+        else:
+            u = mx.random.uniform(shape=(n,), dtype=ctx.float32())
+            s = apply_static_sigma_shift(u, sigma_shift)
+            mx.eval(s)
+            header = f"base static shift={sigma_shift:g}"
+    except Exception as e:  # noqa: BLE001 — diagnostics must never break training
+        _log(exec_ctx, "warning", f"[diag] σ distribution probe skipped: {e}")
+        return
+
+    arr = np.asarray(s).reshape(-1).astype(np.float64)
+    pct = np.percentile(arr, [5, 25, 50, 75, 95])
+    frac_lo = float((arr < 0.3).mean())
+    frac_mid = float(((arr >= 0.3) & (arr <= 0.7)).mean())
+    frac_hi = float((arr > 0.7).mean())
+    _log(
+        exec_ctx,
+        "info",
+        f"[diag] train σ dist ({header}): "
+        f"p5/25/50/75/95={_fmt_floats(pct)} "
+        f"frac σ<0.3={frac_lo:.2f} 0.3-0.7={frac_mid:.2f} >0.7={frac_hi:.2f} "
+        "(base identity lives in high σ; skin texture in low σ)",
+    )
+
+
+def _log_noise_level_loss(
+    exec_ctx: ExecutionContext,
+    model: Any,
+    latent_cache: LatentCache,
+    ctx: Any,
+    *,
+    label: str,
+    sample_idx: int = 0,
+) -> None:
+    """Off-graph per-σ reconstruction loss probe (reveals which noise band is under-fit)."""
+    try:
+        x0, cap = latent_cache.sample_z_image(sample_idx)
+    except Exception as e:  # noqa: BLE001
+        _log(exec_ctx, "warning", f"[diag] per-σ loss probe skipped ({label}): {e}")
+        return
+    levels = (0.1, 0.2, 0.3, 0.5, 0.7, 0.9)
+    mx.random.seed(4242)
+    eps = mx.random.normal(x0.shape, dtype=ctx.bfloat16())
+    parts: list[str] = []
+    try:
+        for sv in levels:
+            sig_col = mx.reshape(
+                mx.full((x0.shape[0],), sv, dtype=ctx.float32()),
+                (x0.shape[0],) + (1,) * (x0.ndim - 1),
+            ).astype(ctx.bfloat16())
+            x_t = mx.stop_gradient((1.0 - sig_col) * x0 + sig_col * eps)
+            pred = model(
+                x_t,
+                timestep=0,
+                txt_embeds=cap,
+                sigmas=mx.full((x0.shape[0],), sv, dtype=ctx.float32()),
+            )
+            loss = mx.mean(mx.square(pred + x0 - eps))
+            mx.eval(loss)
+            parts.append(f"σ={sv:.1f}:{float(loss.item()):.3f}")
+    except Exception as e:  # noqa: BLE001
+        _log(exec_ctx, "warning", f"[diag] per-σ loss probe failed ({label}): {e}")
+        return
+    _log(exec_ctx, "info", f"[diag] per-σ recon loss [{label}] sample#{sample_idx}: " + " ".join(parts))
+
+
+def _log_zimage_latent_caption_stats(
+    exec_ctx: ExecutionContext,
+    latent_cache: LatentCache,
+    ctx: Any,
+    *,
+    sample_idx: int = 0,
+) -> None:
+    """Log cached latent + caption statistics (catches VAE scaling / caption issues)."""
+    try:
+        x0, cap = latent_cache.sample_z_image(sample_idx)
+        mx.eval(x0, cap)
+        lat_mean = float(mx.mean(x0.astype(ctx.float32())).item())
+        lat_std = float(mx.mean(mx.square(x0.astype(ctx.float32()) - lat_mean)).item()) ** 0.5
+        lat_min = float(mx.min(x0.astype(ctx.float32())).item())
+        lat_max = float(mx.max(x0.astype(ctx.float32())).item())
+        cap_norm = float(mx.mean(mx.abs(cap.astype(ctx.float32()))).item())
+        _log(
+            exec_ctx,
+            "info",
+            f"[diag] latent#{sample_idx} shape={tuple(x0.shape)} "
+            f"mean={lat_mean:.3f} std={lat_std:.3f} min={lat_min:.3f} max={lat_max:.3f} | "
+            f"cap shape={tuple(cap.shape)} mean|x|={cap_norm:.3f} "
+            "(latent std≈1 expected; near-0 cap ⇒ empty caption/text-encoder issue)",
+        )
+    except Exception as e:  # noqa: BLE001
+        _log(exec_ctx, "warning", f"[diag] latent/caption stats skipped: {e}")
+
+
 def run_z_image_dreambooth_training(
     request: LoraTrainingRequest,
     exec_ctx: ExecutionContext,
@@ -593,6 +727,40 @@ def run_z_image_dreambooth_training(
             "aligned to inference scheduler for identity/face fidelity",
         )
 
+    lora_layer_count = len(getattr(train_module, "_lora_paths", []) or [])
+    _log(
+        exec_ctx,
+        "info",
+        "[diag] config: "
+        f"model={base_model_id} turbo={is_turbo} res={resolution[0]}x{resolution[1]} "
+        f"iters={train_runtime.iterations} lr={train_runtime.learning_rate:g} "
+        f"grad_accum={train_runtime.grad_accumulate} "
+        f"rank={train_runtime.lora_rank} alpha={train_runtime.lora_alpha} "
+        f"scale={train_runtime.lora_scale:g} blocks={train_runtime.lora_blocks} "
+        f"modules={train_runtime.lora_module_keys or 'all'} lora_layers={lora_layer_count} "
+        f"train_type={train_runtime.train_type} qlora={train_runtime.qlora_bits} "
+        f"min_snr_gamma={train_runtime.min_snr_gamma:g} "
+        f"num_aug={train_runtime.num_augmentations} n_samples={n_samples} "
+        f"train/val={len([p for p in pairs])}",
+    )
+    _log_training_sigma_distribution(
+        exec_ctx,
+        ctx,
+        is_turbo=is_turbo,
+        sigma_shift=base_sigma_shift,
+        resolution=resolution,
+        train_runtime=train_runtime,
+    )
+    _log_zimage_latent_caption_stats(exec_ctx, latent_cache, ctx)
+    # Baseline per-σ loss (fresh LoRA ≈ frozen base): reference to compare training progress against.
+    if is_turbo and training_assistant is not None:
+        _log_noise_level_loss(exec_ctx, train_module, latent_cache, ctx, label="turbo+assistant-init")
+        training_assistant.set_enabled(False)
+        _log_noise_level_loss(exec_ctx, train_module, latent_cache, ctx, label="turbo-inference-init")
+        training_assistant.set_enabled(True)
+    else:
+        _log_noise_level_loss(exec_ctx, train_module, latent_cache, ctx, label="base-init")
+
     prior_latents: Any | None = None
     if train_runtime.prior_loss_weight > 0 and class_prompt:
         prior_latents = _ensure_zimage_class_prior_latents(
@@ -655,6 +823,17 @@ def run_z_image_dreambooth_training(
     def preview_at(step: int) -> None:
         from backend.engine.common.codecs.vae import load_vae_weight_dict, read_vae_dir_config
         from backend.engine.common.codecs.vae.decoder import create_loaded_vae_decoder
+
+        # Per-σ reconstruction loss probe (off training graph). For turbo, capture both the
+        # training-time behavior (assistant on) and the actual inference behavior (assistant off,
+        # matching generation) so we can see whether the low-σ / skin band is being fit.
+        if is_turbo and training_assistant is not None:
+            _log_noise_level_loss(exec_ctx, train_module, latent_cache, ctx, label="turbo+assistant")
+            training_assistant.set_enabled(False)
+            _log_noise_level_loss(exec_ctx, train_module, latent_cache, ctx, label="turbo-inference")
+            training_assistant.set_enabled(True)
+        else:
+            _log_noise_level_loss(exec_ctx, train_module, latent_cache, ctx, label="base")
 
         vae_dir = bundle_root / "vae"
         vae_cfg, _, _ = read_vae_dir_config(vae_dir)
