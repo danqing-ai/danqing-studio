@@ -106,7 +106,7 @@ const navGroups = computed<NavGroup[]>(() => [
       { id: 'avatar_create', icon: 'UserRound', label: t('nav.avatar_create') },
       { id: 'long_video_create', icon: Film, label: t('nav.long_video_create') },
       { id: 'audio_create', icon: Microphone, label: t('nav.audio_create') },
-      { id: 'lora_train', icon: 'Wand2', label: t('nav.lora_train') },
+      { id: 'lora_train', icon: MagicStick, label: t('nav.lora_train') },
     ],
   },
   {
