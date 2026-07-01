@@ -567,13 +567,22 @@ def resolve_per_image_captions(
     return out
 
 
-def detect_caption_mode(pairs: list[tuple[Path, str]]) -> str:
-    """Auto-detect whether the dataset has meaningful per-image captions.
+def detect_caption_mode(
+    pairs: list[tuple[Path, str]],
+    *,
+    dataset_meta: dict[str, Any] | None = None,
+) -> str:
+    """Auto-detect caption mode when the training request leaves ``caption_mode`` on auto.
 
-    Returns ``"per_image"`` when most images carry distinct captions
-    (VLM auto-captions or manually edited), ``"unified"`` when captions
-    are mostly identical (single default prompt).
+    **Concept / face LoRA** (``kind=concept``): always ``unified`` — bind identity to the
+    trigger / ``progress_prompt`` only. VLM per-image captions (outfit, background, pose)
+    dilute the trigger in Qwen3 embeddings and prevent face memorization.
+
+    **Style / other kinds**: ``per_image`` when most captions differ (typical VLM output).
     """
+    kind = str((dataset_meta or {}).get("kind") or "concept").strip().lower()
+    if kind == "concept":
+        return "unified"
     if len(pairs) < 2:
         return "unified"
     captions = [str(p or "").strip() for _, p in pairs]
@@ -581,7 +590,6 @@ def detect_caption_mode(pairs: list[tuple[Path, str]]) -> str:
     if not non_empty:
         return "unified"
     unique = set(non_empty)
-    # If >50% of non-empty captions are distinct, per-image is better for identity learning.
     if len(unique) > max(1, len(non_empty) * 0.5):
         return "per_image"
     return "unified"
@@ -611,7 +619,7 @@ def load_training_pairs_unified(
     )
     raw_mode = (caption_mode or "auto").strip().lower()
     if raw_mode in ("auto", "none", ""):
-        mode = detect_caption_mode(pairs_raw)
+        mode = detect_caption_mode(pairs_raw, dataset_meta=meta)
     else:
         mode = raw_mode
     if mode == "per_image":

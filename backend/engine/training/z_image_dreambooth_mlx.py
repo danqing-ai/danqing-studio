@@ -596,9 +596,24 @@ def run_z_image_dreambooth_training(
     dataset_meta = _dataset_meta(project_root, request.dataset_id)
     trigger_word = str(dataset_meta.get("trigger_word") or "").strip()
 
-    # Resolve effective caption mode for latent cache fingerprint
-    resolved_caption_mode = "per_image" if len({str(p or "").strip() for _, p in pairs}) > 1 else "unified"
-    _log(exec_ctx, "info", f"Caption mode: {resolved_caption_mode} ({len(pairs)} images)")
+    unique_caps = {str(p or "").strip() for _, p in pairs}
+    resolved_caption_mode = "per_image" if len(unique_caps) > 1 else "unified"
+    kind = str(dataset_meta.get("kind") or "concept").strip().lower()
+    if kind == "concept" and resolved_caption_mode == "per_image":
+        _log(
+            exec_ctx,
+            "warning",
+            "Concept LoRA is using per_image captions; long VLM captions dilute the trigger "
+            "and often prevent face memorization. Prefer unified caption (trigger/progress_prompt only) "
+            "or set caption_mode=unified.",
+        )
+    sample_cap = str(pairs[0][1] or "").strip() if pairs else ""
+    _log(
+        exec_ctx,
+        "info",
+        f"Caption mode: {resolved_caption_mode} ({len(pairs)} images); "
+        f"sample_caption={sample_cap[:120]!r}{'…' if len(sample_cap) > 120 else ''}",
+    )
 
     config = get_config_class("z_image")()
     apply_image_registry_config_overrides(entry, config)
