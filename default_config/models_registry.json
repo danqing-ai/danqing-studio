@@ -331,6 +331,34 @@
       "vae_scale": 8,
       "hooks": []
     },
+    "real_esrgan": {
+      "paradigm": "job",
+      "media": [
+        "image"
+      ],
+      "backends": [
+        "mlx"
+      ],
+      "latent_layout": "nchw",
+      "cfg_mode": "none",
+      "latent_channels": 3,
+      "vae_scale": 1,
+      "hooks": []
+    },
+    "bernini": {
+      "paradigm": "diffusion",
+      "media": [
+        "video"
+      ],
+      "backends": [
+        "mlx"
+      ],
+      "latent_layout": "nchw",
+      "cfg_mode": "single",
+      "latent_channels": 16,
+      "vae_scale": 8,
+      "hooks": []
+    },
     "wan": {
       "paradigm": "diffusion",
       "media": [
@@ -3779,6 +3807,287 @@
             "video_upscale_kind": "seedvr2_spatiotemporal"
           }
         }
+      }
+    },
+    "real-esrgan-x4plus": {
+      "catalog": {
+        "media": "image",
+        "description": {
+          "zh": "Real-ESRGAN x4plus 经典超分，RRDBNet 架构，快速轻量，适合照片放大预览。",
+          "en": "Real-ESRGAN x4plus classical upscaler (RRDBNet); fast and lightweight for photo enlargement."
+        },
+        "category": "upscalers",
+        "commercial_use_allowed": true,
+        "type": "upscaler",
+        "source": "modelscope",
+        "name": {
+          "zh": "Real-ESRGAN x4plus",
+          "en": "Real-ESRGAN x4plus"
+        },
+        "recommended": false,
+        "engine": "danqing-image"
+      },
+      "runtime": {
+        "family": "real_esrgan",
+        "backends": [
+          "mlx"
+        ]
+      },
+      "actions": {
+        "upscale": {}
+      },
+      "ui": {
+        "parameters": {
+          "scale_factor": {
+            "default": 4,
+            "options": [
+              2,
+              4
+            ],
+            "label": "放大倍数",
+            "type": "enum"
+          },
+          "tile_size": {
+            "default": 256,
+            "min": 0,
+            "max": 1024,
+            "step": 64,
+            "label": "分块尺寸",
+            "type": "int"
+          }
+        }
+      },
+      "distribution": {
+        "versions": {
+          "fp16": {
+            "name": {
+              "zh": "FP16",
+              "en": "FP16"
+            },
+            "size": "34MB",
+            "default": true,
+            "repo_id": "mlx-community/Real-ESRGAN-x4plus",
+            "local_path": "models/Upscaler/real-esrgan-x4plus-fp16",
+            "source_type": "full"
+          }
+        }
+      }
+    },
+    "real-esrgan-general-x4v3": {
+      "catalog": {
+        "media": "image",
+        "description": {
+          "zh": "Real-ESRGAN general-x4v3 轻量通用超分，支持降噪强度调节（SRVGGNetCompact）。",
+          "en": "Real-ESRGAN general-x4v3 compact general upscaler with adjustable denoise strength."
+        },
+        "category": "upscalers",
+        "commercial_use_allowed": true,
+        "type": "upscaler",
+        "source": "modelscope",
+        "name": {
+          "zh": "Real-ESRGAN general-x4v3",
+          "en": "Real-ESRGAN general-x4v3"
+        },
+        "recommended": false,
+        "engine": "danqing-image"
+      },
+      "runtime": {
+        "family": "real_esrgan",
+        "backends": [
+          "mlx"
+        ]
+      },
+      "actions": {
+        "upscale": {}
+      },
+      "ui": {
+        "parameters": {
+          "scale_factor": {
+            "default": 4,
+            "options": [
+              2,
+              4
+            ],
+            "label": "放大倍数",
+            "type": "enum"
+          },
+          "denoise": {
+            "default": 0.0,
+            "min": 0.0,
+            "max": 1.0,
+            "step": 0.05,
+            "label": "降噪强度",
+            "type": "float"
+          },
+          "tile_size": {
+            "default": 256,
+            "min": 0,
+            "max": 1024,
+            "step": 64,
+            "label": "分块尺寸",
+            "type": "int"
+          }
+        }
+      },
+      "distribution": {
+        "versions": {
+          "fp16": {
+            "name": {
+              "zh": "FP16",
+              "en": "FP16"
+            },
+            "size": "5MB",
+            "default": true,
+            "repo_id": "mlx-community/Real-ESRGAN-general-x4v3",
+            "local_path": "models/Upscaler/real-esrgan-general-x4v3-fp16",
+            "source_type": "full"
+          }
+        }
+      }
+    },
+    "bernini-r-1.3b": {
+      "catalog": {
+        "media": "video",
+        "description": {
+          "zh": "ByteDance Bernini-R 1.3B 视频渲染器，基于 Wan2.1，支持文生视频与视频编辑（v2v/r2v 后续）。",
+          "en": "ByteDance Bernini-R 1.3B video renderer on Wan2.1; text-to-video with editing paths planned."
+        },
+        "category": "video_models",
+        "commercial_use_allowed": true,
+        "type": "video",
+        "source": "modelscope",
+        "name": {
+          "zh": "Bernini-R 1.3B",
+          "en": "Bernini-R 1.3B"
+        },
+        "recommended": false,
+        "engine": "danqing-video"
+      },
+      "runtime": {
+        "family": "bernini",
+        "backends": [
+          "mlx"
+        ],
+        "overrides": {
+          "supports_guidance": true
+        }
+      },
+      "actions": {
+        "create": {}
+      },
+      "ui": {
+        "parameters": {
+          "seed_support": true,
+          "steps": {
+            "default": 40,
+            "min": 10,
+            "max": 50,
+            "label": "步数",
+            "type": "int"
+          },
+          "guide_scale": {
+            "default": 5.0,
+            "min": 1.0,
+            "max": 10.0,
+            "step": 0.5,
+            "label": "CFG引导",
+            "type": "float"
+          },
+          "width": {
+            "default": 832,
+            "options": [
+              480,
+              832,
+              1280
+            ],
+            "type": "enum"
+          },
+          "height": {
+            "default": 480,
+            "options": [
+              320,
+              480,
+              704
+            ],
+            "type": "enum"
+          },
+          "num_frames": {
+            "default": 49,
+            "min": 9,
+            "max": 81,
+            "step": 4,
+            "label": "帧数",
+            "type": "int"
+          },
+          "fps": {
+            "default": 16,
+            "min": 8,
+            "max": 24,
+            "step": 1,
+            "label": "FPS",
+            "type": "int"
+          },
+          "negative_prompt_support": true
+        }
+      },
+      "distribution": {
+        "versions": {
+          "bf16": {
+            "name": {
+              "zh": "BF16",
+              "en": "BF16"
+            },
+            "size": "15GB",
+            "default": true,
+            "repo_id": "mlx-community/Bernini-R-1.3B-bf16",
+            "local_path": "models/Video/bernini-r-1.3b-bf16",
+            "source_type": "full"
+          }
+        }
+      }
+    },
+    "lance-3b": {
+      "catalog": {
+        "media": "image",
+        "description": {
+          "zh": "ByteDance Lance 3B 统一多模态模型（图像专家），支持文生图与指令编辑。权重可从魔搭安装，引擎接入进行中。",
+          "en": "ByteDance Lance 3B unified multimodal image specialist; weights installable from ModelScope (engine integration in progress)."
+        },
+        "category": "base_models",
+        "commercial_use_allowed": true,
+        "type": "base",
+        "source": "modelscope",
+        "name": {
+          "zh": "Lance 3B",
+          "en": "Lance 3B"
+        },
+        "recommended": false,
+        "engine": "danqing-image"
+      },
+      "runtime": {
+        "family": "flux1",
+        "backends": [
+          "mlx"
+        ]
+      },
+      "actions": {},
+      "distribution": {
+        "versions": {
+          "bf16": {
+            "name": {
+              "zh": "BF16",
+              "en": "BF16"
+            },
+            "size": "14GB",
+            "default": true,
+            "repo_id": "mlx-community/Lance-3B-bf16",
+            "local_path": "models/Image/lance-3b-bf16",
+            "source_type": "full"
+          }
+        }
+      },
+      "ui": {
+        "parameters": {}
       }
     },
     "depth-pro": {

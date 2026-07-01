@@ -1,0 +1,29 @@
+"""Real-ESRGAN v3 ``FamilyPlugin`` factory (job / upscale paradigm)."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from backend.engine.config.model_configs import get_config_class
+from backend.engine.families._upscale_backbone import UpscalePluginBackbone
+from backend.engine.platform.session import PlatformSession
+from backend.engine.protocols.plugin import FamilyPlugin
+from backend.engine.protocols.spec_from_config import family_spec_from_config
+from backend.engine.registry.family_registry import register_family
+
+
+def build_real_esrgan_plugin(
+    platform: PlatformSession,
+    *,
+    model_id: str,
+    bundle_root: Path,
+    version_key: str | None = None,
+) -> FamilyPlugin:
+    _ = platform, model_id, bundle_root, version_key
+    config = get_config_class("real_esrgan")()
+    spec = family_spec_from_config("real_esrgan", config, media="image")
+    return FamilyPlugin(family_id="real_esrgan", spec=spec, backbone=UpscalePluginBackbone(spec))
+
+
+def register_real_esrgan_plugin() -> None:
+    register_family("real_esrgan", build_real_esrgan_plugin)

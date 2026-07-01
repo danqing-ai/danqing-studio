@@ -25,6 +25,9 @@ safetensors>=0.4.0
 # ModelScope（魔搭社区）模型下载
 modelscope>=1.20.0
 
+# MLX 社区视频渲染（Bernini-R 等，Wan2.1/2.2 substrate）
+mlx-video>=0.1.0
+
 # 音频生成/处理
 soundfile>=0.12.0
 

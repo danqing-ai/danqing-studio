@@ -19,6 +19,8 @@ def bootstrap_family_plugins() -> None:
     from backend.engine.families.hunyuan.plugin import register_hunyuan_plugin
     from backend.engine.families.ltx.plugin import register_ltx_plugin
     from backend.engine.families.qwen.plugin import register_qwen_image_plugin
+    from backend.engine.families.bernini.plugin import register_bernini_plugin
+    from backend.engine.families.real_esrgan.plugin import register_real_esrgan_plugin
     from backend.engine.families.seedvr2.plugin import register_seedvr2_plugin
     from backend.engine.families.wan.plugin import register_wan_plugin
     from backend.engine.families.z_image.plugin import register_z_image_plugin
@@ -34,6 +36,8 @@ def bootstrap_family_plugins() -> None:
     register_ltx_plugin()
     register_hunyuan_plugin()
     register_seedvr2_plugin()
+    register_real_esrgan_plugin()
+    register_bernini_plugin()
     register_ace_step_plugin()
     register_diffrhythm_plugin()
     _bootstrapped = True

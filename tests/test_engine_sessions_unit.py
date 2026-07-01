@@ -274,6 +274,29 @@ class EngineSessionsTests(unittest.TestCase):
         )
         self.assertEqual(plugin.spec.paradigm, "job")
 
+    def test_real_esrgan_plugin_bootstrap(self) -> None:
+        bootstrap_family_plugins()
+        self.assertTrue(is_family_plugin_registered("real_esrgan"))
+        plugin = build_family_plugin(
+            "real_esrgan",
+            fake_platform(),
+            model_id="real-esrgan-x4plus",
+            bundle_root=Path("/tmp/bundle"),
+        )
+        self.assertEqual(plugin.spec.paradigm, "job")
+
+    def test_bernini_plugin_bootstrap(self) -> None:
+        bootstrap_family_plugins()
+        self.assertTrue(is_family_plugin_registered("bernini"))
+        plugin = build_family_plugin(
+            "bernini",
+            fake_platform(),
+            model_id="bernini-r-1.3b",
+            bundle_root=Path("/tmp/bundle"),
+        )
+        self.assertEqual(plugin.spec.media, "video")
+        self.assertEqual(plugin.spec.paradigm, "diffusion")
+
     def test_video_and_upscale_session_routing(self) -> None:
         bootstrap_family_plugins()
         registry = MagicMock()

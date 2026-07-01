@@ -358,6 +358,17 @@ class SeedVR2Config:
     denoise_strength: float = 0.3    # default denoising strength
 
 
+@dataclass
+class RealESRGANConfig:
+    """Real-ESRGAN classical super-resolution (RRDBNet / SRVGGNetCompact)."""
+
+    vae_scale: int = 1
+    scale_factor: int = 4
+    tile_size: int = 256
+    supports_guidance: bool = False
+    supports_img2img: bool = False
+
+
 # =========================================================================
 # Audio models
 # =========================================================================
@@ -454,6 +465,20 @@ class AceStepConfig:
 # =========================================================================
 # Video models
 # =========================================================================
+
+
+@dataclass
+class BerniniConfig:
+    """ByteDance Bernini-R renderer (Wan2.1 1.3B / Wan2.2 14B via mlx-video)."""
+
+    video_pipeline_shape: str = "family_generator"
+    vae_scale: int = 8
+    sample_shift: float = 3.0
+    use_unipc: bool = True
+    default_guidance: float = 5.0
+    default_negative_prompt: str = ""
+    supports_guidance: bool = True
+    supports_img2img: bool = False
 
 
 @dataclass
@@ -766,6 +791,7 @@ FAMILY_CONFIG_MAP: dict[str, type] = {
     "ernie_image": ErnieImageConfig,
     "cogview4": CogView4Config,
     "seedvr2": SeedVR2Config,
+    "real_esrgan": RealESRGANConfig,
     # Audio
     "diffrhythm": DiffRhythmConfig,
     "ace_step": AceStepConfig,
@@ -773,6 +799,7 @@ FAMILY_CONFIG_MAP: dict[str, type] = {
     "ltx": LTXConfig,
     "wan": WanConfig,
     "hunyuan": HunyuanVideoConfig,
+    "bernini": BerniniConfig,
 }
 
 IMAGE_FAMILY_REUSE_CONTRACT = frozenset({

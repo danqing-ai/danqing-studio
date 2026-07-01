@@ -438,10 +438,12 @@ _VIDEO_TRANSFORMER = {
 # family → (module, factory_fn) for VideoPipeline Shape C (in-repo family generator)
 _VIDEO_GENERATION_FACTORY = {
     "ltx": ("backend.engine.families.ltx.generation", "create_ltx23_generator"),
+    "bernini": ("backend.engine.families.bernini.generation", "create_bernini_generator"),
 }
 
 _VIDEO_GENERATION_VALIDATE = {
     "ltx": ("backend.engine.families.ltx.generation", "validate_video_generation_params"),
+    "bernini": ("backend.engine.families.bernini.generation", "validate_video_generation_params"),
 }
 
 _VIDEO_TRANSFORMER_WEIGHT_PREPARE = {
