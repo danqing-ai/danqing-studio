@@ -560,6 +560,7 @@ class SQLiteAssetStore(IAssetStore):
         created_after: Optional[str] = None,
         created_before: Optional[str] = None,
         model: Optional[str] = None,
+        model_in: Optional[list[str]] = None,
         search: Optional[str] = None,
         search_fields: Optional[list[str]] = None,
         exclude_upload_refs: bool = False,
@@ -601,6 +602,13 @@ class SQLiteAssetStore(IAssetStore):
         if model:
             where.append("(metadata LIKE ?)")
             args.append(f'%"model": "{model}"%')
+        if model_in:
+            model_clauses: list[str] = []
+            for m in model_in:
+                model_clauses.append("(metadata LIKE ?)")
+                args.append(f'%"model": "{m}"%')
+            if model_clauses:
+                where.append("(" + " OR ".join(model_clauses) + ")")
         if search:
             terms = [t.strip() for t in search.split() if t.strip()]
             if terms:

@@ -16,6 +16,10 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 REGISTRY_PATH = ROOT / "default_config" / "models_registry.json"
 
+sys.path.insert(0, str(ROOT))
+
+from backend.core.version_labels import expected_version_display_name  # noqa: E402
+
 CJK_RE = re.compile(r"[\u4e00-\u9fff]")
 
 DESCRIPTION_OVERRIDES: dict[str, dict[str, str]] = {
@@ -283,66 +287,14 @@ def _distribution_entry(model_entry: dict[str, Any]) -> dict[str, Any]:
     return dist if isinstance(dist, dict) else model_entry
 
 
-def _standard_version_label(version_key: str) -> dict[str, str] | None:
-    """Machine version key → bilingual UI label (dtype / tier only)."""
-    vk = str(version_key or "").strip().lower()
-    if not vk:
-        return None
-
-    static: dict[str, tuple[str, str]] = {
-        "fp16": ("FP16", "FP16"),
-        "bf16": ("BF16", "BF16"),
-        "fp8": ("FP8", "FP8"),
-        "int4": ("INT4", "INT4"),
-        "int8": ("INT8", "INT8"),
-        "encoders": ("共享编码器", "Shared Encoders"),
-        "xl-sft": ("XL SFT (4B)", "XL SFT (4B)"),
-    }
-    if vk in static:
-        zh, en = static[vk]
-        return {"zh": zh, "en": en}
-
-    if vk == "mlx-bf16":
-        return {"zh": "MLX BF16", "en": "MLX BF16"}
-    if vk.startswith("mlx-bf16-"):
-        suffix = vk[len("mlx-bf16-") :].upper().replace("-", " ")
-        return {"zh": f"MLX BF16 {suffix}".strip(), "en": f"MLX BF16 {suffix}".strip()}
-
-    q4 = re.match(r"^mlx-q4(?:-(.+))?$", vk)
-    if q4:
-        suffix = (q4.group(1) or "").upper().replace("-", " ")
-        label = f"MLX Q4{f' {suffix}' if suffix else ''}"
-        return {"zh": label, "en": label}
-
-    q8 = re.match(r"^mlx-q8(?:-(.+))?$", vk)
-    if q8:
-        suffix = (q8.group(1) or "").upper().replace("-", " ")
-        label = f"MLX Q8{f' {suffix}' if suffix else ''}"
-        return {"zh": label, "en": label}
-
-    return None
-
-
-def _bit_label(version_key: str, bits: int | None, old_plain: str) -> str | None:
-    vk = version_key.lower()
-    text = old_plain.lower()
-    if vk == "mlx-bf16" or "bf16" in text:
-        return "BF16"
-    if bits == 8 or vk.endswith("q8") or vk == "mlx" or "8bit" in text or "int8" in text:
-        return "8-bit"
-    if bits == 4 or vk.endswith("q4") or "4bit" in vk or "4bit" in text or "int4" in text:
-        return "4-bit"
-    return None
-
-
-def _quant_variant(bit_label: str) -> dict[str, str]:
-    if bit_label == "BF16":
-        return {"zh": "MLX BF16", "en": "MLX BF16"}
-    if bit_label == "8-bit":
-        return {"zh": "MLX Q8", "en": "MLX Q8"}
-    if bit_label == "4-bit":
-        return {"zh": "MLX Q4", "en": "MLX Q4"}
-    return {"zh": bit_label, "en": bit_label}
+def _skip_version_label(model_entry: dict[str, Any], version_key: str) -> bool:
+    catalog = _catalog_entry(model_entry)
+    catalog_type = str(catalog.get("type") or "").lower()
+    catalog_category = str(catalog.get("category") or "").lower()
+    if catalog_type in ("lora", "controlnet") or catalog_category in ("loras", "controlnets"):
+        return True
+    vk = str(version_key or "").lower()
+    return bool(re.match(r"^v[\w-]+$", vk) or re.search(r"\d+steps$", vk))
 
 
 def resolve_version_name(
@@ -350,50 +302,29 @@ def resolve_version_name(
     version_key: str,
     version_entry: dict[str, Any],
 ) -> dict[str, str]:
-    catalog = _catalog_entry(model_entry)
-    standard = _standard_version_label(version_key)
-    if standard is not None:
-        return standard
+    if _skip_version_label(model_entry, version_key):
+        old_name = version_entry.get("name")
+        if isinstance(old_name, dict):
+            cleaned_zh = clean_user_text(str(old_name.get("zh") or ""), lang="zh")
+            cleaned_en = clean_user_text(str(old_name.get("en") or ""), lang="en")
+            if cleaned_zh or cleaned_en:
+                return {
+                    "zh": cleaned_zh or cleaned_en or version_key,
+                    "en": cleaned_en or cleaned_zh or version_key,
+                }
+        old_plain = str(old_name or version_key)
+        cleaned = clean_user_text(old_plain, lang="zh")
+        return {"zh": cleaned or version_key, "en": cleaned or version_key}
 
-    source_type = str(version_entry.get("source_type") or "full")
-    quant = version_entry.get("quantization") or {}
-    bits = quant.get("bits") if isinstance(quant, dict) else None
+    label = expected_version_display_name(version_key, version_entry)
+    if label is not None:
+        return label
+
     old_name = version_entry.get("name")
     if isinstance(old_name, dict):
         old_plain = str(old_name.get("zh") or old_name.get("en") or "")
     else:
         old_plain = str(old_name or "")
-
-    vk = version_key.lower()
-    media = catalog.get("media")
-    catalog_type = str(catalog.get("type") or "").lower()
-
-    if catalog_type in ("lora", "controlnet") or re.match(r"^v[\w-]+$", vk) or re.search(r"\d+steps$", vk):
-        cleaned_zh = clean_user_text(old_plain, lang="zh")
-        cleaned_en = clean_user_text(
-            str(old_name.get("en") if isinstance(old_name, dict) else old_plain),
-            lang="en",
-        )
-        if cleaned_zh or cleaned_en:
-            return {
-                "zh": cleaned_zh or cleaned_en or version_key,
-                "en": cleaned_en or cleaned_zh or version_key,
-            }
-
-    if media == "llm" and vk == "int4":
-        return {"zh": "INT4", "en": "INT4"}
-
-    if source_type == "derived":
-        if bits == 8 or vk == "int8":
-            return {"zh": "INT8", "en": "INT8"}
-        if bits == 4 or vk == "int4":
-            return {"zh": "INT4", "en": "INT4"}
-
-    if source_type == "prequantized" or vk.startswith("mlx-q") or vk.startswith("mlx-bf16"):
-        bit_label = _bit_label(vk, bits, old_plain)
-        if bit_label:
-            return _quant_variant(bit_label)
-
     cleaned = clean_user_text(old_plain, lang="zh")
     if cleaned:
         return {

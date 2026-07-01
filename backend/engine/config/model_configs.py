@@ -421,9 +421,19 @@ class Step1XEditConfig:
     edit_max_reference_images: int = 1
 
 
-# =========================================================================
-# Audio models
-# =========================================================================
+@dataclass
+class BooguImageConfig:
+    """Boogu-Image-0.1 — Qwen3-VL + Lumina2-lineage DiT + FLUX VAE (MLX family_generator)."""
+
+    image_pipeline_shape: str = "family_generator"
+    encoder_type: str = "qwen3_vl"
+    supports_guidance: bool = True
+    supports_img2img: bool = True
+    vae_scale: int = 8
+    boogu_variant: str = "turbo"
+    edit_max_reference_images: int = 1
+    release_text_encoder_after_encode: bool = True
+
 
 
 @dataclass
@@ -1049,6 +1059,7 @@ FAMILY_CONFIG_MAP: dict[str, type] = {
     "esrgan": EsrganConfig,
     "hidream_o1": HiDreamO1Config,
     "step1x_edit": Step1XEditConfig,
+    "boogu_image": BooguImageConfig,
     # Audio
     "diffrhythm": DiffRhythmConfig,
     "ace_step": AceStepConfig,
@@ -1062,7 +1073,7 @@ FAMILY_CONFIG_MAP: dict[str, type] = {
 
 IMAGE_FAMILY_REUSE_CONTRACT = frozenset({
     "flux1", "flux2", "z_image", "qwen_image", "ernie_image", "fibo", "cogview4", "seedvr2", "esrgan",
-    "hidream_o1", "step1x_edit",
+    "hidream_o1", "step1x_edit", "boogu_image",
 })
 
 
@@ -1116,6 +1127,7 @@ def apply_image_registry_config_overrides(entry: Any, config: Any) -> None:
         "step1x_dit_filename",
         "step1x_max_length",
         "step1x_size_level",
+        "boogu_variant",
     ):
         val = registry_scalar_default(entry, param_key, None)
         if val is not None and hasattr(config, param_key):

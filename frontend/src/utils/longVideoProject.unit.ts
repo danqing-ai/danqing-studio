@@ -317,38 +317,35 @@ const richVisual =
   'Indoor night, close-up on lead actor face, cool tone, fingers hovering over confirm button';
 const beatNarrative =
   'Indoor bedroom at night, lead actor reads phone notification, hesitates, then taps confirm';
-const frameReq = 'Eyes widen, breath quickens, stare at floating red notification';
 const composedRich = composeKeyframeSceneText(richVisual, {
   sceneNarrative: beatNarrative,
-  firstFrameRequirement: frameReq,
 });
 assert(
   !composedRich.includes('hesitates'),
   'rich visual skips redundant beat narrative',
 );
-assert(composedRich.includes('notification'), 'first_frame_requirement merged when not in visual');
-assert(composedRich.includes('close-up'), 'anchor visual preserved');
+assert(!composedRich.includes('notification'), 'FFR not merged — beat narrative skipped when visual is rich');
+assert(composedRich.includes('close-up'), 'frame visual preserved');
 
 const composedSparse = composeKeyframeSceneText('Close-up, lead actor face, static', {
   sceneNarrative: beatNarrative,
-  firstFrameRequirement: frameReq,
 });
 assert(
   promptTokenCoverage(composedSparse, beatNarrative) >= 0.15,
   'sparse visual gets beat narrative context',
 );
+assert(!composedSparse.includes('Eyes widen'), 'FFR not merged into T2I scene line');
 
 const facePrompt = keyframeGenerationPrompt(richVisual, {
   sceneNarrative: beatNarrative,
-  firstFrameRequirement: frameReq,
   characters: chars,
   castLooks: [{ character_id: 'c1', look_id: 'l1' }],
 });
-assert(facePrompt.includes('notification'), 'T2I preview includes first-frame requirement');
+assert(!facePrompt.includes('floating red notification'), 'T2I preview excludes FFR-only details');
+assert(facePrompt.includes('confirm button'), 'T2I preview uses frame visual');
 
 const faceAnchorCtx = {
   sceneNarrative: beatNarrative,
-  firstFrameRequirement: frameReq,
   segmentRole: 'face_anchor' as const,
   shotSize: '特写',
 };
@@ -378,6 +375,34 @@ const ffrDup = mergeUncoveredRequirementClauses(
   '眼神凝固；面部静止；背景虚化',
 );
 assert(ffrDup.mergedClauses < ffrDup.totalClauses, 'FFR clauses deduped against visual');
+
+const wukongVisual =
+  '【特写】卧室 · 深夜，赵今麦面部特写，屏幕红光映照脸庞，眼神漫不经心，背景昏暗';
+const wukongComposed = composeKeyframeSceneText(wukongVisual, {
+  segmentRole: 'face_anchor',
+  shotSize: '特写',
+});
+assert(!wukongComposed.includes('；'), 'single frame visual — FFR not merged');
+assert(wukongComposed.includes('面部特写'), 'visual-only scene line preserved');
+const wukongPrompt = keyframeGenerationPrompt(wukongVisual, {
+  segmentRole: 'face_anchor',
+  shotSize: '特写',
+  characters: [
+    {
+      id: 'c_zhao',
+      name: '赵今麦',
+      default_look_id: 'l1',
+      looks: [{ id: 'l1', label: '卧室便装', body: '定位：lead | 外貌：长发披肩，肤色白皙 | 服装：睡衣' }],
+    },
+  ],
+  castLooks: [{ character_id: 'c_zhao', look_id: 'l1' }],
+  styleAnchor: '高对比度冷色调，电影级颗粒感',
+});
+assert(
+  !wukongPrompt.includes('赵今麦脸部特写，屏幕红光映照，眼神漫不经心；'),
+  'preview prompt has one scene description only',
+);
+assert(!wukongPrompt.includes('脸部特写'), 'FFR synonym not duplicated in scene line');
 
 const motionShot = {
   ...shot('m'),

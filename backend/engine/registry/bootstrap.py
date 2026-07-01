@@ -26,6 +26,7 @@ def bootstrap_family_plugins() -> None:
     from backend.engine.families.seedvr2.plugin import register_seedvr2_plugin
     from backend.engine.families.esrgan.plugin import register_esrgan_plugin
     from backend.engine.families.wan.plugin import register_wan_plugin
+    from backend.engine.families.boogu.plugin import register_boogu_image_plugin
     from backend.engine.families.z_image.plugin import register_z_image_plugin
 
     register_flux2_plugin()
@@ -42,6 +43,7 @@ def bootstrap_family_plugins() -> None:
     register_hunyuan_plugin()
     register_hidream_o1_plugin()
     register_step1x_edit_plugin()
+    register_boogu_image_plugin()
     register_seedvr2_plugin()
     register_esrgan_plugin()
     register_ace_step_plugin()

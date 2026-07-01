@@ -25,13 +25,8 @@
       </p>
       <p class="lv-t2i-prov__row">
         <span class="lv-t2i-prov__label">{{ $tt('video.longVideoT2iProvenanceFfr') }}</span>
-        <span class="lv-t2i-prov__val" :class="{ 'is-on': provenance.first_frame_requirement_merged }">
-          <template v-if="provenance.first_frame_requirement_merged && ffrClauseLabel">
-            {{ ffrClauseLabel }}
-          </template>
-          <template v-else>
-            {{ $tt('video.longVideoT2iProvenanceSkipped') }}
-          </template>
+        <span class="lv-t2i-prov__val">
+          {{ ffrSkipLabel }}
         </span>
       </p>
       <ul v-if="provenance.scene_parts.length" class="lv-t2i-prov__parts">
@@ -77,15 +72,12 @@ const locationMergeLabel = computed(() => {
   return label !== key ? label : mode;
 });
 
-const ffrClauseLabel = computed(() => {
-  const p = props.provenance;
-  if (!p?.first_frame_requirement_merged) return '';
-  const total = p.ffr_clauses_total ?? 0;
-  const merged = p.ffr_clauses_merged ?? 0;
-  if (total > 0) {
-    return $tt('video.longVideoT2iProvenanceFfrClauses', { merged, total });
-  }
-  return $tt('video.longVideoT2iProvenanceMerged');
+const ffrSkipLabel = computed(() => {
+  const reason = props.provenance?.ffr_skip_reason;
+  if (!reason) return $tt('video.longVideoT2iProvenanceSkipped');
+  const key = `video.longVideoT2iProvenanceFfrSkip_${reason}`;
+  const label = $tt(key);
+  return label !== key ? label : reason;
 });
 
 function sourceLabel(source: string) {

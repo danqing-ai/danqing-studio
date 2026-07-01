@@ -882,6 +882,7 @@ export const api = {
       segment_duration_sec?: number;
       max_clip_sec?: number;
       long_video_project_id?: string;
+      model?: string;
     }): Promise<LongVideoChapterAnalyzeResult> {
       const response = await client.post('/api/chat/long-video-chapter-analyze', body, {
         timeout: LLM_MULTI_ROUND_TIMEOUT_MS,
@@ -898,6 +899,7 @@ export const api = {
         segment_duration_sec?: number;
         max_clip_sec?: number;
         long_video_project_id?: string;
+        model?: string;
       },
       onProgress?: (phase: string, message: string) => void,
     ): Promise<LongVideoChapterAnalyzeResult> {

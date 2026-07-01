@@ -34,6 +34,23 @@
           <div class="lv-script-studio__parse-params">
             <span class="lv-script-studio__parse-params-label">{{ $tt('video.longVideoScriptParseParams') }}</span>
             <label class="lv-script-studio__parse-duration">
+              <span class="lv-script-studio__parse-duration-label">{{ $tt('video.longVideoScriptParseLlm') }}</span>
+              <DqSelect
+                :model-value="scriptParseLlmModel"
+                size="small"
+                class="lv-script-studio__parse-duration-select lv-script-studio__parse-llm-select"
+                :title="$tt('video.longVideoScriptParseLlmHint')"
+                @update:model-value="onScriptParseLlmChange"
+              >
+                <DqOption
+                  v-for="opt in llmModelOptions"
+                  :key="opt.value"
+                  :label="opt.label"
+                  :value="opt.value"
+                />
+              </DqSelect>
+            </label>
+            <label class="lv-script-studio__parse-duration">
               <span class="lv-script-studio__parse-duration-label">{{ $tt('video.longVideoTargetDuration') }}</span>
               <DqSelect
                 :model-value="targetDurationSec"
@@ -340,9 +357,11 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { $mn } from '@/utils/i18n';
 import { toast } from '@/utils/feedback';
+import { useRegistryStore } from '@/stores/registry';
 import type { LongVideoChapterAnalysis, LongVideoChapterScene, LongVideoCharacter } from '@/types';
 import {
   composeSceneBeat,
@@ -369,6 +388,7 @@ const props = defineProps<{
   scriptParsed?: boolean;
   targetDurationSec: number;
   segmentDurationSec: number;
+  scriptParseLlmModel?: string;
   parsing?: boolean;
   parseProgressPhase?: string;
   expanding?: boolean;
@@ -383,6 +403,7 @@ const emit = defineEmits<{
   (e: 'update:chapterAnalysis', value: LongVideoChapterAnalysis | undefined): void;
   (e: 'update:targetDurationSec', value: number): void;
   (e: 'update:segmentDurationSec', value: number): void;
+  (e: 'update:scriptParseLlmModel', value: string): void;
   (e: 'update:styleAnchor', value: string): void;
   (e: 'expand'): void;
   (e: 'parse'): void;
@@ -390,8 +411,30 @@ const emit = defineEmits<{
 }>();
 
 const { t: $tt, locale } = useI18n();
+const registryStore = useRegistryStore();
 const fileInputRef = ref<HTMLInputElement | null>(null);
 const insightTab = ref<ScriptInsightTab>('scenes');
+
+onMounted(() => {
+  void registryStore.load();
+});
+
+function hasLlmChatAction(actions: unknown): boolean {
+  if (!actions || typeof actions !== 'object') return false;
+  const row = actions as Record<string, unknown>;
+  return row.chat != null || row.enhance != null;
+}
+
+const llmModelOptions = computed(() => {
+  const models = registryStore.registry?.models || {};
+  return Object.entries(models)
+    .filter(([, cfg]) => cfg.media === 'llm' && cfg.category === 'llm_models' && hasLlmChatAction(cfg.actions))
+    .map(([id, cfg]) => ({
+      value: id,
+      label: $mn(cfg, id),
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+});
 
 const durationChoices = [30, 45, 60, 90, 120] as const;
 const segmentDurationChoices = [3, 5, 8] as const;
@@ -619,6 +662,18 @@ function onSegmentDurationChange(value: number | string) {
     emit('update:segmentDurationSec', sec);
   }
 }
+
+function onScriptParseLlmChange(value: number | string) {
+  emit('update:scriptParseLlmModel', String(value));
+}
+
+const scriptParseLlmModel = computed(() => {
+  const saved = props.scriptParseLlmModel?.trim();
+  if (saved) return saved;
+  const preferred = 'qwen3.6-27b';
+  if (llmModelOptions.value.some((o) => o.value === preferred)) return preferred;
+  return llmModelOptions.value[0]?.value ?? '';
+});
 
 function onSceneTitleInput(index: number, event: Event) {
   const title = (event.target as HTMLInputElement).value;

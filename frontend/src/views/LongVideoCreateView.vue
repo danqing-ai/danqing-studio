@@ -92,6 +92,7 @@
             :style-anchor="project?.style_anchor ?? ''"
             :target-duration-sec="project?.target_duration_sec ?? 60"
             :segment-duration-sec="project?.segment_duration_sec ?? 5"
+            :script-parse-llm-model="project?.script_parse_llm_model ?? ''"
             :parsing="isChapterAnalyzing"
             :parse-progress-phase="scriptParseProgressPhase"
             :expanding="isScriptExpanding"
@@ -103,6 +104,7 @@
             @update:chapter-analysis="onChapterAnalysisChange"
             @update:target-duration-sec="onTargetDurationChange"
             @update:segment-duration-sec="onSegmentDurationChange"
+            @update:script-parse-llm-model="patchProjectField('script_parse_llm_model', $event)"
             @update:style-anchor="onUpdateStyleAnchor"
             @expand="onScriptExpand"
             @parse="onScriptParse"
@@ -1496,6 +1498,7 @@ async function runScriptParsePipeline(strategy: LongVideoParseStrategy) {
 
   await ensureProjectSavedForGeneration();
   const projectId = project.value?.project_id ?? lv.project_id ?? '';
+  const parseModel = lv.script_parse_llm_model?.trim() || 'qwen3.6-27b';
 
   const analyzeResult = await analyzeLongVideoChapter(
     {
@@ -1506,6 +1509,7 @@ async function runScriptParsePipeline(strategy: LongVideoParseStrategy) {
       segment_duration_sec: segmentDurationSec,
       max_clip_sec: 10,
       long_video_project_id: projectId,
+      model: parseModel,
     },
     {
       quietSuccess: true,

@@ -96,7 +96,7 @@ export function useStudioGallery(
     };
     Object.assign(params, buildTimeFilterParams());
     if (filterModels.value.length > 0) {
-      params.model = filterModels.value[0];
+      params.model_in = filterModels.value;
     }
     if (options.sourceAction) {
       if (Array.isArray(options.sourceAction)) {
@@ -128,7 +128,7 @@ export function useStudioGallery(
     }
     Object.assign(params, buildTimeFilterParams());
     if (filterModels.value.length > 0) {
-      params.model = filterModels.value[0];
+      params.model_in = filterModels.value;
     }
     if (options.sourceAction) {
       if (Array.isArray(options.sourceAction)) {

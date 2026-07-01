@@ -1224,6 +1224,10 @@ def execute_family_image_generator(
         from backend.engine.families.hidream_o1.generation_mlx import resolve_hidream_output_path
 
         resolve_out = resolve_hidream_output_path
+    elif family == "boogu_image":
+        from backend.engine.families.boogu.generation_mlx import resolve_boogu_output_path
+
+        resolve_out = resolve_boogu_output_path
     else:
         from backend.engine.families.step1x_edit.generation_cuda import resolve_step1x_output_path
 

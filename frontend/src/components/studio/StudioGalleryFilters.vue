@@ -97,23 +97,28 @@ import StudioGalleryBatchActions from '@/components/studio/StudioGalleryBatchAct
 import StudioCanvasSessionControls from '@/components/studio/StudioCanvasSessionControls.vue';
 import type { CanvasMedia } from '@/composables/useCanvasStore';
 
-const props = defineProps<{
-  filterTime: string;
-  filterModels: string[];
-  searchText?: string;
-  timeOptions: { label: string; value: string }[];
-  modelOptions: string[];
-  selectionMode?: boolean;
-  selectedCount?: number;
-  allSelected?: boolean;
-  viewMode?: 'grid' | 'canvas';
-  supportsCanvas?: boolean;
-  canvasMedia?: CanvasMedia;
-  composerBusy?: boolean;
-  showModelFilter?: boolean;
-  showSearch?: boolean;
-  searchPlaceholder?: string;
-}>();
+const props = withDefaults(
+  defineProps<{
+    filterTime: string;
+    filterModels: string[];
+    searchText?: string;
+    timeOptions: { label: string; value: string }[];
+    modelOptions: string[];
+    selectionMode?: boolean;
+    selectedCount?: number;
+    allSelected?: boolean;
+    viewMode?: 'grid' | 'canvas';
+    supportsCanvas?: boolean;
+    canvasMedia?: CanvasMedia;
+    composerBusy?: boolean;
+    showModelFilter?: boolean;
+    showSearch?: boolean;
+    searchPlaceholder?: string;
+  }>(),
+  {
+    showSearch: true,
+  },
+);
 
 const emit = defineEmits<{
   (e: 'update:filterTime', value: string): void;

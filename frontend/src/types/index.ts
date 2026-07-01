@@ -369,6 +369,7 @@ export interface LongVideoShotState {
   characters_on_screen?: string[];
   clip_start_state?: string;
   clip_end_state?: string;
+  /** Inspector / first-frame strategy only — not merged into T2I scene prompt. */
   first_frame_requirement?: string;
   camera_zone_id?: string;
   first_frame_strategy?: FirstFrameStrategy;
@@ -433,14 +434,20 @@ export type KeyframeT2iProvenanceSkipReason =
   | 'narrative_already_covered'
   | 'empty_narrative';
 
+export type KeyframeFfrProvenanceSkipReason = 'inspector_only' | 'empty_ffr';
+
 export interface KeyframeT2iProvenance {
   narrative_merged: boolean;
   narrative_skip_reason?: KeyframeT2iProvenanceSkipReason;
   narrative_token_coverage?: number;
   /** How shot.location was folded into sceneNarrative (token/overlap rules). */
   location_merge?: 'none' | 'prepended' | 'scene_only';
+  /** Always false — FFR is not merged into T2I scene line. */
   first_frame_requirement_merged: boolean;
+  ffr_skip_reason?: KeyframeFfrProvenanceSkipReason;
+  /** @deprecated FFR no longer merges into T2I; kept for parse-run JSON compat. */
   ffr_clauses_total?: number;
+  /** @deprecated FFR no longer merges into T2I; kept for parse-run JSON compat. */
   ffr_clauses_merged?: number;
   scene_parts: Array<{
     source: 'beat_narrative' | 'first_frame_requirement' | 'visual_prompt' | 'location';
@@ -480,6 +487,8 @@ export interface LongVideoProjectState {
   character_lora_id?: string;
   /** Optional model override for cast portrait generation (defaults to keyframe_model). */
   portrait_model?: string;
+  /** LLM for script/chapter parse (defaults to app default_model_llm when empty). */
+  script_parse_llm_model?: string;
   keyframe_model: string;
   segment_video_model: string;
   segment_duration_sec: number;

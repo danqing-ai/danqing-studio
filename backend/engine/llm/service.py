@@ -61,6 +61,7 @@ from backend.engine.llm.vision import (
     mlx_vlm_importable,
     vision_weights_ready,
 )
+from backend.core.bundle_manifest import missing_safetensor_shards
 from backend.utils.path_utils import PathResolver
 
 logger = logging.getLogger(__name__)
@@ -196,6 +197,12 @@ class LLMService:
         if not self._is_thinking_model(self._model_id):
             self._llm_think_enabled = False
 
+    def _resolve_request_llm_model(self, preferred: str | None) -> str:
+        candidate = (preferred or "").strip()
+        if not candidate:
+            return self._model_id
+        return _coerce_llm_model_id(candidate, self._registry)
+
     # ------------------------------------------------------------------
     # Public status
     # ------------------------------------------------------------------
@@ -230,19 +237,41 @@ class LLMService:
             return False
 
     def is_available(self) -> bool:
-        """True when the model directory exists and contains weight files."""
+        """True when the model directory exists and contains complete weight files."""
         try:
             path = self._resolve_model_path()
-            if not path.is_dir():
-                return False
-            # Accept either single model.safetensors or any sharded safetensors/bin files
-            return (
-                (path / "model.safetensors").is_file()
-                or any(f.suffix == ".safetensors" for f in path.rglob("*") if f.is_file())
-                or any(f.suffix == ".bin" for f in path.rglob("*") if f.is_file())
-            )
+            return self._llm_weights_ready(path)
         except Exception:
             return False
+
+    @staticmethod
+    def _llm_weights_ready(path: Path) -> bool:
+        if not path.is_dir():
+            return False
+        missing_shards = missing_safetensor_shards(path)
+        if missing_shards:
+            return False
+        return (
+            (path / "model.safetensors").is_file()
+            or any(f.suffix == ".safetensors" for f in path.rglob("*") if f.is_file())
+            or any(f.suffix == ".bin" for f in path.rglob("*") if f.is_file())
+        )
+
+    @staticmethod
+    def _assert_llm_weights_ready(path: Path, *, model_id: str) -> None:
+        missing_shards = missing_safetensor_shards(path)
+        if missing_shards:
+            preview = ", ".join(missing_shards[:3])
+            suffix = f" (+{len(missing_shards) - 3} more)" if len(missing_shards) > 3 else ""
+            raise RuntimeError(
+                f"LLM model {model_id!r} at {path} is missing weight shard(s): "
+                f"{preview}{suffix}. Re-download the model from Settings → Models."
+            )
+        if not LLMService._llm_weights_ready(path):
+            raise RuntimeError(
+                f"LLM model {model_id!r} weights not found under {path}. "
+                "Install the model from Settings → Models."
+            )
 
     # ------------------------------------------------------------------
     # Chat completion
@@ -255,12 +284,13 @@ class LLMService:
         enable_thinking: bool | None = None,
     ) -> ChatCompletionResponse:
         """Run a single-turn non-streaming chat completion (sync, for asyncio.to_thread)."""
-        thinking = self._resolve_enable_thinking(enable_thinking)
-        think_active = self._think_is_active(thinking)
+        effective_id = self._resolve_request_llm_model(request.model)
+        thinking = self._resolve_enable_thinking_for(effective_id, enable_thinking)
+        think_active = self._think_is_active_for(effective_id, thinking)
         with self._generation_lock:
-            model, tokenizer = self._load_model()
+            model, tokenizer = self._load_model(effective_id)
             try:
-                messages = self._apply_think_mode_to_messages(request.messages)
+                messages = self._apply_think_mode_to_messages_for(effective_id, request.messages)
                 prompt = self._build_chat_prompt(
                     tokenizer,
                     messages,
@@ -274,7 +304,7 @@ class LLMService:
                     **self._generation_kwargs(request, think_active=think_active),
                 )
                 content = extract_final_llm_content(result, think_enabled=think_active)
-                return self._format_response(content, request.model)
+                return self._format_response(content, effective_id)
             finally:
                 self._unload_model(model, tokenizer)
 
@@ -286,11 +316,14 @@ class LLMService:
         """Yield SSE lines in OpenAI format: data: {json}\n\n ... data: [DONE]\n\n"""
         import asyncio
 
+        effective_id = self._resolve_request_llm_model(request.model)
+        thinking = self._resolve_enable_thinking_for(effective_id, None)
+        think_active = self._think_is_active_for(effective_id, thinking)
+
         with self._generation_lock:
-            model, tokenizer = self._load_model()
+            model, tokenizer = self._load_model(effective_id)
             try:
-                messages = self._apply_think_mode_to_messages(request.messages)
-                thinking = self._resolve_enable_thinking(None)
+                messages = self._apply_think_mode_to_messages_for(effective_id, request.messages)
                 prompt_text = self._build_chat_prompt(
                     tokenizer,
                     messages,
@@ -299,8 +332,6 @@ class LLMService:
             except Exception:
                 self._unload_model(model, tokenizer)
                 raise
-
-        think_active = self._think_is_active(thinking)
 
         # Release the lock while streaming so other requests can queue.
         # The model stays loaded until we explicitly unload.
@@ -324,7 +355,7 @@ class LLMService:
                 chunk = ChatCompletionChunk(
                     id=chunk_id,
                     created=created,
-                    model=request.model,
+                    model=effective_id,
                     choices=[
                         ChatDeltaChoice(
                             index=0,
@@ -340,7 +371,7 @@ class LLMService:
             final_chunk = ChatCompletionChunk(
                 id=chunk_id,
                 created=created,
-                model=request.model,
+                model=effective_id,
                 choices=[
                     ChatDeltaChoice(
                         index=0,
@@ -459,7 +490,10 @@ class LLMService:
         from backend.engine.llm.storyboard_cast import parse_character_roster, roster_to_dtos
         from backend.engine.llm.storyboard_scenes import roster_to_dtos as scene_roster_to_dtos
 
-        think_active = self._think_is_active(self._resolve_enable_thinking(None))
+        analyze_model_id = self._resolve_request_llm_model(getattr(request, "model", None))
+        thinking = self._resolve_enable_thinking_for(analyze_model_id, None)
+        think_active = self._think_is_active_for(analyze_model_id, thinking)
+        think_apply = lambda text: self._apply_think_mode_to_text_for(analyze_model_id, text)
         locale = normalize_storyboard_locale(getattr(request, "locale", None))
         narrative_budget = "standard"
         parse_phases: list[LongVideoChapterParsePhaseDTO] = []
@@ -482,17 +516,18 @@ class LLMService:
 
         def chat_fn(*, messages: list[ChatMessage], max_tokens: int) -> str:
             token_cap = self._token_budget(max_tokens, think_active)
-            if self._is_thinking_model(self._model_id):
+            if self._is_thinking_model(analyze_model_id):
                 token_cap = max(token_cap, 8192)
             resp = self.chat_completion(
                 ChatCompletionRequest(
-                    model=self._model_id,
+                    model=analyze_model_id,
                     messages=messages,
                     temperature=0.35,
                     top_p=0.9,
                     max_tokens=token_cap,
                     stream=False,
-                )
+                ),
+                enable_thinking=thinking,
             )
             return sanitize_structured_llm_response(
                 resp.choices[0].message.content,
@@ -508,7 +543,7 @@ class LLMService:
                 target_shot_count=None,
                 narrative_budget=narrative_budget,
                 chat_fn=chat_fn,
-                think_apply=self._apply_think_mode_to_text,
+                think_apply=think_apply,
                 token_budget=lambda b: self._token_budget(b, think_active),
             )
         except ValueError as exc:
@@ -522,7 +557,7 @@ class LLMService:
                 beat_sheet=result.beat_sheet,
                 locale=locale,
                 chat_fn=chat_fn,
-                think_apply=self._apply_think_mode_to_text,
+                think_apply=think_apply,
                 token_budget=lambda b: self._token_budget(b, think_active),
             )
         except ValueError as exc:
@@ -596,7 +631,7 @@ class LLMService:
                 character_dtos=character_dtos_raw,
                 scene_dtos=scene_entity_dtos_raw,
                 chat_fn=chat_fn,
-                think_apply=self._apply_think_mode_to_text,
+                think_apply=think_apply,
                 token_budget=lambda b: self._token_budget(b, think_active),
                 on_progress=report,
             )
@@ -1516,8 +1551,9 @@ class LLMService:
             )
         return self._path_resolver.resolve_registry_local_path(local_path)
 
-    def _resolve_model_path(self) -> Path:
-        entry = self._registry.require(self._model_id)
+    def _resolve_model_path(self, model_id: str | None = None) -> Path:
+        mid = (model_id or self._model_id).strip() or self._model_id
+        entry = self._registry.require(mid)
         versions = entry.raw.get("versions") or {}
         default_ver = next(
             (v for v in versions.values() if v.get("default")),
@@ -1525,19 +1561,21 @@ class LLMService:
         )
         if default_ver is None:
             raise RuntimeError(
-                f"No versions defined for LLM model {self._model_id!r} in registry"
+                f"No versions defined for LLM model {mid!r} in registry"
             )
         local_path = default_ver.get("local_path")
         if not local_path:
             raise RuntimeError(
-                f"No local_path for default version of {self._model_id!r}"
+                f"No local_path for default version of {mid!r}"
             )
         return self._path_resolver.resolve_registry_local_path(local_path)
 
-    def _load_model(self) -> tuple[Any, Any]:
+    def _load_model(self, model_id: str | None = None) -> tuple[Any, Any]:
         """Load the LLM model + tokenizer into GPU memory."""
-        model_path = self._resolve_model_path()
-        logger.info("Loading LLM model from %s", model_path)
+        mid = (model_id or self._model_id).strip() or self._model_id
+        model_path = self._resolve_model_path(mid)
+        self._assert_llm_weights_ready(model_path, model_id=mid)
+        logger.info("Loading LLM model %s from %s", mid, model_path)
         model, tokenizer = mlx_lm.load(str(model_path))
         logger.info("LLM model loaded successfully")
         return model, tokenizer
@@ -1601,34 +1639,29 @@ class LLMService:
             return base
         return min(max(base + 768, base * 3), 8192)
 
-    def _think_is_active(self, thinking: bool | None) -> bool:
-        return bool(thinking) if self._is_thinking_model(self._model_id) else False
-
-    @staticmethod
-    def _is_thinking_model(model_id: str) -> bool:
-        """Models that honor /think and /no_think suffixes on the last user turn."""
-        mid = (model_id or "").lower()
-        if "thinking" in mid:
-            return True
-        # Qwen3.5 base instruct models (e.g. qwen3.5-4b) emit plain-text reasoning unless /no_think.
-        return mid.startswith("qwen3.5") or mid.startswith("qwen3-5")
-
-    def _resolve_enable_thinking(self, override: bool | None) -> bool | None:
-        if not self._is_thinking_model(self._model_id):
+    def _resolve_enable_thinking_for(self, model_id: str, override: bool | None) -> bool | None:
+        if not self._is_thinking_model(model_id):
             return None
         if override is not None:
             return override
         return self._llm_think_enabled
 
-    def _apply_think_mode_to_text(self, text: str) -> str:
-        if not self._is_thinking_model(self._model_id):
+    def _think_is_active_for(self, model_id: str, thinking: bool | None) -> bool:
+        return bool(thinking) if self._is_thinking_model(model_id) else False
+
+    def _apply_think_mode_to_text_for(self, model_id: str, text: str) -> str:
+        if not self._is_thinking_model(model_id):
             return text
         if self._llm_think_enabled:
             return self._with_think_suffix(text)
         return self._with_no_think_suffix(text)
 
-    def _apply_think_mode_to_messages(self, messages: list[ChatMessage]) -> list[ChatMessage]:
-        if not self._is_thinking_model(self._model_id):
+    def _apply_think_mode_to_messages_for(
+        self,
+        model_id: str,
+        messages: list[ChatMessage],
+    ) -> list[ChatMessage]:
+        if not self._is_thinking_model(model_id):
             return messages
         last_user = max((i for i, m in enumerate(messages) if m.role == "user"), default=-1)
         if last_user < 0:
@@ -1646,6 +1679,30 @@ class LLMService:
         patched = list(messages)
         patched[last_user] = ChatMessage(role=msg.role, content=new_content)
         return patched
+
+    def _resolve_enable_thinking(self, override: bool | None) -> bool | None:
+        return self._resolve_enable_thinking_for(self._model_id, override)
+
+    def _think_is_active(self, thinking: bool | None) -> bool:
+        return self._think_is_active_for(self._model_id, thinking)
+
+    def _apply_think_mode_to_text(self, text: str) -> str:
+        return self._apply_think_mode_to_text_for(self._model_id, text)
+
+    def _apply_think_mode_to_messages(self, messages: list[ChatMessage]) -> list[ChatMessage]:
+        return self._apply_think_mode_to_messages_for(self._model_id, messages)
+
+    @staticmethod
+    def _is_thinking_model(model_id: str) -> bool:
+        """Models that honor /think and /no_think suffixes on the last user turn."""
+        mid = (model_id or "").lower()
+        if "thinking" in mid:
+            return True
+        # Qwen3.5 / Qwen3.6 instruct models emit plain-text reasoning unless /no_think.
+        for prefix in ("qwen3.5", "qwen3-5", "qwen3.6", "qwen3-6"):
+            if mid.startswith(prefix):
+                return True
+        return False
 
     @staticmethod
     def _with_no_think_suffix(text: str) -> str:

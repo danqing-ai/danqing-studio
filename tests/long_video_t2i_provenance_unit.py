@@ -67,7 +67,7 @@ class LongVideoT2iProvenanceUnit(unittest.TestCase):
         self.assertEqual(row["location_merge"], "prepended")
         self.assertIn("古城", row["composed_scene_preview"])
 
-    def test_ffr_clause_dedup(self) -> None:
+    def test_ffr_not_merged_into_t2i(self) -> None:
         row = build_shot_t2i_provenance_summary(
             {
                 "id": "sh_4",
@@ -80,9 +80,9 @@ class LongVideoT2iProvenanceUnit(unittest.TestCase):
                 "shot_size": "中景",
             }
         )
-        self.assertTrue(row["first_frame_requirement_merged"])
-        self.assertEqual(row["ffr_clauses_total"], 2)
-        self.assertEqual(row["ffr_clauses_merged"], 1)
+        self.assertFalse(row["first_frame_requirement_merged"])
+        self.assertEqual(row["ffr_skip_reason"], "inspector_only")
+        self.assertEqual(row["composed_scene_preview"], "人物站在窗前")
 
     def test_build_shots_summary_stats(self) -> None:
         shots = [

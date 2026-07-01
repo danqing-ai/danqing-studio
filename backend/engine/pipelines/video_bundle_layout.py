@@ -233,8 +233,12 @@ def hunyuan_vae_dir(bundle_root: Path) -> Path | None:
 
 
 def resolve_hunyuan_sr_bundle(bundle_root: Path | None) -> Path | None:
-    """SR weights may live in sibling ``*-1080p-sr`` bundle; caller passes explicit path via registry."""
+    """SR weights may live in sibling ``*-1080p-sr-bf16`` bundle; caller passes explicit path via registry."""
     if bundle_root is None:
         return None
-    sr = bundle_root.parent / "hunyuan-video-1.5-1080p-sr"
-    return sr if sr.is_dir() else None
+    parent = bundle_root.parent
+    for name in ("hunyuan-video-1.5-1080p-sr-bf16", "hunyuan-video-1.5-1080p-sr"):
+        sr = parent / name
+        if sr.is_dir():
+            return sr
+    return None

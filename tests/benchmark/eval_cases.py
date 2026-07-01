@@ -36,6 +36,8 @@ SMOKE_EDIT_ACTION_ORDER: tuple[str, ...] = ("rewrite", "retouch", "extend")
 MODEL_TIMEOUT_SEC: dict[str, int] = {
     "qwen-image-edit": 1200,
     "firered-image-edit-1.1": 1200,
+    "boogu-image-turbo": 900,
+    "boogu-image-edit": 1800,
     "cogview4-6b": 900,
     "fibo": 900,
     "fibo-lite": 900,
@@ -182,6 +184,7 @@ def _omit_image_strength(model_id: str, family: str) -> bool:
         "firered-image-edit-1.1",
         "fibo-edit",
         "fibo-edit-rmbg",
+        "boogu-image-edit",
     }:
         return True
     if family == "fibo" and model_id.startswith("fibo-edit"):

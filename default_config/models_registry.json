@@ -438,6 +438,21 @@
         "lora_merge"
       ],
       "encoder_type": "z_image"
+    },
+    "boogu_image": {
+      "paradigm": "diffusion",
+      "media": [
+        "image"
+      ],
+      "backends": [
+        "mlx"
+      ],
+      "latent_layout": "nchw",
+      "cfg_mode": "dual",
+      "latent_channels": 16,
+      "vae_scale": 8,
+      "encoder_type": "qwen3_vl",
+      "hooks": []
     }
   },
   "models": {
@@ -492,17 +507,17 @@
       },
       "distribution": {
         "versions": {
-          "int4": {
+          "mlx-q4": {
             "name": {
-              "zh": "INT4",
-              "en": "INT4"
+              "zh": "4-bit 量化版",
+              "en": "4-bit Quantized"
             },
             "size": "2.1GB",
             "default": true,
             "source": "modelscope",
             "repo_id": "mlx-community/Qwen3-4B-Thinking-2507-4bit",
-            "local_path": "models/LLM/qwen3-4b-thinking-2507-int4",
-            "source_type": "full"
+            "local_path": "models/LLM/qwen3-4b-thinking-2507-mlx-q4",
+            "source_type": "prequantized"
           }
         }
       }
@@ -573,6 +588,72 @@
         }
       }
     },
+    "qwen3.6-27b": {
+      "catalog": {
+        "media": "llm",
+        "description": {
+          "zh": "通义千问 3.6 27B 稠密模型，适合长剧本结构化解析；4-bit 量化约 16GB。",
+          "en": "Qwen3.6 27B dense model for structured long-script parsing; ~16GB at 4-bit."
+        },
+        "category": "llm_models",
+        "commercial_use_allowed": true,
+        "source": "modelscope",
+        "name": {
+          "zh": "Qwen3.6 27B",
+          "en": "Qwen3.6 27B"
+        },
+        "recommended": false,
+        "engine": "danqing-llm"
+      },
+      "runtime": {
+        "family": "qwen3",
+        "backends": [
+          "mlx"
+        ]
+      },
+      "actions": {
+        "chat": {},
+        "enhance": {}
+      },
+      "ui": {
+        "parameters": {
+          "temperature": {
+            "type": "float",
+            "default": 0.35,
+            "min": 0.0,
+            "max": 2.0
+          },
+          "max_tokens": {
+            "type": "int",
+            "default": 512,
+            "min": 1,
+            "max": 8192
+          },
+          "top_p": {
+            "type": "float",
+            "default": 0.9,
+            "min": 0.0,
+            "max": 1.0
+          }
+        }
+      },
+      "distribution": {
+        "versions": {
+          "mlx-q4": {
+            "name": {
+              "zh": "4-bit 量化版",
+              "en": "4-bit Quantized"
+            },
+            "size": "16GB",
+            "default": true,
+            "source": "modelscope",
+            "repo_id": "mlx-community/Qwen3.6-27B-4bit",
+            "local_path": "models/LLM/qwen3.6-27b-mlx-q4",
+            "source_type": "prequantized"
+          }
+        }
+      }
+    },
     "qwen3-vl-4b-instruct": {
       "catalog": {
         "media": "llm",
@@ -611,17 +692,17 @@
       },
       "distribution": {
         "versions": {
-          "int4": {
+          "mlx-q4": {
             "name": {
-              "zh": "INT4",
-              "en": "INT4"
+              "zh": "4-bit 量化版",
+              "en": "4-bit Quantized"
             },
             "size": "2.9GB",
             "default": true,
             "source": "modelscope",
             "repo_id": "mlx-community/Qwen3-VL-4B-Instruct-4bit",
-            "local_path": "models/LLM/qwen3-vl-4b-instruct-int4",
-            "source_type": "full"
+            "local_path": "models/LLM/qwen3-vl-4b-instruct-mlx-q4",
+            "source_type": "prequantized"
           }
         }
       }
@@ -765,8 +846,8 @@
         "versions": {
           "fp16": {
             "name": {
-              "zh": "FP16",
-              "en": "FP16"
+              "zh": "FP16 完整版",
+              "en": "FP16 Full"
             },
             "size": "54GB",
             "default": true,
@@ -776,8 +857,8 @@
           },
           "int8": {
             "name": {
-              "zh": "INT8",
-              "en": "INT8"
+              "zh": "INT8 量化版",
+              "en": "INT8 Quantized"
             },
             "size": "32GB",
             "default": false,
@@ -792,8 +873,8 @@
           },
           "int4": {
             "name": {
-              "zh": "INT4",
-              "en": "INT4"
+              "zh": "INT4 量化版",
+              "en": "INT4 Quantized"
             },
             "size": "20GB",
             "default": false,
@@ -948,8 +1029,8 @@
         "versions": {
           "fp16": {
             "name": {
-              "zh": "FP16",
-              "en": "FP16"
+              "zh": "FP16 完整版",
+              "en": "FP16 Full"
             },
             "size": "54GB",
             "default": true,
@@ -959,8 +1040,8 @@
           },
           "int8": {
             "name": {
-              "zh": "INT8",
-              "en": "INT8"
+              "zh": "INT8 量化版",
+              "en": "INT8 Quantized"
             },
             "size": "32GB",
             "default": false,
@@ -975,8 +1056,8 @@
           },
           "int4": {
             "name": {
-              "zh": "INT4",
-              "en": "INT4"
+              "zh": "INT4 量化版",
+              "en": "INT4 Quantized"
             },
             "size": "20GB",
             "default": false,
@@ -1122,8 +1203,8 @@
         "versions": {
           "fp16": {
             "name": {
-              "zh": "FP16",
-              "en": "FP16"
+              "zh": "FP16 完整版",
+              "en": "FP16 Full"
             },
             "size": "54GB",
             "default": true,
@@ -1133,8 +1214,8 @@
           },
           "int8": {
             "name": {
-              "zh": "INT8",
-              "en": "INT8"
+              "zh": "INT8 量化版",
+              "en": "INT8 Quantized"
             },
             "size": "32GB",
             "default": false,
@@ -1149,8 +1230,8 @@
           },
           "int4": {
             "name": {
-              "zh": "INT4",
-              "en": "INT4"
+              "zh": "INT4 量化版",
+              "en": "INT4 Quantized"
             },
             "size": "20GB",
             "default": false,
@@ -1307,8 +1388,8 @@
         "versions": {
           "fp16": {
             "name": {
-              "zh": "FP16",
-              "en": "FP16"
+              "zh": "FP16 完整版",
+              "en": "FP16 Full"
             },
             "size": "22GB",
             "min_unified_memory_gb": 16,
@@ -1319,8 +1400,8 @@
           },
           "int8": {
             "name": {
-              "zh": "INT8",
-              "en": "INT8"
+              "zh": "INT8 量化版",
+              "en": "INT8 Quantized"
             },
             "size": "11GB",
             "default": false,
@@ -1338,8 +1419,8 @@
           },
           "int4": {
             "name": {
-              "zh": "INT4",
-              "en": "INT4"
+              "zh": "INT4 量化版",
+              "en": "INT4 Quantized"
             },
             "size": "5.7GB",
             "min_unified_memory_gb": 6,
@@ -1358,8 +1439,8 @@
           },
           "mlx-q4": {
             "name": {
-              "zh": "MLX Q4",
-              "en": "MLX Q4"
+              "zh": "4-bit 量化版",
+              "en": "4-bit Quantized"
             },
             "size": "4.3GB",
             "min_unified_memory_gb": 6,
@@ -1375,8 +1456,8 @@
           },
           "mlx-q8": {
             "name": {
-              "zh": "MLX Q8",
-              "en": "MLX Q8"
+              "zh": "8-bit 量化版",
+              "en": "8-bit Quantized"
             },
             "size": "8.0GB",
             "default": false,
@@ -1538,8 +1619,8 @@
         "versions": {
           "fp16": {
             "name": {
-              "zh": "FP16",
-              "en": "FP16"
+              "zh": "FP16 完整版",
+              "en": "FP16 Full"
             },
             "size": "49GB",
             "default": true,
@@ -1549,8 +1630,8 @@
           },
           "int8": {
             "name": {
-              "zh": "INT8",
-              "en": "INT8"
+              "zh": "INT8 量化版",
+              "en": "INT8 Quantized"
             },
             "size": "32GB",
             "default": false,
@@ -1565,8 +1646,8 @@
           },
           "int4": {
             "name": {
-              "zh": "INT4",
-              "en": "INT4"
+              "zh": "INT4 量化版",
+              "en": "INT4 Quantized"
             },
             "size": "24GB",
             "default": false,
@@ -1581,8 +1662,8 @@
           },
           "mlx-q4": {
             "name": {
-              "zh": "MLX Q4",
-              "en": "MLX Q4"
+              "zh": "4-bit 量化版",
+              "en": "4-bit Quantized"
             },
             "size": "8.9GB",
             "default": false,
@@ -1597,8 +1678,8 @@
           },
           "mlx-q8": {
             "name": {
-              "zh": "MLX Q8",
-              "en": "MLX Q8"
+              "zh": "8-bit 量化版",
+              "en": "8-bit Quantized"
             },
             "size": "17GB",
             "default": false,
@@ -1753,8 +1834,8 @@
         "versions": {
           "fp16": {
             "name": {
-              "zh": "FP16",
-              "en": "FP16"
+              "zh": "FP16 完整版",
+              "en": "FP16 Full"
             },
             "size": "22GB",
             "default": true,
@@ -1764,8 +1845,8 @@
           },
           "int8": {
             "name": {
-              "zh": "INT8",
-              "en": "INT8"
+              "zh": "INT8 量化版",
+              "en": "INT8 Quantized"
             },
             "size": "15GB",
             "default": false,
@@ -1780,8 +1861,8 @@
           },
           "int4": {
             "name": {
-              "zh": "INT4",
-              "en": "INT4"
+              "zh": "INT4 量化版",
+              "en": "INT4 Quantized"
             },
             "size": "11GB",
             "default": false,
@@ -1931,8 +2012,8 @@
         "versions": {
           "fp16": {
             "name": {
-              "zh": "FP16",
-              "en": "FP16"
+              "zh": "FP16 完整版",
+              "en": "FP16 Full"
             },
             "size": "49GB",
             "default": true,
@@ -1942,8 +2023,8 @@
           },
           "int8": {
             "name": {
-              "zh": "INT8",
-              "en": "INT8"
+              "zh": "INT8 量化版",
+              "en": "INT8 Quantized"
             },
             "size": "32GB",
             "default": false,
@@ -1958,8 +2039,8 @@
           },
           "int4": {
             "name": {
-              "zh": "INT4",
-              "en": "INT4"
+              "zh": "INT4 量化版",
+              "en": "INT4 Quantized"
             },
             "size": "24GB",
             "default": false,
@@ -2127,8 +2208,8 @@
         "versions": {
           "fp16": {
             "name": {
-              "zh": "FP16",
-              "en": "FP16"
+              "zh": "FP16 完整版",
+              "en": "FP16 Full"
             },
             "size": "19GB",
             "default": true,
@@ -2138,8 +2219,8 @@
           },
           "int8": {
             "name": {
-              "zh": "INT8",
-              "en": "INT8"
+              "zh": "INT8 量化版",
+              "en": "INT8 Quantized"
             },
             "size": "13GB",
             "default": false,
@@ -2154,8 +2235,8 @@
           },
           "int4": {
             "name": {
-              "zh": "INT4",
-              "en": "INT4"
+              "zh": "INT4 量化版",
+              "en": "INT4 Quantized"
             },
             "size": "11GB",
             "default": false,
@@ -2344,8 +2425,8 @@
         "versions": {
           "fp16": {
             "name": {
-              "zh": "FP16",
-              "en": "FP16"
+              "zh": "FP16 完整版",
+              "en": "FP16 Full"
             },
             "size": "31GB",
             "default": true,
@@ -2355,8 +2436,8 @@
           },
           "int8": {
             "name": {
-              "zh": "INT8",
-              "en": "INT8"
+              "zh": "INT8 量化版",
+              "en": "INT8 Quantized"
             },
             "size": "19GB",
             "default": false,
@@ -2371,8 +2452,8 @@
           },
           "int4": {
             "name": {
-              "zh": "INT4",
-              "en": "INT4"
+              "zh": "INT4 量化版",
+              "en": "INT4 Quantized"
             },
             "size": "13GB",
             "min_unified_memory_gb": 10,
@@ -2388,8 +2469,8 @@
           },
           "mlx-q4": {
             "name": {
-              "zh": "MLX Q4",
-              "en": "MLX Q4"
+              "zh": "4-bit 量化版",
+              "en": "4-bit Quantized"
             },
             "size": "5.5GB",
             "default": false,
@@ -2404,8 +2485,8 @@
           },
           "mlx-q8": {
             "name": {
-              "zh": "MLX Q8",
-              "en": "MLX Q8"
+              "zh": "8-bit 量化版",
+              "en": "8-bit Quantized"
             },
             "size": "10GB",
             "default": false,
@@ -2542,8 +2623,8 @@
         "versions": {
           "fp16": {
             "name": {
-              "zh": "FP16",
-              "en": "FP16"
+              "zh": "FP16 完整版",
+              "en": "FP16 Full"
             },
             "size": "24GB",
             "default": true,
@@ -2553,8 +2634,8 @@
           },
           "int8": {
             "name": {
-              "zh": "INT8",
-              "en": "INT8"
+              "zh": "INT8 量化版",
+              "en": "INT8 Quantized"
             },
             "size": "16GB",
             "default": false,
@@ -2569,8 +2650,8 @@
           },
           "int4": {
             "name": {
-              "zh": "INT4",
-              "en": "INT4"
+              "zh": "INT4 量化版",
+              "en": "INT4 Quantized"
             },
             "size": "12GB",
             "default": false,
@@ -2704,8 +2785,8 @@
         "versions": {
           "fp16": {
             "name": {
-              "zh": "FP16",
-              "en": "FP16"
+              "zh": "FP16 完整版",
+              "en": "FP16 Full"
             },
             "size": "3KB",
             "default": true,
@@ -2715,8 +2796,8 @@
           },
           "int8": {
             "name": {
-              "zh": "INT8",
-              "en": "INT8"
+              "zh": "INT8 量化版",
+              "en": "INT8 Quantized"
             },
             "size": "3KB",
             "default": false,
@@ -2731,8 +2812,8 @@
           },
           "int4": {
             "name": {
-              "zh": "INT4",
-              "en": "INT4"
+              "zh": "INT4 量化版",
+              "en": "INT4 Quantized"
             },
             "size": "3KB",
             "default": false,
@@ -2858,8 +2939,8 @@
         "versions": {
           "fp16": {
             "name": {
-              "zh": "FP16",
-              "en": "FP16"
+              "zh": "FP16 完整版",
+              "en": "FP16 Full"
             },
             "size": "3KB",
             "default": true,
@@ -2869,8 +2950,8 @@
           },
           "int8": {
             "name": {
-              "zh": "INT8",
-              "en": "INT8"
+              "zh": "INT8 量化版",
+              "en": "INT8 Quantized"
             },
             "size": "3KB",
             "default": false,
@@ -2885,8 +2966,8 @@
           },
           "int4": {
             "name": {
-              "zh": "INT4",
-              "en": "INT4"
+              "zh": "INT4 量化版",
+              "en": "INT4 Quantized"
             },
             "size": "3KB",
             "default": false,
@@ -3014,8 +3095,8 @@
         "versions": {
           "fp16": {
             "name": {
-              "zh": "FP16",
-              "en": "FP16"
+              "zh": "FP16 完整版",
+              "en": "FP16 Full"
             },
             "size": "84GB",
             "default": true,
@@ -3025,8 +3106,8 @@
           },
           "int8": {
             "name": {
-              "zh": "INT8",
-              "en": "INT8"
+              "zh": "INT8 量化版",
+              "en": "INT8 Quantized"
             },
             "size": "46GB",
             "default": false,
@@ -3041,8 +3122,8 @@
           },
           "int4": {
             "name": {
-              "zh": "INT4",
-              "en": "INT4"
+              "zh": "INT4 量化版",
+              "en": "INT4 Quantized"
             },
             "size": "26GB",
             "default": false,
@@ -3200,8 +3281,8 @@
         "versions": {
           "fp16": {
             "name": {
-              "zh": "FP16",
-              "en": "FP16"
+              "zh": "FP16 完整版",
+              "en": "FP16 Full"
             },
             "size": "54GB",
             "default": true,
@@ -3211,8 +3292,8 @@
           },
           "int8": {
             "name": {
-              "zh": "INT8",
-              "en": "INT8"
+              "zh": "INT8 量化版",
+              "en": "INT8 Quantized"
             },
             "size": "35GB",
             "default": false,
@@ -3227,8 +3308,8 @@
           },
           "int4": {
             "name": {
-              "zh": "INT4",
-              "en": "INT4"
+              "zh": "INT4 量化版",
+              "en": "INT4 Quantized"
             },
             "size": "25GB",
             "default": false,
@@ -3243,8 +3324,8 @@
           },
           "mlx-q4": {
             "name": {
-              "zh": "MLX Q4",
-              "en": "MLX Q4"
+              "zh": "4-bit 量化版",
+              "en": "4-bit Quantized"
             },
             "size": "24GB",
             "default": false,
@@ -3265,8 +3346,8 @@
           },
           "mlx-q8": {
             "name": {
-              "zh": "MLX Q8",
-              "en": "MLX Q8"
+              "zh": "8-bit 量化版",
+              "en": "8-bit Quantized"
             },
             "size": "34GB",
             "default": false,
@@ -3378,8 +3459,8 @@
         "versions": {
           "fp16": {
             "name": {
-              "zh": "FP16",
-              "en": "FP16"
+              "zh": "FP16 完整版",
+              "en": "FP16 Full"
             },
             "size": "54GB",
             "default": true,
@@ -3389,8 +3470,8 @@
           },
           "int8": {
             "name": {
-              "zh": "INT8",
-              "en": "INT8"
+              "zh": "INT8 量化版",
+              "en": "INT8 Quantized"
             },
             "size": "35GB",
             "default": false,
@@ -3405,8 +3486,8 @@
           },
           "int4": {
             "name": {
-              "zh": "INT4",
-              "en": "INT4"
+              "zh": "INT4 量化版",
+              "en": "INT4 Quantized"
             },
             "size": "25GB",
             "default": false,
@@ -3421,8 +3502,8 @@
           },
           "mlx-q8": {
             "name": {
-              "zh": "MLX Q8",
-              "en": "MLX Q8"
+              "zh": "8-bit 量化版",
+              "en": "8-bit Quantized"
             },
             "size": "35GB",
             "default": false,
@@ -3443,8 +3524,8 @@
           },
           "mlx-q4": {
             "name": {
-              "zh": "MLX Q4",
-              "en": "MLX Q4"
+              "zh": "4-bit 量化版",
+              "en": "4-bit Quantized"
             },
             "size": "25GB",
             "default": false,
@@ -3559,8 +3640,8 @@
         "versions": {
           "fp16": {
             "name": {
-              "zh": "FP16",
-              "en": "FP16"
+              "zh": "FP16 完整版",
+              "en": "FP16 Full"
             },
             "size": "54GB",
             "default": true,
@@ -3654,8 +3735,8 @@
         "versions": {
           "mlx-bf16": {
             "name": {
-              "zh": "MLX BF16",
-              "en": "MLX BF16"
+              "zh": "BF16 完整版",
+              "en": "BF16 Full"
             },
             "size": "16GB",
             "default": true,
@@ -3666,8 +3747,8 @@
           },
           "mlx-q8": {
             "name": {
-              "zh": "MLX Q8",
-              "en": "MLX Q8"
+              "zh": "8-bit 量化版",
+              "en": "8-bit Quantized"
             },
             "size": "9.4GB",
             "default": false,
@@ -3763,8 +3844,8 @@
         "versions": {
           "mlx-bf16": {
             "name": {
-              "zh": "MLX BF16",
-              "en": "MLX BF16"
+              "zh": "BF16 完整版",
+              "en": "BF16 Full"
             },
             "size": "33GB",
             "default": true,
@@ -3847,13 +3928,13 @@
         "versions": {
           "bf16": {
             "name": {
-              "zh": "BF16",
-              "en": "BF16"
+              "zh": "BF16 完整版",
+              "en": "BF16 Full"
             },
             "size": "49GB",
             "default": true,
             "repo_id": "stepfun-ai/Step1X-Edit",
-            "local_path": "models/Image/step1x-edit",
+            "local_path": "models/Image/step1x-edit-bf16",
             "source": "huggingface",
             "source_type": "full",
             "notes": {
@@ -3863,7 +3944,7 @@
           },
           "fp8": {
             "name": {
-              "zh": "FP8",
+              "zh": "FP8 版",
               "en": "FP8"
             },
             "size": "12GB",
@@ -3876,6 +3957,461 @@
               "zh": "FP8 DiT 权重；需与完整 bundle 中 VAE + Qwen2.5-VL 目录一并安装。",
               "en": "FP8 DiT weights; install alongside VAE + Qwen2.5-VL from the full bundle."
             }
+          }
+        }
+      }
+    },
+    "boogu-image-turbo": {
+      "catalog": {
+        "media": "image",
+        "description": {
+          "zh": "Boogu-Image-0.1-Turbo — 10B 蒸馏版，默认 8 步快速写实与中英文字渲染；Apache-2.0。人像虚化背景在 Turbo+量化版上可能出现细网格（模型/VAE 固有限制，风景纹理区不明显）；可试 mlx-bf16。",
+          "en": "Boogu-Image-0.1-Turbo — 10B distilled default 8-step photorealistic generation with bilingual text rendering. Apache-2.0. Bokeh backgrounds may show a fine grid on Turbo+quantized weights (upstream/VAE limit; less visible on textured landscapes); try mlx-bf16."
+        },
+        "category": "base_models",
+        "commercial_use_allowed": true,
+        "type": "diffusion",
+        "source": "modelscope",
+        "name": {
+          "zh": "Boogu Image Turbo",
+          "en": "Boogu Image Turbo"
+        },
+        "recommended": false,
+        "engine": "danqing-image"
+      },
+      "runtime": {
+        "family": "boogu_image",
+        "backends": [
+          "mlx"
+        ],
+        "overrides": {
+          "image_pipeline_shape": "family_generator",
+          "boogu_variant": "turbo",
+          "supports_guidance": false,
+          "vae_scale": 8,
+          "preview_mode": "none"
+        }
+      },
+      "actions": {
+        "create": {}
+      },
+      "ui": {
+        "parameters": {
+          "seed_support": true,
+          "preview_mode": {
+            "type": "enum",
+            "default": "none",
+            "options": [
+              "none"
+            ]
+          },
+          "steps": {
+            "default": 8,
+            "min": 1,
+            "max": 12,
+            "label": "步数",
+            "note": "Turbo 默认 8 步（平衡速度与虚化背景质量）；极速可试 4 步。CFG 固定为 1.0",
+            "type": "int"
+          },
+          "guidance": {
+            "default": 1.0,
+            "min": 1.0,
+            "max": 1.0,
+            "step": 0.5,
+            "label": "CFG引导",
+            "fixed": true,
+            "type": "float"
+          },
+          "width": {
+            "default": 1024,
+            "options": [
+              768,
+              1024,
+              1280,
+              1536
+            ],
+            "type": "enum"
+          },
+          "height": {
+            "default": 1024,
+            "options": [
+              768,
+              1024,
+              1280,
+              1536
+            ],
+            "type": "enum"
+          },
+          "negative_prompt_support": false
+        },
+        "extends": "image_dit_standard"
+      },
+      "distribution": {
+        "versions": {
+          "bf16": {
+            "name": {
+              "zh": "BF16 完整版",
+              "en": "BF16 Full"
+            },
+            "size": "32GB",
+            "default": true,
+            "repo_id": "Boogu/Boogu-Image-0.1-Turbo",
+            "local_path": "models/Image/boogu-image-turbo-bf16",
+            "source_type": "full",
+            "notes": {
+              "zh": "完整 bundle（DiT + FLUX VAE + Qwen3-VL-8B）。",
+              "en": "Full bundle (DiT + FLUX VAE + Qwen3-VL-8B)."
+            }
+          },
+          "fp8": {
+            "name": {
+              "zh": "FP8 版",
+              "en": "FP8"
+            },
+            "size": "18GB",
+            "default": false,
+            "repo_id": "Boogu/Boogu-Image-0.1-Turbo-fp8",
+            "local_path": "models/Image/boogu-image-turbo-fp8",
+            "source_type": "full",
+            "notes": {
+              "zh": "官方 FP8 权重 bundle，显存占用更低。",
+              "en": "Official FP8 weight bundle; lower VRAM use."
+            }
+          },
+          "int8": {
+            "name": {
+              "zh": "INT8 量化版",
+              "en": "INT8 Quantized"
+            },
+            "size": "22GB",
+            "default": false,
+            "repo_id": "Boogu/Boogu-Image-0.1-Turbo",
+            "local_path": "models/Image/boogu-image-turbo-int8",
+            "source_type": "derived",
+            "from_version": "bf16",
+            "quantization": {
+              "bits": 8,
+              "scheme": "mlx_affine"
+            }
+          },
+          "int4": {
+            "name": {
+              "zh": "INT4 量化版",
+              "en": "INT4 Quantized"
+            },
+            "size": "14GB",
+            "min_unified_memory_gb": 16,
+            "default": false,
+            "repo_id": "Boogu/Boogu-Image-0.1-Turbo",
+            "local_path": "models/Image/boogu-image-turbo-int4",
+            "source_type": "derived",
+            "from_version": "bf16",
+            "quantization": {
+              "bits": 4,
+              "scheme": "mlx_affine"
+            }
+          },
+          "mlx-q8": {
+            "name": {
+              "zh": "8-bit 量化版",
+              "en": "8-bit Quantized"
+            },
+            "size": "22GB",
+            "default": false,
+            "source": "modelscope",
+            "repo_id": "mlx-community/Boogu-Image-0.1-Turbo-8bit",
+            "local_path": "models/Image/boogu-image-turbo-mlx-q8",
+            "source_type": "prequantized",
+            "quantization": {
+              "bits": 8,
+              "scheme": "mlx_affine"
+            },
+            "notes": {
+              "zh": "DiT+VAE 预量化包；安装时一并拉取 Qwen3-VL-8B（4096 维，4B 不可用）。",
+              "en": "Prequantized DiT+VAE; install pulls Qwen3-VL-8B (4096-dim; 4B incompatible)."
+            },
+            "bundle_repos": [
+              {
+                "repo_id": "mlx-community/Boogu-Image-0.1-Turbo-8bit",
+                "local_path": "models/Image/boogu-image-turbo-mlx-q8",
+                "name": "Boogu Image Turbo DiT",
+                "size": "13GB",
+                "source": "modelscope"
+              },
+              {
+                "repo_id": "mlx-community/Qwen3-VL-8B-Instruct-8bit",
+                "local_path": "models/LLM/qwen3-vl-8b-instruct-mlx-q8",
+                "name": {
+                  "zh": "Qwen3-VL-8B Instruct",
+                  "en": "Qwen3-VL-8B Instruct"
+                },
+                "size": "9GB",
+                "source": "modelscope"
+              }
+            ]
+          },
+          "mlx-bf16": {
+            "name": {
+              "zh": "BF16 完整版",
+              "en": "BF16 Full"
+            },
+            "size": "30GB",
+            "default": false,
+            "source": "modelscope",
+            "repo_id": "mlx-community/Boogu-Image-0.1-Turbo-bf16",
+            "local_path": "models/Image/boogu-image-turbo-mlx-bf16",
+            "source_type": "full",
+            "notes": {
+              "zh": "MLX DiT+VAE；安装时一并拉取 Qwen3-VL-8B（4096 维）。",
+              "en": "MLX DiT+VAE; install pulls Qwen3-VL-8B (4096-dim)."
+            },
+            "bundle_repos": [
+              {
+                "repo_id": "mlx-community/Boogu-Image-0.1-Turbo-bf16",
+                "local_path": "models/Image/boogu-image-turbo-mlx-bf16",
+                "name": "Boogu Image Turbo DiT",
+                "size": "21GB",
+                "source": "modelscope"
+              },
+              {
+                "repo_id": "mlx-community/Qwen3-VL-8B-Instruct-8bit",
+                "local_path": "models/LLM/qwen3-vl-8b-instruct-mlx-q8",
+                "name": {
+                  "zh": "Qwen3-VL-8B Instruct",
+                  "en": "Qwen3-VL-8B Instruct"
+                },
+                "size": "9GB",
+                "source": "modelscope"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "boogu-image-edit": {
+      "catalog": {
+        "media": "image",
+        "description": {
+          "zh": "Boogu-Image-0.1-Edit — 指令式图像编辑，摄影向改图与中英文字改字；单参考图。",
+          "en": "Boogu-Image-0.1-Edit — instruction-driven editing for photography and bilingual text edits; single reference image."
+        },
+        "category": "base_models",
+        "commercial_use_allowed": true,
+        "type": "diffusion",
+        "source": "modelscope",
+        "name": {
+          "zh": "Boogu Image Edit",
+          "en": "Boogu Image Edit"
+        },
+        "recommended": false,
+        "engine": "danqing-image"
+      },
+      "runtime": {
+        "family": "boogu_image",
+        "backends": [
+          "mlx"
+        ],
+        "overrides": {
+          "image_pipeline_shape": "family_generator",
+          "boogu_variant": "edit",
+          "supports_guidance": true,
+          "vae_scale": 8,
+          "preview_mode": "none",
+          "edit_max_reference_images": 1
+        }
+      },
+      "actions": {
+        "rewrite": {}
+      },
+      "ui": {
+        "parameters": {
+          "seed_support": true,
+          "preview_mode": {
+            "type": "enum",
+            "default": "none",
+            "options": [
+              "none"
+            ]
+          },
+          "steps": {
+            "default": 30,
+            "min": 4,
+            "max": 50,
+            "label": "步数",
+            "note": "官方推荐 25–50 步；参考图建议对齐 1K",
+            "type": "int"
+          },
+          "guidance": {
+            "default": 4.0,
+            "min": 2.0,
+            "max": 5.0,
+            "step": 0.5,
+            "label": "CFG引导",
+            "type": "float"
+          },
+          "width": {
+            "default": 1024,
+            "options": [
+              768,
+              1024,
+              1280,
+              1536
+            ],
+            "type": "enum"
+          },
+          "height": {
+            "default": 1024,
+            "options": [
+              768,
+              1024,
+              1280,
+              1536
+            ],
+            "type": "enum"
+          },
+          "negative_prompt_support": true
+        },
+        "extends": "image_dit_standard"
+      },
+      "distribution": {
+        "versions": {
+          "bf16": {
+            "name": {
+              "zh": "BF16 完整版",
+              "en": "BF16 Full"
+            },
+            "size": "32GB",
+            "default": true,
+            "repo_id": "Boogu/Boogu-Image-0.1-Edit",
+            "local_path": "models/Image/boogu-image-edit-bf16",
+            "source_type": "full",
+            "notes": {
+              "zh": "完整 bundle（DiT + FLUX VAE + Qwen3-VL-8B）。",
+              "en": "Full bundle (DiT + FLUX VAE + Qwen3-VL-8B)."
+            }
+          },
+          "fp8": {
+            "name": {
+              "zh": "FP8 版",
+              "en": "FP8"
+            },
+            "size": "18GB",
+            "default": false,
+            "repo_id": "Boogu/Boogu-Image-0.1-Edit-fp8",
+            "local_path": "models/Image/boogu-image-edit-fp8",
+            "source_type": "full",
+            "notes": {
+              "zh": "官方 FP8 编辑 bundle；参考图建议对齐 1K。",
+              "en": "Official FP8 edit bundle; align reference image to ~1K."
+            }
+          },
+          "int8": {
+            "name": {
+              "zh": "INT8 量化版",
+              "en": "INT8 Quantized"
+            },
+            "size": "22GB",
+            "default": false,
+            "repo_id": "Boogu/Boogu-Image-0.1-Edit",
+            "local_path": "models/Image/boogu-image-edit-int8",
+            "source_type": "derived",
+            "from_version": "bf16",
+            "quantization": {
+              "bits": 8,
+              "scheme": "mlx_affine"
+            }
+          },
+          "int4": {
+            "name": {
+              "zh": "INT4 量化版",
+              "en": "INT4 Quantized"
+            },
+            "size": "14GB",
+            "min_unified_memory_gb": 16,
+            "default": false,
+            "repo_id": "Boogu/Boogu-Image-0.1-Edit",
+            "local_path": "models/Image/boogu-image-edit-int4",
+            "source_type": "derived",
+            "from_version": "bf16",
+            "quantization": {
+              "bits": 4,
+              "scheme": "mlx_affine"
+            }
+          },
+          "mlx-q4": {
+            "name": {
+              "zh": "4-bit 量化版",
+              "en": "4-bit Quantized"
+            },
+            "size": "17GB",
+            "min_unified_memory_gb": 16,
+            "default": false,
+            "source": "modelscope",
+            "repo_id": "mlx-community/Boogu-Image-0.1-Edit-4bit",
+            "local_path": "models/Image/boogu-image-edit-mlx-q4",
+            "source_type": "prequantized",
+            "quantization": {
+              "bits": 4,
+              "scheme": "mlx_affine"
+            },
+            "notes": {
+              "zh": "DiT+VAE 预量化包；安装时一并拉取 Qwen3-VL-8B（4096 维，4B 不可用）。",
+              "en": "Prequantized DiT+VAE; install pulls Qwen3-VL-8B (4096-dim; 4B incompatible)."
+            },
+            "bundle_repos": [
+              {
+                "repo_id": "mlx-community/Boogu-Image-0.1-Edit-4bit",
+                "local_path": "models/Image/boogu-image-edit-mlx-q4",
+                "name": "Boogu Image Edit DiT",
+                "size": "8GB",
+                "source": "modelscope"
+              },
+              {
+                "repo_id": "mlx-community/Qwen3-VL-8B-Instruct-8bit",
+                "local_path": "models/LLM/qwen3-vl-8b-instruct-mlx-q8",
+                "name": {
+                  "zh": "Qwen3-VL-8B Instruct",
+                  "en": "Qwen3-VL-8B Instruct"
+                },
+                "size": "9GB",
+                "source": "modelscope"
+              }
+            ]
+          },
+          "mlx-bf16": {
+            "name": {
+              "zh": "BF16 完整版",
+              "en": "BF16 Full"
+            },
+            "size": "30GB",
+            "default": false,
+            "source": "modelscope",
+            "repo_id": "mlx-community/Boogu-Image-0.1-Edit-bf16",
+            "local_path": "models/Image/boogu-image-edit-mlx-bf16",
+            "source_type": "full",
+            "notes": {
+              "zh": "MLX DiT+VAE；安装时一并拉取 Qwen3-VL-8B（4096 维）。",
+              "en": "MLX DiT+VAE; install pulls Qwen3-VL-8B (4096-dim)."
+            },
+            "bundle_repos": [
+              {
+                "repo_id": "mlx-community/Boogu-Image-0.1-Edit-bf16",
+                "local_path": "models/Image/boogu-image-edit-mlx-bf16",
+                "name": "Boogu Image Edit DiT",
+                "size": "21GB",
+                "source": "modelscope"
+              },
+              {
+                "repo_id": "mlx-community/Qwen3-VL-8B-Instruct-8bit",
+                "local_path": "models/LLM/qwen3-vl-8b-instruct-mlx-q8",
+                "name": {
+                  "zh": "Qwen3-VL-8B Instruct",
+                  "en": "Qwen3-VL-8B Instruct"
+                },
+                "size": "9GB",
+                "source": "modelscope"
+              }
+            ]
           }
         }
       }
@@ -4019,8 +4555,8 @@
         "versions": {
           "fp16": {
             "name": {
-              "zh": "FP16",
-              "en": "FP16"
+              "zh": "FP16 完整版",
+              "en": "FP16 Full"
             },
             "size": "29GB",
             "default": true,
@@ -4030,8 +4566,8 @@
           },
           "int8": {
             "name": {
-              "zh": "INT8",
-              "en": "INT8"
+              "zh": "INT8 量化版",
+              "en": "INT8 Quantized"
             },
             "size": "22GB",
             "default": false,
@@ -4046,8 +4582,8 @@
           },
           "int4": {
             "name": {
-              "zh": "INT4",
-              "en": "INT4"
+              "zh": "INT4 量化版",
+              "en": "INT4 Quantized"
             },
             "size": "18GB",
             "default": false,
@@ -4062,8 +4598,8 @@
           },
           "mlx-q4": {
             "name": {
-              "zh": "MLX Q4",
-              "en": "MLX Q4"
+              "zh": "4-bit 量化版",
+              "en": "4-bit Quantized"
             },
             "size": "6.2GB",
             "default": false,
@@ -4224,8 +4760,8 @@
         "versions": {
           "bf16": {
             "name": {
-              "zh": "BF16",
-              "en": "BF16"
+              "zh": "BF16 完整版",
+              "en": "BF16 Full"
             },
             "size": "29GB",
             "default": true,
@@ -4284,8 +4820,8 @@
         "versions": {
           "fp16": {
             "name": {
-              "zh": "FP16",
-              "en": "FP16"
+              "zh": "FP16 完整版",
+              "en": "FP16 Full"
             },
             "size": "6.8GB",
             "default": true,
@@ -4348,8 +4884,8 @@
         "versions": {
           "fp16": {
             "name": {
-              "zh": "FP16",
-              "en": "FP16"
+              "zh": "FP16 完整版",
+              "en": "FP16 Full"
             },
             "size": "16GB",
             "default": true,
@@ -4415,8 +4951,8 @@
         "versions": {
           "fp16": {
             "name": {
-              "zh": "FP16",
-              "en": "FP16"
+              "zh": "FP16 完整版",
+              "en": "FP16 Full"
             },
             "size": "32MB",
             "default": true,
@@ -4478,8 +5014,8 @@
         "versions": {
           "fp16": {
             "name": {
-              "zh": "FP16",
-              "en": "FP16"
+              "zh": "FP16 完整版",
+              "en": "FP16 Full"
             },
             "size": "16GB",
             "default": true,
@@ -4541,8 +5077,8 @@
         "versions": {
           "fp16": {
             "name": {
-              "zh": "FP16",
-              "en": "FP16"
+              "zh": "FP16 完整版",
+              "en": "FP16 Full"
             },
             "size": "6.8GB",
             "default": true,
@@ -4584,8 +5120,8 @@
         "versions": {
           "fp16": {
             "name": {
-              "zh": "FP16",
-              "en": "FP16"
+              "zh": "FP16 完整版",
+              "en": "FP16 Full"
             },
             "size": "1.8GB",
             "default": true,
@@ -5082,8 +5618,8 @@
         "versions": {
           "fp16": {
             "name": {
-              "zh": "FP16",
-              "en": "FP16"
+              "zh": "FP16 完整版",
+              "en": "FP16 Full"
             },
             "size": "54GB",
             "default": true,
@@ -5093,8 +5629,8 @@
           },
           "int8": {
             "name": {
-              "zh": "INT8",
-              "en": "INT8"
+              "zh": "INT8 量化版",
+              "en": "INT8 Quantized"
             },
             "size": "32GB",
             "default": false,
@@ -5109,8 +5645,8 @@
           },
           "int4": {
             "name": {
-              "zh": "INT4",
-              "en": "INT4"
+              "zh": "INT4 量化版",
+              "en": "INT4 Quantized"
             },
             "size": "20GB",
             "default": false,
@@ -5819,7 +6355,7 @@
             "size": "2.3GB",
             "default": true,
             "repo_id": "lightx2v/Wan2.2-Lightning",
-            "local_path": "models/Lora/Wan/Wan2.2-T2V-Lightning-V2.0",
+            "local_path": "models/Lora/Wan/Wan2.2-T2V-Lightning-V2.0-v2",
             "source": "modelscope",
             "source_type": "full",
             "allow_patterns": [
@@ -5899,7 +6435,7 @@
             "size": "2.3GB",
             "default": true,
             "repo_id": "lightx2v/Wan2.2-Lightning",
-            "local_path": "models/Lora/Wan/Wan2.2-I2V-Lightning-V1",
+            "local_path": "models/Lora/Wan/Wan2.2-I2V-Lightning-V1-v1",
             "source": "modelscope",
             "source_type": "full",
             "allow_patterns": [
@@ -6063,7 +6599,7 @@
             "size": "810MB",
             "default": true,
             "repo_id": "lightx2v/Qwen-Image-2512-Lightning",
-            "local_path": "models/Lora/Qwen/Qwen-Image-2512-Lightning-4steps-V1.0-bf16",
+            "local_path": "models/Lora/Qwen/Qwen-Image-2512-Lightning-4steps-V1.0-bf16-v4-bf16",
             "source": "modelscope",
             "source_type": "full",
             "allow_patterns": [
@@ -6122,7 +6658,7 @@
             "size": "810MB",
             "default": true,
             "repo_id": "lightx2v/Qwen-Image-Edit-2511-Lightning",
-            "local_path": "models/Lora/Qwen/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16",
+            "local_path": "models/Lora/Qwen/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16-v4-bf16",
             "source": "modelscope",
             "source_type": "full",
             "allow_patterns": [
@@ -6137,7 +6673,7 @@
             "size": "810MB",
             "default": false,
             "repo_id": "lightx2v/Qwen-Image-Edit-2511-Lightning",
-            "local_path": "models/Lora/Qwen/Qwen-Image-Edit-2511-Lightning-8steps-V1.0-bf16",
+            "local_path": "models/Lora/Qwen/Qwen-Image-Edit-2511-Lightning-8steps-V1.0-bf16-v8-bf16",
             "source": "modelscope",
             "source_type": "full",
             "allow_patterns": [
@@ -6285,8 +6821,8 @@
         "versions": {
           "mlx-q4": {
             "name": {
-              "zh": "MLX Q4",
-              "en": "MLX Q4"
+              "zh": "4-bit 量化版",
+              "en": "4-bit Quantized"
             },
             "size": "63GB",
             "default": true,
@@ -6321,8 +6857,8 @@
           },
           "mlx-q8": {
             "name": {
-              "zh": "MLX Q8",
-              "en": "MLX Q8"
+              "zh": "8-bit 量化版",
+              "en": "8-bit Quantized"
             },
             "size": "89GB",
             "default": false,
@@ -6357,8 +6893,8 @@
           },
           "mlx-bf16": {
             "name": {
-              "zh": "MLX BF16",
-              "en": "MLX BF16"
+              "zh": "BF16 完整版",
+              "en": "BF16 Full"
             },
             "size": "138GB",
             "default": false,
@@ -6523,8 +7059,8 @@
         "versions": {
           "mlx-q4": {
             "name": {
-              "zh": "MLX Q4",
-              "en": "MLX Q4"
+              "zh": "4-bit 量化版",
+              "en": "4-bit Quantized"
             },
             "size": "63GB",
             "default": true,
@@ -6559,8 +7095,8 @@
           },
           "mlx-q8": {
             "name": {
-              "zh": "MLX Q8",
-              "en": "MLX Q8"
+              "zh": "8-bit 量化版",
+              "en": "8-bit Quantized"
             },
             "size": "89GB",
             "default": false,
@@ -6595,8 +7131,8 @@
           },
           "mlx-bf16": {
             "name": {
-              "zh": "MLX BF16",
-              "en": "MLX BF16"
+              "zh": "BF16 完整版",
+              "en": "BF16 Full"
             },
             "size": "138GB",
             "default": false,
@@ -6723,13 +7259,13 @@
         "versions": {
           "bf16": {
             "name": {
-              "zh": "BF16",
-              "en": "BF16"
+              "zh": "BF16 完整版",
+              "en": "BF16 Full"
             },
             "size": "20GB",
             "default": true,
             "repo_id": "lightx2v/Hy1.5-Distill-Models",
-            "local_path": "models/Video/hunyuan-video-1.5-t2v-distill",
+            "local_path": "models/Video/hunyuan-video-1.5-t2v-distill-bf16",
             "source": "modelscope",
             "source_type": "full",
             "hunyuan_distill_variant": "t2v_480p",
@@ -6739,7 +7275,7 @@
             "bundle_repos": [
               {
                 "repo_id": "lightx2v/Hy1.5-Distill-Models",
-                "local_path": "models/Video/hunyuan-video-1.5-t2v-distill",
+                "local_path": "models/Video/hunyuan-video-1.5-t2v-distill-bf16",
                 "name": {
                   "zh": "Hy1.5 Distill DiT",
                   "en": "Hy1.5 Distill DiT"
@@ -6759,7 +7295,7 @@
                   "transformer/480p_t2v/config.json",
                   "vae/**"
                 ],
-                "local_path": "models/Video/hunyuan-video-1.5-t2v-distill"
+                "local_path": "models/Video/hunyuan-video-1.5-t2v-distill-bf16"
               },
               {
                 "repo_id": "Qwen/Qwen2.5-VL-7B-Instruct",
@@ -6832,13 +7368,13 @@
         "versions": {
           "bf16": {
             "name": {
-              "zh": "BF16",
-              "en": "BF16"
+              "zh": "BF16 完整版",
+              "en": "BF16 Full"
             },
             "size": "36GB",
             "default": true,
             "repo_id": "Tencent-Hunyuan/HunyuanVideo-1.5",
-            "local_path": "models/Video/hunyuan-video-1.5-1080p-sr",
+            "local_path": "models/Video/hunyuan-video-1.5-1080p-sr-bf16",
             "source": "modelscope",
             "source_type": "partial",
             "hunyuan_ms_variant": "1080p_sr_distilled",
@@ -6849,7 +7385,7 @@
             "bundle_repos": [
               {
                 "repo_id": "Tencent-Hunyuan/HunyuanVideo-1.5",
-                "local_path": "models/Video/hunyuan-video-1.5-1080p-sr",
+                "local_path": "models/Video/hunyuan-video-1.5-1080p-sr-bf16",
                 "name": "HunyuanVideo-1.5",
                 "size": "36GB",
                 "source": "modelscope",
@@ -6983,13 +7519,13 @@
         "versions": {
           "bf16": {
             "name": {
-              "zh": "BF16",
-              "en": "BF16"
+              "zh": "BF16 完整版",
+              "en": "BF16 Full"
             },
             "size": "37GB",
             "default": true,
             "repo_id": "Tencent-Hunyuan/HunyuanVideo-1.5",
-            "local_path": "models/Video/hunyuan-video-1.5-i2v-720p",
+            "local_path": "models/Video/hunyuan-video-1.5-i2v-720p-bf16",
             "source": "modelscope",
             "source_type": "partial",
             "hunyuan_ms_variant": "720p_i2v",
@@ -7000,7 +7536,7 @@
             "bundle_repos": [
               {
                 "repo_id": "Tencent-Hunyuan/HunyuanVideo-1.5",
-                "local_path": "models/Video/hunyuan-video-1.5-i2v-720p",
+                "local_path": "models/Video/hunyuan-video-1.5-i2v-720p-bf16",
                 "name": "HunyuanVideo-1.5",
                 "size": "36GB",
                 "source": "modelscope",
@@ -7011,7 +7547,7 @@
               },
               {
                 "repo_id": "black-forest-labs/FLUX.1-Redux-dev",
-                "local_path": "models/Video/hunyuan-video-1.5-i2v-720p",
+                "local_path": "models/Video/hunyuan-video-1.5-i2v-720p-bf16",
                 "name": "SigLIP (FLUX Redux)",
                 "size": "817MB",
                 "source": "modelscope",
@@ -7139,13 +7675,13 @@
         "versions": {
           "bf16": {
             "name": {
-              "zh": "BF16",
-              "en": "BF16"
+              "zh": "BF16 完整版",
+              "en": "BF16 Full"
             },
             "size": "37GB",
             "default": true,
             "repo_id": "Tencent-Hunyuan/HunyuanVideo-1.5",
-            "local_path": "models/Video/hunyuan-video-1.5-i2v-720p-distill",
+            "local_path": "models/Video/hunyuan-video-1.5-i2v-720p-distill-bf16",
             "source": "modelscope",
             "source_type": "partial",
             "hunyuan_ms_variant": "720p_i2v_distilled_sparse",
@@ -7156,7 +7692,7 @@
             "bundle_repos": [
               {
                 "repo_id": "Tencent-Hunyuan/HunyuanVideo-1.5",
-                "local_path": "models/Video/hunyuan-video-1.5-i2v-720p-distill",
+                "local_path": "models/Video/hunyuan-video-1.5-i2v-720p-distill-bf16",
                 "name": "HunyuanVideo-1.5",
                 "size": "36GB",
                 "source": "modelscope",
@@ -7167,7 +7703,7 @@
               },
               {
                 "repo_id": "black-forest-labs/FLUX.1-Redux-dev",
-                "local_path": "models/Video/hunyuan-video-1.5-i2v-720p-distill",
+                "local_path": "models/Video/hunyuan-video-1.5-i2v-720p-distill-bf16",
                 "name": "SigLIP (FLUX Redux)",
                 "size": "817MB",
                 "source": "modelscope",
@@ -7309,8 +7845,8 @@
         "versions": {
           "fp16": {
             "name": {
-              "zh": "FP16",
-              "en": "FP16"
+              "zh": "FP16 完整版",
+              "en": "FP16 Full"
             },
             "size": "118GB",
             "default": true,
@@ -7343,8 +7879,8 @@
           },
           "int8": {
             "name": {
-              "zh": "INT8",
-              "en": "INT8"
+              "zh": "INT8 量化版",
+              "en": "INT8 Quantized"
             },
             "size": "64GB",
             "default": false,
@@ -7359,8 +7895,8 @@
           },
           "int4": {
             "name": {
-              "zh": "INT4",
-              "en": "INT4"
+              "zh": "INT4 量化版",
+              "en": "INT4 Quantized"
             },
             "size": "38GB",
             "default": false,
@@ -7508,8 +8044,8 @@
         "versions": {
           "fp16": {
             "name": {
-              "zh": "FP16",
-              "en": "FP16"
+              "zh": "FP16 完整版",
+              "en": "FP16 Full"
             },
             "size": "118GB",
             "default": true,
@@ -7542,8 +8078,8 @@
           },
           "int8": {
             "name": {
-              "zh": "INT8",
-              "en": "INT8"
+              "zh": "INT8 量化版",
+              "en": "INT8 Quantized"
             },
             "size": "64GB",
             "default": false,
@@ -7558,8 +8094,8 @@
           },
           "int4": {
             "name": {
-              "zh": "INT4",
-              "en": "INT4"
+              "zh": "INT4 量化版",
+              "en": "INT4 Quantized"
             },
             "size": "38GB",
             "default": false,
@@ -7670,7 +8206,7 @@
         "versions": {
           "fp8": {
             "name": {
-              "zh": "FP8",
+              "zh": "FP8 版",
               "en": "FP8"
             },
             "size": "11GB",
@@ -7816,13 +8352,13 @@
         "versions": {
           "bf16": {
             "name": {
-              "zh": "BF16",
-              "en": "BF16"
+              "zh": "BF16 完整版",
+              "en": "BF16 Full"
             },
             "size": "118GB",
             "default": true,
             "repo_id": "lightx2v/Wan2.2-Distill-Models",
-            "local_path": "models/Video/wan-2.2-i2v-14b-distill",
+            "local_path": "models/Video/wan-2.2-i2v-14b-distill-bf16",
             "source": "modelscope",
             "source_type": "full",
             "wan_distill_variant": "i2v_720p",
@@ -7833,7 +8369,7 @@
             "bundle_repos": [
               {
                 "repo_id": "lightx2v/Wan2.2-Distill-Models",
-                "local_path": "models/Video/wan-2.2-i2v-14b-distill",
+                "local_path": "models/Video/wan-2.2-i2v-14b-distill-bf16",
                 "name": {
                   "zh": "Wan I2V Distill DiT",
                   "en": "Wan I2V Distill DiT"
@@ -7859,7 +8395,7 @@
                   "google/**",
                   "configuration.json"
                 ],
-                "local_path": "models/Video/wan-2.2-i2v-14b-distill"
+                "local_path": "models/Video/wan-2.2-i2v-14b-distill-bf16"
               }
             ]
           }
@@ -7958,13 +8494,13 @@
         "versions": {
           "fp16": {
             "name": {
-              "zh": "FP16",
-              "en": "FP16"
+              "zh": "FP16 完整版",
+              "en": "FP16 Full"
             },
             "size": "64GB",
             "default": true,
             "repo_id": "TurboDiffusion/TurboWan2.2-I2V-A14B-720P",
-            "local_path": "models/Video/wan-2.2-i2v-14b-turbo",
+            "local_path": "models/Video/wan-2.2-i2v-14b-turbo-fp16",
             "source": "huggingface",
             "source_type": "full",
             "wan_distill_variant": "turbo_i2v_720p",
@@ -7975,7 +8511,7 @@
             "bundle_repos": [
               {
                 "repo_id": "TurboDiffusion/TurboWan2.2-I2V-A14B-720P",
-                "local_path": "models/Video/wan-2.2-i2v-14b-turbo",
+                "local_path": "models/Video/wan-2.2-i2v-14b-turbo-fp16",
                 "name": {
                   "zh": "Turbo I2V DiT",
                   "en": "Turbo I2V DiT"
@@ -8001,14 +8537,14 @@
                   "google/**",
                   "configuration.json"
                 ],
-                "local_path": "models/Video/wan-2.2-i2v-14b-turbo"
+                "local_path": "models/Video/wan-2.2-i2v-14b-turbo-fp16"
               }
             ]
           },
           "int8": {
             "name": {
-              "zh": "INT8",
-              "en": "INT8"
+              "zh": "INT8 量化版",
+              "en": "INT8 Quantized"
             },
             "size": "38GB",
             "default": false,
@@ -8143,13 +8679,13 @@
         "versions": {
           "fp16": {
             "name": {
-              "zh": "FP16",
-              "en": "FP16"
+              "zh": "FP16 完整版",
+              "en": "FP16 Full"
             },
             "size": "14GB",
             "default": true,
             "repo_id": "TurboDiffusion/TurboWan2.1-T2V-1.3B-480P",
-            "local_path": "models/Video/wan-2.2-t2v-1.3b-turbo",
+            "local_path": "models/Video/wan-2.2-t2v-1.3b-turbo-fp16",
             "source": "huggingface",
             "source_type": "full",
             "wan_distill_variant": "turbo_t2v_480p_1.3b",
@@ -8159,7 +8695,7 @@
             "bundle_repos": [
               {
                 "repo_id": "TurboDiffusion/TurboWan2.1-T2V-1.3B-480P",
-                "local_path": "models/Video/wan-2.2-t2v-1.3b-turbo",
+                "local_path": "models/Video/wan-2.2-t2v-1.3b-turbo-fp16",
                 "name": {
                   "zh": "Turbo T2V 1.3B DiT",
                   "en": "Turbo T2V 1.3B DiT"
@@ -8184,7 +8720,7 @@
                   "google/**",
                   "configuration.json"
                 ],
-                "local_path": "models/Video/wan-2.2-t2v-1.3b-turbo"
+                "local_path": "models/Video/wan-2.2-t2v-1.3b-turbo-fp16"
               }
             ]
           }
@@ -8298,8 +8834,8 @@
         "versions": {
           "fp16": {
             "name": {
-              "zh": "FP16",
-              "en": "FP16"
+              "zh": "FP16 完整版",
+              "en": "FP16 Full"
             },
             "size": "118GB",
             "default": true,
@@ -8320,8 +8856,8 @@
           },
           "mlx-bf16": {
             "name": {
-              "zh": "MLX BF16",
-              "en": "MLX BF16"
+              "zh": "BF16 完整版",
+              "en": "BF16 Full"
             },
             "size": "64GB",
             "default": false,
@@ -8333,8 +8869,8 @@
           },
           "mlx-q4": {
             "name": {
-              "zh": "MLX Q4",
-              "en": "MLX Q4"
+              "zh": "4-bit 量化版",
+              "en": "4-bit Quantized"
             },
             "size": "27GB",
             "min_unified_memory_gb": 32,
@@ -8455,8 +8991,8 @@
         "versions": {
           "fp16": {
             "name": {
-              "zh": "FP16",
-              "en": "FP16"
+              "zh": "FP16 完整版",
+              "en": "FP16 Full"
             },
             "size": "27GB",
             "default": true,
@@ -8476,8 +9012,8 @@
           },
           "mlx-bf16": {
             "name": {
-              "zh": "MLX BF16",
-              "en": "MLX BF16"
+              "zh": "BF16 完整版",
+              "en": "BF16 Full"
             },
             "size": "14GB",
             "default": false,
@@ -8489,8 +9025,8 @@
           },
           "mlx-q4": {
             "name": {
-              "zh": "MLX Q4",
-              "en": "MLX Q4"
+              "zh": "4-bit 量化版",
+              "en": "4-bit Quantized"
             },
             "size": "12GB",
             "min_unified_memory_gb": 16,
@@ -8614,8 +9150,8 @@
         "versions": {
           "mlx-bf16": {
             "name": {
-              "zh": "MLX BF16",
-              "en": "MLX BF16"
+              "zh": "BF16 完整版",
+              "en": "BF16 Full"
             },
             "size": "43GB",
             "min_unified_memory_gb": 64,
@@ -8634,8 +9170,8 @@
           },
           "mlx-q8": {
             "name": {
-              "zh": "MLX Q8",
-              "en": "MLX Q8"
+              "zh": "8-bit 量化版",
+              "en": "8-bit Quantized"
             },
             "size": "31GB",
             "min_unified_memory_gb": 48,
@@ -8659,8 +9195,8 @@
           },
           "mlx-q4": {
             "name": {
-              "zh": "MLX Q4",
-              "en": "MLX Q4"
+              "zh": "4-bit 量化版",
+              "en": "4-bit Quantized"
             },
             "size": "25GB",
             "min_unified_memory_gb": 32,
@@ -8777,15 +9313,15 @@
         "versions": {
           "mlx-bf16-dmd": {
             "name": {
-              "zh": "MLX BF16 DMD",
-              "en": "MLX BF16 DMD"
+              "zh": "BF16 完整版 (DMD)",
+              "en": "BF16 Full (DMD)"
             },
             "size": "43GB",
             "min_unified_memory_gb": 64,
             "default": true,
             "source": "huggingface",
             "repo_id": "mlx-community/LongCat-Video-Avatar-1.5-bf16-dmd-merged",
-            "local_path": "models/Video/longcat-avatar-1.5-bf16-dmd",
+            "local_path": "models/Video/longcat-avatar-1.5-mlx-bf16-dmd",
             "source_type": "prequantized",
             "allow_patterns": [
               "dit/**",
@@ -8797,15 +9333,15 @@
           },
           "mlx-q8-dmd": {
             "name": {
-              "zh": "MLX Q8 DMD",
-              "en": "MLX Q8 DMD"
+              "zh": "8-bit 量化版 (DMD)",
+              "en": "8-bit Quantized (DMD)"
             },
             "size": "30GB",
             "min_unified_memory_gb": 32,
             "default": false,
             "source": "huggingface",
             "repo_id": "mlx-community/LongCat-Video-Avatar-1.5-q8-dmd-merged",
-            "local_path": "models/Video/longcat-avatar-1.5-q8-dmd",
+            "local_path": "models/Video/longcat-avatar-1.5-mlx-q8-dmd",
             "source_type": "prequantized",
             "quantization": {
               "bits": 8,
@@ -8822,15 +9358,15 @@
           },
           "mlx-q4-dmd": {
             "name": {
-              "zh": "MLX Q4 DMD",
-              "en": "MLX Q4 DMD"
+              "zh": "4-bit 量化版 (DMD)",
+              "en": "4-bit Quantized (DMD)"
             },
             "size": "23GB",
             "min_unified_memory_gb": 24,
             "default": false,
             "source": "huggingface",
             "repo_id": "mlx-community/LongCat-Video-Avatar-1.5-q4-dmd-merged",
-            "local_path": "models/Video/longcat-avatar-1.5-q4-dmd",
+            "local_path": "models/Video/longcat-avatar-1.5-mlx-q4-dmd",
             "source_type": "prequantized",
             "quantization": {
               "bits": 4,
@@ -8959,8 +9495,8 @@
         "versions": {
           "fp16": {
             "name": {
-              "zh": "FP16",
-              "en": "FP16"
+              "zh": "FP16 完整版",
+              "en": "FP16 Full"
             },
             "size": "32GB",
             "default": true,
@@ -8970,8 +9506,8 @@
           },
           "int8": {
             "name": {
-              "zh": "INT8",
-              "en": "INT8"
+              "zh": "INT8 量化版",
+              "en": "INT8 Quantized"
             },
             "size": "23GB",
             "default": false,
@@ -8986,8 +9522,8 @@
           },
           "int4": {
             "name": {
-              "zh": "INT4",
-              "en": "INT4"
+              "zh": "INT4 量化版",
+              "en": "INT4 Quantized"
             },
             "size": "18GB",
             "min_unified_memory_gb": 5,
@@ -9122,8 +9658,8 @@
           },
           "int8": {
             "name": {
-              "zh": "INT8",
-              "en": "INT8"
+              "zh": "INT8 量化版",
+              "en": "INT8 Quantized"
             },
             "size": "23GB",
             "default": false,
@@ -9138,8 +9674,8 @@
           },
           "int4": {
             "name": {
-              "zh": "INT4",
-              "en": "INT4"
+              "zh": "INT4 量化版",
+              "en": "INT4 Quantized"
             },
             "size": "21GB",
             "default": false,
@@ -9154,8 +9690,8 @@
           },
           "mlx-q4": {
             "name": {
-              "zh": "MLX Q4",
-              "en": "MLX Q4"
+              "zh": "4-bit 量化版",
+              "en": "4-bit Quantized"
             },
             "size": "4.9GB",
             "default": false,
@@ -9392,19 +9928,19 @@
         "versions": {
           "fp16": {
             "name": {
-              "zh": "FP16",
-              "en": "FP16"
+              "zh": "FP16 完整版",
+              "en": "FP16 Full"
             },
             "size": "4.7GB",
             "default": true,
             "source": "modelscope",
             "repo_id": "ASLP-lab/DiffRhythm2",
-            "local_path": "models/Audio/diffrhythm-v2",
+            "local_path": "models/Audio/diffrhythm-v2-fp16",
             "source_type": "full",
             "bundle_repos": [
               {
                 "repo_id": "ASLP-lab/DiffRhythm2",
-                "local_path": "models/Audio/diffrhythm-v2",
+                "local_path": "models/Audio/diffrhythm-v2-fp16",
                 "name": "DiffRhythm2",
                 "size": "4.7GB",
                 "source": "modelscope",
@@ -9418,7 +9954,7 @@
               },
               {
                 "repo_id": "ASLP-lab/DiffRhythm2",
-                "local_path": "models/Audio/diffrhythm-v2",
+                "local_path": "models/Audio/diffrhythm-v2-fp16",
                 "name": "DiffRhythm2 G2P",
                 "size": "0B",
                 "source": "modelscope",
@@ -9430,8 +9966,8 @@
           },
           "int8": {
             "name": {
-              "zh": "INT8",
-              "en": "INT8"
+              "zh": "INT8 量化版",
+              "en": "INT8 Quantized"
             },
             "size": "2.6GB",
             "default": false,
@@ -9447,8 +9983,8 @@
           },
           "int4": {
             "name": {
-              "zh": "INT4",
-              "en": "INT4"
+              "zh": "INT4 量化版",
+              "en": "INT4 Quantized"
             },
             "size": "1.5GB",
             "default": false,
@@ -10043,13 +10579,13 @@
         "versions": {
           "fp16": {
             "name": {
-              "zh": "FP16",
-              "en": "FP16"
+              "zh": "FP16 完整版",
+              "en": "FP16 Full"
             },
             "size": "38GB",
             "default": true,
             "repo_id": "TurboDiffusion/TurboWan2.1-T2V-14B-720P",
-            "local_path": "models/Video/wan-2.2-t2v-14b-turbo-720p",
+            "local_path": "models/Video/wan-2.2-t2v-14b-turbo-720p-fp16",
             "source": "huggingface",
             "source_type": "full",
             "wan_distill_variant": "turbo_t2v_720p_14b",
@@ -10059,7 +10595,7 @@
             "bundle_repos": [
               {
                 "repo_id": "TurboDiffusion/TurboWan2.1-T2V-14B-720P",
-                "local_path": "models/Video/wan-2.2-t2v-14b-turbo-720p",
+                "local_path": "models/Video/wan-2.2-t2v-14b-turbo-720p-fp16",
                 "name": {
                   "zh": "Turbo T2V 720p DiT",
                   "en": "Turbo T2V 720p DiT"
@@ -10084,7 +10620,7 @@
                   "google/**",
                   "configuration.json"
                 ],
-                "local_path": "models/Video/wan-2.2-t2v-14b-turbo-720p"
+                "local_path": "models/Video/wan-2.2-t2v-14b-turbo-720p-fp16"
               }
             ]
           }
@@ -10177,13 +10713,13 @@
         "versions": {
           "fp16": {
             "name": {
-              "zh": "FP16",
-              "en": "FP16"
+              "zh": "FP16 完整版",
+              "en": "FP16 Full"
             },
             "size": "38GB",
             "default": true,
             "repo_id": "TurboDiffusion/TurboWan2.1-T2V-14B-480P",
-            "local_path": "models/Video/wan-2.2-t2v-14b-turbo-480p",
+            "local_path": "models/Video/wan-2.2-t2v-14b-turbo-480p-fp16",
             "source": "huggingface",
             "source_type": "full",
             "wan_distill_variant": "turbo_t2v_480p_14b",
@@ -10193,7 +10729,7 @@
             "bundle_repos": [
               {
                 "repo_id": "TurboDiffusion/TurboWan2.1-T2V-14B-480P",
-                "local_path": "models/Video/wan-2.2-t2v-14b-turbo-480p",
+                "local_path": "models/Video/wan-2.2-t2v-14b-turbo-480p-fp16",
                 "name": {
                   "zh": "Turbo T2V 480p DiT",
                   "en": "Turbo T2V 480p DiT"
@@ -10218,7 +10754,7 @@
                   "google/**",
                   "configuration.json"
                 ],
-                "local_path": "models/Video/wan-2.2-t2v-14b-turbo-480p"
+                "local_path": "models/Video/wan-2.2-t2v-14b-turbo-480p-fp16"
               }
             ]
           }

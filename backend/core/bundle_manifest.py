@@ -138,6 +138,10 @@ FAMILY_BUNDLE_CONTRACTS: dict[str, FamilyBundleContract] = {
         required=frozenset({"transformer", "tokenizer"}),
         optional=frozenset(),
     ),
+    "boogu_image": FamilyBundleContract(
+        required=frozenset({"transformer", "vae"}),
+        optional=frozenset({"text_encoder", "scheduler", "tokenizer"}),
+    ),
 }
 
 
@@ -162,6 +166,28 @@ def _rel_path(bundle_root: Path, path: Path) -> str:
         return str(path)
 
 
+def missing_safetensor_shards(
+    bundle_root: Path,
+    *,
+    index_name: str = "model.safetensors.index.json",
+) -> list[str]:
+    """Return shard filenames listed in the safetensors index but absent on disk."""
+    if not bundle_root.is_dir():
+        return []
+    index_path = bundle_root / index_name
+    if not index_path.is_file():
+        return []
+    try:
+        index = json.loads(index_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    weight_map = index.get("weight_map")
+    if not isinstance(weight_map, dict) or not weight_map:
+        return []
+    expected = sorted({str(name) for name in weight_map.values() if str(name).strip()})
+    return [name for name in expected if not (bundle_root / name).is_file()]
+
+
 def scan_components(bundle_root: Path) -> dict[str, list[str]]:
     """Scan bundle directory and classify files by component (convention-based)."""
     if not bundle_root.is_dir():
@@ -172,6 +198,7 @@ def scan_components(bundle_root: Path) -> dict[str, list[str]]:
         "text_encoder": [],
         "vae": [],
         "tokenizer": [],
+        "scheduler": [],
         "image_encoder": [],
         "audio_encoder": [],
     }
@@ -188,6 +215,21 @@ def scan_components(bundle_root: Path) -> dict[str, list[str]]:
 
         suffix_lower = path.suffix.lower()
         weight_suffixes = (".safetensors", ".bin", ".json", ".pth")
+
+        if rel_lower.startswith("mllm/") or "/mllm/" in f"/{rel_lower}/":
+            if suffix_lower in weight_suffixes:
+                components["text_encoder"].append(_rel_path(bundle_root, path))
+            continue
+
+        if rel_lower.startswith("processor/") or "/processor/" in f"/{rel_lower}/":
+            if suffix_lower in weight_suffixes:
+                components["tokenizer"].append(_rel_path(bundle_root, path))
+            continue
+
+        if rel_lower.startswith("scheduler/") or "/scheduler/" in f"/{rel_lower}/":
+            if suffix_lower in weight_suffixes:
+                components["scheduler"].append(_rel_path(bundle_root, path))
+            continue
 
         # Wan / ModelScope flat bundles: models_t5*.pth + Wan2.2_VAE.pth at bundle root.
         if suffix_lower == ".pth":
@@ -277,6 +319,7 @@ def build_manifest_payload(
         missing = missing_required_components(components, contract)
 
     safetensors_count = sum(1 for p in bundle_root.rglob("*.safetensors"))
+    missing_shards = missing_safetensor_shards(bundle_root)
     payload: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "model_id": model_id,
@@ -288,10 +331,12 @@ def build_manifest_payload(
             "safetensors_count": safetensors_count,
             "weight_format": "safetensors" if safetensors_count else "unknown",
         },
-        "status": "complete" if not missing else "incomplete",
+        "status": "complete" if not missing and not missing_shards else "incomplete",
     }
     if missing:
         payload["missing_components"] = missing
+    if missing_shards:
+        payload["missing_shards"] = missing_shards
     return payload
 
 
@@ -338,11 +383,19 @@ def assert_bundle_ready_for_family(
     contract = require_family_bundle_contract(family)
     components = scan_components(bundle_root)
     missing = missing_required_components(components, contract)
+    missing_shards = missing_safetensor_shards(bundle_root)
 
     if missing:
         raise RuntimeError(
             f"Model {model_id!r} (family={family}): bundle at {bundle_root} is missing "
             f"required components: {missing}. Re-download or repair the model bundle."
+        )
+    if missing_shards:
+        preview = ", ".join(missing_shards[:3])
+        suffix = f" (+{len(missing_shards) - 3} more)" if len(missing_shards) > 3 else ""
+        raise RuntimeError(
+            f"Model {model_id!r} (family={family}): bundle at {bundle_root} is missing "
+            f"weight shard(s): {preview}{suffix}. Re-download or repair the model bundle."
         )
 
 
@@ -362,11 +415,13 @@ def bundle_component_status(
     components = scan_components(bundle_root)
 
     missing = missing_required_components(components, contract)
+    missing_shards = missing_safetensor_shards(bundle_root)
     tracked = sorted(contract.required | contract.optional)
     present = sorted(name for name in tracked if components.get(name))
     return {
-        "complete": not missing,
+        "complete": not missing and not missing_shards,
         "missing": missing,
+        "missing_shards": missing_shards,
         "present": present,
         "components": {name: bool(components.get(name)) for name in tracked},
     }

@@ -4063,6 +4063,42 @@ class BundleManifestTests(unittest.TestCase):
             self.assertIn("transformer", components)
             assert_bundle_ready_for_family(root, family="esrgan", model_id="real-esrgan-x4plus")
 
+    def test_assert_bundle_ready_boogu_image_layouts(self) -> None:
+        from backend.core.bundle_manifest import assert_bundle_ready_for_family, scan_components
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for sub in ("transformer", "vae", "scheduler", "mllm", "processor"):
+                (root / sub).mkdir(parents=True)
+            (root / "transformer" / "diffusion_pytorch_model.safetensors").write_bytes(b"x")
+            (root / "vae" / "diffusion_pytorch_model.safetensors").write_bytes(b"y")
+            (root / "scheduler" / "scheduler_config.json").write_text("{}", encoding="utf-8")
+            (root / "mllm" / "model.safetensors").write_bytes(b"z")
+            (root / "processor" / "preprocessor_config.json").write_text("{}", encoding="utf-8")
+
+            components = scan_components(root)
+            self.assertIn("transformer", components)
+            self.assertIn("vae", components)
+            self.assertIn("text_encoder", components)
+            self.assertIn("scheduler", components)
+            self.assertIn("tokenizer", components)
+            assert_bundle_ready_for_family(root, family="boogu_image", model_id="boogu-image-edit")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for sub in ("transformer", "vae", "scheduler"):
+                (root / sub).mkdir(parents=True)
+            (root / "transformer" / "transformer_int4.safetensors").write_bytes(b"x")
+            (root / "vae" / "diffusion_pytorch_model.safetensors").write_bytes(b"y")
+            (root / "scheduler" / "scheduler_config.json").write_text("{}", encoding="utf-8")
+
+            components = scan_components(root)
+            self.assertIn("transformer", components)
+            self.assertIn("vae", components)
+            self.assertIn("scheduler", components)
+            self.assertNotIn("text_encoder", components)
+            assert_bundle_ready_for_family(root, family="boogu_image", model_id="boogu-image-turbo")
+
     def test_assert_bundle_ready_qwen3_llm_flat_layout(self) -> None:
         from backend.core.bundle_manifest import assert_bundle_ready_for_family, scan_components
 
@@ -4075,6 +4111,36 @@ class BundleManifestTests(unittest.TestCase):
             self.assertIn("transformer", components)
             self.assertIn("tokenizer", components)
             assert_bundle_ready_for_family(root, family="qwen3", model_id="qwen3.5-4b")
+
+    def test_assert_bundle_ready_qwen3_rejects_missing_shards(self) -> None:
+        import json
+
+        from backend.core.bundle_manifest import assert_bundle_ready_for_family, missing_safetensor_shards
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "tokenizer.json").write_text("{}", encoding="utf-8")
+            (root / "model-00002-of-00003.safetensors").write_bytes(b"x" * 128)
+            (root / "model.safetensors.index.json").write_text(
+                json.dumps(
+                    {
+                        "weight_map": {
+                            "model.layers.0.weight": "model-00001-of-00003.safetensors",
+                            "model.layers.1.weight": "model-00002-of-00003.safetensors",
+                            "model.layers.2.weight": "model-00003-of-00003.safetensors",
+                        }
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            missing = missing_safetensor_shards(root)
+            self.assertEqual(
+                missing,
+                ["model-00001-of-00003.safetensors", "model-00003-of-00003.safetensors"],
+            )
+            with self.assertRaisesRegex(RuntimeError, "missing weight shard"):
+                assert_bundle_ready_for_family(root, family="qwen3", model_id="qwen3.6-27b")
 
     def test_scan_components_longcat_nested_layout(self) -> None:
         from backend.core.bundle_manifest import assert_bundle_ready_for_family, scan_components

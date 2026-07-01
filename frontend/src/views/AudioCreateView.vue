@@ -9,6 +9,7 @@
       <StudioGalleryFilters
         :filter-time="filterTime"
         :filter-models="filterModels"
+        :search-text="searchText"
         :time-options="timeOptions"
         :model-options="allModelOptions"
         :selection-mode="selectionMode"
@@ -20,6 +21,7 @@
         :composer-busy="activeAudioTasks.length > 0"
         @update:filter-time="filterTime = $event"
         @update:filter-models="filterModels = $event"
+        @update:search-text="searchText = $event"
         @refresh="refreshGallery"
         @toggle-selection-mode="toggleSelectionMode"
         @select-all="selectAllLoaded"

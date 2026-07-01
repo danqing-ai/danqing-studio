@@ -42,6 +42,7 @@ _TRANSFORMER = {
     "cogview4": ("backend.engine.families.cogview4.transformer", "CogView4Transformer"),
     "hidream_o1": ("backend.engine.families.hidream_o1.transformer", "HiDreamO1Transformer"),
     "step1x_edit": ("backend.engine.families.step1x_edit.transformer", "Step1XEditTransformer"),
+    "boogu_image": ("backend.engine.families.boogu.transformer", "BooguImageTransformer"),
 }
 
 # encoder_type → (模块路径, 类名)
@@ -537,11 +538,13 @@ _VIDEO_GENERATION_FACTORY = {
 _IMAGE_GENERATION_FACTORY = {
     "hidream_o1": ("backend.engine.families.hidream_o1.generation", "create_hidream_o1_generator"),
     "step1x_edit": ("backend.engine.families.step1x_edit.generation", "create_step1x_edit_generator"),
+    "boogu_image": ("backend.engine.families.boogu.generation", "create_boogu_image_generator"),
 }
 
 _IMAGE_GENERATION_VALIDATE = {
     "hidream_o1": ("backend.engine.families.hidream_o1.generation", "validate_image_generation_params"),
     "step1x_edit": ("backend.engine.families.step1x_edit.generation", "validate_image_generation_params"),
+    "boogu_image": ("backend.engine.families.boogu.generation", "validate_image_generation_params"),
 }
 
 _VIDEO_AVATAR_FACTORY = {

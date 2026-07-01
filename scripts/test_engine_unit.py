@@ -19,6 +19,7 @@ _ENGINE_TEST_MODULES = (
     "tests.long_video_chapter_analyze_integration",
     "tests.long_video_activity_unit",
     "tests.long_video_t2i_provenance_unit",
+    "tests.llm_model_resolve_unit",
 )
 
 

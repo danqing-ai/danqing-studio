@@ -1123,8 +1123,7 @@ def _shots_from_segments(
                 "characters_on_screen": chars,
                 "clip_start_state": start_visual or seg.first_frame_requirement,
                 "clip_end_state": graph.get("action_summary", "")[:120],
-                "first_frame_requirement": (seg.first_frame_requirement or "").strip()
-                or (start_visual[:120] if start_visual else ""),
+                "first_frame_requirement": (seg.first_frame_requirement or "").strip(),
                 "camera_zone_id": seg.camera_zone_id,
                 "first_frame_strategy": _first_frame_strategy_for_segment(seg),
             }

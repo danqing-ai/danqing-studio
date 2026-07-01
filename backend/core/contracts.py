@@ -475,6 +475,7 @@ class LongVideoChapterAnalyzeRequest(BaseModel):
     segment_duration_sec: float = 5.0
     max_clip_sec: float = 10.0
     long_video_project_id: str = ""
+    model: str = ""
 
 
 class LongVideoChapterParsePhaseDTO(BaseModel):

@@ -131,7 +131,7 @@ class VersionKeyTests(unittest.TestCase):
         )
 
     def test_canonical_local_path_legacy_only(self) -> None:
-        from backend.core.version_keys import canonical_local_path
+        from backend.core.version_keys import canonical_local_path, canonical_primary_local_path
 
         self.assertEqual(
             canonical_local_path("models/Image/flux2-klein-4b-mlx-community-4bit", "mlx-q4"),
@@ -144,6 +144,46 @@ class VersionKeyTests(unittest.TestCase):
         self.assertEqual(
             canonical_local_path("models/Video/longcat-video-mlx-q4", "mlx-q4"),
             "models/Video/longcat-video-mlx-q4",
+        )
+        self.assertEqual(
+            canonical_primary_local_path("models/Video/hunyuan-video-1.5-t2v-distill", "bf16"),
+            "models/Video/hunyuan-video-1.5-t2v-distill-bf16",
+        )
+        self.assertEqual(
+            canonical_primary_local_path("models/Video/longcat-avatar-1.5-bf16-dmd", "mlx-bf16-dmd"),
+            "models/Video/longcat-avatar-1.5-mlx-bf16-dmd",
+        )
+        self.assertEqual(
+            canonical_primary_local_path("models/Text/qwen2.5-vl-7b-instruct", "bf16"),
+            "models/Text/qwen2.5-vl-7b-instruct",
+        )
+
+    def test_expected_version_display_name(self) -> None:
+        from backend.core.version_labels import expected_version_display_name
+
+        self.assertEqual(
+            expected_version_display_name("int4", {"source_type": "derived"}),
+            {"zh": "INT4 量化版", "en": "INT4 Quantized"},
+        )
+        self.assertEqual(
+            expected_version_display_name("mlx-q4", {"source_type": "prequantized"}),
+            {"zh": "4-bit 量化版", "en": "4-bit Quantized"},
+        )
+        self.assertEqual(
+            expected_version_display_name("fp16", {"source_type": "full"}),
+            {"zh": "FP16 完整版", "en": "FP16 Full"},
+        )
+        self.assertEqual(
+            expected_version_display_name("fp8", {"source_type": "full"}),
+            {"zh": "FP8 版", "en": "FP8"},
+        )
+        self.assertEqual(
+            expected_version_display_name("bf16", {"source_type": "full"}),
+            {"zh": "BF16 完整版", "en": "BF16 Full"},
+        )
+        self.assertEqual(
+            expected_version_display_name("mlx-bf16", {"source_type": "full"}),
+            {"zh": "BF16 完整版", "en": "BF16 Full"},
         )
 
     def test_is_quantized_registry_version(self) -> None:

@@ -199,19 +199,7 @@ def build_shot_t2i_provenance_summary(shot: Any) -> dict[str, Any]:
         else:
             narrative_merged = True
 
-    narrative_part = ""
-    if narrative_merged:
-        narrative_part = (
-            scene_narrative[:_SCENE_NARRATIVE_MERGE_MAX_CHARS].strip()
-            if len(scene_narrative) > _SCENE_NARRATIVE_MERGE_MAX_CHARS
-            else scene_narrative
-        )
-
-    req_text, ffr_total, ffr_merged = merge_uncovered_requirement_clauses(
-        visual,
-        requirement,
-        [narrative_part] if narrative_part else None,
-    )
+    ffr_skip_reason = "empty_ffr" if not requirement.strip() else "inspector_only"
 
     return {
         "id": _shot_field(shot, "id"),
@@ -223,14 +211,12 @@ def build_shot_t2i_provenance_summary(shot: Any) -> dict[str, Any]:
         "narrative_skip_reason": narrative_skip_reason,
         "narrative_token_coverage": narrative_token_coverage,
         "location_merge": location_merge,
-        "first_frame_requirement_merged": ffr_merged > 0,
-        "ffr_clauses_total": ffr_total,
-        "ffr_clauses_merged": ffr_merged,
+        "first_frame_requirement_merged": False,
+        "ffr_skip_reason": ffr_skip_reason,
         "composed_scene_preview": _preview_text(
             _compose_scene_preview(
                 visual=visual,
                 scene_narrative=scene_narrative,
-                requirement=req_text,
                 segment_role=segment_role,
                 shot_size=shot_size,
             )
@@ -249,7 +235,6 @@ def _compose_scene_preview(
     *,
     visual: str,
     scene_narrative: str,
-    requirement: str,
     segment_role: str,
     shot_size: str,
 ) -> str:
@@ -264,9 +249,6 @@ def _compose_scene_preview(
         if len(hint) > _SCENE_NARRATIVE_MERGE_MAX_CHARS:
             hint = f"{hint[:_SCENE_NARRATIVE_MERGE_MAX_CHARS].strip()}…"
         parts.append(hint)
-    if requirement and not text_already_covered(visual, requirement):
-        if not any(text_already_covered(p, requirement) for p in parts):
-            parts.append(requirement)
     if visual:
         parts.append(visual)
     return "；".join(parts)
@@ -279,6 +261,6 @@ def build_shots_summary_with_provenance(shots: list[Any]) -> tuple[list[dict[str
         "narrative_merged_count": sum(1 for r in rows if r.get("narrative_merged")),
         "face_anchor_skip_count": sum(1 for r in rows if r.get("narrative_skip_reason") == "face_anchor"),
         "close_up_skip_count": sum(1 for r in rows if r.get("narrative_skip_reason") == "close_up"),
-        "ffr_merged_count": sum(1 for r in rows if r.get("first_frame_requirement_merged")),
+        "ffr_merged_count": 0,
     }
     return rows, stats

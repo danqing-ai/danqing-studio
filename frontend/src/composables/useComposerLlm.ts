@@ -95,6 +95,7 @@ export function useComposerLlm() {
       segment_duration_sec?: number;
       max_clip_sec?: number;
       long_video_project_id?: string;
+      model?: string;
     },
     opts?: { quietSuccess?: boolean; onProgress?: (phase: string, message: string) => void },
   ): Promise<LongVideoChapterAnalyzeResult | null> {

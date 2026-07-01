@@ -66,6 +66,18 @@ _LEGACY_LOCAL_SUFFIXES: tuple[re.Pattern[str], ...] = (
     re.compile(r"-turbo-quant$"),
 )
 
+# Legacy avatar dirs used bf16/q4/q8 instead of mlx-bf16/mlx-q4/mlx-q8 in the suffix.
+_LEGACY_AVATAR_DIR_NAMES: dict[str, str] = {
+    "longcat-avatar-1.5-bf16-dmd": "longcat-avatar-1.5-mlx-bf16-dmd",
+    "longcat-avatar-1.5-q8-dmd": "longcat-avatar-1.5-mlx-q8-dmd",
+    "longcat-avatar-1.5-q4-dmd": "longcat-avatar-1.5-mlx-q4-dmd",
+}
+
+_SHARED_LOCAL_PATH_PREFIXES: tuple[str, ...] = (
+    "models/Text/",
+    "models/LLM/qwen3-vl-8b-instruct",
+)
+
 
 def local_path_dir_stem(local_path: str) -> str:
     """Basename of *local_path* with legacy MLX quant directory suffix removed."""
@@ -105,6 +117,37 @@ def is_canonical_local_path(local_path: str, version_key: str) -> bool:
         return True
     p = Path(local_path)
     return p.name == f"{local_path_dir_stem(local_path)}-{version_key}"
+
+
+def is_shared_bundle_local_path(local_path: str) -> bool:
+    """True for cross-model text/LLM dependency install roots (no version suffix)."""
+    normalized = str(local_path or "").replace("\\", "/")
+    return any(normalized.startswith(prefix) for prefix in _SHARED_LOCAL_PATH_PREFIXES)
+
+
+def canonical_primary_local_path(local_path: str, version_key: str) -> str:
+    """Rewrite primary install dir to ``{stem}-{version_key}`` when needed."""
+    text = str(local_path or "").strip()
+    if not text or not version_key:
+        return text.replace("\\", "/")
+
+    legacy = canonical_local_path(text, version_key)
+    if legacy != text.replace("\\", "/"):
+        return legacy
+
+    p = Path(text)
+    normalized = text.replace("\\", "/")
+    vk = str(version_key).strip()
+    name = p.name
+
+    if name in _LEGACY_AVATAR_DIR_NAMES:
+        return str(p.with_name(_LEGACY_AVATAR_DIR_NAMES[name])).replace("\\", "/")
+    if name.endswith(f"-{vk}"):
+        return normalized
+    if is_shared_bundle_local_path(text):
+        return normalized
+
+    return str(p.with_name(f"{name}-{vk}")).replace("\\", "/")
 
 
 def is_forbidden_vague_version_key(version_key: str | None) -> bool:

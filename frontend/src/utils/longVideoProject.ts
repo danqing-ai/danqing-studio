@@ -683,6 +683,7 @@ function normalizeSceneLine(rawScene: string, locale: 'zh' | 'en'): string {
   if (!s) return s;
   const shotLabel = locale === 'zh' ? '【本帧】' : '[Shot] ';
   if (s.startsWith('【本帧】') || /^\[Shot\]/i.test(s)) return s;
+  if (/^【(?:特写|近景|远景|全景|中景|大特写)/.test(s)) return s;
   return `${shotLabel}${s}`;
 }
 
@@ -1050,7 +1051,7 @@ export type KeyframePromptContext = {
   castMatchText?: string;
   /** Beat narrative / scene_prompt — soft location & story context for T2I. */
   sceneNarrative?: string;
-  /** Hard first-frame constraint from parse (shown separately in inspector). */
+  /** Hard first-frame constraint from parse — inspector / strategy only, not T2I scene merge. */
   firstFrameRequirement?: string;
   segmentRole?: LongVideoShotState['segment_role'];
   shotSize?: string;
@@ -1089,9 +1090,23 @@ function provenancePreview(text: string, max = 72): string {
 
 const PROMPT_TOKEN_RE = /[\u4e00-\u9fff]{2,}|[A-Za-z]{3,}/g;
 
+/** Fold framing labels and near-duplicate wording before token overlap checks. */
+export function normalizePromptForComparison(text: string): string {
+  return text
+    .replace(/【[^】]*】/g, ' ')
+    .replace(/\[[^\]]*\]/g, ' ')
+    .replace(/映照脸庞/g, '映照')
+    .replace(/脸部特写/g, '面部特写')
+    .replace(/脸部/g, '面部')
+    .replace(/脸庞/g, '面部')
+    .replace(/[·•]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function promptTokenSet(text: string): Set<string> {
   const out = new Set<string>();
-  for (const m of (text || '').matchAll(PROMPT_TOKEN_RE)) {
+  for (const m of normalizePromptForComparison(text).matchAll(PROMPT_TOKEN_RE)) {
     const t = m[0];
     if (t.length < 2) continue;
     out.add(/^[A-Za-z]/.test(t) ? t.toLowerCase() : t);
@@ -1110,8 +1125,8 @@ export function promptTokenCoverage(haystack: string, needle: string): number {
 }
 
 function textAlreadyCovered(haystack: string, needle: string): boolean {
-  const h = haystack.trim();
-  const n = needle.trim();
+  const h = normalizePromptForComparison(haystack.trim());
+  const n = normalizePromptForComparison(needle.trim());
   if (!h || !n) return false;
   if (h.includes(n) || n.includes(h)) return true;
   return promptTokenCoverage(h, n) >= 0.72;
@@ -1124,17 +1139,16 @@ function narrativeAddsContext(visual: string, narrative: string): boolean {
   return promptTokenCoverage(v, n) < NARRATIVE_MERGE_COVERAGE_THRESHOLD;
 }
 
-/** Merge beat context + first-frame requirement into the editable visual for T2I only. */
+/**
+ * T2I scene line: beat narrative (when sparse) + frame visual only.
+ * first_frame_requirement is inspector/strategy metadata — never merged here.
+ */
 export function composeKeyframeSceneText(
   visualPrompt: string,
-  ctx: Pick<
-    KeyframePromptContext,
-    'sceneNarrative' | 'firstFrameRequirement' | 'segmentRole' | 'shotSize'
-  >,
+  ctx: Pick<KeyframePromptContext, 'sceneNarrative' | 'segmentRole' | 'shotSize'>,
 ): string {
   const visualScene = extractKeyframeShotScene(visualPrompt).trim() || visualPrompt.trim();
   const narrative = (ctx.sceneNarrative ?? '').trim();
-  const requirement = (ctx.firstFrameRequirement ?? '').trim();
   const parts: string[] = [];
   if (
     narrative
@@ -1147,8 +1161,6 @@ export function composeKeyframeSceneText(
         : narrative;
     parts.push(hint);
   }
-  const reqMerge = mergeUncoveredRequirementClauses(visualScene, requirement, parts);
-  if (reqMerge.text) parts.push(reqMerge.text);
   if (visualScene) parts.push(visualScene);
   return parts.filter(Boolean).join('；');
 }
@@ -1181,18 +1193,6 @@ export function buildKeyframeT2iProvenance(
     }
   }
 
-  const narrativePartForCheck = narrative_merged
-    ? (narrative.length > SCENE_NARRATIVE_MERGE_MAX_CHARS
-        ? `${narrative.slice(0, SCENE_NARRATIVE_MERGE_MAX_CHARS).trim()}…`
-        : narrative)
-    : '';
-  const reqMerge = mergeUncoveredRequirementClauses(
-    visualScene,
-    requirement,
-    narrativePartForCheck ? [narrativePartForCheck] : [],
-  );
-  const first_frame_requirement_merged = reqMerge.mergedClauses > 0;
-
   const scene_parts: KeyframeT2iProvenance['scene_parts'] = [];
   if (ctx.locationMerge === 'prepended' && (ctx.beatLocation ?? '').trim()) {
     scene_parts.push({
@@ -1207,21 +1207,21 @@ export function buildKeyframeT2iProvenance(
         : narrative;
     scene_parts.push({ source: 'beat_narrative', text_preview: provenancePreview(mergedNarrative) });
   }
-  if (first_frame_requirement_merged && reqMerge.text) {
-    scene_parts.push({ source: 'first_frame_requirement', text_preview: provenancePreview(reqMerge.text) });
-  }
   if (visualScene) {
     scene_parts.push({ source: 'visual_prompt', text_preview: provenancePreview(visualScene) });
   }
+
+  const ffr_skip_reason: KeyframeT2iProvenance['ffr_skip_reason'] = requirement
+    ? 'inspector_only'
+    : 'empty_ffr';
 
   return {
     narrative_merged,
     narrative_skip_reason,
     narrative_token_coverage,
     location_merge: ctx.locationMerge ?? 'none',
-    first_frame_requirement_merged,
-    ffr_clauses_total: reqMerge.totalClauses,
-    ffr_clauses_merged: reqMerge.mergedClauses,
+    first_frame_requirement_merged: false,
+    ffr_skip_reason,
     scene_parts,
     composed_scene_line: composeKeyframeSceneText(visualPrompt, ctx),
   };
