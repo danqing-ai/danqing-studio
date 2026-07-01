@@ -15,6 +15,7 @@
         :placeholder="$tt('avatar.promptPlaceholder')"
         resize="none"
         class="avatar-composer__prompt"
+        @keydown="onPromptKeydown"
       />
     </div>
 
@@ -253,6 +254,15 @@ const showSeedField = computed(() => paramSchema.value.seed_support !== false);
 
 function patchParams(patch: Record<string, unknown>) {
   emit('update:params', { ...props.params, ...patch });
+}
+
+function onPromptKeydown(e: KeyboardEvent) {
+  if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+    e.preventDefault();
+    if (!props.generating && props.canGenerate) {
+      emit('generate');
+    }
+  }
 }
 </script>
 

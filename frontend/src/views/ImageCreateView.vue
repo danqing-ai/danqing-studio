@@ -160,7 +160,7 @@
 
   <!-- Preview dialog -->
   <GalleryPreviewDialog
-    v-model:visible="previewVisible"
+    v-model:open="previewVisible"
     v-model:index="selectedImageIndex"
     :items="galleryItems"
     media="image"
@@ -277,6 +277,7 @@ import { reconcileVersionPickerSelection } from '@/composables/useModelRegistryF
 import { applyModelVersionFilters } from '@/utils/modelPickerFilters';
 import { pickDefaultVersionKey } from '@/utils/defaultModelSettings';
 import { dismissSuccessorHint, isSuccessorHintDismissed } from '@/utils/modelSuccessor';
+import { ACTIVE_COMPOSER_TASK_STATUSES, splitComposerPromptLines } from '@/utils/composerQueue';
 // Studio components
 import StudioLayout from '@/components/studio/StudioLayout.vue';
 import StudioCanvas from '@/components/studio/StudioCanvas.vue';
@@ -384,15 +385,6 @@ const selectedSize = ref('1024x1024');
 const batchCount = ref(1);
 const generating = ref(false);
 const queueSubmitting = ref(false);
-
-const ACTIVE_IMAGE_TASK_STATUSES = new Set(['queued', 'running', 'pending', 'submitting']);
-
-function splitComposerPromptLines(text: string): string[] {
-  return String(text || '')
-    .split(/\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-}
 const infiniteCanvasRef = ref<InstanceType<typeof InfiniteCanvas> | null>(null);
 const pendingCanvasAssetIds = ref<string[]>([]);
 const imageCanvas = useCanvasStore('image');
@@ -1087,7 +1079,7 @@ const activeImageTasks = computed(() => {
 const composerBusy = computed(() => {
   if (generating.value) return true;
   return activeImageTasks.value.some((t) =>
-    ACTIVE_IMAGE_TASK_STATUSES.has(String(t.status || '')),
+    ACTIVE_COMPOSER_TASK_STATUSES.has(String(t.status || '')),
   );
 });
 

@@ -13,7 +13,7 @@
         view-mode="grid"
         :supports-canvas="false"
         canvas-media="video"
-        :composer-busy="generating || activeVideoTasks.length > 0"
+        :composer-busy="composerBusy"
         :show-model-filter="false"
         :show-search="true"
         :search-placeholder="$tt('avatar.searchPlaceholder')"
@@ -55,7 +55,7 @@
   <StudioComposeFab
     v-if="!composerDrawerOpen"
     media="video"
-    :busy="generating || activeVideoTasks.length > 0"
+    :busy="composerBusy"
     @open="openComposerDrawer()"
   />
 
@@ -84,33 +84,22 @@
       @generate="onGenerate"
       @pick-portrait="openPortraitPicker"
       @remove-portrait="clearPortrait"
-      @pick-audio="triggerAudioPick"
+      @pick-audio="openAudioPicker"
       @remove-audio="clearAudio"
       @model-change="onModelChange"
     />
   </StudioComposerHost>
 
-  <input
-    ref="portraitInputRef"
-    type="file"
-    accept="image/*"
-    class="avatar-create__hidden-input"
-    @change="onPortraitFile"
-  />
-  <input
-    ref="audioInputRef"
-    type="file"
-    accept="audio/*,.mp3,.wav,.m4a,.aac,.flac,.ogg"
-    class="avatar-create__hidden-input"
-    @change="onAudioFile"
-  />
-
   <DqDialog v-model:open="portraitPickerOpen" :title="$tt('avatar.pickPortrait')" width="min(560px, 92vw)">
     <AssetPicker accept-kind="image" @pick="onPortraitPicked" />
   </DqDialog>
 
+  <DqDialog v-model:open="audioPickerOpen" :title="$tt('avatar.pickAudio')" width="min(560px, 92vw)">
+    <AssetPicker accept-kind="audio" @pick="onAudioPicked" />
+  </DqDialog>
+
   <GalleryPreviewDialog
-    v-model:visible="videoPreviewVisible"
+    v-model:open="videoPreviewVisible"
     v-model:index="selectedVideoIndex"
     :items="galleryItems"
     media="video"
@@ -119,7 +108,7 @@
 
 <script setup lang="ts">
 // @ts-nocheck — avatar create view
-import { ref, reactive, computed, watch, onMounted, inject, type Ref } from 'vue';
+import { ref, reactive, computed, watch, onMounted, onBeforeUnmount, inject, type Ref } from 'vue';
 import { toast } from '@/utils/feedback';
 import { api, taskIdFromSubmitResponse } from '@/utils/api';
 import { $tt, $mvn } from '@/utils/i18n';
@@ -130,6 +119,7 @@ import { applyModelVersionFilters } from '@/utils/modelPickerFilters';
 import { warnIfRiskyMemory } from '@/composables/memoryHint';
 import { useStudioGallery } from '@/composables/useStudioGallery';
 import { useComposerDrawer } from '@/composables/useComposerDrawer';
+import { ACTIVE_COMPOSER_TASK_STATUSES } from '@/utils/composerQueue';
 import type { GalleryItem, SystemInfo, Task } from '@/types';
 import StudioLayout from '@/components/studio/StudioLayout.vue';
 import StudioCanvas from '@/components/studio/StudioCanvas.vue';
@@ -159,8 +149,7 @@ function isVideoModel(config: Record<string, unknown> | null | undefined) {
 
 const generating = ref(false);
 const portraitPickerOpen = ref(false);
-const portraitInputRef = ref<HTMLInputElement | null>(null);
-const audioInputRef = ref<HTMLInputElement | null>(null);
+const audioPickerOpen = ref(false);
 const portraitAssetId = ref('');
 const portraitPreviewUrl = ref('');
 const portraitLabel = ref('');
@@ -187,7 +176,11 @@ const params = reactive({
   negative_prompt: '',
 });
 
-const { composerDrawerOpen, openComposerDrawer } = useComposerDrawer();
+const {
+  composerDrawerOpen,
+  openComposerDrawer,
+  closeComposerDrawer,
+} = useComposerDrawer('avatar');
 
 const {
   galleryItems,
@@ -313,6 +306,13 @@ const activeVideoTasks = computed(() => {
   });
 });
 
+const composerBusy = computed(() => {
+  if (generating.value) return true;
+  return activeVideoTasks.value.some((t) =>
+    ACTIVE_COMPOSER_TASK_STATUSES.has(String(t.status || '')),
+  );
+});
+
 function onGallerySelect(item: GalleryItem) {
   const idx = galleryItems.value.findIndex((it) => it.path === item.path);
   selectedVideoIndex.value = idx >= 0 ? idx : 0;
@@ -405,29 +405,17 @@ function clearPortrait() {
   portraitFile.value = null;
 }
 
-function triggerAudioPick() {
-  audioInputRef.value?.click();
+function openAudioPicker() {
+  audioPickerOpen.value = true;
 }
 
-async function onPortraitFile(ev: Event) {
-  const input = ev.target as HTMLInputElement;
-  const file = input.files?.[0];
-  input.value = '';
-  if (!file) return;
-  portraitFile.value = file;
-  portraitAssetId.value = '';
-  portraitLabel.value = file.name;
-  portraitPreviewUrl.value = URL.createObjectURL(file);
-}
-
-async function onAudioFile(ev: Event) {
-  const input = ev.target as HTMLInputElement;
-  const file = input.files?.[0];
-  input.value = '';
-  if (!file) return;
-  audioFile.value = file;
-  audioAssetId.value = '';
-  audioLabel.value = file.name;
+function onAudioPicked(payload: { path?: string; previewUrl?: string }) {
+  audioPickerOpen.value = false;
+  const path = String(payload?.path || '');
+  if (!path.startsWith('asset:')) return;
+  audioAssetId.value = path.slice('asset:'.length);
+  audioLabel.value = path;
+  audioFile.value = null;
 }
 
 function clearAudio() {
@@ -446,7 +434,7 @@ async function resolveAssetId(existingId: string, file: File | null): Promise<st
 async function runGenerationTask(submitRes: unknown) {
   const tid = taskIdFromSubmitResponse(submitRes);
   if (!tid) {
-    throw new Error('missing task id in submit response');
+    throw new Error($tt('studio.missingTaskId'));
   }
   tasksStore.clearTaskLogs(tid);
   tasksStore.appendTaskLog(tid, $tt('studio.startingGen'), 'info');
@@ -563,6 +551,7 @@ async function loadModelRegistry() {
 
 onMounted(async () => {
   tasksStore.ensureQueuePoller();
+  window.addEventListener('keydown', onCreatePageKeydown);
   try {
     await loadModelRegistry();
   } catch (e) {
@@ -570,10 +559,32 @@ onMounted(async () => {
   }
   loadGallery(true);
 });
+
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onCreatePageKeydown);
+});
+
+function onCreatePageKeydown(e: KeyboardEvent) {
+  const target = e.target as HTMLElement | null;
+  if (
+    target &&
+    (target.tagName === 'INPUT' ||
+      target.tagName === 'TEXTAREA' ||
+      target.isContentEditable)
+  ) {
+    return;
+  }
+  if (e.key === 'Escape' && composerDrawerOpen.value) {
+    e.preventDefault();
+    closeComposerDrawer();
+    return;
+  }
+  if (e.key.toLowerCase() === 'c' && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    e.preventDefault();
+    openComposerDrawer();
+  }
+}
 </script>
 
 <style scoped>
-.avatar-create__hidden-input {
-  display: none;
-}
 </style>

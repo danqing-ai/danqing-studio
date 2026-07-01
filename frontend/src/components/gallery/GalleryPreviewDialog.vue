@@ -136,20 +136,20 @@ import CreateVideoPlayer from '@/components/create/CreateVideoPlayer.vue';
 import GalleryAudioDetail from '@/components/gallery/GalleryAudioDetail.vue';
 
 const props = defineProps<{
-  visible: boolean;
+  open: boolean;
   items: GalleryItem[];
   index: number;
   media: 'image' | 'video' | 'audio';
 }>();
 
 const emit = defineEmits<{
-  (e: 'update:visible', value: boolean): void;
+  (e: 'update:open', value: boolean): void;
   (e: 'update:index', value: number): void;
 }>();
 
 const dialogVisible = computed({
-  get: () => props.visible,
-  set: (val) => emit('update:visible', val),
+  get: () => props.open,
+  set: (val) => emit('update:open', val),
 });
 
 const containerRef = ref<HTMLElement | null>(null);

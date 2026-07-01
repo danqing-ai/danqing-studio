@@ -53,18 +53,21 @@ function notifyGlobalError(title: string, message: string) {
 // Global error handlers
 app.config.errorHandler = (err) => {
   console.error('Vue error:', err);
-  notifyGlobalError('Error', String((err as Error)?.message || err).substring(0, 200));
+  notifyGlobalError(
+    $tt('studio.globalErrorTitle'),
+    String((err as Error)?.message || err).substring(0, 200),
+  );
 };
 
 window.onerror = function (msg, _source, _line, _col, error) {
   const message = (error && error.message) || String(msg);
   if (message.indexOf('ResizeObserver loop') !== -1) return true;
-  notifyGlobalError('JS Error', String(message).substring(0, 200));
+  notifyGlobalError($tt('studio.jsErrorTitle'), String(message).substring(0, 200));
   return false;
 };
 
 window.addEventListener('unhandledrejection', function (event) {
   const reason =
     (event.reason && event.reason.message) || event.reason || 'Unknown Promise error';
-  notifyGlobalError('Unhandled Promise', String(reason).substring(0, 200));
+  notifyGlobalError($tt('studio.unhandledPromiseTitle'), String(reason).substring(0, 200));
 });

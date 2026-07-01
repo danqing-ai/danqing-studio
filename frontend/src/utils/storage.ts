@@ -56,6 +56,7 @@ export const DQ_STORAGE = Object.freeze({
   COMPOSER_DRAWER_IMAGE: 'dq-studio.composerDrawer.image.v4',
   COMPOSER_DRAWER_VIDEO: 'dq-studio.composerDrawer.video.v4',
   COMPOSER_DRAWER_AUDIO: 'dq-studio.composerDrawer.audio.v4',
+  COMPOSER_DRAWER_AVATAR: 'dq-studio.composerDrawer.avatar.v4',
   CANVAS_WORKSPACE_HINT: 'dq-studio.canvas.workspaceHint.v4',
   CANVAS_REGION_GUIDES: 'dq-studio.canvas.regionGuides.v4',
   LORA_TRAIN_DRAFT: 'dq-studio.lora-train-draft.v4',

@@ -18,7 +18,7 @@
         :view-mode="viewMode"
         :supports-canvas="true"
         canvas-media="video"
-        :composer-busy="activeVideoTasks.length > 0"
+        :composer-busy="composerBusy"
         @update:filter-time="filterTime = $event"
         @update:filter-models="filterModels = $event"
         @update:search-text="searchText = $event"
@@ -86,7 +86,7 @@
   <StudioComposeFab
     v-if="!composerDrawerOpen"
     media="video"
-    :busy="activeVideoTasks.length > 0"
+    :busy="composerBusy"
     @open="openComposerDrawer()"
   />
 
@@ -102,8 +102,10 @@
         v-model:size="selectedSize"
         v-model:duration="selectedDurationSec"
         v-model:batch-count="batchCount"
+        :composer-busy="composerBusy"
+        :submitting="queueSubmitting"
         :generating="generating"
-        :can-generate="!submitDisabled"
+        :can-generate="canGenerate"
         :generate-label="primaryCtaLabel"
         :model-options="videoModelSelectOptions"
         :size-options="sizeOptions"
@@ -127,7 +129,7 @@
         :model-not-ready="selectedModelNotReady"
         :model-not-ready-name="currentModelDisplayName"
         :work-mode-options="videoWorkSegmentOptions"
-        @generate="startGeneration"
+        @generate="onComposerSubmit"
         @pick-reference="showAssetPicker = true"
         @remove-reference="removeReference"
         @pick-tail-reference="showTailAssetPicker = true"
@@ -223,7 +225,7 @@
 
   <!-- Video preview dialog -->
   <GalleryPreviewDialog
-    v-model:visible="videoPreviewVisible"
+    v-model:open="videoPreviewVisible"
     v-model:index="selectedVideoIndex"
     :items="galleryItems"
     media="video"
@@ -281,6 +283,8 @@ import { assetIdFromGalleryPath } from '@/utils/copilotHandoff';
 import { DQ_STORAGE, getItem, setItem } from '@/utils/storage';
 import { applyPromptDraft, consumePromptDraft } from '@/utils/promptApply';
 import { usePromptApplyOffer } from '@/composables/usePromptApplyOffer';
+import { ACTIVE_COMPOSER_TASK_STATUSES, splitComposerPromptLines } from '@/utils/composerQueue';
+import { appendStyleBoost } from '@/utils/styleBoost';
 import {
   buildResolutionSizeOptions,
   loadImageNaturalSize,
@@ -399,6 +403,7 @@ const batchCount = ref(1);
 // State
 const currentTask = ref<any>(null);
 const generating = ref(false);
+const queueSubmitting = ref(false);
 const infiniteCanvasRef = ref<InstanceType<typeof InfiniteCanvas> | null>(null);
 const pendingCanvasAssetIds = ref<string[]>([]);
 const videoCanvas = useCanvasStore('video');
@@ -1472,13 +1477,19 @@ const selectedModelNotReady = computed(() => {
   return !versionStatus || !versionStatus.ready;
 });
 
-const submitDisabled = computed(() => {
+const canGenerate = computed(() => {
+  if (selectedModelNotReady.value) return false;
+  if (!String(params.prompt || '').trim()) return false;
+  if (videoWorkMode.value === 'animate' && !hasAnimateReference()) return false;
+  if (videoWorkMode.value === 'edit' && !hasEditReference()) return false;
+  return true;
+});
+
+const composerBusy = computed(() => {
   if (generating.value) return true;
-  if (selectedModelNotReady.value) return true;
-  if (!String(params.prompt || '').trim()) return true;
-  if (videoWorkMode.value === 'animate' && !hasAnimateReference()) return true;
-  if (videoWorkMode.value === 'edit' && !hasEditReference()) return true;
-  return false;
+  return activeVideoTasks.value.some((t) =>
+    ACTIVE_COMPOSER_TASK_STATUSES.has(String(t.status || '')),
+  );
 });
 
 const primaryCtaLabel = computed(() => {
@@ -1815,9 +1826,7 @@ const loadPreset = () => {
     toast.warning($tt('video.presetNeedsEditSource'));
   }
   if (preset.positive) {
-    params.prompt = params.prompt
-      ? params.prompt + '\nStyle boost: ' + preset.positive
-      : preset.positive;
+    params.prompt = appendStyleBoost(params.prompt || '', String(preset.positive));
   }
   if (preset.negative) {
     params.negative_prompt = params.negative_prompt
@@ -1833,7 +1842,7 @@ const loadPreset = () => {
 async function runGenerationTask(submitRes: unknown, modelStr: string) {
   const tid = taskIdFromSubmitResponse(submitRes);
   if (!tid) {
-    throw new Error('missing task id in submit response');
+    throw new Error($tt('studio.missingTaskId'));
   }
   tasksStore.clearTaskLogs(tid);
   tasksStore.appendTaskLog(tid, $tt('studio.startingGen'), 'info');
@@ -1930,7 +1939,53 @@ async function runGenerationTask(submitRes: unknown, modelStr: string) {
   });
 }
 
-const startGeneration = async () => {
+async function queueVideoPromptsToServer() {
+  const lines = splitComposerPromptLines(params.prompt);
+  if (lines.length === 0) {
+    toast.warning($tt('studio.enterPrompt'));
+    return;
+  }
+  if (queueSubmitting.value) return;
+
+  queueSubmitting.value = true;
+  try {
+    for (let i = 0; i < lines.length; i += 1) {
+      params.prompt = lines[i];
+      await startGeneration({ queueOnly: true });
+    }
+    params.prompt = '';
+    toast.success(
+      lines.length > 1
+        ? $tt('create.batchSubmitted', { count: lines.length })
+        : $tt('assistant.taskQueued'),
+    );
+    tasksStore.pollQueueOnce();
+  } catch (e: unknown) {
+    toast.error($tt('studio.error', { msg: e instanceof Error ? e.message : String(e) }));
+  } finally {
+    queueSubmitting.value = false;
+  }
+}
+
+async function onComposerSubmit() {
+  if (!String(params.prompt || '').trim()) {
+    toast.warning($tt('studio.enterPrompt'));
+    return;
+  }
+  if (composerBusy.value) {
+    await queueVideoPromptsToServer();
+    return;
+  }
+  await startGeneration();
+}
+
+type StartGenerationOptions = {
+  queueOnly?: boolean;
+};
+
+const startGeneration = async (options: StartGenerationOptions = {}) => {
+  const queueOnly = options.queueOnly === true;
+  if (!queueOnly && generating.value) return;
   if (!String(params.prompt || '').trim()) {
     toast.warning($tt('studio.enterPrompt'));
     return;
@@ -1973,14 +2028,16 @@ const startGeneration = async () => {
     return;
   }
 
-  generating.value = true;
-  currentTask.value = {
-    id: '',
-    progress: 0,
-    step: 0,
-    total: 0,
-    status: 'submitting',
-  };
+  if (!queueOnly) {
+    generating.value = true;
+    currentTask.value = {
+      id: '',
+      progress: 0,
+      step: 0,
+      total: 0,
+      status: 'submitting',
+    };
+  }
 
   try {
     persistComposerSnapshot();
@@ -2079,10 +2136,22 @@ const startGeneration = async () => {
       }
       submitRes = await api.gen.createVideoGeneration(body);
     }
+    if (queueOnly) {
+      const tid = taskIdFromSubmitResponse(submitRes);
+      if (!tid) {
+        throw new Error($tt('studio.missingTaskId'));
+      }
+      return;
+    }
     await runGenerationTask(submitRes, modelStr);
   } catch (e: any) {
-    generating.value = false;
-    currentTask.value = null;
+    if (!queueOnly) {
+      generating.value = false;
+      currentTask.value = null;
+    }
+    if (queueOnly) {
+      throw e;
+    }
     toast.error($tt('studio.error', { msg: e.message || String(e) }));
   }
 };
@@ -2309,7 +2378,7 @@ function onCreatePageKeydown(e: KeyboardEvent) {
   width: 100%;
   max-height: 220px;
   object-fit: contain;
-  background: #000;
+  background: var(--dq-media-backdrop, #000);
 }
 
 .studio-drawer-submit {

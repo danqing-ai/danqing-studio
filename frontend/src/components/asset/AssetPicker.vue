@@ -65,8 +65,18 @@
           >
             <img v-if="acceptKind === 'image'" :src="row.thumbUrl" alt="" class="asset-picker__library-img" />
             <template v-else>
-              <img :src="row.thumbUrl" alt="" class="asset-picker__library-img" />
-              <span class="asset-picker__library-badge">{{ $t('gallery.filterVideo') }}</span>
+              <img
+                v-if="acceptKind !== 'audio'"
+                :src="row.thumbUrl"
+                alt=""
+                class="asset-picker__library-img"
+              />
+              <div v-else class="asset-picker__library-audio-fallback" aria-hidden="true" />
+              <span class="asset-picker__library-badge">{{
+                acceptKind === 'audio'
+                  ? $t('assetPicker.filterAudio')
+                  : $t('gallery.filterVideo')
+              }}</span>
             </template>
           </button>
         </div>
@@ -95,7 +105,7 @@ import type { AssetRow } from '@/types';
 
 const props = withDefaults(
   defineProps<{
-    acceptKind?: 'image' | 'video' | 'image_or_video';
+    acceptKind?: 'image' | 'video' | 'audio' | 'image_or_video';
     recentGallery?: Array<Record<string, unknown>>;
   }>(),
   {
@@ -117,6 +127,9 @@ const thumbRetryFile = ref<Record<string, boolean>>({});
 
 const acceptAttr = computed(() => {
   if (props.acceptKind === 'video') return 'video/*,.mp4,.webm,.mov,.mkv,.avi';
+  if (props.acceptKind === 'audio') {
+    return 'audio/*,.mp3,.wav,.m4a,.aac,.flac,.ogg,.opus';
+  }
   if (props.acceptKind === 'image_or_video') {
     return 'image/*,video/*,.mp4,.webm,.mov,.mkv,.avi';
   }
@@ -134,6 +147,18 @@ function isVideoAsset(row: AssetRow): boolean {
     ?.toLowerCase();
   if (base && /\.(mp4|mov|webm|mkv|avi)$/.test(base)) return true;
   return false;
+}
+
+function isAudioAsset(row: AssetRow): boolean {
+  const k = String(row.kind || '');
+  const mime = String(row.mime_type || '');
+  if (k === 'audio') return true;
+  if (mime.startsWith('audio/')) return true;
+  const base = String(row.path || '')
+    .split(/[/\\]/)
+    .pop()
+    ?.toLowerCase();
+  return !!base && /\.(wav|mp3|flac|m4a|aac|opus|ogg)$/.test(base);
 }
 
 function isImageAsset(row: AssetRow): boolean {
@@ -155,6 +180,10 @@ const recentFiltered = computed(() => {
     if (props.acceptKind === 'video') {
       if (meta?.asset_kind === 'video') return true;
       return ['mp4', 'mov', 'avi', 'mkv', 'webm'].includes(ext);
+    }
+    if (props.acceptKind === 'audio') {
+      if (meta?.asset_kind === 'audio') return true;
+      return ['wav', 'mp3', 'flac', 'm4a', 'aac', 'opus', 'ogg'].includes(ext);
     }
     if (props.acceptKind === 'image_or_video') {
       if (meta?.asset_kind === 'audio') return false;
@@ -211,9 +240,11 @@ function emitPickFromRecent(item: Record<string, unknown>) {
     toast.warning(
       props.acceptKind === 'video'
         ? $t('assetPicker.needVideo')
-        : props.acceptKind === 'image_or_video'
-          ? $t('assetPicker.needImageOrVideo')
-          : $t('assetPicker.needImage'),
+        : props.acceptKind === 'audio'
+          ? $t('assetPicker.needAudio')
+          : props.acceptKind === 'image_or_video'
+            ? $t('assetPicker.needImageOrVideo')
+            : $t('assetPicker.needImage'),
     );
     return;
   }
@@ -247,6 +278,10 @@ async function onFileChange(ev: Event) {
     toast.warning($t('assetPicker.needVideo'));
     return;
   }
+  if (props.acceptKind === 'audio' && !file.type.startsWith('audio/')) {
+    toast.warning($t('assetPicker.needAudio'));
+    return;
+  }
   if (
     props.acceptKind === 'image_or_video'
     && !file.type.startsWith('image/')
@@ -261,7 +296,9 @@ async function onFileChange(ev: Event) {
     const path = `asset:${data.id}`;
     const previewUrl = file.type.startsWith('video/')
       ? `/api/assets/${data.id}/file`
-      : api.gallery.getImageUrl(path);
+      : file.type.startsWith('audio/')
+        ? `/api/assets/${data.id}/file`
+        : api.gallery.getImageUrl(path);
     emit('pick', { path, previewUrl });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -281,10 +318,11 @@ function mapAssetRow(row: AssetRow) {
   const aid = row.id;
   const path = `asset:${aid}`;
   const video = isVideoAsset(row);
+  const audio = isAudioAsset(row);
   return {
     id: aid,
     thumbUrl: row.thumbnail_url || `/api/assets/${aid}/thumbnail`,
-    previewUrl: video ? `/api/assets/${aid}/file` : api.gallery.getImageUrl(path),
+    previewUrl: video || audio ? `/api/assets/${aid}/file` : api.gallery.getImageUrl(path),
   };
 }
 
@@ -298,7 +336,14 @@ async function fetchLibraryPage(reset: boolean) {
 
   libraryLoading.value = true;
   try {
-    const kind = props.acceptKind === 'image' ? 'image' : props.acceptKind === 'video' ? 'video' : null;
+    const kind =
+      props.acceptKind === 'image'
+        ? 'image'
+        : props.acceptKind === 'video'
+          ? 'video'
+          : props.acceptKind === 'audio'
+            ? 'audio'
+            : null;
     const data = await api.gen.listAssets(kind, LIB_FETCH, libraryApiOffset.value, {
       exclude_upload_refs: false,
     });
@@ -311,7 +356,9 @@ async function fetchLibraryPage(reset: boolean) {
         ? items.filter((r) => isImageAsset(r))
         : props.acceptKind === 'video'
           ? items.filter((r) => isVideoAsset(r))
-          : items.filter((r) => isImageAsset(r) || isVideoAsset(r));
+          : props.acceptKind === 'audio'
+            ? items.filter((r) => isAudioAsset(r))
+            : items.filter((r) => isImageAsset(r) || isVideoAsset(r));
 
     const mapped = filtered.map(mapAssetRow);
     if (reset) libraryRows.value = mapped;
@@ -379,6 +426,12 @@ function selectLibraryRow(row: { id: string; previewUrl: string }) {
   background: var(--bg-secondary, var(--dq-bg-base));
 }
 
+
+.asset-picker__library-audio-fallback {
+  width: 100%;
+  height: 100%;
+  background: color-mix(in srgb, var(--dq-accent) 18%, var(--dq-bg-base));
+}
 
 .asset-picker__library-img {
   width: 100%;

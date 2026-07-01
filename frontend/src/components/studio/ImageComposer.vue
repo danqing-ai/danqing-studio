@@ -252,6 +252,7 @@ import {
 import { assetIdFromGalleryPath } from '@/utils/copilotHandoff';
 import { $tt } from '@/utils/i18n';
 import { formatResolutionOptionLabel } from '@/utils/registryParamSchema';
+import { appendStyleBoost } from '@/utils/styleBoost';
 
 const props = withDefaults(defineProps<{
   modelValue: string;
@@ -428,10 +429,7 @@ function onStyleChange(name: string) {
   const preset = props.styles[name];
   if (preset.positive) {
     lastStylePositive.value = String(preset.positive);
-    const current = localPrompt.value || '';
-    localPrompt.value = current
-      ? current + '\nStyle boost: ' + preset.positive
-      : preset.positive;
+    localPrompt.value = appendStyleBoost(localPrompt.value || '', String(preset.positive));
   }
   if (preset.trigger_words) {
     const tw = String(preset.trigger_words).trim();
