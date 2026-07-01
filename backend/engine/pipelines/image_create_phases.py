@@ -26,6 +26,7 @@ from backend.engine.pipelines.image_run_common import (
     image_model_from_resolved_run,
     image_vae_decode,
     load_image_encoded_model,
+    log_inference_sigma_schedule,
     resolve_image_preview,
     resolve_image_steps_guidance,
     schedule_image_run,
@@ -276,6 +277,7 @@ def build_create_run_context(
         if semantics.cfg_renorm:
             parts.append(f"cfg_renorm=True cfg_renorm_min={semantics.cfg_renorm_min}")
         on_log("info", " ".join(parts))
+        log_inference_sigma_schedule(on_log, sigmas)
 
     _lnd = runtime_contract.denoise_latent_noise_dtype(pipeline.ctx)
     _noise_sample_dtype = runtime_contract.noise_sample_dtype(pipeline.ctx, _lnd)
