@@ -312,11 +312,11 @@
           type="primary"
           size="sm"
           class="studio-composer-toolbar__generate"
-          :disabled="generating || !canGenerate"
+          :disabled="!canGenerate || submitting"
           @click="$emit('generate')"
         >
           <DqIcon :size="14"><MagicStick /></DqIcon>
-          <span>{{ generating ? $tt('create.generating') : generateLabel }}</span>
+          <span>{{ primaryActionLabel }}</span>
         </DqButton>
       </template>
     </ComposerToolbar>
@@ -486,6 +486,7 @@ import {
 import { assetIdFromGalleryPath } from '@/utils/copilotHandoff';
 import { $tt, $pn } from '@/utils/i18n';
 import { formatResolutionOptionLabel } from '@/utils/registryParamSchema';
+import { appendStyleBoost } from '@/utils/styleBoost';
 import { isLongVideoTargetDuration } from '@/utils/videoStoryboardPrompt';
 import {
   findCompatibleLora,
@@ -504,6 +505,8 @@ const props = defineProps<{
   model: string;
   size: string;
   duration: number;
+  composerBusy?: boolean;
+  submitting?: boolean;
   generating: boolean;
   canGenerate: boolean;
   generateLabel: string;
@@ -576,6 +579,12 @@ const emit = defineEmits<{
 }>();
 
 const { t: $t } = useI18n();
+
+const primaryActionLabel = computed(() => {
+  if (props.composerBusy) return $t('create.addToBatch');
+  if (props.generating) return $t('create.generating');
+  return props.generateLabel;
+});
 
 const referenceAssetId = computed(() => {
   if (!props.referenceAssetPath) return null;
@@ -724,10 +733,7 @@ function onStyleChange(name: string) {
   const preset = props.styles[name];
   if (preset.positive) {
     lastStylePositive.value = String(preset.positive);
-    const current = localPrompt.value || '';
-    localPrompt.value = current
-      ? current + '\nStyle boost: ' + preset.positive
-      : preset.positive;
+    localPrompt.value = appendStyleBoost(localPrompt.value || '', String(preset.positive));
   }
   if (preset.negative && props.showNegativePrompt) {
     const current = localParams.value.negative_prompt || '';
@@ -757,7 +763,7 @@ function presetLabel(name: string, preset: Record<string, unknown>): string {
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
     e.preventDefault();
-    if (!props.generating && props.canGenerate) {
+    if (!props.submitting && props.canGenerate) {
       emit('generate');
     }
   }

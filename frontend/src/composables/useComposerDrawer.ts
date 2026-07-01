@@ -1,12 +1,13 @@
 import { ref, watch, type Ref } from 'vue';
 import { DQ_STORAGE, getItem, setItem, type StorageKey } from '@/utils/storage';
 
-export type ComposerDrawerMedia = 'image' | 'video' | 'audio';
+export type ComposerDrawerMedia = 'image' | 'video' | 'audio' | 'avatar';
 
 const STORAGE_KEYS: Record<ComposerDrawerMedia, StorageKey> = {
   image: DQ_STORAGE.COMPOSER_DRAWER_IMAGE,
   video: DQ_STORAGE.COMPOSER_DRAWER_VIDEO,
   audio: DQ_STORAGE.COMPOSER_DRAWER_AUDIO,
+  avatar: DQ_STORAGE.COMPOSER_DRAWER_AVATAR,
 };
 
 export type ComposerDrawerOpenOptions = {

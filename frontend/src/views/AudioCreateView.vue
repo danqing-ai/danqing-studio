@@ -18,7 +18,7 @@
         :view-mode="viewMode"
         :supports-canvas="true"
         canvas-media="audio"
-        :composer-busy="activeAudioTasks.length > 0"
+        :composer-busy="composerBusy"
         @update:filter-time="filterTime = $event"
         @update:filter-models="filterModels = $event"
         @update:search-text="searchText = $event"
@@ -77,7 +77,7 @@
   <StudioComposeFab
     v-if="!composerDrawerOpen"
     media="audio"
-    :busy="activeAudioTasks.length > 0"
+    :busy="composerBusy"
     @open="openComposerDrawer()"
   />
 
@@ -92,8 +92,10 @@
         v-model:model="selectedModelVersion"
         v-model:duration="params.duration"
         v-model:batch-count="params.n"
+        :composer-busy="composerBusy"
+        :submitting="queueSubmitting"
         :generating="generating"
-        :can-generate="audioWorkTab === 'create' ? !submitDisabled : !coverSubmitDisabled"
+        :can-generate="audioWorkTab === 'create' ? canGenerateCreate : canGenerateCover"
         :generate-label="generateLabel"
         :model-options="audioModelSelectOptions"
         :duration-options="durationOptions"
@@ -130,7 +132,7 @@
 
   <!-- Audio preview dialog -->
   <GalleryPreviewDialog
-    v-model:visible="audioPreviewVisible"
+    v-model:open="audioPreviewVisible"
     v-model:index="selectedAudioIndex"
     :items="galleryItems"
     media="audio"
@@ -181,6 +183,7 @@ import {
 } from '@/utils/canvasWorkspaceHint';
 import { previewUrlForGalleryItem } from '@/utils/canvasAssets';
 import { isAudioLyricsRequired, audioLyricsRequiredHintKey, resolveVocalLanguageForSubmit } from '@/utils/audioLyrics';
+import { ACTIVE_COMPOSER_TASK_STATUSES, splitComposerPromptLines } from '@/utils/composerQueue';
 
 const tasksStore = useTasksStore();
 const registryStore = useRegistryStore();
@@ -188,7 +191,7 @@ const router = useRouter();
 const systemInfo = inject<Ref<SystemInfo>>('systemInfo');
 
 // ---- Helpers (migrated from window globals) ----
-const STORAGE_KEY = 'dq-studio.audio-create-prompt-draft.v3';
+const LEGACY_AUDIO_PROMPT_DRAFT_KEY = 'dq-studio.audio-create-prompt-draft.v3';
 
 function parseModelVersion(s: string) {
   const [m, v] = (s || '').split('|');
@@ -231,6 +234,7 @@ const audioWorkSegmentOptions = computed(() => [
 
 // ---- State ----
 const generating = ref(false);
+const queueSubmitting = ref(false);
 const modelsLoading = ref(false);
 const previewPlayerRef = ref(null);
 const previewIsPlaying = ref(false);
@@ -382,11 +386,6 @@ const audioFormats = computed(() => {
 const promptPlaceholder = computed(() => $tt('audio.promptPlaceholder'));
 
 const advancedParamModelConfig = computed(() => currentModelConfig.value);
-const vocalLanguages = [
-  { label: 'English', value: 'en' }, { label: '中文', value: 'zh' }, { label: '日本語', value: 'ja' },
-  { label: '한국어', value: 'ko' }, { label: 'Français', value: 'fr' }, { label: 'Deutsch', value: 'de' },
-  { label: 'Español', value: 'es' }, { label: 'Português', value: 'pt' },
-];
 
 const supportsVocalType = computed(() => {
   return currentModelConfig.value?.parameters?.supports_vocal_type === true;
@@ -478,27 +477,25 @@ const lyricsMissing = computed(() =>
   lyricsRequiredForModel.value && !String(params.lyrics || '').trim(),
 );
 
-const submitDisabled = computed(() => {
-  if (!params.model) return true;
-  if (!modelReady.value) return true;
-  if (!params.prompt.trim()) return true;
-  if (lyricsMissing.value) return true;
-  if (generating.value) return true;
-  return false;
+const canGenerateCreate = computed(() => {
+  if (!params.model) return false;
+  if (!modelReady.value) return false;
+  if (!params.prompt.trim()) return false;
+  if (lyricsMissing.value) return false;
+  return true;
+});
+
+const canGenerateCover = computed(() => {
+  if (!params.model) return false;
+  if (!modelReady.value) return false;
+  if (!supportsCoverAction.value) return false;
+  if (!hasCoverSource()) return false;
+  if (lyricsMissing.value) return false;
+  return true;
 });
 
 const supportsCoverAction = computed(() => {
   return supportsAction(currentModelConfig.value?.actions, 'cover');
-});
-
-const coverSubmitDisabled = computed(() => {
-  if (!params.model) return true;
-  if (!modelReady.value) return true;
-  if (!supportsCoverAction.value) return true;
-  if (!hasCoverSource()) return true;
-  if (lyricsMissing.value) return true;
-  if (generating.value) return true;
-  return false;
 });
 
 // ---- Composer adapters ----
@@ -540,6 +537,14 @@ const coverReferenceMedia = computed(() => {
 });
 
 function onAudioComposerGenerate() {
+  if (composerBusy.value) {
+    if (audioWorkTab.value === 'create') {
+      void queueAudioCreateToServer();
+    } else {
+      void queueAudioCoverToServer();
+    }
+    return;
+  }
   if (audioWorkTab.value === 'create') {
     startGeneration();
   } else {
@@ -714,8 +719,17 @@ function loadPromptDraft() {
       params.prompt = applyPromptDraft(params.prompt, assistantDraft);
       return;
     }
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) params.prompt = raw;
+    const saved = getItem(DQ_STORAGE.AUDIO_CREATE_PROMPT_DRAFT);
+    if (saved) {
+      params.prompt = saved;
+      return;
+    }
+    const legacy = localStorage.getItem(LEGACY_AUDIO_PROMPT_DRAFT_KEY);
+    if (legacy) {
+      params.prompt = legacy;
+      setItem(DQ_STORAGE.AUDIO_CREATE_PROMPT_DRAFT, legacy);
+      localStorage.removeItem(LEGACY_AUDIO_PROMPT_DRAFT_KEY);
+    }
   } catch (e) { /* ignore */ }
 }
 
@@ -728,7 +742,7 @@ function loadAssistantLyricsDraft() {
 
 function savePromptDraft() {
   try {
-    localStorage.setItem(STORAGE_KEY, params.prompt || '');
+    setItem(DQ_STORAGE.AUDIO_CREATE_PROMPT_DRAFT, params.prompt || '');
   } catch (e) { /* ignore */ }
 }
 
@@ -923,12 +937,69 @@ function attachTaskStream(tid: string) {
   });
 }
 
-async function startCoverGeneration() {
-  if (generating.value) return;
-  if (!params.model) { toast.warning('Please select a model'); return; }
-  if (!modelReady.value) { toast.warning('Model is not ready'); return; }
+async function queueAudioCreateToServer() {
+  const lines = splitComposerPromptLines(params.prompt);
+  if (lines.length === 0) {
+    toast.warning($tt('studio.enterPrompt'));
+    return;
+  }
+  if (queueSubmitting.value) return;
+
+  queueSubmitting.value = true;
+  try {
+    for (let i = 0; i < lines.length; i += 1) {
+      params.prompt = lines[i];
+      await startGeneration({ queueOnly: true });
+    }
+    params.prompt = '';
+    toast.success(
+      lines.length > 1
+        ? $tt('create.batchSubmitted', { count: lines.length })
+        : $tt('assistant.taskQueued'),
+    );
+    tasksStore.pollQueueOnce();
+  } catch (e: unknown) {
+    toast.error($tt('studio.error', { msg: e instanceof Error ? e.message : String(e) }));
+  } finally {
+    queueSubmitting.value = false;
+  }
+}
+
+async function queueAudioCoverToServer() {
+  if (queueSubmitting.value) return;
+
+  queueSubmitting.value = true;
+  try {
+    await startCoverGeneration({ queueOnly: true });
+    toast.success($tt('assistant.taskQueued'));
+    tasksStore.pollQueueOnce();
+  } catch (e: unknown) {
+    toast.error($tt('studio.error', { msg: e instanceof Error ? e.message : String(e) }));
+  } finally {
+    queueSubmitting.value = false;
+  }
+}
+
+function audioSubmitErrorMessage(e: unknown, kind: 'create' | 'cover'): string {
+  const err = e as { response?: { data?: { detail?: string } }; message?: string };
+  if (err?.response?.data?.detail) return String(err.response.data.detail);
+  if (err?.message) return String(err.message);
+  return kind === 'cover'
+    ? $tt('studio.error', { msg: $tt('audio.coverFailed') })
+    : $tt('studio.genFailed', { msg: '' });
+}
+
+type AudioGenerationOptions = {
+  queueOnly?: boolean;
+};
+
+async function startCoverGeneration(options: AudioGenerationOptions = {}) {
+  const queueOnly = options.queueOnly === true;
+  if (!queueOnly && generating.value) return;
+  if (!params.model) { toast.warning($tt('studio.pleaseSelectModel')); return; }
+  if (!modelReady.value) { toast.warning($tt('studio.modelNotReadyShort')); return; }
   if (!supportsCoverAction.value) {
-    toast.warning('Selected model does not support cover');
+    toast.warning($tt('audio.coverNotSupported'));
     return;
   }
   if (!hasCoverSource()) {
@@ -940,14 +1011,16 @@ async function startCoverGeneration() {
     return;
   }
 
-  generating.value = true;
-  currentTask.id = '';
-  currentTask.progress = 0;
-  currentTask.step = null;
-  currentTask.total = null;
-  currentTask.status = '';
-  previewLyrics.value = '';
-  previewLyricsDownload.value = '';
+  if (!queueOnly) {
+    generating.value = true;
+    currentTask.id = '';
+    currentTask.progress = 0;
+    currentTask.step = null;
+    currentTask.total = null;
+    currentTask.status = '';
+    previewLyrics.value = '';
+    previewLyricsDownload.value = '';
+  }
 
   try {
     persistComposerSnapshot();
@@ -959,13 +1032,15 @@ async function startCoverGeneration() {
       const up = await api.gen.uploadAsset(coverSourceFile.value);
       source_asset_id = (up as any)?.id;
       if (!source_asset_id) {
-        toast.error($tt('studio.error', { msg: 'upload failed' }));
+        const msg = $tt('studio.uploadFailedGeneric');
+        if (queueOnly) throw new Error(msg);
+        toast.error($tt('studio.error', { msg }));
         generating.value = false;
         return;
       }
     } else {
       toast.warning($tt('audio.coverNeedSource'));
-      generating.value = false;
+      if (!queueOnly) generating.value = false;
       return;
     }
 
@@ -991,23 +1066,28 @@ async function startCoverGeneration() {
     const resp = await api.audios.createEdit(body);
     const tid = taskIdFromSubmitResponse(resp);
     if (!tid) {
-      toast.error($tt('studio.error', { msg: 'missing task id in submit response' }));
+      const msg = $tt('studio.missingTaskId');
+      if (queueOnly) throw new Error(msg);
+      toast.error($tt('studio.error', { msg }));
       generating.value = false;
       return;
     }
+    if (queueOnly) return;
     currentTask.id = tid;
     attachTaskStream(tid);
-  } catch (e: any) {
-    toast.error((e.response && e.response.data && e.response.data.detail) || e.message || 'Cover failed');
+  } catch (e: unknown) {
+    if (queueOnly) throw e;
+    toast.error(audioSubmitErrorMessage(e, 'cover'));
     generating.value = false;
   }
 }
 
-async function startGeneration() {
-  if (generating.value) return;
-  if (!params.model) { toast.warning('Please select a model'); return; }
-  if (!modelReady.value) { toast.warning('Model is not ready'); return; }
-  if (!params.prompt.trim()) { toast.warning('Please enter a prompt'); return; }
+async function startGeneration(options: AudioGenerationOptions = {}) {
+  const queueOnly = options.queueOnly === true;
+  if (!queueOnly && generating.value) return;
+  if (!params.model) { toast.warning($tt('studio.pleaseSelectModel')); return; }
+  if (!modelReady.value) { toast.warning($tt('studio.modelNotReadyShort')); return; }
+  if (!params.prompt.trim()) { toast.warning($tt('studio.enterPrompt')); return; }
   if (lyricsMissing.value) {
     toast.warning($tt(audioLyricsRequiredHintKey(currentModelConfig.value)));
     return;
@@ -1031,14 +1111,16 @@ async function startGeneration() {
     $tt,
   });
 
-  generating.value = true;
-  currentTask.id = '';
-  currentTask.progress = 0;
-  currentTask.step = null;
-  currentTask.total = null;
-  currentTask.status = '';
-  previewLyrics.value = '';
-  previewLyricsDownload.value = '';
+  if (!queueOnly) {
+    generating.value = true;
+    currentTask.id = '';
+    currentTask.progress = 0;
+    currentTask.step = null;
+    currentTask.total = null;
+    currentTask.status = '';
+    previewLyrics.value = '';
+    previewLyricsDownload.value = '';
+  }
 
   try {
     persistComposerSnapshot();
@@ -1053,7 +1135,6 @@ async function startGeneration() {
       negative_prompt: params.negative_prompt || '',
       duration: params.duration ?? null,
       instrumental: !!params.instrumental,
-      // Vocal tracks require lyrics (use AI Generate Lyrics); 5Hz LM only format_sample metadata/codes.
       lyrics: params.lyrics?.trim() || '',
       vocal_language: resolveVocalLanguageForSubmit(
         String(params.lyrics || '').trim(),
@@ -1075,14 +1156,18 @@ async function startGeneration() {
     const resp = await api.audios.createGeneration(body);
     const tid = taskIdFromSubmitResponse(resp);
     if (!tid) {
-      toast.error($tt('studio.error', { msg: 'missing task id in submit response' }));
+      const msg = $tt('studio.missingTaskId');
+      if (queueOnly) throw new Error(msg);
+      toast.error($tt('studio.error', { msg }));
       generating.value = false;
       return;
     }
+    if (queueOnly) return;
     currentTask.id = tid;
     attachTaskStream(tid);
-  } catch (e: any) {
-    toast.error((e.response && e.response.data && e.response.data.detail) || e.message || 'Generation failed');
+  } catch (e: unknown) {
+    if (queueOnly) throw e;
+    toast.error(audioSubmitErrorMessage(e, 'create'));
     generating.value = false;
   }
 }
@@ -1583,6 +1668,13 @@ const activeAudioTasks = computed(() => {
     const live = tasksStore.liveTaskProgress[t.id];
     return live ? { ...t, ...live } : t;
   });
+});
+
+const composerBusy = computed(() => {
+  if (generating.value) return true;
+  return activeAudioTasks.value.some((t) =>
+    ACTIVE_COMPOSER_TASK_STATUSES.has(String(t.status || '')),
+  );
 });
 
 // ---- Gallery preview dialog ----

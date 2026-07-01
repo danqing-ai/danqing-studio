@@ -234,11 +234,11 @@
           type="primary"
           size="sm"
           class="studio-composer-toolbar__generate"
-          :disabled="generating || !canGenerate"
+          :disabled="!canGenerate || submitting"
           @click="$emit('generate')"
         >
           <DqIcon :size="16"><MagicStick /></DqIcon>
-          <span>{{ generating ? $tt('audio.generating') : generateLabel }}</span>
+          <span>{{ primaryActionLabel }}</span>
         </DqButton>
       </template>
     </ComposerToolbar>
@@ -457,6 +457,8 @@ import {
 } from '@danqing/dq-shell';
 import { $tt } from '@/utils/i18n';
 import { isAudioLyricsRequired, audioLyricsRequiredHintKey } from '@/utils/audioLyrics';
+import { useVocalLanguageOptions } from '@/composables/useVocalLanguageOptions';
+import { appendStyleBoost } from '@/utils/styleBoost';
 
 const props = defineProps<{
   modelValue: string;
@@ -465,6 +467,8 @@ const props = defineProps<{
   model: string;
   duration: number;
   batchCount?: number;
+  composerBusy?: boolean;
+  submitting?: boolean;
   generating: boolean;
   canGenerate: boolean;
   generateLabel: string;
@@ -511,6 +515,14 @@ const emit = defineEmits<{
 }>();
 
 const { t: $t } = useI18n();
+
+const primaryActionLabel = computed(() => {
+  if (props.composerBusy) return $t('create.addToBatch');
+  if (props.generating) return $t('audio.generating');
+  return props.generateLabel;
+});
+
+const vocalLanguages = useVocalLanguageOptions();
 
 const advancedOpen = ref(false);
 const lastStylePositive = ref('');
@@ -679,9 +691,7 @@ function onStyleCommand(command: string) {
   if (!preset) return;
   if (preset.positive) {
     lastStylePositive.value = String(preset.positive);
-    localPrompt.value = localPrompt.value
-      ? localPrompt.value + '\nStyle boost: ' + preset.positive
-      : preset.positive;
+    localPrompt.value = appendStyleBoost(localPrompt.value || '', String(preset.positive));
   }
   if (preset.trigger_words) {
     const tw = String(preset.trigger_words).trim();
@@ -749,12 +759,6 @@ const timeSignatures = [
   { label: '4/4', value: '4' }, { label: '6/8', value: '6' },
 ];
 
-const vocalLanguages = [
-  { label: 'English', value: 'en' }, { label: '中文', value: 'zh' }, { label: '日本語', value: 'ja' },
-  { label: '한국어', value: 'ko' }, { label: 'Français', value: 'fr' }, { label: 'Deutsch', value: 'de' },
-  { label: 'Español', value: 'es' }, { label: 'Português', value: 'pt' },
-];
-
 const vocalTypes = computed(() => [
   { label: $tt('audio.vocalTypeMale'), value: 'male' },
   { label: $tt('audio.vocalTypeFemale'), value: 'female' },
@@ -765,7 +769,7 @@ const vocalTypes = computed(() => [
 function onPromptKeydown(e: KeyboardEvent) {
   if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
     e.preventDefault();
-    if (!props.generating && props.canGenerate) {
+    if (!props.submitting && props.canGenerate) {
       emit('generate');
     }
   }

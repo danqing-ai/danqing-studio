@@ -128,6 +128,7 @@ import { useI18n } from 'vue-i18n';
 import { Close, DocumentCopy, MagicStick, Picture, Tools } from '@danqing/dq-shell';
 import ImageComposerAdvancedFields from '@/components/studio/ImageComposerAdvancedFields.vue';
 import type { KeyframeComposeParams } from '@/composables/useLongVideoKeyframeCompose';
+import { appendStyleBoost } from '@/utils/styleBoost';
 
 const props = defineProps<{
   prompt: string;
@@ -190,7 +191,7 @@ function onStyleCommand(name: string) {
   let nextPrompt = props.prompt;
   if (preset.positive) {
     const positive = String(preset.positive);
-    nextPrompt = nextPrompt ? `${nextPrompt}\nStyle boost: ${positive}` : positive;
+    nextPrompt = appendStyleBoost(nextPrompt || '', positive);
   }
   if (preset.trigger_words) {
     const tw = String(preset.trigger_words).trim();
