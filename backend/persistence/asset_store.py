@@ -793,6 +793,7 @@ class SQLiteAssetStore(IAssetStore):
 
     def delete_group(self, group_id: str, *, unlink_assets: bool = False) -> bool:
         """Delete a group. When unlink_assets is True, assets keep their files but lose group_id."""
+        asset_ids: list[str] = []
         with self._lock:
             conn = self._conn()
             if unlink_assets:
@@ -801,15 +802,19 @@ class SQLiteAssetStore(IAssetStore):
                     (group_id,),
                 )
             else:
-                # Delete member assets too
                 rows = conn.execute(
                     "SELECT id FROM assets WHERE group_id = ?", (group_id,)
                 ).fetchall()
-                for r in rows:
-                    self.delete(r["id"])
+                asset_ids = [r["id"] for r in rows]
             cur = conn.execute("DELETE FROM asset_groups WHERE id = ?", (group_id,))
             conn.commit()
-            return cur.rowcount > 0
+            deleted = cur.rowcount > 0
+
+        if not deleted:
+            return False
+        for aid in asset_ids:
+            self.delete(aid)
+        return True
 
     def list_groups(
         self,
