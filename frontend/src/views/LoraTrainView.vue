@@ -1363,6 +1363,16 @@ onMounted(async () => {
   padding: 4px 6px 4px 0;
 }
 
+.lora-train-page .copilot-page__sidebar {
+  width: 252px;
+}
+
+.lora-train-page .dq-download-menu__label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .lora-train-page .copilot-page__sidebar-card :deep(.dq-surface-card__body) {
   gap: 12px;
 }

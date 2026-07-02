@@ -1,31 +1,56 @@
 <template>
   <div class="lora-train-history" :class="`lora-train-history--${variant}`">
     <div v-if="!hideHeader" class="lora-train-history__head">
-      <div class="lora-train-history__head-main">
-        <span class="lora-train-history__title">{{ $t('loraTrain.recentRuns') }}</span>
-        <span v-if="variant === 'page' && runs.length" class="lora-train-history__count">
-          {{ runs.length }}
-        </span>
-      </div>
-      <div class="lora-train-history__head-actions">
+      <template v-if="variant === 'sidebar'">
+        <div class="lora-train-history__head-row">
+          <span class="lora-train-history__title">{{ $t('loraTrain.recentRuns') }}</span>
+          <DqButton
+            v-if="!hideRefresh"
+            size="xs"
+            type="text"
+            :loading="loading"
+            @click="refresh()"
+          >
+            {{ $t('loraTrain.refreshHistory') }}
+          </DqButton>
+        </div>
         <DqButton
           v-if="showModelsLink"
           size="xs"
           type="text"
+          class="lora-train-history__models-link"
           @click="emit('open-models')"
         >
           {{ $t('loraTrain.myLorasShort') }}
         </DqButton>
-        <DqButton
-          v-if="!hideRefresh"
-          size="xs"
-          type="text"
-          :loading="loading"
-          @click="refresh()"
-        >
-          {{ $t('loraTrain.refreshHistory') }}
-        </DqButton>
-      </div>
+      </template>
+      <template v-else>
+        <div class="lora-train-history__head-main">
+          <span class="lora-train-history__title">{{ $t('loraTrain.recentRuns') }}</span>
+          <span v-if="runs.length" class="lora-train-history__count">
+            {{ runs.length }}
+          </span>
+        </div>
+        <div class="lora-train-history__head-actions">
+          <DqButton
+            v-if="showModelsLink"
+            size="xs"
+            type="text"
+            @click="emit('open-models')"
+          >
+            {{ $t('loraTrain.myLorasShort') }}
+          </DqButton>
+          <DqButton
+            v-if="!hideRefresh"
+            size="xs"
+            type="text"
+            :loading="loading"
+            @click="refresh()"
+          >
+            {{ $t('loraTrain.refreshHistory') }}
+          </DqButton>
+        </div>
+      </template>
     </div>
 
     <div v-if="loading && !runs.length" class="lora-train-history__skeleton">
@@ -180,6 +205,25 @@ defineExpose({
   gap: 8px;
 }
 
+.lora-train-history--sidebar .lora-train-history__head {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.lora-train-history__head-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.lora-train-history__models-link {
+  align-self: flex-start;
+  max-width: 100%;
+}
+
 .lora-train-history__head-main {
   display: flex;
   align-items: center;
@@ -200,6 +244,20 @@ defineExpose({
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--dq-label-tertiary);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.lora-train-history--sidebar .lora-train-history__title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lora-train-history--sidebar .lora-train-history__head-row :deep(.dq-btn),
+.lora-train-history--sidebar .lora-train-history__models-link {
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .lora-train-history--page .lora-train-history__title {
@@ -348,11 +406,30 @@ defineExpose({
   gap: 6px;
 }
 
+.lora-train-history--sidebar .lora-train-history__item-top {
+  flex-wrap: nowrap;
+}
+
 .lora-train-history__item-name {
   font-size: var(--dq-font-size-body);
   font-weight: 600;
   color: var(--dq-label-primary);
   word-break: break-word;
+}
+
+.lora-train-history--sidebar .lora-train-history__item-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  word-break: normal;
+}
+
+.lora-train-history--sidebar .lora-train-history__item-top :deep(.dq-tag) {
+  flex-shrink: 0;
+  max-width: 100%;
+  white-space: nowrap;
 }
 
 .lora-train-history--page .lora-train-history__item-name {
@@ -369,6 +446,27 @@ defineExpose({
   gap: 6px;
   font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
+}
+
+.lora-train-history--sidebar .lora-train-history__item-meta {
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.lora-train-history--sidebar .lora-train-history__base,
+.lora-train-history--sidebar .lora-train-history__when {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lora-train-history--sidebar .lora-train-history__base {
+  flex-shrink: 1;
+  min-width: 0;
+}
+
+.lora-train-history--sidebar .lora-train-history__when {
+  flex-shrink: 0;
 }
 
 .lora-train-history__base {
