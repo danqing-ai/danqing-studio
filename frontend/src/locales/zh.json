@@ -292,7 +292,7 @@
     "recentRuns": "最近训练",
     "refreshHistory": "刷新",
     "noRecentRuns": "暂无训练记录",
-    "myLorasShort": "我训练的 LoRA",
+    "myLorasShort": "我的 LoRA",
     "registeredBadge": "已注册",
     "registeredLoras": "已注册 LoRA",
     "trainedLorasIntro": "训练完成并注册后的 LoRA，可直接用于图像生成。训练任务请在 LoRA 训练页查看。",
