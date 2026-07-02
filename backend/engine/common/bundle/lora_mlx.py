@@ -191,12 +191,18 @@ def merge_lora_adapters_common(
         if config_alpha is not None and not any(".alpha" in key.lower() for key in weights):
             groups = _apply_config_alpha(groups, config_alpha=float(config_alpha))
         applied = 0
+        # [diag] merge telemetry for train/inference comparison
+        _group_total = len(groups)
+        _dense_total = len(dense_deltas)
+        _delta_means: list[mx.array] = []
+        _ranks: list[int] = []
         for module_name, delta in dense_deltas.items():
             wkey = param_key_for_module(module_name)
             if wkey not in model._param_map:
                 continue
             param = model._param_map[wkey]
             scaled = float(strength) * delta.astype(mx.float32)
+            _delta_means.append(mx.mean(mx.abs(scaled)))
             param[:] = (param.astype(mx.float32) + scaled).astype(param.dtype)
             applied += 1
         for module_name, (down, up, alpha) in groups.items():
@@ -213,6 +219,8 @@ def merge_lora_adapters_common(
             scale = (float(alpha) / float(rank)) * float(strength)
             delta = mx.matmul(u_orient.astype(mx.float32), d_orient.astype(mx.float32))
             scaled_delta = scale * delta
+            _delta_means.append(mx.mean(mx.abs(scaled_delta)))
+            _ranks.append(int(rank))
             from backend.engine.common.model.quantized_lora import (
                 apply_lora_delta_to_weight,
                 inference_mode_from_model,
@@ -247,8 +255,24 @@ def merge_lora_adapters_common(
             quant_note = ""
             if mode is not None and getattr(mode, "kind", "") == "quantized":
                 quant_note = " requantized_layers=yes"
+            total = _group_total + _dense_total
+            skipped = total - applied
+            rank_note = ""
+            if _ranks:
+                rmin, rmax = min(_ranks), max(_ranks)
+                rank_note = f" rank={rmin}" if rmin == rmax else f" rank={rmin}-{rmax}"
+            delta_note = ""
+            if _delta_means:
+                try:
+                    mean_abs = mx.mean(mx.stack(_delta_means))
+                    ctx.eval(mean_abs)
+                    delta_note = f" mean|Δw|={float(mean_abs.item()):.3e}"
+                except Exception:  # noqa: BLE001 — telemetry must not break merge
+                    delta_note = ""
             on_log(
                 "info",
-                f"lora merged source={mid} strength={strength} tensors={applied}{quant_note}",
+                f"[diag] lora merged source={mid} strength={strength} "
+                f"matched={applied}/{total} skipped={skipped}{rank_note}{delta_note}{quant_note} "
+                "(mean|Δw|≈0 ⇒ LoRA barely affects output; skipped>0 ⇒ key/scope mismatch)",
             )
     ctx.eval(*[t for _, t in model.parameters()])

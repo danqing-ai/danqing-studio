@@ -26,6 +26,7 @@ from backend.engine.pipelines.image_run_common import (
     encode_edit_reference_latent,
     load_edit_source_rgb,
     load_image_encoded_model,
+    log_inference_sigma_schedule,
     packed_edit_latent_dims,
     prepare_edit_rewrite_latents,
     resolve_image_preview,
@@ -337,6 +338,7 @@ def build_image_edit_rewrite_context(
                 f"source_fidelity={fidelity}"
                 + (" edit_conditioning_concat=1" if edit_conditioning_concat else ""),
             )
+            log_inference_sigma_schedule(on_log, sigmas)
 
         latents, extra_cond = model.before_denoise(
             latents,

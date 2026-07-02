@@ -15,6 +15,7 @@ from backend.engine._transformer_registry import _instantiate_image_text_encoder
 from backend.engine.common.codecs.vae import VAEEncoder, infer_latent_channels, prepare_vae_encoder_weight_items
 from backend.engine.config.model_configs import apply_image_registry_config_overrides, get_config_class
 from backend.engine.contracts import local_bundle_root
+from backend.engine.contracts.pipeline_registry import registry_scalar_default
 from backend.engine.families.z_image.weights import remap_zimage_lora_keys
 from backend.engine.pipelines.image_model_load import load_image_transformer
 from backend.engine.training.crop import prepare_training_rgb_image, resolve_training_resolution
@@ -27,12 +28,15 @@ from backend.engine.training.lora_layers import (
 )
 from backend.engine.training.dit_training_loss import (
     CLASS_PRIOR_LATENT_COUNT,
+    _sample_turbo_band_indices,
+    apply_static_sigma_shift,
     combine_instance_prior_loss,
     flow_match_mse,
     merge_prior_cache_tensors,
-    sample_noisy_latent,
+    sample_noisy_latent_shifted,
     sample_noisy_latent_turbo,
     sample_prior_latent,
+    turbo_training_sigmas,
 )
 from backend.engine.training.latent_cache import LatentCache
 from backend.engine.training.lora_train_loop import run_dit_lora_train_loop
@@ -51,6 +55,11 @@ from backend.engine.training.z_image_turbo_adapter import (
 )
 
 _Z_IMAGE_TRAINABLE_IDS = frozenset({"z-image", "z-image-turbo"})
+
+# Z-Image base inference uses FlowMatchEulerScheduler with a static sigma shift (registry
+# ``scheduler_shift``, default 6.0). Training must sample σ from the same shifted distribution
+# or the high-σ structure/identity region stays under-trained and LoRAs fail to memorize faces.
+_Z_IMAGE_BASE_SIGMA_SHIFT = 6.0
 
 
 def _model_id(base_model: str) -> str:
@@ -167,6 +176,7 @@ def _training_loss(
     timestep_high: int = 9,
     timestep_bias: str = "uniform",
     resolution: tuple[int, int] = (512, 512),
+    sigma_shift: float = 1.0,
 ) -> mx.array:
     if turbo:
         x_t, eps, t = sample_noisy_latent_turbo(
@@ -180,7 +190,7 @@ def _training_loss(
             timestep_bias=timestep_bias,
         )
     else:
-        x_t, eps, t = sample_noisy_latent(x0, ctx)
+        x_t, eps, t = sample_noisy_latent_shifted(x0, ctx, sigma_shift=sigma_shift)
     pred = model(x_t, timestep=0, txt_embeds=cap, sigmas=t)
     b = x0.shape[0]
     sigma = mx.reshape(t, (b,) + (1,) * (x0.ndim - 1)).astype(ctx.bfloat16())
@@ -200,7 +210,7 @@ def _training_loss(
             timestep_bias=timestep_bias,
         )
     else:
-        x_tp, epsp, tp = sample_noisy_latent(x0p, ctx)
+        x_tp, epsp, tp = sample_noisy_latent_shifted(x0p, ctx, sigma_shift=sigma_shift)
     predp = model(x_tp, timestep=0, txt_embeds=prior_cap, sigmas=tp)
     sigmap = mx.reshape(tp, (b,) + (1,) * (x0.ndim - 1)).astype(ctx.bfloat16())
     prior = flow_match_mse(predp, x0p, epsp, sigma=sigmap, min_snr_gamma=min_snr_gamma)
@@ -375,6 +385,137 @@ def _generate_progress_image(
     return (arr * 255).astype(np.uint8)
 
 
+def _fmt_floats(values: Any, fmt: str = "%.3f") -> str:
+    import numpy as np
+
+    return "[" + ", ".join(fmt % float(v) for v in np.asarray(values).reshape(-1)) + "]"
+
+
+def _log_training_sigma_distribution(
+    exec_ctx: ExecutionContext,
+    ctx: Any,
+    *,
+    is_turbo: bool,
+    sigma_shift: float,
+    resolution: tuple[int, int],
+    train_runtime: Any,
+) -> None:
+    """Log the σ distribution training actually samples (confirms base shift / turbo band)."""
+    import numpy as np
+
+    n = 4096
+    try:
+        if is_turbo:
+            sigmas = turbo_training_sigmas(
+                ctx,
+                infer_steps=train_runtime.turbo_infer_steps,
+                width=resolution[0],
+                height=resolution[1],
+            )
+            n_s = int(sigmas.shape[0])
+            lo = max(0, min(int(train_runtime.timestep_low) - 1, n_s - 1))
+            hi = max(lo, min(int(train_runtime.timestep_high) - 1, n_s - 1))
+            band = sigmas[lo : hi + 1]
+            idx = _sample_turbo_band_indices(n, int(band.shape[0]), bias=train_runtime.timestep_bias)
+            s = band[idx]
+            mx.eval(band, s)
+            header = (
+                f"turbo band[{train_runtime.timestep_low}-{train_runtime.timestep_high}] "
+                f"bias={train_runtime.timestep_bias} band_σ={_fmt_floats(band)}"
+            )
+        else:
+            u = mx.random.uniform(shape=(n,), dtype=ctx.float32())
+            s = apply_static_sigma_shift(u, sigma_shift)
+            mx.eval(s)
+            header = f"base static shift={sigma_shift:g}"
+    except Exception as e:  # noqa: BLE001 — diagnostics must never break training
+        _log(exec_ctx, "warning", f"[diag] σ distribution probe skipped: {e}")
+        return
+
+    arr = np.asarray(s).reshape(-1).astype(np.float64)
+    pct = np.percentile(arr, [5, 25, 50, 75, 95])
+    frac_lo = float((arr < 0.3).mean())
+    frac_mid = float(((arr >= 0.3) & (arr <= 0.7)).mean())
+    frac_hi = float((arr > 0.7).mean())
+    _log(
+        exec_ctx,
+        "info",
+        f"[diag] train σ dist ({header}): "
+        f"p5/25/50/75/95={_fmt_floats(pct)} "
+        f"frac σ<0.3={frac_lo:.2f} 0.3-0.7={frac_mid:.2f} >0.7={frac_hi:.2f} "
+        "(base identity lives in high σ; skin texture in low σ)",
+    )
+
+
+def _log_noise_level_loss(
+    exec_ctx: ExecutionContext,
+    model: Any,
+    latent_cache: LatentCache,
+    ctx: Any,
+    *,
+    label: str,
+    sample_idx: int = 0,
+) -> None:
+    """Off-graph per-σ reconstruction loss probe (reveals which noise band is under-fit)."""
+    try:
+        x0, cap = latent_cache.sample_z_image(sample_idx)
+    except Exception as e:  # noqa: BLE001
+        _log(exec_ctx, "warning", f"[diag] per-σ loss probe skipped ({label}): {e}")
+        return
+    levels = (0.1, 0.2, 0.3, 0.5, 0.7, 0.9)
+    mx.random.seed(4242)
+    eps = mx.random.normal(x0.shape, dtype=ctx.bfloat16())
+    parts: list[str] = []
+    try:
+        for sv in levels:
+            sig_col = mx.reshape(
+                mx.full((x0.shape[0],), sv, dtype=ctx.float32()),
+                (x0.shape[0],) + (1,) * (x0.ndim - 1),
+            ).astype(ctx.bfloat16())
+            x_t = mx.stop_gradient((1.0 - sig_col) * x0 + sig_col * eps)
+            pred = model(
+                x_t,
+                timestep=0,
+                txt_embeds=cap,
+                sigmas=mx.full((x0.shape[0],), sv, dtype=ctx.float32()),
+            )
+            loss = mx.mean(mx.square(pred + x0 - eps))
+            mx.eval(loss)
+            parts.append(f"σ={sv:.1f}:{float(loss.item()):.3f}")
+    except Exception as e:  # noqa: BLE001
+        _log(exec_ctx, "warning", f"[diag] per-σ loss probe failed ({label}): {e}")
+        return
+    _log(exec_ctx, "info", f"[diag] per-σ recon loss [{label}] sample#{sample_idx}: " + " ".join(parts))
+
+
+def _log_zimage_latent_caption_stats(
+    exec_ctx: ExecutionContext,
+    latent_cache: LatentCache,
+    ctx: Any,
+    *,
+    sample_idx: int = 0,
+) -> None:
+    """Log cached latent + caption statistics (catches VAE scaling / caption issues)."""
+    try:
+        x0, cap = latent_cache.sample_z_image(sample_idx)
+        mx.eval(x0, cap)
+        lat_mean = float(mx.mean(x0.astype(ctx.float32())).item())
+        lat_std = float(mx.mean(mx.square(x0.astype(ctx.float32()) - lat_mean)).item()) ** 0.5
+        lat_min = float(mx.min(x0.astype(ctx.float32())).item())
+        lat_max = float(mx.max(x0.astype(ctx.float32())).item())
+        cap_norm = float(mx.mean(mx.abs(cap.astype(ctx.float32()))).item())
+        _log(
+            exec_ctx,
+            "info",
+            f"[diag] latent#{sample_idx} shape={tuple(x0.shape)} "
+            f"mean={lat_mean:.3f} std={lat_std:.3f} min={lat_min:.3f} max={lat_max:.3f} | "
+            f"cap shape={tuple(cap.shape)} mean|x|={cap_norm:.3f} "
+            "(latent std≈1 expected; near-0 cap ⇒ empty caption/text-encoder issue)",
+        )
+    except Exception as e:  # noqa: BLE001
+        _log(exec_ctx, "warning", f"[diag] latent/caption stats skipped: {e}")
+
+
 def run_z_image_dreambooth_training(
     request: LoraTrainingRequest,
     exec_ctx: ExecutionContext,
@@ -405,6 +546,15 @@ def run_z_image_dreambooth_training(
         raise RuntimeError(
             f"Z-Image training runner expects family z_image (model {base_model_id!r} is {entry.family!r})"
         )
+
+    # Base training samples σ with the same static shift the base scheduler uses at inference
+    # (registry ``scheduler_shift``, default 6.0). Turbo aligns via its inference sigma band and
+    # keeps shift-neutral sampling here.
+    base_sigma_shift = (
+        1.0
+        if is_turbo
+        else float(registry_scalar_default(entry, "scheduler_shift", _Z_IMAGE_BASE_SIGMA_SHIFT))
+    )
 
     preset = resolve_preset(request.preset, base_model=request.base_model)
     cfg = merge_training_request_config(request, preset)
@@ -446,9 +596,24 @@ def run_z_image_dreambooth_training(
     dataset_meta = _dataset_meta(project_root, request.dataset_id)
     trigger_word = str(dataset_meta.get("trigger_word") or "").strip()
 
-    # Resolve effective caption mode for latent cache fingerprint
-    resolved_caption_mode = "per_image" if len({str(p or "").strip() for _, p in pairs}) > 1 else "unified"
-    _log(exec_ctx, "info", f"Caption mode: {resolved_caption_mode} ({len(pairs)} images)")
+    unique_caps = {str(p or "").strip() for _, p in pairs}
+    resolved_caption_mode = "per_image" if len(unique_caps) > 1 else "unified"
+    kind = str(dataset_meta.get("kind") or "concept").strip().lower()
+    if kind == "concept" and resolved_caption_mode == "per_image":
+        _log(
+            exec_ctx,
+            "warning",
+            "Concept LoRA is using per_image captions; long VLM captions dilute the trigger "
+            "and often prevent face memorization. Prefer unified caption (trigger/progress_prompt only) "
+            "or set caption_mode=unified.",
+        )
+    sample_cap = str(pairs[0][1] or "").strip() if pairs else ""
+    _log(
+        exec_ctx,
+        "info",
+        f"Caption mode: {resolved_caption_mode} ({len(pairs)} images); "
+        f"sample_caption={sample_cap[:120]!r}{'…' if len(sample_cap) > 120 else ''}",
+    )
 
     config = get_config_class("z_image")()
     apply_image_registry_config_overrides(entry, config)
@@ -569,6 +734,47 @@ def run_z_image_dreambooth_training(
             f"[{train_runtime.timestep_low}-{train_runtime.timestep_high}] "
             f"modules={train_runtime.lora_module_keys or 'all'}",
         )
+    else:
+        _log(
+            exec_ctx,
+            "info",
+            f"Base Z-Image training: shift-matched σ sampling (sigma_shift={base_sigma_shift:g}) "
+            "aligned to inference scheduler for identity/face fidelity",
+        )
+
+    lora_layer_count = len(getattr(train_module, "_lora_paths", []) or [])
+    _log(
+        exec_ctx,
+        "info",
+        "[diag] config: "
+        f"model={base_model_id} turbo={is_turbo} res={resolution[0]}x{resolution[1]} "
+        f"iters={train_runtime.iterations} lr={train_runtime.learning_rate:g} "
+        f"grad_accum={train_runtime.grad_accumulate} "
+        f"rank={train_runtime.lora_rank} alpha={train_runtime.lora_alpha} "
+        f"scale={train_runtime.lora_scale:g} blocks={train_runtime.lora_blocks} "
+        f"modules={train_runtime.lora_module_keys or 'all'} lora_layers={lora_layer_count} "
+        f"train_type={train_runtime.train_type} qlora={train_runtime.qlora_bits} "
+        f"min_snr_gamma={train_runtime.min_snr_gamma:g} "
+        f"num_aug={train_runtime.num_augmentations} n_samples={n_samples} "
+        f"train/val={len([p for p in pairs])}",
+    )
+    _log_training_sigma_distribution(
+        exec_ctx,
+        ctx,
+        is_turbo=is_turbo,
+        sigma_shift=base_sigma_shift,
+        resolution=resolution,
+        train_runtime=train_runtime,
+    )
+    _log_zimage_latent_caption_stats(exec_ctx, latent_cache, ctx)
+    # Baseline per-σ loss (fresh LoRA ≈ frozen base): reference to compare training progress against.
+    if is_turbo and training_assistant is not None:
+        _log_noise_level_loss(exec_ctx, train_module, latent_cache, ctx, label="turbo+assistant-init")
+        training_assistant.set_enabled(False)
+        _log_noise_level_loss(exec_ctx, train_module, latent_cache, ctx, label="turbo-inference-init")
+        training_assistant.set_enabled(True)
+    else:
+        _log_noise_level_loss(exec_ctx, train_module, latent_cache, ctx, label="base-init")
 
     prior_latents: Any | None = None
     if train_runtime.prior_loss_weight > 0 and class_prompt:
@@ -626,11 +832,23 @@ def run_z_image_dreambooth_training(
             timestep_high=train_runtime.timestep_high,
             timestep_bias=train_runtime.timestep_bias,
             resolution=resolution,
+            sigma_shift=base_sigma_shift,
         )
 
     def preview_at(step: int) -> None:
         from backend.engine.common.codecs.vae import load_vae_weight_dict, read_vae_dir_config
         from backend.engine.common.codecs.vae.decoder import create_loaded_vae_decoder
+
+        # Per-σ reconstruction loss probe (off training graph). For turbo, capture both the
+        # training-time behavior (assistant on) and the actual inference behavior (assistant off,
+        # matching generation) so we can see whether the low-σ / skin band is being fit.
+        if is_turbo and training_assistant is not None:
+            _log_noise_level_loss(exec_ctx, train_module, latent_cache, ctx, label="turbo+assistant")
+            training_assistant.set_enabled(False)
+            _log_noise_level_loss(exec_ctx, train_module, latent_cache, ctx, label="turbo-inference")
+            training_assistant.set_enabled(True)
+        else:
+            _log_noise_level_loss(exec_ctx, train_module, latent_cache, ctx, label="base")
 
         vae_dir = bundle_root / "vae"
         vae_cfg, _, _ = read_vae_dir_config(vae_dir)
@@ -642,6 +860,7 @@ def run_z_image_dreambooth_training(
             vae_weights,
             float(vae_cfg.get("scaling_factor", 1.0)),
             float(vae_cfg.get("shift_factor", 0.0)),
+            vae_cfg=vae_cfg,
         )
         te = _load_zimage_text_encoder(ctx, bundle_root, config)
         if is_turbo and training_assistant is not None:

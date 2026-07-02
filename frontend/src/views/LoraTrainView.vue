@@ -3,7 +3,7 @@
     <div class="copilot-page__sidebar">
       <DqSurfaceCard class="copilot-page__sidebar-card studio-surface-card">
         <div class="card-title">
-          <DqIcon><Wand2 /></DqIcon>
+          <DqIcon><MagicStick /></DqIcon>
           {{ $t('loraTrain.title') }}
         </div>
         <p class="copilot-page__sidebar-intro">{{ $t('loraTrain.railSubtitle') }}</p>
@@ -503,7 +503,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { useI18n } from 'vue-i18n';
-import { FolderChecked, MagicStick, PictureFilled, Setting, Wand2 } from '@danqing/dq-shell';
+import { FolderChecked, MagicStick, PictureFilled, Setting } from '@danqing/dq-shell';
 import { api, taskIdFromSubmitResponse } from '@/utils/api';
 import { toast } from '@/utils/feedback';
 import { openGlobalTaskQueue } from '@/utils/appEvents';

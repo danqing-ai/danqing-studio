@@ -46,6 +46,42 @@ def sample_noisy_latent(x0: mx.array, ctx: Any) -> tuple[mx.array, mx.array, mx.
     return x_t, eps, t
 
 
+def apply_static_sigma_shift(u: mx.array, shift: float) -> mx.array:
+    """SD3 / Z-Image static sigma shift: ``shift*u / (1 + (shift-1)*u)``.
+
+    Monotonic map on ``[0, 1]`` that pushes probability mass toward high σ. Mirrors the
+    inference ``FlowMatchEulerScheduler`` static-``shift`` schedule so training samples the
+    same σ distribution the model denoises at generation time.
+    """
+    s = float(shift)
+    if s == 1.0:
+        return u
+    return s * u / (1.0 + (s - 1.0) * u)
+
+
+def sample_noisy_latent_shifted(
+    x0: mx.array,
+    ctx: Any,
+    *,
+    sigma_shift: float = 1.0,
+) -> tuple[mx.array, mx.array, mx.array]:
+    """Flow-match noising with a static sigma shift matching inference.
+
+    Plain uniform σ sampling under-trains the high-σ (structure / identity) region that a
+    shifted inference schedule spends most of its steps in, so trained LoRAs fail to bind
+    identity (faces). Applying the same shift at training time concentrates supervision
+    where inference actually denoises.
+    """
+    b = x0.shape[0]
+    u = mx.random.uniform(shape=(b,), dtype=ctx.float32())
+    t = apply_static_sigma_shift(u, sigma_shift) if float(sigma_shift) != 1.0 else u
+    eps = mx.random.normal(x0.shape, dtype=ctx.bfloat16())
+    sigma = mx.reshape(t, (b,) + (1,) * (x0.ndim - 1)).astype(ctx.bfloat16())
+    x_t = (1.0 - sigma) * x0 + sigma * eps
+    x_t = mx.stop_gradient(x_t)
+    return x_t, eps, t
+
+
 def turbo_training_sigmas(
     ctx: Any,
     *,

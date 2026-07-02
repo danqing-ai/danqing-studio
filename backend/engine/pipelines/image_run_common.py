@@ -449,6 +449,29 @@ def schedule_image_run(
     )
 
 
+def log_inference_sigma_schedule(on_log: Callable | None, sigmas: Any) -> None:
+    """Log the σ values the model denoises at, to compare against training σ distribution."""
+    if on_log is None or sigmas is None:
+        return
+    try:
+        sig = np.asarray(sigmas).reshape(-1).astype(np.float64)
+        body = sig[:-1] if sig.size > 1 and float(sig[-1]) == 0.0 else sig
+        if body.size == 0:
+            return
+        frac_lo = float((body < 0.3).mean())
+        frac_mid = float(((body >= 0.3) & (body <= 0.7)).mean())
+        frac_hi = float((body > 0.7).mean())
+        vals = "[" + ", ".join("%.3f" % float(v) for v in body) + "]"
+        on_log(
+            "info",
+            f"[diag] inference σ schedule (n={body.size}): σ={vals} "
+            f"frac σ<0.3={frac_lo:.2f} 0.3-0.7={frac_mid:.2f} >0.7={frac_hi:.2f} "
+            "(compare with training '[diag] train σ dist'; LoRA must be trained where inference denoises)",
+        )
+    except Exception:  # noqa: BLE001 — diagnostics must never break generation
+        pass
+
+
 def align_image_hw_multiples(w0: int, h0: int, *, align: int) -> tuple[int, int]:
     """Width/height floored to multiples of ``align`` (at least ``align``)."""
     w = max(align, (w0 // align) * align)
