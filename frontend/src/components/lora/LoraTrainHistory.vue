@@ -1,67 +1,27 @@
 <template>
   <div class="lora-train-history" :class="`lora-train-history--${variant}`">
     <div v-if="!hideHeader" class="lora-train-history__head">
-      <template v-if="variant === 'sidebar'">
-        <div class="lora-train-history__head-row">
-          <span class="lora-train-history__title">{{ $t('loraTrain.recentRuns') }}</span>
-          <DqButton
-            v-if="!hideRefresh"
-            size="xs"
-            type="text"
-            :loading="loading"
-            @click="refresh()"
-          >
-            {{ $t('loraTrain.refreshHistory') }}
-          </DqButton>
-        </div>
+      <div class="lora-train-history__head-row">
+        <span class="lora-train-history__title">{{ $t('loraTrain.recentRuns') }}</span>
         <DqButton
-          v-if="showModelsLink"
+          v-if="!hideRefresh"
           size="xs"
           type="text"
-          class="lora-train-history__models-link"
-          @click="emit('open-models')"
+          :loading="loading"
+          @click="refresh()"
         >
-          {{ $t('loraTrain.myLorasShort') }}
+          {{ $t('loraTrain.refreshHistory') }}
         </DqButton>
-      </template>
-      <template v-else>
-        <div class="lora-train-history__head-main">
-          <span class="lora-train-history__title">{{ $t('loraTrain.recentRuns') }}</span>
-          <span v-if="runs.length" class="lora-train-history__count">
-            {{ runs.length }}
-          </span>
-        </div>
-        <div class="lora-train-history__head-actions">
-          <DqButton
-            v-if="showModelsLink"
-            size="xs"
-            type="text"
-            @click="emit('open-models')"
-          >
-            {{ $t('loraTrain.myLorasShort') }}
-          </DqButton>
-          <DqButton
-            v-if="!hideRefresh"
-            size="xs"
-            type="text"
-            :loading="loading"
-            @click="refresh()"
-          >
-            {{ $t('loraTrain.refreshHistory') }}
-          </DqButton>
-        </div>
-      </template>
+      </div>
     </div>
 
     <div v-if="loading && !runs.length" class="lora-train-history__skeleton">
       <div v-for="i in skeletonCount" :key="i" class="lora-train-history__skeleton-row" />
     </div>
 
-    <DqEmpty
-      v-else-if="!loading && !runs.length"
-      :description="$t('loraTrain.noRecentRuns')"
-      class="lora-train-history__empty"
-    />
+    <p v-else-if="!loading && !runs.length" class="lora-train-history__empty-hint">
+      {{ $t('loraTrain.noRecentRuns') }}
+    </p>
 
     <div v-else class="lora-train-history__list">
       <button
@@ -122,31 +82,28 @@ import {
 const props = withDefaults(
   defineProps<{
     activeId?: string;
-    showModelsLink?: boolean;
     hideRefresh?: boolean;
     hideHeader?: boolean;
-    variant?: 'sidebar' | 'page';
+    variant?: 'rail' | 'page';
     limit?: number;
   }>(),
   {
     activeId: '',
-    showModelsLink: false,
     hideRefresh: false,
     hideHeader: false,
-    variant: 'sidebar',
+    variant: 'rail',
     limit: 12,
   }
 );
 
 const emit = defineEmits<{
   (e: 'select', taskId: string): void;
-  (e: 'open-models'): void;
 }>();
 
 const { t, locale } = useI18n();
 const { runs, loading, refresh, userLoraForRun } = useLoraTrainLibrary();
 
-const skeletonCount = computed(() => (props.variant === 'page' ? 5 : 3));
+const skeletonCount = computed(() => (props.variant === 'page' ? 5 : 4));
 
 function statusType(status: string): string {
   if (status === 'completed') return 'success';
@@ -196,6 +153,7 @@ defineExpose({
   flex-direction: column;
   gap: 10px;
   min-height: 0;
+  height: 100%;
 }
 
 .lora-train-history__head {
@@ -203,12 +161,7 @@ defineExpose({
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-}
-
-.lora-train-history--sidebar .lora-train-history__head {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 4px;
+  flex-shrink: 0;
 }
 
 .lora-train-history__head-row {
@@ -217,25 +170,7 @@ defineExpose({
   justify-content: space-between;
   gap: 8px;
   min-width: 0;
-}
-
-.lora-train-history__models-link {
-  align-self: flex-start;
-  max-width: 100%;
-}
-
-.lora-train-history__head-main {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.lora-train-history__head-actions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  flex-shrink: 0;
+  width: 100%;
 }
 
 .lora-train-history__title {
@@ -248,16 +183,10 @@ defineExpose({
   flex-shrink: 0;
 }
 
-.lora-train-history--sidebar .lora-train-history__title {
+.lora-train-history--rail .lora-train-history__title {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-.lora-train-history--sidebar .lora-train-history__head-row :deep(.dq-btn),
-.lora-train-history--sidebar .lora-train-history__models-link {
-  white-space: nowrap;
-  flex-shrink: 0;
 }
 
 .lora-train-history--page .lora-train-history__title {
@@ -268,26 +197,17 @@ defineExpose({
   color: var(--dq-label-primary);
 }
 
-.lora-train-history__count {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 22px;
-  height: 22px;
-  padding: 0 7px;
-  border-radius: 999px;
-  font-size: var(--dq-font-size-caption);
-  font-weight: 600;
-  color: var(--dq-label-secondary);
-  background: var(--dq-fill-tertiary);
+.lora-train-history__empty-hint {
+  margin: 0;
+  font-size: var(--dq-font-size-body);
+  line-height: 1.5;
+  color: var(--dq-label-tertiary);
+  text-align: center;
+  padding: 24px 8px;
 }
 
-.lora-train-history__empty {
-  padding: 8px 0;
-}
-
-.lora-train-history--page .lora-train-history__empty {
-  padding: 24px 0;
+.lora-train-history--page .lora-train-history__empty-hint {
+  padding: 32px 0;
 }
 
 .lora-train-history__skeleton {
@@ -298,7 +218,7 @@ defineExpose({
 
 .lora-train-history__skeleton-row {
   height: 52px;
-  border-radius: var(--radius-sm);
+  border-radius: 10px;
   background: linear-gradient(
     90deg,
     var(--dq-fill-tertiary) 0%,
@@ -322,12 +242,12 @@ defineExpose({
   display: flex;
   flex-direction: column;
   gap: 6px;
-  max-height: 220px;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
 }
 
 .lora-train-history--page .lora-train-history__list {
-  max-height: none;
   gap: 8px;
 }
 
@@ -338,23 +258,23 @@ defineExpose({
   gap: 10px;
   width: 100%;
   padding: 10px 12px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  background: transparent;
+  border: 0.5px solid var(--dq-glass-border, var(--dq-border-subtle));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--dq-surface-elevated) 60%, transparent);
   cursor: pointer;
   text-align: left;
+  color: inherit;
   transition: background 0.15s ease, border-color 0.15s ease;
 }
 
 .lora-train-history--page .lora-train-history__item {
   padding: 12px 14px;
-  border: 1px solid var(--dq-border-subtle);
   border-radius: 12px;
   background: var(--dq-fill-control);
 }
 
 .lora-train-history__item:hover {
-  background: var(--dq-fill-tertiary);
+  background: color-mix(in srgb, var(--dq-accent) 6%, var(--dq-surface-elevated));
   border-color: color-mix(in srgb, var(--dq-accent) 22%, var(--dq-border-subtle));
 }
 
@@ -363,8 +283,8 @@ defineExpose({
 }
 
 .lora-train-history__item.is-active {
-  background: color-mix(in srgb, var(--dq-accent) 10%, var(--dq-fill-secondary));
-  border-color: color-mix(in srgb, var(--dq-accent) 35%, transparent);
+  border-color: color-mix(in srgb, var(--dq-accent) 45%, transparent);
+  background: color-mix(in srgb, var(--dq-accent) 8%, var(--dq-surface-elevated));
 }
 
 .lora-train-history__status-bar {
@@ -406,7 +326,7 @@ defineExpose({
   gap: 6px;
 }
 
-.lora-train-history--sidebar .lora-train-history__item-top {
+.lora-train-history--rail .lora-train-history__item-top {
   flex-wrap: nowrap;
 }
 
@@ -417,7 +337,7 @@ defineExpose({
   word-break: break-word;
 }
 
-.lora-train-history--sidebar .lora-train-history__item-name {
+.lora-train-history--rail .lora-train-history__item-name {
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -426,14 +346,10 @@ defineExpose({
   word-break: normal;
 }
 
-.lora-train-history--sidebar .lora-train-history__item-top :deep(.dq-tag) {
+.lora-train-history--rail .lora-train-history__item-top :deep(.dq-tag) {
   flex-shrink: 0;
   max-width: 100%;
   white-space: nowrap;
-}
-
-.lora-train-history--page .lora-train-history__item-name {
-  font-size: var(--dq-font-size-body);
 }
 
 .lora-train-history__registered {
@@ -448,24 +364,24 @@ defineExpose({
   color: var(--dq-label-tertiary);
 }
 
-.lora-train-history--sidebar .lora-train-history__item-meta {
+.lora-train-history--rail .lora-train-history__item-meta {
   flex-wrap: nowrap;
   min-width: 0;
 }
 
-.lora-train-history--sidebar .lora-train-history__base,
-.lora-train-history--sidebar .lora-train-history__when {
+.lora-train-history--rail .lora-train-history__base,
+.lora-train-history--rail .lora-train-history__when {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.lora-train-history--sidebar .lora-train-history__base {
+.lora-train-history--rail .lora-train-history__base {
   flex-shrink: 1;
   min-width: 0;
 }
 
-.lora-train-history--sidebar .lora-train-history__when {
+.lora-train-history--rail .lora-train-history__when {
   flex-shrink: 0;
 }
 
