@@ -552,6 +552,7 @@ def run_flux_dreambooth_training(
             vae_weights,
             float(vae_cfg.get("scaling_factor", 1.0)),
             float(vae_cfg.get("shift_factor", 0.0)),
+            vae_cfg=vae_cfg,
         )
         te = Flux1TextEncoder(ctx, bundle_root)
         preview = _generate_progress_image(

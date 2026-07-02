@@ -860,6 +860,7 @@ def run_z_image_dreambooth_training(
             vae_weights,
             float(vae_cfg.get("scaling_factor", 1.0)),
             float(vae_cfg.get("shift_factor", 0.0)),
+            vae_cfg=vae_cfg,
         )
         te = _load_zimage_text_encoder(ctx, bundle_root, config)
         if is_turbo and training_assistant is not None:

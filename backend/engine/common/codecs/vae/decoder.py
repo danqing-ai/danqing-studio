@@ -419,15 +419,34 @@ def reshape_packed_latents_to_nchw(latents: Any) -> Any:
     return latents.reshape(b, latent_h, latent_w, channels).transpose(0, 3, 1, 2)
 
 
+def _conv_in_in_channels(shape: tuple[int, ...] | Any) -> int | None:
+    """Infer conv_in input channels from PyTorch (O,I,kH,kW) or MLX (O,kH,kW,I) layouts."""
+    if len(shape) != 4:
+        return None
+    o, a, b, c = (int(shape[i]) for i in range(4))
+    k_small = b <= 7 and c <= 7
+    # MLX / diffusers NHWC: (O, kH, kW, I)
+    if a <= 7 and k_small and c > 7:
+        return c
+    # PyTorch NCHW: (O, I, kH, kW) — e.g. Z-Image (512, 16, 3, 3)
+    if a > 7 and k_small:
+        return a
+    if k_small and 1 < a < o:
+        return a
+    if a <= 7 and k_small:
+        return c
+    return None
+
+
 def infer_latent_channels(vae_cfg: dict[str, Any], vae_weights: dict[str, Any], *, default: int = 16) -> int:
     lc = vae_cfg.get("latent_channels")
     if lc is not None:
         return int(lc)
     for wkey in ("decoder.conv_in.weight", "conv_in.weight"):
         if wkey in vae_weights:
-            sh = getattr(vae_weights[wkey], "shape", ())
-            if len(sh) == 4:
-                return int(sh[-1])
+            inferred = _conv_in_in_channels(getattr(vae_weights[wkey], "shape", ()))
+            if inferred is not None:
+                return inferred
     wkey = "encoder.conv_out.weight"
     if wkey in vae_weights:
         sh = getattr(vae_weights[wkey], "shape", ())
