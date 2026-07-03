@@ -22,6 +22,7 @@ export type KeyframeComposeParams = {
   controlnet?: string;
   controlnet_strength?: number;
   lemica_mode?: string;
+  teacache_mode?: string;
   latent_refine_scale?: number;
   latent_refine_denoise?: number;
 };
@@ -38,9 +39,6 @@ function defaultParams(): KeyframeComposeParams {
     lora_scale: 0.8,
     controlnet: '',
     controlnet_strength: 0.8,
-    lemica_mode: 'none',
-    latent_refine_scale: 1,
-    latent_refine_denoise: 0.3,
   };
 }
 

@@ -355,6 +355,7 @@ def video_encode_load_and_condition(pipeline,
             family=family,
             bundle_root=bundle_root,
             guidance=guidance,
+            version_key=version_key,
         )
         validate_wan_umt5_embeddings(pipeline, config, txt_embeds, on_log)
 
@@ -506,6 +507,7 @@ def finalize_video_from_latents(pipeline,
     guidance: float,
     on_progress: Callable | None,
     on_log: Callable | None,
+    model: Any | None = None,
 ) -> tuple[str, dict[str, Any]] | None:
     if getattr(pipeline.ctx, "backend", None) == "mlx":
         if on_log:
@@ -560,6 +562,10 @@ def finalize_video_from_latents(pipeline,
         "fps": fps, "width": w, "height": h,
         "mime_type": "video/mp4",
     }
+    if model is not None:
+        from backend.engine.inference.optimization_plan import pop_inference_run_metadata
+
+        metadata.update(pop_inference_run_metadata(model))
     metadata.update(work_title_metadata(request.title))
     return out_path, metadata
 
@@ -1017,8 +1023,26 @@ def encode_video_text(pipeline,
     config: Any,
     family: str,
     bundle_root: Path | None,
+    *,
+    version_key: str | None = None,
+    guidance: float = 1.0,
+    negative_prompt: str | None = None,
 ) -> tuple[Any, Any | None, Any | None, Any | None]:
     """Encode one prompt. Returns ``(txt_embeds, txt_mask, txt_embeds_2, txt_mask_2)``."""
+    use_cache = bool(getattr(config, "use_text_embedding_cache", True))
+    encoder_id = f"{video_encoder_type(config)}:{family}:{version_key or 'default'}"
+    if use_cache:
+        from backend.engine.common.ops.text_embedding_cache import global_text_embedding_cache
+
+        cached = global_text_embedding_cache().get(
+            encoder_id=encoder_id,
+            prompt=text,
+            negative_prompt=negative_prompt,
+            guidance=guidance,
+        )
+        if cached is not None:
+            return cached  # type: ignore[return-value]
+
     encoder_type = video_encoder_type(config)
     if encoder_type == "t5":
         if bool(getattr(config, "t5_attention_mask", False)):
@@ -1033,7 +1057,18 @@ def encode_video_text(pipeline,
     raw = _encode_video_prompt_fn(
         pipeline.ctx, text, encoder_type=encoder_type, bundle_root=bundle_root, config=config,
     )
-    return raw[0], raw[1], raw[2], raw[3]
+    result = raw[0], raw[1], raw[2], raw[3]
+    if use_cache:
+        from backend.engine.common.ops.text_embedding_cache import global_text_embedding_cache
+
+        global_text_embedding_cache().put(
+            encoder_id=encoder_id,
+            prompt=text,
+            negative_prompt=negative_prompt,
+            guidance=guidance,
+            value=result,
+        )
+    return result
 
 def encode_video_text_with_cfg(pipeline,
     *,
@@ -1043,6 +1078,7 @@ def encode_video_text_with_cfg(pipeline,
     family: str,
     bundle_root: Path | None,
     guidance: float,
+    version_key: str | None = None,
 ) -> tuple[
     Any, Any | None, Any | None, Any | None,
     Any | None, Any | None, Any | None, Any | None,
@@ -1078,11 +1114,17 @@ def encode_video_text_with_cfg(pipeline,
         embeds = encode_t5_texts(pipeline, [prompt, neg_txt])
         return embeds[0:1], None, None, None, embeds[1:2], None, None, None
 
-    pos = encode_video_text(pipeline, prompt, config, family, bundle_root)
+    pos = encode_video_text(
+        pipeline, prompt, config, family, bundle_root,
+        version_key=version_key, guidance=guidance, negative_prompt=negative_prompt,
+    )
     if not use_cfg:
         return (*pos, *empty_neg)
     neg_txt = video_cfg_negative_prompt(config, negative_prompt)
-    neg = encode_video_text(pipeline, neg_txt, config, family, bundle_root)
+    neg = encode_video_text(
+        pipeline, neg_txt, config, family, bundle_root,
+        version_key=version_key, guidance=guidance, negative_prompt=neg_txt,
+    )
     return (*pos, *neg)
 
 def apply_video_text_to_extra_cond(pipeline,

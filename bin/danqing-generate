@@ -63,6 +63,12 @@ def main():
         default=0.8,
         help="Structural guide weight (default 0.8)",
     )
+    parser.add_argument(
+        "--teacache-mode",
+        default=None,
+        choices=["none", "auto", "fast", "quality"],
+        help="TeaCache step cache (flux1/z_image; registry default if omitted)",
+    )
     parser.add_argument("--output", required=True, help="Output image path")
     parser.add_argument("--project-root", default=str(PROJECT_ROOT))
     args = parser.parse_args()
@@ -81,6 +87,7 @@ def main():
         control_asset_id=args.control_asset_id,
         control_image=args.control_image,
         controlnet_strength=args.controlnet_strength,
+        teacache_mode=args.teacache_mode,
         output=args.output,
         project_root=Path(args.project_root).resolve(),
     )

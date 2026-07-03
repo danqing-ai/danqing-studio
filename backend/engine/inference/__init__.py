@@ -37,6 +37,13 @@ from backend.engine.inference.diffusion import DiffusionInference
 from backend.engine.inference.diffusion_bundle import run_diffusion_denoise
 from backend.engine.inference.flow_matching import FlowMatchingInference
 from backend.engine.inference.image_denoise import run_image_denoise
+from backend.engine.inference.optimization_plan import (
+    ImageInferencePlan,
+    InferencePlan,
+    VideoInferencePlan,
+    resolve_image_inference_plan,
+    resolve_video_inference_plan,
+)
 from backend.engine.inference.job import JobBundle, run_job
 from backend.engine.inference.upscale_job import run_upscale_job
 from backend.engine.inference.video_denoise import run_video_denoise
@@ -83,6 +90,9 @@ __all__ = [
     "InferenceBundle",
     "InferenceStrategy",
     "ImageStepKwargsBuilder",
+    "ImageInferencePlan",
+    "VideoInferencePlan",
+    "InferencePlan",
     "MemoryGuard",
     "StepKwargsBuilder",
     "TwoStageBundle",
@@ -90,4 +100,6 @@ __all__ = [
     "VideoStepKwargsBuilder",
     "build_uncond_kwargs",
     "resolve_cfg_strategy",
+    "resolve_image_inference_plan",
+    "resolve_video_inference_plan",
 ]

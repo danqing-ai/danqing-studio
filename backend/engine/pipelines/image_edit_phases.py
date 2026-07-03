@@ -19,6 +19,7 @@ from backend.engine.contracts import FamilyRuntimeContract
 from backend.engine.inference.image_denoise import run_image_denoise
 from backend.engine.pipelines.image_run_common import (
     ResolvedImageModel,
+    apply_image_inference_options,
     assert_edit_rewrite_schedule,
     build_image_vae_preview_session,
     image_model_from_resolved_run,
@@ -87,6 +88,7 @@ class ImageEditRunContext(MediaRunContext):
     preview_mode: str
     preview_interval: int
     preview_max_edge: int
+    preview_decoder: str
     preview_state: dict[str, Any]
     packed_edit: bool
     flux_unpack_edit: Callable[..., Any] | None
@@ -215,7 +217,7 @@ def build_image_edit_rewrite_context(
         init_timestep = 0
         if fidelity > 0.0 and not edit_conditioning_concat:
             init_timestep = max(1, int(steps * fidelity))
-        preview_mode, preview_interval, preview_max_edge = resolve_image_preview(entry)
+        preview_mode, preview_interval, preview_max_edge, preview_decoder = resolve_image_preview(entry)
         preview_state: dict[str, Any] = {}
 
         enc_loaded = load_image_encoded_model(
@@ -270,17 +272,7 @@ def build_image_edit_rewrite_context(
                 structural_cleanup()
             raise
 
-        lemica_mode = getattr(request, "lemica_mode", None)
-        if lemica_mode and str(lemica_mode).strip().lower() not in ("", "none", "off"):
-            from backend.engine.common.mlx_only import require_mlx_if_option_active
-
-            require_mlx_if_option_active(
-                pipeline.ctx,
-                feature="lemica_mode",
-                option=lemica_mode,
-            )
-            extra_cond = dict(extra_cond)
-            extra_cond["lemica_mode"] = str(lemica_mode).strip().lower()
+        extra_cond = apply_image_inference_options(pipeline.ctx, request, extra_cond)
 
         guide = getattr(request, "structural_guide", None)
         if guide is not None:
@@ -340,6 +332,20 @@ def build_image_edit_rewrite_context(
             )
             log_inference_sigma_schedule(on_log, sigmas)
 
+        from backend.engine.inference.optimization_plan import attach_resolved_inference_plan
+
+        extra_cond = attach_resolved_inference_plan(
+            extra_cond,
+            family=family,
+            config=config,
+            entry=entry,
+            ctx=pipeline.ctx,
+            num_steps=len(timesteps),
+        )
+        from backend.engine.inference.optimization_plan import log_inference_plan_from_cond
+
+        log_inference_plan_from_cond(extra_cond, on_log)
+
         latents, extra_cond = model.before_denoise(
             latents,
             timesteps,
@@ -391,6 +397,7 @@ def build_image_edit_rewrite_context(
         preview_mode=preview_mode,
         preview_interval=preview_interval,
         preview_max_edge=preview_max_edge,
+        preview_decoder=preview_decoder,
         preview_state=preview_state,
         packed_edit=packed_edit,
         flux_unpack_edit=flux_unpack_edit,
@@ -412,7 +419,10 @@ def execute_image_edit_denoise(ctx: ImageEditRunContext) -> Any | None:
     if ctx.preview_mode == "stream":
         warm_image_step_preview_decoders(
             pipeline,
-            ctx.entry, ctx.version_key or None, preview_state, config=ctx.config, on_log=ctx.on_log
+            ctx.entry, ctx.version_key or None, preview_state,
+            config=ctx.config,
+            preview_decoder=ctx.preview_decoder,
+            on_log=ctx.on_log,
         )
         try:
             preview_state["vae_session"] = build_image_vae_preview_session(
@@ -549,6 +559,9 @@ def persist_image_edit(
     }
     if ctx.structural_output_meta:
         meta.update(ctx.structural_output_meta)
+    from backend.engine.inference.optimization_plan import pop_inference_run_metadata
+
+    meta.update(pop_inference_run_metadata(ctx.model))
     meta.update(work_title_metadata(ctx.request.title))
     return str(out_path), meta
 

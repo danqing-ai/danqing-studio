@@ -13,6 +13,12 @@ from backend.engine.inference.diffusion import DiffusionInference
 from backend.engine.inference.step_kwargs_builders import ImageStepKwargsBuilder
 from backend.engine.pipelines.image_run_common import maybe_emit_image_step_preview
 from backend.engine.pipelines.pipeline_progress import emit_denoise_progress
+from backend.engine.common.ops.step_cache import log_step_cache_summary
+from backend.engine.common.ops.teacache_calibrate import (
+    publish_teacache_probe_from_model,
+    teacache_probe_enabled,
+)
+from backend.engine.inference.optimization_plan import stash_inference_run_metadata
 
 
 def run_image_denoise(
@@ -128,4 +134,10 @@ def run_image_denoise(
     )
 
     with inference_span(ctx_exec, "diffusion_paradigm"):
-        return DiffusionInference(ctx).run(bundle)
+        result = DiffusionInference(ctx).run(bundle)
+    if teacache_probe_enabled():
+        publish_teacache_probe_from_model(model)
+    else:
+        log_step_cache_summary(model, on_log)
+        stash_inference_run_metadata(model, extra_cond)
+    return result

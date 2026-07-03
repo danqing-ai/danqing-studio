@@ -177,26 +177,55 @@
       </div>
     </div>
 
-    <div v-if="showZImageTurboExtras" class="composer-advanced-fields__row">
+    <div
+      v-for="paramKey in inferenceEnumKeys"
+      :key="paramKey"
+      class="composer-advanced-fields__row"
+    >
       <div class="composer-advanced-fields__field composer-advanced-fields__field--full composer-advanced-fields__field--stack">
         <div class="composer-advanced-fields__inline">
-          <label>{{ $t('create.lemicaMode') }}</label>
-          <DqSelect v-model="params.lemica_mode" size="small" class="composer-advanced-fields__select composer-advanced-fields__select--grow">
-            <DqOption value="none" :label="$t('create.lemicaOff')" />
-            <DqOption value="slow" :label="$t('create.lemicaSlow')" />
-            <DqOption value="medium" :label="$t('create.lemicaMedium')" />
-            <DqOption value="fast" :label="$t('create.lemicaFast')" />
+          <label>{{ paramFieldLabel(paramKey) }}</label>
+          <DqSelect
+            v-model="params[paramKey]"
+            size="small"
+            class="composer-advanced-fields__select composer-advanced-fields__select--grow"
+          >
+            <DqOption
+              v-for="opt in enumParamOptions(paramSchema[paramKey])"
+              :key="`${paramKey}-${opt}`"
+              :value="opt"
+              :label="enumOptionLabel(paramKey, opt)"
+            />
           </DqSelect>
         </div>
-        <p class="composer-advanced-fields__hint">{{ $t('create.lemicaHint') }}</p>
+        <p v-if="paramFieldHint(paramKey)" class="composer-advanced-fields__hint">
+          {{ paramFieldHint(paramKey) }}
+        </p>
+      </div>
+    </div>
+
+    <div v-if="paramSchema.latent_refine_scale" class="composer-advanced-fields__row">
+      <div class="composer-advanced-fields__field composer-advanced-fields__field--full composer-advanced-fields__field--stack">
         <div class="composer-advanced-fields__inline">
-          <label>{{ $t('create.latentRefineScale') }}</label>
-          <DqSlider v-model="params.latent_refine_scale" :min="1" :max="2" :step="0.25" class="composer-advanced-fields__slider-grow" />
+          <label>{{ paramFieldLabel('latent_refine_scale') }}</label>
+          <DqSlider
+            v-model="params.latent_refine_scale"
+            :min="paramSchema.latent_refine_scale.min ?? 1"
+            :max="paramSchema.latent_refine_scale.max ?? 2"
+            :step="paramSchema.latent_refine_scale.step ?? 0.25"
+            class="composer-advanced-fields__slider-grow"
+          />
           <span class="composer-advanced-fields__val">{{ params.latent_refine_scale }}</span>
         </div>
-        <div v-if="Number(params.latent_refine_scale) > 1" class="composer-advanced-fields__inline">
-          <label>{{ $t('create.latentRefineDenoise') }}</label>
-          <DqSlider v-model="params.latent_refine_denoise" :min="0" :max="1" :step="0.05" class="composer-advanced-fields__slider-grow" />
+        <div v-if="Number(params.latent_refine_scale) > 1 && paramSchema.latent_refine_denoise" class="composer-advanced-fields__inline">
+          <label>{{ paramFieldLabel('latent_refine_denoise') }}</label>
+          <DqSlider
+            v-model="params.latent_refine_denoise"
+            :min="paramSchema.latent_refine_denoise.min ?? 0"
+            :max="paramSchema.latent_refine_denoise.max ?? 1"
+            :step="paramSchema.latent_refine_denoise.step ?? 0.05"
+            class="composer-advanced-fields__slider-grow"
+          />
           <span class="composer-advanced-fields__val">{{ params.latent_refine_denoise }}</span>
         </div>
       </div>
@@ -230,7 +259,15 @@ import {
   isZImageStructuralBaseModel,
   isZImageUnionControlNet,
 } from '@/composables/useStructuralGuide';
-import { img2imgUsesStrength, normalizeParamsDef } from '@/utils/registryParamSchema';
+import {
+  COMPOSER_INFERENCE_ENUM_KEYS,
+  composerParamHintI18nKey,
+  composerParamLabelI18nKey,
+  enumOptionI18nKey,
+  enumParamOptions,
+  img2imgUsesStrength,
+  normalizeParamsDef,
+} from '@/utils/registryParamSchema';
 
 export type ComposerAdvancedParams = {
   steps: number;
@@ -244,6 +281,7 @@ export type ComposerAdvancedParams = {
   controlnet?: string;
   controlnet_strength?: number;
   lemica_mode?: string;
+  teacache_mode?: string;
   latent_refine_scale?: number;
   latent_refine_denoise?: number;
 };
@@ -315,13 +353,13 @@ const loraSupported = computed(() =>
   Boolean((props.currentModelConfig?.parameters as { lora_support?: boolean } | undefined)?.lora_support),
 );
 
-const showZImageTurboExtras = computed(() =>
-  isZImageStructuralBaseModel(String(props.model || '')),
+const inferenceEnumKeys = computed(() =>
+  COMPOSER_INFERENCE_ENUM_KEYS.filter((key) => Boolean(paramSchema.value[key])),
 );
 
 const showZImageInpaintExtras = computed(() => {
   const key = String(props.params.controlnet || '');
-  return showZImageTurboExtras.value && isZImageUnionControlNet(key);
+  return Boolean(key) && isZImageUnionControlNet(key);
 });
 
 const controlNetStrengthLabel = computed(() => {
@@ -360,6 +398,25 @@ function controlNetOptionLabel(n: Record<string, unknown>): string {
 
 function randomizeSeed() {
   props.params.seed = String(Math.floor(Math.random() * 1_000_000));
+}
+
+function paramFieldLabel(paramKey: string): string {
+  const spec = paramSchema.value[paramKey];
+  if (spec && typeof spec.label === 'string' && spec.label.trim()) return spec.label;
+  const i18nKey = composerParamLabelI18nKey(paramKey);
+  return i18nKey ? $t(`create.${i18nKey}`) : paramKey;
+}
+
+function paramFieldHint(paramKey: string): string {
+  const spec = paramSchema.value[paramKey];
+  if (spec && typeof spec.note === 'string' && spec.note.trim()) return spec.note;
+  const i18nKey = composerParamHintI18nKey(paramKey);
+  return i18nKey ? $t(`create.${i18nKey}`) : '';
+}
+
+function enumOptionLabel(paramKey: string, value: string): string {
+  const i18nKey = enumOptionI18nKey(paramKey, value);
+  return i18nKey ? $t(`create.${i18nKey}`) : value;
 }
 
 watch(

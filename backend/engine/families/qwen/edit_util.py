@@ -280,7 +280,7 @@ def build_qwen_image_edit_context(
         guidance_default=4.0,
     )
     seed = request.seed if request.seed is not None else random.randint(0, 2 ** 32 - 1)
-    preview_mode, preview_interval, preview_max_edge = resolve_image_preview(entry)
+    preview_mode, preview_interval, preview_max_edge, _preview_decoder = resolve_image_preview(entry)
     preview_state: dict[str, Any] = {}
     use_picture_prefix = bool(getattr(config, "edit_use_picture_prefix", False))
     edit_plus_multi = bool(getattr(config, "edit_plus_multi_image", False))

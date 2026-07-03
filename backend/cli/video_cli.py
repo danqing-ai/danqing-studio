@@ -29,6 +29,7 @@ def generate(
     guidance: float | None = None,
     shift: float | None = None,
     seed: int | None = None,
+    teacache_mode: str | None = None,
     output: str = "",
     project_root: Path | None = None,
 ) -> str:
@@ -56,6 +57,8 @@ def generate(
             payload["fps"] = fps
         if shift is not None:
             payload["shift"] = shift
+        if teacache_mode is not None:
+            payload["teacache_mode"] = teacache_mode
         request = VideoGenerationRequest(**payload)
 
         if not ctx.video_engine.supports(model, "generate"):
@@ -93,6 +96,7 @@ def edit(
     negative_prompt: str = "",
     steps: int | None = None,
     seed: int | None = None,
+    teacache_mode: str | None = None,
     output: str = "",
     project_root: Path | None = None,
 ) -> str:
@@ -112,6 +116,7 @@ def edit(
             negative_prompt=negative_prompt,
             steps=steps,
             seed=seed,
+            teacache_mode=teacache_mode,
         )
 
         if not ctx.video_engine.supports(model, "edit"):

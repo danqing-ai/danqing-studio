@@ -25,7 +25,6 @@ from backend.engine.common.long_video.validate import (
     LongVideoValidationError,
     validate_long_video_request,
 )
-from .runtime._base import RuntimeContext
 from .sessions.engine_dispatch import (
     dispatch_long_video,
     dispatch_video_avatar,
@@ -33,6 +32,7 @@ from .sessions.engine_dispatch import (
     dispatch_video_edit,
     dispatch_video_upscale,
 )
+from backend.engine.inference.optimization_plan import inference_metadata_for_task
 
 
 class DanQingVideoEngine(IVideoEngine):
@@ -124,7 +124,12 @@ class DanQingVideoEngine(IVideoEngine):
             parent_asset_id=parent_id, relation_type=relation,
             group_id=group_id,
         )
-        return EngineResult(primary_asset_id=aid, asset_ids=[aid], output_paths=[output_path])
+        return EngineResult(
+            primary_asset_id=aid,
+            asset_ids=[aid],
+            output_paths=[output_path],
+            metadata=inference_metadata_for_task(metadata),
+        )
 
     async def generate_long(
         self,
@@ -176,7 +181,12 @@ class DanQingVideoEngine(IVideoEngine):
             parent_asset_id=parent_id, relation_type=relation,
             group_id=group_id,
         )
-        return EngineResult(primary_asset_id=aid, asset_ids=[aid], output_paths=[output_path])
+        return EngineResult(
+            primary_asset_id=aid,
+            asset_ids=[aid],
+            output_paths=[output_path],
+            metadata=inference_metadata_for_task(metadata),
+        )
 
     async def edit(self, request: VideoEditRequest, ctx: ExecutionContext) -> EngineResult:
         import asyncio
@@ -213,7 +223,12 @@ class DanQingVideoEngine(IVideoEngine):
             parent_asset_id=parent_id, relation_type=relation,
             group_id=group_id,
         )
-        return EngineResult(primary_asset_id=aid, asset_ids=[aid], output_paths=[output_path])
+        return EngineResult(
+            primary_asset_id=aid,
+            asset_ids=[aid],
+            output_paths=[output_path],
+            metadata=inference_metadata_for_task(metadata),
+        )
 
     async def avatar(self, request: VideoAvatarRequest, ctx: ExecutionContext) -> EngineResult:
         import asyncio

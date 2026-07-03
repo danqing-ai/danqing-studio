@@ -462,6 +462,31 @@
             </div>
           </div>
         </div>
+
+        <div
+          v-for="paramKey in inferenceEnumKeys"
+          :key="paramKey"
+          class="video-composer__advanced-row video-composer__advanced-row--stack"
+        >
+          <div class="video-composer__field video-composer__field--full">
+            <label>{{ paramFieldLabel(paramKey) }}</label>
+            <DqSelect
+              v-model="localParams[paramKey]"
+              size="small"
+              class="video-composer__select"
+            >
+              <DqOption
+                v-for="opt in enumParamOptions(paramSchema[paramKey])"
+                :key="`${paramKey}-${opt}`"
+                :value="opt"
+                :label="enumOptionLabel(paramKey, opt)"
+              />
+            </DqSelect>
+            <p v-if="paramFieldHint(paramKey)" class="video-composer__param-note">
+              {{ paramFieldHint(paramKey) }}
+            </p>
+          </div>
+        </div>
       </div>
     </ComposerAdvancedCollapsible>
   </div>
@@ -485,7 +510,14 @@ import {
 } from '@danqing/dq-shell';
 import { assetIdFromGalleryPath } from '@/utils/copilotHandoff';
 import { $tt, $pn } from '@/utils/i18n';
-import { formatResolutionOptionLabel } from '@/utils/registryParamSchema';
+import { formatResolutionOptionLabel,
+  VIDEO_INFERENCE_ENUM_KEYS,
+  composerParamHintI18nKey,
+  composerParamLabelI18nKey,
+  enumOptionI18nKey,
+  enumParamOptions,
+  normalizeParamsDef,
+} from '@/utils/registryParamSchema';
 import { appendStyleBoost } from '@/utils/styleBoost';
 import { isLongVideoTargetDuration } from '@/utils/videoStoryboardPrompt';
 import {
@@ -524,6 +556,7 @@ const props = defineProps<{
     negative_prompt: string;
     lora?: string;
     lora_scale?: number;
+    teacache_mode?: string;
     upscale_scale?: number;
     upscale_denoise?: number;
     upscale_max_frames?: number;
@@ -667,7 +700,32 @@ const extraReferenceMedia = computed(
 
 const berniniRefMax = computed(() => props.berniniRefMax ?? 5);
 
-const paramSchema = computed(() => props.currentModelConfig?.parameters || {});
+const paramSchema = computed(() =>
+  normalizeParamsDef(props.currentModelConfig?.parameters as Record<string, unknown> | undefined),
+);
+
+const inferenceEnumKeys = computed(() =>
+  VIDEO_INFERENCE_ENUM_KEYS.filter((key) => Boolean(paramSchema.value[key])),
+);
+
+function paramFieldLabel(paramKey: string): string {
+  const spec = paramSchema.value[paramKey];
+  if (spec && typeof spec.label === 'string' && spec.label.trim()) return spec.label;
+  const i18nKey = composerParamLabelI18nKey(paramKey);
+  return i18nKey ? $t(`create.${i18nKey}`) : paramKey;
+}
+
+function paramFieldHint(paramKey: string): string {
+  const spec = paramSchema.value[paramKey];
+  if (spec && typeof spec.note === 'string' && spec.note.trim()) return spec.note;
+  const i18nKey = composerParamHintI18nKey(paramKey);
+  return i18nKey ? $t(`create.${i18nKey}`) : '';
+}
+
+function enumOptionLabel(paramKey: string, value: string): string {
+  const i18nKey = enumOptionI18nKey(paramKey, value);
+  return i18nKey ? $t(`create.${i18nKey}`) : value;
+}
 
 function videoLoraLabel(l: Record<string, unknown>) {
   return loraOptionLabel(l as CompatibleLoraRow);

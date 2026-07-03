@@ -16,6 +16,7 @@ export type SegmentComposeParams = {
   negative_prompt: string;
   lora: string;
   lora_scale: number;
+  teacache_mode?: string;
 };
 
 function defaultParams(): SegmentComposeParams {
@@ -28,6 +29,7 @@ function defaultParams(): SegmentComposeParams {
     negative_prompt: '',
     lora: '',
     lora_scale: 1.0,
+    teacache_mode: 'auto',
   };
 }
 

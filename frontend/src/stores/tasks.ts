@@ -3,6 +3,7 @@ import { defineStore } from 'pinia';
 import { api } from '@/utils/api';
 import type { QueueState } from '@/types';
 import {
+  buildInferenceResultLogMessage,
   formatGenLogMessage,
   formatLogTimestamp,
   isDuplicateDenoiseStepLog,
@@ -253,7 +254,16 @@ export const useTasksStore = defineStore('tasks', () => {
     });
 
     eventSource.addEventListener('result', (event) => {
-      const data = JSON.parse(event.data);
+      const data = JSON.parse(event.data) as Record<string, unknown>;
+      const meta =
+        (data.metadata as Record<string, unknown> | undefined) ??
+        ((data.result as Record<string, unknown> | undefined)?.metadata as
+          | Record<string, unknown>
+          | undefined);
+      const inferenceMsg = buildInferenceResultLogMessage(meta);
+      if (inferenceMsg) {
+        appendTaskLog(taskId, inferenceMsg, 'success');
+      }
       callbacks.onResult?.(data);
     });
 

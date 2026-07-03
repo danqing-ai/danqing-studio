@@ -35,6 +35,12 @@ def main():
     parser.add_argument("--negative-prompt", default="")
     parser.add_argument("--steps", type=int, default=None)
     parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument(
+        "--teacache-mode",
+        default=None,
+        choices=["none", "auto", "fast", "quality"],
+        help="TeaCache step cache (wan/hunyuan animate; registry default if omitted)",
+    )
     parser.add_argument("--output", required=True)
     parser.add_argument("--project-root", default=str(PROJECT_ROOT))
     args = parser.parse_args()
@@ -47,6 +53,7 @@ def main():
         negative_prompt=args.negative_prompt,
         steps=args.steps,
         seed=args.seed,
+        teacache_mode=args.teacache_mode,
         output=args.output,
         project_root=Path(args.project_root).resolve(),
     )

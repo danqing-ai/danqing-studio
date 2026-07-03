@@ -109,6 +109,122 @@ export function parseInferParams(message: string): Record<string, string> | null
   return Object.keys(out).length > 0 ? out : null;
 }
 
+const INFERENCE_PLAN_RE = /^\[inference\]\s*(.+)$/;
+
+/** Parse ``[inference] family=flux1 steps=28 teacache=quality …`` task log lines. */
+export function parseInferencePlanLog(message: string): Record<string, string> | null {
+  const m = String(message || '').trim().match(INFERENCE_PLAN_RE);
+  if (!m) return null;
+  const out: Record<string, string> = {};
+  for (const token of m[1].split(/\s+/)) {
+    const eq = token.indexOf('=');
+    if (eq > 0) {
+      out[token.slice(0, eq)] = token.slice(eq + 1);
+    }
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+const TEACACHE_SUMMARY_RE =
+  /^TeaCache skipped (\d+)\/(\d+) steps \((\d+)%\), thresh=([\d.]+)$/;
+
+/** Parse TeaCache skip summary emitted after denoise. */
+export function parseTeacacheSummaryLog(message: string): Record<string, string> | null {
+  const m = String(message || '').trim().match(TEACACHE_SUMMARY_RE);
+  if (!m) return null;
+  return {
+    skipped: m[1],
+    total: m[2],
+    skip_pct: m[3],
+    thresh: m[4],
+  };
+}
+
+function formatTeacacheModeLabel(mode: string): string {
+  const aliases: Record<string, string> = {
+    none: 'studio.teacacheOff',
+    auto: 'studio.teacacheAuto',
+    quality: 'studio.teacacheQuality',
+    medium: 'studio.teacacheMedium',
+    fast: 'studio.teacacheFast',
+  };
+  const i18nKey = aliases[mode] || `studio.teacache${mode.charAt(0).toUpperCase()}${mode.slice(1)}`;
+  const out = $tt(i18nKey);
+  return out !== i18nKey ? out : mode;
+}
+
+function inferencePlanChips(params: Record<string, string>): LogDisplayChip[] {
+  const order: { key: string; labelKey: string; format?: (v: string) => string }[] = [
+    { key: 'teacache', labelKey: 'studio.logChip.teacacheMode', format: formatTeacacheModeLabel },
+    { key: 'steps', labelKey: 'studio.logChip.steps' },
+    { key: 'batched_cfg', labelKey: 'studio.logChip.batchedCfg', format: (v) => (v === 'on' ? 'on' : v) },
+    { key: 'mlx_compile', labelKey: 'studio.logChip.mlxCompile', format: (v) => (v === 'on' ? 'on' : v) },
+    { key: 'lemica', labelKey: 'studio.logChip.lemicaMode' },
+    { key: 'preview', labelKey: 'studio.logChip.previewMode' },
+    { key: 'attn', labelKey: 'studio.logChip.attentionBackend' },
+  ];
+  const chips: LogDisplayChip[] = [];
+  for (const { key, labelKey, format } of order) {
+    const value = params[key];
+    if (value == null || value === '') continue;
+    const label = $tt(labelKey);
+    chips.push({
+      key,
+      label: label !== labelKey ? label : key,
+      value: format ? format(value) : value,
+    });
+  }
+  return chips;
+}
+
+function teacacheSummaryChips(params: Record<string, string>): LogDisplayChip[] {
+  const order: { key: string; labelKey: string }[] = [
+    { key: 'skipped', labelKey: 'studio.logChip.teacacheSkipped' },
+    { key: 'skip_pct', labelKey: 'studio.logChip.teacacheSkipRate' },
+    { key: 'thresh', labelKey: 'studio.logChip.teacacheThresh' },
+  ];
+  const chips: LogDisplayChip[] = [];
+  for (const { key, labelKey } of order) {
+    const raw = params[key];
+    if (raw == null || raw === '') continue;
+    const label = $tt(labelKey);
+    let value = raw;
+    if (key === 'skipped' && params.total) {
+      value = `${raw}/${params.total}`;
+    } else if (key === 'skip_pct') {
+      value = `${raw}%`;
+    }
+    chips.push({
+      key,
+      label: label !== labelKey ? label : key,
+      value,
+    });
+  }
+  return chips;
+}
+
+/** Build TeaCache summary log line from task/asset result metadata (SSE ``result`` event). */
+export function buildInferenceResultLogMessage(
+  metadata: Record<string, unknown> | null | undefined,
+): string | null {
+  if (!metadata || typeof metadata !== 'object') return null;
+  const skippedRaw = metadata.teacache_skipped;
+  const computedRaw = metadata.teacache_computed;
+  if (skippedRaw == null && computedRaw == null) return null;
+  const skipped = Number(skippedRaw) || 0;
+  const computed = Number(computedRaw) || 0;
+  const total = skipped + computed;
+  if (total <= 0) return null;
+  const rateRaw = metadata.teacache_skip_rate;
+  const pct =
+    rateRaw != null && Number.isFinite(Number(rateRaw))
+      ? Math.round(Number(rateRaw) * 100)
+      : Math.round((skipped / total) * 100);
+  const thresh =
+    metadata.teacache_thresh != null ? Number(metadata.teacache_thresh).toFixed(3) : '0.200';
+  return `TeaCache skipped ${skipped}/${total} steps (${pct}%), thresh=${thresh}`;
+}
+
 function inferParamChips(params: Record<string, string>): LogDisplayChip[] {
   const order: { key: string; labelKey: string }[] = [
     { key: 'model', labelKey: 'studio.logChip.model' },
@@ -145,6 +261,8 @@ export function classifyLogEntry(message: string, level: string): LogDisplayKind
   }
   if (parseGraphStep(message)) return 'milestone';
   if (parseInferParams(message)) return 'milestone';
+  if (parseInferencePlanLog(message)) return 'milestone';
+  if (parseTeacacheSummaryLog(message)) return 'milestone';
   if (/^preview step /i.test(message)) return 'progress';
   if (TECHNICAL_HINT_RE.test(message)) return 'technical';
   return 'info' === lvl ? 'technical' : 'milestone';
@@ -155,6 +273,10 @@ function buildDisplayTitle(message: string, kind: LogDisplayKind): string {
   if (graph) return graphStepTitle(graph.node);
   const infer = parseInferParams(message);
   if (infer) return $tt('studio.logInferTitle');
+  const plan = parseInferencePlanLog(message);
+  if (plan) return $tt('studio.logInferencePlanTitle');
+  const teacache = parseTeacacheSummaryLog(message);
+  if (teacache) return $tt('studio.logTeacacheSummaryTitle');
   if (kind === 'progress' && parseDenoiseStepKey(message)) {
     return formatGenLogMessage(message);
   }
@@ -181,6 +303,8 @@ function buildDisplayDetail(
     detail = !d || d === 'start' ? undefined : d;
   } else if (parseInferParams(message)) {
     detail = showTechnical ? message : undefined;
+  } else if (parseInferencePlanLog(message) || parseTeacacheSummaryLog(message)) {
+    detail = showTechnical ? message : undefined;
   } else if (kind === 'technical') {
     detail = message;
   } else if (kind === 'milestone' || kind === 'progress') {
@@ -202,6 +326,8 @@ export function buildLogDisplayItems(
     if (kind === 'technical' && !showTechnical) return;
 
     const infer = parseInferParams(entry.message);
+    const plan = parseInferencePlanLog(entry.message);
+    const teacache = parseTeacacheSummaryLog(entry.message);
     const title = buildDisplayTitle(entry.message, kind);
     items.push({
       index,
@@ -209,7 +335,13 @@ export function buildLogDisplayItems(
       kind,
       title,
       detail: buildDisplayDetail(entry.message, kind, showTechnical, title),
-      chips: infer ? inferParamChips(infer) : undefined,
+      chips: infer
+        ? inferParamChips(infer)
+        : plan
+          ? inferencePlanChips(plan)
+          : teacache
+            ? teacacheSummaryChips(teacache)
+            : undefined,
     });
   });
   return items;

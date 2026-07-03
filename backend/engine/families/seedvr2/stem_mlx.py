@@ -223,6 +223,7 @@ class SeedVR2UpscalePipeline:
         "tiling_config",
         "bits",
         "_bundle_path",
+        "_vae_stream_session",
     )
 
     def __init__(
@@ -241,6 +242,26 @@ class SeedVR2UpscalePipeline:
         self.tiling_config = tiling_config
         self.bits = bits
         self._bundle_path = Path(bundle_path) if bundle_path is not None else None
+        self._vae_stream_session = None
+
+    def configure_vae_runtime(
+        self,
+        *,
+        stream_enabled: bool,
+        conv3d_backend: str = "auto",
+        on_log: Callable[[str, str], None] | None = None,
+    ) -> None:
+        from backend.engine.common.integrations.mfa_seedvr2 import (
+            log_conv3d_backend,
+            resolve_conv3d_backend,
+        )
+        from backend.engine.common.ops.vae_stream_cache import VAEStreamCacheSession
+
+        backend = resolve_conv3d_backend(conv3d_backend)
+        log_conv3d_backend(backend, on_log=on_log)
+        session = VAEStreamCacheSession.from_plan(enabled=bool(stream_enabled))
+        self._vae_stream_session = session
+        self.vae.bind_vae_runtime(stream=session, conv3d_backend=backend)
 
     @classmethod
     def from_bundle(
@@ -662,6 +683,16 @@ def run_seedvr2_spatiotemporal_video(
     out_idx = 0
     bundle = pipeline._bundle_path
 
+    from backend.engine.config.model_configs import SeedVR2Config
+
+    sr_cfg = SeedVR2Config()
+    pipeline.configure_vae_runtime(
+        stream_enabled=bool(sr_cfg.vae_stream_cache),
+        conv3d_backend=str(sr_cfg.conv3d_backend),
+        on_log=on_log,
+    )
+    pipeline.vae.reset_vae_stream()
+
     for start in range(0, n_frames, chunk_frames):
         if is_cancelled and is_cancelled():
             return
@@ -703,6 +734,8 @@ def run_seedvr2_spatiotemporal_video(
             im.save(str(frames_out_dir / f"{png_pattern_name}_{out_idx:06d}.png"))
         if on_progress:
             on_progress(end / max(n_frames, 1), end, n_frames)
+
+    pipeline.vae.reset_vae_stream()
 
 
 def expected_seedvr2_weight_files(model_key: str) -> tuple[str, ...]:

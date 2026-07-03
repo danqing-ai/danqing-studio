@@ -52,6 +52,22 @@ class WanTransformer(DelegatingDiTStem):
         return cond
 
     def before_denoise(self, latents: Any, timesteps: Any, sigmas: Any, **cond: Any) -> tuple[Any, dict[str, Any]]:
+        from backend.engine.inference.optimization_plan import plan_from_extra_cond, pop_inference_plan
+
+        cond = dict(cond)
+        n_steps = len(timesteps) if timesteps is not None else 0
+        plan = pop_inference_plan(cond)
+        if plan is None:
+            plan = plan_from_extra_cond(
+                cond,
+                family="wan",
+                config=self.config,
+                entry=None,
+                ctx=self.ctx,
+                num_steps=n_steps,
+            )
+        if hasattr(self._inner, "apply_runtime_plan"):
+            self._inner.apply_runtime_plan(plan)
         ctx = self.ctx
         self._inner.invalidate_text_cache()
         _, _, t, h, w = latents.shape
@@ -93,7 +109,11 @@ class WanTransformer(DelegatingDiTStem):
         return self._inner.unpatchify_token_grid(token_out, grid)
 
     def step_callback(self, step_idx: int, latents: Any, noise_pred: Any) -> None:
-        del step_idx, noise_pred
+        del latents, noise_pred
+        inner = self._inner
+        step_cache = getattr(inner, "_step_cache", None)
+        if step_cache is not None:
+            step_cache.set_step_counter(int(step_idx) + 1)
 
     def build_timestep_per_token(self, scalar_t: Any, seq_len: int, mask2: Any | None = None) -> Any:
         """Per-token timesteps for ``expand_timesteps`` (first-frame tokens → 0 when masked)."""

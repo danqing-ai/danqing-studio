@@ -48,6 +48,11 @@ class Flux1Config:
     cfg_negative_eligible: bool = False
     vae_encoder_cast_bfloat16: bool = True  # MLX VAEEncoder weights → bfloat16 after load
     release_text_encoder_after_encode: bool = True
+    use_batched_cfg: bool = True
+    use_mlx_compile: bool = False
+    use_mlx_compile_auto: bool = True
+    teacache_mode: str = "auto"
+    use_mm_dit_text_cache: bool = True
 
     def __post_init__(self):
         pass
@@ -116,6 +121,10 @@ class QwenImageConfig:
     edit_plus_multi_image: bool = False
     edit_max_reference_images: int = 1
     release_text_encoder_after_encode: bool = True
+    use_batched_cfg: bool = True
+    use_mlx_compile: bool = False
+    use_mlx_compile_auto: bool = True
+    teacache_mode: str = "auto"
 
 
 @dataclass
@@ -190,7 +199,9 @@ class ZImageConfig:
     noise_sample_fp32: bool = True
     z_image_noise_layout: bool = True
     use_mlx_compile: bool = False        # keep numerical path close to reference; prioritize parity
+    use_mlx_compile_auto: bool = True
     use_mlx_cfg_fusion: bool = False     # disable fused CFG fast-path; use explicit cond/uncond forwards
+    teacache_mode: str = "auto"
     release_text_encoder_after_encode: bool = True
 
 
@@ -367,6 +378,8 @@ class SeedVR2Config:
     scale_factor: int = 2            # upscale factor
     tile_size: int = 1024            # tiled super-resolution
     denoise_strength: float = 0.3    # default denoising strength
+    vae_stream_cache: bool = True
+    conv3d_backend: str = "auto"
 
 
 @dataclass
@@ -688,6 +701,11 @@ class WanConfig:
     validate_umt5_embeddings: bool = True
     post_denoise_clear_cache: bool = True
     wan_moe_lazy_experts: bool = True
+    attention_backend: str = "auto"
+    vae_stream_cache: bool = False
+    conv3d_backend: str = "auto"
+    use_text_embedding_cache: bool = True
+    teacache_mode: str = "auto"
     geometry_check: str = "wan"
     uses_wan_vae_bundle: bool = True
     video_vae_backend: str = "wan"
@@ -903,6 +921,8 @@ class HunyuanVideoConfig:
     scheduler_bundle_extras: str = ""
     default_encoder_type: str = "hunyuan_video_dual"
     video_edit_source_mode: str = "image_only"
+    teacache_mode: str = "auto"
+    use_text_embedding_cache: bool = True
 
 
 def merge_hunyuan_transformer_config_from_bundle(config: HunyuanVideoConfig, bundle_root: Path | None) -> None:
@@ -1117,6 +1137,11 @@ def apply_image_registry_config_overrides(entry: Any, config: Any) -> None:
         "edit_max_reference_images",
         "patch_token_dim",
         "release_text_encoder_after_encode",
+        "use_batched_cfg",
+        "use_mlx_compile",
+        "use_mlx_compile_auto",
+        "teacache_mode",
+        "use_mm_dit_text_cache",
         "hidream_quantized_no_edit",
         "hidream_noise_scale",
         "hidream_noise_clip_std",

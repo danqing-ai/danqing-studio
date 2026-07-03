@@ -38,6 +38,12 @@ def main():
     parser.add_argument("--guidance", type=float, default=None)
     parser.add_argument("--shift", type=float, default=None, help="Flow schedule shift (Wan default 5)")
     parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument(
+        "--teacache-mode",
+        default=None,
+        choices=["none", "auto", "fast", "quality"],
+        help="TeaCache step cache (wan/hunyuan; registry default if omitted)",
+    )
     parser.add_argument("--output", required=True)
     parser.add_argument("--project-root", default=str(PROJECT_ROOT))
     args = parser.parse_args()
@@ -54,6 +60,7 @@ def main():
         guidance=args.guidance,
         shift=args.shift,
         seed=args.seed,
+        teacache_mode=args.teacache_mode,
         output=args.output,
         project_root=Path(args.project_root).resolve(),
     )

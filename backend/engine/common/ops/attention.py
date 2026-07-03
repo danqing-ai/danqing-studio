@@ -340,14 +340,25 @@ def scaled_dot_product_attention_bhsd_mx(
     mask: Any | None = None,
     compute_dtype: Any | None = None,
     out_dtype: Any | None = None,
+    attention_backend: str = "auto",
 ) -> Any:
-    """MLX fast SDPA for ``[B, H, S, D]`` tensors with optional dtype control."""
+    """MLX SDPA for ``[B, H, S, D]`` with optional mlx-mfa dispatch."""
     q_in, k_in, v_in = q, k, v
     if compute_dtype is not None:
         q = q.astype(compute_dtype)
         k = k.astype(compute_dtype)
         v = v.astype(compute_dtype)
-    out = ops.fast.scaled_dot_product_attention(q, k, v, scale=scale, mask=mask)
+
+    if str(attention_backend or "auto").strip().lower() != "mlx":
+        from backend.engine.common.ops.mfa_bridge import flash_attention
+
+        out = flash_attention(q, k, v, backend=attention_backend, scale=scale, mask=mask)
+    elif hasattr(ops, "fast") and hasattr(ops.fast, "scaled_dot_product_attention"):
+        out = ops.fast.scaled_dot_product_attention(q, k, v, scale=scale, mask=mask)
+    else:
+        from backend.engine.common.ops.mfa_bridge import flash_attention
+
+        out = flash_attention(q, k, v, backend=attention_backend, scale=scale, mask=mask)
     if out_dtype is not None:
         return out.astype(out_dtype)
     if compute_dtype is not None and hasattr(q_in, "dtype"):

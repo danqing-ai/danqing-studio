@@ -358,6 +358,102 @@ export function strengthToSourceFidelity(strength: unknown, fallback = 0.4): num
   return Math.min(0.95, Math.max(0.05, 1 - v));
 }
 
+/** Enum inference options declared in models_registry (Composer advanced panel). */
+export const COMPOSER_INFERENCE_ENUM_KEYS = ['teacache_mode', 'lemica_mode'] as const;
+
+/** Video composer: TeaCache only (LeMiCa is image Z-Image specific). */
+export const VIDEO_INFERENCE_ENUM_KEYS = ['teacache_mode'] as const;
+
+export function hasRegistryParam(
+  parameters: Record<string, unknown> | undefined | null,
+  key: string,
+): boolean {
+  return Object.prototype.hasOwnProperty.call(normalizeParamsDef(parameters || {}), key);
+}
+
+export function enumParamOptions(spec: NormalizedParamSpec | undefined): string[] {
+  if (!spec || !Array.isArray(spec.options)) return [];
+  return spec.options.map(String);
+}
+
+/** Attach registry enum fields to create/edit API bodies (including explicit ``none``). */
+export function appendActiveEnumFields(
+  body: Record<string, unknown>,
+  params: Record<string, unknown>,
+  keys: readonly string[],
+  parameters?: Record<string, unknown> | undefined | null,
+): void {
+  const schema = normalizeParamsDef(parameters || {});
+  for (const key of keys) {
+    const spec = schema[key];
+    if (!spec) continue;
+    const raw = params[key] ?? spec.default;
+    if (raw === undefined || raw === null || raw === '') continue;
+    const val = String(raw).trim().toLowerCase();
+    body[key] = val === 'off' ? 'none' : val;
+  }
+}
+
+/** Latent refine upscaler block when registry declares ``latent_refine_scale``. */
+export function appendLatentRefineField(
+  body: Record<string, unknown>,
+  params: Record<string, unknown>,
+  parameters?: Record<string, unknown> | undefined | null,
+): void {
+  if (!hasRegistryParam(parameters, 'latent_refine_scale')) return;
+  const schema = normalizeParamsDef(parameters || {});
+  const scaleSpec = schema.latent_refine_scale;
+  const fallbackScale = typeof scaleSpec?.default === 'number' ? scaleSpec.default : 1.0;
+  const refineScale = Number(params.latent_refine_scale ?? fallbackScale);
+  if (!Number.isFinite(refineScale) || refineScale <= 1.0) return;
+  const denoiseSpec = schema.latent_refine_denoise;
+  const fallbackDenoise = typeof denoiseSpec?.default === 'number' ? denoiseSpec.default : 0.35;
+  body.latent_refine = {
+    scale: refineScale,
+    denoise_strength: Number(params.latent_refine_denoise ?? fallbackDenoise) || fallbackDenoise,
+    hires_steps: 0,
+    interpolation: 'linear',
+  };
+}
+
+/** Legacy i18n keys for enum option labels under ``create.*``. */
+export function enumOptionI18nKey(paramKey: string, value: string): string | null {
+  const map: Record<string, Record<string, string>> = {
+    teacache_mode: {
+      none: 'teacacheOff',
+      auto: 'teacacheAuto',
+      quality: 'teacacheQuality',
+      medium: 'teacacheMedium',
+      fast: 'teacacheFast',
+    },
+    lemica_mode: {
+      none: 'lemicaOff',
+      slow: 'lemicaSlow',
+      medium: 'lemicaMedium',
+      fast: 'lemicaFast',
+    },
+  };
+  return map[paramKey]?.[value] ?? null;
+}
+
+export function composerParamLabelI18nKey(paramKey: string): string | null {
+  const map: Record<string, string> = {
+    teacache_mode: 'teacacheMode',
+    lemica_mode: 'lemicaMode',
+    latent_refine_scale: 'latentRefineScale',
+    latent_refine_denoise: 'latentRefineDenoise',
+  };
+  return map[paramKey] ?? null;
+}
+
+export function composerParamHintI18nKey(paramKey: string): string | null {
+  const map: Record<string, string> = {
+    teacache_mode: 'teacacheHint',
+    lemica_mode: 'lemicaHint',
+  };
+  return map[paramKey] ?? null;
+}
+
 export function hasDeviation(
   parameters: Record<string, unknown> | undefined | null,
   target: Record<string, unknown>,

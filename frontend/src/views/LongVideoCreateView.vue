@@ -284,6 +284,7 @@ import {
 } from '@/utils/llmMessages';
 import { $tt } from '@/utils/i18n';
 import { useTasksStore } from '@/stores/tasks';
+import { useRegistryStore } from '@/stores/registry';
 import type { LongVideoChainMode, LongVideoCharacter, LongVideoChapterAnalysis, LongVideoEditorTab, LongVideoProjectState, LongVideoProjectSummary, LongVideoScene, LongVideoShotCastLook, LongVideoShotSceneLook, LongVideoShotState, SystemInfo } from '@/types';
 import LongVideoParseStrategyDialog, {
   type LongVideoParseStrategy,
@@ -312,6 +313,7 @@ import { useLongVideoSegmentCompose } from '@/composables/useLongVideoSegmentCom
 import { useComposerLlm } from '@/composables/useComposerLlm';
 import { useStudioGallery } from '@/composables/useStudioGallery';
 import {
+  appendImageInferenceFields,
   appendZImageEnhancementFields,
   isControlNetHostRuntimeAvailable,
   resolveControlAssetId,
@@ -320,11 +322,13 @@ import { assetIdFromGalleryPath } from '@/utils/copilotHandoff';
 import { openGlobalTaskQueue } from '@/utils/appEvents';
 import router from '@/router';
 import {
+  appendActiveEnumFields,
   formatResolutionOptionLabel,
   normalizeParamsDef,
   parseSizeValue,
   strengthDefaultFromRegistry,
   strengthToSourceFidelity,
+  VIDEO_INFERENCE_ENUM_KEYS,
 } from '@/utils/registryParamSchema';
 import {
   allocateShotDurations,
@@ -395,6 +399,7 @@ import { berniniMaxReferenceImages } from '@/utils/videoEditSource';
 import '@/styles/long-video.css';
 
 const tasksStore = useTasksStore();
+const registryStore = useRegistryStore();
 const systemInfo = inject<Ref<SystemInfo>>('systemInfo', ref({} as SystemInfo));
 const longVideoProject = useLongVideoProject();
 const {
@@ -658,6 +663,8 @@ async function onGenerateSceneRef(si: number, li: number) {
   const model = lv.keyframe_model ?? defaultKeyframeModel.value;
   const { width, height } = SCENE_REFERENCE_SIZE;
   const key = sceneRefKey(si, li);
+  const modelParameters = (registryStore.registry?.models?.[model] as Record<string, unknown> | undefined)
+    ?.parameters as Record<string, unknown> | undefined;
 
   sceneRefGeneratingKey.value = key;
   try {
@@ -673,6 +680,11 @@ async function onGenerateSceneRef(si: number, li: number) {
       metadata: withProjectMetadata({ long_video_phase: 'scene_ref', scene_id: sc.id, scene_look_id: look.id }),
       priority: 'normal',
     };
+    appendImageInferenceFields(
+      genBody,
+      keyframeComposeParams as Record<string, unknown>,
+      modelParameters,
+    );
     const submitRes = await api.gen.createImageGeneration(genBody);
     const tid = taskIdFromSubmitResponse(submitRes);
     if (!tid) throw new Error('no task id');
@@ -787,6 +799,8 @@ async function onGeneratePortrait(ci: number, li: number) {
   const model = lv.portrait_model ?? lv.keyframe_model ?? defaultKeyframeModel.value;
   const { width, height } = PORTRAIT_REFERENCE_SIZE;
   const key = portraitKey(ci, li);
+  const modelParameters = (registryStore.registry?.models?.[model] as Record<string, unknown> | undefined)
+    ?.parameters as Record<string, unknown> | undefined;
 
   portraitGeneratingKey.value = key;
   try {
@@ -802,6 +816,11 @@ async function onGeneratePortrait(ci: number, li: number) {
       metadata: withProjectMetadata({ long_video_phase: 'cast_portrait', cast_character_id: ch.id, cast_look_id: look.id }),
       priority: 'normal',
     };
+    appendImageInferenceFields(
+      genBody,
+      keyframeComposeParams as Record<string, unknown>,
+      modelParameters,
+    );
     const submitRes = await api.gen.createImageGeneration(genBody);
     const tid = taskIdFromSubmitResponse(submitRes);
     if (!tid) throw new Error('no task id');
@@ -1960,14 +1979,13 @@ async function onGenerateKeyframe(index: number) {
   const inpSrc = resolveInpaintAssetId(keyframeInpaintSourceImage.value);
   const inpMsk = resolveInpaintAssetId(keyframeInpaintMaskImage.value);
   const enhCommon = {
+    parameters: keyframeModelConfig.value?.parameters as Record<string, unknown> | undefined,
+    params: p,
     controlnet: String(p.controlnet || ''),
     controlAssetId: control_asset_id,
     controlnetStrength: Number(p.controlnet_strength) || 0.8,
     inpaintSourceId: inpSrc,
     inpaintMaskId: inpMsk,
-    lemicaMode: String(p.lemica_mode || 'none'),
-    latentRefineScale: Number(p.latent_refine_scale),
-    latentRefineDenoise: Number(p.latent_refine_denoise),
   };
 
   const seedNum = p.seed ? parseInt(String(p.seed), 10) : null;
@@ -2174,6 +2192,12 @@ function buildSegmentSubmitBody(
       return null;
     }
   }
+  appendActiveEnumFields(
+    body,
+    p as Record<string, unknown>,
+    VIDEO_INFERENCE_ENUM_KEYS,
+    normalizeParamsDef(modelParameters(segModel)) as Record<string, unknown> | undefined,
+  );
   return body;
 }
 

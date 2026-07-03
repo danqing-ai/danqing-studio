@@ -36,6 +36,7 @@ def generate(
     control_asset_id: str = "",
     control_image: str = "",
     controlnet_strength: float = 0.8,
+    teacache_mode: str | None = None,
     output: str = "",
     project_root: Path | None = None,
 ) -> str:
@@ -95,6 +96,7 @@ def generate(
             seed=seed,
             scheduler=sched,
             structural_guide=structural_guide,
+            teacache_mode=teacache_mode,
         )
 
         if not ctx.image_engine.supports(model, "generate"):
@@ -143,6 +145,7 @@ def edit(
     scheduler: str | None = None,
     reference_asset_ids: list[str] | None = None,
     reference_images: list[str] | None = None,
+    teacache_mode: str | None = None,
     output: str = "",
     project_root: Path | None = None,
 ) -> str:
@@ -224,6 +227,7 @@ def edit(
             steps=steps,
             seed=seed,
             scheduler=sched,
+            teacache_mode=teacache_mode,
         )
 
         if not ctx.image_engine.supports(model, "edit"):

@@ -137,6 +137,29 @@
         />
       </div>
     </div>
+
+    <div
+      v-for="paramKey in inferenceEnumKeys"
+      :key="paramKey"
+      class="video-advanced-fields__item video-advanced-fields__item--stack"
+    >
+      <label class="video-advanced-fields__label">{{ paramFieldLabel(paramKey) }}</label>
+      <DqSelect
+        v-model="params[paramKey]"
+        size="small"
+        class="video-advanced-fields__select"
+      >
+        <DqOption
+          v-for="opt in enumParamOptions(paramSchema[paramKey])"
+          :key="`${paramKey}-${opt}`"
+          :value="opt"
+          :label="enumOptionLabel(paramKey, opt)"
+        />
+      </DqSelect>
+      <p v-if="paramFieldHint(paramKey)" class="video-advanced-fields__note">
+        {{ paramFieldHint(paramKey) }}
+      </p>
+    </div>
   </div>
 </template>
 
@@ -146,6 +169,13 @@ import { useI18n } from 'vue-i18n';
 import { Refresh } from '@danqing/dq-shell';
 import type { SegmentComposeParams } from '@/composables/useLongVideoSegmentCompose';
 import type { NormalizedParamSpec } from '@/utils/registryParamSchema';
+import {
+  VIDEO_INFERENCE_ENUM_KEYS,
+  composerParamHintI18nKey,
+  composerParamLabelI18nKey,
+  enumOptionI18nKey,
+  enumParamOptions,
+} from '@/utils/registryParamSchema';
 import {
   findCompatibleLora,
   loraHintKey,
@@ -199,6 +229,29 @@ const showGuideScale = computed(() => {
 });
 
 const showNumFrames = computed(() => Boolean(props.paramSchema.num_frames));
+
+const inferenceEnumKeys = computed(() =>
+  VIDEO_INFERENCE_ENUM_KEYS.filter((key) => Boolean(props.paramSchema[key])),
+);
+
+function paramFieldLabel(paramKey: string): string {
+  const spec = props.paramSchema[paramKey];
+  if (spec && typeof spec.label === 'string' && spec.label.trim()) return spec.label;
+  const i18nKey = composerParamLabelI18nKey(paramKey);
+  return i18nKey ? $t(`create.${i18nKey}`) : paramKey;
+}
+
+function paramFieldHint(paramKey: string): string {
+  const spec = props.paramSchema[paramKey];
+  if (spec && typeof spec.note === 'string' && spec.note.trim()) return spec.note;
+  const i18nKey = composerParamHintI18nKey(paramKey);
+  return i18nKey ? $t(`create.${i18nKey}`) : '';
+}
+
+function enumOptionLabel(paramKey: string, value: string): string {
+  const i18nKey = enumOptionI18nKey(paramKey, value);
+  return i18nKey ? $t(`create.${i18nKey}`) : value;
+}
 
 function loraOptionLabelForRow(l: Record<string, unknown>): string {
   if (l.source === 'user_trained') {

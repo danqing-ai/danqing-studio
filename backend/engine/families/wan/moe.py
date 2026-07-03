@@ -318,7 +318,10 @@ class WanMoETransformer:
         return latents
 
     def step_callback(self, step_idx: int, latents: Any, noise_pred: Any) -> None:
-        del step_idx, latents, noise_pred
+        expert = self._ensure_expert(step_idx)
+        fn = getattr(expert, "step_callback", None)
+        if callable(fn):
+            fn(step_idx, latents, noise_pred)
 
     def parameters(self):
         for side in ("high", "low"):
