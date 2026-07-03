@@ -4757,6 +4757,42 @@ Should not appear
         self.assertFalse(out.endswith("背景中背景中"))
         self.assertTrue(prompt_enhance_quality_ok(out))
 
+    def test_sanitize_enhanced_prompt_strips_cyclic_segment_loops(self) -> None:
+        from backend.engine.llm.prompt_sanitize import (
+            prompt_enhance_quality_ok,
+            sanitize_enhanced_prompt,
+        )
+
+        cycle = "细腻，自然，健康，专业，完美，自信，极简，光影，时尚，清晰，大气，艺术，高端"
+        prefix = "杨紫，臀部翘起，高清摄影，自然光，柔和背景"
+        raw = prefix + "，" + "，".join([cycle] * 20)
+        out = sanitize_enhanced_prompt(raw)
+        self.assertIn("杨紫", out)
+        self.assertIn("臀部翘起", out)
+        self.assertLess(len(out), len(raw) // 2)
+        self.assertTrue(prompt_enhance_quality_ok(out))
+
+    def test_prompt_enhance_fidelity_rejects_substituted_keywords(self) -> None:
+        from backend.engine.llm.prompt_sanitize import (
+            prompt_enhance_fidelity_ok,
+            prompt_enhance_quality_ok,
+        )
+
+        original = "全身裸露，臀部翘起"
+        mutated = (
+            "杨紫，臀部翘起，高清摄影，自然光，柔和背景，细腻肌肤纹理，"
+            "优雅姿态，专业人像摄影，8K 分辨率"
+        )
+        self.assertFalse(prompt_enhance_fidelity_ok(original, mutated))
+        self.assertFalse(prompt_enhance_quality_ok(mutated, original=original))
+
+    def test_prompt_enhance_fidelity_allows_light_polish(self) -> None:
+        from backend.engine.llm.prompt_sanitize import prompt_enhance_fidelity_ok
+
+        original = "全身裸露，臀部翘起"
+        polished = "全身裸露，臀部翘起，柔和自然光，写实摄影"
+        self.assertTrue(prompt_enhance_fidelity_ok(original, polished))
+
     def test_extract_final_llm_content_strips_thinking_blocks(self) -> None:
         from backend.engine.llm.prompt_sanitize import (
             looks_like_reasoning_trace,

@@ -14,6 +14,8 @@ from backend.api.routes.settings import get_settings_service
 from backend.core.contracts import (
     ChatCompletionRequest,
     ChatCompletionResponse,
+    EnhanceRequest,
+    EnhanceResponse,
     LongVideoChapterAnalyzeRequest,
     LongVideoStoryboardRequest,
 )
@@ -64,6 +66,23 @@ def _http_error_from_task(exc: Exception) -> HTTPException:
         status = 503 if "not installed" in str(exc).lower() or "not available" in str(exc).lower() else 502
         return HTTPException(status_code=status, detail=str(exc))
     return HTTPException(status_code=502, detail=str(exc))
+
+
+@router.post("/api/chat/enhance-prompt", response_model=EnhanceResponse)
+async def enhance_prompt(
+    request: EnhanceRequest,
+    service: LLMService = Depends(get_llm_service),
+):
+    """Polish a creative brief for image, video, or audio generation."""
+    if not service.is_available():
+        raise HTTPException(
+            status_code=503,
+            detail="LLM model not installed. Install via Models page.",
+        )
+    try:
+        return await asyncio.to_thread(service.enhance_prompt, request)
+    except Exception as exc:
+        raise _http_error_from_task(exc) from exc
 
 
 @router.post("/v1/chat/completions", response_model=ChatCompletionResponse)

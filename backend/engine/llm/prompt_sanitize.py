@@ -29,8 +29,29 @@ def _join_segments(segments: list[str], *, prefer_chinese: bool) -> str:
     return sep.join(segments)
 
 
+def _truncate_cyclic_segments(segments: list[str], *, min_repeats: int = 1) -> list[str]:
+    """Drop tail when a multi-segment pattern repeats (e.g. A,B,C,A,B,C,…)."""
+    n = len(segments)
+    if n < 4:
+        return segments
+    max_period = min(16, n // 2)
+    for period in range(2, max_period + 1):
+        if n >= period * 2 and segments[-period:] == segments[-period * 2 : -period]:
+            return segments[:-period]
+        for start in range(0, n - period * (min_repeats + 1) + 1):
+            chunk = segments[start : start + period]
+            reps = 1
+            pos = start + period
+            while pos + period <= n and segments[pos : pos + period] == chunk:
+                reps += 1
+                pos += period
+            if reps >= min_repeats + 1:
+                return segments[: start + period]
+    return segments
+
+
 def _truncate_segment_loop(text: str) -> str:
-    """Cut comma-separated prompts when the same segment repeats 3+ times."""
+    """Cut comma-separated prompts when segments repeat consecutively or cyclically."""
     segments = _split_segments(text)
     if len(segments) < 3:
         return text.strip()
@@ -43,6 +64,7 @@ def _truncate_segment_loop(text: str) -> str:
         if len(out) >= _MAX_SEGMENTS:
             break
 
+    out = _truncate_cyclic_segments(out)
     if not out:
         return text.strip()
     return _join_segments(out, prefer_chinese=_looks_chinese(text))
@@ -128,7 +150,34 @@ def looks_like_reasoning_trace(text: str) -> bool:
     return sum(1 for marker in markers if marker in low) >= 2
 
 
-def prompt_enhance_quality_ok(text: str) -> bool:
+def _has_cyclic_segment_loop(segments: list[str], *, min_repeats: int = 1) -> bool:
+    truncated = _truncate_cyclic_segments(segments, min_repeats=min_repeats)
+    return len(truncated) < len(segments)
+
+
+def prompt_enhance_fidelity_ok(original: str, enhanced: str) -> bool:
+    """Reject enhancements that balloon short briefs or drop user keywords."""
+    orig = (original or "").strip()
+    out = (enhanced or "").strip()
+    if not orig or not out:
+        return bool(orig == out)
+    if len(orig) > 80:
+        return True
+
+    max_len = min(_MAX_PROMPT_CHARS, max(int(len(orig) * 2.5), 120))
+    if len(out) > max_len:
+        return False
+
+    for segment in _split_segments(orig):
+        token = segment.strip()
+        if len(token) < 2:
+            continue
+        if token not in out:
+            return False
+    return True
+
+
+def prompt_enhance_quality_ok(text: str, *, original: str = "") -> bool:
     """Heuristic guard against degenerate mlx-lm prompt loops."""
     cleaned = (text or "").strip()
     if not cleaned:
@@ -141,6 +190,8 @@ def prompt_enhance_quality_ok(text: str) -> bool:
         return False
 
     segments = _split_segments(cleaned)
+    if _has_cyclic_segment_loop(segments):
+        return False
     if len(segments) >= 4:
         unique_ratio = len(set(segments)) / len(segments)
         if unique_ratio < 0.45:
@@ -153,6 +204,11 @@ def prompt_enhance_quality_ok(text: str) -> bool:
     for segment in segments:
         if _has_degenerate_tail_repeat(segment):
             return False
+        if len(segment) <= 4 and sum(1 for s in segments if s == segment) >= 3:
+            return False
+
+    if original.strip() and not prompt_enhance_fidelity_ok(original, cleaned):
+        return False
 
     return True
 
