@@ -34,6 +34,7 @@ from backend.core.i18n import resolve_locale
 from backend.core.model_registry import ModelEntry, ModelRegistry
 from backend.engine.llm.lyrics_sanitize import lyric_line_has_annotations, sanitize_lyrics_output
 from backend.engine.llm.prompt_sanitize import (
+    prompt_enhance_fidelity_ok,
     prompt_enhance_quality_ok,
     sanitize_enhanced_prompt,
 )
@@ -453,16 +454,18 @@ class LLMService:
                         extract_final_llm_content(result, think_enabled=think_active),
                         think_enabled=think_active,
                     )
-                    if prompt_enhance_quality_ok(cleaned):
+                    if prompt_enhance_quality_ok(cleaned, original=raw_prompt):
                         return EnhanceResponse(enhanced_prompt=cleaned)
                     last_clean = cleaned
             finally:
                 self._unload_model(model, tokenizer)
 
         fallback = sanitize_enhanced_prompt(raw_prompt, think_enabled=think_active)
-        if prompt_enhance_quality_ok(last_clean):
+        if prompt_enhance_quality_ok(last_clean, original=raw_prompt):
             return EnhanceResponse(enhanced_prompt=last_clean)
-        return EnhanceResponse(enhanced_prompt=fallback or last_clean)
+        if prompt_enhance_fidelity_ok(raw_prompt, last_clean):
+            return EnhanceResponse(enhanced_prompt=last_clean)
+        return EnhanceResponse(enhanced_prompt=fallback or raw_prompt)
 
     def analyze_long_video_chapter(
         self,

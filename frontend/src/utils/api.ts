@@ -788,6 +788,19 @@ export const api = {
       return eventSource;
     },
 
+    async enhancePrompt(body: {
+      prompt: string;
+      style_positive?: string;
+      style_negative?: string;
+      target_action?: string;
+      model_id?: string;
+    }): Promise<{ enhanced_prompt: string }> {
+      const response = await client.post('/api/chat/enhance-prompt', body, {
+        timeout: LLM_REQUEST_TIMEOUT_MS,
+      });
+      return response.data;
+    },
+
     async chatCompletion(body: {
       model?: string;
       messages: Array<{

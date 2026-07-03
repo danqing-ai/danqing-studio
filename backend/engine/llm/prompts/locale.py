@@ -62,10 +62,20 @@ def scene_entity_user_locale_block(locale: str) -> str:
 def enhance_user_locale_hint(text: str) -> str:
     """Optional polish hint when input is already detailed (user message only)."""
     raw = (text or "").strip()
-    if len(raw) < 60:
+    if not raw:
         return ""
     if any("\u4e00" <= ch <= "\u9fff" for ch in raw):
+        if len(raw) < 60:
+            return (
+                "\n\n（输入较短：保留原意与关键词，最多补充少量画面细节，"
+                "禁止堆砌形容词或重复用词。）"
+            )
         return "\n\n（输入已够详细：只做轻微润色，禁止加长或重复用词。）"
+    if len(raw) < 80:
+        return (
+            "\n\n(Input is short: preserve intent and keywords; add at most a few visual cues; "
+            "no filler loops.)"
+        )
     if len(raw) >= 80:
         return "\n\n(Input is already detailed: light polish only; do not lengthen or repeat phrases.)"
     return ""

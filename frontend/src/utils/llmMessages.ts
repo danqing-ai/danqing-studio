@@ -440,10 +440,12 @@ export async function enhancePromptViaChat(
   prompt: string,
   opts?: { stylePositive?: string; targetAction?: string },
 ): Promise<string> {
-  return runChatCompletion(buildEnhanceMessages(prompt, opts), {
-    temperature: 0.65,
-    max_tokens: 512,
+  const res = await api.gen.enhancePrompt({
+    prompt,
+    style_positive: opts?.stylePositive,
+    target_action: opts?.targetAction,
   });
+  return (res.enhanced_prompt || '').trim();
 }
 
 export async function generateLyricsViaChat(prompt: string, style?: string): Promise<string> {
