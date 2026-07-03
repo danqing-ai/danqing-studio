@@ -38,6 +38,20 @@ _DANQING_PY = PROJECT_ROOT / ".venv" / "bin" / "python3"
 _DEFAULT_BENCH_MLX_MEMORY_GB = 64
 
 
+def _bench_teacache_mode() -> str | None:
+    raw = os.environ.get("DANQING_BENCH_TEACACHE_MODE", "auto").strip().lower()
+    if raw in ("", "none", "off", "false", "0"):
+        return None
+    return raw
+
+
+def _append_bench_inference_flags(cmd: list[str]) -> list[str]:
+    tc = _bench_teacache_mode()
+    if tc:
+        cmd += ["--teacache-mode", tc]
+    return cmd
+
+
 def _bench_mlx_memory_gb() -> int:
     raw = os.environ.get("DANQING_BENCH_MLX_MEMORY_GB", str(_DEFAULT_BENCH_MLX_MEMORY_GB)).strip()
     try:
@@ -158,6 +172,7 @@ class EvalRunner:
             "--output",
             str(output_path),
         ]
+        cmd = _append_bench_inference_flags(cmd)
         return self._exec_cli(cmd, label="generate", timeout_sec=case.timeout_sec, case=case)
 
     def _run_generate_edit(self, case: EvalCase, output_path: Path) -> bool:
@@ -189,6 +204,7 @@ class EvalRunner:
             cmd += ["--extend-directions", "right"]
         if case.action == "retouch":
             cmd += ["--mask-image", str(ensure_edit_mask())]
+        cmd = _append_bench_inference_flags(cmd)
         return self._exec_cli(cmd, label="edit", timeout_sec=case.timeout_sec, case=case)
 
     def _run_generate_upscale(self, case: EvalCase, output_path: Path) -> bool:

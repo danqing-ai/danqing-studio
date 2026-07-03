@@ -1,6 +1,7 @@
 .PHONY: help clean clean-download-cache lint dev start stop test test-integration \
 	frontend-install frontend-dev frontend-build frontend-typecheck frontend-canvas-unit \
 	bench-setup bench-download-judge bench-eval bench-eval-smoke bench-eval-case bench-eval-calibrate \
+	calibrate-teacache-smoke calibrate-teacache-run calibrate-teacache-fit \
 	chapter-parse-bench chapter-parse-bench-test \
 	check-consistency check-models-registry-contracts check-ep-boundary check-theme-legacy check-ui-compat check-engine-rules check-engine-imports check-engine-family-layout check-engine-family-primitives check-engine-attention-paths check-engine-sdpa-paths check-engine-rope-paths check-engine-modulation-paths check-frontend-governance check-weight-parity check-engine-governance verify-engine-stack \
 	sync-models-registry \
@@ -64,6 +65,51 @@ bench-eval-case:
 
 bench-eval-calibrate:
 	$(BENCH_PY) -m tests.benchmark eval --all --profile full --calibrate
+
+TEACACHE_OUT := tests/benchmark/outputs/teacache
+
+# TeaCache calibration — offline fit smoke (no GPU) or probe run (requires installed model).
+calibrate-teacache-smoke:
+	@mkdir -p $(TEACACHE_OUT)
+	$(PYTHON) scripts/calibrate_teacache.py fit \
+		--trace tests/fixtures/teacache/flux1_probe_trace.sample.json \
+		--write-report $(TEACACHE_OUT)/flux1_smoke_report.json
+	$(PYTHON) scripts/calibrate_teacache.py fit \
+		--trace tests/fixtures/teacache/wan_probe_trace.sample.json \
+		--write-report $(TEACACHE_OUT)/wan_smoke_report.json
+	@echo "TeaCache calibration smoke OK -> $(TEACACHE_OUT)/"
+
+calibrate-teacache-run:
+	@if [ -z "$(MODEL)" ] || [ -z "$(PROMPT)" ]; then \
+		echo "Usage: make calibrate-teacache-run MODEL=flux1-dev PROMPT='a mountain' [STEPS=28] [SIZE=512x512] [SEED=42]"; \
+		echo "       Optional: OUTPUT=... TRACE=... TARGET_SKIP_RATE=0.35"; \
+		exit 2; \
+	fi
+	@mkdir -p $(TEACACHE_OUT)
+	$(PYTHON) scripts/calibrate_teacache.py run \
+		--model $(MODEL) \
+		--prompt "$(PROMPT)" \
+		--steps $(or $(STEPS),28) \
+		--output $(or $(OUTPUT),$(TEACACHE_OUT)/$(MODEL)_probe.png) \
+		--trace $(or $(TRACE),$(TEACACHE_OUT)/$(MODEL)_probe_trace.json) \
+		--target-skip-rate $(or $(TARGET_SKIP_RATE),0.35) \
+		$(if $(SIZE),--size $(SIZE),) \
+		$(if $(SEED),--seed $(SEED),) \
+		$(if $(GUIDANCE),--guidance $(GUIDANCE),)
+
+calibrate-teacache-fit:
+	@if [ -z "$(TRACE)" ]; then \
+		echo "Usage: make calibrate-teacache-fit TRACE=path/to/trace.json [FAMILY=] [STEPS=] [TARGET_SKIP_RATE=0.35]"; \
+		exit 2; \
+	fi
+	@mkdir -p $(TEACACHE_OUT)
+	$(PYTHON) scripts/calibrate_teacache.py fit \
+		--trace $(TRACE) \
+		--target-skip-rate $(or $(TARGET_SKIP_RATE),0.35) \
+		$(if $(FAMILY),--family $(FAMILY),) \
+		$(if $(STEPS),--steps $(STEPS),) \
+		$(if $(FIT_COEFFICIENTS),--fit-coefficients,) \
+		--write-report $(or $(REPORT),$(TEACACHE_OUT)/fit_report.json)
 
 # Fixed long-video chapter parse speed/quality cases (wukong + rainy_night; requires local LLM).
 CASE ?= all
@@ -191,7 +237,7 @@ report-family-reuse:
 check-engine-governance: check-engine-rules check-consistency check-weight-parity
 	@echo "Engine governance suite OK"
 
-verify-engine-stack: check-engine-governance test-engine-unit
+verify-engine-stack: check-engine-governance test-engine-unit calibrate-teacache-smoke
 	@echo "Engine stack verification OK"
 
 test-engine-unit:
@@ -303,6 +349,9 @@ help:
 	@echo ""
 	@echo "Benchmark:"
 	@echo "  bench-setup / bench-download-judge / bench-eval / bench-eval-smoke / bench-eval-case"
+	@echo "  calibrate-teacache-smoke — offline TeaCache fit replay (no GPU)"
+	@echo "  calibrate-teacache-run MODEL=... PROMPT=... [STEPS=28] — probe rel_l1 + suggest threshold"
+	@echo "  calibrate-teacache-fit TRACE=... — replay saved trace JSON"
 	@echo "  chapter-parse-bench [CASE=all|wukong|rainy_night] [RUNS=1] — fixed LLM parse speed cases"
 	@echo "  chapter-parse-bench-test — unittest gates (skips if no LLM)"
 	@echo ""

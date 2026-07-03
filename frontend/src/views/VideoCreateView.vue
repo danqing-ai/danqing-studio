@@ -286,11 +286,13 @@ import { usePromptApplyOffer } from '@/composables/usePromptApplyOffer';
 import { ACTIVE_COMPOSER_TASK_STATUSES, splitComposerPromptLines } from '@/utils/composerQueue';
 import { appendStyleBoost } from '@/utils/styleBoost';
 import {
+  applyDefaults,
   buildResolutionSizeOptions,
   loadImageNaturalSize,
   parseSizeValue,
   pickClosestResolutionPreset,
   pickResolutionForModel,
+  VIDEO_INFERENCE_ENUM_KEYS,
 } from '@/utils/registryParamSchema';
 import {
   getVideoSizeForModel,
@@ -393,6 +395,7 @@ const params = reactive({
   upscale_max_frames: 300,
   lora: '',
   lora_scale: 1.0,
+  teacache_mode: 'auto',
 });
 
 const selectedModelVersion = ref('');
@@ -1699,6 +1702,7 @@ const loadModelDefaults = () => {
   if (p.num_frames) params.num_frames = p.num_frames.default;
   if (p.fps) params.fps = p.fps.default;
   if (p.lora_scale?.default != null) params.lora_scale = p.lora_scale.default;
+  applyDefaults(p, params as Record<string, unknown>);
   params.seed = '';
   params.lora = '';
   syncComposerPickersFromParams();
@@ -1730,6 +1734,10 @@ const hasCustomParams = computed(() => {
   if (params.seed) return true;
   if (params.lora) return true;
   if (p.lora_scale && params.lora_scale !== p.lora_scale.default) return true;
+  for (const key of VIDEO_INFERENCE_ENUM_KEYS) {
+    const spec = p[key as keyof typeof p] as { default?: unknown } | undefined;
+    if (spec && params[key as keyof typeof params] !== spec.default) return true;
+  }
   return false;
 });
 
@@ -2109,6 +2117,12 @@ const startGeneration = async (options: StartGenerationOptions = {}) => {
       if (refIds.length > 0) {
         animateBody.reference_asset_ids = refIds;
       }
+      appendActiveEnumFields(
+        animateBody,
+        params as Record<string, unknown>,
+        VIDEO_INFERENCE_ENUM_KEYS,
+        currentModelConfig.value?.parameters as Record<string, unknown> | undefined,
+      );
       submitRes = await api.gen.createVideoEdit(animateBody);
     } else {
       const body: Record<string, unknown> = {
@@ -2134,6 +2148,12 @@ const startGeneration = async (options: StartGenerationOptions = {}) => {
       if (refIds.length > 0) {
         body.reference_asset_ids = refIds;
       }
+      appendActiveEnumFields(
+        body,
+        params as Record<string, unknown>,
+        VIDEO_INFERENCE_ENUM_KEYS,
+        currentModelConfig.value?.parameters as Record<string, unknown> | undefined,
+      );
       submitRes = await api.gen.createVideoGeneration(body);
     }
     if (queueOnly) {

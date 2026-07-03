@@ -11,6 +11,8 @@ from backend.engine.common.ops.cfg_batch import (
     TEXT_KEYS_MINIMAL,
     predict_noise_cfg_batched,
 )
+from backend.engine.common.ops.dit_runtime import DiTRuntimeSession
+from backend.engine.common.ops.step_cache import StepCacheSession
 from backend.engine.common.ops.attention import (
     build_key_padding_mask_from_lengths,
     wan_attention,
@@ -225,6 +227,8 @@ class WanModelMLX(TransformerBase):
         self._text_cache_key: tuple[int, ...] | None = None
         self._cached_context: mx.array | None = None
         self._cached_cross_kv: list[tuple[mx.array, mx.array]] | None = None
+        self._step_cache: StepCacheSession | None = None
+        self._teacache_cached_residual: mx.array | None = None
         self._build_param_map()
 
     def invalidate_text_cache(self) -> None:
@@ -234,6 +238,23 @@ class WanModelMLX(TransformerBase):
         self._cached_cross_kv = None
         self._rope_cos_sin = None
         self._rope_grid_key = None
+
+    def apply_runtime_plan(self, plan: Any) -> None:
+        """Refresh compile + step cache from frozen inference plan."""
+        runtime = DiTRuntimeSession.from_plan(plan)
+        self._step_cache = runtime.step_cache
+        self._teacache_cached_residual = None
+        if getattr(self.ctx, "backend", None) != "mlx":
+            self._compiled_forward = None
+            return
+        if runtime.use_mlx_compile:
+            if self._compiled_forward is None:
+                try:
+                    self._compiled_forward = self.ctx.compile(self._forward_compute)
+                except Exception:
+                    self._compiled_forward = None
+        else:
+            self._compiled_forward = None
 
     def after_load_weights(self, bundle_root=None) -> None:
         super().after_load_weights(bundle_root)
@@ -625,17 +646,41 @@ class WanModelMLX(TransformerBase):
                 ctx, lens, seq_len, mlx_linear_compute_dtype(self.patch_embedding)
             )
 
-        for blk, cross_kv in zip(self.blocks, cross_kv_list):
-            x = blk(
-                x,
-                e0,
-                grid_sizes_list,
-                freqs,
-                context,
-                cross_kv=cross_kv,
-                rope_cos_sin=rope_cos_sin,
-                attn_mask=attn_mask,
-            )
+        body_in = x
+        skip_body = False
+        if self._step_cache is not None and self._step_cache.enabled:
+            mod_in = e0[0:1] if int(e0.shape[0]) > 1 else e0
+            decision = self._step_cache.gate(mod_in)
+            if self._step_cache.should_skip(
+                decision,
+                has_residual=self._teacache_cached_residual is not None,
+            ):
+                x = body_in + self._teacache_cached_residual
+                skip_body = True
+            elif decision is not None and decision.should_update_cache:
+                self._step_cache.store_branch_mod_input("default", mod_in)
+            elif (
+                decision is not None
+                and decision.should_compute
+                and decision.rel_l1 is not None
+            ):
+                self._step_cache.store_branch_mod_input("default", mod_in)
+
+        if not skip_body:
+            for blk, cross_kv in zip(self.blocks, cross_kv_list):
+                x = blk(
+                    x,
+                    e0,
+                    grid_sizes_list,
+                    freqs,
+                    context,
+                    cross_kv=cross_kv,
+                    rope_cos_sin=rope_cos_sin,
+                    attn_mask=attn_mask,
+                )
+            if self._step_cache is not None and self._step_cache.enabled:
+                self._teacache_cached_residual = x - body_in
+                ctx.eval(self._teacache_cached_residual)
 
         if e.ndim == 2:
             e_h = e[:, None, :]

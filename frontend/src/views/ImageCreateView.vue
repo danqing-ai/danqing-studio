@@ -369,9 +369,6 @@ const params = reactive<Record<string, unknown>>({
   img2img: false,
   controlnet: '',
   controlnet_strength: 0.8,
-  lemica_mode: 'none',
-  latent_refine_scale: 1.0,
-  latent_refine_denoise: 0.35,
   scheduler: 'flow_match_euler_discrete',
   upscale_scale: 2,
   upscale_denoise: 0.3,
@@ -1793,14 +1790,13 @@ async function submitImageGenerationTask(
   const inpSrc = resolveInpaintAssetId(inpaintSourceImage.value);
   const inpMsk = resolveInpaintAssetId(inpaintMaskImage.value);
   const enhCommon = {
+    parameters: currentModelConfig.value?.parameters as Record<string, unknown> | undefined,
+    params,
     controlnet: String(params.controlnet || ''),
     controlAssetId: ctx.control_asset_id,
     controlnetStrength: Number(params.controlnet_strength) || 0.8,
     inpaintSourceId: inpSrc,
     inpaintMaskId: inpMsk,
-    lemicaMode: String(params.lemica_mode || 'none'),
-    latentRefineScale: Number(params.latent_refine_scale),
-    latentRefineDenoise: Number(params.latent_refine_denoise),
   };
 
   if (ctx.hasRef) {

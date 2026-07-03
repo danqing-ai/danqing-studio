@@ -44,6 +44,392 @@ class StructuralGuideTests(unittest.TestCase):
         self.assertIsNone(companion_lora_id("flux-redux"))
 
 
+class InferenceOptimizationTests(unittest.TestCase):
+    def test_teacache_resolve_auto_short_schedule_off(self) -> None:
+        from backend.engine.common.ops.teacache import resolve_teacache_settings
+
+        enabled, *_ = resolve_teacache_settings("flux1", "auto", num_steps=8)
+        self.assertFalse(enabled)
+
+    def test_teacache_gate_skips_when_below_threshold(self) -> None:
+        import mlx.core as mx
+
+        from backend.engine.common.ops.teacache import (
+            FLUX1_TEACACHE_COEFFICIENTS,
+            TeaCacheState,
+            gate_step,
+        )
+
+        state = TeaCacheState()
+        a = mx.ones((1, 8, 64))
+        decision = gate_step(
+            state,
+            rel_l1_thresh=0.20,
+            coefficients=FLUX1_TEACACHE_COEFFICIENTS,
+            skip_first=1,
+            skip_last=1,
+            num_steps=25,
+            step_idx=5,
+            mod_in=a,
+        )
+        self.assertTrue(decision.should_compute)
+        lane = state.lane("default")
+        lane.previous_mod_input = a
+        lane.accumulated_distance = 0.0
+        decision2 = gate_step(
+            state,
+            rel_l1_thresh=0.35,
+            coefficients=FLUX1_TEACACHE_COEFFICIENTS,
+            skip_first=1,
+            skip_last=1,
+            num_steps=25,
+            step_idx=6,
+            mod_in=a,
+        )
+        self.assertFalse(decision2.should_compute)
+
+    def test_compile_policy_teacache_blocks(self) -> None:
+        from backend.engine.common.ops.compile_policy import resolve_use_mlx_compile
+        from backend.engine.config.model_configs import Flux1Config
+
+        cfg = Flux1Config(use_mlx_compile_auto=True)
+        self.assertFalse(
+            resolve_use_mlx_compile(cfg, num_steps=25, backend="mlx", teacache_mode="on")
+        )
+        self.assertTrue(
+            resolve_use_mlx_compile(cfg, num_steps=25, backend="mlx", teacache_mode="none")
+        )
+
+    def test_flux1_predict_noise_cfg_symbol(self) -> None:
+        from backend.engine.families.flux1.transformer_mlx import Flux1DiTMLX
+
+        self.assertTrue(callable(getattr(Flux1DiTMLX, "predict_noise_cfg", None)))
+
+    def test_qwen_predict_noise_cfg_symbol(self) -> None:
+        from backend.engine.families.qwen.transformer_mlx import QwenImageDiTMLX
+
+        self.assertTrue(callable(getattr(QwenImageDiTMLX, "predict_noise_cfg", None)))
+
+    def test_apply_image_inference_options(self) -> None:
+        from backend.engine.pipelines.image_run_common import apply_image_inference_options
+
+        class _Req:
+            lemica_mode = "medium"
+            teacache_mode = "none"
+
+        class _Ctx:
+            backend = "mlx"
+
+        extra = apply_image_inference_options(_Ctx(), _Req(), {"foo": 1})
+        self.assertEqual(extra["foo"], 1)
+        self.assertEqual(extra["lemica_mode"], "medium")
+        self.assertEqual(extra["teacache_mode"], "none")
+
+    def test_inference_plan_teacache_lemica_mutex(self) -> None:
+        from backend.engine.inference.optimization_plan import resolve_image_inference_plan
+
+        class _Cfg:
+            teacache_mode = "auto"
+            lemica_mode = "medium"
+            use_batched_cfg = True
+            use_mm_dit_text_cache = False
+            use_mlx_compile_auto = True
+
+        class _Ctx:
+            backend = "mlx"
+
+        plan = resolve_image_inference_plan(
+            family="z_image",
+            config=_Cfg(),
+            entry=None,
+            ctx=_Ctx(),
+            num_steps=28,
+            teacache_mode="quality",
+            lemica_mode="medium",
+        )
+        self.assertTrue(plan.step_cache_enabled)
+        self.assertFalse(plan.lemica_enabled)
+
+    def test_step_cache_session_gate(self) -> None:
+        import mlx.core as mx
+
+        from backend.engine.common.ops.step_cache import StepCacheSession
+
+        session = StepCacheSession.configure(
+            family="flux1",
+            mode="quality",
+            num_steps=25,
+            user_thresh=0.35,
+        )
+        self.assertTrue(session.enabled)
+        a = mx.ones((1, 8, 64))
+        d1 = session.gate(a, step_idx=5)
+        assert d1 is not None
+        self.assertTrue(d1.should_compute)
+        session.store_branch_mod_input("default", a)
+        session.state.lane("default").accumulated_distance = 0.0
+        d2 = session.gate(a, step_idx=6)
+        assert d2 is not None
+        self.assertFalse(d2.should_compute)
+
+    def test_teacache_dual_branch_cfg_isolated(self) -> None:
+        import mlx.core as mx
+
+        from backend.engine.common.ops.step_cache import StepCacheSession
+
+        session = StepCacheSession.configure(
+            family="z_image",
+            mode="on",
+            num_steps=10,
+            user_thresh=0.35,
+        )
+        a = mx.ones((1, 8, 64))
+        b = mx.ones((1, 8, 64)) * 1.5
+        session.set_step_counter(1)
+
+        d_cond = session.gate(a, branch="cond")
+        assert d_cond is not None
+        self.assertTrue(d_cond.should_compute)
+        session.store_branch_mod_input("cond", a)
+        session.store_branch_residual("cond", a)
+
+        d_uncond = session.gate(b, branch="uncond")
+        assert d_uncond is not None
+        self.assertTrue(d_uncond.should_compute)
+
+        session.store_branch_mod_input("uncond", b)
+        session.store_branch_residual("uncond", b)
+        self.assertIs(session.branch_cached_residual("cond"), a)
+        self.assertIs(session.branch_cached_residual("uncond"), b)
+
+    def test_video_inference_plan_fields(self) -> None:
+        from backend.engine.inference.optimization_plan import resolve_video_inference_plan
+
+        class _Cfg:
+            teacache_mode = "none"
+            use_batched_cfg = True
+            use_mlx_compile_auto = True
+            use_mlx_compile_step_distill = True
+            step_distill = True
+            attention_backend = "auto"
+            vae_stream_cache = False
+            conv3d_backend = "auto"
+            dim_in = 48
+
+        class _Ctx:
+            backend = "mlx"
+
+        plan = resolve_video_inference_plan(
+            family="wan",
+            config=_Cfg(),
+            ctx=_Ctx(),
+            num_steps=4,
+        )
+        self.assertEqual(plan.family, "wan")
+        self.assertFalse(plan.step_cache_enabled)
+        self.assertIn(plan.attention_backend, ("mlx", "mfa"))
+
+    def test_text_embedding_cache_roundtrip(self) -> None:
+        from backend.engine.common.ops.text_embedding_cache import TextEmbeddingCache
+
+        cache = TextEmbeddingCache(max_entries=4)
+        cache.put(
+            encoder_id="t5",
+            prompt="hello",
+            negative_prompt="",
+            guidance=3.5,
+            value=("a", "b"),
+        )
+        hit = cache.get(encoder_id="t5", prompt="hello", negative_prompt="", guidance=3.5)
+        self.assertEqual(hit, ("a", "b"))
+
+    def test_wan_teacache_auto_enabled(self) -> None:
+        from backend.engine.common.ops.teacache import resolve_teacache_settings
+
+        enabled, thresh, coeffs, *_ = resolve_teacache_settings("wan", "auto", num_steps=40)
+        self.assertTrue(enabled)
+        self.assertAlmostEqual(thresh, 0.20, places=2)
+        self.assertEqual(len(coeffs), 5)
+
+    def test_hunyuan_teacache_auto_enabled(self) -> None:
+        from backend.engine.common.ops.teacache import resolve_teacache_settings
+
+        enabled, thresh, *_ = resolve_teacache_settings("hunyuan", "auto", num_steps=50)
+        self.assertTrue(enabled)
+        self.assertAlmostEqual(thresh, 0.15, places=2)
+
+    def test_apply_video_inference_options(self) -> None:
+        from backend.engine.inference.video_options import apply_video_inference_options
+
+        class _Req:
+            teacache_mode = "quality"
+
+        class _Ctx:
+            backend = "mlx"
+
+        extra = apply_video_inference_options(_Ctx(), _Req(), {"foo": 1})
+        self.assertEqual(extra["foo"], 1)
+        self.assertEqual(extra["teacache_mode"], "quality")
+
+    def test_vae_stream_prepend_tail(self) -> None:
+        import mlx.core as mx
+
+        from backend.engine.common.ops.vae_stream_cache import VAEStreamCacheSession
+
+        session = VAEStreamCacheSession.from_plan(enabled=True)
+        x = mx.ones((1, 3, 2, 4, 4))
+        session.update_causal_tail(x, "layer0", kernel_temporal=3)
+        out = session.prepend_causal_tail(x, "layer0", kernel_temporal=3)
+        self.assertEqual(out.shape, (1, 3, 4, 4, 4))
+
+    def test_teacache_probe_session_records_rel_l1(self) -> None:
+        import mlx.core as mx
+
+        from backend.engine.common.ops.step_cache import StepCacheSession
+
+        session = StepCacheSession.configure_probe(family="flux1", num_steps=10)
+        a = mx.ones((1, 8, 64)) * 1.0
+        b = mx.ones((1, 8, 64)) * 1.1
+        session.gate(a, step_idx=1)
+        session.store_branch_mod_input("default", a)
+        session.gate(b, step_idx=2)
+        session.publish_probe_trace()
+        trace = StepCacheSession.consume_probe_trace()
+        self.assertEqual(len(trace), 1)
+        self.assertGreater(trace[0], 0.0)
+
+    def test_teacache_calibration_simulate_skip_rate(self) -> None:
+        from backend.engine.common.ops.teacache import FLUX1_TEACACHE_COEFFICIENTS
+        from backend.engine.common.ops.teacache_calibrate import (
+            build_calibration_report,
+            simulate_skip_rate,
+        )
+
+        rel = [0.01, 0.02, 0.01, 0.03, 0.01, 0.02] * 4
+        rate_low = simulate_skip_rate(
+            rel,
+            coefficients=FLUX1_TEACACHE_COEFFICIENTS,
+            thresh=0.05,
+            num_steps=25,
+        )
+        rate_high = simulate_skip_rate(
+            rel,
+            coefficients=FLUX1_TEACACHE_COEFFICIENTS,
+            thresh=0.80,
+            num_steps=25,
+        )
+        self.assertGreater(rate_high, rate_low)
+        report = build_calibration_report(
+            rel,
+            family="flux1",
+            num_steps=25,
+            target_skip_rate=0.35,
+        )
+        self.assertEqual(report.family, "flux1")
+        self.assertGreater(report.suggested_thresh, 0.0)
+        self.assertGreater(len(report.threshold_sweep), 0)
+
+    def test_teacache_fixture_smoke_reports(self) -> None:
+        from pathlib import Path
+
+        from backend.engine.common.ops.teacache_calibrate import (
+            build_calibration_report,
+            load_trace_json,
+        )
+
+        root = Path(__file__).resolve().parent / "fixtures" / "teacache"
+        for name in ("flux1_probe_trace.sample.json", "wan_probe_trace.sample.json"):
+            data = load_trace_json(root / name)
+            rel = [float(x) for x in data["rel_l1"]]
+            report = build_calibration_report(
+                rel,
+                family=str(data["family"]),
+                num_steps=int(data["num_steps"]),
+            )
+            self.assertGreater(report.suggested_thresh, 0.0)
+
+    def test_step_cache_summary_format(self) -> None:
+        from backend.engine.common.ops.step_cache import (
+            StepCacheSession,
+            format_step_cache_summary,
+        )
+
+        session = StepCacheSession.configure(family="flux1", mode="quality", num_steps=25)
+        assert session.state is not None
+        session.state.computed_count = 18
+        session.state.skipped_count = 7
+        msg = format_step_cache_summary(session)
+        self.assertIsNotNone(msg)
+        assert msg is not None
+        self.assertIn("skipped 7/25", msg)
+
+    def test_inference_plan_snapshot_and_metadata(self) -> None:
+        from backend.engine.common.ops.step_cache import StepCacheSession
+        from backend.engine.inference.optimization_plan import (
+            attach_inference_plan,
+            inference_plan_log_line,
+            merge_inference_run_metadata,
+            pop_inference_run_metadata,
+            resolve_image_inference_plan,
+        )
+
+        class _Cfg:
+            teacache_mode = "quality"
+            lemica_mode = "none"
+            use_batched_cfg = True
+            use_mm_dit_text_cache = False
+            use_mlx_compile_auto = True
+
+        class _Ctx:
+            backend = "mlx"
+
+        plan = resolve_image_inference_plan(
+            family="flux1",
+            config=_Cfg(),
+            entry=None,
+            ctx=_Ctx(),
+            num_steps=28,
+            teacache_mode="quality",
+        )
+        line = inference_plan_log_line(plan)
+        self.assertIn("teacache=quality", line)
+        extra = attach_inference_plan({}, plan)
+        self.assertIn("_inference_plan_snapshot", extra)
+        self.assertEqual(extra["_inference_plan_snapshot"]["teacache_mode"], "quality")
+
+        class _Model:
+            _step_cache = None
+
+        session = StepCacheSession.configure(family="flux1", mode="quality", num_steps=25)
+        assert session.state is not None
+        session.state.computed_count = 20
+        session.state.skipped_count = 5
+        model = _Model()
+        model._step_cache = session
+        merged = merge_inference_run_metadata(model, extra)
+        self.assertEqual(merged["teacache_skipped"], 5)
+        self.assertEqual(merged["teacache_computed"], 20)
+        setattr(model, "_dq_inference_run_meta", merged)
+        popped = pop_inference_run_metadata(model)
+        self.assertEqual(popped["teacache_skip_rate"], 0.2)
+        self.assertEqual(pop_inference_run_metadata(model), {})
+
+    def test_inference_metadata_for_task(self) -> None:
+        from backend.engine.inference.optimization_plan import inference_metadata_for_task
+
+        meta = inference_metadata_for_task(
+            {
+                "prompt": "hello",
+                "teacache_mode": "quality",
+                "teacache_skipped": 5,
+                "teacache_skip_rate": 0.2,
+            }
+        )
+        self.assertEqual(meta["teacache_mode"], "quality")
+        self.assertEqual(meta["teacache_skipped"], 5)
+        self.assertNotIn("prompt", meta)
+
+
 class ZImageEnhancementTests(unittest.TestCase):
     def test_lemica_schedules(self) -> None:
         from backend.engine.families.z_image.transformer_mlx import lemica_compute_steps

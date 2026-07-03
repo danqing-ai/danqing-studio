@@ -59,9 +59,33 @@ from backend.engine.pipelines.pipeline_progress import (
 
 _IMAGE_SCHEDULER_SEMANTICS = SchedulerSemanticsResolver()
 
+_IMAGE_INFERENCE_OPTION_ATTRS = ("lemica_mode", "teacache_mode")
 
-def resolve_image_preview_settings(entry: Any) -> tuple[str, int, int]:
-    """Return (preview_mode, interval_steps, max_edge_px)."""
+
+def apply_image_inference_options(
+    ctx: Any,
+    request: ImageGenerationRequest | ImageEditRequest,
+    extra_cond: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Wire MLX-only inference enum options from API request into ``extra_cond``."""
+    extra = dict(extra_cond or {})
+    for attr in _IMAGE_INFERENCE_OPTION_ATTRS:
+        val = getattr(request, attr, None)
+        if val is None:
+            continue
+        norm = str(val).strip().lower()
+        if norm in ("", "none", "off"):
+            extra[attr] = "none"
+            continue
+        from backend.engine.common.mlx_only import require_mlx_if_option_active
+
+        require_mlx_if_option_active(ctx, feature=attr, option=val)
+        extra[attr] = norm
+    return extra
+
+
+def resolve_image_preview_settings(entry: Any) -> tuple[str, int, int, str]:
+    """Return (preview_mode, interval_steps, max_edge_px, preview_decoder)."""
     mode = _registry_scalar_default_fn(entry, "preview_mode", None)
     if mode is None:
         raw = getattr(entry, "raw", None) or {}
@@ -75,7 +99,10 @@ def resolve_image_preview_settings(entry: Any) -> tuple[str, int, int]:
         mode = "none"
     interval = int(_registry_scalar_default_fn(entry, "preview_interval_steps", 2) or 2)
     max_edge = int(_registry_scalar_default_fn(entry, "preview_max_edge", 512) or 512)
-    return mode, max(1, interval), max(64, min(2048, max_edge))
+    decoder = str(_registry_scalar_default_fn(entry, "preview_decoder", "auto") or "auto").strip().lower()
+    if decoder not in ("auto", "standard", "taesd"):
+        decoder = "auto"
+    return mode, max(1, interval), max(64, min(2048, max_edge)), decoder
 
 
 @dataclass(frozen=True)
@@ -148,7 +175,7 @@ def resolve_image_steps_guidance(
     return steps, guidance, metadata
 
 
-def resolve_image_preview(entry: Any) -> tuple[str, int, int]:
+def resolve_image_preview(entry: Any) -> tuple[str, int, int, str]:
     return resolve_image_preview_settings(entry)
 
 
@@ -598,7 +625,21 @@ def encode_image_text_for_pipeline(pipeline,
     entry: Any | None = None,
     version_key: str | None = None,
 ) -> tuple[Any, Any, Any, Any, Any, Any, str]:
-    return encode_image_text_conditioning(
+    use_cache = bool(getattr(config, "use_text_embedding_cache", True))
+    encoder_id = f"{getattr(config, 'encoder_type', 'unknown')}:{version_key or 'default'}"
+    if use_cache:
+        from backend.engine.common.ops.text_embedding_cache import global_text_embedding_cache
+
+        cached = global_text_embedding_cache().get(
+            encoder_id=encoder_id,
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            guidance=guidance,
+        )
+        if cached is not None:
+            return cached  # type: ignore[return-value]
+
+    result = encode_image_text_conditioning(
         pipeline.ctx,
         prompt=prompt,
         negative_prompt=negative_prompt,
@@ -609,6 +650,17 @@ def encode_image_text_for_pipeline(pipeline,
         registry_entry=entry,
         registry_version_key=version_key,
     )
+    if use_cache:
+        from backend.engine.common.ops.text_embedding_cache import global_text_embedding_cache
+
+        global_text_embedding_cache().put(
+            encoder_id=encoder_id,
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            guidance=guidance,
+            value=result,
+        )
+    return result
 
 def image_encode_load_for_inference(pipeline,
     *,
@@ -828,8 +880,31 @@ def warm_image_step_preview_decoders(pipeline,
     preview_state: dict[str, Any],
     *,
     config: Any = None,
+    preview_decoder: str = "auto",
     on_log: Callable | None = None,
 ) -> None:
+    if preview_decoder in ("auto", "taesd") and preview_state.get("taesd_decoder") is None:
+        from backend.engine.common.codecs.vae.taesd_mlx import load_taesd_preview_decoder
+
+        family = str(getattr(entry, "family", "") or "")
+        variant = "taef2" if family in ("flux2", "ernie_image") else "taef1"
+        try:
+            preview_state["taesd_decoder"] = load_taesd_preview_decoder(
+                pipeline.ctx,
+                project_root=Path(pipeline._project_root),
+                variant=variant,
+                on_log=on_log,
+            )
+        except Exception as exc:
+            preview_state["taesd_decoder"] = False
+            if on_log:
+                on_log("warning", f"TAESD preview warmup failed: {exc}")
+        if preview_decoder == "taesd" and not preview_state.get("taesd_decoder"):
+            raise RuntimeError(
+                "preview_decoder=taesd but TAESD weights were not found. "
+                "Place taef1_decoder.safetensors under models/taesd/ or set DANQING_TAESD_DIR."
+            )
+
     bundle_root = _local_bundle_root_fn(pipeline._project_root, entry, version_key)
     if bool(getattr(config, "vae_preview_warmup", False)) and bundle_root:
         vae_dir = bundle_root / "vae"
@@ -866,11 +941,36 @@ def decode_latents_for_image_step_preview(pipeline,
     latent_w: int,
     on_log: Callable | None = None,
 ) -> Any:
-    """Same decode semantics as final frame; prefer warmed VAE session when available."""
+    """Same decode semantics as final frame; prefer TAESD then warmed VAE session."""
     decode_latents = latents_for_image_vae_preview(latents)
     if packed_denoise and flux_unpack is not None:
         decode_latents = flux_unpack(pipeline.ctx, latents, latent_h, latent_w)
         decode_latents = latents_for_image_vae_preview(decode_latents)
+
+    taesd = preview_state.get("taesd_decoder")
+    if taesd not in (None, False):
+        from backend.engine.common.codecs.vae import read_vae_dir_config
+        from backend.engine.common.codecs.vae.taesd_mlx import decode_taesd_preview
+
+        bundle_root = _local_bundle_root_fn(pipeline._project_root, entry, version_key)
+        vae_dir = (bundle_root / "vae") if bundle_root else None
+        vae_cfg, scaling_factor, shift_factor = read_vae_dir_config(vae_dir if vae_dir and vae_dir.is_dir() else None)
+        rgb = decode_taesd_preview(
+            pipeline.ctx,
+            taesd,
+            decode_latents,
+            vae_scaling_factor=float(scaling_factor),
+            vae_shift_factor=float(shift_factor),
+        )
+        arr = np.asarray(rgb)
+        if arr.ndim == 4:
+            arr = arr[0]
+        arr = (np.clip(arr, 0.0, 1.0) * 255.0).astype(np.uint8)
+        if arr.shape[-1] == 3:
+            arr = arr[..., ::-1]
+        from PIL import Image
+
+        return Image.fromarray(arr)
 
     flux2_vae = preview_state.get("vae_preview_model")
     if flux2_vae not in (None, False):

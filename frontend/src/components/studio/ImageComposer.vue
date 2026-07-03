@@ -279,6 +279,7 @@ const props = withDefaults(defineProps<{
     controlnet?: string;
     controlnet_strength?: number;
     lemica_mode?: string;
+    teacache_mode?: string;
     latent_refine_scale?: number;
     latent_refine_denoise?: number;
   };

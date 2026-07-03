@@ -731,3 +731,31 @@ class QwenImageDiTMLX(TransformerBase):
         from backend.engine.families.qwen.edit_util import unpack_qwen_sequence_to_nchw
 
         return unpack_qwen_sequence_to_nchw(ctx, out_f, int(image_height), int(image_width))
+
+    def predict_noise_cfg(
+        self,
+        latents_in: Any,
+        t: Any,
+        *,
+        guidance: float,
+        pos_kwargs: dict[str, Any],
+        neg_kwargs: dict[str, Any],
+        cfg_renorm: bool = False,
+        cfg_renorm_min: float = 0.0,
+    ) -> Any:
+        from backend.engine.common.ops.cfg_batch import QWEN_CFG_TEXT_KEYS, predict_noise_cfg_batched
+
+        return predict_noise_cfg_batched(
+            self.forward,
+            self.ctx,
+            latents_in,
+            t,
+            guidance=guidance,
+            pos_kwargs=pos_kwargs,
+            neg_kwargs=neg_kwargs,
+            text_keys=QWEN_CFG_TEXT_KEYS,
+            combine_cfg_noise=self.combine_cfg_noise,
+            refine_cfg_noise=self.refine_cfg_noise,
+            cfg_renorm=cfg_renorm,
+            cfg_renorm_min=cfg_renorm_min,
+        )

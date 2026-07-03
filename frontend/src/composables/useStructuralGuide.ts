@@ -1,6 +1,11 @@
 import { ref, type Ref } from 'vue';
 import { api } from '@/utils/api';
 import { $mn } from '@/utils/i18n';
+import {
+  appendActiveEnumFields,
+  appendLatentRefineField,
+  COMPOSER_INFERENCE_ENUM_KEYS,
+} from '@/utils/registryParamSchema';
 
 export type StructuralGuideType = 'canny' | 'depth' | 'pose' | 'hed' | 'mlsd' | 'scribble' | 'gray' | 'auto' | 'redux';
 export type ControlNetScope = 'create' | 'retouch' | 'extend';
@@ -125,18 +130,17 @@ export function buildStructuralGuidePayload(
   return payload;
 }
 
-/** Attach Z-Image / structural extras to create or rewrite request bodies. */
+/** Attach structural guide + registry inference options to create/rewrite bodies. */
 export function appendZImageEnhancementFields(
   body: Record<string, unknown>,
   opts: {
+    parameters?: Record<string, unknown> | null;
+    params?: Record<string, unknown>;
     controlnet?: string;
     controlAssetId?: string | null;
     controlnetStrength?: number;
     inpaintSourceId?: string;
     inpaintMaskId?: string;
-    lemicaMode?: string;
-    latentRefineScale?: number;
-    latentRefineDenoise?: number;
   },
 ): { ok: true } | { ok: false; code: 'inpaint_pair_required' } {
   const controlnet = String(opts.controlnet || '');
@@ -154,20 +158,20 @@ export function appendZImageEnhancementFields(
       inpSrc && inpMsk ? { sourceAssetId: inpSrc, maskAssetId: inpMsk } : undefined,
     );
   }
-  const lemica = String(opts.lemicaMode || 'none');
-  if (lemica && lemica !== 'none') {
-    body.lemica_mode = lemica;
-  }
-  const refineScale = Number(opts.latentRefineScale);
-  if (Number.isFinite(refineScale) && refineScale > 1.0) {
-    body.latent_refine = {
-      scale: refineScale,
-      denoise_strength: Number(opts.latentRefineDenoise) || 0.35,
-      hires_steps: 0,
-      interpolation: 'linear',
-    };
-  }
+  const composerParams = opts.params || {};
+  appendActiveEnumFields(body, composerParams, COMPOSER_INFERENCE_ENUM_KEYS, opts.parameters);
+  appendLatentRefineField(body, composerParams, opts.parameters);
   return { ok: true };
+}
+
+/** Attach registry inference enums (TeaCache / LeMiCa) + latent refine without structural guide. */
+export function appendImageInferenceFields(
+  body: Record<string, unknown>,
+  composerParams: Record<string, unknown>,
+  parameters?: Record<string, unknown> | null,
+): void {
+  appendActiveEnumFields(body, composerParams, COMPOSER_INFERENCE_ENUM_KEYS, parameters);
+  appendLatentRefineField(body, composerParams, parameters);
 }
 
 export function fillModelRegistryDefaultsPatch(

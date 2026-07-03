@@ -960,6 +960,18 @@
             "label": "CFG引导",
             "type": "float"
           },
+          "teacache_mode": {
+            "type": "enum",
+            "default": "auto",
+            "options": [
+              "none",
+              "auto",
+              "quality",
+              "medium",
+              "fast"
+            ],
+            "label": "TeaCache 步间加速"
+          },
           "width": {
             "default": 1024,
             "options": [
@@ -2178,6 +2190,18 @@
             ],
             "label": "调度器",
             "type": "enum"
+          },
+          "teacache_mode": {
+            "type": "enum",
+            "default": "auto",
+            "options": [
+              "none",
+              "auto",
+              "quality",
+              "medium",
+              "fast"
+            ],
+            "label": "TeaCache 步间加速"
           },
           "resolution_presets": {
             "default": "768x1280",
@@ -7460,6 +7484,18 @@
             "label": "CFG引导",
             "type": "float"
           },
+          "teacache_mode": {
+            "type": "enum",
+            "default": "auto",
+            "options": [
+              "none",
+              "auto",
+              "quality",
+              "medium",
+              "fast"
+            ],
+            "label": "TeaCache 步间加速"
+          },
           "shift": {
             "default": 7.0,
             "min": 1.0,
@@ -7777,6 +7813,18 @@
             "label": "CFG引导",
             "type": "float"
           },
+          "teacache_mode": {
+            "type": "enum",
+            "default": "auto",
+            "options": [
+              "none",
+              "auto",
+              "quality",
+              "medium",
+              "fast"
+            ],
+            "label": "TeaCache 步间加速"
+          },
           "shift": {
             "default": 12.0,
             "min": 1.0,
@@ -7975,6 +8023,18 @@
             "step": 0.5,
             "label": "CFG引导",
             "type": "float"
+          },
+          "teacache_mode": {
+            "type": "enum",
+            "default": "auto",
+            "options": [
+              "none",
+              "auto",
+              "quality",
+              "medium",
+              "fast"
+            ],
+            "label": "TeaCache 步间加速"
           },
           "shift": {
             "default": 12.0,

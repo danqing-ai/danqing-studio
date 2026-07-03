@@ -13,6 +13,9 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from backend.engine.common.ops.dit_runtime import DiTRuntimeSession
+from backend.engine.common.ops.lemica import lemica_compute_steps
+from backend.engine.common.ops.step_cache import StepCacheSession
 from backend.engine.config.model_configs import ZImageConfig
 from backend.engine.runtime._base import RuntimeContext
 from backend.engine.common.model.base import TransformerBase
@@ -26,43 +29,7 @@ from backend.engine.common.ops.embeddings import (
     sinusoidal_timestep_proj,
 )
 from backend.engine.common.ops.norm import apply_scale_shift, unpack_modulation_4way
-
-# LeMiCa step schedules (training-free residual cache; ref: z-image-turbo-mlx / UnicomAI LeMiCa)
-LEMICA_SCHEDULES: dict[int, dict[str, tuple[int, ...]]] = {
-    8: {
-        "slow": (0, 1, 2, 3, 5, 6, 7),
-        "medium": (0, 1, 2, 4, 5, 7),
-        "fast": (0, 1, 2, 5, 7),
-    },
-    9: {
-        "slow": (0, 1, 2, 3, 5, 7, 8),
-        "medium": (0, 1, 2, 4, 6, 8),
-        "fast": (0, 1, 2, 5, 8),
-    },
-    28: {
-        "slow": tuple(range(22)) + (24, 26, 27),
-        "medium": tuple(range(20)) + (22, 24, 26, 27),
-        "fast": tuple(range(18)) + (20, 22, 25, 27),
-    },
-}
-
-
-def lemica_compute_steps(mode: str, num_steps: int) -> tuple[bool, ...] | None:
-    mode = (mode or "none").strip().lower()
-    if mode in ("", "none", "off"):
-        return None
-    table = LEMICA_SCHEDULES.get(int(num_steps))
-    if table is None:
-        for key in sorted(LEMICA_SCHEDULES.keys(), reverse=True):
-            if num_steps <= key:
-                table = LEMICA_SCHEDULES[key]
-                break
-    if table is None:
-        return None
-    steps = table.get(mode)
-    if steps is None:
-        raise RuntimeError(f"unknown lemica_mode={mode!r} for num_steps={num_steps}")
-    return tuple(i in steps for i in range(num_steps))
+from backend.engine.common.ops.lemica import LEMICA_SCHEDULES  # noqa: F401 — re-export for tests
 
 # =========================================================================
 # RopeEmbedder — 复数频率 RoPE
@@ -403,6 +370,8 @@ class ZImageDiTMLX(TransformerBase):
         self._lemica_bool_list: tuple[bool, ...] | None = None
         self._lemica_step_counter = 0
         self._lemica_previous_residual = None
+        self._step_cache: StepCacheSession | None = None
+        self._use_mlx_compile_run = False
 
     def after_load_weights(self, bundle_root=None) -> None:
         super().after_load_weights(bundle_root)
@@ -453,7 +422,7 @@ class ZImageDiTMLX(TransformerBase):
         self._compiled_cfg_forward = None
         if getattr(self.ctx, "backend", None) != "mlx":
             return
-        if not getattr(self.config, "use_mlx_compile", True):
+        if not self._use_mlx_compile_run:
             return
         try:
             self._compiled_forward = self.ctx.compile(self._forward_cached_compute)
@@ -466,23 +435,40 @@ class ZImageDiTMLX(TransformerBase):
         except Exception:
             self._compiled_cfg_forward = None
 
+    def step_callback(self, step_idx: int, latents: Any, noise_pred: Any) -> None:
+        del latents, noise_pred
+        if self._step_cache is not None:
+            self._step_cache.set_step_counter(int(step_idx) + 1)
+
     def before_denoise(self, latents, timesteps, sigmas, **cond):
-        lemica_mode = cond.pop("lemica_mode", None)
-        if lemica_mode is None:
-            lemica_mode = getattr(self.config, "lemica_mode", "none")
-        if lemica_mode and str(lemica_mode).lower() not in ("none", "off", ""):
-            self.configure_lemica(str(lemica_mode), len(timesteps) if timesteps is not None else 0)
+        runtime, cond = DiTRuntimeSession.from_before_denoise_cond(
+            family="z_image",
+            config=self.config,
+            entry=None,
+            ctx=self.ctx,
+            cond=dict(cond),
+            timesteps=timesteps,
+        )
+        self._step_cache = runtime.step_cache
+        self._lemica_bool_list = runtime.lemica_bool_list
+        if runtime.step_cache is not None and runtime.step_cache.enabled:
+            self.reset_lemica_state()
+        elif runtime.lemica_bool_list is not None:
+            self.reset_lemica_state()
         else:
             self.reset_lemica_state()
             self._lemica_bool_list = None
 
+        self._use_mlx_compile_run = runtime.use_mlx_compile
+        if self._step_cache is not None and self._step_cache.enabled:
+            # Gate uses mx.eval / host floats — incompatible inside ctx.compile.
+            self._use_mlx_compile_run = False
+        self._refresh_compiled_forward()
+
         if getattr(self.ctx, "backend", None) != "mlx":
             return latents, cond
-        # Keep inference numerics aligned with reference path by default:
-        # no precomputed caches unless explicit MLX fast-path is enabled.
-        if not getattr(self.config, "use_mlx_compile", False):
+        if not runtime.plan.needs_precompute_cap():
             return latents, cond
-        cond = dict(cond)
         txt_embeds = cond.pop("txt_embeds", None)
         neg_embeds = cond.pop("neg_embeds", None)
         latents_n = self._normalize_latents(latents)
@@ -557,9 +543,11 @@ class ZImageDiTMLX(TransformerBase):
 
         noise_cond = self._forward_from_caches(
             latents_n, t, cap_emb, cap_freqs, x_freqs, x_pad_mask, x_len, image_size,
+            teacache_branch="cond",
         )
         noise_uncond = self._forward_from_caches(
             latents_n, t, neg_cap_emb, neg_cap_freqs, nx_freqs, nx_pad_mask, nx_len, n_image_size,
+            teacache_branch="uncond",
         )
         noise_pred = self.combine_cfg_noise(noise_cond, noise_uncond, guidance)
         if cfg_renorm:
@@ -594,14 +582,16 @@ class ZImageDiTMLX(TransformerBase):
         geo_cache = conditioning.get("zimage_geo_cache")
         control_ctx = conditioning.get("zimage_control_context")
         control_scale = float(conditioning.get("zimage_control_context_scale", self._control_context_scale))
+        teacache_branch = str(conditioning.get("_teacache_branch") or "default")
         if cap_cache is not None and geo_cache is not None:
             cap_emb, cap_freqs, _ = cap_cache
             x_freqs, x_pad_mask, x_len, image_size, _ = geo_cache
             output = self._forward_from_caches(
                 latents_n, t, cap_emb, cap_freqs, x_freqs, x_pad_mask, x_len, image_size,
-                use_compile=True,
+                use_compile=self._use_mlx_compile_run,
                 control_context=control_ctx,
                 control_context_scale=control_scale,
+                teacache_branch=teacache_branch,
             )
         else:
             cap_feats = self._resolve_cap_feats(txt_embeds, conditioning)
@@ -684,6 +674,7 @@ class ZImageDiTMLX(TransformerBase):
         use_compile: bool = False,
         control_context=None,
         control_context_scale: float = 1.0,
+        teacache_branch: str = "default",
     ):
         if use_compile and self._compiled_forward is not None and control_context is None:
             tokens = self._compiled_forward(latents, t, cap_emb, cap_freqs, x_freqs, x_pad_mask, x_len)
@@ -698,6 +689,7 @@ class ZImageDiTMLX(TransformerBase):
                 x_len,
                 control_context=control_context,
                 control_context_scale=control_context_scale,
+                teacache_branch=teacache_branch,
             )
         return self._unpatchify(tokens, image_size)
 
@@ -713,6 +705,7 @@ class ZImageDiTMLX(TransformerBase):
         *,
         control_context=None,
         control_context_scale: float = 1.0,
+        teacache_branch: str = "default",
     ):
         ctx = self.ctx
         act = self._act_dtype
@@ -773,8 +766,29 @@ class ZImageDiTMLX(TransformerBase):
             and not self._lemica_bool_list[step_idx]
             and self._lemica_previous_residual is not None
         )
+        use_teacache_skip = False
+        cache_branch = str(teacache_branch or "default")
+        if self._step_cache is not None and self._step_cache.enabled:
+            signal = unified_before
+            mod_in = signal[0:1] if int(signal.shape[0]) > 1 else signal
+            decision = self._step_cache.gate(mod_in, branch=cache_branch)
+            cached_residual = self._step_cache.branch_cached_residual(cache_branch)
+            if self._step_cache.should_skip(decision, branch=cache_branch):
+                unified = unified_before + cached_residual
+                use_teacache_skip = True
+            elif decision is not None and decision.should_update_cache:
+                self._step_cache.store_branch_mod_input(cache_branch, mod_in)
+            elif (
+                decision is not None
+                and decision.should_compute
+                and decision.rel_l1 is not None
+            ):
+                self._step_cache.store_branch_mod_input(cache_branch, mod_in)
+
         if use_lemica_skip:
             unified = unified + self._lemica_previous_residual
+        elif use_teacache_skip:
+            pass
         else:
             for layer_idx, layer in enumerate(self.layers):
                 hint = ctrl.hint_for_main_layer(layer_idx, layer_hints) if ctrl else None
@@ -782,7 +796,13 @@ class ZImageDiTMLX(TransformerBase):
                 unified = apply_control_hint(unified, hint, c_scale, ctx)
             if self._lemica_bool_list is not None:
                 self._lemica_previous_residual = unified - unified_before
-                ctx.eval(self._lemica_previous_residual)
+                if not self._use_mlx_compile_run:
+                    ctx.eval(self._lemica_previous_residual)
+            elif self._step_cache is not None and self._step_cache.enabled:
+                residual = unified - unified_before
+                self._step_cache.store_branch_residual(cache_branch, residual)
+                if not self._use_mlx_compile_run:
+                    ctx.eval(residual)
         if self._lemica_bool_list is not None:
             self._lemica_step_counter += 1
 

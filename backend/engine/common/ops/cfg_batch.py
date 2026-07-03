@@ -12,6 +12,8 @@ HUNYUAN_CFG_TEXT_KEYS = frozenset(
     {"txt_embeds", "txt_attn_mask", "txt_embeds_2", "txt_attn_mask_2"}
 )
 FIBO_CFG_TEXT_KEYS = frozenset({"txt_embeds", "text_encoder_layers"})
+FLUX1_CFG_TEXT_KEYS = frozenset({"txt_embeds", "pooled_embeds", "redux_txt_embeds"})
+QWEN_CFG_TEXT_KEYS = frozenset({"txt_embeds", "encoder_hidden_states_mask"})
 
 
 def broadcast_batch(ctx: RuntimeContext, tensor: Any | None, batch_size: int) -> Any | None:

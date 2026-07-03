@@ -97,6 +97,7 @@ class ImageGenerationRequest(BaseModel):
     structural_guide: Optional[StructuralGuide] = None
     style_guide: Optional[StyleGuide] = None
     lemica_mode: Optional[str] = None
+    teacache_mode: Optional[str] = None
     latent_refine: Optional[LatentRefineSpec] = None
     priority: Literal["normal", "high"] = "normal"
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -127,6 +128,7 @@ class ImageEditRequest(BaseModel):
     adapters: list[AdapterRef] = Field(default_factory=list)
     structural_guide: Optional[StructuralGuide] = None
     lemica_mode: Optional[str] = None
+    teacache_mode: Optional[str] = None
     latent_refine: Optional[LatentRefineSpec] = None
     priority: Literal["normal", "high"] = "normal"
     metadata: dict[str, Any] = Field(default_factory=dict)
@@ -170,6 +172,7 @@ class VideoGenerationRequest(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
     reference_asset_ids: list[str] = Field(default_factory=list)
     long_video: Optional["VideoLongVideoSpec"] = None
+    teacache_mode: Optional[str] = None
 
 
 class LongVideoShotSpec(BaseModel):
@@ -317,6 +320,7 @@ class VideoEditRequest(BaseModel):
     priority: Literal["normal", "high"] = "normal"
     metadata: dict[str, Any] = Field(default_factory=dict)
     reference_asset_ids: list[str] = Field(default_factory=list)
+    teacache_mode: Optional[str] = None
 
 
 class VideoUpscaleRequest(BaseModel):

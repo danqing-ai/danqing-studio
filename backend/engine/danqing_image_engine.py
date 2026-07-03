@@ -24,6 +24,7 @@ from .sessions.engine_dispatch import (
     dispatch_image_edit,
     dispatch_image_upscale,
 )
+from backend.engine.inference.optimization_plan import inference_metadata_for_task
 
 
 class DanQingImageEngine(IImageEngine):
@@ -125,6 +126,7 @@ class DanQingImageEngine(IImageEngine):
                 primary_asset_id=asset_ids[0] if asset_ids else "",
                 asset_ids=asset_ids,
                 output_paths=output_paths,
+                metadata=inference_metadata_for_task(result[0][1] if result else None),
             )
 
         output_path, metadata = result
@@ -134,7 +136,12 @@ class DanQingImageEngine(IImageEngine):
             parent_asset_id=parent_id, relation_type=relation,
             group_id=group_id,
         )
-        return EngineResult(primary_asset_id=aid, asset_ids=[aid], output_paths=[output_path])
+        return EngineResult(
+            primary_asset_id=aid,
+            asset_ids=[aid],
+            output_paths=[output_path],
+            metadata=inference_metadata_for_task(metadata),
+        )
 
     async def edit(self, request: ImageEditRequest, ctx: ExecutionContext) -> EngineResult:
         import asyncio
@@ -174,7 +181,12 @@ class DanQingImageEngine(IImageEngine):
             parent_asset_id=parent_id, relation_type=relation,
             group_id=group_id,
         )
-        return EngineResult(primary_asset_id=aid, asset_ids=[aid], output_paths=[output_path])
+        return EngineResult(
+            primary_asset_id=aid,
+            asset_ids=[aid],
+            output_paths=[output_path],
+            metadata=inference_metadata_for_task(metadata),
+        )
 
     async def upscale(self, request: ImageUpscaleRequest, ctx: ExecutionContext) -> EngineResult:
         if not self.supports(request.model, "upscale"):

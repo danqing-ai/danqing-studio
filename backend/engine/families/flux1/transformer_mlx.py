@@ -13,6 +13,16 @@ import mlx.nn as mx_nn
 import numpy as np
 
 from backend.engine.common.model.base import TransformerBase, collect_params_legacy_tree
+from backend.engine.common.ops.cfg_batch import (
+    FLUX1_CFG_TEXT_KEYS,
+    predict_noise_cfg_batched,
+)
+from backend.engine.common.ops.dit_runtime import DiTRuntimeSession
+from backend.engine.common.ops.mm_dit_text_cache import (
+    invalidate_mm_dit_text_cache,
+    text_cache_key,
+)
+from backend.engine.common.ops.step_cache import StepCacheSession
 from backend.engine.common.ops.attention import scaled_dot_product_attention_bhsd_mx
 from backend.engine.common.ops.embeddings import PatchEmbed2D, sinusoidal_timestep_proj
 from backend.engine.common.ops.norm import (
@@ -451,6 +461,21 @@ class Flux1DiTMLX(TransformerBase):
         self._base_patch_weight: Any = None
         self._base_patch_bias: Any = None
 
+        self._mm_text_cache_key: tuple[Any, ...] | None = None
+        self._mm_cached_encoder_hidden: Any = None
+        self._mm_cached_pooled_contrib: Any = None
+        self._mm_cached_rotary_emb: Any = None
+        self._mm_cached_txt_len: int | None = None
+        self._mm_cached_hw: tuple[int, int] | None = None
+
+        self._step_cache: StepCacheSession | None = None
+        self._teacache_cached_img_residual: Any = None
+        self._teacache_cached_encoder_hidden: Any = None
+
+        self._compiled_forward = None
+        self._compile_warmed = False
+        self._use_mlx_compile_run = False
+
         self._build_param_map()
 
     def sanitize(self, weights: dict[str, Any]) -> dict[str, Any]:
@@ -545,18 +570,86 @@ class Flux1DiTMLX(TransformerBase):
             )
         return tokens @ w.T + b
 
-    def forward(self, latents, timestep, txt_embeds=None, clip_embeds=None,
-                pooled_embeds=None, sigmas=None, **conditioning):
-        ctx = self.ctx
-        cfg = self.config
-        if latents.ndim != 4:
-            raise RuntimeError(
-                f"Flux1DiTMLX expects NCHW latents [B,C,H,W], got shape={tuple(latents.shape)}"
-            )
-        B = latents.shape[0]
-        _, _, H, W = latents.shape
+    def after_load_weights(self, bundle_root: str | None = None) -> None:
+        super().after_load_weights(bundle_root)
+        invalidate_mm_dit_text_cache(self)
+        self._compiled_forward = None
+        self._compile_warmed = False
 
-        # diffusers: prefer scheduler ``timesteps`` for time MLP (bench parity).
+    def before_denoise(self, latents, timesteps, sigmas, **cond):
+        runtime, cond = DiTRuntimeSession.from_before_denoise_cond(
+            family="flux1",
+            config=self.config,
+            entry=None,
+            ctx=self.ctx,
+            cond=dict(cond),
+            timesteps=timesteps,
+        )
+        self._step_cache = runtime.step_cache
+        self._teacache_cached_img_residual = None
+        self._teacache_cached_encoder_hidden = None
+        self._use_mlx_compile_run = runtime.use_mlx_compile
+        self._refresh_compiled_forward()
+        if self._use_mlx_compile_run and self._compiled_forward is not None and not self._compile_warmed:
+            self._warmup_compile(latents, timesteps, sigmas, **cond)
+        return latents, cond
+
+    def step_callback(self, step_idx: int, latents: Any, noise_pred: Any) -> None:
+        del latents, noise_pred
+        if self._step_cache is not None:
+            self._step_cache.set_step_counter(int(step_idx) + 1)
+
+    def _warmup_compile(self, latents, timesteps, sigmas, **cond) -> None:
+        if self._compiled_forward is None:
+            return
+        try:
+            dummy_t = 0
+            kwargs = dict(cond)
+            if "txt_embeds" in kwargs:
+                self._compiled_forward(latents, dummy_t, **kwargs)
+                self.ctx.eval(latents)
+            self._compile_warmed = True
+        except Exception:
+            self._compiled_forward = None
+            self._use_mlx_compile_run = False
+
+    def _refresh_compiled_forward(self) -> None:
+        self._compiled_forward = None
+        if not self._use_mlx_compile_run or getattr(self.ctx, "backend", None) != "mlx":
+            return
+        try:
+            self._compiled_forward = self.ctx.compile(self._forward_compute)
+        except Exception:
+            self._compiled_forward = None
+
+    def predict_noise_cfg(
+        self,
+        latents_in: Any,
+        t: Any,
+        *,
+        guidance: float,
+        pos_kwargs: dict[str, Any],
+        neg_kwargs: dict[str, Any],
+        cfg_renorm: bool = False,
+        cfg_renorm_min: float = 0.0,
+    ) -> Any:
+        return predict_noise_cfg_batched(
+            self.forward,
+            self.ctx,
+            latents_in,
+            t,
+            guidance=guidance,
+            pos_kwargs=pos_kwargs,
+            neg_kwargs=neg_kwargs,
+            text_keys=FLUX1_CFG_TEXT_KEYS,
+            combine_cfg_noise=self.combine_cfg_noise,
+            refine_cfg_noise=self.refine_cfg_noise,
+            cfg_renorm=cfg_renorm,
+            cfg_renorm_min=cfg_renorm_min,
+        )
+
+    def _resolve_time_batch(self, B: int, timestep, sigmas, conditioning) -> Any:
+        ctx = self.ctx
         timestep_embed_value = conditioning.get("timestep_embed_value")
         if timestep_embed_value is not None:
             t_val = float(timestep_embed_value)
@@ -576,43 +669,10 @@ class Flux1DiTMLX(TransformerBase):
                 t_val = float(tv)
             if t_val <= 1.0 + 1e-5:
                 t_val *= 1000.0
-        # ``compute_text_embeddings``: timestep as ModelConfig.precision (bfloat16)
-        t_batch = ctx.full((B,), t_val, dtype=ctx.bfloat16())
+        return ctx.full((B,), t_val, dtype=ctx.bfloat16())
 
-        fill_static = conditioning.get("fill_static_packed")
-        structural_nchw = conditioning.get("structural_latents_nchw")
-        if fill_static is not None:
-            noise_packed = _pack_flux1_latents(ctx, latents)
-            packed = ctx.concat([noise_packed, fill_static], axis=-1)
-            hidden_states = self._patch_embed_packed(packed)
-        elif structural_nchw is not None:
-            noise_packed = _pack_flux1_latents(ctx, latents)
-            struct_packed = _pack_flux1_latents(ctx, structural_nchw)
-            packed = ctx.concat([noise_packed, struct_packed], axis=-1)
-            hidden_states = self._patch_embed_packed(packed)
-        else:
-            hidden_states = self._patch_embed_packed(_pack_flux1_latents(ctx, latents))
-        img_seq_len = hidden_states.shape[1]
-
-        redux_txt = conditioning.get("redux_txt_embeds")
-        merged_txt = txt_embeds
-        if redux_txt is not None:
-            if merged_txt is not None:
-                merged_txt = ctx.concat([merged_txt, redux_txt], axis=1)
-            else:
-                merged_txt = redux_txt
-
-        if merged_txt is not None:
-            txt = self.txt_in(merged_txt)
-        else:
-            txt = ctx.zeros((B, 0, cfg.hidden_dim))
-
-        if clip_embeds is not None and self.clip_in is not None:
-            txt = ctx.concat([txt, self.clip_in(clip_embeds)], axis=1)
-
-        encoder_hidden_states = txt
-        txt_len = encoder_hidden_states.shape[1]
-
+    def _build_conditioning(self, B: int, t_batch: Any, txt_embeds, pooled_embeds, conditioning) -> Any:
+        ctx = self.ctx
         t_proj = sinusoidal_timestep_proj(ctx, t_batch, 256, flip_sin_to_cos=True)
         c = self.time_in.forward(t_proj)
         guidance_scale = conditioning.get("guidance_scale")
@@ -623,11 +683,84 @@ class Flux1DiTMLX(TransformerBase):
                 sinusoidal_timestep_proj(ctx, g_batch, 256, flip_sin_to_cos=True)
             )
         if pooled_embeds is not None:
-            c = c + self.vector_in(pooled_embeds)
-        c = c.astype(ctx.bfloat16())
+            if (
+                getattr(self.config, "use_mm_dit_text_cache", True)
+                and self._mm_cached_pooled_contrib is not None
+            ):
+                c = c + self._mm_cached_pooled_contrib
+            else:
+                c = c + self.vector_in(pooled_embeds)
+        return c.astype(ctx.bfloat16())
 
+    def _resolve_encoder_hidden(
+        self,
+        B: int,
+        txt_embeds,
+        clip_embeds,
+        conditioning,
+        *,
+        H: int,
+        W: int,
+    ) -> tuple[Any, int, Any]:
+        ctx = self.ctx
+        cfg = self.config
+        redux_txt = conditioning.get("redux_txt_embeds")
+        merged_txt = txt_embeds
+        if redux_txt is not None:
+            if merged_txt is not None:
+                merged_txt = ctx.concat([merged_txt, redux_txt], axis=1)
+            else:
+                merged_txt = redux_txt
+
+        cache_key = text_cache_key(merged_txt, clip_embeds, H, W)
+        if (
+            getattr(self.config, "use_mm_dit_text_cache", True)
+            and self._mm_text_cache_key == cache_key
+            and self._mm_cached_encoder_hidden is not None
+            and self._mm_cached_rotary_emb is not None
+        ):
+            return (
+                self._mm_cached_encoder_hidden,
+                int(self._mm_cached_txt_len or 0),
+                self._mm_cached_rotary_emb,
+            )
+
+        if merged_txt is not None:
+            txt = self.txt_in(merged_txt)
+        else:
+            txt = ctx.zeros((B, 0, cfg.hidden_dim))
+
+        if clip_embeds is not None and self.clip_in is not None:
+            txt = ctx.concat([txt, self.clip_in(clip_embeds)], axis=1)
+
+        encoder_hidden_states = txt
+        txt_len = int(encoder_hidden_states.shape[1])
         txt_ids, img_ids = self._prepare_pos_ids(H, W, txt_len)
         rotary_emb = self.pos_embed.forward(ctx.concat([txt_ids, img_ids], axis=1))
+
+        if getattr(self.config, "use_mm_dit_text_cache", True):
+            self._mm_text_cache_key = cache_key
+            self._mm_cached_encoder_hidden = encoder_hidden_states
+            self._mm_cached_txt_len = txt_len
+            self._mm_cached_rotary_emb = rotary_emb
+            self._mm_cached_hw = (H, W)
+            if conditioning.get("pooled_embeds") is not None:
+                self._mm_cached_pooled_contrib = self.vector_in(conditioning["pooled_embeds"])
+            else:
+                self._mm_cached_pooled_contrib = None
+            ctx.eval(encoder_hidden_states, rotary_emb)
+
+        return encoder_hidden_states, txt_len, rotary_emb
+
+    def _run_dit_body(
+        self,
+        hidden_states: Any,
+        encoder_hidden_states: Any,
+        c: Any,
+        rotary_emb: Any,
+        txt_len: int,
+    ) -> tuple[Any, Any]:
+        ctx = self.ctx
         for block in self.transformer_blocks:
             encoder_hidden_states, hidden_states = block.forward(
                 hidden_states, encoder_hidden_states, c, rotary_emb=rotary_emb,
@@ -642,9 +775,111 @@ class Flux1DiTMLX(TransformerBase):
                 ctx.eval(x)
 
         hidden_states = x[:, txt_len:]
+        return hidden_states, encoder_hidden_states
+
+    def _forward_compute(
+        self,
+        latents,
+        timestep,
+        txt_embeds=None,
+        clip_embeds=None,
+        pooled_embeds=None,
+        sigmas=None,
+        **conditioning,
+    ):
+        ctx = self.ctx
+        if latents.ndim != 4:
+            raise RuntimeError(
+                f"Flux1DiTMLX expects NCHW latents [B,C,H,W], got shape={tuple(latents.shape)}"
+            )
+        B = latents.shape[0]
+        _, _, H, W = latents.shape
+
+        fill_static = conditioning.get("fill_static_packed")
+        structural_nchw = conditioning.get("structural_latents_nchw")
+        if fill_static is not None:
+            noise_packed = _pack_flux1_latents(ctx, latents)
+            packed = ctx.concat([noise_packed, fill_static], axis=-1)
+            hidden_states = self._patch_embed_packed(packed)
+        elif structural_nchw is not None:
+            noise_packed = _pack_flux1_latents(ctx, latents)
+            struct_packed = _pack_flux1_latents(ctx, structural_nchw)
+            packed = ctx.concat([noise_packed, struct_packed], axis=-1)
+            hidden_states = self._patch_embed_packed(packed)
+        else:
+            hidden_states = self._patch_embed_packed(_pack_flux1_latents(ctx, latents))
+
+        if pooled_embeds is None:
+            pooled_embeds = conditioning.get("pooled_embeds")
+
+        t_batch = self._resolve_time_batch(B, timestep, sigmas, conditioning)
+        encoder_hidden_states, txt_len, rotary_emb = self._resolve_encoder_hidden(
+            B, txt_embeds, clip_embeds, conditioning, H=H, W=W,
+        )
+        c = self._build_conditioning(B, t_batch, txt_embeds, pooled_embeds, conditioning)
+
+        body_in = hidden_states
+        skip_body = False
+        if self._step_cache is not None and self._step_cache.enabled:
+            n_img, _, _, _, _ = self.transformer_blocks[0].norm1.forward(hidden_states, c)
+            mod_in = n_img[0:1] if int(n_img.shape[0]) > 1 else n_img
+            decision = self._step_cache.gate(mod_in)
+            if self._step_cache.should_skip(
+                decision,
+                has_residual=(
+                    self._teacache_cached_img_residual is not None
+                    and self._teacache_cached_encoder_hidden is not None
+                ),
+            ):
+                hidden_states = body_in + self._teacache_cached_img_residual
+                encoder_hidden_states = self._teacache_cached_encoder_hidden
+                skip_body = True
+            elif decision is not None and decision.should_update_cache:
+                self._step_cache.store_branch_mod_input("default", mod_in)
+            elif (
+                decision is not None
+                and decision.should_compute
+                and decision.rel_l1 is not None
+            ):
+                self._step_cache.store_branch_mod_input("default", mod_in)
+
+        if not skip_body:
+            hidden_states, encoder_hidden_states = self._run_dit_body(
+                hidden_states, encoder_hidden_states, c, rotary_emb, txt_len,
+            )
+            if self._step_cache is not None and self._step_cache.enabled:
+                self._teacache_cached_img_residual = hidden_states - body_in
+                self._teacache_cached_encoder_hidden = encoder_hidden_states
+                ctx.eval(self._teacache_cached_img_residual)
+
         hidden_states = self.norm_out.forward(hidden_states, c)
         hidden_states = self.proj_out(hidden_states)
         return _unpack_flux1_latents(ctx, hidden_states, H, W)
+
+    def forward(self, latents, timestep, txt_embeds=None, clip_embeds=None,
+                pooled_embeds=None, sigmas=None, **conditioning):
+        if (
+            self._use_mlx_compile_run
+            and self._compiled_forward is not None
+            and conditioning.get("fill_static_packed") is None
+            and conditioning.get("structural_latents_nchw") is None
+        ):
+            return self._compiled_forward(
+                latents, timestep,
+                txt_embeds=txt_embeds,
+                clip_embeds=clip_embeds,
+                pooled_embeds=pooled_embeds,
+                sigmas=sigmas,
+                **conditioning,
+            )
+        return self._forward_compute(
+            latents, timestep,
+            txt_embeds=txt_embeds,
+            clip_embeds=clip_embeds,
+            pooled_embeds=pooled_embeds,
+            sigmas=sigmas,
+            **conditioning,
+        )
 
     def _prepare_pos_ids(self, latent_h: int, latent_w: int, txt_len: int):
         """``_prepare_text_ids`` + ``_prepare_latent_image_ids``（packed 格 H//2 × W//2）。"""

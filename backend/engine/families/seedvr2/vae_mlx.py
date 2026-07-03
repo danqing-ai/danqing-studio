@@ -2,10 +2,13 @@ from __future__ import annotations
 
 """SeedVR2 3D VAE — 单文件，避免 encoder/decoder 多级碎片目录。"""
 
+from typing import Any
+
 import mlx.core as mx
 from mlx import nn
 
 from backend.engine.common.ops.attention import scaled_dot_product_attention_bhsd_mx
+from backend.engine.common.ops.vae_stream_cache import VAEStreamCacheSession
 from .weights_mlx import ModelConfig
 
 
@@ -41,27 +44,57 @@ class CausalConv3d(nn.Module):
         kt, kh, kw = kernel_size
         self.weight = mx.zeros((out_channels, kt, kh, kw, in_channels))
         self.bias = mx.zeros((out_channels,))
+        self._runtime_layer_id: str | None = None
+        self._runtime_stream: VAEStreamCacheSession | None = None
+        self._runtime_conv3d_backend: str = "native"
+
+    def bind_runtime(
+        self,
+        *,
+        layer_id: str,
+        stream: VAEStreamCacheSession | None,
+        conv3d_backend: str,
+    ) -> None:
+        self._runtime_layer_id = str(layer_id)
+        self._runtime_stream = stream
+        self._runtime_conv3d_backend = str(conv3d_backend or "native")
 
     def __call__(self, x: mx.array) -> mx.array:
         B, C, T, H, W = x.shape
         kt, kh, kw = self.kernel_size
         pt, ph, pw = self.padding
         st, sh, sw = self.stride
+        stream = self._runtime_stream
+        layer_id = self._runtime_layer_id or "cc3d"
+        x_orig = x
 
         if self.causal_temporal and kt > 1:
-            causal_pad = (2 * self.padding[0]) if self.use_padding_causal else kt - 1
-            if causal_pad > 0:
-                first_frame = x[:, :, :1, :, :]
-                pad_frames = mx.repeat(first_frame, causal_pad, axis=2)
-                x = mx.concatenate([pad_frames, x], axis=2)
-            temporal_padding = 0
+            if stream is not None and stream.enabled:
+                x = stream.prepend_causal_tail(x, layer_id, kernel_temporal=kt)
+                temporal_padding = 0
+            else:
+                causal_pad = (2 * self.padding[0]) if self.use_padding_causal else kt - 1
+                if causal_pad > 0:
+                    first_frame = x[:, :, :1, :, :]
+                    pad_frames = mx.repeat(first_frame, causal_pad, axis=2)
+                    x = mx.concatenate([pad_frames, x], axis=2)
+                temporal_padding = 0
         else:
             temporal_padding = pt
 
-        x = x.transpose(0, 2, 3, 4, 1)
-        out = mx.conv_general(x, self.weight, stride=self.stride, padding=(temporal_padding, ph, pw))
-        out = out + self.bias
-        out = out.transpose(0, 4, 1, 2, 3)
+        from backend.engine.common.integrations.mfa_seedvr2 import causal_conv3d_forward
+
+        out = causal_conv3d_forward(
+            x,
+            weight=self.weight,
+            bias=self.bias,
+            stride=(st, sh, sw),
+            padding=(temporal_padding, ph, pw),
+            backend=self._runtime_conv3d_backend,
+        )
+
+        if stream is not None and stream.enabled and self.causal_temporal and kt > 1:
+            stream.update_causal_tail(x_orig, layer_id, kernel_temporal=kt)
         return out
 
 
@@ -540,6 +573,43 @@ class SeedVR2VAE(nn.Module):
             layers_per_block=3,
             temporal_up_blocks=2,
         )
+        self._vae_stream: VAEStreamCacheSession | None = None
+
+    def bind_vae_runtime(
+        self,
+        *,
+        stream: VAEStreamCacheSession | None,
+        conv3d_backend: str = "native",
+    ) -> None:
+        """Attach per-decode stream state + conv3d backend to all ``CausalConv3d`` layers."""
+        self._vae_stream = stream
+        counter = 0
+
+        def _visit(obj: Any) -> None:
+            nonlocal counter
+            if isinstance(obj, CausalConv3d):
+                obj.bind_runtime(
+                    layer_id=f"cc3d_{counter}",
+                    stream=stream,
+                    conv3d_backend=conv3d_backend,
+                )
+                counter += 1
+                return
+            if isinstance(obj, (list, tuple)):
+                for item in obj:
+                    _visit(item)
+                return
+            if isinstance(obj, nn.Module):
+                for val in vars(obj).values():
+                    if isinstance(val, (CausalConv3d, nn.Module, list, tuple)):
+                        _visit(val)
+
+        _visit(self.encoder)
+        _visit(self.decoder)
+
+    def reset_vae_stream(self) -> None:
+        if self._vae_stream is not None:
+            self._vae_stream.reset()
 
     def encode(self, x: mx.array) -> mx.array:
         x = x[:, :, None, :, :] if x.ndim == 4 else x

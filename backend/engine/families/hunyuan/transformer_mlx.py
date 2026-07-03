@@ -24,6 +24,8 @@ from backend.engine.common.ops.cfg_batch import (
     broadcast_batch,
     predict_noise_cfg_batched,
 )
+from backend.engine.common.ops.dit_runtime import DiTRuntimeSession
+from backend.engine.common.ops.step_cache import StepCacheSession
 from backend.engine.common.codecs.text_encoders.qwen3_mlx import MlxTimestepEmbeddingMLP
 from backend.engine.common.ops.embeddings import sinusoidal_timestep_proj
 from backend.engine.common.ops.norm import (
@@ -687,6 +689,8 @@ class HunyuanVideoDiTMLX(TransformerBase):
         self._cond_latents: Any | None = None
         self._mask_concat: Any | None = None
         self._image_embeds: Any | None = None
+        self._step_cache: StepCacheSession | None = None
+        self._teacache_cached_residual: mx.array | None = None
         self._build_param_map()
 
     def prepare_conditioning(self, request: Any, bundle_root: str | None = None) -> dict[str, Any]:
@@ -703,7 +707,16 @@ class HunyuanVideoDiTMLX(TransformerBase):
         sigmas: Any,
         **cond: Any,
     ) -> tuple[Any, dict[str, Any]]:
-        del timesteps, sigmas
+        runtime, cond = DiTRuntimeSession.from_before_denoise_cond(
+            family="hunyuan",
+            config=self.config,
+            entry=None,
+            ctx=self.ctx,
+            cond=dict(cond),
+            timesteps=timesteps,
+        )
+        self._step_cache = runtime.step_cache
+        self._teacache_cached_residual = None
         ctx = self.ctx
         B, C, T, H, W = latents.shape
         out_c = self._latent_channels
@@ -728,6 +741,11 @@ class HunyuanVideoDiTMLX(TransformerBase):
         else:
             self._image_embeds = ctx.zeros((B, vision_tokens, image_dim), dtype=latents.dtype)
         return latents, cond
+
+    def step_callback(self, step_idx: int, latents: Any, noise_pred: Any) -> None:
+        del latents, noise_pred
+        if self._step_cache is not None:
+            self._step_cache.set_step_counter(int(step_idx) + 1)
 
     def _build_model_input(self, latents: Any) -> Any:
         if self._cond_latents is None or self._mask_concat is None:
@@ -857,14 +875,40 @@ class HunyuanVideoDiTMLX(TransformerBase):
             array_fn=self.ctx.array,
         )
 
-        for block in self.transformer_blocks:
-            hidden_states, encoder_hidden_states = block(
-                hidden_states,
-                encoder_hidden_states,
-                temb,
-                encoder_attention_mask,
-                freqs_cis,
-            )
+        body_in = hidden_states
+        skip_body = False
+        if self._step_cache is not None and self._step_cache.enabled:
+            mod_in, *_ = self.transformer_blocks[0].norm1(hidden_states, temb)
+            if int(mod_in.shape[0]) > 1:
+                mod_in = mod_in[0:1]
+            decision = self._step_cache.gate(mod_in)
+            if self._step_cache.should_skip(
+                decision,
+                has_residual=self._teacache_cached_residual is not None,
+            ):
+                hidden_states = body_in + self._teacache_cached_residual
+                skip_body = True
+            elif decision is not None and decision.should_update_cache:
+                self._step_cache.store_branch_mod_input("default", mod_in)
+            elif (
+                decision is not None
+                and decision.should_compute
+                and decision.rel_l1 is not None
+            ):
+                self._step_cache.store_branch_mod_input("default", mod_in)
+
+        if not skip_body:
+            for block in self.transformer_blocks:
+                hidden_states, encoder_hidden_states = block(
+                    hidden_states,
+                    encoder_hidden_states,
+                    temb,
+                    encoder_attention_mask,
+                    freqs_cis,
+                )
+            if self._step_cache is not None and self._step_cache.enabled:
+                self._teacache_cached_residual = hidden_states - body_in
+                ctx.eval(self._teacache_cached_residual)
 
         hidden_states = self.norm_out(hidden_states, temb)
         hidden_states = self.proj_out(hidden_states)

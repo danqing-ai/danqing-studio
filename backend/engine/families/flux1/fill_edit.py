@@ -214,7 +214,7 @@ def build_flux1_fill_edit_context(
     steps = max(1, steps)
     guidance = float(request.guidance) if request.guidance is not None else float(guidance_default)
     guidance = runtime_contract.resolve_guidance_scalar(guidance)
-    preview_mode, preview_interval, preview_max_edge = resolve_image_preview_settings(entry)
+    preview_mode, preview_interval, preview_max_edge, _preview_decoder = resolve_image_preview_settings(entry)
     preview_state: dict[str, Any] = {}
 
     with phase_cm("encode"):

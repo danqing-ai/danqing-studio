@@ -29,6 +29,7 @@ from backend.engine.inference.video_denoise import run_video_denoise
 from backend.engine.inference.video_two_stage import run_family_video_avatar, run_family_video_generator
 from backend.engine.pipelines.pipeline_progress import pipeline_graph_step
 from backend.engine.sessions._context import MediaRunContext, ResolvedRun
+from backend.engine.inference.video_options import apply_video_inference_options
 from backend.engine.pipelines.video_run_common import (
     apply_video_registry_config_overrides,
     create_timesteps_for_video,
@@ -183,6 +184,7 @@ def persist_video_create(
         guidance=ctx.guidance,
         on_progress=ctx.on_progress,
         on_log=ctx.on_log,
+        model=ctx.model,
     )
 
 
@@ -381,6 +383,19 @@ def build_video_create_run_context(
         )
 
     extra_cond["_pipeline_fps"] = float(fps)
+    from backend.engine.inference.optimization_plan import attach_resolved_video_inference_plan
+
+    extra_cond = apply_video_inference_options(pipeline.ctx, request, extra_cond)
+    extra_cond = attach_resolved_video_inference_plan(
+        extra_cond,
+        family=family,
+        config=config,
+        ctx=pipeline.ctx,
+        num_steps=len(timesteps),
+    )
+    from backend.engine.inference.optimization_plan import log_inference_plan_from_cond
+
+    log_inference_plan_from_cond(extra_cond, on_log)
     latents, extra_cond = model.before_denoise(latents, timesteps, sigmas, **extra_cond)
     rope_kw = video_rotary_model_kwargs(config, pipeline.ctx, h, w, latents)
 

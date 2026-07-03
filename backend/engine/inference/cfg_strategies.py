@@ -152,7 +152,7 @@ class DualForwardCfgStrategy:
         cfg_renorm: bool = False,
         cfg_renorm_min: float = 0.0,
     ) -> Any:
-        noise_cond = model(latents, t, **cond_kwargs)
+        noise_cond = model(latents, t, **cond_kwargs, _teacache_branch="cond")
 
         # 无 CFG — 直接返回
         if uncond_kwargs is None:
@@ -162,7 +162,7 @@ class DualForwardCfgStrategy:
         if ctx is not None and getattr(ctx, "backend", None) == "mlx":
             ctx.eval(noise_cond)
 
-        noise_uncond = model(latents, t, **uncond_kwargs)
+        noise_uncond = model(latents, t, **uncond_kwargs, _teacache_branch="uncond")
         if ctx is not None and getattr(ctx, "backend", None) == "mlx":
             ctx.eval(noise_uncond)
 
@@ -199,8 +199,11 @@ def resolve_cfg_strategy(
     ):
         return FusedCfgStrategy()
 
-    # 2) Batched CFG — predict_noise_cfg (Wan, Hunyuan)
-    if callable(getattr(model, "predict_noise_cfg", None)):
+    # 2) Batched CFG — predict_noise_cfg (Wan, Hunyuan, FLUX1, Qwen)
+    if (
+        callable(getattr(model, "predict_noise_cfg", None))
+        and getattr(config, "use_batched_cfg", True)
+    ):
         return BatchedCfgStrategy()
 
     # 3) Dual forward — fallback

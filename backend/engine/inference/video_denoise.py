@@ -11,6 +11,12 @@ from backend.engine.inference.cfg_strategies import resolve_cfg_strategy
 from backend.engine.inference.diffusion_bundle import run_diffusion_denoise
 from backend.engine.inference.step_kwargs_builders import VideoStepKwargsBuilder
 from backend.engine.pipelines.pipeline_progress import emit_denoise_progress
+from backend.engine.common.ops.step_cache import log_step_cache_summary
+from backend.engine.common.ops.teacache_calibrate import (
+    publish_teacache_probe_from_model,
+    teacache_probe_enabled,
+)
+from backend.engine.inference.optimization_plan import stash_inference_run_metadata
 
 
 def run_video_denoise(
@@ -88,4 +94,9 @@ def run_video_denoise(
     from backend.engine.families.wan.moe import release_wan_moe_experts_if_supported
 
     release_wan_moe_experts_if_supported(model, ctx)
+    if teacache_probe_enabled():
+        publish_teacache_probe_from_model(model)
+    else:
+        log_step_cache_summary(model, on_log)
+        stash_inference_run_metadata(model, extra_cond)
     return latents

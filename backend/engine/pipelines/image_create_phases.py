@@ -21,6 +21,7 @@ from backend.engine._transformer_registry import (
 )
 from backend.engine.contracts import FamilyRuntimeContract
 from backend.engine.pipelines.image_run_common import (
+    apply_image_inference_options,
     build_image_vae_preview_session,
     execute_family_image_generator,
     image_model_from_resolved_run,
@@ -83,6 +84,7 @@ class ImageCreateRunContext(MediaRunContext):
     preview_mode: str
     preview_interval: int
     preview_max_edge: int
+    preview_decoder: str
     preview_state: dict[str, Any]
     latent_noise_dtype: Any
     noise_sample_dtype: Any
@@ -160,7 +162,7 @@ def build_create_run_context(
     steps, guidance, _meta = resolve_image_steps_guidance(
         image.entry, request, image.runtime_contract
     )
-    preview_mode, preview_interval, preview_max_edge = resolve_image_preview(image.entry)
+    preview_mode, preview_interval, preview_max_edge, preview_decoder = resolve_image_preview(image.entry)
     preview_state: dict[str, Any] = {}
 
     with phase_cm("encode"):
@@ -214,17 +216,7 @@ def build_create_run_context(
             structural_cleanup()
         raise
 
-    lemica_mode = getattr(request, "lemica_mode", None)
-    if lemica_mode and str(lemica_mode).strip().lower() not in ("", "none", "off"):
-        from backend.engine.common.mlx_only import require_mlx_if_option_active
-
-        require_mlx_if_option_active(
-            pipeline.ctx,
-            feature="lemica_mode",
-            option=lemica_mode,
-        )
-        extra_cond = dict(extra_cond)
-        extra_cond["lemica_mode"] = str(lemica_mode).strip().lower()
+    extra_cond = apply_image_inference_options(pipeline.ctx, request, extra_cond)
 
     with phase_cm("schedule"):
         scheduled = schedule_image_run(
@@ -337,6 +329,7 @@ def build_create_run_context(
         preview_mode=preview_mode,
         preview_interval=preview_interval,
         preview_max_edge=preview_max_edge,
+        preview_decoder=preview_decoder,
         preview_state=preview_state,
         latent_noise_dtype=_lnd,
         noise_sample_dtype=_noise_sample_dtype,
@@ -401,6 +394,19 @@ def execute_create_denoise(
         )
 
     local_extra_cond = dict(ctx.extra_cond)
+    from backend.engine.inference.optimization_plan import attach_resolved_inference_plan
+
+    local_extra_cond = attach_resolved_inference_plan(
+        local_extra_cond,
+        family=ctx.family,
+        config=config,
+        entry=ctx.entry,
+        ctx=pipeline.ctx,
+        num_steps=len(ctx.timesteps),
+    )
+    from backend.engine.inference.optimization_plan import log_inference_plan_from_cond
+
+    log_inference_plan_from_cond(local_extra_cond, on_log)
     if ctx.packed_denoise:
         latents_nchw = ctx.flux_unpack(pipeline.ctx, latents, ctx.latent_h, ctx.latent_w)
         latents_nchw, local_extra_cond = model.before_denoise(
@@ -430,6 +436,7 @@ def execute_create_denoise(
             ctx.version_key,
             batch_preview_state,
             config=config,
+            preview_decoder=ctx.preview_decoder,
             on_log=on_log,
         )
         try:
@@ -564,6 +571,9 @@ def persist_create_image(
     }
     if ctx.structural_output_meta:
         meta.update(ctx.structural_output_meta)
+    from backend.engine.inference.optimization_plan import pop_inference_run_metadata
+
+    meta.update(pop_inference_run_metadata(ctx.model))
     meta.update(work_title_metadata(ctx.request.title))
     return str(out_path), meta
 
