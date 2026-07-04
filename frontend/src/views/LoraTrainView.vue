@@ -1,16 +1,5 @@
 <template>
   <div class="copilot-page lora-train-page">
-    <aside class="lora-train-page__runs-rail" :aria-label="$t('loraTrain.recentRuns')">
-      <DqSurfaceCard class="lora-train-page__runs-card studio-surface-card">
-        <LoraTrainHistory
-          ref="historyRef"
-          :active-id="activeRunId"
-          variant="rail"
-          @select="openRun"
-        />
-      </DqSurfaceCard>
-    </aside>
-
     <div class="copilot-page__sidebar">
       <DqSurfaceCard class="lv-sidebar-card lora-train-page__sidebar-card">
         <div class="card-title">
@@ -1926,9 +1915,9 @@ onMounted(async () => {
     overflow: auto;
   }
 
-  .lora-train-page__runs-rail {
-    width: 100%;
-    max-height: 240px;
+  .lora-train-page__sidebar-history {
+    flex: 0 0 auto;
+    max-height: 220px;
   }
 
   .lora-train-page__memory-panel {

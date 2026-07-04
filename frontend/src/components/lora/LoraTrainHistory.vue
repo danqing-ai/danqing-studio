@@ -4,9 +4,11 @@
       <div v-for="i in skeletonCount" :key="i" class="lora-train-history__skeleton-row" />
     </div>
 
-    <p v-else-if="!loading && !runs.length" class="lora-train-history__empty-hint">
-      {{ $t('loraTrain.noRecentRuns') }}
-    </p>
+    <DqEmpty
+      v-else-if="!loading && !runs.length"
+      :description="$t('loraTrain.noRecentRuns')"
+      class="lora-train-history__empty"
+    />
 
     <div v-else class="lora-train-history__list">
       <button
@@ -105,7 +107,7 @@ const emit = defineEmits<{
 const { t, locale } = useI18n();
 const { runs, loading, refresh, userLoraForRun } = useLoraTrainLibrary();
 
-const skeletonCount = computed(() => (props.variant === 'page' ? 5 : 4));
+const skeletonCount = computed(() => (props.variant === 'page' ? 5 : 3));
 
 function statusType(status: string): string {
   if (status === 'completed') return 'success';
@@ -154,7 +156,6 @@ defineExpose({
   display: flex;
   flex-direction: column;
   min-height: 0;
-  height: 100%;
 }
 
 .lora-train-history__title {
@@ -175,17 +176,26 @@ defineExpose({
   color: var(--dq-label-primary);
 }
 
-.lora-train-history__empty-hint {
-  margin: 0;
-  font-size: var(--dq-font-size-body);
-  line-height: 1.5;
-  color: var(--dq-label-tertiary);
-  text-align: center;
-  padding: 24px 8px;
+.lora-train-history__count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: var(--dq-font-size-caption);
+  font-weight: 600;
+  color: var(--dq-label-secondary);
+  background: var(--dq-fill-tertiary);
 }
 
-.lora-train-history--page .lora-train-history__empty-hint {
-  padding: 32px 0;
+.lora-train-history__empty {
+  padding: 8px 0;
+}
+
+.lora-train-history--page .lora-train-history__empty {
+  padding: 24px 0;
 }
 
 .lora-train-history__skeleton {
@@ -196,7 +206,7 @@ defineExpose({
 
 .lora-train-history__skeleton-row {
   height: 52px;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   background: linear-gradient(
     90deg,
     var(--dq-fill-tertiary) 0%,
@@ -236,12 +246,11 @@ defineExpose({
   gap: 10px;
   width: 100%;
   padding: 10px 12px;
-  border: 0.5px solid var(--dq-glass-border, var(--dq-border-subtle));
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--dq-surface-elevated) 60%, transparent);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
   cursor: pointer;
   text-align: left;
-  color: inherit;
   transition: background 0.15s ease, border-color 0.15s ease;
 }
 
@@ -252,12 +261,13 @@ defineExpose({
 
 .lora-train-history--page .lora-train-history__item {
   padding: 12px 14px;
+  border: 1px solid var(--dq-border-subtle);
   border-radius: 12px;
   background: var(--dq-fill-control);
 }
 
 .lora-train-history__item:hover {
-  background: color-mix(in srgb, var(--dq-accent) 6%, var(--dq-surface-elevated));
+  background: var(--dq-fill-tertiary);
   border-color: color-mix(in srgb, var(--dq-accent) 22%, var(--dq-border-subtle));
 }
 
@@ -266,8 +276,8 @@ defineExpose({
 }
 
 .lora-train-history__item.is-active {
-  border-color: color-mix(in srgb, var(--dq-accent) 45%, transparent);
-  background: color-mix(in srgb, var(--dq-accent) 8%, var(--dq-surface-elevated));
+  background: color-mix(in srgb, var(--dq-accent) 10%, var(--dq-fill-secondary));
+  border-color: color-mix(in srgb, var(--dq-accent) 35%, transparent);
 }
 
 .lora-train-history__status-bar {
@@ -344,6 +354,10 @@ defineExpose({
   max-width: 100%;
 }
 
+.lora-train-history--page .lora-train-history__item-name {
+  font-size: var(--dq-font-size-body);
+}
+
 .lora-train-history__registered {
   flex-shrink: 0;
 }
@@ -356,7 +370,7 @@ defineExpose({
   color: var(--dq-label-tertiary);
 }
 
-.lora-train-history--rail .lora-train-history__item-meta {
+.lora-train-history--sidebar .lora-train-history__item-meta {
   flex-wrap: nowrap;
   min-width: 0;
   gap: 4px;
@@ -370,7 +384,7 @@ defineExpose({
   text-overflow: ellipsis;
 }
 
-.lora-train-history--rail .lora-train-history__when {
+.lora-train-history--sidebar .lora-train-history__when {
   flex-shrink: 0;
 }
 
