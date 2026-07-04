@@ -162,7 +162,7 @@ function handleActionSelect(action: string) {
           >
             {{ $t('settings.restorePromptTemplates') }}
           </DqButton>
-          <DqButton type="primary" size="sm" @click="emit('add')">
+          <DqButton type="primary" @click="emit('add')">
             <DqIcon><plus /></DqIcon>
             {{ $t('settings.addTemplate') }}
           </DqButton>

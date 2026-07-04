@@ -24,7 +24,10 @@ from backend.core.interfaces import IPathResolver, ISettingsService
 from backend.engine.engine_registry import EngineRegistry
 from backend.engine.training import dataset_store
 from backend.engine.training.crop import presets_with_training_resolution, training_crop_policy
-from backend.engine.training.lora_train_runtime import train_min_memory_gb
+from backend.engine.training.lora_train_runtime import (
+    resume_checkpoint_incompatibility,
+    train_min_memory_gb,
+)
 from backend.engine.training.presets import (
     FLUX1_TRAIN_MIN_MEMORY_GB,
     PRESETS,
@@ -382,8 +385,48 @@ def trainable_models():
     }
 
 
+def _raise_resume_incompatible(message: str) -> None:
+    raise HTTPException(
+        400,
+        detail={"code": "resume_incompatible", "message": message},
+    )
+
+
+def _validate_resume_checkpoint(
+    body: LoraTrainingRequest,
+    sched: TaskScheduler,
+    adapter_path: Path,
+    *,
+    task_id: str | None,
+) -> None:
+    source_params: dict[str, Any] | None = None
+    if task_id:
+        row = sched.get_task(task_id)
+        if row:
+            raw = row.get("params")
+            if isinstance(raw, dict):
+                source_params = raw
+    reason = resume_checkpoint_incompatibility(
+        base_model=body.base_model,
+        adapter_path=adapter_path,
+        source_task_params=source_params,
+    )
+    if reason:
+        _raise_resume_incompatible(reason)
+
+
 def _resolve_resume_adapter(body: LoraTrainingRequest, sched: TaskScheduler) -> LoraTrainingRequest:
     if body.resume_from:
+        path = Path(body.resume_from)
+        if not path.is_file():
+            raise HTTPException(
+                404,
+                detail={
+                    "code": "resume_not_found",
+                    "message": f"Resume adapter not found: {body.resume_from}",
+                },
+            )
+        _validate_resume_checkpoint(body, sched, path, task_id=(body.resume_task_id or "").strip() or None)
         return body
     task_id = (body.resume_task_id or "").strip()
     checkpoint = (body.resume_checkpoint or "").strip()
@@ -412,6 +455,7 @@ def _resolve_resume_adapter(body: LoraTrainingRequest, sched: TaskScheduler) -> 
                 "message": f"Checkpoint not found: {checkpoint} for task {task_id}",
             },
         )
+    _validate_resume_checkpoint(body, sched, path, task_id=task_id)
     return body.model_copy(update={"resume_from": str(path)})
 
 

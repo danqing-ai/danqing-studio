@@ -8,7 +8,7 @@
         :accept="acceptAttr"
         @change="onFileChange"
       />
-      <DqButton type="primary" size="sm" @click="triggerUpload">
+      <DqButton type="primary" @click="triggerUpload">
         <DqIcon><upload /></DqIcon>
         {{ $t('assetPicker.upload') }}
       </DqButton>

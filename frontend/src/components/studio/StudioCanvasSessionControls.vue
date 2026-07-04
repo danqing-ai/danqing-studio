@@ -61,7 +61,7 @@
       @keydown.enter="commitRename"
     />
     <template #footer>
-      <DqButton @click="renameOpen = false">{{ $t('common.cancel') }}</DqButton>
+      <DqButton size="sm" @click="renameOpen = false">{{ $t('common.cancel') }}</DqButton>
       <DqButton type="primary" @click="commitRename">{{ $t('common.confirm') }}</DqButton>
     </template>
   </DqDialog>

@@ -273,7 +273,7 @@ export interface LongVideoCharacterLook {
   portrait_prompt?: string;
 }
 
-export type LongVideoEditorTab = 'script' | 'cast' | 'scenes' | 'storyboard';
+export type LongVideoEditorTab = 'settings' | 'script' | 'cast' | 'scenes' | 'storyboard';
 
 export type LongVideoInspectorTab = 'frame' | 'clip';
 

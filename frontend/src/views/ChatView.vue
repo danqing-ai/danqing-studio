@@ -35,7 +35,7 @@
             {{ llmReady ? $t('assistant.llmReady') : $t('assistant.modelNotReady') }}
           </DqTag>
           <span v-if="llmReady" class="copilot-page__status-model">{{ chatModelLabel }}</span>
-          <DqButton v-else type="text" size="xs" @click="goToModels">
+          <DqButton v-else type="text" size="sm" @click="goToModels">
             {{ $t('assistant.installLlm') }}
           </DqButton>
           <p v-if="needsVision && visionReady" class="copilot-page__status-vision">
@@ -43,7 +43,7 @@
           </p>
           <p v-else-if="needsVision && !visionReady" class="copilot-page__status-vision copilot-page__status-vision--warn">
             {{ visionWarnText }}
-            <DqButton type="text" size="xs" @click="goToModels">{{ $t('assistant.installVisionModel') }}</DqButton>
+            <DqButton type="text" size="sm" @click="goToModels">{{ $t('assistant.installVisionModel') }}</DqButton>
           </p>
         </div>
       </DqSurfaceCard>
@@ -62,7 +62,7 @@
           <p class="copilot-page__page-desc">{{ currentTaskDesc }}</p>
         </div>
         <div class="copilot-page__header-actions">
-          <DqButton size="small" type="default" @click="openComposer">
+          <DqButton size="sm" type="default" @click="openComposer">
             {{ openComposerLabel }}
           </DqButton>
           <DqCountBadge
@@ -84,7 +84,7 @@
 
       <div v-if="!llmReady" class="copilot-page__banner">
         <p>{{ $t('assistant.llmRequiredHint') }}</p>
-        <DqButton size="small" @click="goToModels">{{ $t('assistant.installLlm') }}</DqButton>
+        <DqButton size="sm" @click="goToModels">{{ $t('assistant.installLlm') }}</DqButton>
       </div>
 
       <div class="copilot-page__split">
@@ -103,7 +103,7 @@
             />
             <div class="copilot-page__asset-meta">
               <span class="copilot-page__asset-id">{{ selectedAsset.id }}</span>
-              <DqButton type="text" size="xs" @click="clearAsset">{{ $t('assistant.clearAsset') }}</DqButton>
+              <DqButton type="text" size="sm" @click="clearAsset">{{ $t('assistant.clearAsset') }}</DqButton>
             </div>
           </div>
           <AssetPicker
@@ -170,10 +170,10 @@
           </div>
           <div class="copilot-page__result-body">{{ lastResult.output }}</div>
           <div class="copilot-page__result-actions">
-            <DqButton size="small" @click="copyText(lastResult.output)">{{ $t('assistant.copy') }}</DqButton>
+            <DqButton size="sm" @click="copyText(lastResult.output)">{{ $t('assistant.copy') }}</DqButton>
             <DqButton
               v-if="lastResult.applyRoute"
-              size="small"
+              size="sm"
               type="primary"
               @click="applyResult(lastResult, 'replace')"
             >
@@ -181,7 +181,7 @@
             </DqButton>
             <DqButton
               v-if="lastResult.applyRoute && lastResult.appendLabel"
-              size="small"
+              size="sm"
               @click="applyResult(lastResult, 'append')"
             >
               {{ lastResult.appendLabel }}
@@ -202,7 +202,7 @@
           </div>
           <div class="copilot-page__cards-actions">
             <DqButton
-              size="small"
+              size="sm"
               :disabled="pendingCount === 0 || isBatchRunning"
               :loading="isBatchRunning"
               @click="runBatch"
@@ -210,7 +210,7 @@
               {{ $t('assistant.runAll', { n: pendingCount }) }}
             </DqButton>
             <DqButton
-              size="small"
+              size="sm"
               type="text"
               :disabled="finishedCount === 0"
               @click="clearFinished"
@@ -251,7 +251,7 @@
               <DqIconButton
                 v-if="task.status === 'pending'"
                 type="text"
-                size="xs"
+                size="sm"
                 :label="$t('assistant.runNow')"
                 @click="executeTask(task.id)"
               >
@@ -260,7 +260,7 @@
               <DqIconButton
                 v-if="task.status === 'done' && task.output"
                 type="text"
-                size="xs"
+                size="sm"
                 :label="$t('assistant.copy')"
                 @click="copyText(task.output!)"
               >
@@ -269,7 +269,7 @@
               <DqIconButton
                 v-if="task.status === 'done' && taskSupportsAppend(task)"
                 type="text"
-                size="xs"
+                size="sm"
                 :label="appendLabelForTask(task)"
                 @click="applyTaskResult(task, 'append')"
               >
@@ -278,7 +278,7 @@
               <DqIconButton
                 v-if="task.status === 'done'"
                 type="text"
-                size="xs"
+                size="sm"
                 :label="applyLabelForTask(task)"
                 @click="applyTaskResult(task, 'replace')"
               >
@@ -286,7 +286,7 @@
               </DqIconButton>
               <DqIconButton
                 type="text"
-                size="xs"
+                size="sm"
                 :label="$t('common.delete')"
                 @click="removeTask(task.id)"
               >

@@ -97,7 +97,7 @@ const emit = defineEmits<{
     </DqPrefPane>
 
     <template #footer>
-      <DqButton @click="emit('cancel')">{{ $t('common.cancel') }}</DqButton>
+      <DqButton size="sm" @click="emit('cancel')">{{ $t('common.cancel') }}</DqButton>
       <DqButton type="primary" @click="emit('save')">{{ $t('common.save') }}</DqButton>
     </template>
   </DqDialog>

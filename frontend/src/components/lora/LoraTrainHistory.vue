@@ -1,27 +1,14 @@
 <template>
   <div class="lora-train-history" :class="`lora-train-history--${variant}`">
-    <div v-if="!hideHeader" class="lora-train-history__head">
-      <div class="lora-train-history__head-row">
-        <span class="lora-train-history__title">{{ $t('loraTrain.recentRuns') }}</span>
-        <DqButton
-          v-if="!hideRefresh"
-          size="xs"
-          type="text"
-          :loading="loading"
-          @click="refresh()"
-        >
-          {{ $t('loraTrain.refreshHistory') }}
-        </DqButton>
-      </div>
-    </div>
-
     <div v-if="loading && !runs.length" class="lora-train-history__skeleton">
       <div v-for="i in skeletonCount" :key="i" class="lora-train-history__skeleton-row" />
     </div>
 
-    <p v-else-if="!loading && !runs.length" class="lora-train-history__empty-hint">
-      {{ $t('loraTrain.noRecentRuns') }}
-    </p>
+    <DqEmpty
+      v-else-if="!loading && !runs.length"
+      :description="$t('loraTrain.noRecentRuns')"
+      class="lora-train-history__empty"
+    />
 
     <div v-else class="lora-train-history__list">
       <button
@@ -39,19 +26,40 @@
 
         <span class="lora-train-history__item-content">
           <span class="lora-train-history__item-top">
-            <span class="lora-train-history__item-name">{{ runOutputName(run) }}</span>
-            <DqTag size="small" :type="statusType(String(run.status || ''))" effect="plain">
-              {{ statusLabel(String(run.status || '')) }}
-            </DqTag>
-            <DqTag
-              v-if="userLoraForRun(run)"
-              size="small"
-              type="success"
-              effect="plain"
-              class="lora-train-history__registered"
+            <span
+              class="lora-train-history__item-name"
+              :title="runOutputName(run)"
             >
-              {{ $t('loraTrain.registeredBadge') }}
-            </DqTag>
+              {{ runOutputName(run) }}
+            </span>
+            <span v-if="variant === 'sidebar'" class="lora-train-history__item-badges">
+              <DqTag size="small" :type="statusType(String(run.status || ''))" effect="plain">
+                {{ statusLabel(String(run.status || '')) }}
+              </DqTag>
+              <DqTag
+                v-if="userLoraForRun(run)"
+                size="small"
+                type="success"
+                effect="plain"
+                class="lora-train-history__registered"
+              >
+                {{ $t('loraTrain.registeredBadge') }}
+              </DqTag>
+            </span>
+            <template v-else>
+              <DqTag size="small" :type="statusType(String(run.status || ''))" effect="plain">
+                {{ statusLabel(String(run.status || '')) }}
+              </DqTag>
+              <DqTag
+                v-if="userLoraForRun(run)"
+                size="small"
+                type="success"
+                effect="plain"
+                class="lora-train-history__registered"
+              >
+                {{ $t('loraTrain.registeredBadge') }}
+              </DqTag>
+            </template>
           </span>
           <span class="lora-train-history__item-meta">
             <span class="lora-train-history__base">{{ runBaseModel(run) }}</span>
@@ -82,16 +90,12 @@ import {
 const props = withDefaults(
   defineProps<{
     activeId?: string;
-    hideRefresh?: boolean;
-    hideHeader?: boolean;
-    variant?: 'rail' | 'page';
+    variant?: 'sidebar' | 'page';
     limit?: number;
   }>(),
   {
     activeId: '',
-    hideRefresh: false,
-    hideHeader: false,
-    variant: 'rail',
+    variant: 'sidebar',
     limit: 12,
   }
 );
@@ -103,7 +107,7 @@ const emit = defineEmits<{
 const { t, locale } = useI18n();
 const { runs, loading, refresh, userLoraForRun } = useLoraTrainLibrary();
 
-const skeletonCount = computed(() => (props.variant === 'page' ? 5 : 4));
+const skeletonCount = computed(() => (props.variant === 'page' ? 5 : 3));
 
 function statusType(status: string): string {
   if (status === 'completed') return 'success';
@@ -151,26 +155,7 @@ defineExpose({
 .lora-train-history {
   display: flex;
   flex-direction: column;
-  gap: 10px;
   min-height: 0;
-  height: 100%;
-}
-
-.lora-train-history__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-.lora-train-history__head-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  min-width: 0;
-  width: 100%;
 }
 
 .lora-train-history__title {
@@ -183,12 +168,6 @@ defineExpose({
   flex-shrink: 0;
 }
 
-.lora-train-history--rail .lora-train-history__title {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .lora-train-history--page .lora-train-history__title {
   font-size: var(--dq-font-size-body);
   font-weight: 600;
@@ -197,17 +176,26 @@ defineExpose({
   color: var(--dq-label-primary);
 }
 
-.lora-train-history__empty-hint {
-  margin: 0;
-  font-size: var(--dq-font-size-body);
-  line-height: 1.5;
-  color: var(--dq-label-tertiary);
-  text-align: center;
-  padding: 24px 8px;
+.lora-train-history__count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: var(--dq-font-size-caption);
+  font-weight: 600;
+  color: var(--dq-label-secondary);
+  background: var(--dq-fill-tertiary);
 }
 
-.lora-train-history--page .lora-train-history__empty-hint {
-  padding: 32px 0;
+.lora-train-history__empty {
+  padding: 8px 0;
+}
+
+.lora-train-history--page .lora-train-history__empty {
+  padding: 24px 0;
 }
 
 .lora-train-history__skeleton {
@@ -218,7 +206,7 @@ defineExpose({
 
 .lora-train-history__skeleton-row {
   height: 52px;
-  border-radius: 10px;
+  border-radius: var(--radius-sm);
   background: linear-gradient(
     90deg,
     var(--dq-fill-tertiary) 0%,
@@ -258,23 +246,28 @@ defineExpose({
   gap: 10px;
   width: 100%;
   padding: 10px 12px;
-  border: 0.5px solid var(--dq-glass-border, var(--dq-border-subtle));
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--dq-surface-elevated) 60%, transparent);
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
   cursor: pointer;
   text-align: left;
-  color: inherit;
   transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.lora-train-history--sidebar .lora-train-history__item {
+  padding: 8px 8px;
+  gap: 8px;
 }
 
 .lora-train-history--page .lora-train-history__item {
   padding: 12px 14px;
+  border: 1px solid var(--dq-border-subtle);
   border-radius: 12px;
   background: var(--dq-fill-control);
 }
 
 .lora-train-history__item:hover {
-  background: color-mix(in srgb, var(--dq-accent) 6%, var(--dq-surface-elevated));
+  background: var(--dq-fill-tertiary);
   border-color: color-mix(in srgb, var(--dq-accent) 22%, var(--dq-border-subtle));
 }
 
@@ -283,8 +276,8 @@ defineExpose({
 }
 
 .lora-train-history__item.is-active {
-  border-color: color-mix(in srgb, var(--dq-accent) 45%, transparent);
-  background: color-mix(in srgb, var(--dq-accent) 8%, var(--dq-surface-elevated));
+  background: color-mix(in srgb, var(--dq-accent) 10%, var(--dq-fill-secondary));
+  border-color: color-mix(in srgb, var(--dq-accent) 35%, transparent);
 }
 
 .lora-train-history__status-bar {
@@ -326,8 +319,10 @@ defineExpose({
   gap: 6px;
 }
 
-.lora-train-history--rail .lora-train-history__item-top {
-  flex-wrap: nowrap;
+.lora-train-history--sidebar .lora-train-history__item-top {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
 }
 
 .lora-train-history__item-name {
@@ -337,19 +332,30 @@ defineExpose({
   word-break: break-word;
 }
 
-.lora-train-history--rail .lora-train-history__item-name {
-  flex: 1;
-  min-width: 0;
+.lora-train-history--sidebar .lora-train-history__item-name {
+  width: 100%;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   word-break: normal;
 }
 
-.lora-train-history--rail .lora-train-history__item-top :deep(.dq-tag) {
+.lora-train-history--sidebar .lora-train-history__item-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+}
+
+.lora-train-history--sidebar .lora-train-history__item-badges :deep(.dq-tag) {
   flex-shrink: 0;
   max-width: 100%;
-  white-space: nowrap;
+}
+
+.lora-train-history--page .lora-train-history__item-name {
+  font-size: var(--dq-font-size-body);
 }
 
 .lora-train-history__registered {
@@ -364,24 +370,21 @@ defineExpose({
   color: var(--dq-label-tertiary);
 }
 
-.lora-train-history--rail .lora-train-history__item-meta {
+.lora-train-history--sidebar .lora-train-history__item-meta {
   flex-wrap: nowrap;
   min-width: 0;
+  gap: 4px;
 }
 
-.lora-train-history--rail .lora-train-history__base,
-.lora-train-history--rail .lora-train-history__when {
+.lora-train-history--sidebar .lora-train-history__base {
+  flex: 1;
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
-.lora-train-history--rail .lora-train-history__base {
-  flex-shrink: 1;
-  min-width: 0;
-}
-
-.lora-train-history--rail .lora-train-history__when {
+.lora-train-history--sidebar .lora-train-history__when {
   flex-shrink: 0;
 }
 

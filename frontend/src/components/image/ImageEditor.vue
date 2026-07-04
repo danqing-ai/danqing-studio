@@ -68,7 +68,7 @@
       </div>
       <div class="toolbar-divider" />
       <div v-if="showSubmitButton" class="toolbar-group">
-        <DqButton type="primary" size="sm" :disabled="!hasMaskContent" @click="$emit('submit')">
+        <DqButton type="primary" :disabled="!hasMaskContent" @click="$emit('submit')">
           {{ $t('studio.generate') }}
         </DqButton>
       </div>

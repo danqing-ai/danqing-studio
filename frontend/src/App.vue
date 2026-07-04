@@ -22,7 +22,7 @@
       >
         <p class="dq-app-setup-hint__text">{{ $tt('settings.quickSetupFirstRunHint') }}</p>
         <div class="dq-app-setup-hint__actions">
-          <DqButton size="sm" type="primary" @click="goQuickSetupSettings">
+          <DqButton type="primary" @click="goQuickSetupSettings">
             {{ $tt('settings.quickSetupGoSettings') }}
           </DqButton>
           <DqButton size="sm" @click="dismissSetupHint">

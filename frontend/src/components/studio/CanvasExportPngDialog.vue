@@ -23,7 +23,7 @@
       </DqCheckbox>
     </div>
     <template #footer>
-      <DqButton @click="$emit('update:open', false)">{{ $t('common.cancel') }}</DqButton>
+      <DqButton size="sm" @click="$emit('update:open', false)">{{ $t('common.cancel') }}</DqButton>
       <DqButton type="primary" @click="onConfirm">{{ $t('canvas.exportPng') }}</DqButton>
     </template>
   </DqDialog>

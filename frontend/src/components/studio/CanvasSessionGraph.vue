@@ -18,7 +18,7 @@
           </template>
         </span>
       </div>
-      <DqIconButton type="text" size="xs" :label="$t('gallery.close')" @click="$emit('close')">
+      <DqIconButton type="text" size="sm" :label="$t('gallery.close')" @click="$emit('close')">
         <DqIcon :size="14"><Close /></DqIcon>
       </DqIconButton>
     </header>
@@ -35,7 +35,7 @@
 
     <div v-if="allNodes.length === 0" class="canvas-session-graph__empty">
       <p>{{ $t('canvas.sessionGraphEmpty') }}</p>
-      <DqButton type="primary" size="sm" @click="$emit('import-works')">
+      <DqButton type="primary" @click="$emit('import-works')">
         {{ $t('canvas.importWorks') }}
       </DqButton>
     </div>

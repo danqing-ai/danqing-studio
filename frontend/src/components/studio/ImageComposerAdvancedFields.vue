@@ -35,7 +35,7 @@
           />
           <DqIconButton
             type="text"
-            size="xs"
+            size="sm"
             :label="$t('create.randomSeed')"
             @click="randomizeSeed"
           >
@@ -137,11 +137,11 @@
           <label>{{ $t('canvas.controlImage') }}</label>
           <div v-if="controlImage" class="composer-advanced-fields__thumb">
             <img :src="controlImage.previewUrl" alt="control" />
-            <DqIconButton type="text" size="xs" :label="$t('common.delete')" @click="$emit('remove-control')">
+            <DqIconButton type="text" size="sm" :label="$t('common.delete')" @click="$emit('remove-control')">
               <DqIcon :size="10"><Close /></DqIcon>
             </DqIconButton>
           </div>
-          <DqButton v-else size="xs" type="secondary" @click="$emit('pick-control')">
+          <DqButton v-else size="sm" type="secondary" @click="$emit('pick-control')">
             {{ $t('canvas.pickControlImage') }}
           </DqButton>
         </div>
@@ -153,11 +153,11 @@
             <label>{{ $t('create.inpaintSource') }}</label>
             <div v-if="inpaintSourceImage" class="composer-advanced-fields__thumb">
               <img :src="inpaintSourceImage.previewUrl" alt="inpaint source" />
-              <DqIconButton type="text" size="xs" :label="$t('common.delete')" @click="$emit('remove-inpaint-source')">
+              <DqIconButton type="text" size="sm" :label="$t('common.delete')" @click="$emit('remove-inpaint-source')">
                 <DqIcon :size="10"><Close /></DqIcon>
               </DqIconButton>
             </div>
-            <DqButton v-else size="xs" type="secondary" @click="$emit('pick-inpaint-source')">
+            <DqButton v-else size="sm" type="secondary" @click="$emit('pick-inpaint-source')">
               {{ $t('create.pickInpaintSource') }}
             </DqButton>
           </div>
@@ -165,11 +165,11 @@
             <label>{{ $t('create.inpaintMask') }}</label>
             <div v-if="inpaintMaskImage" class="composer-advanced-fields__thumb">
               <img :src="inpaintMaskImage.previewUrl" alt="inpaint mask" />
-              <DqIconButton type="text" size="xs" :label="$t('common.delete')" @click="$emit('remove-inpaint-mask')">
+              <DqIconButton type="text" size="sm" :label="$t('common.delete')" @click="$emit('remove-inpaint-mask')">
                 <DqIcon :size="10"><Close /></DqIcon>
               </DqIconButton>
             </div>
-            <DqButton v-else size="xs" type="secondary" @click="$emit('pick-inpaint-mask')">
+            <DqButton v-else size="sm" type="secondary" @click="$emit('pick-inpaint-mask')">
               {{ $t('create.pickInpaintMask') }}
             </DqButton>
           </div>

@@ -1,67 +1,28 @@
 <template>
   <div class="copilot-page lora-train-page">
-    <aside class="lora-train-page__runs-rail" :aria-label="$t('loraTrain.recentRuns')">
-      <DqSurfaceCard class="lora-train-page__runs-card studio-surface-card">
-        <LoraTrainHistory
-          ref="historyRef"
-          :active-id="activeRunId"
-          variant="rail"
-          @select="openRun"
-        />
-      </DqSurfaceCard>
-    </aside>
-
     <div class="copilot-page__sidebar">
-      <DqSurfaceCard class="copilot-page__sidebar-card studio-surface-card">
+      <DqSurfaceCard class="lv-sidebar-card lora-train-page__sidebar-card">
         <div class="card-title">
           <DqIcon><MagicStick /></DqIcon>
-          {{ $t('loraTrain.title') }}
+          {{ $t('loraTrain.recentRuns') }}
         </div>
-
-        <nav
-          class="copilot-page__nav dq-download-menu"
-          role="navigation"
-          :aria-label="$t('loraTrain.title')"
+        <DqButton
+          type="primary"
+          block
+          class="lv-sidebar-card__new-btn"
+          @click="startNewTraining"
         >
-          <button
-            v-for="(item, i) in stepNavItems"
-            :key="item.key"
-            type="button"
-            class="dq-download-menu__item lora-train-page__nav-item"
-            :class="{
-              'is-active': step === i && !activeRunId,
-              'is-done': stepDone(i),
-              'is-locked': i > maxReachableStep,
-            }"
-            :disabled="i > maxReachableStep || !!activeRunId"
-            @click="goToStep(i)"
-          >
-            <span class="lora-train-page__nav-step" aria-hidden="true">{{ i + 1 }}</span>
-            <DqIcon class="dq-download-menu__icon"><component :is="item.icon" /></DqIcon>
-            <span class="dq-download-menu__label">{{ item.label }}</span>
-          </button>
-        </nav>
-
-        <div v-if="wizardSummary.length && !activeRunId" class="copilot-page__status-panel lora-train-page__wizard-summary">
-          <span class="lora-train-page__wizard-summary-title">{{ $t('loraTrain.wizardSummary') }}</span>
-          <ul class="lora-train-page__wizard-summary-list">
-            <li v-for="row in wizardSummary" :key="row.key">
-              <span class="lora-train-page__wizard-summary-label">{{ row.label }}</span>
-              <span class="lora-train-page__wizard-summary-value">{{ row.value }}</span>
-            </li>
-          </ul>
-        </div>
-
-        <div v-if="requirements" class="copilot-page__status-panel lora-train-page__memory-panel">
-          <DqTag size="small" :type="requirements.can_submit ? 'success' : 'warning'" effect="plain">
-            {{ requirements.can_submit ? $t('loraTrain.memoryOk') : $t('loraTrain.memoryLow') }}
-          </DqTag>
-          <span class="lora-train-page__memory-hint">{{
-            $t('loraTrain.memoryHint', {
-              required: requirements.min_memory_gb,
-              detected: requirements.detected_memory_gb || '?',
-            })
-          }}</span>
+          + {{ $t('loraTrain.newTraining') }}
+        </DqButton>
+        <div class="lora-train-page__sidebar-body">
+          <LoraTrainHistory
+            ref="historyRef"
+            :active-id="activeRunId"
+            variant="sidebar"
+            hide-header
+            hide-refresh
+            @select="openRun"
+          />
         </div>
       </DqSurfaceCard>
     </div>
@@ -75,68 +36,31 @@
       />
 
       <template v-else>
-        <header class="page-header copilot-page__page-header lora-train-page__page-header">
-          <div class="lora-train-page__header-top">
-            <div class="copilot-page__header-main">
-              <h2 class="page-title copilot-page__page-title">
-                <DqIcon class="copilot-page__title-icon" aria-hidden="true">
-                  <component :is="currentStepIcon" />
-                </DqIcon>
-                {{ currentStepTitle }}
-              </h2>
-              <p class="copilot-page__page-desc">{{ currentStepDesc }}</p>
-            </div>
-            <div class="copilot-page__header-actions">
-              <DqButton v-if="step > 0" size="small" @click="step -= 1">
-                {{ $t('common.back') }}
-              </DqButton>
-              <DqButton
-                v-if="step < 3"
-                size="small"
-                type="primary"
-                :disabled="!canNext"
-                @click="step += 1"
-              >
-                {{ $t('common.next') }}
-              </DqButton>
-              <DqButton
-                v-else
-                size="small"
-                type="primary"
-                :loading="submitting"
-                :disabled="!canSubmit"
-                @click="submitTraining"
-              >
-                {{ $t('loraTrain.startTraining') }}
-              </DqButton>
-            </div>
-          </div>
-          <div
-            class="lora-train-page__stepper"
-            role="progressbar"
-            :aria-valuenow="step + 1"
-            aria-valuemin="1"
-            aria-valuemax="4"
-            :aria-label="currentStepTitle"
-          >
-            <div
-              v-for="(item, i) in stepNavItems"
-              :key="item.key"
-              class="lora-train-page__stepper-item"
+        <div class="lv-editor-tabs lora-train-page__stepper" role="tablist">
+          <template v-for="(item, i) in stepNavItems" :key="item.key">
+            <span v-if="i > 0" class="lv-editor-tabs__connector" aria-hidden="true" />
+            <button
+              type="button"
+              role="tab"
+              class="lv-editor-tabs__tab"
               :class="{
-                'is-active': step === i,
-                'is-done': step > i || stepDone(i),
-                'is-locked': i > maxReachableStep,
+                'lv-editor-tabs__tab--active': step === i,
+                'lv-editor-tabs__tab--done': step > i || stepDone(i),
+                'lv-editor-tabs__tab--locked': i > maxReachableStep,
               }"
+              :aria-selected="step === i"
+              @click="goToStep(i)"
             >
-              <span class="lora-train-page__stepper-track" aria-hidden="true">
-                <span class="lora-train-page__stepper-fill" />
+              <span class="lv-editor-tabs__icon" :class="{ 'lv-editor-tabs__icon--done': step > i || stepDone(i) }" aria-hidden="true">
+                <span v-if="step > i || stepDone(i)" class="lv-editor-tabs__icon-mark">✓</span>
+                <span v-else class="lv-editor-tabs__icon-mark">{{ i + 1 }}</span>
               </span>
-              <span class="lora-train-page__stepper-dot">{{ i + 1 }}</span>
-              <span class="lora-train-page__stepper-label">{{ item.label }}</span>
-            </div>
-          </div>
-        </header>
+              <span class="lv-editor-tabs__text">
+                <span class="lv-editor-tabs__label">{{ item.label }}</span>
+              </span>
+            </button>
+          </template>
+        </div>
 
         <DqSurfaceCard class="copilot-page__workspace-card studio-surface-card">
           <!-- Step 1: base model -->
@@ -165,19 +89,6 @@
                     {{ modelShortDesc(m) }}
                   </span>
                 </span>
-                <span v-if="form.base_model !== m.id" class="lora-train-page__base-tile-meta">
-                  <DqTag
-                    v-if="m.trainable && m.ready"
-                    size="small"
-                    type="success"
-                    effect="plain"
-                  >
-                    {{ $t('loraTrain.dreamboothReady') }}
-                  </DqTag>
-                  <DqTag v-else size="small" type="info" effect="plain">
-                    {{ !m.trainable ? $t('loraTrain.phase2') : $t('loraTrain.notInstalled') }}
-                  </DqTag>
-                </span>
                 <span
                   v-if="form.base_model === m.id"
                   class="lora-train-page__base-tile-check"
@@ -185,6 +96,16 @@
                 />
               </button>
             </div>
+          </div>
+          <div v-show="step === 0" class="lora-train-page__nav-bar">
+            <span />
+            <DqButton
+              type="primary"
+              :disabled="!canNext(0)"
+              @click="goToStep(1)"
+            >
+              {{ $t('common.next') }}
+            </DqButton>
           </div>
 
           <!-- Step 2: dataset -->
@@ -205,9 +126,37 @@
               @run-dataset-vlm="runDatasetVlmAudit"
             />
           </div>
+          <div v-show="step === 1" class="lora-train-page__nav-bar">
+            <DqButton size="sm" @click="goToStep(0)">
+              {{ $t('common.back') }}
+            </DqButton>
+            <DqButton
+              type="primary"
+              :disabled="!canNext(1)"
+              @click="goToStep(2)"
+            >
+              {{ $t('common.next') }}
+            </DqButton>
+          </div>
 
           <!-- Step 3: config -->
           <div v-show="step === 2" class="lora-train-page__panel">
+            <DqAlert
+              v-if="hasResume"
+              type="warning"
+              :closable="false"
+              class="lora-train-page__resume-banner"
+              :title="$t('loraTrain.resumeActiveTitle')"
+            >
+              <p>{{ $t('loraTrain.resumeActiveBody', {
+                task: form.resume_task_id,
+                checkpoint: form.resume_checkpoint,
+                base: form.base_model,
+              }) }}</p>
+              <DqButton size="sm" type="secondary" @click="clearResume">
+                {{ $t('loraTrain.clearResume') }}
+              </DqButton>
+            </DqAlert>
             <div class="lora-train-page__preset-grid">
               <button
                 v-for="p in presetKeys"
@@ -359,7 +308,7 @@
                 :title="$t('loraTrain.promptMismatchTitle')"
               >
                 <p>{{ $t('loraTrain.promptMismatchBody', { dataset: effectiveDatasetCaption, progress: form.progress_prompt.trim() }) }}</p>
-                <DqButton size="xs" type="secondary" @click="syncProgressPromptFromDataset">
+                <DqButton size="sm" type="secondary" @click="syncProgressPromptFromDataset">
                   {{ $t('loraTrain.promptMismatchSync') }}
                 </DqButton>
               </DqAlert>
@@ -443,25 +392,39 @@
                   :placeholder="$t('loraTrain.loraModuleKeysPlaceholder')"
                 />
               </div>
-              <div class="lora-train-page__resume-block">
-                <span class="lora-train-page__label">{{ $t('loraTrain.resumeTraining') }}</span>
-                <p class="lora-train-page__field-hint">{{ $t('loraTrain.resumeHint') }}</p>
-                <div class="lora-train-page__field-grid">
-                  <div class="lora-train-page__field">
-                    <label class="lora-train-page__label">{{ $t('loraTrain.resumeFromTask') }}</label>
-                    <DqInput v-model="form.resume_task_id" placeholder="tsk_…" />
-                  </div>
-                  <div class="lora-train-page__field">
-                    <label class="lora-train-page__label">{{ $t('loraTrain.resumeCheckpoint') }}</label>
-                    <DqInput v-model="form.resume_checkpoint" placeholder="0000300_adapters.safetensors" />
-                  </div>
-                </div>
-              </div>
             </details>
+          </div>
+          <div v-show="step === 2" class="lora-train-page__nav-bar">
+            <DqButton size="sm" @click="goToStep(1)">
+              {{ $t('common.back') }}
+            </DqButton>
+            <DqButton
+              type="primary"
+              :disabled="!canNext(2)"
+              @click="goToStep(3)"
+            >
+              {{ $t('common.next') }}
+            </DqButton>
           </div>
 
           <!-- Step 4: confirm -->
           <div v-show="step === 3" class="lora-train-page__panel">
+            <DqAlert
+              v-if="hasResume"
+              type="warning"
+              :closable="false"
+              class="lora-train-page__resume-banner"
+              :title="$t('loraTrain.resumeConfirmWarning')"
+            >
+              <p>{{ $t('loraTrain.resumeActiveBody', {
+                task: form.resume_task_id,
+                checkpoint: form.resume_checkpoint,
+                base: form.base_model,
+              }) }}</p>
+              <DqButton size="sm" type="secondary" @click="clearResume">
+                {{ $t('loraTrain.clearResume') }}
+              </DqButton>
+            </DqAlert>
             <p class="lora-train-page__confirm-intro">{{ $t('loraTrain.confirmIntro') }}</p>
             <LoraQualityHints
               v-if="datasetHealth"
@@ -510,11 +473,24 @@
                 <span>{{ $t('loraTrain.summaryOptimization') }}</span>
                 <strong>{{ confirmOptimizationSummary }}</strong>
               </li>
-              <li v-if="form.resume_task_id && form.resume_checkpoint">
+              <li v-if="hasResume">
                 <span>{{ $t('loraTrain.summaryResume') }}</span>
-                <strong>{{ form.resume_checkpoint }}</strong>
+                <strong>{{ form.resume_task_id }} / {{ form.resume_checkpoint }}</strong>
               </li>
             </ul>
+          </div>
+          <div v-show="step === 3" class="lora-train-page__nav-bar">
+            <DqButton size="sm" @click="goToStep(2)">
+              {{ $t('common.back') }}
+            </DqButton>
+            <DqButton
+              type="primary"
+              :loading="submitting"
+              :disabled="!canSubmit"
+              @click="submitTraining"
+            >
+              {{ $t('loraTrain.startTraining') }}
+            </DqButton>
           </div>
         </DqSurfaceCard>
       </template>
@@ -526,7 +502,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { useI18n } from 'vue-i18n';
-import { FolderChecked, MagicStick, PictureFilled, Setting } from '@danqing/dq-shell';
+import { MagicStick } from '@danqing/dq-shell';
 import { api, taskIdFromSubmitResponse } from '@/utils/api';
 import { toast } from '@/utils/feedback';
 import { openGlobalTaskQueue } from '@/utils/appEvents';
@@ -535,6 +511,7 @@ import LoraTrainRunDetail from '@/components/lora/LoraTrainRunDetail.vue';
 import LoraDatasetPanel from '@/components/lora/LoraDatasetPanel.vue';
 import LoraTrainHistory from '@/components/lora/LoraTrainHistory.vue';
 import LoraQualityHints from '@/components/lora/LoraQualityHints.vue';
+import { useLoraTrainLibrary } from '@/composables/useLoraTrainLibrary';
 import { useRegistryStore } from '@/stores/registry';
 import type { LoraDatasetHealthReport } from '@/utils/loraQuality';
 
@@ -546,6 +523,8 @@ const registryStore = useRegistryStore();
 const step = ref(0);
 const submitting = ref(false);
 const activeRunId = ref('');
+const resumeIntent = ref(false);
+const applyingResumeSync = ref(false);
 const trainableModels = ref<any[]>([]);
 const datasets = ref<any[]>([]);
 const datasetHealth = ref<LoraDatasetHealthReport | null>(null);
@@ -556,6 +535,7 @@ const presetsByModel = ref<Record<string, Record<string, Record<string, unknown>
 const captionEdits = reactive<Record<string, string>>({});
 const datasetPanelRef = ref<InstanceType<typeof LoraDatasetPanel> | null>(null);
 const historyRef = ref<InstanceType<typeof LoraTrainHistory> | null>(null);
+const { loading: historyLoading, refresh: refreshHistory } = useLoraTrainLibrary();
 const presetKeys = ['quick', 'standard', 'quality', 'custom'];
 
 const Z_IMAGE_PRIOR_DISABLED_MODELS = new Set(['z-image', 'z-image-turbo']);
@@ -570,20 +550,14 @@ function clearPriorPreservationFields() {
 }
 
 const stepNavItems = computed(() => [
-  { key: 'base', label: t('loraTrain.stepBase'), icon: MagicStick },
-  { key: 'dataset', label: t('loraTrain.stepDataset'), icon: PictureFilled },
-  { key: 'config', label: t('loraTrain.stepConfig'), icon: Setting },
-  { key: 'confirm', label: t('loraTrain.stepConfirm'), icon: FolderChecked },
+  { key: 'base', label: t('loraTrain.stepBase') },
+  { key: 'dataset', label: t('loraTrain.stepDataset') },
+  { key: 'config', label: t('loraTrain.stepConfig') },
+  { key: 'confirm', label: t('loraTrain.stepConfirm') },
 ]);
 
-const stepDescKeys = ['stepBaseDesc', 'stepDatasetDesc', 'stepConfigDesc', 'stepConfirmDesc'];
-
-const currentStepTitle = computed(() => stepNavItems.value[step.value]?.label || '');
-const currentStepDesc = computed(() => t(`loraTrain.${stepDescKeys[step.value] || 'stepBaseDesc'}`));
-const currentStepIcon = computed(() => stepNavItems.value[step.value]?.icon || MagicStick);
-
 const form = reactive({
-  base_model: 'flux1-dev',
+  base_model: 'z-image-turbo',
   dataset_id: '',
   preset: 'standard' as string,
   progress_prompt: '',
@@ -635,9 +609,12 @@ const confirmPreviewImages = computed(() =>
 );
 
 const effectiveDatasetCaption = computed(() => {
-  const fromMeta = String(selectedDataset.value?.default_prompt || '').trim();
-  if (fromMeta) return fromMeta;
-  return form.default_prompt.trim();
+  // form.default_prompt is the live editor value; datasets[] may lag until blur save.
+  if (form.dataset_id) {
+    const fromForm = form.default_prompt.trim();
+    if (fromForm) return fromForm;
+  }
+  return String(selectedDataset.value?.default_prompt || '').trim();
 });
 
 const promptCaptionMismatch = computed(() => {
@@ -745,19 +722,31 @@ const maxReachableStep = computed(() => {
   return max;
 });
 
-const canNext = computed(() => {
-  if (step.value === 0) return !!form.base_model;
-  if (step.value === 1) return (selectedDataset.value?.image_count || 0) >= 3;
-  if (step.value === 2) return !!form.progress_prompt.trim();
+function canNext(stepIndex: number): boolean {
+  if (stepIndex === 0) return !!form.base_model;
+  if (stepIndex === 1) return (selectedDataset.value?.image_count || 0) >= 3;
+  if (stepIndex === 2) return !!form.progress_prompt.trim();
   return true;
-});
+}
 
 const canSubmit = computed(
-  () => canNext.value && requirements.value?.can_submit !== false
+  () => canNext(2) && requirements.value?.can_submit !== false
 );
 
+const hasResume = computed(
+  () => !!form.resume_task_id.trim() && !!form.resume_checkpoint.trim()
+);
+
+function clearResume() {
+  form.resume_task_id = '';
+  form.resume_checkpoint = '';
+  resumeIntent.value = false;
+  persistDraft();
+}
+
 function goToStep(i: number) {
-  if (i <= maxReachableStep.value) step.value = i;
+  if (i > maxReachableStep.value) return;
+  step.value = i;
 }
 
 function openRun(taskId: string) {
@@ -902,6 +891,11 @@ function applyPresetTrainingDefaults() {
     form.lora_blocks = Number(cfg.lora_blocks) || null;
   } else {
     form.lora_blocks = null;
+  }
+  if (cfg && Object.prototype.hasOwnProperty.call(cfg, 'progress_steps')) {
+    form.progress_steps = Number(cfg.progress_steps) || null;
+  } else {
+    form.progress_steps = null;
   }
   if (cfg && Object.prototype.hasOwnProperty.call(cfg, 'prior_loss_weight')) {
     form.prior_loss_weight = Number(cfg.prior_loss_weight) || 0;
@@ -1081,8 +1075,10 @@ function restoreDraft() {
     if (draft.weight_decay != null) form.weight_decay = Number(draft.weight_decay);
     if (draft.val_split != null) form.val_split = Number(draft.val_split);
     if (draft.val_every != null) form.val_every = Number(draft.val_every);
-    if (draft.resume_task_id) form.resume_task_id = String(draft.resume_task_id);
-    if (draft.resume_checkpoint) form.resume_checkpoint = String(draft.resume_checkpoint);
+    // Never restore resume fields from draft — they leak across unrelated new runs.
+    form.resume_task_id = '';
+    form.resume_checkpoint = '';
+    resumeIntent.value = false;
     if (draft.train_type) form.train_type = draft.train_type as '' | 'lora' | 'dora';
     if (draft.min_snr_gamma != null) form.min_snr_gamma = Number(draft.min_snr_gamma);
     if (draft.class_prompt) form.class_prompt = String(draft.class_prompt);
@@ -1125,8 +1121,6 @@ function persistDraft() {
       weight_decay: form.weight_decay,
       val_split: form.val_split,
       val_every: form.val_every,
-      resume_task_id: form.resume_task_id,
-      resume_checkpoint: form.resume_checkpoint,
       train_type: form.train_type,
       min_snr_gamma: form.min_snr_gamma,
       class_prompt: form.class_prompt,
@@ -1233,15 +1227,31 @@ function openRunFromQuery() {
 function resumeFromRouteQuery() {
   const taskId = String(route.query.resume_task || '').trim();
   const checkpoint = String(route.query.resume_checkpoint || '').trim();
-  if (!taskId || !checkpoint) return;
+  if (!taskId || !checkpoint) return Promise.resolve();
+  applyingResumeSync.value = true;
   form.resume_task_id = taskId;
   form.resume_checkpoint = checkpoint;
+  resumeIntent.value = true;
   step.value = Math.max(step.value, 2);
-  toast.success(t('loraTrain.resumeTraining'));
   const q = { ...route.query };
   delete q.resume_task;
   delete q.resume_checkpoint;
   router.replace({ query: q });
+  return api.gen.getMediaTask(taskId).then((row: any) => {
+    const rec = row as Record<string, unknown>;
+    const params = (rec.params || {}) as Record<string, unknown>;
+    const sourceBase = String(params.base_model || rec.model_id || '').split(':')[0].trim();
+    if (sourceBase) {
+      form.base_model = sourceBase;
+      applyPresetTrainingDefaults();
+      void refreshRequirements();
+    }
+    toast.success(t('loraTrain.resumeTraining'));
+  }).catch(() => {
+    toast.success(t('loraTrain.resumeTraining'));
+  }).finally(() => {
+    applyingResumeSync.value = false;
+  });
 }
 
 watch(step, (s) => {
@@ -1277,13 +1287,19 @@ watch(
     form.weight_decay,
     form.val_split,
     form.val_every,
-    form.resume_task_id,
-    form.resume_checkpoint,
   ],
   () => persistDraft()
 );
 
 watch(() => form.base_model, () => {
+  if (applyingResumeSync.value) return;
+  if (hasResume.value) {
+    const hadIntent = resumeIntent.value;
+    clearResume();
+    if (hadIntent) {
+      toast.info(t('loraTrain.resumeClearedOnBaseChange'));
+    }
+  }
   if (!supportsPriorPreservation.value) {
     clearPriorPreservationFields();
   }
@@ -1312,12 +1328,18 @@ async function submitTraining() {
       activeRunId.value = tid;
       historyRef.value?.refresh();
     }
+    clearResume();
   } catch (e: any) {
     const msg = e?.response?.data?.detail?.message || e?.message || String(e);
     toast.error(msg);
   } finally {
     submitting.value = false;
   }
+}
+
+function startNewTraining() {
+  activeRunId.value = '';
+  step.value = 0;
 }
 
 function onVerifyGenerate(payload: { prompt: string; loraId: string; baseModel: string }) {
@@ -1341,7 +1363,7 @@ onMounted(async () => {
     applyPresetTrainingDefaults();
     if (form.preset === 'custom') applyCustomDefaultsFromQuick();
     openRunFromQuery();
-    resumeFromRouteQuery();
+    await resumeFromRouteQuery();
     await importFromRouteQuery();
     if (form.dataset_id) {
       await refreshDatasetHealth(form.dataset_id);
@@ -1353,39 +1375,44 @@ onMounted(async () => {
 </script>
 
 <style scoped>
-.lora-train-page.copilot-page {
-  padding: 4px 6px 4px 0;
-  gap: 12px;
-}
-
-.lora-train-page__runs-rail {
-  width: 220px;
-  flex-shrink: 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.lora-train-page__runs-card {
-  flex: 1;
-  min-height: 0;
+.lora-train-page__sidebar-card {
   height: 100%;
   display: flex;
   flex-direction: column;
 }
 
-.lora-train-page__runs-card :deep(.dq-surface-card__body) {
+.lora-train-page__sidebar-card :deep(.dq-surface-card__body) {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding: 12px;
 }
 
-.lora-train-page .copilot-page__sidebar {
-  width: 252px;
+.lora-train-page__sidebar-card .lv-sidebar-card__new-btn {
+  margin-bottom: 12px;
+  flex-shrink: 0;
+}
+
+.lora-train-page__sidebar-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.lora-train-page__sidebar-body .lora-train-history {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.lora-train-page__sidebar-body .lora-train-history__list {
+  max-height: none;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .lora-train-page .dq-download-menu__label {
@@ -1394,347 +1421,177 @@ onMounted(async () => {
   text-overflow: ellipsis;
 }
 
-.lora-train-page .copilot-page__sidebar-card :deep(.dq-surface-card__body) {
-  gap: 12px;
-}
-
-.lora-train-page .dq-download-menu__item.is-locked {
-  opacity: 0.42;
-  cursor: not-allowed;
-}
-
-.lora-train-page .dq-download-menu__item.is-done:not(.is-active) .dq-download-menu__label {
-  color: var(--dq-label-secondary);
-}
-
-.lora-train-page__nav-item {
-  gap: 8px;
-}
-
-.lora-train-page__nav-step {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  width: 18px;
-  height: 18px;
-  border-radius: 999px;
-  font-size: 10px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  color: var(--dq-label-tertiary);
-  background: var(--dq-fill-tertiary);
-  border: 0.5px solid var(--dq-border-subtle);
-}
-
-.lora-train-page__nav-item.is-active .lora-train-page__nav-step {
-  color: var(--dq-accent-contrast, #fff);
-  background: var(--dq-accent);
-  border-color: transparent;
-}
-
-.lora-train-page__nav-item.is-done .lora-train-page__nav-step {
-  color: var(--dq-success);
-  background: color-mix(in srgb, var(--dq-success) 12%, transparent);
-  border-color: color-mix(in srgb, var(--dq-success) 35%, transparent);
-}
-
-.lora-train-page__wizard-summary {
-  margin-top: 2px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--dq-bg-base) 55%, var(--dq-fill-secondary));
-  border: 0.5px solid var(--dq-border-subtle);
-}
-
-.lora-train-page__wizard-summary-title {
-  display: block;
-  font-size: var(--dq-font-size-caption);
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--dq-label-tertiary);
-  margin-bottom: 8px;
-}
-
-.lora-train-page__wizard-summary-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.lora-train-page__wizard-summary-list li {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.lora-train-page__wizard-summary-label {
-  font-size: var(--dq-font-size-caption);
-  color: var(--dq-label-tertiary);
-}
-
-.lora-train-page__wizard-summary-value {
-  font-size: var(--dq-font-size-caption);
-  font-weight: 500;
-  color: var(--dq-label-primary);
-  line-height: 1.35;
-  word-break: break-word;
-}
-
-.lora-train-page__memory-panel {
-  margin-top: auto;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 10px 12px;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--dq-bg-base) 55%, var(--dq-fill-secondary));
-  border: 0.5px solid var(--dq-border-subtle);
-}
-
-.lora-train-page__memory-hint {
-  font-size: var(--dq-font-size-caption);
-  line-height: 1.45;
-  color: var(--dq-label-tertiary);
-}
-
-.lora-train-page__page-header {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 14px;
-}
-
-.lora-train-page__header-top {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  width: 100%;
-}
-
+/* ── Stepper (reuses lv-editor-tabs visual) ── */
 .lora-train-page__stepper {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0;
-  width: 100%;
-  padding-top: 2px;
+  flex-shrink: 0;
 }
 
-.lora-train-page__stepper-item {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  padding: 0 6px;
-}
-
-.lora-train-page__stepper-track {
-  position: absolute;
-  top: 11px;
-  left: calc(50% + 14px);
-  right: calc(-50% + 14px);
-  height: 2px;
-  background: var(--dq-border-subtle);
-  pointer-events: none;
-}
-
-.lora-train-page__stepper-item:last-child .lora-train-page__stepper-track {
-  display: none;
-}
-
-.lora-train-page__stepper-fill {
-  display: block;
-  height: 100%;
-  width: 0;
-  background: var(--dq-accent);
-  border-radius: 999px;
-  transition: width 0.2s ease;
-}
-
-.lora-train-page__stepper-item.is-done .lora-train-page__stepper-fill {
-  width: 100%;
-}
-
-.lora-train-page__stepper-dot {
-  position: relative;
-  z-index: 1;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  color: var(--dq-label-tertiary);
-  background: var(--dq-fill-secondary);
-  border: 1.5px solid var(--dq-border-subtle);
-  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
-}
-
-.lora-train-page__stepper-item.is-done .lora-train-page__stepper-dot {
-  color: var(--dq-success);
-  background: color-mix(in srgb, var(--dq-success) 10%, var(--dq-fill-secondary));
-  border-color: color-mix(in srgb, var(--dq-success) 45%, var(--dq-border));
-}
-
-.lora-train-page__stepper-item.is-active .lora-train-page__stepper-dot {
-  color: var(--dq-accent-contrast, #fff);
-  background: var(--dq-accent);
-  border-color: var(--dq-accent);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--dq-accent) 18%, transparent);
-}
-
-.lora-train-page__stepper-item.is-locked .lora-train-page__stepper-dot {
+.lora-train-page__stepper .lv-editor-tabs__tab--locked {
+  cursor: not-allowed;
   opacity: 0.45;
 }
 
-.lora-train-page__stepper-label {
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--dq-label-tertiary);
-  text-align: center;
-  line-height: 1.25;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 100%;
-}
-
-.lora-train-page__stepper-item.is-active .lora-train-page__stepper-label {
-  color: var(--dq-label-primary);
-  font-weight: 600;
-}
-
-.lora-train-page__stepper-item.is-done .lora-train-page__stepper-label {
-  color: var(--dq-label-secondary);
+/* ── Nav bar (panel bottom) ── */
+.lora-train-page__nav-bar {
+ display: flex;
+ align-items: center;
+ justify-content: space-between;
+ padding: 10px 0 0;
+ border-top: 0.5px solid var(--dq-border-subtle);
+ flex-shrink: 0;
+ margin-top: auto;
+ width: 100%;
+ box-sizing: border-box;
 }
 
 .lora-train-page .copilot-page__workspace-card > :deep(.dq-surface-card__body) {
-  overflow: auto;
-  padding: 20px 22px;
+ flex: 1;
+ min-height: 0;
+ overflow: hidden;
+ display: flex;
+ flex-direction: column;
+ padding: 12px 16px 16px;
+ width: 100%;
+ max-width: 100%;
+ box-sizing: border-box;
 }
 
 .lora-train-page__panel {
-  max-width: 920px;
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.lora-train-page__panel:not(.lora-train-page__panel--base) {
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .lora-train-page__panel--base {
-  max-width: 760px;
+  width: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .lora-train-page__panel--flush {
   max-width: none;
+  width: 100%;
 }
 
 .lora-train-page__base-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px;
+ display: grid;
+ grid-template-columns: repeat(2, minmax(0, 1fr));
+ gap: 16px;
+ width: 100%;
+ align-items: stretch;
 }
 
 .lora-train-page__base-tile {
   position: relative;
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  grid-template-rows: auto auto;
-  align-items: center;
-  gap: 4px 14px;
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
   width: 100%;
-  padding: 16px 18px;
-  border: 1px solid var(--dq-border-subtle);
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--dq-bg-base) 62%, var(--dq-fill-secondary));
+  min-width: 0;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 20px;
+  border: 1.5px solid var(--dq-border-subtle);
+  border-radius: 16px;
+  background: var(--dq-bg-base);
   cursor: pointer;
   text-align: left;
   transition:
-    border-color 0.15s ease,
-    background 0.15s ease,
-    box-shadow 0.15s ease;
+    border-color 0.2s ease,
+    background 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.15s ease;
 }
 
 .lora-train-page__base-tile:disabled {
-  opacity: 0.5;
+  opacity: 0.45;
   cursor: not-allowed;
 }
 
 .lora-train-page__base-tile:not(:disabled):hover {
-  border-color: color-mix(in srgb, var(--dq-accent) 30%, var(--dq-border));
-  background: color-mix(in srgb, var(--dq-accent) 4%, var(--dq-fill-secondary));
+  border-color: color-mix(in srgb, var(--dq-accent) 35%, var(--dq-border));
+  background: color-mix(in srgb, var(--dq-accent) 3%, var(--dq-bg-base));
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px color-mix(in srgb, var(--dq-accent) 8%, transparent);
 }
 
 .lora-train-page__base-tile.is-selected {
-  border-color: color-mix(in srgb, var(--dq-accent) 60%, var(--dq-border));
-  background: color-mix(in srgb, var(--dq-accent) 8%, var(--dq-fill-secondary));
+  border-color: var(--dq-accent);
+  background: color-mix(in srgb, var(--dq-accent) 6%, var(--dq-bg-base));
   box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--dq-accent) 18%, transparent),
-    0 10px 28px color-mix(in srgb, var(--dq-accent) 10%, transparent);
+    inset 0 0 0 1.5px var(--dq-accent),
+    0 12px 32px color-mix(in srgb, var(--dq-accent) 12%, transparent);
 }
 
 .lora-train-page__base-tile-icon {
-  grid-row: 1 / span 2;
+  flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
-  font-size: 14px;
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+  font-size: 16px;
   font-weight: 700;
   letter-spacing: -0.02em;
   color: var(--dq-label-primary);
-  background: var(--dq-fill-tertiary);
-  border: 0.5px solid var(--dq-border-subtle);
+  background: var(--dq-fill-secondary);
+  border: 1px solid var(--dq-border-subtle);
+  transition: all 0.2s ease;
 }
 
 .lora-train-page__base-tile.is-family-flux .lora-train-page__base-tile-icon {
   color: #c4b5fd;
-  background: color-mix(in srgb, #8b5cf6 18%, var(--dq-fill-secondary));
-  border-color: color-mix(in srgb, #8b5cf6 28%, transparent);
+  background: linear-gradient(135deg, color-mix(in srgb, #8b5cf6 15%, var(--dq-fill-secondary)), color-mix(in srgb, #8b5cf6 8%, var(--dq-fill-secondary)));
+  border-color: color-mix(in srgb, #8b5cf6 30%, transparent);
 }
 
 .lora-train-page__base-tile.is-family-zimage .lora-train-page__base-tile-icon {
   color: #67e8f9;
-  background: color-mix(in srgb, #06b6d4 16%, var(--dq-fill-secondary));
-  border-color: color-mix(in srgb, #06b6d4 28%, transparent);
+  background: linear-gradient(135deg, color-mix(in srgb, #06b6d4 15%, var(--dq-fill-secondary)), color-mix(in srgb, #06b6d4 8%, var(--dq-fill-secondary)));
+  border-color: color-mix(in srgb, #06b6d4 30%, transparent);
 }
 
 .lora-train-page__base-tile.is-family-qwen .lora-train-page__base-tile-icon {
   color: #fdba74;
-  background: color-mix(in srgb, #f97316 16%, var(--dq-fill-secondary));
-  border-color: color-mix(in srgb, #f97316 28%, transparent);
+  background: linear-gradient(135deg, color-mix(in srgb, #f97316 15%, var(--dq-fill-secondary)), color-mix(in srgb, #f97316 8%, var(--dq-fill-secondary)));
+  border-color: color-mix(in srgb, #f97316 30%, transparent);
 }
 
 .lora-train-page__base-tile.is-selected .lora-train-page__base-tile-icon {
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--dq-accent) 25%, transparent);
+  transform: scale(1.05);
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--dq-accent) 20%, transparent);
 }
 
 .lora-train-page__base-tile-body {
+  flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
   min-width: 0;
+  padding-top: 4px;
 }
 
 .lora-train-page__base-tile-name {
-  font-size: var(--dq-font-size-body);
+  font-size: var(--dq-font-size-body-lg);
   font-weight: 600;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.01em;
   color: var(--dq-label-primary);
   line-height: 1.3;
 }
 
 .lora-train-page__base-tile-desc {
   font-size: var(--dq-font-size-caption);
-  line-height: 1.45;
+  line-height: 1.5;
   color: var(--dq-label-tertiary);
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -1742,33 +1599,30 @@ onMounted(async () => {
   overflow: hidden;
 }
 
-.lora-train-page__base-tile-meta {
-  grid-column: 3;
-  grid-row: 1;
-  align-self: start;
-}
-
 .lora-train-page__base-tile-check {
   position: absolute;
-  right: 12px;
-  bottom: 12px;
-  width: 18px;
-  height: 18px;
+  right: 16px;
+  bottom: 16px;
+  width: 20px;
+  height: 20px;
   border-radius: 999px;
   background: var(--dq-accent);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--dq-accent) 20%, transparent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--dq-accent) 15%, transparent);
 }
 
 .lora-train-page__base-tile-check::after {
   content: '';
   position: absolute;
-  left: 6px;
+  left: 7px;
   top: 3px;
-  width: 5px;
-  height: 9px;
+  width: 6px;
+  height: 10px;
   border: solid var(--dq-accent-contrast, #fff);
   border-width: 0 2px 2px 0;
   transform: rotate(45deg);
+}
+
+.lora-train-page__panel--flush > :deep(.lora-dataset-panel) {
 }
 
 .lora-train-page__preset-grid {
@@ -1776,6 +1630,7 @@ onMounted(async () => {
   grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
   gap: 10px;
   margin-bottom: 16px;
+  width: 100%;
 }
 
 .lora-train-page__preset-card {
@@ -1902,6 +1757,7 @@ onMounted(async () => {
 
 .lora-train-page__confirm-health {
   margin-bottom: 14px;
+  width: 100%;
 }
 
 .lora-train-page__field {
@@ -1909,6 +1765,7 @@ onMounted(async () => {
   flex-direction: column;
   gap: 6px;
   margin-bottom: 14px;
+  min-width: 0;
 }
 
 .lora-train-page__label {
@@ -1924,6 +1781,7 @@ onMounted(async () => {
   border-radius: 12px;
   border: 0.5px solid var(--dq-border-subtle);
   background: color-mix(in srgb, var(--dq-bg-base) 55%, var(--dq-fill-secondary));
+  max-width: 100%;
 }
 
 .lora-train-page__optimization-head {
@@ -1934,6 +1792,7 @@ onMounted(async () => {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 12px 16px;
+  max-width: 100%;
 }
 
 .lora-train-page__field--wide {
@@ -1946,10 +1805,12 @@ onMounted(async () => {
   gap: 6px;
 }
 
-.lora-train-page__resume-block {
-  margin-top: 16px;
-  padding-top: 14px;
-  border-top: 0.5px solid var(--dq-border-subtle);
+.lora-train-page__resume-banner {
+  margin-bottom: 16px;
+}
+
+.lora-train-page__resume-banner p {
+  margin: 0 0 10px;
 }
 
 .lora-train-page__advanced {
@@ -1970,6 +1831,9 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .lora-train-page__summary li {
@@ -1981,10 +1845,15 @@ onMounted(async () => {
   background: color-mix(in srgb, var(--dq-bg-base) 50%, var(--dq-fill-secondary));
   border: 0.5px solid var(--dq-border-subtle);
   font-size: var(--dq-font-size-body);
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .lora-train-page__summary span {
   color: var(--dq-label-tertiary);
+  flex-shrink: 0;
 }
 
 .lora-train-page__summary strong {
@@ -1992,10 +1861,15 @@ onMounted(async () => {
   font-weight: 600;
   text-align: right;
   word-break: break-word;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 1;
 }
 
 .lora-train-page__confirm-preview {
   margin-bottom: 16px;
+  width: 100%;
 }
 
 .lora-train-page__confirm-preview-label {
@@ -2039,12 +1913,11 @@ onMounted(async () => {
   .lora-train-page.copilot-page {
     flex-direction: column;
     overflow: auto;
-    padding-right: 0;
   }
 
-  .lora-train-page__runs-rail {
-    width: 100%;
-    max-height: 240px;
+  .lora-train-page__sidebar-history {
+    flex: 0 0 auto;
+    max-height: 220px;
   }
 
   .lora-train-page__memory-panel {
@@ -2055,13 +1928,8 @@ onMounted(async () => {
     grid-template-columns: 1fr;
   }
 
-  .lora-train-page__stepper-label {
+  .lora-train-page__stepper .lv-editor-tabs__desc {
     display: none;
-  }
-
-  .lora-train-page__header-top {
-    flex-direction: column;
-    align-items: stretch;
   }
 }
 </style>

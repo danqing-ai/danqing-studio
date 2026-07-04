@@ -4,10 +4,10 @@
       {{ $t('studio.successorHint', { name: successorName }) }}
     </p>
     <div class="composer-successor-hint__actions">
-      <DqButton size="xs" type="primary" @click="$emit('switch')">
+      <DqButton type="primary" @click="$emit('switch')">
         {{ $t('studio.successorSwitch') }}
       </DqButton>
-      <DqButton size="xs" type="text" @click="$emit('dismiss')">
+      <DqButton size="sm" type="text" @click="$emit('dismiss')">
         {{ $t('studio.successorDismiss') }}
       </DqButton>
     </div>

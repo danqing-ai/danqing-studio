@@ -37,7 +37,7 @@
       </DqPrefRow>
       <p v-if="form.auto_register" class="zimage-merge-panel__hint">{{ $t('tools.mergeAutoRegisterHint') }}</p>
     </DqPrefPane>
-    <DqButton type="primary" size="small" :loading="submitting" :disabled="!mlxAvailable" @click="submitMerge">
+    <DqButton type="primary" :loading="submitting" :disabled="!mlxAvailable" @click="submitMerge">
       {{ $t('tools.mergeSubmit') }}
     </DqButton>
   </details>

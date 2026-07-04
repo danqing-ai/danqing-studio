@@ -23,14 +23,14 @@
         <div class="lv-kf-compose__ref">
           <div v-if="referenceImage" class="lv-kf-compose__ref-pill">
             <img :src="referenceImage.previewUrl" alt="" />
-            <DqIconButton type="text" size="xs" :label="$tt('common.delete')" @click="$emit('remove-reference')">
+            <DqIconButton type="text" size="sm" :label="$tt('common.delete')" @click="$emit('remove-reference')">
               <DqIcon :size="10"><Close /></DqIcon>
             </DqIconButton>
           </div>
           <DqIconButton
             v-else
             type="text"
-            size="xs"
+            size="sm"
             :label="$tt('create.refImage')"
             @click="$emit('pick-reference')"
           >
@@ -40,7 +40,7 @@
         <div class="lv-kf-compose__prompt-tools">
           <DqIconButton
             type="text"
-            size="xs"
+            size="sm"
             :disabled="enhancing || !prompt.trim()"
             :label="$tt('create.enhance')"
             @click="$emit('enhance')"
@@ -53,7 +53,7 @@
             size="small"
             @command="onStyleCommand"
           >
-            <DqIconButton type="text" size="xs" :label="$tt('create.composerTip.preset')">
+            <DqIconButton type="text" size="sm" :label="$tt('create.composerTip.preset')">
               <DqIcon :size="14"><DocumentCopy /></DqIcon>
             </DqIconButton>
             <template #dropdown>

@@ -4,7 +4,7 @@
     <aside class="lora-dataset-panel__list">
       <div class="lora-dataset-panel__list-head">
         <span class="lora-dataset-panel__list-title">{{ $t('loraTrain.datasetLibrary') }}</span>
-        <DqButton size="xs" type="primary" @click="openCreateDialog">
+        <DqButton type="primary" @click="openCreateDialog">
           {{ $t('loraTrain.newDataset') }}
         </DqButton>
       </div>
@@ -14,7 +14,7 @@
       <DqInput
         v-if="datasets.length > 3"
         v-model="datasetSearch"
-        size="xs"
+        size="sm"
         class="lora-dataset-panel__search"
         :placeholder="$t('loraTrain.searchDatasets')"
         clearable
@@ -74,7 +74,7 @@
       <DqEmpty v-else :description="$t('loraTrain.noDatasets')" class="lora-dataset-panel__list-empty" />
 
       <div class="lora-dataset-panel__list-foot">
-        <DqButton size="xs" type="secondary" :loading="importingDog6" block @click="importDog6">
+        <DqButton size="sm" type="secondary" :loading="importingDog6" block @click="importDog6">
           {{ $t('loraTrain.importDog6') }}
         </DqButton>
       </div>
@@ -102,7 +102,7 @@
               {{ $t('loraTrain.datasetProgress', { current: imageCount, min: minImages }) }}
             </DqTag>
             <DqButton
-              size="xs"
+              size="sm"
               type="danger"
               :loading="deletingDataset"
               @click="deleteDataset(selectedId, selectedDataset?.name || selectedId)"
@@ -279,7 +279,7 @@
       </div>
       <template #footer>
         <DqButton size="sm" @click="showCreateDialog = false">{{ $t('common.cancel') }}</DqButton>
-        <DqButton size="sm" type="primary" :disabled="!newDatasetName.trim()" @click="createDataset">
+        <DqButton type="primary" :disabled="!newDatasetName.trim()" @click="createDataset">
           {{ $t('common.confirm') }}
         </DqButton>
       </template>
@@ -700,7 +700,12 @@ function datasetMetaPatch(name?: string): Record<string, unknown> {
 
 async function patchDefaultPrompt() {
   if (!props.selectedId) return;
-  await api.loras.patchDataset(props.selectedId, datasetMetaPatch());
+  try {
+    const ds = (await api.loras.patchDataset(props.selectedId, datasetMetaPatch())) as Record<string, any>;
+    patchDatasets(props.datasets.map((d) => (d.id === props.selectedId ? { ...d, ...ds } : d)));
+  } catch (e: unknown) {
+    toast.error(apiErrorMessage(e));
+  }
 }
 
 async function saveDatasetKind() {

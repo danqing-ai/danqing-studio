@@ -15,7 +15,7 @@
             {{ statusLabel(row.status) }}
           </DqTag>
           <span v-if="row.at" class="lv-related-tasks__time">{{ formatTime(row.at) }}</span>
-          <DqButton size="xs" type="text" @click="openLog(row.taskId)">
+          <DqButton size="sm" type="text" @click="openLog(row.taskId)">
             {{ $tt('video.longVideoRelatedTasksViewLog') }}
           </DqButton>
         </li>

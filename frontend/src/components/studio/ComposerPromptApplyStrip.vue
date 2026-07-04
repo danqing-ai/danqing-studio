@@ -4,21 +4,21 @@
     <div class="composer-prompt-apply__actions">
       <DqTooltip :content="$t('create.composerTip.llmApplyReplace')" placement="top">
         <span class="composer-prompt-apply__action">
-          <DqButton size="xs" type="primary" @click="$emit('replace')">
+          <DqButton type="primary" @click="$emit('replace')">
             {{ $t('create.llmApplyReplace') }}
           </DqButton>
         </span>
       </DqTooltip>
       <DqTooltip :content="$t('create.composerTip.llmApplyAppend')" placement="top">
         <span class="composer-prompt-apply__action">
-          <DqButton size="xs" @click="$emit('append')">
+          <DqButton size="sm" @click="$emit('append')">
             {{ $t('create.llmApplyAppend') }}
           </DqButton>
         </span>
       </DqTooltip>
       <DqTooltip :content="$t('create.composerTip.llmApplyDismiss')" placement="top">
         <span class="composer-prompt-apply__action">
-          <DqButton size="xs" type="text" @click="$emit('dismiss')">
+          <DqButton size="sm" type="text" @click="$emit('dismiss')">
             {{ $t('create.llmApplyDismiss') }}
           </DqButton>
         </span>

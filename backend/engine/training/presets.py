@@ -54,6 +54,8 @@ Z_IMAGE_PRESETS: dict[str, dict[str, Any]] = {
         "checkpoint_every": 200,
         "learning_rate": 1e-4,
         "guidance": 5.0,
+        "progress_steps": 28,
+        "sigma_bias": "high",
         "optimizer": "adamw",
         # Plain flow-match (no min-SNR ε weighting); keeps high-σ identity + low-σ detail bands.
         "min_snr_gamma": 0.0,
@@ -70,6 +72,8 @@ Z_IMAGE_PRESETS: dict[str, dict[str, Any]] = {
         "checkpoint_every": 400,
         "learning_rate": 1e-4,
         "guidance": 5.0,
+        "progress_steps": 28,
+        "sigma_bias": "high",
         "optimizer": "adamw",
         "grad_checkpoint": True,
         "min_snr_gamma": 0.0,
@@ -86,6 +90,8 @@ Z_IMAGE_PRESETS: dict[str, dict[str, Any]] = {
         "checkpoint_every": 500,
         "learning_rate": 5e-5,
         "guidance": 5.0,
+        "progress_steps": 28,
+        "sigma_bias": "high",
         "grad_checkpoint": True,
         "min_snr_gamma": 0.0,
         "prior_loss_weight": 0.0,
@@ -138,11 +144,15 @@ Z_IMAGE_TURBO_MFLUX_CORE: dict[str, Any] = {
     "learning_rate": 1e-4,
     "grad_checkpoint": True,
     "guidance": 0.0,
+    # Match inference default steps (registry z-image-turbo steps=9) so train σ band aligns with denoise.
     "progress_steps": 9,
     "turbo_infer_steps": 9,
     "timestep_low": 4,
     "timestep_high": 9,
-    "timestep_bias": "uniform",
+    # Favor the low-σ end of the turbo band (skin pores / fine detail); uniform under-trains texture.
+    "timestep_bias": "low",
+    # Train with Ostris assistant OFF part of the time so LoRA fits inference (assistant off) path.
+    "turbo_assistant_off_prob": 0.5,
     "optimizer": "adamw",
     # Turbo trains only inside the low/mid-σ inference band. min-SNR-γ uses the ε-prediction
     # weighting, which disproportionately suppresses the low-σ (high-SNR) end of that band —

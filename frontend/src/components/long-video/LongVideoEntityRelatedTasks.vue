@@ -9,7 +9,7 @@
       <DqTag size="small" effect="plain" :type="statusTagType(row.status)">
         {{ statusLabel(row.status) }}
       </DqTag>
-      <DqButton size="xs" type="text" @click="openLog(row.taskId)">
+      <DqButton size="sm" type="text" @click="openLog(row.taskId)">
         {{ $tt('video.longVideoRelatedTasksViewLog') }}
       </DqButton>
     </template>

@@ -104,7 +104,7 @@
     </div>
 
     <div v-if="task?.status === 'completed'" class="lora-run-detail__actions">
-      <DqButton type="primary" size="sm" @click="verifyGenerate">
+      <DqButton type="primary" @click="verifyGenerate">
         {{ $t('loraTrain.verifyGenerate') }}
       </DqButton>
       <DqButton
