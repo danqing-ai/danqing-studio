@@ -43,7 +43,7 @@ const emit = defineEmits<{
       </DqPrefRow>
     </DqPrefPane>
     <template #footer>
-      <DqButton @click="emit('cancel')">{{ $t('download.cancel') }}</DqButton>
+      <DqButton size="sm" @click="emit('cancel')">{{ $t('download.cancel') }}</DqButton>
       <DqButton type="primary" :loading="importing" @click="emit('submit')">
         {{ $t('download.import_') }}
       </DqButton>

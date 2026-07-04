@@ -93,7 +93,7 @@
 
     <div v-if="layerList.length === 0 && !overlayRows.length" class="canvas-layer__empty">
       <DqEmpty :description="$t('canvas.noLayers')" />
-      <DqButton type="primary" size="sm" @click="$emit('import-works')">
+      <DqButton type="primary" @click="$emit('import-works')">
         {{ $t('canvas.importWorks') }}
       </DqButton>
     </div>
@@ -167,7 +167,7 @@
     </div>
 
     <div class="canvas-layer__footer">
-      <DqButton type="primary" size="sm" @click="$emit('import-works')">
+      <DqButton type="primary" @click="$emit('import-works')">
         {{ $t('canvas.importWorks') }}
       </DqButton>
     </div>

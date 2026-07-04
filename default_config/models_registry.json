@@ -2072,8 +2072,8 @@
       "catalog": {
         "media": "image",
         "description": {
-          "zh": "通义 Z-Image 完整版基础模型，支持 CFG 与负向提示，适合风格探索、LoRA 与二次开发；快速写实人像请用 Z-Image-Turbo。",
-          "en": "Tongyi Z-Image foundation model with CFG and negative prompts; best for style exploration, LoRA, and fine-tuning. Use Z-Image-Turbo for fast photorealistic portraits."
+          "zh": "通义 Z-Image 完整版基础模型，支持 CFG 与负向提示，适合风格探索与二次开发；概念/人像 LoRA 请优先 Z-Image-Turbo（Base 训概念易低 σ 变形）。",
+          "en": "Tongyi Z-Image foundation model with CFG and negative prompts; best for style exploration and fine-tuning. Prefer Z-Image-Turbo for concept/portrait LoRAs (Base concept training may deform at low σ)."
         },
         "category": "base_models",
         "commercial_use_allowed": true,
@@ -2280,8 +2280,8 @@
       "catalog": {
         "media": "image",
         "description": {
-          "zh": "通义 Z-Image-Turbo，6B 单流 DiT，8 步快速高质量出图；支持 LoRA（Turbo 训练需 de-distill 适配器；与 Z-Image Base 训练的适配器互通）。",
-          "en": "Tongyi Z-Image-Turbo — 6B single-stream DiT, 8-step fast generation; LoRA supported (train on Turbo with de-distill adapter; compatible with Z-Image Base adapters)."
+          "zh": "通义 Z-Image-Turbo，6B 单流 DiT，9 步快速高质量出图；支持 LoRA（概念/人像 LoRA 请用 Turbo 底座训练；与 Z-Image Base 适配器互通但 Base 训概念易变形）。",
+          "en": "Tongyi Z-Image-Turbo — 6B single-stream DiT, 9-step fast generation; LoRA supported (train concept/portrait LoRAs on Turbo; Base-trained concept adapters may deform)."
         },
         "category": "base_models",
         "commercial_use_allowed": true,
@@ -2337,11 +2337,11 @@
             "max": 1024
           },
           "steps": {
-            "default": 8,
+            "default": 9,
             "min": 1,
             "max": 50,
             "label": "步数",
-            "note": "Turbo 蒸馏版推荐 8 步；人像可试 9–12 步",
+            "note": "默认 9 步与 Turbo LoRA 训练 σ band 对齐（末段更低 σ，肤质更自然）；可试 10–12 步",
             "type": "int"
           },
           "guidance": {

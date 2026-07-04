@@ -33,7 +33,7 @@
         <div v-if="portraitPreview" class="avatar-composer__ref-pill">
           <img :src="portraitPreview" alt="" class="avatar-composer__ref-thumb" />
           <span class="avatar-composer__ref-name">{{ portraitLabel }}</span>
-          <DqIconButton type="text" size="xs" :aria-label="$tt('common.delete')" @click="$emit('remove-portrait')">
+          <DqIconButton type="text" size="sm" :aria-label="$tt('common.delete')" @click="$emit('remove-portrait')">
             <DqIcon :size="10"><Close /></DqIcon>
           </DqIconButton>
         </div>
@@ -48,7 +48,7 @@
         <div v-if="audioLabel" class="avatar-composer__ref-pill">
           <DqIcon :size="14"><Microphone /></DqIcon>
           <span class="avatar-composer__ref-name">{{ audioLabel }}</span>
-          <DqIconButton type="text" size="xs" :aria-label="$tt('common.delete')" @click="$emit('remove-audio')">
+          <DqIconButton type="text" size="sm" :aria-label="$tt('common.delete')" @click="$emit('remove-audio')">
             <DqIcon :size="10"><Close /></DqIcon>
           </DqIconButton>
         </div>

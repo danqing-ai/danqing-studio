@@ -1589,14 +1589,33 @@ body {
 
 }
 
-/* 下载中心：整页 flex + 侧栏（减少内联 layout） */
+/* 下载中心 / Copilot 工作台：整页 flex + 侧栏（减少内联 layout） */
+html.dark .dq-app-main:has(.copilot-page),
+html.dark .dq-app-main:has(.models-page) {
+ display: flex;
+ flex-direction: column;
+ min-height: 0;
+ overflow: hidden;
+}
+
+html.dark .dq-app-main:has(.copilot-page) > .copilot-page,
+html.dark .dq-app-main:has(.models-page) > .models-page {
+ flex: 1;
+ min-height: 0;
+}
+
 .models-page,
 .copilot-page {
-  display: flex;
-  gap: 20px;
-  width: 100%;
-  max-width: none;
-  height: 100%;
+ display: flex;
+ gap: 20px;
+ width: 100%;
+ max-width: none;
+ flex: 1;
+ min-height: 0;
+ min-width: 0;
+ overflow: hidden;
+ box-sizing: border-box;
+ align-items: stretch;
 }
 
 .models-page__sidebar {
@@ -1645,6 +1664,17 @@ body {
 .copilot-page__sidebar {
  width: 220px;
  flex-shrink: 0;
+ display: flex;
+ flex-direction: column;
+ align-self: stretch;
+ min-height: 0;
+}
+
+.copilot-page__sidebar > * {
+ flex: 1;
+ min-height: 0;
+ display: flex;
+ flex-direction: column;
 }
 
 .copilot-page__sidebar-card {
@@ -1698,15 +1728,15 @@ body {
 .copilot-page__main {
  flex: 1;
  min-width: 0;
+ min-height: 0;
  overflow: hidden;
- padding: 4px 8px 16px 0;
+ padding: 0;
  display: flex;
  flex-direction: column;
  gap: 12px;
 }
 
 .copilot-page__header-main {
- flex: 1;
  min-width: 0;
 }
 
@@ -1735,18 +1765,32 @@ body {
  flex: 1;
  min-width: 0;
  min-height: 0;
- overflow: hidden;
  display: flex;
  flex-direction: column;
+ width: 100%;
+ overflow: hidden;
+}
+
+.copilot-page__workspace-card.dq-surface-card {
+ flex: 1;
+ min-height: 0;
+ min-width: 0;
+ display: flex;
+ flex-direction: column;
+ overflow: hidden;
 }
 
 .copilot-page__workspace-card > .dq-surface-card__body {
  flex: 1;
  min-height: 0;
  overflow-y: auto;
+ overflow-x: hidden;
  display: flex;
  flex-direction: column;
  gap: 12px;
+ width: 100%;
+ max-width: 100%;
+ box-sizing: border-box;
 }
 
 .model-version-name {
@@ -4459,11 +4503,6 @@ body {
 .copilot-page {
  position: relative;
  isolation: isolate;
-}
-
-.models-page .models-page__main,
-.copilot-page .copilot-page__main {
- padding-right: 6px;
 }
 
 .models-page .models-page__sidebar-card.studio-surface-card.dq-surface-card,

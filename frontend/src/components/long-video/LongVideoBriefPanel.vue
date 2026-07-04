@@ -1,7 +1,6 @@
 <template>
-  <section class="lv-script-studio lv-panel lv-section">
+  <section class="lv-script-studio lv-section">
     <div class="lv-script-studio__body">
-      <div class="lv-script-studio__editor">
         <div class="lv-script-studio__composer">
           <div class="lv-script-studio__composer-bar">
             <span class="lv-script-studio__composer-label">{{ $tt('video.longVideoScriptInputLabel') }}</span>
@@ -152,7 +151,6 @@
             </div>
           </div>
         </div>
-      </div>
 
       <aside class="lv-script-studio__insights">
         <DqAlert
@@ -344,7 +342,7 @@
                 <p class="lv-script-studio__next-text">{{ $tt('video.longVideoScriptNextCast') }}</p>
               </div>
               <div class="lv-script-studio__next-actions">
-                <DqButton type="primary" size="sm" @click="emit('go-to-cast')">
+                <DqButton type="primary" @click="emit('go-to-cast')">
                   {{ $tt('video.longVideoScriptNextCastBtn') }}
                 </DqButton>
               </div>
@@ -719,17 +717,18 @@ async function onFileSelected(event: Event) {
   gap: 0;
   padding: 0;
   overflow: hidden;
+  width: 100%;
 }
 
 .lv-script-studio__body {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1.05fr) minmax(280px, 0.95fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   overflow: hidden;
 }
 
-.lv-script-studio__editor {
+.lv-script-studio__body > .lv-script-studio__composer {
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -1378,7 +1377,7 @@ async function onFileSelected(event: Event) {
     overflow-y: auto;
   }
 
-  .lv-script-studio__editor {
+  .lv-script-studio__body > .lv-script-studio__composer {
     border-right: none;
     border-bottom: 0.5px solid var(--dq-border-subtle);
     min-height: 360px;

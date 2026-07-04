@@ -1,58 +1,5 @@
 <template>
   <div class="lora-train-history" :class="`lora-train-history--${variant}`">
-    <div v-if="!hideHeader" class="lora-train-history__head">
-      <template v-if="variant === 'sidebar'">
-        <div class="lora-train-history__head-row">
-          <span class="lora-train-history__title">{{ $t('loraTrain.recentRuns') }}</span>
-          <DqButton
-            v-if="!hideRefresh"
-            size="xs"
-            type="text"
-            :loading="loading"
-            @click="refresh()"
-          >
-            {{ $t('loraTrain.refreshHistory') }}
-          </DqButton>
-        </div>
-        <DqButton
-          v-if="showModelsLink"
-          size="xs"
-          type="text"
-          class="lora-train-history__models-link"
-          @click="emit('open-models')"
-        >
-          {{ $t('loraTrain.myLorasShort') }}
-        </DqButton>
-      </template>
-      <template v-else>
-        <div class="lora-train-history__head-main">
-          <span class="lora-train-history__title">{{ $t('loraTrain.recentRuns') }}</span>
-          <span v-if="runs.length" class="lora-train-history__count">
-            {{ runs.length }}
-          </span>
-        </div>
-        <div class="lora-train-history__head-actions">
-          <DqButton
-            v-if="showModelsLink"
-            size="xs"
-            type="text"
-            @click="emit('open-models')"
-          >
-            {{ $t('loraTrain.myLorasShort') }}
-          </DqButton>
-          <DqButton
-            v-if="!hideRefresh"
-            size="xs"
-            type="text"
-            :loading="loading"
-            @click="refresh()"
-          >
-            {{ $t('loraTrain.refreshHistory') }}
-          </DqButton>
-        </div>
-      </template>
-    </div>
-
     <div v-if="loading && !runs.length" class="lora-train-history__skeleton">
       <div v-for="i in skeletonCount" :key="i" class="lora-train-history__skeleton-row" />
     </div>
@@ -79,19 +26,40 @@
 
         <span class="lora-train-history__item-content">
           <span class="lora-train-history__item-top">
-            <span class="lora-train-history__item-name">{{ runOutputName(run) }}</span>
-            <DqTag size="small" :type="statusType(String(run.status || ''))" effect="plain">
-              {{ statusLabel(String(run.status || '')) }}
-            </DqTag>
-            <DqTag
-              v-if="userLoraForRun(run)"
-              size="small"
-              type="success"
-              effect="plain"
-              class="lora-train-history__registered"
+            <span
+              class="lora-train-history__item-name"
+              :title="runOutputName(run)"
             >
-              {{ $t('loraTrain.registeredBadge') }}
-            </DqTag>
+              {{ runOutputName(run) }}
+            </span>
+            <span v-if="variant === 'sidebar'" class="lora-train-history__item-badges">
+              <DqTag size="small" :type="statusType(String(run.status || ''))" effect="plain">
+                {{ statusLabel(String(run.status || '')) }}
+              </DqTag>
+              <DqTag
+                v-if="userLoraForRun(run)"
+                size="small"
+                type="success"
+                effect="plain"
+                class="lora-train-history__registered"
+              >
+                {{ $t('loraTrain.registeredBadge') }}
+              </DqTag>
+            </span>
+            <template v-else>
+              <DqTag size="small" :type="statusType(String(run.status || ''))" effect="plain">
+                {{ statusLabel(String(run.status || '')) }}
+              </DqTag>
+              <DqTag
+                v-if="userLoraForRun(run)"
+                size="small"
+                type="success"
+                effect="plain"
+                class="lora-train-history__registered"
+              >
+                {{ $t('loraTrain.registeredBadge') }}
+              </DqTag>
+            </template>
           </span>
           <span class="lora-train-history__item-meta">
             <span class="lora-train-history__base">{{ runBaseModel(run) }}</span>
@@ -122,17 +90,11 @@ import {
 const props = withDefaults(
   defineProps<{
     activeId?: string;
-    showModelsLink?: boolean;
-    hideRefresh?: boolean;
-    hideHeader?: boolean;
     variant?: 'sidebar' | 'page';
     limit?: number;
   }>(),
   {
     activeId: '',
-    showModelsLink: false,
-    hideRefresh: false,
-    hideHeader: false,
     variant: 'sidebar',
     limit: 12,
   }
@@ -140,7 +102,6 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   (e: 'select', taskId: string): void;
-  (e: 'open-models'): void;
 }>();
 
 const { t, locale } = useI18n();
@@ -194,48 +155,7 @@ defineExpose({
 .lora-train-history {
   display: flex;
   flex-direction: column;
-  gap: 10px;
   min-height: 0;
-}
-
-.lora-train-history__head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.lora-train-history--sidebar .lora-train-history__head {
-  flex-direction: column;
-  align-items: stretch;
-  gap: 4px;
-}
-
-.lora-train-history__head-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  min-width: 0;
-}
-
-.lora-train-history__models-link {
-  align-self: flex-start;
-  max-width: 100%;
-}
-
-.lora-train-history__head-main {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.lora-train-history__head-actions {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  flex-shrink: 0;
 }
 
 .lora-train-history__title {
@@ -244,18 +164,6 @@ defineExpose({
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--dq-label-tertiary);
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-.lora-train-history--sidebar .lora-train-history__title {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.lora-train-history--sidebar .lora-train-history__head-row :deep(.dq-btn),
-.lora-train-history--sidebar .lora-train-history__models-link {
   white-space: nowrap;
   flex-shrink: 0;
 }
@@ -322,12 +230,12 @@ defineExpose({
   display: flex;
   flex-direction: column;
   gap: 6px;
-  max-height: 220px;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
 }
 
 .lora-train-history--page .lora-train-history__list {
-  max-height: none;
   gap: 8px;
 }
 
@@ -344,6 +252,11 @@ defineExpose({
   cursor: pointer;
   text-align: left;
   transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.lora-train-history--sidebar .lora-train-history__item {
+  padding: 8px 8px;
+  gap: 8px;
 }
 
 .lora-train-history--page .lora-train-history__item {
@@ -407,7 +320,9 @@ defineExpose({
 }
 
 .lora-train-history--sidebar .lora-train-history__item-top {
-  flex-wrap: nowrap;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
 }
 
 .lora-train-history__item-name {
@@ -418,18 +333,25 @@ defineExpose({
 }
 
 .lora-train-history--sidebar .lora-train-history__item-name {
-  flex: 1;
-  min-width: 0;
+  width: 100%;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   word-break: normal;
 }
 
-.lora-train-history--sidebar .lora-train-history__item-top :deep(.dq-tag) {
+.lora-train-history--sidebar .lora-train-history__item-badges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+}
+
+.lora-train-history--sidebar .lora-train-history__item-badges :deep(.dq-tag) {
   flex-shrink: 0;
   max-width: 100%;
-  white-space: nowrap;
 }
 
 .lora-train-history--page .lora-train-history__item-name {
@@ -451,18 +373,15 @@ defineExpose({
 .lora-train-history--sidebar .lora-train-history__item-meta {
   flex-wrap: nowrap;
   min-width: 0;
-}
-
-.lora-train-history--sidebar .lora-train-history__base,
-.lora-train-history--sidebar .lora-train-history__when {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  gap: 4px;
 }
 
 .lora-train-history--sidebar .lora-train-history__base {
-  flex-shrink: 1;
+  flex: 1;
   min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .lora-train-history--sidebar .lora-train-history__when {

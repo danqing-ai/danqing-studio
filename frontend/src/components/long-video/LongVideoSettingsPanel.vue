@@ -1,13 +1,6 @@
 <template>
   <section class="lv-settings" :class="{ 'lv-settings--inline': inline }">
-    <div v-if="!inline" class="lv-settings__head">
-      <span class="lv-settings__title">{{ $tt('video.longVideoProjectSettings') }}</span>
-    </div>
-    <div
-      class="lv-panel lv-section"
-      :class="{ 'lv-section--compact': inline, 'lv-panel--settings-bar': inline }"
-    >
-      <template v-if="inline">
+    <template v-if="inline">
         <div class="lv-settings-bar" role="group" :aria-label="$tt('video.longVideoProjectSettings')">
           <div class="lv-settings-bar__field">
             <label class="lv-settings-bar__label" :for="ids.title">{{ $tt('video.longVideoProjectTitle') }}</label>
@@ -90,23 +83,25 @@
         <p v-if="inline && projectId" class="lv-settings-bar__project-id">
           <span>{{ $tt('video.longVideoProjectIdLabel') }}</span>
           <code :title="projectId">{{ shortProjectId }}</code>
-          <DqButton size="xs" type="text" @click="copyProjectId">{{ $tt('studio.taskIdCopy') }}</DqButton>
+          <DqButton size="sm" type="text" @click="copyProjectId">{{ $tt('studio.taskIdCopy') }}</DqButton>
         </p>
       </template>
 
-      <DqPrefPane
-        v-else
-        class="settings-grouped-form settings-pref-pane-form settings-pref-pane-form--system lv-settings-pref-pane"
-      >
-        <DqPrefRow :label="$tt('video.longVideoProjectTitle')">
-          <DqInput
-            :model-value="title"
-            class="settings-mac-value-control"
-            :placeholder="$tt('video.longVideoProjectTitlePh')"
-            :aria-label="$tt('video.longVideoProjectTitle')"
-            @update:model-value="$emit('update:title', $event)"
-          />
-        </DqPrefRow>
+      <template v-else>
+        <DqPrefPane
+          class="settings-grouped-form settings-pref-pane-form settings-pref-pane-form--system lv-settings-pref-pane"
+        >
+          <DqPrefRow :label="$tt('video.longVideoProjectTitle')" stacked>
+            <div class="settings-stacked-control">
+              <DqInput
+                :model-value="title"
+                class="settings-mac-value-control"
+                :placeholder="$tt('video.longVideoProjectTitlePh')"
+                :aria-label="$tt('video.longVideoProjectTitle')"
+                @update:model-value="$emit('update:title', $event)"
+              />
+            </div>
+          </DqPrefRow>
 
         <DqPrefRow :label="$tt('video.longVideoKeyframeModel')" stacked>
           <div class="settings-stacked-control">
@@ -186,8 +181,8 @@
           </div>
         </DqPrefRow>
 
-      </DqPrefPane>
-    </div>
+        </DqPrefPane>
+      </template>
   </section>
 </template>
 

@@ -1,75 +1,26 @@
 <template>
-  <div class="lv-studio studio-create-page lv-studio--full">
-    <header class="lv-studio__toolbar dq-glass--bar">
-      <div class="lv-studio__toolbar-inner">
-        <h1 class="lv-studio__toolbar-title">{{ $tt('video.longVideoPageTitle') }}</h1>
-        <div class="lv-studio__toolbar-spacer" />
-        <span v-if="saveStatusLabel" class="lv-studio__save-status" :class="saveStatusClass">
-          {{ saveStatusLabel }}
-        </span>
-        <div class="lv-studio__toolbar-actions">
-          <DqButton
-            size="sm"
-            type="text"
-            :loading="savingProject"
-            :disabled="savingProject || !project"
-            @click="saveProject"
-          >
-            {{ $tt('video.longVideoSaveProject') }}
-          </DqButton>
-          <DqButton
-            type="primary"
-            size="sm"
-            :loading="generating"
-            :disabled="generating || mergeDisabled"
-            @click="mergeLongVideo"
-          >
-            {{ $tt('video.longVideoMergeFilm') }}
-          </DqButton>
-        </div>
-      </div>
-    </header>
+  <div class="copilot-page long-video-page">
+    <div class="copilot-page__sidebar">
+      <LongVideoProjectSidebar
+        :projects="savedProjects"
+        :active-project-id="project?.project_id"
+        :loading="projectsLoading"
+        @open="loadSavedProject"
+        @new-project="createNewProject"
+        @delete="deleteSavedProject"
+      />
+    </div>
 
-    <DqAlert
-      v-if="!registrySupported"
-      type="warning"
-      :closable="false"
-      class="lv-studio__alert"
-      :title="$tt('video.longVideoModelUnsupported')"
-    />
+    <div class="copilot-page__main">
+      <DqAlert
+        v-if="!registrySupported"
+        type="warning"
+        :closable="false"
+        class="long-video-page__alert"
+        :title="$tt('video.longVideoModelUnsupported')"
+      />
 
-    <div class="lv-studio__body">
-      <aside class="lv-studio__sidebar">
-        <LongVideoProjectSidebar
-          :projects="savedProjects"
-          :active-project-id="project?.project_id"
-          :loading="projectsLoading"
-          @open="loadSavedProject"
-          @new-project="createNewProject"
-          @delete="deleteSavedProject"
-        />
-      </aside>
-
-      <div class="lv-studio__editor">
-        <LongVideoSettingsPanel
-          inline
-          :title="projectTitle"
-          :keyframe-model="project?.keyframe_model ?? defaultKeyframeModel"
-          :segment-model="project?.segment_video_model ?? defaultSegmentModel"
-          :output-size="projectOutputSize"
-          :output-size-options="segmentResolutionOptions"
-          :keyframe-model-options="keyframeModelOptions"
-          :segment-model-options="segmentModelOptions"
-          :model-label="modelLabel"
-          :overlap-frames="project?.overlap_frames ?? 4"
-          :project-id="project?.project_id ?? ''"
-          @update:title="patchProjectField('title', $event)"
-          @update:keyframe-model="onKeyframeModelChange"
-          @update:segment-model="onSegmentModelChange"
-          @update:output-size="patchProjectField('output_size', $event)"
-          @update:overlap-frames="patchProjectField('overlap_frames', $event)"
-        />
-
+      <div class="lv-editor-tabs-wrapper">
         <LongVideoEditorTabs
           :model-value="editorTab"
           :cast-count="project?.characters?.length ?? 0"
@@ -81,6 +32,28 @@
           :storyboard-done="storyboardStepDone"
           @update:model-value="onEditorTabChange"
         />
+      </div>
+
+      <DqSurfaceCard class="copilot-page__workspace-card studio-surface-card">
+        <div v-show="editorTab === 'settings'" class="lv-editor-pane lv-editor-pane--settings">
+          <LongVideoSettingsPanel
+            :title="projectTitle"
+            :keyframe-model="project?.keyframe_model ?? defaultKeyframeModel"
+            :segment-model="project?.segment_video_model ?? defaultSegmentModel"
+            :output-size="projectOutputSize"
+            :output-size-options="segmentResolutionOptions"
+            :keyframe-model-options="keyframeModelOptions"
+            :segment-model-options="segmentModelOptions"
+            :model-label="modelLabel"
+            :overlap-frames="project?.overlap_frames ?? 4"
+            :project-id="project?.project_id ?? ''"
+            @update:title="patchProjectField('title', $event)"
+            @update:keyframe-model="onKeyframeModelChange"
+            @update:segment-model="onSegmentModelChange"
+            @update:output-size="patchProjectField('output_size', $event)"
+            @update:overlap-frames="patchProjectField('overlap_frames', $event)"
+          />
+        </div>
 
         <div v-show="editorTab === 'script'" class="lv-editor-pane lv-editor-pane--script">
           <LongVideoBriefPanel
@@ -149,37 +122,48 @@
           @clear-ref="onClearSceneRef"
           @vision-backfill="onVisionBackfillSceneLook"
           @batch-generate-refs="onBatchGenerateSceneRefs"
+          @go-to-script="onEditorTabChange('script')"
           @go-to-storyboard="onEditorTabChange('storyboard')"
         />
         </div>
 
         <div v-show="editorTab === 'storyboard'" class="lv-editor-pane lv-editor-pane--storyboard">
-        <LongVideoGroupToolbar
-          :shots="shots"
-          :selection="selection"
-          :chain-mode="project?.chain_mode ?? 'keyframe_only'"
-          :generating="batchGroupGenerating"
-          @generate-group="onBatchGenerateCurrentGroup"
-          @generate-all-anchors="onBatchGenerateAllAnchors"
-          @generate-all-segments="onBatchGenerateAllSegments"
-        />
-        <LongVideoGroupProgressBar
-          :shots="shots"
-          @select-group="onSelectBeatGroup"
-        />
-        <LongVideoBeatGroupRail
-          :shots="shots"
-          :selection="selection"
-          :keyframe-generating-index="keyframeGeneratingIndex"
-          :segment-generating-indices="segmentGeneratingIndicesList"
-          :output-width="outputSizePixels.width"
-          :output-height="outputSizePixels.height"
-          @select-segment="onSelectSegment"
-          @insert-anchor="onInsertFaceAnchor"
-          @resplit-beat="onResplitBeatGroup"
-        />
+          <LongVideoGroupToolbar
+            :shots="shots"
+            :selection="selection"
+            :chain-mode="project?.chain_mode ?? 'keyframe_only'"
+            :generating="batchGroupGenerating"
+            @generate-group="onBatchGenerateCurrentGroup"
+            @generate-all-anchors="onBatchGenerateAllAnchors"
+            @generate-all-segments="onBatchGenerateAllSegments"
+          />
+          <LongVideoGroupProgressBar
+            :shots="shots"
+            @select-group="onSelectBeatGroup"
+          />
+          <LongVideoBeatGroupRail
+            :shots="shots"
+            :selection="selection"
+            :keyframe-generating-index="keyframeGeneratingIndex"
+            :segment-generating-indices="segmentGeneratingIndicesList"
+            :output-width="outputSizePixels.width"
+            :output-height="outputSizePixels.height"
+            @select-segment="onSelectSegment"
+            @insert-anchor="onInsertFaceAnchor"
+            @resplit-beat="onResplitBeatGroup"
+          />
+          <div class="long-video-page__merge-bar">
+            <DqButton
+              type="primary"
+              :loading="generating"
+              :disabled="generating || mergeDisabled"
+              @click="mergeLongVideo"
+            >
+              {{ $tt('video.longVideoMergeFilm') }}
+            </DqButton>
+          </div>
         </div>
-      </div>
+      </DqSurfaceCard>
     </div>
 
     <LongVideoInspectorDrawer
@@ -2554,39 +2538,6 @@ const { status: autoSaveStatus, cancelPending: cancelAutoSavePending } = useLong
   suppress: suppressAutoSave,
   hasPersistableContent: longVideoHasPersistableContent,
   save: persistProjectToServer,
-});
-
-const saveStatusLabel = computed(() => {
-  const lv = project.value;
-  if (!lv) return '';
-  if (!lv.project_id) {
-    if (autoSaveStatus.value === 'pending' || autoSaveStatus.value === 'saving') {
-      return $tt('video.longVideoAutoSaveCreating');
-    }
-    if (longVideoHasPersistableContent(lv)) {
-      return $tt('video.longVideoAutoSaveWillCreate');
-    }
-    return $tt('video.longVideoLocalDraftHint');
-  }
-  switch (autoSaveStatus.value) {
-    case 'pending':
-      return $tt('video.longVideoAutoSavePending');
-    case 'saving':
-      return $tt('video.longVideoAutoSaveSaving');
-    case 'saved':
-      return $tt('video.longVideoAutoSaveSaved');
-    case 'error':
-      return $tt('video.longVideoAutoSaveError');
-    default:
-      return '';
-  }
-});
-
-const saveStatusClass = computed(() => {
-  if (!project.value?.project_id) return 'is-local';
-  if (autoSaveStatus.value === 'error') return 'is-error';
-  if (autoSaveStatus.value === 'saved') return 'is-saved';
-  return '';
 });
 
 async function loadSavedProject(projectId: string, opts?: { silent?: boolean }) {

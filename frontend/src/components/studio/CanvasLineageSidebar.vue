@@ -5,7 +5,7 @@
         <span>{{ $t('canvas.lineageSidebar') }}</span>
         <span v-if="assetId" class="canvas-lineage-sidebar__hint">{{ $t('canvas.lineageClickHint') }}</span>
       </div>
-      <DqIconButton type="text" size="xs" :label="$t('gallery.close')" @click="$emit('close')">
+      <DqIconButton type="text" size="sm" :label="$t('gallery.close')" @click="$emit('close')">
         <DqIcon :size="14"><Close /></DqIcon>
       </DqIconButton>
     </header>

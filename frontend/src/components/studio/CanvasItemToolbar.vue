@@ -10,7 +10,7 @@
     <template v-if="pageMedia === 'image' && isImage">
       <DqIconButton
         type="text"
-        size="xs"
+        size="sm"
         :label="$t('action.image.rewrite')"
         @click="$emit('action', 'quick-reference')"
       >
@@ -18,7 +18,7 @@
       </DqIconButton>
       <DqIconButton
         type="text"
-        size="xs"
+        size="sm"
         :label="$t('action.image.retouch')"
         @click="$emit('action', 'retouch')"
       >
@@ -26,7 +26,7 @@
       </DqIconButton>
       <DqIconButton
         type="text"
-        size="xs"
+        size="sm"
         :label="$t('action.image.extend')"
         @click="$emit('action', 'extend')"
       >
@@ -34,7 +34,7 @@
       </DqIconButton>
       <DqIconButton
         type="text"
-        size="xs"
+        size="sm"
         :label="$t('action.image.upscale')"
         @click="$emit('action', 'upscale')"
       >
@@ -45,7 +45,7 @@
     <template v-else-if="pageMedia === 'video' && isImage">
       <DqIconButton
         type="text"
-        size="xs"
+        size="sm"
         :label="$t('action.video.animate')"
         @click="$emit('action', 'quick-animate')"
       >
@@ -56,7 +56,7 @@
     <template v-else-if="pageMedia === 'video' && isVideo">
       <DqIconButton
         type="text"
-        size="xs"
+        size="sm"
         :label="$t('action.video.edit')"
         @click="$emit('action', 'quick-animate-video')"
       >
@@ -64,7 +64,7 @@
       </DqIconButton>
       <DqIconButton
         type="text"
-        size="xs"
+        size="sm"
         :label="$t('action.video.upscale')"
         @click="$emit('action', 'upscale')"
       >
@@ -75,7 +75,7 @@
     <template v-else-if="pageMedia === 'audio' && isAudio">
       <DqIconButton
         type="text"
-        size="xs"
+        size="sm"
         :label="$t('action.audio.cover')"
         @click="$emit('action', 'quick-cover')"
       >
@@ -86,7 +86,7 @@
     <DqIconButton
       v-if="hasWorkflow"
       type="text"
-      size="xs"
+      size="sm"
       :label="$t('canvas.branchGenerate')"
       @click="$emit('action', 'branch')"
     >
@@ -94,7 +94,7 @@
     </DqIconButton>
 
     <DqDropdown trigger="click" size="small" @command="(cmd: string) => $emit('action', cmd)">
-      <DqIconButton type="text" size="xs" :label="$t('canvas.moreMenu')" @click.stop>
+      <DqIconButton type="text" size="sm" :label="$t('canvas.moreMenu')" @click.stop>
         <DqIcon :size="14"><Menu /></DqIcon>
       </DqIconButton>
       <template #dropdown>
@@ -181,7 +181,7 @@
 
     <DqIconButton
       type="text"
-      size="xs"
+      size="sm"
       :label="$t('canvas.removeFromCanvas')"
       @click="$emit('action', 'remove')"
     >

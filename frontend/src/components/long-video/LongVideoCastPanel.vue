@@ -1,19 +1,13 @@
 <template>
-  <section class="lv-cast-workshop lv-panel lv-section">
-    <div v-if="scriptSourceLabel" class="lv-cast-workshop__source">
-      <span class="lv-cast-workshop__source-text">{{ scriptSourceLabel }}</span>
-      <DqButton size="sm" type="text" @click="emit('go-to-script')">
-        {{ $tt('video.longVideoCastEditScript') }}
-      </DqButton>
-    </div>
-
-    <header class="lv-cast-workshop__header">
-      <div class="lv-cast-workshop__header-main">
-        <h2 class="lv-cast-workshop__title">{{ $tt('video.longVideoCastWorkshopTitle') }}</h2>
-        <p class="lv-cast-workshop__subtitle">{{ $tt('video.longVideoCastWorkshopHint') }}</p>
-      </div>
-      <div class="lv-cast-workshop__header-actions">
-        <div v-if="characters.length && totalLookCount > 0" class="lv-cast-workshop__progress" :title="$tt('video.longVideoCastReadyStat', { ready: readyPortraitCount, total: totalLookCount })">
+  <section class="lv-cast-workshop lv-section">
+    <div v-if="scriptSourceLabel || characters.length" class="lv-cast-workshop__source">
+      <span v-if="scriptSourceLabel" class="lv-cast-workshop__source-text">{{ scriptSourceLabel }}</span>
+      <div class="lv-cast-workshop__source-actions">
+        <div
+          v-if="characters.length && totalLookCount > 0"
+          class="lv-cast-workshop__progress"
+          :title="$tt('video.longVideoCastReadyStat', { ready: readyPortraitCount, total: totalLookCount })"
+        >
           <div class="lv-cast-workshop__progress-track">
             <div
               class="lv-cast-workshop__progress-fill"
@@ -37,13 +31,16 @@
         <DqButton v-if="canImport" type="text" size="sm" @click="importFromAnchor">
           {{ $tt('video.longVideoCastImportFromAnchor') }}
         </DqButton>
+        <DqButton v-if="scriptSourceLabel" size="sm" type="text" @click="emit('go-to-script')">
+          {{ $tt('video.longVideoCastEditScript') }}
+        </DqButton>
       </div>
-    </header>
+    </div>
 
     <div v-if="!characters.length" class="lv-cast-workshop__empty">
       <div class="lv-cast-workshop__empty-card">
         <p class="lv-cast-workshop__empty-text">{{ $tt('video.longVideoCastRosterEmpty') }}</p>
-        <DqButton type="primary" size="sm" @click="onAddCharacter">
+        <DqButton type="primary" @click="onAddCharacter">
           <DqIcon :size="12"><Plus /></DqIcon>
           {{ $tt('video.longVideoCastAddCharacter') }}
         </DqButton>
@@ -125,7 +122,7 @@
             </div>
           </div>
           <div class="lv-cast-workshop__detail-actions">
-            <DqButton size="sm" type="primary" @click="addLook(selectedIndex)">
+            <DqButton type="primary" @click="addLook(selectedIndex)">
               <DqIcon :size="12"><Plus /></DqIcon>
               {{ $tt('video.longVideoCastAddLook') }}
             </DqButton>
@@ -307,7 +304,7 @@
         <span class="lv-cast-workshop__next-kicker">{{ $tt('video.longVideoCastNextTitle') }}</span>
         <p class="lv-cast-workshop__next-text">{{ $tt('video.longVideoCastNextStoryboard') }}</p>
       </div>
-      <DqButton type="primary" size="sm" @click="emit('go-to-storyboard')">
+      <DqButton type="primary" @click="emit('go-to-storyboard')">
         {{ $tt('video.longVideoCastNextStoryboardBtn') }}
       </DqButton>
     </footer>
@@ -549,8 +546,10 @@ function removeLook(ci: number, li: number) {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 16px 18px 18px;
+  gap: 10px;
+  padding: 12px 16px 16px;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .lv-cast-workshop__source {
@@ -558,10 +557,9 @@ function removeLook(ci: number, li: number) {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 8px 12px;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--dq-accent) 8%, transparent);
-  border: 1px solid color-mix(in srgb, var(--dq-accent) 22%, var(--dq-border-subtle));
+  flex-wrap: wrap;
+  padding-bottom: 10px;
+  border-bottom: 0.5px solid var(--dq-border-subtle);
 }
 
 .lv-cast-workshop__source-text {
@@ -574,38 +572,13 @@ function removeLook(ci: number, li: number) {
   white-space: nowrap;
 }
 
-.lv-cast-workshop__header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  flex-wrap: wrap;
-  padding-bottom: 14px;
-  border-bottom: 0.5px solid var(--dq-border-subtle);
-}
-
-.lv-cast-workshop__title {
-  margin: 0;
-  font-size: var(--dq-font-size-title);
-  font-weight: 650;
-  letter-spacing: -0.02em;
-  color: var(--dq-label-primary);
-}
-
-.lv-cast-workshop__subtitle {
-  margin: 5px 0 0;
-  font-size: var(--dq-font-size-caption);
-  line-height: 1.5;
-  color: var(--dq-label-tertiary);
-  max-width: 42rem;
-}
-
-.lv-cast-workshop__header-actions {
+.lv-cast-workshop__source-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex-shrink: 0;
   flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .lv-cast-workshop__progress {
@@ -679,8 +652,9 @@ function removeLook(ci: number, li: number) {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: 232px minmax(0, 1fr);
-  gap: 18px;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: 12px;
+  overflow: hidden;
 }
 
 .lv-cast-workshop__sidebar {
@@ -828,20 +802,23 @@ function removeLook(ci: number, li: number) {
 .lv-cast-workshop__detail {
   min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  padding: 4px 2px 8px;
+  gap: 12px;
+  padding: 0;
+  min-width: 0;
+  width: 100%;
 }
 
 .lv-cast-workshop__detail-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
+  gap: 12px;
   flex-wrap: wrap;
-  padding: 14px 16px 14px 18px;
-  border-radius: 14px;
+  padding: 10px 12px;
+  border-radius: 12px;
   background:
     linear-gradient(
       135deg,
@@ -853,6 +830,7 @@ function removeLook(ci: number, li: number) {
     inset 3px 0 0 var(--dq-accent),
     inset 0 1px 0 color-mix(in srgb, white 5%, transparent),
     0 6px 20px color-mix(in srgb, black 10%, transparent);
+  flex-shrink: 0;
 }
 
 .lv-cast-workshop__detail-identity {
@@ -999,9 +977,12 @@ function removeLook(ci: number, li: number) {
 
 .lv-cast-workshop__looks {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 20px;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 12px;
   align-content: start;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .lv-cast-workshop__look-card {
@@ -1207,7 +1188,7 @@ function removeLook(ci: number, li: number) {
   gap: 12px;
   flex-shrink: 0;
   padding: 14px 16px;
-  margin-top: 12px;
+  margin-top: auto;
   border-radius: 12px;
   background: linear-gradient(
     135deg,

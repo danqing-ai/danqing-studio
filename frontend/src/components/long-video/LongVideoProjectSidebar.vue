@@ -1,17 +1,17 @@
 <template>
   <DqSurfaceCard class="lv-sidebar-card">
-    <div class="lv-sidebar-card__head">
-      <span class="lv-sidebar-card__title">{{ $tt('video.longVideoProjectList') }}</span>
-      <DqButton type="primary" size="sm" block @click="$emit('new-project')">
-        + {{ $tt('video.longVideoNewProject') }}
-      </DqButton>
+    <div class="card-title">
+      <DqIcon><Film /></DqIcon>
+      {{ $tt('video.longVideoProjectList') }}
     </div>
+
+    <DqButton type="primary" block class="lv-sidebar-card__new-btn" @click="$emit('new-project')">
+      + {{ $tt('video.longVideoNewProject') }}
+    </DqButton>
 
     <div class="lv-sidebar-card__body">
       <p v-if="loading" class="lv-sidebar-card__hint">{{ $tt('common.loading') }}</p>
-      <p v-else-if="!projects.length" class="lv-sidebar-card__hint">
-        {{ $tt('video.longVideoProjectListEmpty') }}
-      </p>
+      <DqEmpty v-else-if="!projects.length" :description="$tt('video.longVideoProjectListEmpty')" />
 
       <ul v-else class="lv-sidebar-card__list" role="list">
         <li
@@ -43,7 +43,7 @@
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
-import { Delete } from '@danqing/dq-shell';
+import { Delete, Film } from '@danqing/dq-shell';
 import type { LongVideoProjectSummary } from '@/types';
 
 defineProps<{
@@ -91,28 +91,17 @@ function formatUpdated(iso: string): string {
   overflow: hidden;
 }
 
-.lv-sidebar-card__head {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 2px 2px 12px;
-  flex-shrink: 0;
-}
-
-.lv-sidebar-card__title {
-  font-size: var(--dq-font-size-caption);
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--dq-label-tertiary);
-}
-
 .lv-sidebar-card__body {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+.lv-sidebar-card__new-btn {
+  margin-bottom: 12px;
+  flex-shrink: 0;
 }
 
 .lv-sidebar-card__hint {

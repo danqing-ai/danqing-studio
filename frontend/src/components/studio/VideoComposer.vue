@@ -13,7 +13,7 @@
       >
         <template #default>
           <span>{{ $tt('studio.notDownloadedMsg') }}</span>
-          <DqButton type="primary" size="sm" class="studio-alert-inline-btn" @click="$emit('go-download')">
+          <DqButton type="primary" class="studio-alert-inline-btn" @click="$emit('go-download')">
             {{ $tt('studio.goDownload') }}
           </DqButton>
         </template>

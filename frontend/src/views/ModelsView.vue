@@ -297,7 +297,7 @@
             >
               {{ $t('gallery.refresh') }}
             </DqButton>
-            <DqButton type="primary" size="sm" @click="activeCategory = 'lora_search'">
+            <DqButton type="primary" @click="activeCategory = 'lora_search'">
               {{ $t('download.loraSearch') }}
             </DqButton>
           </div>
@@ -324,7 +324,7 @@
         </DqRow>
         <div v-else class="trained-loras-page__empty">
           <DqEmpty :description="$t('download.noDownloadedLoras')" />
-          <DqButton type="primary" size="sm" @click="activeCategory = 'lora_search'">
+          <DqButton type="primary" @click="activeCategory = 'lora_search'">
             {{ $t('download.loraSearch') }}
           </DqButton>
         </div>
@@ -343,7 +343,7 @@
             >
               {{ $t('loraTrain.refreshHistory') }}
             </DqButton>
-            <DqButton type="primary" size="sm" @click="goToLoraTrain">
+            <DqButton type="primary" @click="goToLoraTrain">
               {{ $t('loraTrain.startTraining') }}
             </DqButton>
           </div>
@@ -370,7 +370,7 @@
         </DqRow>
         <div v-else class="trained-loras-page__empty">
           <DqEmpty :description="$t('download.noUserLoras')" />
-          <DqButton type="primary" size="sm" @click="goToLoraTrain">
+          <DqButton type="primary" @click="goToLoraTrain">
             {{ $t('loraTrain.startTraining') }}
           </DqButton>
         </div>

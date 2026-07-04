@@ -1,28 +1,22 @@
 <template>
   <div class="lv-rail lv-beat-rail" :style="railAspectStyle">
-    <div class="lv-panel lv-section lv-section--rail">
-      <div class="lv-section__head">
-        <span class="lv-section__title">{{ $tt('video.longVideoTimeline') }}</span>
+    <div class="lv-beat-rail__track">
+      <div v-if="!shots.length" class="lv-rail__empty">
+        <p class="lv-rail__empty-title">{{ $tt('video.longVideoEmptyRailTitle') }}</p>
       </div>
-
-      <div class="lv-beat-rail__track">
-        <div v-if="!shots.length" class="lv-rail__empty">
-          <p class="lv-rail__empty-title">{{ $tt('video.longVideoEmptyRailTitle') }}</p>
-        </div>
-        <div v-else class="lv-beat-rail__groups">
-          <LongVideoBeatGroupCard
-            v-for="group in groups"
-            :key="group.groupId"
-            :group="group"
-            :shots="shots"
-            :selection="selection"
-            :keyframe-generating-index="keyframeGeneratingIndex"
-            :segment-generating-indices="segmentGeneratingIndices"
-            @select-segment="$emit('select-segment', $event)"
-            @insert-anchor="$emit('insert-anchor', $event)"
-            @resplit-beat="$emit('resplit-beat', $event)"
-          />
-        </div>
+      <div v-else class="lv-beat-rail__groups">
+        <LongVideoBeatGroupCard
+          v-for="group in groups"
+          :key="group.groupId"
+          :group="group"
+          :shots="shots"
+          :selection="selection"
+          :keyframe-generating-index="keyframeGeneratingIndex"
+          :segment-generating-indices="segmentGeneratingIndices"
+          @select-segment="$emit('select-segment', $event)"
+          @insert-anchor="$emit('insert-anchor', $event)"
+          @resplit-beat="$emit('resplit-beat', $event)"
+        />
       </div>
     </div>
   </div>

@@ -59,11 +59,22 @@ def apply_static_sigma_shift(u: mx.array, shift: float) -> mx.array:
     return s * u / (1.0 + (s - 1.0) * u)
 
 
+def _apply_sigma_uniform_bias(u: mx.array, bias: str) -> mx.array:
+    """Bias uniform draws before static shift (high → identity band, low → detail band)."""
+    mode = (bias or "uniform").strip().lower()
+    if mode == "low":
+        return mx.square(u)
+    if mode == "high":
+        return mx.sqrt(u)
+    return u
+
+
 def sample_noisy_latent_shifted(
     x0: mx.array,
     ctx: Any,
     *,
     sigma_shift: float = 1.0,
+    sigma_bias: str = "uniform",
 ) -> tuple[mx.array, mx.array, mx.array]:
     """Flow-match noising with a static sigma shift matching inference.
 
@@ -74,6 +85,7 @@ def sample_noisy_latent_shifted(
     """
     b = x0.shape[0]
     u = mx.random.uniform(shape=(b,), dtype=ctx.float32())
+    u = _apply_sigma_uniform_bias(u, sigma_bias)
     t = apply_static_sigma_shift(u, sigma_shift) if float(sigma_shift) != 1.0 else u
     eps = mx.random.normal(x0.shape, dtype=ctx.bfloat16())
     sigma = mx.reshape(t, (b,) + (1,) * (x0.ndim - 1)).astype(ctx.bfloat16())

@@ -52,6 +52,13 @@ const { t: $tt } = useI18n();
 
 const tabs = computed(() => [
   {
+    id: 'settings' as const,
+    label: $tt('video.longVideoProjectSettings'),
+    desc: $tt('video.longVideoEditorTabSettingsDesc'),
+    done: true,
+    badge: null as number | null,
+  },
+  {
     id: 'script' as const,
     label: $tt('video.longVideoEditorTabScript'),
     desc: $tt('video.longVideoEditorTabScriptDesc'),

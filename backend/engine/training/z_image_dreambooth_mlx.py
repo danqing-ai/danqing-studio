@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import random
 from pathlib import Path
 from typing import Any
 
@@ -177,6 +178,7 @@ def _training_loss(
     timestep_bias: str = "uniform",
     resolution: tuple[int, int] = (512, 512),
     sigma_shift: float = 1.0,
+    sigma_bias: str = "uniform",
 ) -> mx.array:
     if turbo:
         x_t, eps, t = sample_noisy_latent_turbo(
@@ -190,7 +192,9 @@ def _training_loss(
             timestep_bias=timestep_bias,
         )
     else:
-        x_t, eps, t = sample_noisy_latent_shifted(x0, ctx, sigma_shift=sigma_shift)
+        x_t, eps, t = sample_noisy_latent_shifted(
+            x0, ctx, sigma_shift=sigma_shift, sigma_bias=sigma_bias
+        )
     pred = model(x_t, timestep=0, txt_embeds=cap, sigmas=t)
     b = x0.shape[0]
     sigma = mx.reshape(t, (b,) + (1,) * (x0.ndim - 1)).astype(ctx.bfloat16())
@@ -210,7 +214,9 @@ def _training_loss(
             timestep_bias=timestep_bias,
         )
     else:
-        x_tp, epsp, tp = sample_noisy_latent_shifted(x0p, ctx, sigma_shift=sigma_shift)
+        x_tp, epsp, tp = sample_noisy_latent_shifted(
+            x0p, ctx, sigma_shift=sigma_shift, sigma_bias=sigma_bias
+        )
     predp = model(x_tp, timestep=0, txt_embeds=prior_cap, sigmas=tp)
     sigmap = mx.reshape(tp, (b,) + (1,) * (x0.ndim - 1)).astype(ctx.bfloat16())
     prior = flow_match_mse(predp, x0p, epsp, sigma=sigmap, min_snr_gamma=min_snr_gamma)
@@ -729,17 +735,19 @@ def run_z_image_dreambooth_training(
         _log(
             exec_ctx,
             "info",
-            "Turbo LoRA inference hint: linear scheduler, 8-9 steps, CFG=0, "
+            "Turbo LoRA inference hint: linear scheduler, 9 steps, CFG=0, "
             f"LoRA weight 0.7-0.85, FP16 base; training sigma band "
             f"[{train_runtime.timestep_low}-{train_runtime.timestep_high}] "
+            f"bias={train_runtime.timestep_bias} "
+            f"assistant_off_prob={train_runtime.turbo_assistant_off_prob:g} "
             f"modules={train_runtime.lora_module_keys or 'all'}",
         )
     else:
         _log(
             exec_ctx,
             "info",
-            f"Base Z-Image training: shift-matched σ sampling (sigma_shift={base_sigma_shift:g}) "
-            "aligned to inference scheduler for identity/face fidelity",
+            f"Base Z-Image training: shift-matched σ sampling (sigma_shift={base_sigma_shift:g}, "
+            f"sigma_bias={train_runtime.sigma_bias}) aligned to inference scheduler for identity",
         )
 
     lora_layer_count = len(getattr(train_module, "_lora_paths", []) or [])
@@ -755,6 +763,8 @@ def run_z_image_dreambooth_training(
         f"modules={train_runtime.lora_module_keys or 'all'} lora_layers={lora_layer_count} "
         f"train_type={train_runtime.train_type} qlora={train_runtime.qlora_bits} "
         f"min_snr_gamma={train_runtime.min_snr_gamma:g} "
+        f"sigma_bias={train_runtime.sigma_bias} "
+        f"turbo_asst_off={train_runtime.turbo_assistant_off_prob:g} "
         f"num_aug={train_runtime.num_augmentations} n_samples={n_samples} "
         f"train/val={len([p for p in pairs])}",
     )
@@ -817,23 +827,37 @@ def run_z_image_dreambooth_training(
         return latent_cache.sample_z_image(indices[0])
 
     def loss_fn(x0: mx.array, cap: mx.array) -> mx.array:
-        return _training_loss(
-            train_module,
-            x0,
-            cap,
-            ctx,
-            min_snr_gamma=train_runtime.min_snr_gamma,
-            prior_cap=prior_cap,
-            prior_latents=prior_latents,
-            prior_loss_weight=train_runtime.prior_loss_weight if prior_cap is not None else 0.0,
-            turbo=is_turbo,
-            turbo_infer_steps=train_runtime.turbo_infer_steps,
-            timestep_low=train_runtime.timestep_low,
-            timestep_high=train_runtime.timestep_high,
-            timestep_bias=train_runtime.timestep_bias,
-            resolution=resolution,
-            sigma_shift=base_sigma_shift,
-        )
+        assistant_was_off = False
+        if (
+            is_turbo
+            and training_assistant is not None
+            and train_runtime.turbo_assistant_off_prob > 0.0
+        ):
+            if random.random() < float(train_runtime.turbo_assistant_off_prob):
+                training_assistant.set_enabled(False)
+                assistant_was_off = True
+        try:
+            return _training_loss(
+                train_module,
+                x0,
+                cap,
+                ctx,
+                min_snr_gamma=train_runtime.min_snr_gamma,
+                prior_cap=prior_cap,
+                prior_latents=prior_latents,
+                prior_loss_weight=train_runtime.prior_loss_weight if prior_cap is not None else 0.0,
+                turbo=is_turbo,
+                turbo_infer_steps=train_runtime.turbo_infer_steps,
+                timestep_low=train_runtime.timestep_low,
+                timestep_high=train_runtime.timestep_high,
+                timestep_bias=train_runtime.timestep_bias,
+                resolution=resolution,
+                sigma_shift=base_sigma_shift,
+                sigma_bias=train_runtime.sigma_bias,
+            )
+        finally:
+            if assistant_was_off and training_assistant is not None:
+                training_assistant.set_enabled(True)
 
     def preview_at(step: int) -> None:
         from backend.engine.common.codecs.vae import load_vae_weight_dict, read_vae_dir_config

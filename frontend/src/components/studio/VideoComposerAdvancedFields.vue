@@ -82,7 +82,7 @@
         />
         <DqIconButton
           type="text"
-          size="xs"
+          size="sm"
           :label="$t('create.randomSeed')"
           @click="randomizeSeed"
         >

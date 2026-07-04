@@ -5,7 +5,7 @@
         <span class="lv-parse-run-bar__ok" aria-hidden="true">✓</span>
         <span class="lv-parse-run-bar__title">{{ $tt('video.longVideoParseRunTitle') }}</span>
         <code v-if="parseRunId" class="lv-parse-run-bar__id" :title="parseRunId">{{ shortId(parseRunId) }}</code>
-        <DqButton v-if="parseRunId" size="xs" type="text" @click="copyId(parseRunId)">
+        <DqButton v-if="parseRunId" size="sm" type="text" @click="copyId(parseRunId)">
           {{ $tt('studio.taskIdCopy') }}
         </DqButton>
       </div>
@@ -18,7 +18,7 @@
       </div>
     </div>
     <div class="lv-parse-run-bar__actions">
-      <DqButton size="xs" type="text" @click="expanded = !expanded">
+      <DqButton size="sm" type="text" @click="expanded = !expanded">
         {{ expanded ? $tt('video.longVideoParseRunCollapse') : $tt('video.longVideoParseRunExpand') }}
       </DqButton>
     </div>
@@ -59,7 +59,7 @@
         <p v-if="projectId" class="lv-parse-run-bar__project">
           {{ $tt('video.longVideoProjectIdLabel') }}
           <code :title="projectId">{{ shortId(projectId) }}</code>
-          <DqButton size="xs" type="text" @click="copyId(projectId)">{{ $tt('studio.taskIdCopy') }}</DqButton>
+          <DqButton size="sm" type="text" @click="copyId(projectId)">{{ $tt('studio.taskIdCopy') }}</DqButton>
         </p>
       </template>
     </div>

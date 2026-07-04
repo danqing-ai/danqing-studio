@@ -119,7 +119,7 @@
           <li>{{ $t('canvas.shortcutRemove') }}</li>
           <li>{{ $t('canvas.scaleHint') }}</li>
         </ul>
-        <DqButton type="primary" size="sm" @click="$emit('open-import-picker')">
+        <DqButton type="primary" @click="$emit('open-import-picker')">
           {{ $t('canvas.importWorks') }}
         </DqButton>
       </div>

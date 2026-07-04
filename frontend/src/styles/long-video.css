@@ -1,123 +1,103 @@
-/* Long-video workbench — aligned with Studio create pages (glass bar + pref rows + canvas) */
+/* Long-video workbench — copilot-page layout (sidebar + page-header + stepper tabs + workspace card) */
 
-html.dark .dq-app-main:has(.lv-studio) {
-  padding: 0;
-  overflow: hidden;
-  background-color: var(--dq-bg-page);
-  background-image: none;
+html.dark .dq-app-main:has(.long-video-page) {
+ background-color: var(--dq-bg-page);
+ background-image: none;
+ display: flex;
+ flex-direction: column;
+ min-height: 0;
+ overflow: hidden;
 }
 
-.lv-studio {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 0;
-  width: 100%;
-  background-color: var(--dq-bg-page);
-  background-image:
-    radial-gradient(ellipse 120% 420px at 50% -8%, rgba(10, 132, 255, 0.07) 0%, transparent 55%),
-    var(--dq-bg-page-glow);
+html.dark .dq-app-main:has(.long-video-page) > .long-video-page {
+ flex: 1;
+ min-height: 0;
 }
 
-.lv-studio__alert {
-  margin: 8px 16px 0;
+.long-video-page .copilot-page__workspace-card.studio-surface-card.dq-surface-card > .dq-surface-card__body {
+ padding: 0;
+ gap: 0;
+ overflow: hidden;
+}
+
+/* ── Alert ── */
+.long-video-page__alert {
+  margin-bottom: 8px;
   flex-shrink: 0;
 }
 
-.lv-studio__toolbar {
-  flex-shrink: 0;
-  z-index: 10;
-}
-
-.lv-studio__toolbar-inner {
+/* ── Merge bar (storyboard bottom) ── */
+.long-video-page__merge-bar {
   display: flex;
   align-items: center;
-  gap: 10px;
-  width: 100%;
-  min-width: 0;
-  padding: 10px 20px;
-  box-sizing: border-box;
-}
-
-.lv-studio__toolbar-title {
-  margin: 0;
-  font-size: var(--dq-font-size-body);
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  color: var(--dq-label-primary);
-  white-space: nowrap;
-}
-
-.lv-studio__toolbar-spacer {
-  flex: 1 1 auto;
-  min-width: 8px;
-}
-
-.lv-studio__save-status {
-  font-size: var(--dq-font-size-caption);
-  color: var(--dq-label-tertiary);
-  white-space: nowrap;
-  padding: 0 8px;
+  justify-content: flex-end;
+  padding: 10px 0 0;
+  border-top: 0.5px solid var(--dq-border-subtle);
   flex-shrink: 0;
+  margin-top: auto;
 }
 
-.lv-studio__save-status.is-local {
-  color: var(--dq-label-secondary);
+/* ── Content card (workspace) ── */
+.copilot-page__main .lv-editor-tabs-wrapper {
+ flex-shrink: 0;
+ padding: 0 0 10px;
+ width: 100%;
+ min-width: 0;
+ max-width: 100%;
+ box-sizing: border-box;
+ overflow-x: auto;
+ overflow-y: hidden;
+ scrollbar-width: none;
+ -ms-overflow-style: none;
 }
 
-.lv-studio__save-status.is-saved {
-  color: var(--dq-label-secondary);
+.copilot-page__main .lv-editor-tabs-wrapper::-webkit-scrollbar {
+ display: none;
 }
 
-.lv-studio__save-status.is-error {
-  color: var(--dq-danger, #ff3b30);
+.copilot-page__main .lv-editor-tabs {
+ width: 100%;
+ min-width: 0;
+ max-width: 100%;
+ box-sizing: border-box;
 }
 
-.lv-studio__toolbar-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
+/* Long-video: 5 tabs — compact stepper, label-only (no subtitle row) */
+.long-video-page .lv-editor-tabs {
+ min-width: 0;
+ max-width: 100%;
+ overflow: hidden;
 }
 
-.lv-studio__body {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  gap: 16px;
-  width: 100%;
-  overflow: hidden;
-  padding: 12px 16px 16px;
-  box-sizing: border-box;
+.long-video-page .lv-editor-tabs__connector {
+ width: 10px;
+ flex-shrink: 0;
 }
 
-.lv-studio__sidebar {
-  width: 220px;
-  flex-shrink: 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
+.long-video-page .lv-editor-tabs__tab {
+ flex: 1 1 0;
+ min-width: 0;
+ max-width: 100%;
+ padding: 8px 10px;
+ gap: 8px;
+ min-height: 44px;
+ overflow: hidden;
 }
 
-.lv-studio__sidebar .lv-sidebar-card {
-  flex: 1;
-  min-height: 0;
+.long-video-page .lv-editor-tabs__desc {
+ display: none;
 }
 
-.lv-studio__editor {
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  overflow: hidden;
+.long-video-page .lv-editor-tabs__label {
+ white-space: nowrap;
+ overflow: hidden;
+ text-overflow: ellipsis;
 }
 
-.lv-studio__editor > .lv-rail {
-  flex: 1;
-  min-height: 0;
+.long-video-page .lv-editor-tabs__badge {
+ min-width: 20px;
+ padding: 2px 6px;
+ font-size: 11px;
 }
 
 .lv-editor-tabs {
@@ -141,18 +121,21 @@ html.dark .dq-app-main:has(.lv-studio) {
 }
 
 .lv-editor-tabs__tab {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 52px;
-  padding: 8px 14px;
-  border: 1px solid transparent;
-  border-radius: 10px;
-  background: transparent;
-  cursor: pointer;
-  text-align: left;
-  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+ flex: 1 1 0;
+ min-width: 0;
+ display: flex;
+ align-items: center;
+ gap: 10px;
+ min-height: 52px;
+ padding: 8px 14px;
+ border: 1px solid transparent;
+ border-radius: 10px;
+ background: transparent;
+ cursor: pointer;
+ text-align: left;
+ transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+ overflow: hidden;
+ box-sizing: border-box;
 }
 
 .lv-editor-tabs__tab:hover:not(.lv-editor-tabs__tab--active) {
@@ -209,11 +192,14 @@ html.dark .dq-app-main:has(.lv-studio) {
 }
 
 .lv-editor-tabs__label {
-  font-size: var(--dq-font-size-body);
-  font-weight: 600;
-  letter-spacing: -0.01em;
-  color: var(--dq-label-primary);
-  line-height: 1.2;
+ font-size: var(--dq-font-size-body);
+ font-weight: 600;
+ letter-spacing: -0.01em;
+ color: var(--dq-label-primary);
+ line-height: 1.2;
+ white-space: nowrap;
+ overflow: hidden;
+ text-overflow: ellipsis;
 }
 
 .lv-editor-tabs__tab:not(.lv-editor-tabs__tab--active) .lv-editor-tabs__label {
@@ -244,36 +230,155 @@ html.dark .dq-app-main:has(.lv-studio) {
 }
 
 .lv-editor-pane {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
+ flex: 1;
+ min-height: 0;
+ min-width: 0;
+ width: 100%;
+ max-width: 100%;
+ display: flex;
+ flex-direction: column;
+ overflow: hidden;
+ padding: 12px 16px 16px;
+ box-sizing: border-box;
+}
+
+.lv-editor-pane--settings {
+ overflow-y: auto;
+ overflow-x: hidden;
+ align-items: stretch;
+}
+
+.lv-editor-pane--settings .lv-settings {
+ width: 100%;
+ flex: 0 0 auto;
+ height: auto;
+ min-width: 0;
+ align-self: stretch;
+ overflow: visible;
+}
+
+.lv-editor-pane--settings .lv-settings .dq-pref-pane.settings-pref-pane-form {
+ width: 100%;
+ flex: 0 0 auto;
+ height: auto;
+ min-width: 0;
+ overflow: hidden;
+ border-radius: 12px;
+ border: 0.5px solid var(--dq-border-subtle);
+ background: color-mix(in srgb, var(--dq-surface-elevated) 72%, transparent);
+ box-shadow: inset 0 1px 0 color-mix(in srgb, white 4%, transparent);
+}
+
+.lv-editor-pane--settings .lv-settings .dq-pref-pane.settings-pref-pane-form .dq-pref-row {
+ display: flex;
+ flex-direction: column;
+ align-items: stretch;
+ gap: 8px;
+ width: 100%;
+ min-width: 0;
+ padding: 14px 16px;
+ margin-bottom: 0;
+}
+
+.lv-editor-pane--settings .settings-pref-pane-form--system .dq-pref-row__label {
+ flex: none !important;
+ max-width: none !important;
+ align-self: stretch;
+ font-size: var(--dq-font-size-caption);
+ font-weight: 500;
+ line-height: 1.35;
+ color: var(--dq-label-secondary);
+}
+
+.lv-editor-pane--settings .settings-pref-pane-form--system .dq-pref-row__content {
+ flex: none !important;
+ width: 100% !important;
+ align-items: stretch !important;
+}
+
+.lv-editor-pane--settings .settings-mac-value-control,
+.lv-editor-pane--settings .settings-stacked-control,
+.lv-editor-pane--settings .settings-pref-pane-form--system .settings-pref-slider-row,
+.lv-editor-pane--settings .settings-pref-pane-form--system .dq-pref-row:not(.dq-pref-row--stacked) .settings-stacked-control {
+ width: 100%;
+ max-width: none;
+ margin-left: 0;
+}
+
+.lv-editor-pane--settings .settings-form-hint--below-control {
+ margin: 0;
+ font-size: var(--dq-font-size-caption);
+ line-height: 1.4;
+ color: var(--dq-label-tertiary);
+}
+
+.lv-editor-pane--settings .dq-pref-row .dq-input,
+.lv-editor-pane--settings .dq-pref-row .dq-select__trigger {
+ min-height: 36px;
+ font-size: var(--dq-font-size-body);
+}
+
+.lv-editor-pane--settings .dq-pref-row {
+ border-bottom: 0.5px solid var(--dq-border-subtle);
+}
+
+.lv-editor-pane--settings .dq-pref-row:last-child {
+ border-bottom: none;
+}
+
+@media (max-width: 960px) {
+ .long-video-page .lv-editor-tabs__tab {
+  padding: 8px 8px;
+  gap: 6px;
+ }
 }
 
 .lv-editor-pane--cast {
-  min-height: min(520px, 55vh);
+ min-height: 0;
+ overflow-y: auto;
+ overflow-x: hidden;
+ padding: 0;
+}
+
+.lv-editor-pane--cast > .lv-cast-workshop {
+ flex: 1;
+ min-height: 0;
+}
+
+.lv-editor-pane--scenes {
+ overflow-y: auto;
+ overflow-x: hidden;
+ padding: 0;
+}
+
+.lv-editor-pane--scenes > .lv-scene-workshop {
+ flex: 1;
+ min-height: 0;
 }
 
 .lv-editor-pane--script {
-  overflow: hidden;
-  min-height: min(640px, 72vh);
+ overflow: hidden;
+ min-height: min(640px, 72vh);
+ padding: 0;
 }
 
-.lv-editor-pane--script > .lv-script-studio,
-.lv-editor-pane--script > .lv-panel.lv-section {
-  flex: 1;
-  min-height: 0;
+.lv-editor-pane--script > .lv-script-studio {
+ flex: 1;
+ min-height: 0;
+ overflow-y: auto;
+ overflow-x: hidden;
 }
 
 .lv-editor-pane--storyboard {
-  gap: 10px;
-  overflow-y: auto;
+ gap: 10px;
+ overflow-y: auto;
+ overflow-x: hidden;
+ padding: 12px 16px 16px;
 }
 
 .lv-editor-pane--storyboard > .lv-rail {
-  flex: 1;
-  min-height: 240px;
+ flex: 1;
+ min-height: 240px;
 }
 
 /* ── Brief / storyboard expand ── */
@@ -344,7 +449,8 @@ html.dark .dq-app-main:has(.lv-studio) {
 
 /* ── Cast panel (legacy class hooks; workshop uses scoped styles) ── */
 .lv-cast,
-.lv-cast-workshop {
+.lv-cast-workshop,
+.lv-scene-workshop {
   flex: 1;
   min-height: 0;
   max-height: none;
@@ -760,7 +866,11 @@ html.dark .dq-app-main:has(.lv-studio) {
 .lv-section {
   display: flex;
   flex-direction: column;
+  flex: 1;
   min-height: 0;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
 }
 
 .lv-section--compact {
@@ -848,9 +958,11 @@ html.dark .dq-app-main:has(.lv-studio) {
 /* ── Shared glass panel (settings + storyboard) ── */
 .lv-panel {
   border-radius: 14px;
-  padding: 16px;
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
   background: color-mix(in srgb, var(--dq-glass-panel-bg, var(--dq-surface-elevated)) 94%, transparent);
   border: 0.5px solid var(--dq-glass-border, var(--dq-border-subtle));
   box-shadow: var(--dq-shadow-glass, none), inset 0 1px 0 var(--dq-glass-highlight, transparent);
@@ -874,7 +986,10 @@ html.dark .dq-app-main:has(.lv-studio) {
 .lv-settings {
   display: flex;
   flex-direction: column;
+  flex: 1;
   min-height: 0;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .lv-settings--inline {
@@ -882,17 +997,29 @@ html.dark .dq-app-main:has(.lv-studio) {
   height: auto;
 }
 
-.lv-settings__head {
-  flex-shrink: 0;
-  padding: 4px 4px 10px;
+/* Override DqPrefPane overflow:visible to prevent content spilling out */
+.lv-settings .dq-pref-pane.settings-pref-pane-form {
+  flex: 1;
+  overflow: hidden;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
 
-.lv-settings__title {
-  font-size: var(--dq-font-size-caption);
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--dq-label-tertiary);
+/* Ensure pref rows don't expand beyond container */
+.lv-settings .dq-pref-pane.settings-pref-pane-form .dq-pref-row {
+  min-width: 0;
+}
+
+/* Ensure stacked control and hint text wrap properly */
+.lv-settings .settings-stacked-control {
+  min-width: 0;
+  width: 100%;
+}
+
+.lv-settings .settings-form-hint {
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .lv-panel--settings-bar {
@@ -1542,34 +1669,8 @@ html.dark .dq-app-main:has(.lv-studio) {
 }
 
 @media (max-width: 960px) {
-  .lv-studio__body {
-    flex-direction: column;
-    overflow-y: auto;
-  }
-
-  .lv-studio__sidebar {
-    width: 100%;
-    flex: 0 0 auto;
-    max-height: 240px;
-  }
-
-  .lv-studio__editor {
-    flex: 1 1 360px;
-    min-height: 360px;
-  }
-
   .lv-settings-bar {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .lv-header__inner {
-    flex-wrap: wrap;
-    gap: 10px;
-  }
-
-  .lv-header__phases {
-    order: 3;
-    flex: 1 1 100%;
   }
 }
 

@@ -7649,13 +7649,17 @@ class LoraTrainingPresetsTests(unittest.TestCase):
         self.assertEqual(zimg["lora_rank"], 16)
         self.assertEqual(zimg["lora_blocks"], 24)
         self.assertTrue(zimg["grad_checkpoint"])
+        self.assertEqual(zimg["progress_steps"], 28)
+        self.assertEqual(zimg["sigma_bias"], "high")
         self.assertEqual(zturbo["lora_rank"], 16)
         self.assertEqual(zturbo["guidance"], 0.0)
         self.assertEqual(zturbo["timestep_low"], 4)
         self.assertEqual(zturbo["timestep_high"], 9)
-        self.assertEqual(zturbo["timestep_bias"], "uniform")
-        self.assertEqual(zturbo["min_snr_gamma"], 5.0)
+        self.assertEqual(zturbo["timestep_bias"], "low")
+        self.assertEqual(zturbo["turbo_assistant_off_prob"], 0.5)
+        self.assertEqual(zturbo["min_snr_gamma"], 0.0)
         self.assertEqual(zturbo["turbo_infer_steps"], 9)
+        self.assertEqual(zturbo["progress_steps"], 9)
         self.assertNotIn("lora_module_keys", zturbo)
         self.assertEqual(zturbo["val_split"], 0.1)
         self.assertEqual(zturbo["val_every"], 100)
@@ -7756,6 +7760,22 @@ class ZImageTurboTrainingTests(unittest.TestCase):
             timestep_bias="uniform",
         )
         self.assertLess(float(mx.mean(t_low)), float(mx.mean(t_uni)))
+
+    def test_base_high_sigma_bias_prefers_high_sigma(self) -> None:
+        import mlx.core as mx
+
+        from backend.engine.runtime.mlx import MLXContext
+        from backend.engine.training.dit_training_loss import sample_noisy_latent_shifted
+
+        ctx = MLXContext()
+        x0 = ctx.zeros((256, 16, 64, 64), dtype=ctx.bfloat16())
+        _, _, t_high = sample_noisy_latent_shifted(
+            x0, ctx, sigma_shift=6.0, sigma_bias="high"
+        )
+        _, _, t_uni = sample_noisy_latent_shifted(
+            x0, ctx, sigma_shift=6.0, sigma_bias="uniform"
+        )
+        self.assertGreater(float(mx.mean(t_high)), float(mx.mean(t_uni)))
 
     def test_apply_lora_recursive_wraps_matching_linears(self) -> None:
         import mlx.nn as nn
