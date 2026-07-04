@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -290,6 +291,45 @@ def clear_mlx_training_cache(mlx_ctx: Any | None = None) -> None:
 
 def adapter_meta_path(adapter_path: Path) -> Path:
     return adapter_path.with_suffix(".json")
+
+
+def normalize_base_model_id(model_id: str) -> str:
+    return (model_id or "").split(":", 1)[0].strip()
+
+
+def resume_checkpoint_incompatibility(
+    *,
+    base_model: str,
+    adapter_path: Path,
+    source_task_params: dict[str, Any] | None = None,
+) -> str | None:
+    """Return a human-readable reason when a resume checkpoint cannot be used, else None."""
+    requested = normalize_base_model_id(base_model)
+    if not requested:
+        return "base_model is required when resuming training"
+
+    if source_task_params:
+        source = normalize_base_model_id(str(source_task_params.get("base_model") or ""))
+        if source and source != requested:
+            return (
+                f"Resume source task used base model {source!r}, "
+                f"but this request targets {requested!r}"
+            )
+
+    meta_path = adapter_meta_path(adapter_path)
+    if not meta_path.is_file():
+        return None
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None
+    meta_base = normalize_base_model_id(str(meta.get("base_model") or ""))
+    if meta_base and meta_base != requested:
+        return (
+            f"Checkpoint was saved for base model {meta_base!r}, "
+            f"but this request targets {requested!r}"
+        )
+    return None
 
 
 def optimizer_state_path(adapter_path: Path) -> Path:

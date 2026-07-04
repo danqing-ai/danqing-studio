@@ -7503,6 +7503,37 @@ class LoraTrainRuntimeTests(unittest.TestCase):
         self.assertEqual(cfg.lora_alpha, 16)
         self.assertEqual(cfg.lora_scale, 1.0)
 
+    def test_resume_checkpoint_incompatibility_base_model(self) -> None:
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from backend.engine.training.lora_train_runtime import resume_checkpoint_incompatibility
+
+        with tempfile.TemporaryDirectory() as tmp:
+            adapter = Path(tmp) / "best_adapters.safetensors"
+            adapter.write_bytes(b"")
+            meta = adapter.with_suffix(".json")
+            meta.write_text(
+                json.dumps({"base_model": "z-image-turbo", "iteration": 300}),
+                encoding="utf-8",
+            )
+            reason = resume_checkpoint_incompatibility(
+                base_model="z-image",
+                adapter_path=adapter,
+                source_task_params={"base_model": "z-image-turbo"},
+            )
+            self.assertIsNotNone(reason)
+            self.assertIn("z-image-turbo", reason)
+            self.assertIn("z-image", reason)
+
+            ok = resume_checkpoint_incompatibility(
+                base_model="z-image-turbo",
+                adapter_path=adapter,
+                source_task_params={"base_model": "z-image-turbo"},
+            )
+            self.assertIsNone(ok)
+
     def test_parse_lora_train_runtime_config_rejects_batch_size_gt_one(self) -> None:
         from backend.engine.training.lora_train_runtime import parse_lora_train_runtime_config
 

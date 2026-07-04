@@ -209,6 +209,22 @@
 
           <!-- Step 3: config -->
           <div v-show="step === 2" class="lora-train-page__panel">
+            <DqAlert
+              v-if="hasResume"
+              type="warning"
+              :closable="false"
+              class="lora-train-page__resume-banner"
+              :title="$t('loraTrain.resumeActiveTitle')"
+            >
+              <p>{{ $t('loraTrain.resumeActiveBody', {
+                task: form.resume_task_id,
+                checkpoint: form.resume_checkpoint,
+                base: form.base_model,
+              }) }}</p>
+              <DqButton size="xs" type="secondary" @click="clearResume">
+                {{ $t('loraTrain.clearResume') }}
+              </DqButton>
+            </DqAlert>
             <div class="lora-train-page__preset-grid">
               <button
                 v-for="p in presetKeys"
@@ -444,25 +460,27 @@
                   :placeholder="$t('loraTrain.loraModuleKeysPlaceholder')"
                 />
               </div>
-              <div class="lora-train-page__resume-block">
-                <span class="lora-train-page__label">{{ $t('loraTrain.resumeTraining') }}</span>
-                <p class="lora-train-page__field-hint">{{ $t('loraTrain.resumeHint') }}</p>
-                <div class="lora-train-page__field-grid">
-                  <div class="lora-train-page__field">
-                    <label class="lora-train-page__label">{{ $t('loraTrain.resumeFromTask') }}</label>
-                    <DqInput v-model="form.resume_task_id" placeholder="tsk_…" />
-                  </div>
-                  <div class="lora-train-page__field">
-                    <label class="lora-train-page__label">{{ $t('loraTrain.resumeCheckpoint') }}</label>
-                    <DqInput v-model="form.resume_checkpoint" placeholder="0000300_adapters.safetensors" />
-                  </div>
-                </div>
-              </div>
             </details>
           </div>
 
           <!-- Step 4: confirm -->
           <div v-show="step === 3" class="lora-train-page__panel">
+            <DqAlert
+              v-if="hasResume"
+              type="warning"
+              :closable="false"
+              class="lora-train-page__resume-banner"
+              :title="$t('loraTrain.resumeConfirmWarning')"
+            >
+              <p>{{ $t('loraTrain.resumeActiveBody', {
+                task: form.resume_task_id,
+                checkpoint: form.resume_checkpoint,
+                base: form.base_model,
+              }) }}</p>
+              <DqButton size="xs" type="secondary" @click="clearResume">
+                {{ $t('loraTrain.clearResume') }}
+              </DqButton>
+            </DqAlert>
             <p class="lora-train-page__confirm-intro">{{ $t('loraTrain.confirmIntro') }}</p>
             <LoraQualityHints
               v-if="datasetHealth"
@@ -511,9 +529,9 @@
                 <span>{{ $t('loraTrain.summaryOptimization') }}</span>
                 <strong>{{ confirmOptimizationSummary }}</strong>
               </li>
-              <li v-if="form.resume_task_id && form.resume_checkpoint">
+              <li v-if="hasResume">
                 <span>{{ $t('loraTrain.summaryResume') }}</span>
-                <strong>{{ form.resume_checkpoint }}</strong>
+                <strong>{{ form.resume_task_id }} / {{ form.resume_checkpoint }}</strong>
               </li>
             </ul>
           </div>
@@ -548,6 +566,8 @@ const registryStore = useRegistryStore();
 const step = ref(0);
 const submitting = ref(false);
 const activeRunId = ref('');
+const resumeIntent = ref(false);
+const applyingResumeSync = ref(false);
 const trainableModels = ref<any[]>([]);
 const datasets = ref<any[]>([]);
 const datasetHealth = ref<LoraDatasetHealthReport | null>(null);
@@ -757,6 +777,17 @@ const canNext = computed(() => {
 const canSubmit = computed(
   () => canNext.value && requirements.value?.can_submit !== false
 );
+
+const hasResume = computed(
+  () => !!form.resume_task_id.trim() && !!form.resume_checkpoint.trim()
+);
+
+function clearResume() {
+  form.resume_task_id = '';
+  form.resume_checkpoint = '';
+  resumeIntent.value = false;
+  persistDraft();
+}
 
 function goToStep(i: number) {
   if (i <= maxReachableStep.value) step.value = i;
@@ -1083,8 +1114,10 @@ function restoreDraft() {
     if (draft.weight_decay != null) form.weight_decay = Number(draft.weight_decay);
     if (draft.val_split != null) form.val_split = Number(draft.val_split);
     if (draft.val_every != null) form.val_every = Number(draft.val_every);
-    if (draft.resume_task_id) form.resume_task_id = String(draft.resume_task_id);
-    if (draft.resume_checkpoint) form.resume_checkpoint = String(draft.resume_checkpoint);
+    // Never restore resume fields from draft — they leak across unrelated new runs.
+    form.resume_task_id = '';
+    form.resume_checkpoint = '';
+    resumeIntent.value = false;
     if (draft.train_type) form.train_type = draft.train_type as '' | 'lora' | 'dora';
     if (draft.min_snr_gamma != null) form.min_snr_gamma = Number(draft.min_snr_gamma);
     if (draft.class_prompt) form.class_prompt = String(draft.class_prompt);
@@ -1127,8 +1160,6 @@ function persistDraft() {
       weight_decay: form.weight_decay,
       val_split: form.val_split,
       val_every: form.val_every,
-      resume_task_id: form.resume_task_id,
-      resume_checkpoint: form.resume_checkpoint,
       train_type: form.train_type,
       min_snr_gamma: form.min_snr_gamma,
       class_prompt: form.class_prompt,
@@ -1235,15 +1266,31 @@ function openRunFromQuery() {
 function resumeFromRouteQuery() {
   const taskId = String(route.query.resume_task || '').trim();
   const checkpoint = String(route.query.resume_checkpoint || '').trim();
-  if (!taskId || !checkpoint) return;
+  if (!taskId || !checkpoint) return Promise.resolve();
+  applyingResumeSync.value = true;
   form.resume_task_id = taskId;
   form.resume_checkpoint = checkpoint;
+  resumeIntent.value = true;
   step.value = Math.max(step.value, 2);
-  toast.success(t('loraTrain.resumeTraining'));
   const q = { ...route.query };
   delete q.resume_task;
   delete q.resume_checkpoint;
   router.replace({ query: q });
+  return api.tasks.getMediaTask(taskId).then((row) => {
+    const rec = row as Record<string, unknown>;
+    const params = (rec.params || {}) as Record<string, unknown>;
+    const sourceBase = String(params.base_model || rec.model_id || '').split(':')[0].trim();
+    if (sourceBase) {
+      form.base_model = sourceBase;
+      applyPresetTrainingDefaults();
+      void refreshRequirements();
+    }
+    toast.success(t('loraTrain.resumeTraining'));
+  }).catch(() => {
+    toast.success(t('loraTrain.resumeTraining'));
+  }).finally(() => {
+    applyingResumeSync.value = false;
+  });
 }
 
 watch(step, (s) => {
@@ -1279,13 +1326,19 @@ watch(
     form.weight_decay,
     form.val_split,
     form.val_every,
-    form.resume_task_id,
-    form.resume_checkpoint,
   ],
   () => persistDraft()
 );
 
 watch(() => form.base_model, () => {
+  if (applyingResumeSync.value) return;
+  if (hasResume.value) {
+    const hadIntent = resumeIntent.value;
+    clearResume();
+    if (hadIntent) {
+      toast.info(t('loraTrain.resumeClearedOnBaseChange'));
+    }
+  }
   if (!supportsPriorPreservation.value) {
     clearPriorPreservationFields();
   }
@@ -1314,6 +1367,7 @@ async function submitTraining() {
       activeRunId.value = tid;
       historyRef.value?.refresh();
     }
+    clearResume();
   } catch (e: any) {
     const msg = e?.response?.data?.detail?.message || e?.message || String(e);
     toast.error(msg);
@@ -1347,7 +1401,7 @@ onMounted(async () => {
     applyPresetTrainingDefaults();
     if (form.preset === 'custom') applyCustomDefaultsFromQuick();
     openRunFromQuery();
-    resumeFromRouteQuery();
+    await resumeFromRouteQuery();
     await importFromRouteQuery();
     if (form.dataset_id) {
       await refreshDatasetHealth(form.dataset_id);
@@ -1933,10 +1987,12 @@ onMounted(async () => {
   gap: 6px;
 }
 
-.lora-train-page__resume-block {
-  margin-top: 16px;
-  padding-top: 14px;
-  border-top: 0.5px solid var(--dq-border-subtle);
+.lora-train-page__resume-banner {
+  margin-bottom: 16px;
+}
+
+.lora-train-page__resume-banner p {
+  margin: 0 0 10px;
 }
 
 .lora-train-page__advanced {
