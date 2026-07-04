@@ -1,12 +1,22 @@
 <template>
   <div class="copilot-page lora-train-page">
+    <aside class="lora-train-page__runs-rail" :aria-label="$t('loraTrain.recentRuns')">
+      <DqSurfaceCard class="lora-train-page__runs-card studio-surface-card">
+        <LoraTrainHistory
+          ref="historyRef"
+          :active-id="activeRunId"
+          variant="rail"
+          @select="openRun"
+        />
+      </DqSurfaceCard>
+    </aside>
+
     <div class="copilot-page__sidebar">
       <DqSurfaceCard class="copilot-page__sidebar-card studio-surface-card">
         <div class="card-title">
           <DqIcon><MagicStick /></DqIcon>
           {{ $t('loraTrain.title') }}
         </div>
-        <p class="copilot-page__sidebar-intro">{{ $t('loraTrain.railSubtitle') }}</p>
 
         <nav
           class="copilot-page__nav dq-download-menu"
@@ -40,17 +50,6 @@
               <span class="lora-train-page__wizard-summary-value">{{ row.value }}</span>
             </li>
           </ul>
-        </div>
-
-        <div class="lora-train-page__sidebar-history">
-          <LoraTrainHistory
-            ref="historyRef"
-            :active-id="activeRunId"
-            variant="sidebar"
-            show-models-link
-            @select="openRun"
-            @open-models="openModelsUserLorasPage"
-          />
         </div>
 
         <div v-if="requirements" class="copilot-page__status-panel lora-train-page__memory-panel">
@@ -536,7 +535,6 @@ import LoraTrainRunDetail from '@/components/lora/LoraTrainRunDetail.vue';
 import LoraDatasetPanel from '@/components/lora/LoraDatasetPanel.vue';
 import LoraTrainHistory from '@/components/lora/LoraTrainHistory.vue';
 import LoraQualityHints from '@/components/lora/LoraQualityHints.vue';
-import { openModelsUserLoras } from '@/utils/loraTrainHandoff';
 import { useRegistryStore } from '@/stores/registry';
 import type { LoraDatasetHealthReport } from '@/utils/loraQuality';
 
@@ -1322,10 +1320,6 @@ async function submitTraining() {
   }
 }
 
-function openModelsUserLorasPage() {
-  openModelsUserLoras(router);
-}
-
 function onVerifyGenerate(payload: { prompt: string; loraId: string; baseModel: string }) {
   router.push({
     name: 'image_create',
@@ -1361,6 +1355,33 @@ onMounted(async () => {
 <style scoped>
 .lora-train-page.copilot-page {
   padding: 4px 6px 4px 0;
+  gap: 12px;
+}
+
+.lora-train-page__runs-rail {
+  width: 220px;
+  flex-shrink: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.lora-train-page__runs-card {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.lora-train-page__runs-card :deep(.dq-surface-card__body) {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 12px;
 }
 
 .lora-train-page .copilot-page__sidebar {
@@ -1462,14 +1483,6 @@ onMounted(async () => {
   color: var(--dq-label-primary);
   line-height: 1.35;
   word-break: break-word;
-}
-
-.lora-train-page__sidebar-history {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
 }
 
 .lora-train-page__memory-panel {
@@ -2029,9 +2042,9 @@ onMounted(async () => {
     padding-right: 0;
   }
 
-  .lora-train-page__sidebar-history {
-    flex: 0 0 auto;
-    max-height: 220px;
+  .lora-train-page__runs-rail {
+    width: 100%;
+    max-height: 240px;
   }
 
   .lora-train-page__memory-panel {
