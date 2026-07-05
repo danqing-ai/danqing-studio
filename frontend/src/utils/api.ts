@@ -207,6 +207,8 @@ function assetRowToGalleryItem(a: AssetRow): GalleryItem {
     prompt: String(meta.prompt || ''),
     model: String(meta.model || ''),
     thumbnail: thumb,
+    source_task_id: String(a.source_task_id || meta.source_task_id || ''),
+    source_action: a.source_action ?? (meta.source_action as string | null | undefined) ?? null,
     metadata: {
       ...meta,
       ...(duration_seconds != null ? { duration_seconds } : {}),

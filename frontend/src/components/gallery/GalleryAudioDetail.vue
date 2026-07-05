@@ -42,36 +42,7 @@
     </div>
 
     <template v-if="variant === 'lightbox'">
-      <div v-if="item.prompt" class="gallery-audio-detail__section">
-        <div class="gallery-audio-detail__section-head">
-          <span class="gallery-audio-detail__section-label">{{ $t('gallery.prompt') }}</span>
-          <DqIconButton
-            type="text"
-            size="sm"
-            :label="$t('gallery.copy')"
-            @click="copyPrompt"
-          >
-            <DqIcon><CopyDocument /></DqIcon>
-          </DqIconButton>
-        </div>
-        <p class="gallery-audio-detail__prompt-text">{{ item.prompt }}</p>
-      </div>
-
-      <dl class="gallery-audio-detail__meta">
-        <div v-if="item.model" class="gallery-audio-detail__meta-row">
-          <dt>{{ $t('gallery.model') }}</dt>
-          <dd>{{ item.model }}</dd>
-        </div>
-        <div v-if="durationLabel" class="gallery-audio-detail__meta-row">
-          <dt>{{ $t('gallery.durationLabel') }}</dt>
-          <dd>{{ durationLabel }}</dd>
-        </div>
-        <div v-if="item.created_at" class="gallery-audio-detail__meta-row">
-          <dt>{{ $t('gallery.createdAt') }}</dt>
-          <dd>{{ formatDate(item.created_at) }}</dd>
-        </div>
-      </dl>
-
+      <GalleryAssetDetailMeta :item="item" show-prompt />
     </template>
   </div>
 </template>
@@ -79,12 +50,12 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { CopyDocument } from '@danqing/dq-shell';
-import { toast } from '@/utils/feedback';
-import { $tt } from '@/utils/i18n';
 import AudioMusicPlayer from '@/components/audio/AudioMusicPlayer.vue';
+import GalleryAssetDetailMeta from '@/components/gallery/GalleryAssetDetailMeta.vue';
 import type { GalleryItem } from '@/types';
 import { assetDisplayLabel } from '@/utils/assetDisplay';
+import { toast } from '@/utils/feedback';
+import { $tt } from '@/utils/i18n';
 
 const props = defineProps({
   item: { type: Object as () => GalleryItem, required: true },
@@ -137,15 +108,6 @@ function artHueForPrompt(text: string) {
   return h;
 }
 
-function formatDate(dateStr: string) {
-  if (!dateStr) return '—';
-  try {
-    return new Date(dateStr).toLocaleString();
-  } catch {
-    return dateStr;
-  }
-}
-
 async function copyLyrics() {
   if (!lyricsText.value) return;
   try {
@@ -175,23 +137,6 @@ function downloadLyrics() {
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 }
-
-async function copyPrompt() {
-  const text = props.item.prompt;
-  if (!text) return;
-  try {
-    await navigator.clipboard.writeText(text);
-    toast.success($tt('gallery.copied'));
-  } catch {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand('copy');
-    document.body.removeChild(ta);
-    toast.success($tt('gallery.copied'));
-  }
-}
 </script>
 
 <style scoped>
@@ -203,17 +148,5 @@ async function copyPrompt() {
 
 .gallery-audio-detail--lightbox .studio-audio-effective-lyrics__body {
   color: var(--dq-label-primary);
-}
-
-.gallery-audio-detail__prompt-text {
-  color: var(--dq-label-primary);
-}
-
-.gallery-audio-detail__meta-row dd {
-  color: var(--dq-label-secondary);
-}
-
-.gallery-audio-detail__index {
-  color: var(--dq-label-tertiary);
 }
 </style>

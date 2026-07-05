@@ -80,42 +80,14 @@
       </div>
 
       <div v-if="media === 'video' && currentItem" class="gallery-preview-detail">
-        <div v-if="currentItem.prompt" class="gallery-preview-detail__section">
-          <div class="gallery-preview-detail__head">
-            <span class="gallery-preview-detail__label">{{ $t('gallery.prompt') }}</span>
-            <DqIconButton
-              type="text"
-              size="sm"
-              :label="$t('gallery.copy')"
-              @click="copyPrompt"
-            >
-              <DqIcon><CopyDocument /></DqIcon>
-            </DqIconButton>
-          </div>
-          <p class="gallery-preview-detail__prompt">{{ currentItem.prompt }}</p>
-        </div>
-        <dl class="gallery-preview-detail__meta">
-          <div v-if="currentItem.model" class="gallery-preview-detail__meta-row">
-            <dt>{{ $t('gallery.model') }}</dt>
-            <dd>{{ currentItem.model }}</dd>
-          </div>
-          <div v-if="currentItem.duration_seconds" class="gallery-preview-detail__meta-row">
-            <dt>{{ $t('gallery.durationLabel') }}</dt>
-            <dd>{{ formatClock(Number(currentItem.duration_seconds)) }}</dd>
-          </div>
-          <div v-if="currentItem.created_at" class="gallery-preview-detail__meta-row">
-            <dt>{{ $t('gallery.createdAt') }}</dt>
-            <dd>{{ formatDate(currentItem.created_at) }}</dd>
-          </div>
-        </dl>
+        <GalleryAssetDetailMeta :item="currentItem" show-prompt />
       </div>
 
       <div
-        v-if="media === 'image' && (imageCaption || imageMetaLine)"
-        class="gallery-preview-caption dq-glass--popover"
+        v-if="media === 'image' && currentItem"
+        class="gallery-preview-detail gallery-preview-detail--image dq-glass--popover"
       >
-        <p v-if="imageCaption" class="gallery-preview-caption__text">{{ imageCaption }}</p>
-        <p v-if="imageMetaLine" class="gallery-preview-caption__meta">{{ imageMetaLine }}</p>
+        <GalleryAssetDetailMeta :item="currentItem" show-prompt />
       </div>
 
       <div v-if="items.length > 1" class="gallery-preview-counter">
@@ -127,13 +99,13 @@
 
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue';
-import { ArrowLeft, ArrowRight, CopyDocument } from '@danqing/dq-shell';
+import { ArrowLeft, ArrowRight } from '@danqing/dq-shell';
 import { api } from '@/utils/api';
 import { $tt } from '@/utils/i18n';
-import { toast } from '@/utils/feedback';
 import type { GalleryItem } from '@/types';
 import CreateVideoPlayer from '@/components/create/CreateVideoPlayer.vue';
 import GalleryAudioDetail from '@/components/gallery/GalleryAudioDetail.vue';
+import GalleryAssetDetailMeta from '@/components/gallery/GalleryAssetDetailMeta.vue';
 
 const props = defineProps<{
   open: boolean;
@@ -177,15 +149,6 @@ const dialogTitle = computed(() => {
 });
 
 const imageCaption = computed(() => (currentItem.value?.prompt || '').trim());
-
-const imageMetaLine = computed(() => {
-  const item = currentItem.value;
-  if (!item) return '';
-  const parts: string[] = [];
-  if (item.model) parts.push(item.model);
-  if (item.width && item.height) parts.push(`${item.width}×${item.height}`);
-  return parts.join(' · ');
-});
 
 const canGoPrev = computed(() => currentIndex.value > 0);
 const canGoNext = computed(() => currentIndex.value < props.items.length - 1);
@@ -244,32 +207,6 @@ function downloadCurrent() {
   a.href = api.gallery.getImageUrl(item.path);
   a.download = item.name || 'download';
   a.click();
-}
-
-async function copyPrompt() {
-  const text = currentItem.value?.prompt;
-  if (!text) return;
-  try {
-    await navigator.clipboard.writeText(text);
-    toast.success($tt('gallery.copied'));
-  } catch {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand('copy');
-    document.body.removeChild(ta);
-    toast.success($tt('gallery.copied'));
-  }
-}
-
-function formatDate(dateStr: string) {
-  if (!dateStr) return '—';
-  try {
-    return new Date(dateStr).toLocaleString();
-  } catch {
-    return dateStr;
-  }
 }
 
 function goPrev() {
@@ -389,7 +326,7 @@ onBeforeUnmount(() => {
 }
 
 .gallery-preview-container--image .gallery-preview-media {
-  padding: 12px 52px 88px;
+  padding: 12px 52px 220px;
 }
 
 .gallery-preview-img {
@@ -533,9 +470,17 @@ onBeforeUnmount(() => {
   border-radius: var(--dq-radius-group);
   color: var(--dq-label-primary);
   z-index: 10;
-  max-height: 160px;
+  max-height: min(240px, 34vh);
   overflow-y: auto;
   box-shadow: var(--dq-shadow-md);
+}
+
+.gallery-preview-detail--image {
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%);
+  width: min(640px, calc(100% - 96px));
+  bottom: 44px;
 }
 
 .gallery-preview-detail__section {
