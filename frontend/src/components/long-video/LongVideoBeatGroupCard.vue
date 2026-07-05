@@ -23,6 +23,14 @@
           <button type="button" class="lv-beat-group__menu-item" @click="onResplitBeat">
             {{ $tt('video.longVideoResplitBeat') }}
           </button>
+          <button
+            type="button"
+            class="lv-beat-group__menu-item"
+            :disabled="parseRegenerating"
+            @click="onRegenerateParse"
+          >
+            {{ $tt('video.longVideoBeatRegenerate') }}
+          </button>
         </div>
       </div>
     </header>
@@ -73,12 +81,14 @@ const props = defineProps<{
   selection: LongVideoSelection;
   keyframeGeneratingIndex?: number | null;
   segmentGeneratingIndices?: number[];
+  parseRegenerating?: boolean;
 }>();
 
 const emit = defineEmits<{
   (e: 'select-segment', index: number): void;
   (e: 'insert-anchor', groupId: string): void;
   (e: 'resplit-beat', groupId: string): void;
+  (e: 'regenerate-beat', beatIndex: number): void;
 }>();
 
 const { t: $tt } = useI18n();
@@ -104,6 +114,11 @@ function onInsertAnchor() {
 function onResplitBeat() {
   closeMenu();
   emit('resplit-beat', props.group.groupId);
+}
+
+function onRegenerateParse() {
+  closeMenu();
+  emit('regenerate-beat', props.group.beatIndex);
 }
 
 function onDocClick() {

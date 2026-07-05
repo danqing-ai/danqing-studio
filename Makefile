@@ -159,7 +159,7 @@ stop:
 test: verify-engine-stack
 
 test-integration:
-	@echo "No integration tests yet (placeholder)"
+	PYTHONPATH=. $(PYTHON) tests/script_parse_integration.py ScriptParseIntegrationTests.test_decompose_and_expand_e2e ScriptParseIntegrationTests.test_wukong_decompose_and_expand_e2e
 
 # ============================================================================
 # Quality gates

@@ -30,7 +30,10 @@
           :cast-done="castStepDone"
           :scenes-done="scenesStepDone"
           :storyboard-done="storyboardStepDone"
+          :storyboard-disabled="storyboardTabBlocked"
+          :storyboard-disabled-reason="storyboardTabBlockedReason"
           @update:model-value="onEditorTabChange"
+          @storyboard-blocked="onStoryboardTabBlocked"
         />
       </div>
 
@@ -68,8 +71,13 @@
             :script-parse-llm-model="project?.script_parse_llm_model ?? ''"
             :parsing="isChapterAnalyzing"
             :parse-progress-phase="scriptParseProgressPhase"
+            :parse-progress-message="scriptParseProgressMessage"
+            :beat-regenerating-index="beatRegeneratingIndex"
             :expanding="isScriptExpanding"
+            :generating-storyboard="isStoryboardGenerating"
             :parse-error="scriptParseError"
+            :parse-blocked="storyboardTabBlocked"
+            :parse-blocked-reason="storyboardTabBlockedReason"
             :project-id="project?.project_id ?? ''"
             :parsed-shot-count="shots.length"
             @update:script-text="onScriptTextChange"
@@ -81,6 +89,9 @@
             @update:style-anchor="onUpdateStyleAnchor"
             @expand="onScriptExpand"
             @parse="onScriptParse"
+            @generate-storyboard="onGenerateStoryboard"
+            @regenerate-beat="onRegenerateBeat"
+            @clear-parse-blocked="clearParseBlocked"
             @go-to-cast="onEditorTabChange('cast')"
         />
         </div>
@@ -104,7 +115,7 @@
           @batch-generate-portraits="onBatchGeneratePortraits"
           @import-style-anchor="onUpdateStyleAnchor"
           @go-to-script="onEditorTabChange('script')"
-          @go-to-storyboard="onEditorTabChange('storyboard')"
+          @go-to-storyboard="onCastGoToStoryboard"
         />
         </div>
 
@@ -123,7 +134,7 @@
           @vision-backfill="onVisionBackfillSceneLook"
           @batch-generate-refs="onBatchGenerateSceneRefs"
           @go-to-script="onEditorTabChange('script')"
-          @go-to-storyboard="onEditorTabChange('storyboard')"
+          @go-to-storyboard="onCastGoToStoryboard"
         />
         </div>
 
@@ -148,10 +159,24 @@
             :segment-generating-indices="segmentGeneratingIndicesList"
             :output-width="outputSizePixels.width"
             :output-height="outputSizePixels.height"
+            :beat-regenerating-index="beatRegeneratingIndex"
+            :parse-loading="isChapterAnalyzing || isStoryboardGenerating"
             @select-segment="onSelectSegment"
             @insert-anchor="onInsertFaceAnchor"
             @resplit-beat="onResplitBeatGroup"
+            @regenerate-beat="onRegenerateBeatFromGroup"
           />
+          <DqAlert
+            v-if="storyboardTabBlocked && !shots.length"
+            type="error"
+            :closable="false"
+            class="long-video-page__parse-blocked"
+            :title="storyboardTabBlockedReason || $tt('video.longVideoStoryboardTabBlocked')"
+          >
+            <DqButton size="sm" type="primary" @click="onEditorTabChange('script')">
+              {{ $tt('video.longVideoParseBlockedGoScript') }}
+            </DqButton>
+          </DqAlert>
           <div class="long-video-page__merge-bar">
             <DqButton
               type="primary"
@@ -306,6 +331,10 @@ import { assetIdFromGalleryPath } from '@/utils/copilotHandoff';
 import { openGlobalTaskQueue } from '@/utils/appEvents';
 import router from '@/router';
 import {
+  clearLongVideoHandoffState,
+  readLongVideoHandoffState,
+} from '@/utils/longVideoHandoff';
+import {
   appendActiveEnumFields,
   formatResolutionOptionLabel,
   normalizeParamsDef,
@@ -380,6 +409,10 @@ import {
   resolveSceneForShot,
 } from '@/utils/longVideoProject';
 import { berniniMaxReferenceImages } from '@/utils/videoEditSource';
+import {
+  mergeQualityIssues,
+  type ScriptParseQualityIssue,
+} from '@/utils/scriptParseError';
 import '@/styles/long-video.css';
 
 const tasksStore = useTasksStore();
@@ -396,7 +429,7 @@ const {
   pickOutputSizeForModel,
   loadRegistry,
 } = useLongVideoRegistry();
-const { enhance, isEnhancing, analyzeLongVideoChapter, isChapterAnalyzing } = useComposerLlm();
+const { enhance, isEnhancing, scriptParseDecompose, scriptParseExpand, scriptParseExpandBeat, isChapterAnalyzing, isStoryboardGenerating } = useComposerLlm();
 const { locale: uiLocale } = useI18n();
 const { galleryItems, loadGallery } = useStudioGallery('image', { defaultGroupMode: false });
 
@@ -440,9 +473,12 @@ const suppressAutoSave = ref(0);
 const parseStrategyOpen = ref(false);
 const scriptParseError = ref('');
 const scriptParseProgressPhase = ref('');
+const scriptParseProgressMessage = ref('');
+const beatRegeneratingIndex = ref<number | null>(null);
 const isScriptExpanding = ref(false);
 
-type ChapterAnalyzeApiResult = NonNullable<Awaited<ReturnType<typeof analyzeLongVideoChapter>>>;
+type ChapterAnalyzeApiResult = import('@/utils/api').ScriptParseExpandResult;
+type DecomposeApiResult = import('@/utils/api').ScriptParseDecomposeResult;
 
 const project = computed(() => longVideoProject.project.value);
 const shots = computed(() => project.value?.shots ?? []);
@@ -499,6 +535,19 @@ const scenesStepDone = computed(() => {
 
 const storyboardStepDone = computed(() => shots.value.length >= MIN_LONG_VIDEO_KEYFRAMES);
 
+const storyboardTabBlocked = computed(() => {
+  const analysis = project.value?.chapter_analysis;
+  if (analysis?.parse_blocked) return true;
+  return (analysis?.quality_issues ?? []).some((i) => i.severity === 'critical');
+});
+
+const storyboardTabBlockedReason = computed(() => {
+  const analysis = project.value?.chapter_analysis;
+  return analysis?.parse_blocked_reason?.trim()
+    || (analysis?.quality_issues ?? []).find((i) => i.severity === 'critical')?.message
+    || '';
+});
+
 const defaultKeyframeModel = computed(() => profile.value?.keyframe_models[0] ?? 'z-image-turbo');
 const defaultSegmentModel = computed(() => profile.value?.segment_models[0] ?? 'wan-2.2-i2v-14b');
 const keyframeModelOptions = computed(() => profile.value?.keyframe_models ?? []);
@@ -553,7 +602,61 @@ const consistencyWarningForSelection = computed(() => {
   return consistencyWarnings.value[idx] ?? null;
 });
 
+function onParseProgress(phase: string, message?: string) {
+  scriptParseProgressPhase.value = phase;
+  scriptParseProgressMessage.value = message?.trim() || '';
+}
+
+function markParseBlocked(reason: string, incomingIssues: ScriptParseQualityIssue[] = []) {
+  const lv = project.value;
+  if (!lv) return;
+  const prev = lv.chapter_analysis ?? {
+    synopsis: '',
+    scene_beats: [],
+  };
+  const structured = incomingIssues.length
+    ? incomingIssues
+    : [{ code: 'parse_blocked', message: reason, severity: 'critical' as const }];
+  const mergedIssues = mergeQualityIssues(prev.quality_issues, structured);
+  setProjectWithChapterSync({
+    ...lv,
+    chapter_analysis: {
+      ...prev,
+      parse_blocked: true,
+      parse_blocked_reason: reason,
+      quality_issues: mergedIssues,
+    },
+  });
+}
+
+function clearParseBlocked() {
+  const lv = project.value;
+  if (!lv?.chapter_analysis?.parse_blocked) return;
+  const prev = lv.chapter_analysis;
+  setProjectWithChapterSync({
+    ...lv,
+    chapter_analysis: {
+      ...prev,
+      parse_blocked: false,
+      parse_blocked_reason: undefined,
+      quality_issues: (prev.quality_issues ?? []).filter(
+        (i) => i.severity !== 'critical' && i.code !== 'parse_blocked',
+      ),
+    },
+  });
+  scriptParseError.value = '';
+}
+
+function onStoryboardTabBlocked() {
+  const reason = storyboardTabBlockedReason.value;
+  toast.warning(reason || $tt('video.longVideoStoryboardTabBlocked'));
+}
+
 function onEditorTabChange(tab: LongVideoEditorTab) {
+  if (tab === 'storyboard' && storyboardTabBlocked.value) {
+    onStoryboardTabBlocked();
+    return;
+  }
   patchProjectField('editor_tab', tab);
 }
 
@@ -1387,6 +1490,108 @@ function storyboardShotsFromResponse(
   });
 }
 
+function applyScriptDecomposeResult(
+  result: DecomposeApiResult,
+  opts: { mergeCharacters?: boolean } = {},
+): number {
+  const lv = project.value;
+  if (!lv || !result?.scene_beats?.length) return 0;
+
+  const scene_beats = result.scene_beats.map((s) => ({
+    order: s.order,
+    title: s.title || '',
+    beat: s.beat || '',
+  }));
+  const mergeCharacters = opts.mergeCharacters !== false;
+  const incomingChars = (result.characters ?? []) as LongVideoCharacter[];
+  const mergedChars = mergeCharacters
+    ? mergeCharacterRosters(lv.characters ?? [], incomingChars)
+    : incomingChars;
+  const rosterPatch = hydrateCharacterRoster(
+    {
+      characters: mergedChars,
+      character_anchor: result.character_anchor || lv.character_anchor || '',
+      style_anchor: result.style_anchor || lv.style_anchor || '',
+    },
+    uiLocale.value.startsWith('zh') ? 'zh' : 'en',
+  );
+  const incomingScenes = (result.scenes ?? []) as LongVideoScene[];
+  const mergedScenes = mergeCharacters
+    ? mergeSceneRosters(lv.scenes ?? [], incomingScenes)
+    : incomingScenes;
+  const parseRunId = result.parse_run_id || lv.chapter_analysis?.parse_run_id || '';
+  const parseAt = parseRunId ? new Date().toISOString() : lv.chapter_analysis?.last_parse_at;
+  const analysis: LongVideoChapterAnalysis = {
+    synopsis: result.synopsis || '',
+    mood: result.mood || '',
+    scene_beats,
+    character_anchor: rosterPatch.character_anchor,
+    style_anchor: rosterPatch.style_anchor,
+    characters: rosterPatch.characters,
+    scenes: mergedScenes,
+    quality_warnings: [],
+    quality_issues: [],
+    parse_blocked: false,
+    parse_blocked_reason: undefined,
+    parse_run_id: parseRunId,
+    last_parse_at: parseAt,
+    parse_phases: result.parse_phases ?? lv.chapter_analysis?.parse_phases,
+    script_artifact: result.script_artifact ?? lv.chapter_analysis?.script_artifact,
+    shot_t2i_provenance: lv.chapter_analysis?.shot_t2i_provenance,
+    parse_history: lv.chapter_analysis?.parse_history,
+  };
+  setProjectWithChapterSync({
+    ...lv,
+    chapter_analysis: analysis,
+    character_anchor: rosterPatch.character_anchor,
+    characters: rosterPatch.characters,
+    scenes: mergedScenes,
+    style_anchor: rosterPatch.style_anchor,
+    chapter_title: result.chapter_title?.trim() || lv.chapter_title,
+    shots: [],
+  });
+  return scene_beats.length;
+}
+
+function buildScriptArtifactForExpand(lv: LongVideoProjectState): Record<string, unknown> | null {
+  const base = lv.chapter_analysis?.script_artifact;
+  if (!base || base.version !== '2.0') return null;
+  const merged = { ...base } as Record<string, unknown>;
+  merged.title = lv.chapter_title || base.title || '';
+  merged.style_anchor = lv.style_anchor || base.style_anchor || '';
+  if (lv.characters?.length) {
+    merged.characters = lv.characters.map((ch) => ({
+      id: ch.id,
+      name: ch.name,
+      role: (base.characters as Array<{ id: string; role?: string }> | undefined)?.find((c) => c.id === ch.id)?.role ?? 'supporting',
+      looks: ch.looks.map((lk) => ({
+        id: lk.id,
+        label: lk.label,
+        body: lk.body,
+        portrait_prompt_hint: '',
+      })),
+      default_look_id: ch.default_look_id,
+    }));
+  }
+  if (lv.scenes?.length) {
+    merged.scenes = lv.scenes.map((sc) => ({
+      id: sc.id,
+      name: sc.name,
+      looks: sc.looks.map((lk) => ({
+        id: lk.id,
+        label: lk.label,
+        body: lk.body,
+        environment_prompt_hint: '',
+      })),
+      default_look_id: sc.default_look_id,
+      spatial_layout_json: sc.spatial_layout_json ?? {},
+      grounding_panorama_asset_id: sc.grounding_panorama_asset_id ?? '',
+      grounding_depth_asset_id: sc.grounding_depth_asset_id ?? '',
+    }));
+  }
+  return merged;
+}
+
 function applyScriptAnalyzeResult(
   result: ChapterAnalyzeApiResult,
   opts: { mergeCharacters?: boolean } = {},
@@ -1457,9 +1662,12 @@ function applyScriptAnalyzeResult(
     scenes: mergedScenes,
     quality_warnings: result.quality_warnings ?? [],
     quality_issues: result.quality_issues ?? [],
+    parse_blocked: false,
+    parse_blocked_reason: undefined,
     parse_run_id: parseRunId,
     last_parse_at: parseAt,
     parse_phases: result.parse_phases ?? lv.chapter_analysis?.parse_phases,
+    script_artifact: result.script_artifact ?? lv.chapter_analysis?.script_artifact,
     shot_t2i_provenance: Object.keys(provenanceByShot).length ? provenanceByShot : lv.chapter_analysis?.shot_t2i_provenance,
     parse_history: parseHistory.length ? parseHistory : lv.chapter_analysis?.parse_history,
   };
@@ -1482,7 +1690,7 @@ function applyScriptAnalyzeResult(
 async function runScriptParsePipeline(strategy: LongVideoParseStrategy) {
   parseStrategyOpen.value = false;
   scriptParseError.value = '';
-  scriptParseProgressPhase.value = 'plan';
+  scriptParseProgressPhase.value = 'decompose';
 
   if (strategy === 'new_project') {
     if (!(await bootstrapNewProjectForParse())) return;
@@ -1496,34 +1704,29 @@ async function runScriptParsePipeline(strategy: LongVideoParseStrategy) {
     return;
   }
 
-  const segmentDurationSec = lv.segment_duration_sec ?? 5;
   const mergeCharacters = strategy === 'replace';
 
   await ensureProjectSavedForGeneration();
   const projectId = project.value?.project_id ?? lv.project_id ?? '';
   const parseModel = lv.script_parse_llm_model?.trim() || 'qwen3.6-27b';
 
-  const analyzeResult = await analyzeLongVideoChapter(
+  const decomposeResult = await scriptParseDecompose(
     {
-      chapter_text: text,
-      chapter_title: (lv.chapter_title || '').trim(),
+      script_text: text,
+      title: (lv.chapter_title || '').trim(),
       locale: uiLocale.value,
-      target_duration_sec: lv.target_duration_sec ?? 60,
-      segment_duration_sec: segmentDurationSec,
-      max_clip_sec: 10,
       long_video_project_id: projectId,
       model: parseModel,
     },
     {
       quietSuccess: true,
-      onProgress: (phase) => {
-        scriptParseProgressPhase.value = phase;
-      },
+      onProgress: onParseProgress,
     },
   );
   scriptParseProgressPhase.value = '';
-  if (!analyzeResult?.scene_beats?.length) {
-    if (!analyzeResult) {
+  scriptParseProgressMessage.value = '';
+  if (!decomposeResult?.scene_beats?.length) {
+    if (!decomposeResult) {
       scriptParseError.value = $tt('video.longVideoChapterAnalyzeFailedGeneric');
     } else {
       scriptParseError.value = $tt('video.longVideoChapterAnalyzeEmpty');
@@ -1531,33 +1734,183 @@ async function runScriptParsePipeline(strategy: LongVideoParseStrategy) {
     return;
   }
 
-  const sceneCount = applyScriptAnalyzeResult(analyzeResult, { mergeCharacters });
+  const sceneCount = applyScriptDecomposeResult(decomposeResult, { mergeCharacters });
   if (!sceneCount) return;
 
-  const lvAfter = project.value;
-  const hasParsedShots = (analyzeResult.shots?.length ?? lvAfter?.shots?.length ?? 0) > 0;
-  if (!hasParsedShots) {
-    scriptParseError.value = $tt('video.longVideoChapterAnalyzeNoShots');
+  const castCount = decomposeResult.characters?.length ?? project.value?.characters?.length ?? 0;
+  toast.success(
+    $tt('video.longVideoScriptDecomposeReady', {
+      scenes: sceneCount,
+      cast: castCount,
+    }),
+  );
+  onEditorTabChange('cast');
+}
+
+async function runStoryboardExpandPipeline() {
+  await runExpandPipeline({ mode: 'full' });
+}
+
+function shotsToExpandPayload(shotList: typeof shots.value): Array<Record<string, unknown>> {
+  return shotList.map((s, i) => ({
+    id: s.id,
+    order: s.order ?? i,
+    narrative_beat_index: s.narrative_beat_index ?? i,
+    visual_prompt: s.visual_prompt,
+    start_visual_prompt: s.start_visual_prompt,
+    video_prompt: s.video_prompt ?? s.motion_prompt,
+    motion_prompt: s.motion_prompt,
+    scene_prompt: s.scene_prompt,
+    segment_role: s.segment_role,
+    start_frame_mode: s.start_frame_mode,
+    segment_group_id: s.segment_group_id,
+    segment_group_index: s.segment_group_index,
+    duration_sec: s.duration_sec,
+    cast_looks: s.cast_looks,
+    scene_look: s.scene_look,
+  }));
+}
+
+async function runExpandPipeline(opts: { mode: 'full' } | { mode: 'beat'; beatIndex: number }) {
+  scriptParseError.value = '';
+  scriptParseProgressPhase.value = 'beat_plan';
+  scriptParseProgressMessage.value = '';
+  if (opts.mode === 'beat') {
+    beatRegeneratingIndex.value = opts.beatIndex;
+  }
+
+  const lv = project.value;
+  if (!lv) {
+    beatRegeneratingIndex.value = null;
+    return;
+  }
+  const artifact = buildScriptArtifactForExpand(lv);
+  if (!artifact) {
+    scriptParseError.value = $tt('video.longVideoStoryboardSynopsisEmpty');
+    beatRegeneratingIndex.value = null;
     return;
   }
 
-  const castCount = analyzeResult.characters?.length ?? lvAfter?.characters?.length ?? 0;
-  const shotCount = lvAfter?.shots?.length ?? 0;
-  toast.success(
-    $tt('video.longVideoScriptPipelineReady', {
-      scenes: sceneCount,
-      cast: castCount,
-      shots: shotCount,
-    }),
-  );
-  const qWarn = analyzeResult.quality_warnings?.length ?? 0;
-  if (qWarn > 0) {
-    toast.warning(
-      $tt('video.longVideoParseQualityWarnings', {
-        count: qWarn,
-        sample: analyzeResult.quality_warnings?.[0] ?? '',
-      }),
+  await ensureProjectSavedForGeneration();
+  const projectId = project.value?.project_id ?? lv.project_id ?? '';
+  const parseModel = lv.script_parse_llm_model?.trim() || 'qwen3.6-27b';
+  const segmentDurationSec = lv.segment_duration_sec ?? 5;
+  const parseOpts = {
+    quietSuccess: true as const,
+    onProgress: onParseProgress,
+    onError: (msg: string, qualityIssues?: ScriptParseQualityIssue[]) => {
+      scriptParseError.value = msg;
+      markParseBlocked(msg, qualityIssues ?? []);
+    },
+  };
+
+  let expandResult: ChapterAnalyzeApiResult | null = null;
+  if (opts.mode === 'full') {
+    expandResult = await scriptParseExpand(
+      {
+        script_artifact: artifact,
+        locale: uiLocale.value,
+        target_duration_sec: lv.target_duration_sec ?? 60,
+        segment_duration_sec: segmentDurationSec,
+        max_clip_sec: 10,
+        long_video_project_id: projectId,
+        model: parseModel,
+      },
+      parseOpts,
     );
+  } else {
+    expandResult = await scriptParseExpandBeat(
+      {
+        script_artifact: artifact,
+        beat_index: opts.beatIndex,
+        existing_shots: shotsToExpandPayload(shots.value),
+        locale: uiLocale.value,
+        target_duration_sec: lv.target_duration_sec ?? 60,
+        segment_duration_sec: segmentDurationSec,
+        max_clip_sec: 10,
+        long_video_project_id: projectId,
+        model: parseModel,
+      },
+      parseOpts,
+    );
+  }
+
+  beatRegeneratingIndex.value = null;
+  scriptParseProgressPhase.value = '';
+  scriptParseProgressMessage.value = '';
+
+  if (!expandResult?.shots?.length) {
+    if (!expandResult) {
+      if (!scriptParseError.value) {
+        scriptParseError.value =
+          opts.mode === 'beat'
+            ? $tt('video.longVideoBeatExpandFailedGeneric')
+            : $tt('video.longVideoScriptGenerateStoryboardFailedGeneric');
+      }
+    } else {
+      scriptParseError.value = $tt('video.longVideoChapterAnalyzeNoShots');
+    }
+    return;
+  }
+
+  applyScriptAnalyzeResult(expandResult, { mergeCharacters: false });
+
+  if (opts.mode === 'full') {
+    toast.success($tt('video.longVideoStoryboardReady'));
+    const qWarn = expandResult.quality_warnings?.length ?? 0;
+    if (qWarn > 0) {
+      toast.warning(
+        $tt('video.longVideoParseQualityWarnings', {
+          count: qWarn,
+          sample: expandResult.quality_warnings?.[0] ?? '',
+        }),
+      );
+    }
+    onEditorTabChange('storyboard');
+  } else {
+    toast.success($tt('video.longVideoBeatExpandDone', { index: opts.beatIndex + 1 }));
+  }
+}
+
+async function runBeatExpandPipeline(beatIndex: number) {
+  await runExpandPipeline({ mode: 'beat', beatIndex });
+}
+
+async function onRegenerateBeat(beatIndex: number) {
+  if (!scriptStepDone.value) {
+    toast.warning($tt('video.longVideoStoryboardSynopsisEmpty'));
+    return;
+  }
+  const ok = window.confirm($tt('video.longVideoBeatExpandConfirm', { index: beatIndex + 1 }));
+  if (!ok) return;
+  await runBeatExpandPipeline(beatIndex);
+}
+
+async function onRegenerateBeatFromGroup(beatIndex: number) {
+  if (isStoryboardGenerating.value || isChapterAnalyzing.value) return;
+  await onRegenerateBeat(beatIndex);
+}
+
+async function onGenerateStoryboard() {
+  if (!scriptStepDone.value) {
+    toast.warning($tt('video.longVideoStoryboardSynopsisEmpty'));
+    return;
+  }
+  if (shots.value.length > 0) {
+    const ok = window.confirm($tt('video.longVideoStoryboardOverwriteConfirm'));
+    if (!ok) return;
+  }
+  await runStoryboardExpandPipeline();
+}
+
+async function onCastGoToStoryboard() {
+  if (storyboardTabBlocked.value) {
+    onStoryboardTabBlocked();
+    return;
+  }
+  if (!shots.value.length && scriptStepDone.value) {
+    await runStoryboardExpandPipeline();
+    return;
   }
   onEditorTabChange('storyboard');
 }
@@ -2735,6 +3088,20 @@ async function mergeLongVideo() {
   }
 }
 
+function applyHandoffFromVideoCreate(): void {
+  const handoff = readLongVideoHandoffState();
+  if (!handoff) return;
+  longVideoProject.patchProject({
+    script_text: handoff.script_text,
+    ...(handoff.target_duration_sec ? { target_duration_sec: handoff.target_duration_sec } : {}),
+    editor_tab: 'script',
+  });
+  clearLongVideoHandoffState();
+  if (handoff.script_text?.trim()) {
+    toast.info($tt('video.longVideoHandoffApplied'));
+  }
+}
+
 onMounted(async () => {
   await loadRegistry();
   await loadProjectList();
@@ -2756,6 +3123,7 @@ onMounted(async () => {
   }
   syncOutputSizeForSegmentModel(segmentModelId.value);
   await loadGallery(true);
+  applyHandoffFromVideoCreate();
 });
 
 watch(segmentModelId, (modelId) => {

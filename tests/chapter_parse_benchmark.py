@@ -60,7 +60,7 @@ class CaseSummary:
 
 
 def _load_llm_service():
-    from tests.long_video_chapter_analyze_integration import _load_llm_service
+    from tests.script_parse_integration import _load_llm_service
 
     return _load_llm_service()
 
@@ -71,17 +71,24 @@ def run_single(
     *,
     run_index: int,
 ) -> CaseRunResult:
-    from backend.core.contracts import LongVideoChapterAnalyzeRequest
+    from backend.core.contracts import ScriptParseDecomposeRequest, ScriptParseExpandRequest
 
     t0 = time.perf_counter()
     try:
-        resp = svc.analyze_long_video_chapter(
-            LongVideoChapterAnalyzeRequest(
-                chapter_text=case.load_script(),
-                chapter_title=case.title,
+        decomposed = svc.script_parse_decompose(
+            ScriptParseDecomposeRequest(
+                script_text=case.load_script(),
+                title=case.title,
+                locale=case.locale,
+            )
+        )
+        resp = svc.script_parse_expand(
+            ScriptParseExpandRequest(
+                script_artifact=decomposed.script_artifact,
                 locale=case.locale,
                 target_duration_sec=case.target_duration_sec,
                 segment_duration_sec=case.segment_duration_sec,
+                max_clip_sec=getattr(case, "max_clip_sec", 10.0),
             )
         )
     except Exception as exc:

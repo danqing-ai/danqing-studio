@@ -1,5 +1,5 @@
 """
-LLM / VLM routes — OpenAI-compatible chat completions + long-video orchestration APIs.
+LLM / VLM routes — OpenAI-compatible chat completions.
 """
 
 from __future__ import annotations
@@ -9,17 +9,14 @@ import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from backend.api.deps import get_asset_store, get_llm_service, get_long_video_activity_store
+from backend.api.deps import get_asset_store, get_llm_service
 from backend.api.routes.settings import get_settings_service
 from backend.core.contracts import (
     ChatCompletionRequest,
     ChatCompletionResponse,
     EnhanceRequest,
     EnhanceResponse,
-    LongVideoChapterAnalyzeRequest,
-    LongVideoStoryboardRequest,
 )
-from backend.engine.common.long_video.activity import LongVideoActivityRecorder
 from backend.engine.llm import LLMService
 from backend.engine.llm.chat_vision import run_vision_chat_completion
 from backend.engine.llm.message_content import (
@@ -28,19 +25,8 @@ from backend.engine.llm.message_content import (
 )
 from backend.core.i18n import resolve_locale
 from backend.persistence.asset_store import SQLiteAssetStore
-from backend.persistence.long_video_activity_store import LongVideoActivityStore
 
 router = APIRouter()
-
-
-def _chapter_analyze_activity_recorder(
-    request: LongVideoChapterAnalyzeRequest,
-    store: LongVideoActivityStore,
-) -> LongVideoActivityRecorder | None:
-    project_id = (request.long_video_project_id or "").strip()
-    if not project_id:
-        return None
-    return LongVideoActivityRecorder(store, project_id)
 
 
 def _resolve_locale(http_request: Request, body_locale: str | None) -> str:
@@ -147,78 +133,39 @@ def get_vision_model_info(service: LLMService = Depends(get_llm_service)):
 
 
 @router.post("/api/chat/long-video-storyboard")
-async def long_video_storyboard(
-    request: LongVideoStoryboardRequest,
-    http_request: Request,
-    service: LLMService = Depends(get_llm_service),
-):
-    """Multi-round long-video storyboard (Plan → Expand → optional Continuity)."""
-    if not service.is_available():
-        raise HTTPException(
-            status_code=503,
-            detail="LLM model not installed. Install via Models page.",
-        )
-    locale = _resolve_locale(http_request, request.locale)
-    req = request.model_copy(update={"locale": locale})
-    if (getattr(request, "source_mode", "brief") or "brief") == "chapter":
-        raise HTTPException(
-            status_code=410,
-            detail=(
-                "Legacy chapter storyboard API is deprecated. "
-                "Use POST /api/chat/long-video-chapter-analyze for script parse + shots."
-            ),
-        )
-    try:
-        return await asyncio.to_thread(service.generate_long_video_storyboard, req)
-    except (RuntimeError, ValueError) as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+async def long_video_storyboard(http_request: Request, service: LLMService = Depends(get_llm_service)):
+    """Deprecated — use Long Video page with script-parse decompose + expand."""
+    del http_request, service
+    raise HTTPException(
+        status_code=410,
+        detail=(
+            "Legacy long-video storyboard API removed. "
+            "Use POST /api/script-parse/decompose then /api/script-parse/expand."
+        ),
+    )
 
 
 @router.post("/api/chat/long-video-chapter-analyze")
-async def long_video_chapter_analyze(
-    request: LongVideoChapterAnalyzeRequest,
-    http_request: Request,
-    service: LLMService = Depends(get_llm_service),
-    activity_store: LongVideoActivityStore = Depends(get_long_video_activity_store),
-):
-    """Analyze a novel chapter into synopsis, cast, scenes, and segment shots (video-first pipeline)."""
-    if not service.is_available():
-        raise HTTPException(
-            status_code=503,
-            detail="LLM model not installed. Install via Models page.",
-        )
-    locale = _resolve_locale(http_request, request.locale)
-    req = request.model_copy(update={"locale": locale})
-    recorder = _chapter_analyze_activity_recorder(req, activity_store)
-    try:
-        return await asyncio.to_thread(
-            service.analyze_long_video_chapter,
-            req,
-            activity_recorder=recorder,
-        )
-    except (RuntimeError, ValueError) as exc:
-        if recorder is not None and recorder.active:
-            recorder.record_failed(str(exc))
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+async def long_video_chapter_analyze(http_request: Request, service: LLMService = Depends(get_llm_service)):
+    """Deprecated — use script-parse decompose + expand."""
+    del http_request, service
+    raise HTTPException(
+        status_code=410,
+        detail=(
+            "Legacy chapter analyze API removed. "
+            "Use POST /api/script-parse/decompose then /api/script-parse/expand."
+        ),
+    )
 
 
 @router.post("/api/chat/long-video-chapter-analyze/stream")
-async def long_video_chapter_analyze_stream(
-    request: LongVideoChapterAnalyzeRequest,
-    http_request: Request,
-    service: LLMService = Depends(get_llm_service),
-    activity_store: LongVideoActivityStore = Depends(get_long_video_activity_store),
-):
-    """SSE: progress events during multi-pass chapter analyze, then final JSON result."""
-    if not service.is_available():
-        raise HTTPException(
-            status_code=503,
-            detail="LLM model not installed. Install via Models page.",
-        )
-    locale = _resolve_locale(http_request, request.locale)
-    req = request.model_copy(update={"locale": locale})
-    recorder = _chapter_analyze_activity_recorder(req, activity_store)
-    return StreamingResponse(
-        service.analyze_long_video_chapter_stream(req, activity_recorder=recorder),
-        media_type="text/event-stream",
+async def long_video_chapter_analyze_stream(http_request: Request, service: LLMService = Depends(get_llm_service)):
+    """Deprecated — use script-parse SSE endpoints."""
+    del http_request, service
+    raise HTTPException(
+        status_code=410,
+        detail=(
+            "Legacy chapter analyze stream removed. "
+            "Use POST /api/script-parse/decompose/stream and /api/script-parse/expand/stream."
+        ),
     )

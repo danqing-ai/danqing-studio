@@ -471,6 +471,74 @@ class LongVideoPlanDTO(BaseModel):
     narrative_budget: str
 
 
+class ScriptParseDecomposeRequest(BaseModel):
+    script_text: str
+    title: str = ""
+    locale: str = ""
+    long_video_project_id: str = ""
+    model: str = ""
+
+
+class ScriptParseExpandRequest(BaseModel):
+    script_artifact: dict[str, Any]
+    locale: str = ""
+    target_duration_sec: float = 60.0
+    segment_duration_sec: float = 5.0
+    max_clip_sec: float = 10.0
+    long_video_project_id: str = ""
+    model: str = ""
+    beat_indices: list[int] = Field(default_factory=list)
+
+
+class ScriptParseExpandBeatRequest(BaseModel):
+    script_artifact: dict[str, Any]
+    beat_index: int = Field(ge=0)
+    existing_shots: list[dict[str, Any]] = Field(default_factory=list)
+    locale: str = ""
+    target_duration_sec: float = 60.0
+    segment_duration_sec: float = 5.0
+    max_clip_sec: float = 10.0
+    long_video_project_id: str = ""
+    model: str = ""
+
+
+class ScriptParseDecomposeResponse(BaseModel):
+    chapter_title: str = ""
+    synopsis: str
+    mood: str = ""
+    character_anchor: str = ""
+    style_anchor: str = ""
+    characters: list["LongVideoCharacterDTO"] = Field(default_factory=list)
+    scenes: list["LongVideoSceneDTO"] = Field(default_factory=list)
+    scene_beats: list["LongVideoChapterSceneDTO"] = Field(default_factory=list)
+    scene_count: int = 0
+    script_artifact: dict[str, Any] = Field(default_factory=dict)
+    llm_calls: int = 0
+    parse_phases: list["LongVideoChapterParsePhaseDTO"] = Field(default_factory=list)
+    parse_run_id: str = ""
+    long_video_project_id: str = ""
+
+
+class ScriptParseExpandResponse(BaseModel):
+    chapter_title: str = ""
+    synopsis: str = ""
+    mood: str = ""
+    character_anchor: str = ""
+    style_anchor: str = ""
+    characters: list["LongVideoCharacterDTO"] = Field(default_factory=list)
+    scenes: list["LongVideoSceneDTO"] = Field(default_factory=list)
+    scene_beats: list["LongVideoChapterSceneDTO"] = Field(default_factory=list)
+    scene_count: int = 0
+    shots: list["LongVideoStoryboardShotDTO"] = Field(default_factory=list)
+    script_artifact: dict[str, Any] = Field(default_factory=dict)
+    llm_calls: int = 0
+    parse_phases: list["LongVideoChapterParsePhaseDTO"] = Field(default_factory=list)
+    quality_warnings: list[str] = Field(default_factory=list)
+    quality_issues: list["LongVideoParseQualityIssueDTO"] = Field(default_factory=list)
+    parse_run_id: str = ""
+    long_video_project_id: str = ""
+
+
 class LongVideoChapterAnalyzeRequest(BaseModel):
     chapter_text: str
     chapter_title: str = ""
@@ -642,6 +710,11 @@ class LongVideoStoryboardShotDTO(BaseModel):
     location: str = ""
     shot_size: str = ""
     narrative_beat_index: int | None = None
+    shot_intent: str = ""
+    narrative_role: str = ""
+    camera_movement: str = ""
+    lighting_key: str = ""
+    is_establishing_empty: bool = False
 
 
 class LongVideoStoryboardResponse(BaseModel):

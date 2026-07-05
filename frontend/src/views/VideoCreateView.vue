@@ -145,8 +145,7 @@
         @prompt-apply-replace="onPromptApplyReplace"
         @prompt-apply-append="onPromptApplyAppend"
         @prompt-apply-dismiss="promptApply.clear()"
-        :storyboard-expanding="isStoryboardExpanding"
-        @storyboard-expand="onStoryboardExpand"
+        @open-long-video="onOpenLongVideoStudio"
       />
   </StudioComposerHost>
 
@@ -307,7 +306,7 @@ import {
   videoRequiresSourceVideo,
   videoSupportsVideoEdit,
 } from '@/utils/videoEditSource';
-import { formatStoryboardScript } from '@/utils/videoStoryboardPrompt';
+import { LONG_VIDEO_HANDOFF_STATE_KEY } from '@/utils/longVideoHandoff';
 import {
   applyLoraComposeOverrides,
   findCompatibleLora,
@@ -1111,7 +1110,7 @@ function onModelVersionChange(val: string) {
   loadCompatibleLoras();
 }
 
-const { isEnhancing, isReversing, enhance: doEnhance, reversePrompt, storyboardLongVideo, isStoryboardExpanding } = useComposerLlm();
+const { isEnhancing, isReversing, enhance: doEnhance, reversePrompt } = useComposerLlm();
 const promptApply = usePromptApplyOffer();
 const promptApplyPreview = computed(() => promptApply.pending.value?.result ?? null);
 
@@ -1130,22 +1129,17 @@ async function onEnhancePrompt(ctx?: { stylePositive?: string }) {
   }
 }
 
-async function onStoryboardExpand() {
+async function onOpenLongVideoStudio() {
   const prompt = String(params.prompt || '').trim();
-  if (!prompt) return;
-  const p = currentModelConfig.value?.parameters || {};
-  const segExtend = Number(p.long_video_segment_extend_sec?.default ?? 8);
-  const initialSec = Number(p.long_video_reference_duration_sec?.default ?? 8);
-  const result = await storyboardLongVideo({
-    prompt,
-    target_duration_sec: selectedDurationSec.value,
-    initial_duration_sec: initialSec,
-    segment_extend_sec: segExtend,
-    use_shot_plan: false,
+  router.push({
+    name: 'long_video_create',
+    state: {
+      [LONG_VIDEO_HANDOFF_STATE_KEY]: {
+        script_text: prompt,
+        target_duration_sec: selectedDurationSec.value,
+      },
+    },
   });
-  if (!result) return;
-  params.prompt = formatStoryboardScript(result.opening_prompt, result.segment_prompts || []);
-  toast.info($tt('video.storyboardComplete'));
 }
 
 async function onReversePromptFromReference() {

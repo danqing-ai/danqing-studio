@@ -382,6 +382,7 @@ export interface LongVideoShotState {
   /** Source beat index in chapter scene_beats. */
   narrative_beat_index?: number;
   shot_size?: string;
+  is_establishing_empty?: boolean;
 }
 
 export type LongVideoSelection =
@@ -425,10 +426,15 @@ export interface LongVideoChapterAnalysis {
   last_parse_at?: string;
   /** Cached parse phase trail from last analyze response. */
   parse_phases?: Array<{ phase: string; message?: string }>;
+  /** ScriptArtifact v2 from decompose — sent back on expand. */
+  script_artifact?: Record<string, unknown>;
   /** Latest per-shot T2I assembly provenance (keyed by shot id). */
   shot_t2i_provenance?: Record<string, KeyframeT2iProvenance>;
   /** Rolling parse run snapshots (newest last, max 5). */
   parse_history?: LongVideoParseHistoryEntry[];
+  /** Expand failed (e.g. critical parse quality) — block Storyboard tab until re-run succeeds. */
+  parse_blocked?: boolean;
+  parse_blocked_reason?: string;
 }
 
 export type KeyframeT2iProvenanceSkipReason =

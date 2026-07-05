@@ -467,55 +467,16 @@ class LLMService:
             return EnhanceResponse(enhanced_prompt=last_clean)
         return EnhanceResponse(enhanced_prompt=fallback or raw_prompt)
 
-    def analyze_long_video_chapter(
+    def _script_parse_runtime(
         self,
-        request: "LongVideoChapterAnalyzeRequest",
-        *,
-        on_progress: Callable[[str, str], None] | None = None,
-        activity_recorder: Any | None = None,
-    ) -> "LongVideoChapterAnalyzeResponse":
-        from backend.core.contracts import (
-            LongVideoChapterAnalyzeRequest,
-            LongVideoChapterAnalyzeResponse,
-            LongVideoChapterParsePhaseDTO,
-            LongVideoChapterSceneDTO,
-            LongVideoCharacterDTO,
-            LongVideoCharacterLookDTO,
-            LongVideoParseQualityIssueDTO,
-            LongVideoSceneDTO,
-            LongVideoSceneLookDTO,
-            LongVideoStoryboardShotDTO,
-        )
-        from backend.engine.llm.chapter_analyze import parse_structured_beat, run_chapter_analyze
-        from backend.engine.llm.storyboard_pipeline import run_storyboard_pipeline
-        from backend.engine.llm.scene_entity_extract import run_scene_entity_extract
-        from backend.engine.llm.storyboard import normalize_storyboard_locale
-        from backend.engine.llm.storyboard_cast import parse_character_roster, roster_to_dtos
-        from backend.engine.llm.storyboard_scenes import roster_to_dtos as scene_roster_to_dtos
+        model_id: str | None,
+    ) -> tuple[str, bool, Callable[[str], str], Callable[[int], int], Callable[..., str]]:
+        from backend.engine.llm.prompt_sanitize import sanitize_structured_llm_response
 
-        analyze_model_id = self._resolve_request_llm_model(getattr(request, "model", None))
+        analyze_model_id = self._resolve_request_llm_model(model_id)
         thinking = self._resolve_enable_thinking_for(analyze_model_id, None)
         think_active = self._think_is_active_for(analyze_model_id, thinking)
         think_apply = lambda text: self._apply_think_mode_to_text_for(analyze_model_id, text)
-        locale = normalize_storyboard_locale(getattr(request, "locale", None))
-        narrative_budget = "standard"
-        parse_phases: list[LongVideoChapterParsePhaseDTO] = []
-        project_id = str(getattr(request, "long_video_project_id", "") or "").strip()
-
-        if activity_recorder is not None and activity_recorder.active:
-            activity_recorder.record_started(
-                chapter_title=request.chapter_title,
-                target_duration_sec=float(getattr(request, "target_duration_sec", 60.0) or 60.0),
-            )
-
-        def report(phase: str, message: str = "") -> None:
-            parse_phases.append(LongVideoChapterParsePhaseDTO(phase=phase, message=message))
-            if activity_recorder is not None and activity_recorder.active:
-                activity_recorder.record_phase(phase, message)
-            if on_progress:
-                on_progress(phase, message)
-
-        from backend.engine.llm.prompt_sanitize import sanitize_structured_llm_response
 
         def chat_fn(*, messages: list[ChatMessage], max_tokens: int) -> str:
             token_cap = self._token_budget(max_tokens, think_active)
@@ -537,184 +498,140 @@ class LLMService:
                 think_enabled=think_active,
             )
 
-        report("plan", "plan")
-        try:
-            result = run_chapter_analyze(
-                chapter_text=request.chapter_text,
-                chapter_title=request.chapter_title,
-                locale=locale,
-                target_shot_count=None,
-                narrative_budget=narrative_budget,
-                chat_fn=chat_fn,
-                think_apply=think_apply,
-                token_budget=lambda b: self._token_budget(b, think_active),
-            )
-        except ValueError as exc:
-            raise RuntimeError(str(exc)) from exc
-        report("roster", "roster")
+        token_budget = lambda b: self._token_budget(b, think_active)
+        return analyze_model_id, think_active, think_apply, token_budget, chat_fn
 
-        report("scenes", "scenes")
-        try:
-            scene_roster, scene_llm_calls = run_scene_entity_extract(
-                synopsis=result.synopsis,
-                beat_sheet=result.beat_sheet,
-                locale=locale,
-                chat_fn=chat_fn,
-                think_apply=think_apply,
-                token_budget=lambda b: self._token_budget(b, think_active),
-            )
-        except ValueError as exc:
-            raise RuntimeError(str(exc)) from exc
-        total_llm_calls = result.llm_calls + scene_llm_calls
+    def script_parse_decompose(
+        self,
+        request: "ScriptParseDecomposeRequest",
+        *,
+        on_progress: Callable[[str, str], None] | None = None,
+        activity_recorder: Any | None = None,
+    ) -> "ScriptParseDecomposeResponse":
+        from backend.core.contracts import (
+            LongVideoChapterParsePhaseDTO,
+            ScriptParseDecomposeRequest,
+            ScriptParseDecomposeResponse,
+        )
+        from backend.engine.llm.script_parse.pipeline import run_decompose
+        from backend.engine.llm.script_parse.response import decompose_to_response
+        from backend.engine.llm.storyboard import normalize_storyboard_locale
 
-        roster, style_anchor = parse_character_roster(result.character_anchor, locale=locale)
-        if result.style_anchor:
-            style_anchor = result.style_anchor
-        character_dtos_raw = [row for row in roster_to_dtos(roster)]
-        scene_entity_dtos_raw: list[dict] = scene_roster_to_dtos(scene_roster)
+        locale = normalize_storyboard_locale(getattr(request, "locale", None))
+        parse_phases: list[LongVideoChapterParsePhaseDTO] = []
+        project_id = str(getattr(request, "long_video_project_id", "") or "").strip()
 
-        character_dtos: list[LongVideoCharacterDTO] = []
-        for row in character_dtos_raw:
-            looks = [
-                LongVideoCharacterLookDTO(**lk)
-                for lk in (row.get("looks") or [])
-                if isinstance(lk, dict)
-            ]
-            character_dtos.append(
-                LongVideoCharacterDTO(
-                    id=str(row.get("id", "")),
-                    name=str(row.get("name", "")),
-                    default_look_id=str(row.get("default_look_id", "")),
-                    looks=looks,
-                )
+        if activity_recorder is not None and activity_recorder.active:
+            activity_recorder.record_started(
+                chapter_title=request.title,
+                target_duration_sec=0.0,
             )
 
-        scene_entity_dtos: list[LongVideoSceneDTO] = []
-        for row in scene_entity_dtos_raw:
-            looks = [
-                LongVideoSceneLookDTO(**lk)
-                for lk in (row.get("looks") or [])
-                if isinstance(lk, dict)
-            ]
-            scene_entity_dtos.append(
-                LongVideoSceneDTO(
-                    id=str(row.get("id", "")),
-                    name=str(row.get("name", "")),
-                    default_look_id=str(row.get("default_look_id", "")),
-                    looks=looks,
-                )
-            )
+        def report(phase: str, message: str = "") -> None:
+            parse_phases.append(LongVideoChapterParsePhaseDTO(phase=phase, message=message))
+            if activity_recorder is not None and activity_recorder.active:
+                activity_recorder.record_phase(phase, message)
+            if on_progress:
+                on_progress(phase, message)
 
-        scenes = []
-        for i, beat_raw in enumerate(result.beat_sheet):
-            title, beat = parse_structured_beat(beat_raw)
-            scenes.append(
-                LongVideoChapterSceneDTO(
-                    order=i + 1,
-                    title=title,
-                    beat=beat,
-                )
-            )
-
-        target_duration = float(getattr(request, "target_duration_sec", 60.0) or 60.0)
-        segment_duration = float(getattr(request, "segment_duration_sec", 5.0) or 5.0)
-        max_clip_sec = float(getattr(request, "max_clip_sec", 10.0) or 10.0)
+        _, _, think_apply, token_budget, chat_fn = self._script_parse_runtime(getattr(request, "model", None))
 
         try:
-            pipeline_result = run_storyboard_pipeline(
-                beat_sheet=result.beat_sheet,
-                synopsis=result.synopsis,
-                character_anchor=result.character_anchor,
-                style_anchor=style_anchor,
-                mood=result.mood or "",
+            result = run_decompose(
+                script_text=request.script_text,
+                title=request.title,
                 locale=locale,
-                target_duration_sec=target_duration,
-                segment_duration_sec=segment_duration,
-                max_clip_sec=max_clip_sec,
-                character_dtos=character_dtos_raw,
-                scene_dtos=scene_entity_dtos_raw,
                 chat_fn=chat_fn,
                 think_apply=think_apply,
-                token_budget=lambda b: self._token_budget(b, think_active),
+                token_budget=token_budget,
                 on_progress=report,
             )
         except ValueError as exc:
             raise RuntimeError(str(exc)) from exc
-        except RuntimeError:
-            raise
-        total_llm_calls += pipeline_result.llm_calls
 
-        character_anchor_out = result.character_anchor
-        if pipeline_result.character_dtos:
-            character_dtos_raw = pipeline_result.character_dtos
-            from backend.engine.llm.storyboard_cast import dtos_to_roster, format_character_roster
-
-            roster = dtos_to_roster(character_dtos_raw)
-            if roster:
-                character_anchor_out = format_character_roster(
-                    roster,
-                    style_anchor,
-                    locale=locale,
-                )
-
-        shot_dtos = [
-            LongVideoStoryboardShotDTO(**row)
-            for row in pipeline_result.shots
-            if isinstance(row, dict)
-        ]
-
-        scene_entity_dtos = []
-        for row in pipeline_result.scene_dtos:
-            looks = [
-                LongVideoSceneLookDTO(**lk)
-                for lk in (row.get("looks") or [])
-                if isinstance(lk, dict)
-            ]
-            scene_entity_dtos.append(
-                LongVideoSceneDTO(
-                    id=str(row.get("id", "")),
-                    name=str(row.get("name", "")),
-                    default_look_id=str(row.get("default_look_id", "")),
-                    looks=looks,
-                    spatial_layout_json=row.get("spatial_layout_json") or {},
-                    grounding_panorama_asset_id=str(row.get("grounding_panorama_asset_id", "")),
-                    grounding_depth_asset_id=str(row.get("grounding_depth_asset_id", "")),
-                )
-            )
-
-        response = LongVideoChapterAnalyzeResponse(
-            chapter_title=result.chapter_title,
-            synopsis=result.synopsis,
-            mood=result.mood,
-            character_anchor=character_anchor_out,
-            style_anchor=style_anchor,
-            characters=character_dtos,
-            scenes=scene_entity_dtos,
-            scene_beats=scenes,
-            scene_count=len(scenes),
-            shots=shot_dtos,
+        response = decompose_to_response(
+            result,
             parse_phases=parse_phases,
-            quality_warnings=list(pipeline_result.validation_warnings),
-            quality_issues=[
-                LongVideoParseQualityIssueDTO(**row)
-                for row in pipeline_result.quality_issues
-                if isinstance(row, dict)
-            ],
-            llm_calls=total_llm_calls,
             parse_run_id=activity_recorder.parse_run_id if activity_recorder and activity_recorder.active else "",
-            long_video_project_id=project_id,
+            project_id=project_id,
+            locale=locale,
         )
         if activity_recorder is not None and activity_recorder.active:
             activity_recorder.record_completed(response)
         return response
 
-    def analyze_long_video_chapter_stream(
+    def script_parse_expand(
         self,
-        request: "LongVideoChapterAnalyzeRequest",
+        request: "ScriptParseExpandRequest",
         *,
+        on_progress: Callable[[str, str], None] | None = None,
         activity_recorder: Any | None = None,
+    ) -> "ScriptParseExpandResponse":
+        from backend.core.contracts import (
+            LongVideoChapterParsePhaseDTO,
+            ScriptParseExpandRequest,
+            ScriptParseExpandResponse,
+        )
+        from backend.engine.llm.script_parse.pipeline import run_expand
+        from backend.engine.llm.script_parse.response import expand_to_response, script_dict_to_artifact
+        from backend.engine.llm.storyboard import normalize_storyboard_locale
+
+        locale = normalize_storyboard_locale(getattr(request, "locale", None))
+        parse_phases: list[LongVideoChapterParsePhaseDTO] = []
+        project_id = str(getattr(request, "long_video_project_id", "") or "").strip()
+
+        if activity_recorder is not None and activity_recorder.active:
+            activity_recorder.record_started(
+                chapter_title="",
+                target_duration_sec=float(getattr(request, "target_duration_sec", 60.0) or 60.0),
+            )
+
+        def report(phase: str, message: str = "") -> None:
+            parse_phases.append(LongVideoChapterParsePhaseDTO(phase=phase, message=message))
+            if activity_recorder is not None and activity_recorder.active:
+                activity_recorder.record_phase(phase, message)
+            if on_progress:
+                on_progress(phase, message)
+
+        _, _, think_apply, token_budget, chat_fn = self._script_parse_runtime(getattr(request, "model", None))
+
+        try:
+            artifact = script_dict_to_artifact(request.script_artifact)
+        except Exception as exc:
+            raise RuntimeError(f"invalid script_artifact: {exc}") from exc
+
+        try:
+            result = run_expand(
+                script=artifact,
+                target_duration_sec=float(getattr(request, "target_duration_sec", 60.0) or 60.0),
+                segment_duration_sec=float(getattr(request, "segment_duration_sec", 5.0) or 5.0),
+                max_clip_sec=float(getattr(request, "max_clip_sec", 10.0) or 10.0),
+                locale=locale,
+                chat_fn=chat_fn,
+                think_apply=think_apply,
+                token_budget=token_budget,
+                on_progress=report,
+                beat_indices=list(request.beat_indices or []),
+            )
+        except ValueError as exc:
+            raise RuntimeError(str(exc)) from exc
+
+        report("done", "done")
+        response = expand_to_response(
+            result,
+            artifact=artifact,
+            parse_phases=parse_phases,
+            parse_run_id=activity_recorder.parse_run_id if activity_recorder and activity_recorder.active else "",
+            project_id=project_id,
+        )
+        if activity_recorder is not None and activity_recorder.active:
+            activity_recorder.record_completed(response)
+        return response
+
+    def _script_parse_stream(
+        self,
+        worker: Callable[[Callable[[str, str], None]], Any],
     ):
-        """SSE progress events then a final ``result`` event."""
         import json
         import queue
         import threading
@@ -723,23 +640,27 @@ class LLMService:
         holder: dict[str, object] = {}
 
         def on_progress(phase: str, message: str) -> None:
+            if phase == "review_retry":
+                event_queue.put(
+                    {
+                        "event": "review_retry",
+                        "pass": message,
+                        "phase": phase,
+                        "message": message,
+                    }
+                )
+                return
             event_queue.put({"event": "progress", "phase": phase, "message": message})
 
-        def worker() -> None:
+        def run_worker() -> None:
             try:
-                holder["result"] = self.analyze_long_video_chapter(
-                    request,
-                    on_progress=on_progress,
-                    activity_recorder=activity_recorder,
-                )
+                holder["result"] = worker(on_progress)
             except Exception as exc:
                 holder["error"] = exc
-                if activity_recorder is not None and activity_recorder.active:
-                    activity_recorder.record_failed(str(exc))
             finally:
                 event_queue.put(None)
 
-        threading.Thread(target=worker, daemon=True).start()
+        threading.Thread(target=run_worker, daemon=True).start()
 
         while True:
             item = event_queue.get()
@@ -749,545 +670,150 @@ class LLMService:
 
         err = holder.get("error")
         if err is not None:
-            payload = {"event": "error", "detail": str(err)}
+            payload: dict[str, object] = {"event": "error", "detail": str(err)}
+            issues = getattr(err, "quality_issues", None)
+            if issues:
+                payload["quality_issues"] = issues
             yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
             return
 
         result = holder.get("result")
         if result is None:
-            payload = {"event": "error", "detail": "chapter analyze returned no result"}
+            payload = {"event": "error", "detail": "script parse returned no result"}
             yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
             return
 
-        payload = {
-            "event": "result",
-            "data": result.model_dump(mode="json"),
-        }
+        payload = {"event": "result", "data": result.model_dump(mode="json")}
         yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
-    def generate_long_video_storyboard(
+    def script_parse_decompose_stream(
         self,
-        request: "LongVideoStoryboardRequest",
-    ) -> "LongVideoStoryboardResponse":
-        from backend.core.contracts import (
-            LongVideoPlanDTO,
-            LongVideoStoryboardRequest,
-            LongVideoStoryboardResponse,
-            LongVideoStoryboardShotDTO,
-            LongVideoCharacterDTO,
-            LongVideoCharacterLookDTO,
-            LongVideoShotCastLookDTO,
-            LongVideoSceneDTO,
-            LongVideoSceneLookDTO,
-            LongVideoShotSceneLookDTO,
-        )
-        from backend.engine.common.long_video.plan import build_shot_plan, build_shot_plan_for_scenes
-        from backend.engine.families.ltx.long_video_plan import LongVideoPlan, build_long_video_plan
-        from backend.engine.llm.chapter_analyze import MIN_SCENES as CHAPTER_MIN_SCENES
-        from backend.engine.llm.storyboard_cast import (
-            format_character_roster,
-            parse_character_roster,
-            roster_to_dtos,
-        )
-        from backend.engine.llm.storyboard_scenes import roster_to_dtos as scene_roster_to_dtos
-        from backend.engine.llm.storyboard import (
-            apply_storyboard_anchor_locale,
-            apply_storyboard_output_locale,
-            build_structured_shots,
-            coalesce_dual_pairs,
-            expand_batches_for_plan,
-            expand_batches_for_shot_count,
-            merge_expand_batches,
-            normalize_storyboard_locale,
-            normalize_character_anchor,
-            parse_dual_shot_script,
-            parse_expand_script,
-            parse_plan_script,
-            plan_to_dto,
-            shot_plan_to_dto,
-            storyboard_quality_ok,
-            storyboard_shot_pairs_ok,
-            dual_pairs_from_beats,
-            chapter_beats_ready_for_shots,
-        )
+        request: "ScriptParseDecomposeRequest",
+        *,
+        activity_recorder: Any | None = None,
+    ):
+        def worker(on_progress: Callable[[str, str], None]):
+            try:
+                return self.script_parse_decompose(
+                    request,
+                    on_progress=on_progress,
+                    activity_recorder=activity_recorder,
+                )
+            except Exception as exc:
+                if activity_recorder is not None and activity_recorder.active:
+                    activity_recorder.record_failed(str(exc))
+                raise
 
-        raw = (request.prompt or "").strip()
-        is_chapter = (getattr(request, "source_mode", "brief") or "brief") == "chapter"
-        scene_beats_in = [b.strip() for b in (request.scene_beats or []) if b and b.strip()]
-        has_prebuilt_beats = len(scene_beats_in) >= CHAPTER_MIN_SCENES
-        if not raw and not is_chapter and not has_prebuilt_beats:
-            raise RuntimeError("long_video_storyboard requires a non-empty prompt")
-        if is_chapter and not has_prebuilt_beats:
-            raise RuntimeError(
-                "chapter storyboard requires scene_beats from chapter analysis "
-                f"(at least {CHAPTER_MIN_SCENES})"
-            )
-        if not raw:
-            raw = scene_beats_in[0][:240]
+        yield from self._script_parse_stream(worker)
+
+    def script_parse_expand_stream(
+        self,
+        request: "ScriptParseExpandRequest",
+        *,
+        activity_recorder: Any | None = None,
+    ):
+        def worker(on_progress: Callable[[str, str], None]):
+            try:
+                return self.script_parse_expand(
+                    request,
+                    on_progress=on_progress,
+                    activity_recorder=activity_recorder,
+                )
+            except Exception as exc:
+                if activity_recorder is not None and activity_recorder.active:
+                    activity_recorder.record_failed(str(exc))
+                raise
+
+        yield from self._script_parse_stream(worker)
+
+    def script_parse_expand_beat(
+        self,
+        request: "ScriptParseExpandBeatRequest",
+        *,
+        on_progress: Callable[[str, str], None] | None = None,
+        activity_recorder: Any | None = None,
+    ) -> "ScriptParseExpandResponse":
+        from backend.core.contracts import (
+            LongVideoChapterParsePhaseDTO,
+            ScriptParseExpandBeatRequest,
+            ScriptParseExpandResponse,
+        )
+        from backend.engine.llm.script_parse.pipeline import run_expand_beat
+        from backend.engine.llm.script_parse.response import expand_to_response, script_dict_to_artifact
+        from backend.engine.llm.storyboard import normalize_storyboard_locale
 
         locale = normalize_storyboard_locale(getattr(request, "locale", None))
-        locale_block = storyboard_user_locale_block(locale)
+        parse_phases: list[LongVideoChapterParsePhaseDTO] = []
+        project_id = str(getattr(request, "long_video_project_id", "") or "").strip()
 
-        plan = build_long_video_plan(
-            target_duration_sec=request.target_duration_sec,
-            initial_duration_sec=request.initial_duration_sec,
-            segment_extend_sec=request.segment_extend_sec,
-            reference_duration_sec=request.reference_duration_sec,
-        )
-        if has_prebuilt_beats and request.use_shot_plan:
-            shot_plan = build_shot_plan_for_scenes(
-                scene_count=len(scene_beats_in),
-                segment_duration_sec=request.segment_duration_sec,
-                target_duration_sec=request.target_duration_sec,
-                beat_texts=scene_beats_in,
+        if activity_recorder is not None and activity_recorder.active:
+            activity_recorder.record_started(
+                chapter_title="",
+                target_duration_sec=float(getattr(request, "target_duration_sec", 60.0) or 60.0),
             )
-            effective_target_duration = request.target_duration_sec
-        else:
-            shot_plan = build_shot_plan(
-                target_duration_sec=request.target_duration_sec,
-                segment_duration_sec=request.segment_duration_sec,
-                beat_texts=[],
-            )
-            effective_target_duration = request.target_duration_sec
-        expected_beats = shot_plan.shot_count if request.use_shot_plan else plan.total_segments
-        llm_calls = 0
-        think_active = self._think_is_active(self._resolve_enable_thinking(None))
 
-        if request.use_shot_plan:
-            if is_chapter:
-                plan_user = (
-                    f"Chapter synopsis: {raw}\n"
-                    f"Keyframe shots: {shot_plan.shot_count} (from chapter scene analysis)\n"
-                    f"Target total duration ~{effective_target_duration}s (soft guideline)\n"
-                    f"Per-shot durations (sec): {list(shot_plan.segment_durations_sec)}\n"
-                    f"Expand each chapter scene into one keyframe — preserve order."
-                )
-            else:
-                plan_user = (
-                    f"Brief: {raw}\n"
-                    f"Keyframe shots: {shot_plan.shot_count} "
-                    f"(~{shot_plan.segment_duration_sec}s default I2V clip per edge; actual per-shot may vary)\n"
-                    f"Target total duration ~{effective_target_duration}s (soft guideline)\n"
-                    f"Per-shot durations (sec): {list(shot_plan.segment_durations_sec)}\n"
-                    f"Narrative budget: {shot_plan.narrative_budget}\n"
-                    f"Write about {expected_beats} [Beat] lines after [Anchor] — one per keyframe."
-                )
-            plan_system = LONG_VIDEO_PLAN_SHOT_SYSTEM_PROMPT
-            expand_system = LONG_VIDEO_EXPAND_SHOT_SYSTEM_PROMPT
-            continuity_system = LONG_VIDEO_CONTINUITY_SHOT_SYSTEM_PROMPT
-        else:
-            plan_user = (
-                f"Brief: {raw}\n"
-                f"Segments: {plan.total_segments} (1 opening + {plan.extend_pass_count} extends)\n"
-                f"Durations (sec): {list(plan.segment_durations_sec)}\n"
-                f"Narrative budget: {plan.narrative_budget}\n"
-                f"Write exactly {expected_beats} [Beat] lines after [Anchor]."
-            )
-            plan_system = LONG_VIDEO_PLAN_SYSTEM_PROMPT
-            expand_system = LONG_VIDEO_EXPAND_SYSTEM_PROMPT
-            continuity_system = LONG_VIDEO_CONTINUITY_SYSTEM_PROMPT
-        if request.style_positive.strip():
-            plan_user += f"\nStyle: {request.style_positive.strip()}"
-        plan_user += locale_block
+        def report(phase: str, message: str = "") -> None:
+            parse_phases.append(LongVideoChapterParsePhaseDTO(phase=phase, message=message))
+            if activity_recorder is not None and activity_recorder.active:
+                activity_recorder.record_phase(phase, message)
+            if on_progress:
+                on_progress(phase, message)
 
-        if has_prebuilt_beats and request.use_shot_plan:
-            beat_sheet = list(scene_beats_in)
-            character_anchor = (request.prebuilt_character_anchor or "").strip()
-            if len(character_anchor) < 12:
-                character_anchor = raw[:240].strip()
-            style_anchor = (request.prebuilt_style_anchor or "").strip()
-            roster, parsed_style = parse_character_roster(character_anchor, locale=locale)
-            if not style_anchor and parsed_style:
-                style_anchor = parsed_style
-            character_anchor = apply_storyboard_anchor_locale(
-                format_character_roster(roster, style_anchor, locale=locale) if roster else character_anchor,
-                beat_sheet=beat_sheet[:expected_beats],
+        _, _, think_apply, token_budget, chat_fn = self._script_parse_runtime(getattr(request, "model", None))
+
+        try:
+            artifact = script_dict_to_artifact(request.script_artifact)
+        except Exception as exc:
+            raise RuntimeError(f"invalid script_artifact: {exc}") from exc
+
+        try:
+            result = run_expand_beat(
+                script=artifact,
+                beat_index=int(request.beat_index),
+                target_duration_sec=float(getattr(request, "target_duration_sec", 60.0) or 60.0),
+                segment_duration_sec=float(getattr(request, "segment_duration_sec", 5.0) or 5.0),
+                max_clip_sec=float(getattr(request, "max_clip_sec", 10.0) or 10.0),
                 locale=locale,
+                chat_fn=chat_fn,
+                think_apply=think_apply,
+                token_budget=token_budget,
+                on_progress=report,
+                existing_shots=list(request.existing_shots or []),
             )
-            if roster and not style_anchor:
-                _, style_anchor = parse_character_roster(character_anchor, locale=locale)
-            character_dtos = roster_to_dtos(roster)
-            scene_dtos = self._prebuilt_scene_dtos(request.prebuilt_scenes)
-        else:
-            plan_resp = self.chat_completion(
-                ChatCompletionRequest(
-                    model=self._model_id,
-                    messages=[
-                        ChatMessage(role="system", content=plan_system),
-                        ChatMessage(role="user", content=self._apply_think_mode_to_text(plan_user)),
-                    ],
-                    temperature=0.55,
-                    top_p=0.9,
-                    max_tokens=self._token_budget(600, think_active),
-                    stream=False,
-                )
-            )
-            llm_calls += 1
-            plan_text = sanitize_enhanced_prompt(
-                plan_resp.choices[0].message.content,
-                think_enabled=think_active,
-            )
-            character_anchor, beat_sheet = parse_plan_script(plan_text, expected_beats=expected_beats)
-            if len(character_anchor.strip()) < 12:
-                character_anchor = raw[:240].strip()
-            roster, style_anchor = parse_character_roster(character_anchor, locale=locale)
-            character_anchor = apply_storyboard_anchor_locale(
-                format_character_roster(roster, style_anchor, locale=locale) if roster else character_anchor,
-                beat_sheet=beat_sheet[:expected_beats],
-                locale=locale,
-            )
-            if roster and not style_anchor:
-                _, style_anchor = parse_character_roster(character_anchor, locale=locale)
-            character_dtos = roster_to_dtos(roster)
-            scene_dtos = self._prebuilt_scene_dtos(request.prebuilt_scenes)
+        except ValueError as exc:
+            raise RuntimeError(str(exc)) from exc
 
-        expand_expected = shot_plan.shot_count if request.use_shot_plan else plan.extend_pass_count
-
-        segment_batches: list[list[str]] = []
-        dual_pairs: list[tuple[str, str]] = []
-        opening_parts: list[str] = []
-        use_prebuilt_beats_direct = (
-            request.use_shot_plan
-            and has_prebuilt_beats
-            and chapter_beats_ready_for_shots(scene_beats_in)
+        report("done", "done")
+        response = expand_to_response(
+            result,
+            artifact=artifact,
+            parse_phases=parse_phases,
+            parse_run_id=activity_recorder.parse_run_id if activity_recorder and activity_recorder.active else "",
+            project_id=project_id,
         )
-        if use_prebuilt_beats_direct:
-            dual_pairs = dual_pairs_from_beats(
-                beat_sheet,
-                shot_plan.shot_count,
-                character_anchor=character_anchor,
-            )
-        else:
-            expand_batches = (
-                expand_batches_for_shot_count(shot_plan.shot_count)
-                if request.use_shot_plan
-                else expand_batches_for_plan(plan)
-            )
-            for start, count in expand_batches:
-                batch_beats = beat_sheet[start : start + count]
-                expand_user = (
-                    f"Anchor:\n{character_anchor}\n\nBeats:\n"
-                    + "\n".join(f"- {beat_sheet[i]}" for i in range(start, min(start + count, len(beat_sheet))))
-                    + f"\n\nExpand shots {start + 1}..{start + count}. "
-                    f"[Visual N] = scene-only; Anchor blocks are appended automatically before T2I."
-                )
-                if is_chapter:
-                    expand_user += (
-                        "\n\nThese beats come from a novel chapter — preserve order and narrative fidelity."
-                    )
-                expand_user += locale_block
-                expand_resp = self.chat_completion(
-                    ChatCompletionRequest(
-                        model=self._model_id,
-                        messages=[
-                            ChatMessage(role="system", content=expand_system),
-                            ChatMessage(role="user", content=self._apply_think_mode_to_text(expand_user)),
-                        ],
-                        temperature=0.6,
-                        top_p=0.9,
-                        max_tokens=self._token_budget(1400 if request.use_shot_plan else 900, think_active),
-                        stream=False,
-                    )
-                )
-                llm_calls += 1
-                expand_text = sanitize_enhanced_prompt(
-                    expand_resp.choices[0].message.content,
-                    think_enabled=think_active,
-                )
-                try:
-                    batch_dual = parse_dual_shot_script(
-                        expand_text,
-                        expected_shots=count,
-                        fallback=batch_beats,
-                    )
-                    dual_pairs.extend(batch_dual)
-                    segment_batches.append([m for _, m in batch_dual])
-                except ValueError:
-                    try:
-                        opening, segs = parse_expand_script(
-                            expand_text,
-                            expected_segments=count,
-                            fallback=batch_beats,
-                        )
-                    except ValueError:
-                        segs = list(batch_beats)
-                        if len(segs) < count:
-                            segs = dual_pairs_from_beats(
-                                beat_sheet[start : start + count],
-                                count,
-                                character_anchor=character_anchor,
-                            )
-                            segs = [m for _, m in segs]
-                        opening = ""
-                    opening_parts.append(opening)
-                    segment_batches.append(segs)
+        if activity_recorder is not None and activity_recorder.active:
+            activity_recorder.record_completed(response)
+        return response
 
-        if not dual_pairs and beat_sheet and request.use_shot_plan:
-            dual_pairs = dual_pairs_from_beats(
-                beat_sheet,
-                shot_plan.shot_count,
-                character_anchor=character_anchor,
-            )
-
-        if request.use_shot_plan and dual_pairs:
-            dual_pairs = coalesce_dual_pairs(
-                dual_pairs,
-                beat_sheet,
-                shot_plan.shot_count,
-                character_anchor=character_anchor,
-            )
-
-        if dual_pairs:
-            opening_prompt = dual_pairs[0][0] if dual_pairs else ""
-            segment_prompts = [m for _, m in dual_pairs]
-        else:
-            opening_prompt, segment_prompts = merge_expand_batches(opening_parts, segment_batches)
-        if not opening_prompt and beat_sheet:
-            opening_prompt = beat_sheet[0]
-        if request.use_shot_plan and shot_plan.shot_count > 0:
-            from backend.engine.llm.storyboard import _pad_strings
-
-            beat_sheet = _pad_strings(beat_sheet, shot_plan.shot_count, label="beat sheet")
-
-        quality_plan = plan
-        if request.use_shot_plan:
-            quality_plan = LongVideoPlan(
-                target_duration_sec=shot_plan.target_duration_sec,
-                initial_duration_sec=shot_plan.segment_duration_sec,
-                segment_extend_sec=shot_plan.segment_duration_sec,
-                reference_duration_sec=request.reference_duration_sec,
-                extend_pass_count=expand_expected,
-                total_segments=expected_beats,
-                segment_durations_sec=shot_plan.segment_durations_sec,
-                narrative_budget=shot_plan.narrative_budget,
-            )
-
-        def _quality_ok() -> bool:
-            if request.use_shot_plan:
-                return (
-                    len(character_anchor.strip()) >= 12
-                    and storyboard_shot_pairs_ok(
-                        dual_pairs,
-                        shot_count=shot_plan.shot_count,
-                        beat_sheet=beat_sheet[:expected_beats],
-                        character_anchor=character_anchor,
-                        characters=character_dtos,
-                        style_anchor=style_anchor,
-                        locale=locale,
-                    )
+    def script_parse_expand_beat_stream(
+        self,
+        request: "ScriptParseExpandBeatRequest",
+        *,
+        activity_recorder: Any | None = None,
+    ):
+        def worker(on_progress: Callable[[str, str], None]):
+            try:
+                return self.script_parse_expand_beat(
+                    request,
+                    on_progress=on_progress,
+                    activity_recorder=activity_recorder,
                 )
-            return storyboard_quality_ok(
-                character_anchor=character_anchor,
-                opening_prompt=opening_prompt,
-                segment_prompts=segment_prompts,
-                beat_sheet=beat_sheet[:expected_beats],
-                plan=quality_plan,
-                min_segment_prompts=0,
-            )
+            except Exception as exc:
+                if activity_recorder is not None and activity_recorder.active:
+                    activity_recorder.record_failed(str(exc))
+                raise
 
-        if not _quality_ok() and not use_prebuilt_beats_direct:
-            if request.use_shot_plan:
-                pairs_for_cont = dual_pairs or [
-                    (opening_prompt, segment_prompts[i] if i < len(segment_prompts) else beat_sheet[i])
-                    for i in range(expand_expected)
-                ]
-                beat_block = "\n".join(
-                    f"[Beat {i + 1}] {b}" for i, b in enumerate(beat_sheet[:expand_expected])
-                )
-                cont_user = (
-                    f"Anchor:\n{character_anchor}\n\nBeats (cast per shot):\n{beat_block}\n\n"
-                    + "\n".join(
-                        f"[Visual {i + 1}] {v}\n[Motion {i + 1}] {m}"
-                        for i, (v, m) in enumerate(pairs_for_cont)
-                    )
-                    + locale_block
-                )
-            else:
-                cont_user = (
-                    f"Anchor:\n{character_anchor}\n\nOpening:\n{opening_prompt}\n\nSegments:\n"
-                    + "\n".join(f"[Segment {i+1}] {p}" for i, p in enumerate(segment_prompts))
-                    + locale_block
-                )
-            cont_resp = self.chat_completion(
-                ChatCompletionRequest(
-                    model=self._model_id,
-                    messages=[
-                        ChatMessage(role="system", content=continuity_system),
-                        ChatMessage(role="user", content=self._apply_think_mode_to_text(cont_user)),
-                    ],
-                    temperature=0.45,
-                    top_p=0.9,
-                    max_tokens=self._token_budget(1600 if request.use_shot_plan else 1000, think_active),
-                    stream=False,
-                )
-            )
-            llm_calls += 1
-            cont_text = sanitize_enhanced_prompt(
-                cont_resp.choices[0].message.content,
-                think_enabled=think_active,
-            )
-            if request.use_shot_plan:
-                dual_pairs = parse_dual_shot_script(
-                    cont_text,
-                    expected_shots=expand_expected,
-                    fallback=beat_sheet[:expand_expected],
-                )
-                dual_pairs = coalesce_dual_pairs(
-                    dual_pairs,
-                    beat_sheet,
-                    shot_plan.shot_count,
-                    character_anchor=character_anchor,
-                )
-                opening_prompt = dual_pairs[0][0] if dual_pairs else opening_prompt
-                segment_prompts = [m for _, m in dual_pairs]
-            else:
-                opening_prompt, segment_prompts = parse_expand_script(
-                    cont_text,
-                    expected_segments=expand_expected,
-                    fallback=beat_sheet[:expand_expected],
-                )
-
-        def _localized_shots(shot_dicts: list[dict]) -> list[dict]:
-            return apply_storyboard_output_locale(
-                shot_dicts,
-                beat_sheet=beat_sheet,
-                locale=locale,
-            )
-
-        def _shot_build_kwargs() -> dict:
-            return {
-                "character_anchor": character_anchor,
-                "opening_prompt": opening_prompt,
-                "segment_prompts": segment_prompts,
-                "beat_sheet": beat_sheet,
-                "target_duration_sec": effective_target_duration,
-                "segment_duration_sec": request.segment_duration_sec,
-                "dual_pairs": dual_pairs or None,
-                "characters": character_dtos,
-                "scenes": scene_dtos,
-                "style_anchor": style_anchor,
-                "locale": locale,
-                "shot_plan": shot_plan if request.use_shot_plan else None,
-            }
-
-        def _to_shot_dtos(shot_dicts: list[dict]) -> list[LongVideoStoryboardShotDTO]:
-            out: list[LongVideoStoryboardShotDTO] = []
-            for s in shot_dicts:
-                cast = [
-                    LongVideoShotCastLookDTO(**row)
-                    for row in (s.get("cast_looks") or [])
-                    if isinstance(row, dict)
-                ]
-                scene_row = s.get("scene_look")
-                scene_look = (
-                    LongVideoShotSceneLookDTO(**scene_row)
-                    if isinstance(scene_row, dict) and scene_row.get("scene_id")
-                    else None
-                )
-                out.append(
-                    LongVideoStoryboardShotDTO(
-                        id=str(s.get("id", "")),
-                        order=int(s.get("order", 0)),
-                        visual_prompt=str(s.get("visual_prompt", "")),
-                        motion_prompt=str(s.get("motion_prompt", "")),
-                        video_prompt=str(s.get("video_prompt", s.get("motion_prompt", ""))),
-                        start_visual_prompt=str(s.get("start_visual_prompt", "")),
-                        end_visual_prompt=str(s.get("end_visual_prompt", "")),
-                        anchor_visual_prompt=str(s.get("anchor_visual_prompt", "")),
-                        segment_role=s.get("segment_role") or "keyframe",
-                        start_frame_mode=s.get("start_frame_mode") or "keyframe",
-                        segment_group_id=str(s.get("segment_group_id", "")),
-                        segment_group_index=int(s.get("segment_group_index", 0)),
-                        face_anchor_shot_id=str(s.get("face_anchor_shot_id", "")),
-                        flf_mode=s.get("flf_mode") or "none",
-                        end_frame_sync_anchor=bool(s.get("end_frame_sync_anchor")),
-                        chain_mode=s.get("chain_mode"),
-                        scene_prompt=str(s.get("scene_prompt", "")),
-                        cast_looks=cast,
-                        scene_look=scene_look,
-                        duration_sec=(
-                            float(s["duration_sec"])
-                            if s.get("duration_sec") is not None and float(s["duration_sec"]) > 0
-                            else None
-                        ),
-                    )
-                )
-            return out
-
-        def _to_character_dtos() -> list[LongVideoCharacterDTO]:
-            items: list[LongVideoCharacterDTO] = []
-            for row in character_dtos:
-                looks = [
-                    LongVideoCharacterLookDTO(**lk)
-                    for lk in (row.get("looks") or [])
-                    if isinstance(lk, dict)
-                ]
-                items.append(
-                    LongVideoCharacterDTO(
-                        id=str(row.get("id", "")),
-                        name=str(row.get("name", "")),
-                        default_look_id=str(row.get("default_look_id", "")),
-                        looks=looks,
-                    )
-                )
-            return items
-
-        def _to_scene_dtos() -> list[LongVideoSceneDTO]:
-            items: list[LongVideoSceneDTO] = []
-            for row in scene_dtos:
-                looks = [
-                    LongVideoSceneLookDTO(**lk)
-                    for lk in (row.get("looks") or [])
-                    if isinstance(lk, dict)
-                ]
-                items.append(
-                    LongVideoSceneDTO(
-                        id=str(row.get("id", "")),
-                        name=str(row.get("name", "")),
-                        default_look_id=str(row.get("default_look_id", "")),
-                        looks=looks,
-                    )
-                )
-            return items
-
-        if not _quality_ok():
-            shot_dicts = _localized_shots(build_structured_shots(**_shot_build_kwargs()))
-            if request.use_shot_plan and any(
-                str(s.get("visual_prompt", "")).strip() for s in shot_dicts
-            ):
-                dto = LongVideoPlanDTO(**plan_to_dto(plan))
-                return LongVideoStoryboardResponse(
-                    character_anchor=character_anchor,
-                    opening_prompt=opening_prompt,
-                    segment_prompts=segment_prompts,
-                    segment_count=expand_expected,
-                    plan=dto,
-                    beat_sheet=beat_sheet[:expected_beats],
-                    llm_calls=llm_calls,
-                    shots=_to_shot_dtos(shot_dicts),
-                    characters=_to_character_dtos(),
-                    scenes=_to_scene_dtos(),
-                    style_anchor=style_anchor,
-                )
-            raise RuntimeError(
-                "long_video_storyboard quality check failed after Plan/Expand/Continuity"
-            )
-
-        shot_dicts = _localized_shots(build_structured_shots(**_shot_build_kwargs()))
-        dto = LongVideoPlanDTO(**plan_to_dto(plan))
-        return LongVideoStoryboardResponse(
-            character_anchor=character_anchor,
-            opening_prompt=opening_prompt,
-            segment_prompts=segment_prompts,
-            segment_count=expand_expected,
-            plan=dto,
-            beat_sheet=beat_sheet[:expected_beats],
-            llm_calls=llm_calls,
-            shots=_to_shot_dtos(shot_dicts),
-            characters=_to_character_dtos(),
-            scenes=_to_scene_dtos(),
-            style_anchor=style_anchor,
-        )
+        yield from self._script_parse_stream(worker)
 
     # ------------------------------------------------------------------
     # Lyrics generation
@@ -1623,18 +1149,6 @@ class LLMService:
                 top_p=request.top_p,
             ),
         }
-
-    @staticmethod
-    def _prebuilt_scene_dtos(scenes: list | None) -> list[dict]:
-        rows: list[dict] = []
-        for row in scenes or []:
-            if hasattr(row, "model_dump"):
-                rows.append(row.model_dump())
-            elif isinstance(row, dict):
-                rows.append(row)
-            else:
-                rows.append(dict(row))
-        return rows
 
     @staticmethod
     def _token_budget(base: int, think_active: bool) -> int:

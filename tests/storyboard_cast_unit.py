@@ -6,9 +6,11 @@ import unittest
 from backend.engine.llm.storyboard import KEYFRAME_REF_DIVIDER, is_structured_keyframe_visual
 from backend.engine.llm.storyboard_cast import (
     compose_keyframe_with_cast,
+    ensure_cast_covers_on_screen,
     infer_shot_cast_looks,
     parse_character_roster,
     format_character_roster,
+    ShotCastLook,
 )
 
 
@@ -149,7 +151,7 @@ class StoryboardCastTests(unittest.TestCase):
         self.assertEqual(roster, [])
 
     def test_cast_lock_ignores_beat_scene_prompt_for_names(self) -> None:
-        from backend.engine.llm.storyboard_pipeline import _apply_cast_lock
+        from backend.engine.llm.script_parse.finalize import apply_cast_lock
 
         character_dtos = [
             {
@@ -173,7 +175,7 @@ class StoryboardCastTests(unittest.TestCase):
                 "characters_on_screen": ["赵今麦"],
             }
         ]
-        locked = _apply_cast_lock(shots, character_dtos=character_dtos, scene_dtos=[])
+        locked = apply_cast_lock(shots, character_dtos=character_dtos, scene_dtos=[])
         cast_ids = {row["character_id"] for row in locked[0]["cast_looks"]}
         self.assertEqual(cast_ids, {"char_zjm"})
 
@@ -188,6 +190,26 @@ class StoryboardCastTests(unittest.TestCase):
             normalize_look_label("卧室便装", locale="zh", name="赵今麦"),
             "卧室便装",
         )
+
+    def test_ensure_cast_covers_all_on_screen(self) -> None:
+        anchor = (
+            "【角色·赵今麦·日常】红薄外套\n"
+            "---\n"
+            "【角色·孙悟空·默认】金甲\n"
+            "---\n"
+            "【画风】写实"
+        )
+        roster, _ = parse_character_roster(anchor, locale="zh")
+        zjm = next(c for c in roster if c.name == "赵今麦")
+        partial = [ShotCastLook(character_id=next(c for c in roster if c.name == "孙悟空").id, look_id=next(c for c in roster if c.name == "孙悟空").looks[0].id)]
+        full = ensure_cast_covers_on_screen(
+            partial,
+            on_screen_names=["赵今麦", "孙悟空"],
+            characters=roster,
+        )
+        ids = {c.character_id for c in full}
+        self.assertIn(zjm.id, ids)
+        self.assertEqual(len(full), 2)
 
 
 if __name__ == "__main__":

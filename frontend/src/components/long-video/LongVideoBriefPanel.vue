@@ -140,19 +140,44 @@
                 {{ expandLoading ? $tt('video.longVideoScriptExpanding') : $tt('video.longVideoScriptExpand') }}
               </DqButton>
               <DqButton
-                type="primary"
                 size="sm"
-                :loading="parseLoading"
-                :disabled="parseLoading || expandLoading || !scriptText.trim()"
+                :loading="Boolean(parsing)"
+                :disabled="parseLoading || !scriptText.trim()"
                 @click="emit('parse')"
               >
-                {{ parseLoading ? parseProgressButtonLabel : parseButtonLabel }}
+                {{ parsing ? parseProgressButtonLabel : parseButtonLabel }}
+              </DqButton>
+              <DqButton
+                v-if="scriptParsed"
+                type="primary"
+                size="sm"
+                :loading="Boolean(generatingStoryboard)"
+                :disabled="parseLoading || !scriptParsed"
+                @click="emit('generate-storyboard')"
+              >
+                {{ generatingStoryboard ? $tt('video.longVideoScriptGeneratingStoryboard') : $tt('video.longVideoScriptGenerateStoryboard') }}
               </DqButton>
             </div>
           </div>
         </div>
 
       <aside class="lv-script-studio__insights">
+        <DqAlert
+          v-if="parseBlocked"
+          type="error"
+          :closable="false"
+          class="lv-script-studio__parse-blocked"
+          :title="parseBlockedReason || $tt('video.longVideoStoryboardTabBlocked')"
+        >
+          <div class="lv-script-studio__parse-blocked-actions">
+            <DqButton size="sm" type="primary" :loading="parseLoading" @click="emit('generate-storyboard')">
+              {{ $tt('video.longVideoParseBlockedRetry') }}
+            </DqButton>
+            <DqButton size="sm" type="text" @click="emit('clear-parse-blocked')">
+              {{ $tt('video.longVideoParseBlockedDismiss') }}
+            </DqButton>
+          </div>
+        </DqAlert>
         <DqAlert
           v-if="parseError"
           type="error"
@@ -248,13 +273,26 @@
                   >
                     <div class="lv-script-studio__scene-index">{{ idx + 1 }}</div>
                     <div class="lv-script-studio__scene-body">
-                      <input
-                        class="lv-script-studio__scene-title dq-input"
-                        type="text"
-                        :value="scene.title || ''"
-                        :placeholder="$tt('video.longVideoScriptSceneTitlePh')"
-                        @input="onSceneTitleInput(idx, $event)"
-                      />
+                      <div class="lv-script-studio__scene-title-row">
+                        <input
+                          class="lv-script-studio__scene-title dq-input"
+                          type="text"
+                          :value="scene.title || ''"
+                          :placeholder="$tt('video.longVideoScriptSceneTitlePh')"
+                          @input="onSceneTitleInput(idx, $event)"
+                        />
+                        <DqButton
+                          v-if="(parsedShotCount ?? 0) > 0"
+                          size="sm"
+                          type="text"
+                          class="lv-script-studio__scene-regen"
+                          :loading="beatRegeneratingIndex === sceneBeatIndex(scene, idx)"
+                          :disabled="parseLoading || beatRegeneratingIndex != null"
+                          @click="emit('regenerate-beat', sceneBeatIndex(scene, idx))"
+                        >
+                          {{ $tt('video.longVideoBeatRegenerate') }}
+                        </DqButton>
+                      </div>
                       <div class="lv-script-studio__scene-fields">
                         <label class="lv-script-studio__scene-field">
                           <span class="lv-script-studio__scene-field-label">
@@ -389,8 +427,13 @@ const props = defineProps<{
   scriptParseLlmModel?: string;
   parsing?: boolean;
   parseProgressPhase?: string;
+  parseProgressMessage?: string;
+  beatRegeneratingIndex?: number | null;
   expanding?: boolean;
+  generatingStoryboard?: boolean;
   parseError?: string;
+  parseBlocked?: boolean;
+  parseBlockedReason?: string;
   projectId?: string;
   parsedShotCount?: number;
 }>();
@@ -405,6 +448,9 @@ const emit = defineEmits<{
   (e: 'update:styleAnchor', value: string): void;
   (e: 'expand'): void;
   (e: 'parse'): void;
+  (e: 'generate-storyboard'): void;
+  (e: 'regenerate-beat', beatIndex: number): void;
+  (e: 'clear-parse-blocked'): void;
   (e: 'go-to-cast'): void;
 }>();
 
@@ -437,31 +483,33 @@ const llmModelOptions = computed(() => {
 const durationChoices = [30, 45, 60, 90, 120] as const;
 const segmentDurationChoices = [3, 5, 8] as const;
 
-const parseLoading = computed(() => Boolean(props.parsing));
+const parseLoading = computed(() => Boolean(props.parsing) || Boolean(props.generatingStoryboard));
 const parseProgressPhase = computed(() => props.parseProgressPhase?.trim() || '');
+const parseProgressMessage = computed(() => props.parseProgressMessage?.trim() || '');
 
 const PARSE_PHASE_ORDER = [
-  'plan',
-  'roster',
-  'story_graph',
-  'scenes',
-  'spatial_layout',
-  'scene_grounding',
-  'segment_plan',
-  'face_reachability',
-  'anchor_split_plan',
-  'segment_video',
-  'segment_video_repair',
-  'start_visual',
-  'anchor_visual',
-  'cast_lock',
-  'shot_validate',
-  'shot_repair',
-  'parse_quality',
+  'decompose',
+  'beat_plan',
+  'shot_spec',
+  'finalize',
+  'review_retry',
   'done',
 ] as const;
 
-const parsePhaseOrder = PARSE_PHASE_ORDER;
+const parsePhaseOrder = computed(() =>
+  PARSE_PHASE_ORDER.filter((phase) => phase !== 'review_retry' || isReviewRetry.value),
+);
+
+const isReviewRetry = computed(() => parseProgressPhase.value === 'review_retry');
+
+function effectiveParsePhase(): string {
+  const phase = parseProgressPhase.value;
+  if (phase === 'review_retry') {
+    const pass = parseProgressMessage.value;
+    if (pass && (PARSE_PHASE_ORDER as readonly string[]).includes(pass)) return pass;
+  }
+  return phase;
+}
 
 function phaseKey(phase: string): string {
   return phase
@@ -471,26 +519,48 @@ function phaseKey(phase: string): string {
 }
 
 function parseStepClass(phase: string): Record<string, boolean> {
-  const current = parseProgressPhase.value;
+  const current = effectiveParsePhase();
   if (!current) return {};
+  if (phase === 'review_retry') {
+    return {
+      'lv-script-studio__parse-step--active': isReviewRetry.value,
+    };
+  }
   const curIdx = PARSE_PHASE_ORDER.indexOf(current as (typeof PARSE_PHASE_ORDER)[number]);
   const idx = PARSE_PHASE_ORDER.indexOf(phase as (typeof PARSE_PHASE_ORDER)[number]);
   if (curIdx < 0 || idx < 0) return {};
+  const reviewActive = isReviewRetry.value;
   return {
-    'lv-script-studio__parse-step--done': idx < curIdx,
-    'lv-script-studio__parse-step--active': idx === curIdx,
+    'lv-script-studio__parse-step--done': idx < curIdx && !reviewActive,
+    'lv-script-studio__parse-step--active': idx === curIdx && !reviewActive,
+    'lv-script-studio__parse-step--retry-parent': reviewActive && idx === curIdx,
   };
 }
 
 const parseProgressButtonLabel = computed(() => {
   const phase = parseProgressPhase.value;
   if (!phase) return $tt('video.longVideoScriptParsing');
+  if (phase === 'review_retry') {
+    const pass = parseProgressMessage.value;
+    const passLabel = pass
+      ? $tt(`video.longVideoParsePhase${phaseKey(pass)}`)
+      : $tt('video.longVideoParsePhaseReviewRetry');
+    return $tt('video.longVideoScriptParsingReviewRetry', { pass: passLabel });
+  }
   const key = `video.longVideoParsePhase${phaseKey(phase)}`;
   const label = $tt(key);
   return $tt('video.longVideoScriptParsingPhase', { phase: label });
 });
+const beatRegeneratingIndex = computed(() =>
+  typeof props.beatRegeneratingIndex === 'number' ? props.beatRegeneratingIndex : null,
+);
+
 const expandLoading = computed(() => Boolean(props.expanding));
+const generatingStoryboard = computed(() => Boolean(props.generatingStoryboard));
+const parsing = computed(() => Boolean(props.parsing));
 const parseError = computed(() => props.parseError?.trim() || '');
+const parseBlocked = computed(() => Boolean(props.parseBlocked));
+const parseBlockedReason = computed(() => props.parseBlockedReason?.trim() || '');
 
 const qualityNotices = computed(() => {
   const issues = props.chapterAnalysis?.quality_issues ?? [];
@@ -611,6 +681,10 @@ function shotSizeOptionsForBeat(beat: string): readonly string[] {
     return [current, ...base];
   }
   return base;
+}
+
+function sceneBeatIndex(scene: LongVideoChapterScene, idx: number): number {
+  return typeof scene.order === 'number' && scene.order >= 0 ? scene.order : idx;
 }
 
 function parsedSceneBeat(beat: string) {
@@ -887,6 +961,29 @@ async function onFileSelected(event: Event) {
   color: var(--dq-label-secondary);
 }
 
+.lv-script-studio__parse-step--retry-parent {
+  color: var(--dq-color-text-secondary);
+}
+
+.lv-script-studio__parse-step--retry-parent .lv-script-studio__parse-step-dot {
+  box-shadow: 0 0 0 2px var(--dq-color-warning, #e6a23c);
+}
+
+.lv-script-studio__scene-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lv-script-studio__scene-title-row .lv-script-studio__scene-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.lv-script-studio__scene-regen {
+  flex-shrink: 0;
+}
+
 .lv-script-studio__parse-steps {
   margin: 0;
   padding: 0;
@@ -1135,6 +1232,17 @@ async function onFileSelected(event: Event) {
   font-size: var(--dq-font-size-caption);
   color: var(--dq-label-tertiary);
   white-space: nowrap;
+}
+
+.lv-script-studio__parse-blocked-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.lv-script-studio__parse-blocked {
+  margin-bottom: var(--dq-space-3);
 }
 
 .lv-script-studio__parse-error,

@@ -248,6 +248,23 @@ class ParseQualityTests(unittest.TestCase):
         result = validate_parse_quality(shots, beat_sheet=["卧室 | 中景 | 卧室 | 赵今麦刷手机"])
         self.assertTrue(any(i.code == "scene_inline_look_tag" for i in result.issues))
 
+    def test_beat_narrative_coverage_uses_start_visual(self) -> None:
+        shots = [
+            {
+                "segment_group_id": "beat_0",
+                "duration_sec": 5.0,
+                "scene_prompt": "城郊旧公寓，窗外雨夜霓虹倒影",
+                "video_prompt": "雨水沿玻璃滑落，镜头缓慢前推",
+                "start_visual_prompt": "林晓坐在工作台前低头读泛黄信件",
+                "characters_on_screen": ["林晓"],
+                "flf_mode": "none",
+            },
+        ]
+        beat = "雨夜读信 | 远景 | 城郊旧公寓 | 窗外秋雨连绵，林晓坐在工作台研读匿名信"
+        result = validate_parse_quality(shots, beat_sheet=[beat])
+        codes = {i.code for i in result.issues}
+        self.assertNotIn("beat_narrative_undercovered", codes)
+
 
 if __name__ == "__main__":
     unittest.main()
