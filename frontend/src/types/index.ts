@@ -10,6 +10,8 @@ export interface GalleryItem {
   model: string;
   thumbnail: string;
   mime_type?: string;
+  source_task_id?: string;
+  source_action?: string | null;
   metadata: Record<string, unknown>;
 }
 
@@ -35,6 +37,8 @@ export interface AssetRow {
   height?: number;
   created_at?: string;
   kind?: string;
+  source_task_id?: string;
+  source_action?: string | null;
   parent_asset_id?: string | null;
   relation_type?: string | null;
 }
