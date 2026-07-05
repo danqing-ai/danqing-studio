@@ -53,7 +53,7 @@ class ShotRepairTests(unittest.TestCase):
 
     def test_normalize_preserves_post_when_over_guide(self):
         from backend.engine.common.long_video.shot_repair import normalize_subsegment_plans
-        from backend.engine.llm.chapter_segment_plan import SubsegmentPlan
+    from backend.engine.common.long_video.segment_plan_types import SubsegmentPlan
 
         subsegs = [
             SubsegmentPlan(

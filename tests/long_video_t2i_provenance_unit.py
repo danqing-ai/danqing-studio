@@ -60,7 +60,27 @@ class LongVideoT2iProvenanceUnit(unittest.TestCase):
                 "location": "古城",
                 "scene_prompt": "晨雾中的城墙与飞鸟",
                 "visual_prompt": "广角镜头，空镜",
+                "start_visual_prompt": "广角镜头，空镜",
                 "shot_size": "远景",
+                "first_frame_visibility": "invisible",
+                "is_establishing_empty": True,
+            }
+        )
+        self.assertFalse(row["narrative_merged"])
+        self.assertEqual(row["composed_scene_preview"], "广角镜头，空镜")
+
+    def test_legacy_sparse_visual_merges_beat_scene(self) -> None:
+        row = build_shot_t2i_provenance_summary(
+            {
+                "id": "sh_3b",
+                "order": 3,
+                "segment_role": "establishing",
+                "location": "古城",
+                "scene_prompt": "晨雾中的城墙与飞鸟",
+                "visual_prompt": "",
+                "start_visual_prompt": "",
+                "shot_size": "远景",
+                "first_frame_visibility": "invisible",
             }
         )
         self.assertTrue(row["narrative_merged"])

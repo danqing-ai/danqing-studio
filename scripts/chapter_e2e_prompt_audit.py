@@ -13,9 +13,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from backend.core.contracts import LongVideoChapterAnalyzeRequest
+from backend.core.contracts import ScriptParseDecomposeRequest, ScriptParseExpandRequest
 from tests.chapter_parse_benchmark_cases import CASE_BY_ID, CHAPTER_PARSE_BENCHMARK_CASES
-from tests.long_video_chapter_analyze_integration import _load_llm_service
+from tests.script_parse_integration import _load_llm_service
 
 OUT_DIR = ROOT / "tests" / "benchmark" / "outputs" / "chapter_e2e"
 
@@ -58,10 +58,16 @@ def run_case(case_id: str, *, skip_tsx: bool = False) -> int:
 
     print(f"\n{'=' * 72}\nCASE {case_id} — {case.title}\n{'=' * 72}")
     t0 = time.perf_counter()
-    resp = svc.analyze_long_video_chapter(
-        LongVideoChapterAnalyzeRequest(
-            chapter_text=case.load_script(),
-            chapter_title=case.title,
+    decomposed = svc.script_parse_decompose(
+        ScriptParseDecomposeRequest(
+            script_text=case.load_script(),
+            title=case.title,
+            locale=case.locale,
+        )
+    )
+    resp = svc.script_parse_expand(
+        ScriptParseExpandRequest(
+            script_artifact=decomposed.script_artifact,
             locale=case.locale,
             target_duration_sec=case.target_duration_sec,
             segment_duration_sec=case.segment_duration_sec,

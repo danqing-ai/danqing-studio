@@ -13,8 +13,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from backend.core.contracts import LongVideoChapterAnalyzeRequest
-from tests.long_video_chapter_analyze_integration import _load_llm_service
+from backend.core.contracts import ScriptParseDecomposeRequest, ScriptParseExpandRequest
+from tests.script_parse_integration import _load_llm_service
 
 SHOT_KEYS = (
     "id",
@@ -102,10 +102,16 @@ def main() -> int:
         return 1
 
     print(f"Parsing project {args.project_id} ({title}) …", flush=True)
-    resp = svc.analyze_long_video_chapter(
-        LongVideoChapterAnalyzeRequest(
-            chapter_text=script,
-            chapter_title=(state.get("chapter_title") or title or "").strip(),
+    decomposed = svc.script_parse_decompose(
+        ScriptParseDecomposeRequest(
+            script_text=script,
+            title=(state.get("chapter_title") or title or "").strip(),
+            locale="zh",
+        )
+    )
+    resp = svc.script_parse_expand(
+        ScriptParseExpandRequest(
+            script_artifact=decomposed.script_artifact,
             locale="zh",
             target_duration_sec=float(state.get("target_duration_sec") or 60),
             segment_duration_sec=float(state.get("segment_duration_sec") or 5),
@@ -192,8 +198,6 @@ def main() -> int:
             prev = prev_by_id.get(str(row.get("id") or ""))
             if not prev:
                 continue
-            if prev.get("cast_looks"):
-                row["cast_looks"] = prev["cast_looks"]
             if prev.get("scene_look"):
                 row["scene_look"] = prev["scene_look"]
             if prev.get("keyframe_asset_id"):

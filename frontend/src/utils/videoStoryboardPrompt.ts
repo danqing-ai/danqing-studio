@@ -1,15 +1,4 @@
-/** Format / parse long-video storyboard in a single prompt textarea. */
-
-export function formatStoryboardScript(opening: string, segments: string[]): string {
-  const parts: string[] = [];
-  const open = opening.trim();
-  if (open) parts.push(`[Opening]\n${open}`);
-  segments.forEach((seg, i) => {
-    const s = seg.trim();
-    if (s) parts.push(`[Segment ${i + 1}]\n${s}`);
-  });
-  return parts.join('\n\n');
-}
+/** Long-video duration helpers for Video Create composer. */
 
 export function parseStoryboardPrompt(text: string): {
   opening: string;

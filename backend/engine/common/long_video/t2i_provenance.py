@@ -9,6 +9,7 @@ from __future__ import annotations
 import re
 from typing import Any, Literal
 
+from backend.engine.common.long_video.keyframe_prompt_policy import should_merge_scene_prompt_into_t2i
 from backend.engine.common.long_video.prompt_overlap import prompt_token_coverage
 
 NARRATIVE_MERGE_COVERAGE_THRESHOLD = 0.38
@@ -102,10 +103,21 @@ def is_close_up_shot_size(shot_size: str) -> bool:
     return bool(s and _CLOSE_UP_SHOT_SIZE_RE.match(s))
 
 
-def should_skip_beat_narrative_merge(*, segment_role: str, shot_size: str) -> bool:
-    if segment_role == "face_anchor":
+def should_skip_beat_narrative_merge(
+    *,
+    segment_role: str,
+    shot_size: str = "",
+    start_visual: str = "",
+    visibility: str = "",
+    is_intentional_empty: bool = False,
+) -> bool:
+    del shot_size  # legacy callers only; visibility contract replaces shot_size heuristics
+    if (start_visual or "").strip():
         return True
-    return is_close_up_shot_size(shot_size)
+    if is_intentional_empty or segment_role == "face_anchor":
+        return True
+    vis = visibility or "full_face"
+    return vis in ("full_face", "partial", "silhouette")
 
 
 def location_referenced_in_text(loc: str, text: str) -> bool:
@@ -174,6 +186,10 @@ def build_shot_t2i_provenance_summary(shot: Any) -> dict[str, Any]:
     beat_scene = _shot_field(shot, "scene_prompt")
     segment_role = _shot_field(shot, "segment_role")
     shot_size = _shot_field(shot, "shot_size")
+    visibility = _shot_field(shot, "first_frame_visibility") or "full_face"
+    is_empty = bool(
+        shot.get("is_establishing_empty") if isinstance(shot, dict) else getattr(shot, "is_establishing_empty", False)
+    )
     requirement = _shot_field(shot, "first_frame_requirement")
 
     scene_narrative, location_merge = merge_beat_narrative_fields(
@@ -188,8 +204,16 @@ def build_shot_t2i_provenance_summary(shot: Any) -> dict[str, Any]:
 
     if not scene_narrative:
         narrative_skip_reason = "empty_narrative"
-    elif should_skip_beat_narrative_merge(segment_role=segment_role, shot_size=shot_size):
+    elif should_skip_beat_narrative_merge(
+        segment_role=segment_role,
+        shot_size=shot_size,
+        start_visual=visual,
+        visibility=visibility,
+        is_intentional_empty=is_empty,
+    ):
         narrative_skip_reason = "face_anchor" if segment_role == "face_anchor" else "close_up"
+    elif not should_merge_scene_prompt_into_t2i(start_visual=visual, scene_prompt=beat_scene):
+        narrative_skip_reason = "token_coverage_sufficient"
     elif text_already_covered(visual, scene_narrative):
         narrative_skip_reason = "narrative_already_covered"
     else:
@@ -218,7 +242,8 @@ def build_shot_t2i_provenance_summary(shot: Any) -> dict[str, Any]:
                 visual=visual,
                 scene_narrative=scene_narrative,
                 segment_role=segment_role,
-                shot_size=shot_size,
+                visibility=visibility,
+                is_intentional_empty=is_empty,
             )
         ),
     }
@@ -236,12 +261,22 @@ def _compose_scene_preview(
     visual: str,
     scene_narrative: str,
     segment_role: str,
-    shot_size: str,
+    shot_size: str = "",
+    visibility: str = "",
+    is_intentional_empty: bool = False,
 ) -> str:
+    del shot_size
+    if visual.strip():
+        return visual.strip()
     parts: list[str] = []
     if (
         scene_narrative
-        and not should_skip_beat_narrative_merge(segment_role=segment_role, shot_size=shot_size)
+        and not should_skip_beat_narrative_merge(
+            segment_role=segment_role,
+            start_visual=visual,
+            visibility=visibility,
+            is_intentional_empty=is_intentional_empty,
+        )
         and not text_already_covered(visual, scene_narrative)
         and prompt_token_coverage(visual, scene_narrative) < NARRATIVE_MERGE_COVERAGE_THRESHOLD
     ):

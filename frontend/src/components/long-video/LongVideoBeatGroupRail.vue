@@ -13,9 +13,11 @@
           :selection="selection"
           :keyframe-generating-index="keyframeGeneratingIndex"
           :segment-generating-indices="segmentGeneratingIndices"
+          :parse-regenerating="beatRegeneratingIndex === group.beatIndex"
           @select-segment="$emit('select-segment', $event)"
           @insert-anchor="$emit('insert-anchor', $event)"
           @resplit-beat="$emit('resplit-beat', $event)"
+          @regenerate-beat="$emit('regenerate-beat', $event)"
         />
       </div>
     </div>
@@ -36,12 +38,14 @@ const props = defineProps<{
   segmentGeneratingIndices?: number[];
   outputWidth?: number;
   outputHeight?: number;
+  beatRegeneratingIndex?: number | null;
 }>();
 
 defineEmits<{
   (e: 'select-segment', index: number): void;
   (e: 'insert-anchor', groupId: string): void;
   (e: 'resplit-beat', groupId: string): void;
+  (e: 'regenerate-beat', beatIndex: number): void;
 }>();
 
 const { t: $tt } = useI18n();

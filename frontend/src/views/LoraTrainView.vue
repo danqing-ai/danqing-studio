@@ -36,30 +36,32 @@
       />
 
       <template v-else>
-        <div class="lv-editor-tabs lora-train-page__stepper" role="tablist">
-          <template v-for="(item, i) in stepNavItems" :key="item.key">
-            <span v-if="i > 0" class="lv-editor-tabs__connector" aria-hidden="true" />
-            <button
-              type="button"
-              role="tab"
-              class="lv-editor-tabs__tab"
-              :class="{
-                'lv-editor-tabs__tab--active': step === i,
-                'lv-editor-tabs__tab--done': step > i || stepDone(i),
-                'lv-editor-tabs__tab--locked': i > maxReachableStep,
-              }"
-              :aria-selected="step === i"
-              @click="goToStep(i)"
-            >
-              <span class="lv-editor-tabs__icon" :class="{ 'lv-editor-tabs__icon--done': step > i || stepDone(i) }" aria-hidden="true">
-                <span v-if="step > i || stepDone(i)" class="lv-editor-tabs__icon-mark">✓</span>
-                <span v-else class="lv-editor-tabs__icon-mark">{{ i + 1 }}</span>
-              </span>
-              <span class="lv-editor-tabs__text">
-                <span class="lv-editor-tabs__label">{{ item.label }}</span>
-              </span>
-            </button>
-          </template>
+        <div class="lv-editor-tabs-wrapper">
+          <div class="lv-editor-tabs lora-train-page__stepper" role="tablist">
+            <template v-for="(item, i) in stepNavItems" :key="item.key">
+              <span v-if="i > 0" class="lv-editor-tabs__connector" aria-hidden="true" />
+              <button
+                type="button"
+                role="tab"
+                class="lv-editor-tabs__tab"
+                :class="{
+                  'lv-editor-tabs__tab--active': step === i,
+                  'lv-editor-tabs__tab--done': step > i || stepDone(i),
+                  'lv-editor-tabs__tab--locked': i > maxReachableStep,
+                }"
+                :aria-selected="step === i"
+                @click="goToStep(i)"
+              >
+                <span class="lv-editor-tabs__icon" :class="{ 'lv-editor-tabs__icon--done': step > i || stepDone(i) }" aria-hidden="true">
+                  <span v-if="step > i || stepDone(i)" class="lv-editor-tabs__icon-mark">✓</span>
+                  <span v-else class="lv-editor-tabs__icon-mark">{{ i + 1 }}</span>
+                </span>
+                <span class="lv-editor-tabs__text">
+                  <span class="lv-editor-tabs__label">{{ item.label }}</span>
+                </span>
+              </button>
+            </template>
+          </div>
         </div>
 
         <DqSurfaceCard class="copilot-page__workspace-card studio-surface-card">
@@ -514,6 +516,7 @@ import LoraQualityHints from '@/components/lora/LoraQualityHints.vue';
 import { useLoraTrainLibrary } from '@/composables/useLoraTrainLibrary';
 import { useRegistryStore } from '@/stores/registry';
 import type { LoraDatasetHealthReport } from '@/utils/loraQuality';
+import '@/styles/editor-tabs.css';
 
 const { t, locale } = useI18n();
 const router = useRouter();

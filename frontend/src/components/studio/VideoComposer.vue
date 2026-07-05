@@ -185,20 +185,6 @@
             <DqIcon :size="12" :class="{ 'video-composer__enhance-spin': enhancing }"><MagicStick /></DqIcon>
           </DqIconButton>
         </ComposerIconTip>
-        <ComposerIconTip
-          v-if="showStoryboardExpand"
-          :content="localPrompt.trim() ? $t('video.storyboardExpandTip') : $t('video.storyboardExpandEmpty')"
-        >
-          <DqIconButton
-            type="text"
-            size="xs"
-            :disabled="storyboardExpanding || !localPrompt.trim()"
-            :aria-label="$t('video.storyboardExpand')"
-            @click="$emit('storyboard-expand')"
-          >
-            <DqIcon :size="12"><DocumentCopy /></DqIcon>
-          </DqIconButton>
-        </ComposerIconTip>
         <DqDropdown
           v-if="styles && Object.keys(styles).length > 0"
           trigger="click"
@@ -234,6 +220,12 @@
       @append="$emit('prompt-apply-append')"
       @dismiss="$emit('prompt-apply-dismiss')"
     />
+    <div v-if="showLongVideoHandoff" class="video-composer__long-video-handoff">
+      <span class="video-composer__long-video-handoff-text">{{ $t('video.longVideoHandoffHint') }}</span>
+      <DqButton size="sm" type="text" class="video-composer__long-video-handoff-btn" @click="$emit('open-long-video')">
+        {{ $t('video.openLongVideoStudio') }}
+      </DqButton>
+    </div>
     </div>
 
     <!-- Toolbar -->
@@ -581,7 +573,6 @@ const props = defineProps<{
   compatibleLoras?: Record<string, unknown>[];
   collapsed?: boolean;
   promptApplyPreview?: string | null;
-  storyboardExpanding?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -608,7 +599,7 @@ const emit = defineEmits<{
   (e: 'prompt-apply-replace'): void;
   (e: 'prompt-apply-append'): void;
   (e: 'prompt-apply-dismiss'): void;
-  (e: 'storyboard-expand'): void;
+  (e: 'open-long-video'): void;
 }>();
 
 const { t: $t } = useI18n();
@@ -744,7 +735,7 @@ const isLongDuration = computed(
   () => props.workMode === 'create' && isLongVideoTargetDuration(localDuration.value, longVideoSupport.value),
 );
 
-const showStoryboardExpand = computed(() => isLongDuration.value);
+const showLongVideoHandoff = computed(() => isLongDuration.value);
 
 const promptRows = computed(() => (isLongDuration.value ? 8 : 5));
 
@@ -860,6 +851,23 @@ function onKeydown(e: KeyboardEvent) {
   display: flex;
   flex-direction: column;
   margin-bottom: 8px;
+  flex-shrink: 0;
+}
+
+.video-composer__long-video-handoff {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  margin-top: 6px;
+  padding: 6px 10px;
+  border-radius: var(--dq-radius-sm);
+  background: var(--dq-color-fill-secondary, rgba(128, 128, 128, 0.08));
+  font-size: var(--dq-font-size-caption, 12px);
+  color: var(--dq-color-text-secondary);
+}
+
+.video-composer__long-video-handoff-btn {
   flex-shrink: 0;
 }
 

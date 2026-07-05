@@ -225,6 +225,39 @@ def _narrative_from_beat_line(beat_raw: str) -> str:
         return beat_raw
 
 
+def _narrative_visual_for_coverage(beat_raw: str) -> str:
+    """Beat narrative body only (exclude title/shot/location metadata from coverage needle)."""
+    raw = (beat_raw or "").strip()
+    if "|" in raw:
+        parts = [p.strip() for p in raw.split("|")]
+        if len(parts) >= 4:
+            return "|".join(parts[3:]).strip()
+    return _narrative_from_beat_line(beat_raw)
+
+
+def _beat_group_prompt_text(shots: list[dict[str, Any]], indices: list[int]) -> str:
+    parts: list[str] = []
+    for i in indices:
+        shot = shots[i]
+        for fld in (
+            "video_prompt",
+            "motion_prompt",
+            "scene_prompt",
+            "start_visual_prompt",
+            "visual_prompt",
+            "anchor_visual_prompt",
+            "clip_end_state",
+        ):
+            text = str(shot.get(fld) or "").strip()
+            if text:
+                parts.append(text)
+        for name in shot.get("characters_on_screen") or []:
+            n = str(name).strip()
+            if n:
+                parts.append(n)
+    return " ".join(parts)
+
+
 from backend.engine.common.long_video.prompt_overlap import prompt_token_set as _token_set
 
 
@@ -451,16 +484,13 @@ def validate_parse_quality(
                 )
             )
             continue
-        narrative = _narrative_from_beat_line(beat_raw)
+        narrative = _narrative_visual_for_coverage(beat_raw)
         if not narrative.strip():
             continue
-        group_prompt = " ".join(
-            _video_prompt(shots[i]) + " " + str(shots[i].get("scene_prompt") or "")
-            for i in indices
-        )
-        from backend.engine.common.long_video.prompt_overlap import prompt_token_coverage
+        group_prompt = _beat_group_prompt_text(shots, indices)
+        from backend.engine.common.long_video.prompt_overlap import prompt_narrative_coverage
 
-        coverage = prompt_token_coverage(group_prompt, narrative)
+        coverage = prompt_narrative_coverage(group_prompt, narrative)
         if coverage < 0.22:
             issues.append(
                 ParseQualityIssue(

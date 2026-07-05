@@ -23,6 +23,7 @@ import type {
   SystemInfo,
 } from '@/types';
 import { DQ_STORAGE, getItem } from '@/utils/storage';
+import { ScriptParseError, type ScriptParseQualityIssue } from '@/utils/scriptParseError';
 
 const API_BASE = '';
 
@@ -83,7 +84,7 @@ export type LongVideoChapterAnalyzeShot = {
   shot_size?: string;
 };
 
-export type LongVideoChapterAnalyzeResult = {
+export type ScriptParseDecomposeResult = {
   chapter_title: string;
   synopsis: string;
   mood?: string;
@@ -100,11 +101,19 @@ export type LongVideoChapterAnalyzeResult = {
     name: string;
     default_look_id: string;
     looks: Array<{ id: string; label: string; body: string }>;
+    spatial_layout_json?: Record<string, unknown>;
   }>;
   scene_beats: Array<{ order: number; title?: string; beat: string }>;
   scene_count: number;
-  shots?: LongVideoChapterAnalyzeShot[];
+  script_artifact: Record<string, unknown>;
   parse_phases?: Array<{ phase: string; message?: string }>;
+  llm_calls: number;
+  parse_run_id?: string;
+  long_video_project_id?: string;
+};
+
+export type ScriptParseExpandResult = ScriptParseDecomposeResult & {
+  shots?: LongVideoChapterAnalyzeShot[];
   quality_warnings?: string[];
   quality_issues?: Array<{
     code: string;
@@ -113,10 +122,10 @@ export type LongVideoChapterAnalyzeResult = {
     shot_index?: number | null;
     beat_index?: number | null;
   }>;
-  llm_calls: number;
-  parse_run_id?: string;
-  long_video_project_id?: string;
 };
+
+/** @deprecated use ScriptParseExpandResult */
+export type LongVideoChapterAnalyzeResult = ScriptParseExpandResult;
 
 export type LongVideoProjectActivityItem = {
   id: string;
@@ -185,6 +194,77 @@ export function taskIdFromSubmitResponse(res: unknown): string {
     return String(direct);
   }
   return '';
+}
+
+
+async function parseScriptParseStream<T>(
+  path: string,
+  body: Record<string, unknown>,
+  onProgress?: (phase: string, message: string) => void,
+): Promise<T> {
+  const lang = getItem(DQ_STORAGE.LANG) || 'zh';
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Accept-Language': lang,
+    },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const errBody = (await res.json()) as { detail?: string };
+      if (errBody.detail) detail = String(errBody.detail);
+    } catch {
+      /* ignore */
+    }
+    throw new Error(detail);
+  }
+  if (!res.body) {
+    throw new Error('empty stream body');
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let finalResult: T | null = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const chunks = buffer.split('\n\n');
+    buffer = chunks.pop() ?? '';
+    for (const chunk of chunks) {
+      const line = chunk.split('\n').find((l) => l.startsWith('data: '));
+      if (!line) continue;
+      const payload = JSON.parse(line.slice(6)) as {
+        event?: string;
+        phase?: string;
+        message?: string;
+        pass?: string;
+        detail?: string;
+        quality_issues?: ScriptParseQualityIssue[];
+        data?: T;
+      };
+      if (payload.event === 'progress' && payload.phase) {
+        onProgress?.(payload.phase, payload.message ?? payload.phase);
+      } else if (payload.event === 'review_retry') {
+        onProgress?.('review_retry', payload.pass ?? payload.message ?? 'review_retry');
+      } else if (payload.event === 'result' && payload.data) {
+        finalResult = payload.data;
+      } else if (payload.event === 'error') {
+        throw new ScriptParseError(
+          payload.detail || 'script parse failed',
+          payload.quality_issues ?? [],
+        );
+      }
+    }
+  }
+  if (!finalResult) {
+    throw new Error('script parse stream ended without result');
+  }
+  return finalResult;
 }
 
 function assetRowToGalleryItem(a: AssetRow): GalleryItem {
@@ -831,78 +911,62 @@ export const api = {
       return response.data;
     },
 
-    async longVideoStoryboard(body: {
-      prompt: string;
-      target_duration_sec?: number;
-      initial_duration_sec?: number;
-      segment_extend_sec?: number;
-      segment_duration_sec?: number;
-      reference_duration_sec?: number;
-      style_positive?: string;
-      locale?: string;
-      use_shot_plan?: boolean;
-      source_mode?: 'brief' | 'chapter';
-      scene_beats?: string[];
-      prebuilt_character_anchor?: string;
-      prebuilt_style_anchor?: string;
-      prebuilt_scenes?: Array<{
-        id: string;
-        name: string;
-        default_look_id: string;
-        looks: Array<{ id: string; label: string; body: string }>;
-      }>;
-    }): Promise<{
-      character_anchor: string;
-      style_anchor?: string;
-      characters?: Array<{
-        id: string;
-        name: string;
-        default_look_id: string;
-        looks: Array<{ id: string; label: string; body: string }>;
-      }>;
-      scenes?: Array<{
-        id: string;
-        name: string;
-        default_look_id: string;
-        looks: Array<{ id: string; label: string; body: string }>;
-      }>;
-      opening_prompt: string;
-      segment_prompts: string[];
-      segment_count: number;
-      plan: Record<string, unknown>;
-      beat_sheet: string[];
-      llm_calls: number;
-      shots: Array<{
-        id?: string;
-        order?: number;
-        visual_prompt: string;
-        motion_prompt: string;
-        scene_prompt?: string;
-        cast_looks?: Array<{ character_id: string; look_id: string }>;
-        scene_look?: { scene_id: string; look_id: string };
-        duration_sec?: number;
-      }>;
-    }> {
-      const response = await client.post('/api/chat/long-video-storyboard', body, {
-        timeout: LLM_MULTI_ROUND_TIMEOUT_MS,
-      });
-      return response.data;
+    async scriptParseDecomposeStream(
+      body: {
+        script_text: string;
+        title?: string;
+        locale?: string;
+        long_video_project_id?: string;
+        model?: string;
+      },
+      onProgress?: (phase: string, message: string) => void,
+    ): Promise<ScriptParseDecomposeResult> {
+      return parseScriptParseStream<ScriptParseDecomposeResult>(
+        '/api/script-parse/decompose/stream',
+        body,
+        onProgress,
+      );
     },
 
-    async longVideoChapterAnalyze(body: {
-      chapter_text: string;
-      chapter_title?: string;
-      locale?: string;
-      target_duration_sec?: number;
-      segment_duration_sec?: number;
-      max_clip_sec?: number;
-      long_video_project_id?: string;
-      model?: string;
-    }): Promise<LongVideoChapterAnalyzeResult> {
-      const response = await client.post('/api/chat/long-video-chapter-analyze', body, {
-        timeout: LLM_MULTI_ROUND_TIMEOUT_MS,
-      });
-      return response.data as LongVideoChapterAnalyzeResult;
+    async scriptParseExpandStream(
+      body: {
+        script_artifact: Record<string, unknown>;
+        locale?: string;
+        target_duration_sec?: number;
+        segment_duration_sec?: number;
+        max_clip_sec?: number;
+        long_video_project_id?: string;
+        model?: string;
+        beat_indices?: number[];
+      },
+      onProgress?: (phase: string, message: string) => void,
+    ): Promise<ScriptParseExpandResult> {
+      return parseScriptParseStream<ScriptParseExpandResult>(
+        '/api/script-parse/expand/stream',
+        body,
+        onProgress,
+      );
+    },
+
+    async scriptParseExpandBeatStream(
+      body: {
+        script_artifact: Record<string, unknown>;
+        beat_index: number;
+        existing_shots?: Array<Record<string, unknown>>;
+        locale?: string;
+        target_duration_sec?: number;
+        segment_duration_sec?: number;
+        max_clip_sec?: number;
+        long_video_project_id?: string;
+        model?: string;
+      },
+      onProgress?: (phase: string, message: string) => void,
+    ): Promise<ScriptParseExpandResult> {
+      return parseScriptParseStream<ScriptParseExpandResult>(
+        '/api/script-parse/expand/beat/stream',
+        body,
+        onProgress,
+      );
     },
 
     async longVideoChapterAnalyzeStream(
@@ -918,62 +982,28 @@ export const api = {
       },
       onProgress?: (phase: string, message: string) => void,
     ): Promise<LongVideoChapterAnalyzeResult> {
-      const lang = getItem(DQ_STORAGE.LANG) || 'zh';
-      const res = await fetch('/api/chat/long-video-chapter-analyze/stream', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept-Language': lang,
+      const decomposed = await this.scriptParseDecomposeStream(
+        {
+          script_text: body.chapter_text,
+          title: body.chapter_title,
+          locale: body.locale,
+          long_video_project_id: body.long_video_project_id,
+          model: body.model,
         },
-        body: JSON.stringify(body),
-      });
-      if (!res.ok) {
-        let detail = res.statusText;
-        try {
-          const errBody = (await res.json()) as { detail?: string };
-          if (errBody.detail) detail = String(errBody.detail);
-        } catch {
-          /* ignore */
-        }
-        throw new Error(detail);
-      }
-      if (!res.body) {
-        throw new Error('empty stream body');
-      }
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let finalResult: LongVideoChapterAnalyzeResult | null = null;
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, { stream: true });
-        const chunks = buffer.split('\n\n');
-        buffer = chunks.pop() ?? '';
-        for (const chunk of chunks) {
-          const line = chunk.split('\n').find((l) => l.startsWith('data: '));
-          if (!line) continue;
-          const payload = JSON.parse(line.slice(6)) as {
-            event?: string;
-            phase?: string;
-            message?: string;
-            detail?: string;
-            data?: LongVideoChapterAnalyzeResult;
-          };
-          if (payload.event === 'progress' && payload.phase) {
-            onProgress?.(payload.phase, payload.message ?? payload.phase);
-          } else if (payload.event === 'result' && payload.data) {
-            finalResult = payload.data;
-          } else if (payload.event === 'error') {
-            throw new Error(payload.detail || 'chapter analyze failed');
-          }
-        }
-      }
-      if (!finalResult) {
-        throw new Error('chapter analyze stream ended without result');
-      }
-      return finalResult;
+        onProgress,
+      );
+      return this.scriptParseExpandStream(
+        {
+          script_artifact: decomposed.script_artifact,
+          locale: body.locale,
+          target_duration_sec: body.target_duration_sec,
+          segment_duration_sec: body.segment_duration_sec,
+          max_clip_sec: body.max_clip_sec,
+          long_video_project_id: body.long_video_project_id,
+          model: body.model,
+        },
+        onProgress,
+      );
     },
 
     async getLlmModelInfo(): Promise<{

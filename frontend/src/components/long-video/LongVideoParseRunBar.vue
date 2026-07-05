@@ -1,9 +1,12 @@
 <template>
-  <section v-if="visible" class="lv-parse-run-bar">
+  <section v-if="visible" class="lv-parse-run-bar" :class="{ 'lv-parse-run-bar--blocked': parseBlocked }">
     <div class="lv-parse-run-bar__head">
       <div class="lv-parse-run-bar__title-row">
-        <span class="lv-parse-run-bar__ok" aria-hidden="true">✓</span>
-        <span class="lv-parse-run-bar__title">{{ $tt('video.longVideoParseRunTitle') }}</span>
+        <span v-if="parseBlocked" class="lv-parse-run-bar__blocked" aria-hidden="true">!</span>
+        <span v-else class="lv-parse-run-bar__ok" aria-hidden="true">✓</span>
+        <span class="lv-parse-run-bar__title">
+          {{ parseBlocked ? $tt('video.longVideoParseRunBlockedTitle') : $tt('video.longVideoParseRunTitle') }}
+        </span>
         <code v-if="parseRunId" class="lv-parse-run-bar__id" :title="parseRunId">{{ shortId(parseRunId) }}</code>
         <DqButton v-if="parseRunId" size="sm" type="text" @click="copyId(parseRunId)">
           {{ $tt('studio.taskIdCopy') }}
@@ -32,10 +35,15 @@
           </li>
         </ol>
         <ul v-if="qualityIssues.length" class="lv-parse-run-bar__issues">
-          <li v-for="(issue, idx) in qualityIssues.slice(0, 8)" :key="idx">
+          <li
+            v-for="(issue, idx) in qualityIssues.slice(0, 8)"
+            :key="idx"
+            :class="{ 'is-critical': issue.severity === 'critical' }"
+          >
             {{ issue.message }}
           </li>
         </ul>
+        <p v-if="parseBlockedReason" class="lv-parse-run-bar__blocked-reason">{{ parseBlockedReason }}</p>
         <div v-if="parseHistory.length > 1" class="lv-parse-run-bar__history">
           <span class="lv-parse-run-bar__history-label">{{ $tt('video.longVideoParseHistoryTitle') }}</span>
           <ul class="lv-parse-run-bar__history-list">
@@ -120,6 +128,8 @@ const selectedHistorySummary = computed(() => {
 const lastParseAt = computed(() => props.chapterAnalysis?.last_parse_at?.trim() || '');
 const shotCount = computed(() => Math.max(0, props.shotCount ?? 0));
 const qualityIssues = computed(() => props.chapterAnalysis?.quality_issues ?? []);
+const parseBlocked = computed(() => Boolean(props.chapterAnalysis?.parse_blocked));
+const parseBlockedReason = computed(() => props.chapterAnalysis?.parse_blocked_reason?.trim() || '');
 const qualityCount = computed(
   () => (props.chapterAnalysis?.quality_warnings?.length ?? 0) + qualityIssues.value.length,
 );
@@ -140,7 +150,9 @@ function formatTime(iso: string) {
 }
 
 function phaseLabel(phase: string | undefined) {
-  const p = phase || '';
+  const p = (phase || '').trim();
+  if (!p) return '';
+  if (p === 'review_retry') return $tt('video.longVideoParsePhaseReviewRetry');
   const key = `video.longVideoParsePhase${p
     .split('_')
     .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
@@ -195,6 +207,27 @@ watch(
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
+}
+
+.lv-parse-run-bar--blocked {
+  border-color: color-mix(in srgb, var(--dq-danger, #c33) 35%, var(--dq-border-subtle));
+  background: color-mix(in srgb, var(--dq-danger, #c33) 6%, var(--dq-fill-control));
+}
+
+.lv-parse-run-bar__blocked {
+  color: var(--dq-danger, #c33);
+  font-weight: 700;
+}
+
+.lv-parse-run-bar__blocked-reason {
+  margin: 0 0 8px;
+  font-size: var(--dq-font-size-caption);
+  color: var(--dq-danger, #c33);
+}
+
+.lv-parse-run-bar__issues li.is-critical {
+  color: var(--dq-danger, #c33);
+  font-weight: 600;
 }
 
 .lv-parse-run-bar__ok {

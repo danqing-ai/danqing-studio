@@ -22,7 +22,8 @@ import {
   mergeUncoveredRequirementClauses,
   locationsSimilar,
   shouldSkipBeatNarrativeMerge,
-  isCloseUpShotSize,
+  castReferenceScope,
+  shouldMergeScenePromptIntoT2i,
   promptTokenCoverage,
   extractKeyframeShotScene,
   parseSceneLookBody,
@@ -347,7 +348,7 @@ assert(facePrompt.includes('confirm button'), 'T2I preview uses frame visual');
 const faceAnchorCtx = {
   sceneNarrative: beatNarrative,
   segmentRole: 'face_anchor' as const,
-  shotSize: '特写',
+  firstFrameVisibility: 'full_face' as const,
 };
 const composedFaceAnchor = composeKeyframeSceneText('特写，主角面部静止', faceAnchorCtx);
 assert(!composedFaceAnchor.includes('hesitates'), 'face_anchor skips beat narrative merge');
@@ -356,10 +357,47 @@ assert(composedFaceAnchor.includes('静止') || composedFaceAnchor.includes('特
 const closeUpProv = buildKeyframeT2iProvenance('近景，女侠侧脸', {
   sceneNarrative: '云雾山山径，女侠沿山路疾行，衣袂翻飞',
   segmentRole: 'keyframe',
-  shotSize: '近景',
+  firstFrameVisibility: 'partial',
 });
-assert(closeUpProv.narrative_skip_reason === 'close_up', 'close-up provenance reason');
-assert(!closeUpProv.narrative_merged, 'close-up does not merge narrative');
+assert(
+  closeUpProv.narrative_skip_reason === 'token_coverage_sufficient'
+    || closeUpProv.narrative_skip_reason === 'close_up',
+  'structured or partial skip merge',
+);
+assert(!closeUpProv.narrative_merged, 'partial visibility does not merge narrative');
+
+assert(
+  !shouldMergeScenePromptIntoT2i(
+    '赵今麦手指悬停在手机屏幕上方',
+    '深夜昏暗卧室，红色通知UI特效在黑暗中格外醒目',
+  ),
+  'structured start_visual blocks scene_prompt merge',
+);
+
+const wukongFingerPrompt = keyframeGenerationPrompt(
+  '赵今麦手指悬停在手机屏幕上方，红色通知UI特效刚刚弹出',
+  {
+    segmentRole: 'keyframe',
+    firstFrameVisibility: 'partial',
+    characters: [
+      {
+        id: 'c_zhao',
+        name: '赵今麦',
+        default_look_id: 'l1',
+        looks: [{ id: 'l1', label: '卧室便装', body: '定位：lead | 外貌：长发披肩 | 服装：睡衣' }],
+      },
+    ],
+    castLooks: [{ character_id: 'c_zhao', look_id: 'l1' }],
+    styleAnchor: '高对比度冷色调',
+  },
+);
+assert(!wukongFingerPrompt.includes('红色通知UI特效在黑暗中格外醒目'), 'no scene_prompt merge');
+assert(!wukongFingerPrompt.includes('面容清秀'), 'partial cast omits face appearance');
+assert(
+  wukongFingerPrompt.includes('服饰') || wukongFingerPrompt.includes('Wardrobe'),
+  'wardrobe-only cast section',
+);
+assert(castReferenceScope('partial', 'keyframe') === 'wardrobe', 'partial scope');
 
 assert(locationsSimilar('云雾山山径', '云雾山山路'), 'path location bigram overlap');
 const locMerge = mergeBeatNarrativeFields({
@@ -386,7 +424,7 @@ assert(!wukongComposed.includes('；'), 'single frame visual — FFR not merged'
 assert(wukongComposed.includes('面部特写'), 'visual-only scene line preserved');
 const wukongPrompt = keyframeGenerationPrompt(wukongVisual, {
   segmentRole: 'face_anchor',
-  shotSize: '特写',
+  firstFrameVisibility: 'full_face',
   characters: [
     {
       id: 'c_zhao',

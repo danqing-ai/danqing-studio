@@ -82,7 +82,7 @@ def repair_shot_contracts(
 
 
 def _clone_subsegment_plan(sub: Any, **overrides: Any) -> Any:
-    from backend.engine.llm.chapter_segment_plan import SubsegmentPlan
+    from backend.engine.common.long_video.segment_plan_types import SubsegmentPlan
 
     data = {
         "role": sub.role,

@@ -145,9 +145,11 @@ def create_app() -> FastAPI:
 
     # LLM service (standalone, not through TaskScheduler)
     import backend.api.routes.llm as llm_routes
+    import backend.api.routes.script_parse as script_parse_routes
     import backend.api.routes.canvas as canvas_routes
     import backend.api.routes.long_video_projects as long_video_routes
     app.include_router(llm_routes.router)
+    app.include_router(script_parse_routes.router)
     app.include_router(canvas_routes.router)
     app.include_router(long_video_routes.router)
 

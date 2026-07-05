@@ -536,6 +536,32 @@ def cast_looks_to_dtos(cast: list[ShotCastLook]) -> list[dict]:
     return [{"character_id": c.character_id, "look_id": c.look_id} for c in cast]
 
 
+def ensure_cast_covers_on_screen(
+    cast: list[ShotCastLook],
+    *,
+    on_screen_names: list[str],
+    characters: list[StoryboardCharacter],
+) -> list[ShotCastLook]:
+    """Every characters_on_screen name gets a cast row (default look fallback)."""
+    if not on_screen_names:
+        return list(cast)
+    by_name = {ch.name: ch for ch in characters}
+    present = {c.character_id for c in cast}
+    out = list(cast)
+    for name in on_screen_names:
+        n = (name or "").strip()
+        if not n:
+            continue
+        ch = by_name.get(n)
+        if not ch or ch.id in present:
+            continue
+        look_id = ch.default_look_id or (ch.looks[0].id if ch.looks else "")
+        if look_id:
+            out.append(ShotCastLook(character_id=ch.id, look_id=look_id))
+            present.add(ch.id)
+    return out
+
+
 def dtos_to_cast_looks(items: list[dict]) -> list[ShotCastLook]:
     out: list[ShotCastLook] = []
     for row in items or []:

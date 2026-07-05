@@ -206,7 +206,10 @@ export function groupShotsByBeat(shots: LongVideoShotState[]): LongVideoBeatGrou
     if (!group) {
       group = {
         groupId,
-        beatIndex: order.length,
+        beatIndex:
+          typeof shot.narrative_beat_index === 'number' && shot.narrative_beat_index >= 0
+            ? shot.narrative_beat_index
+            : order.length,
         title: (shot.scene_prompt || shot.visual_prompt || '').trim().slice(0, 40) || groupId,
         shotIndices: [],
       };
@@ -687,13 +690,28 @@ function normalizeSceneLine(rawScene: string, locale: 'zh' | 'en'): string {
   return `${shotLabel}${s}`;
 }
 
-function keyframeSceneComposeNote(locale: 'zh' | 'en'): string {
+function keyframeSceneComposeNote(locale: 'zh' | 'en', scope: CastReferenceScope): string {
+  if (scope === 'wardrobe') {
+    return locale === 'zh'
+      ? '按本镜场景构图与动作；仅服饰/配色与定妆一致，本帧不要求清晰面部。'
+      : 'Compose this shot per scene framing and action; match outfit palette only—no readable face in frame.';
+  }
+  if (scope === 'none') {
+    return locale === 'zh'
+      ? '按本镜场景构图与环境；无人物或人物不可见。'
+      : 'Compose environment per scene; no visible characters.';
+  }
   return locale === 'zh'
     ? '按本镜场景构图、景别与动作，环境背景完整；仅面部/服饰与角色定妆一致，勿复制定妆图的构图或纯色背景。'
     : 'Compose this shot with full scene, framing, and action; match cast face/outfit only—do not copy portrait framing or plain backdrop.';
 }
 
-function keyframeCastSectionNote(locale: 'zh' | 'en'): string {
+function keyframeCastSectionNote(locale: 'zh' | 'en', scope: CastReferenceScope): string {
+  if (scope === 'wardrobe') {
+    return locale === 'zh'
+      ? '仅约束服饰与配色；构图、可见身体部位与环境以「场景」章节为准，勿添加清晰五官。'
+      : 'Outfit and palette only—visible body parts and environment follow the Scene section; no added facial detail.';
+  }
   return locale === 'zh'
     ? '仅约束角色外貌与服饰；场景构图、景别、环境与其他人物以「场景」章节为准。'
     : 'Outfit and appearance only—scene framing, environment, and other characters follow the Scene section.';
@@ -705,7 +723,9 @@ function buildKeyframeMarkdownCastSection(
   sceneText: string,
   _styleAnchor: string,
   locale: 'zh' | 'en',
+  scope: CastReferenceScope = 'face',
 ): string {
+  if (scope === 'none') return '';
   const castChars = charactersForShotCast(characters, castLooks, sceneText);
   if (!castChars.length) return '';
 
@@ -723,11 +743,11 @@ function buildKeyframeMarkdownCastSection(
       otherNames.filter((n) => n !== ch.name.trim()),
     );
     const heading = locale === 'zh' ? `### ${ch.name} · ${lk.label}` : `### ${ch.name} · ${lk.label}`;
-    blocks.push(`${heading}\n\n${formatCastOutfitMarkdown(outfitParts, locale)}`);
+    blocks.push(`${heading}\n\n${formatCastOutfitMarkdown(outfitParts, locale, scope)}`);
   }
 
   const castHeading = locale === 'zh' ? KEYFRAME_MD_CAST_ZH : KEYFRAME_MD_CAST_EN;
-  return `## ${castHeading}\n\n> ${keyframeCastSectionNote(locale)}\n\n${blocks.join('\n\n')}`;
+  return `## ${castHeading}\n\n> ${keyframeCastSectionNote(locale, scope)}\n\n${blocks.join('\n\n')}`;
 }
 
 function buildKeyframeMarkdownFromAnchorBlocks(
@@ -1040,6 +1060,8 @@ export function charactersForShotCast(
     .filter((ch): ch is LongVideoCharacter => Boolean(ch));
 }
 
+export type CastReferenceScope = 'none' | 'wardrobe' | 'face';
+
 export type KeyframePromptContext = {
   characterAnchor?: string;
   characters?: LongVideoCharacter[];
@@ -1049,37 +1071,55 @@ export type KeyframePromptContext = {
   sceneLook?: LongVideoShotSceneLook;
   /** Visual + characters_on_screen; overrides visual-only match for cast binding. */
   castMatchText?: string;
-  /** Beat narrative / scene_prompt — soft location & story context for T2I. */
+  /** Beat environment text (five_aspect.scene) — I2V / scene-look binding, not T2I merge when start_visual exists. */
   sceneNarrative?: string;
   /** Hard first-frame constraint from parse — inspector / strategy only, not T2I scene merge. */
   firstFrameRequirement?: string;
   segmentRole?: LongVideoShotState['segment_role'];
+  /** From beat plan Pass 2 — drives cast scope and T2I merge policy. */
+  firstFrameVisibility?: LongVideoShotState['first_frame_visibility'];
+  isEstablishingEmpty?: boolean;
   shotSize?: string;
   locationMerge?: 'none' | 'prepended' | 'scene_only';
   beatLocation?: string;
   beatScenePrompt?: string;
 };
 
+/** Cast T2I reference depth from parse visibility contract (not free-text shot_size). */
+export function castReferenceScope(
+  visibility: LongVideoShotState['first_frame_visibility'] | undefined,
+  segmentRole: LongVideoShotState['segment_role'] | undefined,
+  isEstablishingEmpty?: boolean,
+): CastReferenceScope {
+  const vis = visibility ?? 'full_face';
+  if (isEstablishingEmpty || vis === 'invisible') return 'none';
+  if (segmentRole === 'face_anchor') return 'face';
+  if (vis === 'full_face') return 'face';
+  return 'wardrobe';
+}
+
+/** Structured script_parse shots carry start_visual; scene_prompt is not merged into T2I. */
+export function shouldMergeScenePromptIntoT2i(startVisual: string, scenePrompt = ''): boolean {
+  if (startVisual.trim()) return false;
+  return Boolean(scenePrompt.trim());
+}
+
 /** Max chars when merging beat narrative into T2I scene line. */
 const SCENE_NARRATIVE_MERGE_MAX_CHARS = 120;
 /** Skip beat narrative merge when this fraction of its tokens already appear in the visual. */
 const NARRATIVE_MERGE_COVERAGE_THRESHOLD = 0.38;
 
-const CLOSE_UP_SHOT_SIZE_RE =
-  /^(?:特写|大特写|近景|close[\s-]?up|cu\b|medium[\s-]?close|extreme[\s-]?close)/i;
-
-export function isCloseUpShotSize(shotSize: string | undefined): boolean {
-  const s = (shotSize ?? '').trim();
-  if (!s) return false;
-  return CLOSE_UP_SHOT_SIZE_RE.test(s);
-}
-
-/** Beat-level process narrative must not pollute face-anchor / close-up keyframe T2I. */
+/** Legacy chapter-analyze fallback only — structured parse uses start_visual as sole T2I scene source. */
 export function shouldSkipBeatNarrativeMerge(
-  ctx: Pick<KeyframePromptContext, 'segmentRole' | 'shotSize'>,
+  ctx: Pick<
+    KeyframePromptContext,
+    'segmentRole' | 'firstFrameVisibility' | 'isEstablishingEmpty'
+  > & { startVisual?: string },
 ): boolean {
-  if (ctx.segmentRole === 'face_anchor') return true;
-  return isCloseUpShotSize(ctx.shotSize);
+  if ((ctx.startVisual ?? '').trim()) return true;
+  if (ctx.isEstablishingEmpty || ctx.segmentRole === 'face_anchor') return true;
+  const vis = ctx.firstFrameVisibility ?? 'full_face';
+  return vis === 'full_face' || vis === 'partial' || vis === 'silhouette';
 }
 
 function provenancePreview(text: string, max = 72): string {
@@ -1145,14 +1185,18 @@ function narrativeAddsContext(visual: string, narrative: string): boolean {
  */
 export function composeKeyframeSceneText(
   visualPrompt: string,
-  ctx: Pick<KeyframePromptContext, 'sceneNarrative' | 'segmentRole' | 'shotSize'>,
+  ctx: Pick<
+    KeyframePromptContext,
+    'sceneNarrative' | 'segmentRole' | 'firstFrameVisibility' | 'isEstablishingEmpty'
+  >,
 ): string {
   const visualScene = extractKeyframeShotScene(visualPrompt).trim() || visualPrompt.trim();
+  if (visualScene) return visualScene;
   const narrative = (ctx.sceneNarrative ?? '').trim();
   const parts: string[] = [];
   if (
     narrative
-    && !shouldSkipBeatNarrativeMerge(ctx)
+    && !shouldSkipBeatNarrativeMerge({ ...ctx, startVisual: visualScene })
     && narrativeAddsContext(visualScene, narrative)
   ) {
     const hint =
@@ -1180,8 +1224,15 @@ export function buildKeyframeT2iProvenance(
 
   if (!narrative) {
     narrative_skip_reason = 'empty_narrative';
-  } else if (shouldSkipBeatNarrativeMerge(ctx)) {
-    narrative_skip_reason = ctx.segmentRole === 'face_anchor' ? 'face_anchor' : 'close_up';
+  } else if (shouldSkipBeatNarrativeMerge({ ...ctx, startVisual: visualScene })) {
+    narrative_skip_reason =
+      ctx.segmentRole === 'face_anchor'
+        ? 'face_anchor'
+        : visualScene
+          ? 'token_coverage_sufficient'
+          : ctx.firstFrameVisibility === 'partial' || ctx.firstFrameVisibility === 'silhouette'
+            ? 'close_up'
+            : 'token_coverage_sufficient';
   } else if (textAlreadyCovered(visualScene, narrative)) {
     narrative_skip_reason = 'narrative_already_covered';
   } else {
@@ -1263,7 +1314,8 @@ export function keyframePromptContextForShot(
     sceneNarrative,
     firstFrameRequirement: shot.first_frame_requirement,
     segmentRole: shot.segment_role,
-    shotSize: shot.shot_size,
+    firstFrameVisibility: shot.first_frame_visibility,
+    isEstablishingEmpty: shot.is_establishing_empty,
     locationMerge,
     beatLocation,
     beatScenePrompt,
@@ -1284,6 +1336,11 @@ export function keyframeGenerationPrompt(
   const styleAnchor = (ctx.styleAnchor ?? '').trim();
   const castLooks = ctx.castLooks ?? [];
   const castMatchText = (ctx.castMatchText ?? scene).trim();
+  const castScope = castReferenceScope(
+    ctx.firstFrameVisibility,
+    ctx.segmentRole,
+    ctx.isEstablishingEmpty,
+  );
   const locale: 'zh' | 'en' = /[\u4e00-\u9fff]/.test(scene || anchor) ? 'zh' : 'en';
   const sceneSetSection = buildKeyframeMarkdownSceneSetSection(
     scenes,
@@ -1293,7 +1350,7 @@ export function keyframeGenerationPrompt(
   );
   const sceneLine = normalizeSceneLine(scene, locale);
   const sceneBlock = sceneSetSection || characters.length
-    ? `> ${keyframeSceneComposeNote(locale)}\n\n${sceneLine}`
+    ? `> ${keyframeSceneComposeNote(locale, castScope)}\n\n${sceneLine}`
     : sceneLine;
 
   if (characters.length) {
@@ -1305,6 +1362,7 @@ export function keyframeGenerationPrompt(
         castMatchText,
         styleAnchor,
         locale,
+        castScope,
       );
       return assembleKeyframeMarkdownPrompt(sceneBlock, sceneSetSection, castSection, styleAnchor, locale);
     }
@@ -1322,7 +1380,7 @@ export function keyframeGenerationPrompt(
   );
   const hasCast = Boolean(castSection.trim());
   const finalSceneBlock = hasCast || sceneSetSection
-    ? `> ${keyframeSceneComposeNote(locale)}\n\n${sceneLine}`
+    ? `> ${keyframeSceneComposeNote(locale, castScope)}\n\n${sceneLine}`
     : sceneLine;
   return assembleKeyframeMarkdownPrompt(finalSceneBlock, sceneSetSection, castSection, styleAnchor, locale);
 }
@@ -1742,7 +1800,17 @@ export function characterLookOutfitParts(
 function formatCastOutfitMarkdown(
   parts: { appearance: string; wardrobe: string },
   locale: 'zh' | 'en',
+  scope: CastReferenceScope = 'face',
 ): string {
+  if (scope === 'wardrobe') {
+    const wardrobeLabel = locale === 'zh' ? '服饰' : 'Wardrobe';
+    if (parts.wardrobe) {
+      return `- **${wardrobeLabel}**：${parts.wardrobe}`;
+    }
+    return locale === 'zh'
+      ? '- **服饰**：与定妆一致（本帧不可见面部，勿绘制清晰五官）'
+      : '- **Wardrobe**: match cast outfit (no readable face in this frame)';
+  }
   if (parts.wardrobe) {
     const appLabel = locale === 'zh' ? '外貌' : 'Appearance';
     const wardLabel = locale === 'zh' ? '服装' : 'Wardrobe';
