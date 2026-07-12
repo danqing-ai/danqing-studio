@@ -42,21 +42,11 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install dq-ui dependencies
-        run: npm install
-        working-directory: ${{ github.workspace }}/dq-ui/packages/tokens
-
-      - name: Install and build dq-ui ui
+      - name: Install and build dq-ui
         run: |
           npm install
           npm run build
-        working-directory: ${{ github.workspace }}/dq-ui/packages/ui
-
-      - name: Install and build dq-ui shell
-        run: |
-          npm install
-          npm run build
-        working-directory: ${{ github.workspace }}/dq-ui/packages/shell
+        working-directory: ${{ github.workspace }}/dq-ui
 
       - name: Setup Rust
         run: rustup target add aarch64-apple-darwin
