@@ -120,7 +120,7 @@ body {
  border-bottom: none;
 }
 
-/* 顶栏：暗色下由 theme-apple-native 接管（毛玻璃 + 发丝分隔线） */
+/* 顶栏：表面由 dq-glass--* 工具类提供 */
 
 /* 顶栏内水平菜单：与顶栏同色底，整栏仅保留顶栏一条下边线（避免双线/断层） */
 
@@ -275,7 +275,7 @@ body {
  background: var(--bg-primary);
 }
 
-/* 主内容区：暗黑由 theme-apple-native 提供纯黑底 */
+/* 主内容区 */
 
 /* 卡片样式 */
 
@@ -4496,9 +4496,9 @@ html.dark .dq-app-main:has(.models-page) > .models-page {
 }
 
 /* =============================================================================
- * 模型页（下载中心）— 布局与排版；深色玻璃/阴影见 theme-apple-chrome.css
+ * 模型页（下载中心）— 布局与排版
  * ============================================================================= */
-/* 布局与排版；深色玻璃/阴影见 theme-apple-chrome.css */
+/* 布局与排版 */
 .models-page,
 .copilot-page {
  position: relative;
@@ -4650,7 +4650,7 @@ html.dark .dq-app-main:has(.models-page) > .models-page {
  color: var(--dq-label-primary);
 }
 
-/* —— 模型卡片（结构；表面/悬停见 theme-apple-chrome.css）—— */
+/* —— 模型卡片（结构）—— */
 .models-page .model-card {
  border-radius: var(--dq-radius-group);
 }

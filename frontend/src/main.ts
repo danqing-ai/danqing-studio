@@ -16,10 +16,6 @@ import '@danqing/dq-tokens/dq-shadcn-dark.css';
 import '@danqing/dq-ui/style.css';
 import '@danqing/dq-shell/style.css';
 import './styles/theme.css';
-import './styles/theme-apple-dark.css';
-import './styles/theme-apple-chrome.css';
-import './styles/theme-apple-finish.css';
-import './styles/theme-apple-native.css';
 import '@danqing/dq-tokens/dq-tauri-macos.css';
 
 const savedTheme = getItem(DQ_STORAGE.THEME) as ThemeId | null;
