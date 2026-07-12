@@ -281,7 +281,7 @@ pack-linux-server-venv:
 	@test -d .venv || python3.11 -m venv .venv || python3 -m venv .venv
 	$(PYTHON) -m pip install --upgrade pip
 	$(PYTHON) -m pip install torch torchvision --index-url $(TORCH_INDEX_URL)
-	$(PYTHON) -m pip install -r requirements-linux-cuda.txt pyinstaller
+	$(PYTHON) -m pip install -r requirements-cuda.txt pyinstaller
 
 pack-linux-server-sidecar: frontend-build
 	DANQING_PYINSTALLER_PROFILE=cuda $(PYTHON) scripts/build_sidecar.py
@@ -298,7 +298,7 @@ pack-windows-venv:
 	@test -d .venv || py -3.11 -m venv .venv || python -m venv .venv
 	$(PYTHON) -m pip install --upgrade pip
 	$(PYTHON) -m pip install torch torchvision --index-url $(TORCH_INDEX_URL)
-	$(PYTHON) -m pip install -r requirements-linux-cuda.txt pyinstaller
+	$(PYTHON) -m pip install -r requirements-cuda.txt pyinstaller
 
 pack-windows-sidecar: frontend-build
 	DANQING_PYINSTALLER_PROFILE=cuda $(PYTHON) scripts/build_sidecar.py

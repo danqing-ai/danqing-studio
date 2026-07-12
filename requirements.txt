@@ -1,3 +1,37 @@
+# Common dependencies (platform-agnostic).
+# MLX builds:  pip install -r requirements-mlx.txt
+# CUDA builds: pip install -r requirements-cuda.txt
+
+# ── Web framework ──
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+python-multipart>=0.0.6
+aiohttp>=3.9.0
+
+# ── Image / Video I/O ──
+Pillow>=10.0.0
+pillow-heif>=0.16.0
+opencv-python-headless>=4.8.0
+imageio>=2.34.0
+imageio-ffmpeg>=0.5.0
+
+# ── Core ──
+pydantic>=2.5.0
+psutil>=5.9.0
+
+# ── Tokenizers / text encoding ──
+transformers>=4.40.0
+sentencepiece
+tiktoken
+
+# ── Model hubs ──
+huggingface-hub>=0.25.0
+safetensors>=0.4.0
+modelscope>=1.20.0
+
+# ── Audio ──
+soundfile>=0.12.0
+phonemizer
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
 python-multipart>=0.0.6
