@@ -290,7 +290,7 @@ class SettingsService(ISettingsService):
                     )
                 if not ok:
                     continue
-            from backend.catalog.lora_meta import lora_adapter_picklist_row
+            from backend.catalog.lora_meta import lora_adapter_picklist_row, lora_config_picklist_extras
 
             out.append(
                 lora_adapter_picklist_row(
@@ -344,16 +344,20 @@ class SettingsService(ISettingsService):
                 resolved = self._path_resolver.resolve_registry_local_path(local_path)
                 if not resolved.is_dir() and not resolved.is_file():
                     continue
+            row: dict[str, Any] = {
+                "kind": "lora",
+                "id": str(ul.get("id")),
+                "name": str(ul.get("name") or ul.get("id")),
+                "base_model": lora_base,
+                "source": str(ul.get("source") or "user_trained"),
+                "local_path": local_path,
+            }
+            if local_path:
+                bundle_dir = resolved if resolved.is_dir() else resolved.parent
+                row.update(lora_config_picklist_extras(bundle_dir))
             out.insert(
                 0,
-                {
-                    "kind": "lora",
-                    "id": str(ul.get("id")),
-                    "name": str(ul.get("name") or ul.get("id")),
-                    "base_model": lora_base,
-                    "source": str(ul.get("source") or "user_trained"),
-                    "local_path": local_path,
-                },
+                row,
             )
         return out
 

@@ -46,7 +46,11 @@ from backend.engine.training.lora_train_runtime import (
     parse_lora_train_runtime_config,
     split_train_val_indices,
 )
-from backend.engine.training.presets import merge_training_request_config, resolve_preset
+from backend.engine.training.presets import (
+    Z_IMAGE_SCHEME4_INFERENCE,
+    merge_training_request_config,
+    resolve_preset,
+)
 from backend.engine.training.user_lora_registry import register_user_lora
 
 from backend.engine.training.z_image_turbo_adapter import (
@@ -749,6 +753,23 @@ def run_z_image_dreambooth_training(
             f"Base Z-Image training: shift-matched σ sampling (sigma_shift={base_sigma_shift:g}, "
             f"sigma_bias={train_runtime.sigma_bias}) aligned to inference scheduler for identity",
         )
+        if train_runtime.scheme4_turbo_band_mix > 0:
+            _log(
+                exec_ctx,
+                "info",
+                f"Scheme 4 hybrid: {train_runtime.scheme4_turbo_band_mix * 100:.0f}% of steps sample "
+                f"Turbo σ band [{train_runtime.timestep_low}-{train_runtime.timestep_high}] "
+                f"(steps={train_runtime.turbo_infer_steps}, bias={train_runtime.timestep_bias}) "
+                f"on Base DiT so identity survives Turbo inference; remainder uses Base shift sampling.",
+            )
+        if (request.preset or "").strip().lower() == "scheme4":
+            _log(
+                exec_ctx,
+                "info",
+                "Scheme 4 inference: use z-image-turbo + this LoRA; DistillPatch loads automatically. "
+                "Official acceleration config: 8 steps, cfg_scale=1 (guidance=0), linear scheduler, "
+                "LoRA weight 0.7–0.85.",
+            )
 
     lora_layer_count = len(getattr(train_module, "_lora_paths", []) or [])
     _log(
@@ -764,6 +785,7 @@ def run_z_image_dreambooth_training(
         f"train_type={train_runtime.train_type} qlora={train_runtime.qlora_bits} "
         f"min_snr_gamma={train_runtime.min_snr_gamma:g} "
         f"sigma_bias={train_runtime.sigma_bias} "
+        f"scheme4_turbo_mix={train_runtime.scheme4_turbo_band_mix:g} "
         f"turbo_asst_off={train_runtime.turbo_assistant_off_prob:g} "
         f"num_aug={train_runtime.num_augmentations} n_samples={n_samples} "
         f"train/val={len([p for p in pairs])}",
@@ -776,6 +798,15 @@ def run_z_image_dreambooth_training(
         resolution=resolution,
         train_runtime=train_runtime,
     )
+    if not is_turbo and train_runtime.scheme4_turbo_band_mix > 0:
+        _log_training_sigma_distribution(
+            exec_ctx,
+            ctx,
+            is_turbo=True,
+            sigma_shift=base_sigma_shift,
+            resolution=resolution,
+            train_runtime=train_runtime,
+        )
     _log_zimage_latent_caption_stats(exec_ctx, latent_cache, ctx)
     # Baseline per-σ loss (fresh LoRA ≈ frozen base): reference to compare training progress against.
     if is_turbo and training_assistant is not None:
@@ -785,6 +816,10 @@ def run_z_image_dreambooth_training(
         training_assistant.set_enabled(True)
     else:
         _log_noise_level_loss(exec_ctx, train_module, latent_cache, ctx, label="base-init")
+        if train_runtime.scheme4_turbo_band_mix > 0:
+            _log_noise_level_loss(
+                exec_ctx, train_module, latent_cache, ctx, label="scheme4-turbo-band-init"
+            )
 
     prior_latents: Any | None = None
     if train_runtime.prior_loss_weight > 0 and class_prompt:
@@ -836,6 +871,10 @@ def run_z_image_dreambooth_training(
             if random.random() < float(train_runtime.turbo_assistant_off_prob):
                 training_assistant.set_enabled(False)
                 assistant_was_off = True
+        use_turbo_band = is_turbo or (
+            train_runtime.scheme4_turbo_band_mix > 0.0
+            and random.random() < float(train_runtime.scheme4_turbo_band_mix)
+        )
         try:
             return _training_loss(
                 train_module,
@@ -846,7 +885,7 @@ def run_z_image_dreambooth_training(
                 prior_cap=prior_cap,
                 prior_latents=prior_latents,
                 prior_loss_weight=train_runtime.prior_loss_weight if prior_cap is not None else 0.0,
-                turbo=is_turbo,
+                turbo=use_turbo_band,
                 turbo_infer_steps=train_runtime.turbo_infer_steps,
                 timestep_low=train_runtime.timestep_low,
                 timestep_high=train_runtime.timestep_high,
@@ -873,6 +912,10 @@ def run_z_image_dreambooth_training(
             training_assistant.set_enabled(True)
         else:
             _log_noise_level_loss(exec_ctx, train_module, latent_cache, ctx, label="base")
+            if train_runtime.scheme4_turbo_band_mix > 0:
+                _log_noise_level_loss(
+                    exec_ctx, train_module, latent_cache, ctx, label="scheme4-turbo-band"
+                )
 
         vae_dir = bundle_root / "vae"
         vae_cfg, _, _ = read_vae_dir_config(vae_dir)
@@ -901,6 +944,21 @@ def run_z_image_dreambooth_training(
                 turbo=is_turbo,
             )
             Image.fromarray(preview).save(work_dir / f"{step:07d}_progress.png")
+            if not is_turbo and train_runtime.scheme4_turbo_band_mix > 0:
+                turbo_steps = int(train_runtime.turbo_infer_steps)
+                preview_turbo = _generate_progress_image(
+                    model=train_module,
+                    vae_dec=dec,
+                    text_encoder=te,
+                    prompt=progress_prompt,
+                    resolution=resolution,
+                    ctx=ctx,
+                    steps=turbo_steps,
+                    turbo=True,
+                )
+                Image.fromarray(preview_turbo).save(
+                    work_dir / f"{step:07d}_progress_turbo{turbo_steps}.png"
+                )
         finally:
             if is_turbo and training_assistant is not None:
                 training_assistant.set_enabled(True)
@@ -972,6 +1030,8 @@ def run_z_image_dreambooth_training(
         "trigger_word": trigger_word,
         "training_caption": training_caption,
     }
+    if not is_turbo and (request.preset or "").strip().lower() == "scheme4":
+        lora_config["inference"] = dict(Z_IMAGE_SCHEME4_INFERENCE)
     (dest_dir / "lora_config.json").write_text(json.dumps(lora_config, indent=2), encoding="utf-8")
 
     user_lora_id = ""

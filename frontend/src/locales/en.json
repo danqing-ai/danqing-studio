@@ -90,7 +90,7 @@
     "memoryHint": "Requires ~{required}GB unified memory (detected: {detected}GB)",
     "memoryOk": "Memory OK",
     "memoryLow": "Insufficient memory",
-    "stepBaseDesc": "Choose a base diffusion model. Flux.1-dev, Z-Image Base, and Qwen-Image support DreamBooth training.",
+    "stepBaseDesc": "Choose a base diffusion model. For portrait/concept LoRAs use Z-Image Base + Scheme 4 (train Base, infer Turbo).",
     "stepDatasetDesc": "Pick or create a dataset in the library, then add 3+ captioned images. The selected base model center-crops and snaps sizes to its VAE grid automatically — no manual resizing.",
     "stepConfigDesc": "Choose a preset and the unified training caption (identity binding text — not preview-only).",
     "stepConfirmDesc": "Review your configuration, then submit the job to the global queue.",
@@ -283,9 +283,12 @@
     "outputName": "LoRA name (optional)",
     "outputNamePlaceholder": "Auto-generated if empty",
     "outputNameDesc": "Name when registering the trained adapter to your LoRA list.",
+    "scheme4InferHint": "After training: use Z-Image-Turbo + this LoRA in Create; DistillPatch auto-loads (install Z-Image Turbo DistillPatch from Models first). Acceleration: 8 steps, cfg_scale=1, linear scheduler.",
+    "presetRecommended": "Recommended",
     "confirmIntro": "Review the settings below, then submit to the global queue. You can browse elsewhere while training runs.",
     "summaryOutput": "LoRA name",
     "presetDesc": {
+      "scheme4": "Official Scheme 4: Base SFT + hybrid Turbo σ band (rank 32, all blocks, 1200 steps); infer on Turbo + DistillPatch (8-step acceleration).",
       "quick": "~300–400 steps — good for validating dataset and captions",
       "standard": "Recommended default — balance of quality and time",
       "quality": "More steps — best for final output",
@@ -338,6 +341,7 @@
     "registeredAs": "Registered",
     "registerSuccess": "LoRA registered",
     "preset": {
+      "scheme4": "Scheme 4 (recommended)",
       "quick": "Quick",
       "standard": "Standard",
       "quality": "Quality",
@@ -555,7 +559,8 @@
     "loraLabel": "LoRA",
     "noLora": "No LoRA",
     "loraHint": {
-      "videoStepDistillMoe": "This LoRA uses high/low noise shards merged per step; composer values follow registry compose_overrides."
+      "videoStepDistillMoe": "This LoRA uses high/low noise shards merged per step; composer values follow registry compose_overrides.",
+      "zImageDistillPatch": "Scheme 4: auto-loaded with Base-trained LoRAs on Turbo to restore official 8-step acceleration (cfg_scale=1)."
     },
     "myLoraTag": "My LoRA",
     "pickLoraToAdd": "Select LoRA to add…",
@@ -868,7 +873,8 @@
     "presetTagI2I": "[Img2img]",
     "noLora": "No LoRA",
     "loraHint": {
-      "videoStepDistillMoe": "This LoRA uses high/low noise shards merged per step; composer values follow registry compose_overrides."
+      "videoStepDistillMoe": "This LoRA uses high/low noise shards merged per step; composer values follow registry compose_overrides.",
+      "zImageDistillPatch": "Scheme 4: auto-loaded with Base-trained LoRAs on Turbo to restore official 8-step acceleration (cfg_scale=1)."
     },
     "myLoraTag": "My LoRA",
     "pickLoraToAdd": "Select LoRA to add…",

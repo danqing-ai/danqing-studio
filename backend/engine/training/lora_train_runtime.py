@@ -76,6 +76,7 @@ class LoraTrainRuntimeConfig:
     timestep_bias: str
     sigma_bias: str
     turbo_assistant_off_prob: float
+    scheme4_turbo_band_mix: float
 
     @property
     def lora_scale(self) -> float:
@@ -218,6 +219,7 @@ def parse_lora_train_runtime_config(cfg: dict[str, Any], *, defaults: dict[str, 
         timestep_bias=str(merged.get("timestep_bias") or "low").strip().lower(),
         sigma_bias=str(merged.get("sigma_bias") or "uniform").strip().lower(),
         turbo_assistant_off_prob=float(merged.get("turbo_assistant_off_prob") or 0.0),
+        scheme4_turbo_band_mix=float(merged.get("scheme4_turbo_band_mix") or 0.0),
     )
 
 

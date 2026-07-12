@@ -273,6 +273,11 @@ import {
   assetIdsFromGalleryItems,
   navigateToLoraTrainWithAssets,
 } from '@/utils/loraTrainHandoff';
+import {
+  applyLoraComposeOverrides,
+  findCompatibleLora,
+  type CompatibleLoraRow,
+} from '@/utils/loraAdapterMeta';
 import { reconcileVersionPickerSelection } from '@/composables/useModelRegistryFilters';
 import { applyModelVersionFilters } from '@/utils/modelPickerFilters';
 import { pickDefaultVersionKey } from '@/utils/defaultModelSettings';
@@ -939,7 +944,7 @@ function onPromptApplyAppend() {
 /*  LoRAs / ControlNets                                                */
 /* ------------------------------------------------------------------ */
 
-const compatibleLoras = ref<Record<string, unknown>[]>([]);
+const compatibleLoras = ref<CompatibleLoraRow[]>([]);
 const {
   compatibleControlNets,
   loadCompatibleControlNets,
@@ -954,15 +959,27 @@ const controlNetHostRuntimeAvailable = computed(() =>
   ),
 );
 
+function syncImageLoraSelection() {
+  if (!params.lora) return;
+  const row = findCompatibleLora(compatibleLoras.value, params.lora);
+  if (!row) {
+    params.lora = '';
+    return;
+  }
+  applyLoraComposeOverrides(params as Record<string, unknown>, row);
+}
+
 async function loadCompatibleAdapters(modelKey: string) {
   if (!modelKey) {
     compatibleLoras.value = [];
     compatibleControlNets.value = [];
+    params.lora = '';
     return;
   }
   try {
     const loras = await api.settings.getCompatibleLoras(modelKey);
-    compatibleLoras.value = (loras as Record<string, unknown>[]) || [];
+    compatibleLoras.value = (loras as CompatibleLoraRow[]) || [];
+    syncImageLoraSelection();
     await loadCompatibleControlNets(modelKey);
     clearControlNetIfIncompatible(params, () => {
       controlImage.value = null;
@@ -1049,6 +1066,10 @@ watch(() => params.model, (modelKey) => {
     controlImage.value = null;
     syncCanvasControlOverlay(null);
   }
+});
+
+watch(() => params.lora, () => {
+  syncImageLoraSelection();
 });
 
 watch(

@@ -167,6 +167,16 @@ def merge_lora_adapters_common(
                 f"but the image request uses {base_model_id!r}."
             )
         if bundle is None:
+            if entry is not None:
+                from backend.engine.contracts.pipeline_registry import resolve_version_block
+
+                block = resolve_version_block(entry, ver or None)
+                lp = (block or {}).get("local_path") if block else None
+                if block and lp:
+                    raise RuntimeError(
+                        f"LoRA {lora_id!r} is not installed. Download it from the Models page "
+                        f"(expected under {lp!r}, version {ver or 'default'})."
+                    )
             raise RuntimeError(
                 f"LoRA {lora_id!r} is not installed on disk (missing registry versions.local_path "
                 f"for version {ver or 'default'})."

@@ -165,16 +165,34 @@
                 :key="p"
                 type="button"
                 class="lora-train-page__preset-card"
-                :class="{ 'is-selected': form.preset === p }"
+                :class="{
+                  'is-selected': form.preset === p,
+                  'is-recommended': p === 'scheme4' && form.base_model === 'z-image',
+                }"
                 @click="form.preset = p"
               >
-                <span class="lora-train-page__preset-name">{{ $t(`loraTrain.preset.${p}`) }}</span>
+                <span class="lora-train-page__preset-name">
+                  {{ $t(`loraTrain.preset.${p}`) }}
+                  <em
+                    v-if="p === 'scheme4' && form.base_model === 'z-image'"
+                    class="lora-train-page__preset-badge"
+                  >{{ $t('loraTrain.presetRecommended') }}</em>
+                </span>
                 <span class="lora-train-page__preset-desc">{{ $t(`loraTrain.presetDesc.${p}`) }}</span>
                 <span v-if="p !== 'custom' && presetStats(p)" class="lora-train-page__preset-stats">
                   {{ presetStats(p) }}
                 </span>
               </button>
             </div>
+            <DqAlert
+              v-if="form.base_model === 'z-image' && form.preset === 'scheme4'"
+              type="info"
+              :closable="false"
+              class="lora-train-page__scheme4-hint"
+              :title="$t('loraTrain.preset.scheme4')"
+            >
+              <p>{{ $t('loraTrain.scheme4InferHint') }}</p>
+            </DqAlert>
             <div v-if="activePresetDetail" class="lora-train-page__preset-detail">
               <span class="lora-train-page__preset-detail-label">{{ $t('loraTrain.presetDetail') }}</span>
               <div class="lora-train-page__preset-detail-grid">
@@ -456,6 +474,14 @@
                 </span>
               </div>
             </div>
+            <DqAlert
+              v-if="form.base_model === 'z-image' && form.preset === 'scheme4'"
+              type="info"
+              :closable="false"
+              class="lora-train-page__scheme4-hint"
+            >
+              <p>{{ $t('loraTrain.scheme4InferHint') }}</p>
+            </DqAlert>
             <ul class="lora-train-page__summary">
               <li><span>{{ $t('loraTrain.summaryBase') }}</span><strong>{{ form.base_model }}</strong></li>
               <li>
@@ -539,7 +565,12 @@ const captionEdits = reactive<Record<string, string>>({});
 const datasetPanelRef = ref<InstanceType<typeof LoraDatasetPanel> | null>(null);
 const historyRef = ref<InstanceType<typeof LoraTrainHistory> | null>(null);
 const { loading: historyLoading, refresh: refreshHistory } = useLoraTrainLibrary();
-const presetKeys = ['quick', 'standard', 'quality', 'custom'];
+const presetKeys = computed(() => {
+  if (form.base_model === 'z-image') {
+    return ['scheme4', 'quick', 'standard', 'quality', 'custom'];
+  }
+  return ['quick', 'standard', 'quality', 'custom'];
+});
 
 const Z_IMAGE_PRIOR_DISABLED_MODELS = new Set(['z-image', 'z-image-turbo']);
 
@@ -560,9 +591,9 @@ const stepNavItems = computed(() => [
 ]);
 
 const form = reactive({
-  base_model: 'z-image-turbo',
+  base_model: 'z-image',
   dataset_id: '',
-  preset: 'standard' as string,
+  preset: 'scheme4' as string,
   progress_prompt: '',
   default_prompt: '',
   output_name: '',
@@ -1294,7 +1325,7 @@ watch(
   () => persistDraft()
 );
 
-watch(() => form.base_model, () => {
+watch(() => form.base_model, (mid) => {
   if (applyingResumeSync.value) return;
   if (hasResume.value) {
     const hadIntent = resumeIntent.value;
@@ -1302,6 +1333,9 @@ watch(() => form.base_model, () => {
     if (hadIntent) {
       toast.info(t('loraTrain.resumeClearedOnBaseChange'));
     }
+  }
+  if (form.preset === 'scheme4' && mid !== 'z-image') {
+    form.preset = 'standard';
   }
   if (!supportsPriorPreservation.value) {
     clearPriorPreservationFields();
@@ -1652,6 +1686,22 @@ onMounted(async () => {
 
 .lora-train-page__preset-card:hover {
   border-color: var(--dq-border);
+}
+
+.lora-train-page__preset-card.is-recommended {
+  border-color: var(--dq-color-primary-border, rgba(64, 158, 255, 0.45));
+}
+
+.lora-train-page__preset-badge {
+  margin-left: 0.35rem;
+  font-size: 0.72rem;
+  font-style: normal;
+  font-weight: 600;
+  color: var(--dq-color-primary, #409eff);
+}
+
+.lora-train-page__scheme4-hint {
+  margin-bottom: 1rem;
 }
 
 .lora-train-page__preset-card.is-selected {

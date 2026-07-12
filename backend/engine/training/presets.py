@@ -44,7 +44,51 @@ TRAINABLE_BASE_MODELS: frozenset[str] = frozenset(
     {"flux1-dev", "z-image", "z-image-turbo", "qwen-image"}
 )
 
+# Official Scheme 4 (DiffSynth / HF blog): standard SFT on Z-Image Base, infer on Turbo
+# with Z-Image-Turbo-DistillPatch (8 steps, cfg_scale=1 → guidance=0 here).
+# https://huggingface.co/blog/kelseye/training-strategies-of-z-image-turbo
+Z_IMAGE_SCHEME4_INFERENCE: dict[str, Any] = {
+    "scheme": "scheme4",
+    "model": "z-image-turbo",
+    "extra_adapters": ["z-image-turbo-distillpatch-lora:bf16"],
+    "steps": 8,
+    "guidance": 0,
+    "scheduler": "linear",
+    "lora_weight": 0.8,
+}
+
+# Portrait/concept tuning on top of official SFT defaults (rank 32, all blocks, 3k steps).
+# scheme4_turbo_band_mix: fraction of steps that sample Turbo's 8-step σ band on Base DiT so
+# identity survives Base→Turbo inference (DistillPatch alone only restores acceleration).
+Z_IMAGE_SCHEME4_CORE: dict[str, Any] = {
+    "iterations": 1200,
+    "lora_rank": 32,
+    "lora_blocks": -1,
+    "lora_module_keys": ["to_q", "to_k", "to_v", "to_out.0", "w1", "w2", "w3"],
+    "grad_accumulate": 4,
+    "progress_every": 400,
+    "checkpoint_every": 400,
+    "learning_rate": 1e-4,
+    "guidance": 5.0,
+    "progress_steps": 28,
+    "sigma_bias": "high",
+    "scheme4_turbo_band_mix": 0.45,
+    "turbo_infer_steps": 8,
+    "timestep_low": 1,
+    "timestep_high": 8,
+    "timestep_bias": "uniform",
+    "optimizer": "adamw",
+    "grad_checkpoint": True,
+    "min_snr_gamma": 0.0,
+    "prior_loss_weight": 0.0,
+    "val_split": 0.1,
+    "val_every": 100,
+}
+
 Z_IMAGE_PRESETS: dict[str, dict[str, Any]] = {
+    "scheme4": {
+        **Z_IMAGE_SCHEME4_CORE,
+    },
     "quick": {
         "iterations": 600,
         "lora_rank": 16,
@@ -220,9 +264,15 @@ def resolve_preset(name: str | None, *, base_model: str = "flux1-dev") -> dict[s
         table = QWEN_IMAGE_PRESETS
     else:
         table = PRESETS
+    if key == "scheme4" and mid != "z-image":
+        raise ValueError(
+            "Training preset 'scheme4' is only for z-image (Base); "
+            "use quick|standard|quality for z-image-turbo."
+        )
     if key not in table:
         raise ValueError(
-            f"Unknown training preset {name!r}; choose quick|standard|quality|custom"
+            f"Unknown training preset {name!r}; choose "
+            f"{'scheme4|' if mid == 'z-image' else ''}quick|standard|quality|custom"
         )
     return dict(table[key])
 

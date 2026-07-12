@@ -1089,6 +1089,7 @@ def apply_image_lora_adapters(pipeline,
                 f"Model {base_model_id!r} does not declare LoRA support; "
                 "remove adapters from the request or use a LoRA-capable base model."
             )
+    from backend.catalog.lora_meta import expand_z_image_scheme4_adapters
     from backend.engine.runtime.mlx import MLXContext
 
     if not isinstance(pipeline.ctx, MLXContext):
@@ -1096,10 +1097,24 @@ def apply_image_lora_adapters(pipeline,
             "LoRA merging for Flux.1 / Flux2 / Z-Image / Qwen Image is only implemented on the MLX runtime; "
             f"current runtime is {type(pipeline.ctx).__name__}."
         )
+    config_dir = pipeline._project_root / "config"
+    expanded = expand_z_image_scheme4_adapters(
+        adapters,
+        base_model_id=base_model_id,
+        registry=pipeline._registry,
+        config_dir=config_dir,
+        project_root=pipeline._project_root,
+    )
+    if len(expanded) > len(adapters) and on_log is not None:
+        on_log(
+            "info",
+            "Scheme 4: appended Z-Image-Turbo DistillPatch LoRA for Base-trained adapter "
+            "(official acceleration: 8 steps, cfg_scale=1 / guidance=0, linear scheduler).",
+        )
     _merge_image_lora_adapters(
         family=family,
         model=model,
-        adapters=list(adapters),
+        adapters=expanded,
         base_model_id=base_model_id,
         project_root=pipeline._project_root,
         registry=pipeline._registry,

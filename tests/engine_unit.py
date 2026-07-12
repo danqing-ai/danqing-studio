@@ -7492,9 +7492,108 @@ class LoraTrainRuntimeTests(unittest.TestCase):
     def test_z_image_presets_disable_prior_loss(self) -> None:
         from backend.engine.training.presets import resolve_preset
 
-        for name in ("quick", "standard", "quality"):
+        for name in ("quick", "standard", "quality", "scheme4"):
             preset = resolve_preset(name, base_model="z-image")
             self.assertEqual(preset.get("prior_loss_weight"), 0.0, msg=name)
+
+    def test_z_image_scheme4_preset(self) -> None:
+        from backend.engine.training.presets import Z_IMAGE_SCHEME4_CORE, resolve_preset
+
+        preset = resolve_preset("scheme4", base_model="z-image")
+        self.assertEqual(preset["iterations"], Z_IMAGE_SCHEME4_CORE["iterations"])
+        self.assertEqual(preset["lora_rank"], 32)
+        self.assertEqual(preset["lora_blocks"], -1)
+        self.assertEqual(preset["sigma_bias"], "high")
+        self.assertEqual(
+            preset["lora_module_keys"],
+            ["to_q", "to_k", "to_v", "to_out.0", "w1", "w2", "w3"],
+        )
+        self.assertEqual(preset["scheme4_turbo_band_mix"], 0.45)
+        self.assertEqual(preset["turbo_infer_steps"], 8)
+        self.assertEqual(preset["timestep_low"], 1)
+        self.assertEqual(preset["timestep_high"], 8)
+        with self.assertRaises(ValueError):
+            resolve_preset("scheme4", base_model="z-image-turbo")
+
+    def test_expand_z_image_scheme4_adapters(self) -> None:
+        from types import SimpleNamespace
+
+        from backend.catalog.lora_meta import (
+            Z_IMAGE_DISTILLPATCH_ADAPTER_ID,
+            Z_IMAGE_DISTILLPATCH_LORA_ID,
+            expand_z_image_scheme4_adapters,
+            lora_config_picklist_extras,
+        )
+
+        base_lora = SimpleNamespace(
+            raw={"base_model": "z-image"},
+            base_model="z-image",
+        )
+        patch_entry = SimpleNamespace(
+            raw={"base_model": "z-image-turbo", "category": "loras", "versions": {}},
+            base_model="z-image-turbo",
+        )
+
+        def _get(mid: str):
+            if mid == "my-lora":
+                return base_lora
+            if mid == Z_IMAGE_DISTILLPATCH_LORA_ID:
+                return patch_entry
+            return None
+
+        registry = SimpleNamespace(get=_get)
+
+        expanded = expand_z_image_scheme4_adapters(
+            [{"id": "my-lora", "weight": 0.8}],
+            base_model_id="z-image-turbo",
+            registry=registry,
+        )
+        self.assertEqual(len(expanded), 2)
+        self.assertEqual(expanded[1]["id"], Z_IMAGE_DISTILLPATCH_ADAPTER_ID)
+
+        turbo_lora = SimpleNamespace(
+            raw={"base_model": "z-image-turbo"},
+            base_model="z-image-turbo",
+        )
+        registry_turbo = SimpleNamespace(get=lambda mid: turbo_lora if mid == "t-lora" else None)
+        unchanged = expand_z_image_scheme4_adapters(
+            [{"id": "t-lora", "weight": 0.8}],
+            base_model_id="z-image-turbo",
+            registry=registry_turbo,
+        )
+        self.assertEqual(len(unchanged), 1)
+
+        on_base = expand_z_image_scheme4_adapters(
+            [{"id": "my-lora", "weight": 0.8}],
+            base_model_id="z-image",
+            registry=registry,
+        )
+        self.assertEqual(len(on_base), 1)
+
+        import json
+        import tempfile
+        from pathlib import Path
+
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle = Path(tmp)
+            (bundle / "lora_config.json").write_text(
+                json.dumps(
+                    {
+                        "base_model": "z-image",
+                        "inference": {
+                            "scheme": "scheme4",
+                            "model": "z-image-turbo",
+                            "steps": 8,
+                            "guidance": 0,
+                            "scheduler": "linear",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            extras = lora_config_picklist_extras(bundle)
+            self.assertEqual(extras["compose_overrides"]["steps"], 8)
+            self.assertEqual(extras["hint_key"], "studio.loraHint.zImageDistillPatch")
 
     def test_parse_lora_train_runtime_config_default_scale(self) -> None:
         from backend.engine.training.lora_train_runtime import parse_lora_train_runtime_config
@@ -7708,8 +7807,16 @@ class LoraTrainingPresetsTests(unittest.TestCase):
             (512, 512),
         )
 
+    def test_lora_training_request_accepts_scheme4_preset(self) -> None:
+        from backend.core.contracts import LoraTrainingRequest
 
-class ZImageTurboTrainingTests(unittest.TestCase):
+        req = LoraTrainingRequest(
+            base_model="z-image",
+            dataset_id="ds_test",
+            progress_prompt="cyq",
+            preset="scheme4",
+        )
+        self.assertEqual(req.preset, "scheme4")
     def test_turbo_training_sigmas_band(self) -> None:
         from backend.engine.runtime.mlx import MLXContext
         from backend.engine.training.dit_training_loss import sample_noisy_latent_turbo, turbo_training_sigmas

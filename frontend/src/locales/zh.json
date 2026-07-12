@@ -90,7 +90,7 @@
     "memoryHint": "约需 {required}GB 统一内存（当前 {detected}GB）",
     "memoryOk": "内存满足要求",
     "memoryLow": "内存不足",
-    "stepBaseDesc": "选择基座扩散模型。支持 Flux.1-dev、Z-Image Base 与 Qwen-Image 的 DreamBooth 训练。",
+    "stepBaseDesc": "选择基座扩散模型。人像/概念 LoRA 推荐 Z-Image Base + Scheme 4 预设（Base 训、Turbo 推）。",
     "stepDatasetDesc": "在左侧数据集库中选择或新建数据集，拖拽/上传至少 3 张图片并编辑 caption。训练时由所选基座模型自动中心裁切并对齐 VAE 网格，无需手动调整尺寸。",
     "stepConfigDesc": "选择训练预设与统一训练 Caption（绑定触发词的身份文案，非预览专用）。",
     "stepConfirmDesc": "确认配置无误后，提交到全局任务队列开始训练。",
@@ -283,9 +283,12 @@
     "outputName": "LoRA 名称（可选）",
     "outputNamePlaceholder": "留空则自动生成",
     "outputNameDesc": "训练完成后注册到 LoRA 列表时使用的名称。",
+    "scheme4InferHint": "训练完成后：文生图选 Z-Image-Turbo + 本 LoRA；引擎自动加载 DistillPatch（需先在「模型」页安装 Z-Image Turbo DistillPatch LoRA）。加速配置：8 步、cfg_scale=1、linear 调度。",
+    "presetRecommended": "推荐",
     "confirmIntro": "确认以下配置后将加入全局任务队列，训练期间可继续浏览其他页面。",
     "summaryOutput": "LoRA 名称",
     "presetDesc": {
+      "scheme4": "官方 Scheme 4：Base SFT + 混合 Turbo σ 带（rank32、全层、1200 步）；推理 Turbo + DistillPatch（8 步加速）",
       "quick": "约 300–400 步，适合快速验证数据集与 caption",
       "standard": "推荐默认，平衡质量与耗时",
       "quality": "更多步数，适合最终产出",
@@ -338,6 +341,7 @@
     "registeredAs": "已注册为",
     "registerSuccess": "LoRA 已注册",
     "preset": {
+      "scheme4": "Scheme 4（推荐）",
       "quick": "快速试训",
       "standard": "标准",
       "quality": "高质量",
@@ -555,7 +559,8 @@
     "loraLabel": "LoRA",
     "noLora": "不使用 LoRA",
     "loraHint": {
-      "videoStepDistillMoe": "该 LoRA 含高噪/低噪双分片，引擎按步自动合并；参数以注册表 compose_overrides 为准。"
+      "videoStepDistillMoe": "该 LoRA 含高噪/低噪双分片，引擎按步自动合并；参数以注册表 compose_overrides 为准。",
+      "zImageDistillPatch": "Scheme 4：Base 训练的 LoRA 在 Turbo 推理时自动加载，恢复官方 8 步加速配置（cfg_scale=1）。"
     },
     "myLoraTag": "我的 LoRA",
     "pickLoraToAdd": "选择 LoRA 添加…",
@@ -869,7 +874,8 @@
     "presetTagI2I": "[图生图]",
     "noLora": "不使用 LoRA",
     "loraHint": {
-      "videoStepDistillMoe": "该 LoRA 含高噪/低噪双分片，引擎按步自动合并；参数以注册表 compose_overrides 为准。"
+      "videoStepDistillMoe": "该 LoRA 含高噪/低噪双分片，引擎按步自动合并；参数以注册表 compose_overrides 为准。",
+      "zImageDistillPatch": "Scheme 4：Base 训练的 LoRA 在 Turbo 推理时自动加载，恢复官方 8 步加速配置（cfg_scale=1）。"
     },
     "myLoraTag": "我的 LoRA",
     "pickLoraToAdd": "选择 LoRA 添加…",

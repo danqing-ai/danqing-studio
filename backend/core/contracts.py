@@ -752,7 +752,7 @@ class LoraTrainingRequest(BaseModel):
     base_model: str  # e.g. flux1-dev or flux1-dev:fp16
     dataset_id: str
     progress_prompt: str
-    preset: Literal["quick", "standard", "quality", "custom"] = "standard"
+    preset: Literal["scheme4", "quick", "standard", "quality", "custom"] = "standard"
     output_name: str = ""
     auto_register: bool = True
     priority: Literal["normal", "high"] = "normal"
