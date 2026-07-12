@@ -43,14 +43,19 @@ jobs:
           node-version: '20'
 
       - name: Install dq-ui dependencies
+        run: npm install
+        working-directory: ${{ github.workspace }}/dq-ui/packages/tokens
+
+      - name: Install and build dq-ui ui
         run: |
           npm install
-        working-directory: ${{ github.workspace }}/dq-ui/packages/tokens
-      - name: Install dq-ui ui
-        run: npm install
+          npm run build
         working-directory: ${{ github.workspace }}/dq-ui/packages/ui
-      - name: Install dq-ui shell
-        run: npm install
+
+      - name: Install and build dq-ui shell
+        run: |
+          npm install
+          npm run build
         working-directory: ${{ github.workspace }}/dq-ui/packages/shell
 
       - name: Setup Rust
