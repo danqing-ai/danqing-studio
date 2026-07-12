@@ -6,6 +6,8 @@ authors = ["DanQing Studio"]
 edition = "2021"
 rust-version = "1.77"
 
+[workspace]
+
 [lib]
 name = "danqing_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
