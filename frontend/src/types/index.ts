@@ -415,7 +415,7 @@ export interface LongVideoChapterAnalysis {
   /** Input-driven parse quality notices (non-blocking). */
   quality_warnings?: string[];
   quality_issues?: Array<{
-    code: string;
+    code?: string;
     message: string;
     severity?: 'warning' | 'critical';
     shot_index?: number | null;

@@ -292,6 +292,7 @@ import {
   pickClosestResolutionPreset,
   pickResolutionForModel,
   VIDEO_INFERENCE_ENUM_KEYS,
+  appendActiveEnumFields,
 } from '@/utils/registryParamSchema';
 import {
   getVideoSizeForModel,

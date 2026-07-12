@@ -418,7 +418,6 @@ const wukongVisual =
   '【特写】卧室 · 深夜，赵今麦面部特写，屏幕红光映照脸庞，眼神漫不经心，背景昏暗';
 const wukongComposed = composeKeyframeSceneText(wukongVisual, {
   segmentRole: 'face_anchor',
-  shotSize: '特写',
 });
 assert(!wukongComposed.includes('；'), 'single frame visual — FFR not merged');
 assert(wukongComposed.includes('面部特写'), 'visual-only scene line preserved');

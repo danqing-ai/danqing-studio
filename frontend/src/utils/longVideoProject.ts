@@ -706,7 +706,7 @@ function keyframeSceneComposeNote(locale: 'zh' | 'en', scope: CastReferenceScope
     : 'Compose this shot with full scene, framing, and action; match cast face/outfit only—do not copy portrait framing or plain backdrop.';
 }
 
-function keyframeCastSectionNote(locale: 'zh' | 'en', scope: CastReferenceScope): string {
+function keyframeCastSectionNote(locale: 'zh' | 'en', scope: CastReferenceScope = 'face'): string {
   if (scope === 'wardrobe') {
     return locale === 'zh'
       ? '仅约束服饰与配色；构图、可见身体部位与环境以「场景」章节为准，勿添加清晰五官。'

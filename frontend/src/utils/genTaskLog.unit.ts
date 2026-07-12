@@ -49,7 +49,7 @@ const planItems = buildLogDisplayItems(
 );
 assert(planItems.length === 1, 'one plan item');
 assert(
-  planItems[0].chips?.some((chip) => chip.key === 'teacache' && chip.value.length > 0),
+  (planItems[0].chips?.some((chip) => chip.key === 'teacache' && chip.value.length > 0)) ?? false,
   'teacache chip',
 );
 
@@ -65,7 +65,7 @@ const summaryItems = buildLogDisplayItems(
 );
 assert(summaryItems.length === 1, 'one summary item');
 assert(
-  summaryItems[0].chips?.some((chip) => chip.key === 'skipped' && chip.value === '7/25'),
+  (summaryItems[0].chips?.some((chip) => chip.key === 'skipped' && chip.value === '7/25')) ?? false,
   'skipped chip',
 );
 

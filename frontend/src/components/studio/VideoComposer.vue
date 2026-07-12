@@ -743,7 +743,7 @@ const promptPlaceholder = computed(() =>
   isLongDuration.value ? $tt('video.promptPlaceholderLong') : $tt('video.promptPlaceholder'),
 );
 
-const showSeedField = computed(() => paramSchema.value.seed_support !== false);
+const showSeedField = computed(() => paramSchema.value.seed_support !== undefined);
 
 const referenceMediaLabel = computed(() => {
   if (props.workMode === 'edit') return $tt('video.editSourceTitle');
