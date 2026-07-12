@@ -18,9 +18,7 @@ __pycache__/
 
 # Data & outputs (large files)
 /models/
-models
 /loras/
-loras
 outputs/
 db/*.db
 
