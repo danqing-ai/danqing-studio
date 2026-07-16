@@ -4257,6 +4257,8 @@ html.dark .dq-app-main:has(.models-page) > .models-page {
  align-items: center;
  justify-content: center;
  border-bottom: 1px solid var(--border-color);
+ /* Card uses overflow:visible; round header top to match .model-card radius */
+ border-radius: var(--radius-md) var(--radius-md) 0 0;
 }
 
 .model-icon {
@@ -4646,6 +4648,7 @@ html.dark .dq-app-main:has(.models-page) > .models-page {
 .models-page .model-card-header {
  height: 76px;
  border-bottom: none;
+ border-radius: var(--dq-radius-group) var(--dq-radius-group) 0 0;
 }
 
 /* 模型缩写徽标：pill + 轻高光 */
