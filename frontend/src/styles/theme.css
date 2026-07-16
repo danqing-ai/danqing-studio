@@ -1,6 +1,6 @@
 /*
  * DanQing Studio — 业务布局与页面结构（配色 / 组件外观由 `@danqing/dq-tokens` + `@danqing/dq-ui` 提供）。
- * 仅深色：`applyTheme()` 固定 `html.dark`。
+ * 主题经 `applyDqTheme` / `stores/theme` 切换；默认 macOS 暗色。
  * 勿使用 Vue SFC 的 `:deep()`；用普通后代选择器（如 `.foo .dq-surface-card__body`）。
  */
 
@@ -39,22 +39,10 @@
  0 4px 12px color-mix(in srgb, var(--dq-label-primary) 6%, transparent),
  0 18px 44px color-mix(in srgb, var(--dq-label-primary) 8%, transparent);
 
- /* 全站无衬线：优先系统 UI 字体栈（比单独 Roboto 更接近「流行客户端」） */
- --dq-font-sans:
- ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue',
- Arial, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
-
- /* 圆角：略加大一级，卡片/输入更「软」 */
- --radius-sm: 8px;
- --radius-md: 12px;
- --radius-lg: 18px;
-
- /* 间距 */
- --space-xs: 4px;
- --space-sm: 8px;
- --space-md: 16px;
- --space-lg: 24px;
- --space-xl: 32px;
+ /* 圆角：映射到共享 radius tokens */
+ --radius-sm: var(--dq-radius-control-sm);
+ --radius-md: var(--dq-radius-group);
+ --radius-lg: var(--dq-radius-menu);
 }
 
 /* 全局覆盖 */
@@ -108,7 +96,7 @@ body {
  display: flex;
  align-items: center;
  justify-content: space-between;
- padding: 0 var(--space-xl);
+ padding: 0 var(--dq-space-xl);
  position: relative;
  z-index: 100;
 }
@@ -284,10 +272,10 @@ body {
  font-size: var(--dq-font-size-title);
  font-weight: 600;
  color: var(--text-primary);
- margin-bottom: var(--space-md);
+ margin-bottom: var(--dq-space-md);
  display: flex;
  align-items: center;
- gap: var(--space-sm);
+ gap: var(--dq-space-sm);
  line-height: 1;
 }
 
@@ -416,7 +404,7 @@ body {
 }
 
 .templates-page__header-icon {
-  color: var(--dq-primary);
+  color: var(--dq-accent);
 }
 
 .templates-page__count-tag {
@@ -1583,7 +1571,7 @@ body {
 
 
  .app-main {
- padding: var(--space-md);
+ padding: var(--dq-space-md);
  }
 
 
@@ -2092,7 +2080,7 @@ html.dark .dq-app-main:has(.models-page) > .models-page {
 
 .lora-search-row__bind-label {
  font-size: var(--dq-font-size-caption);
- color: var(--dq-text-tertiary);
+ color: var(--dq-label-tertiary);
 }
 
 .lora-search-row__bind-select {
@@ -2352,16 +2340,16 @@ html.dark .dq-app-main:has(.models-page) > .models-page {
 }
 
 .studio-surface-card .dq-surface-card__header {
- padding: var(--space-lg) var(--space-lg) 0;
+ padding: var(--dq-space-lg) var(--dq-space-lg) 0;
  border-bottom: none;
 }
 
 .studio-surface-card .dq-surface-card__header .card-title {
- margin-bottom: var(--space-md);
+ margin-bottom: var(--dq-space-md);
 }
 
 .studio-surface-card.dq-surface-card > .dq-surface-card__body {
- padding: var(--space-lg);
+ padding: var(--dq-space-lg);
 }
 
 .studio-surface-card.dq-surface-card:has(> .dq-surface-card__header) > .dq-surface-card__body {
@@ -4433,8 +4421,8 @@ html.dark .dq-app-main:has(.models-page) > .models-page {
  justify-content: space-between;
  align-items: center;
  margin-top: 0;
- margin-bottom: var(--space-lg);
- padding-bottom: var(--space-md);
+ margin-bottom: var(--dq-space-lg);
+ padding-bottom: var(--dq-space-md);
  border-bottom: 1px solid var(--border-color);
 }
 

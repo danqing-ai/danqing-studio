@@ -1580,21 +1580,21 @@ html.dark .dq-app-main:has(.long-video-page) > .long-video-page {
   padding: var(--dq-space-xs) var(--dq-space-sm);
   font-size: 12px;
   line-height: 1.45;
-  color: var(--dq-text-secondary);
+  color: var(--dq-label-secondary);
   background: color-mix(in srgb, var(--dq-accent) 8%, transparent);
-  border-radius: var(--dq-radius-sm);
+  border-radius: var(--dq-radius-control-sm);
 }
 
 .lv-inspector__requirement-label {
   font-weight: 600;
-  color: var(--dq-text-primary);
+  color: var(--dq-label-primary);
   margin-right: 0.35em;
 }
 
 .lv-inspector__vis-meta {
   margin: 0 0 var(--dq-space-sm);
   font-size: 11px;
-  color: var(--dq-text-tertiary);
+  color: var(--dq-label-tertiary);
 }
 
 .lv-beat-node__role {

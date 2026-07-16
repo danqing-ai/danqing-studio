@@ -63,8 +63,9 @@ import { ref, reactive, watch, onMounted, onUnmounted, inject, type Ref } from '
 import { useI18n } from 'vue-i18n';
 import { toast, confirm } from '@/utils/feedback';
 import { api } from '@/utils/api';
-import { $tt, applyTheme, PRODUCTIVITY_THEME_IDS, VALID_THEME_IDS, type ThemeId } from '@/utils/i18n';
+import { $tt, applyTheme, migrateThemeId, VALID_THEME_IDS, type ThemeId } from '@/utils/i18n';
 import { DQ_STORAGE, getItem, setItem } from '@/utils/storage';
+import { useThemeStore } from '@/stores/theme';
 import { useRegistryStore } from '@/stores/registry';
 import type { SystemInfo } from '@/types';
 import SystemSettingsForm from '@/components/settings/SystemSettingsForm.vue';
@@ -146,7 +147,7 @@ const activeSection = ref<SectionId>(
 
 const settings = reactive<Record<string, unknown>>({
   language: 'zh',
-  theme: 'apple-dark',
+  theme: 'mac',
   auto_save_prompts: true,
   output_format: 'png',
   default_model_llm: 'qwen3.5-4b',
@@ -225,15 +226,19 @@ const loadSettings = async () => {
       setItem(DQ_STORAGE.LANG, data.language);
       document.documentElement.lang = data.language;
     }
-    if (data.theme && VALID_THEME_IDS.includes(data.theme as ThemeId)) {
-      settings.theme = data.theme;
-      applyTheme(data.theme as ThemeId);
-      setItem(DQ_STORAGE.THEME, data.theme);
+    const migrated = migrateThemeId(data.theme as string | undefined);
+    if (migrated && VALID_THEME_IDS.includes(migrated)) {
+      settings.theme = migrated;
+      applyTheme(migrated);
+      setItem(DQ_STORAGE.THEME, migrated);
     } else {
-      const savedTheme = getItem(DQ_STORAGE.THEME);
-      if (savedTheme && PRODUCTIVITY_THEME_IDS.includes(savedTheme as ThemeId)) {
+      const savedTheme = migrateThemeId(getItem(DQ_STORAGE.THEME));
+      if (savedTheme) {
         settings.theme = savedTheme;
-        applyTheme(savedTheme as ThemeId);
+        applyTheme(savedTheme);
+      } else {
+        settings.theme = 'mac';
+        applyTheme('mac');
       }
     }
   } catch (e) {
@@ -360,9 +365,9 @@ const handleLanguageChange = (lang: string) => {
 };
 
 const handleThemeChange = (theme: string) => {
-  settings.theme = theme;
-  applyTheme(theme as ThemeId);
-  setItem(DQ_STORAGE.THEME, theme);
+  const id = migrateThemeId(theme) ?? 'mac';
+  settings.theme = id;
+  useThemeStore().setTheme(id);
 };
 
 /* ------------------------------------------------------------------ */

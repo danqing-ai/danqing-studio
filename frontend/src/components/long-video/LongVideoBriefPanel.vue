@@ -1242,12 +1242,12 @@ async function onFileSelected(event: Event) {
 }
 
 .lv-script-studio__parse-blocked {
-  margin-bottom: var(--dq-space-3);
+  margin-bottom: var(--dq-space-sm);
 }
 
 .lv-script-studio__parse-error,
 .lv-script-studio__parse-quality {
-  margin-bottom: var(--dq-space-3);
+  margin-bottom: var(--dq-space-sm);
 }
 
 .lv-script-studio__parse-quality-list {

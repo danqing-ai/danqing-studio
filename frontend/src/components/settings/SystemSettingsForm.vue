@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue';
-import type { ThemeId } from '@/utils/i18n';
+import type { ThemeId } from '@/stores/theme';
+import { THEME_OPTIONS } from '@/stores/theme';
 import { $mn } from '@/utils/i18n';
 import { canvasAutoAddEnabled, setCanvasAutoAdd } from '@/composables/useCanvasStore';
 import QuickSetupPanel from '@/components/settings/QuickSetupPanel.vue';
@@ -44,12 +45,10 @@ const props = defineProps<{
   restoreConfigBusy: boolean;
 }>();
 
-const themeOptions: { label: string; value: ThemeId }[] = [
-  { label: 'settings.themeAppleDark', value: 'apple-dark' },
-  { label: 'settings.themeLinearDark', value: 'linear-dark' },
-  { label: 'settings.themeChinaRedDark', value: 'china-red-dark' },
-  { label: 'settings.themeShadcnDark', value: 'shadcn-dark' },
-];
+const themeOptions = THEME_OPTIONS.map((opt) => ({
+  label: opt.label,
+  value: opt.id,
+}));
 
 const emit = defineEmits<{
   save: [];
@@ -158,7 +157,7 @@ const vlmModelOptions = computed(() => {
               <DqOption
                 v-for="opt in themeOptions"
                 :key="opt.value"
-                :label="$t(opt.label)"
+                :label="opt.label"
                 :value="opt.value"
               />
             </DqSelect>

@@ -64,7 +64,7 @@ const navTitle = computed(() => `${props.navLabel} ${props.targetName}`.trim());
   padding: 0;
   border: 0;
   background: transparent;
-  color: var(--dq-text-link, var(--dq-primary));
+  color: var(--dq-accent);
   font: inherit;
   font-size: var(--dq-font-size-caption);
   line-height: 1.4;
@@ -78,7 +78,7 @@ const navTitle = computed(() => `${props.navLabel} ${props.targetName}`.trim());
 }
 
 .model-catalog-relation__nav:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--dq-primary) 45%, transparent);
+  outline: 2px solid color-mix(in srgb, var(--dq-accent) 45%, transparent);
   outline-offset: 2px;
   border-radius: 2px;
 }

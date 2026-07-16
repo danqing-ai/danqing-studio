@@ -115,42 +115,12 @@ export function sendShortcutHintText(): string {
   return isApple ? $tt('studio.sendShortcutHintMac') : $tt('studio.sendShortcutHintWin');
 }
 
-export type ThemeId = 'apple-dark' | 'linear-dark' | 'china-red-dark' | 'shadcn-dark';
-
-/** All selectable themes (includes default). */
-export const VALID_THEME_IDS: ThemeId[] = [
-  'apple-dark',
-  'linear-dark',
-  'china-red-dark',
-  'shadcn-dark',
-];
-
-/** Non-default token themes restored from local storage on boot. */
-export const PRODUCTIVITY_THEME_IDS: ThemeId[] = [
-  'linear-dark',
-  'china-red-dark',
-  'shadcn-dark',
-];
-
-const THEME_ROOT_CLASSES = [
-  'dq-linear-dark',
-  'dq-china-red-dark',
-  'dq-shadcn-dark',
-] as const;
-
-const THEME_CLASSES: Record<ThemeId, string> = {
-  'apple-dark': 'dark',
-  'linear-dark': 'dark dq-linear-dark',
-  'china-red-dark': 'dark dq-china-red-dark',
-  'shadcn-dark': 'dark dq-shadcn-dark',
-};
-
-/** Apply theme class to <html>. Defaults to apple-dark. */
-export function applyTheme(themeId?: ThemeId): void {
-  const id: ThemeId = themeId && THEME_CLASSES[themeId] ? themeId : 'apple-dark';
-  const html = document.documentElement;
-  html.classList.remove('dq-theme-light', 'dark', ...THEME_ROOT_CLASSES);
-  for (const cls of THEME_CLASSES[id].split(' ')) {
-    html.classList.add(cls);
-  }
-}
+/* Theme API — re-exported from stores/theme for existing imports */
+export {
+  applyTheme,
+  migrateThemeId,
+  VALID_THEME_IDS,
+  PRODUCTIVITY_THEME_IDS,
+  THEME_OPTIONS,
+  type ThemeId,
+} from '@/stores/theme';

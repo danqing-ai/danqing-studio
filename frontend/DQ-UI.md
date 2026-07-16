@@ -27,20 +27,21 @@ Hosts mount via `installDanQingFeedback` in `plugins/dq-ui.ts`.
 | Components | `@danqing/dq-ui` (`Dq*`, Reka UI) |
 | Shell | `@danqing/dq-shell` |
 | Icons | Lucide via `registerDqIcons` + `DqIcon` |
-| Layout CSS | `studio-*` / `settings-*` classes in `theme*.css` |
+| Layout CSS | `studio-*` / `settings-*` / `copilot-*` in `styles/theme.css` (+ `long-video.css`) |
 
-### Theme CSS (same pattern as mac)
+## Conventions
 
-Import token palettes in `frontend/src/main.ts`; switch with `applyTheme()` on `<html>` (`frontend/src/utils/i18n.ts`).
+- **主题切换**：`stores/theme.ts` → `applyDqTheme` / `THEME_OPTIONS`（`@danqing/dq-tokens`）。默认 **`mac`**（macOS 暗色）。旧值 `apple-dark` 自动迁移为 `mac`。
+- **间距 / 半径**：优先 `--dq-space-*`、`--dq-radius-*`；产品兼容别名 `--primary` / `--bg-*` / `--radius-*` 仅作过渡。
+- **焦点 / 悬停**：`--dq-focus-ring`、`.dq-hoverable`；禁止自造 focus ring。
+- **禁止**全局 `html * { transition: ... }`。
+- 模板仅使用 `Dq*`（无 Element Plus）。
 
-| Theme | Token file (`@danqing/dq-tokens`) | `<html>` classes |
-|-------|-----------------------------------|------------------|
-| Apple Dark (default) | `dq-mac.css` + `dq-glass.css` | `dark` |
-| Linear Dark | `dq-linear-dark.css` | `dark dq-linear-dark` |
-| China Red Dark | `dq-china-red-dark.css` | `dark dq-china-red-dark` |
-| Zinc Dark (shadcn-style) | `dq-shadcn-dark.css` | `dark dq-shadcn-dark` |
+### Theme CSS
 
-Studio-only chrome (sidebars, Studio 创作页浮动条, gallery) stays in `frontend/src/styles/theme-apple-*.css` — not in tokens.
+Import palettes in `frontend/src/main.ts`; switch with `applyDqTheme` on `<html>`.
+
+Studio-only chrome（侧栏、创作页浮动条、gallery、长视频工作台）留在 `frontend/src/styles/theme.css` / `long-video.css` — 不进 tokens。
 
 `make check-consistency` runs `check_frontend_governance.py` (EP boundary, theme legacy, dq-ui compat).
 
@@ -51,4 +52,4 @@ cd ../dq-ui && pnpm install
 cd frontend && npm install && npm run dev
 ```
 
-Restart Vite after `dq-ui` changes.
+Restart Vite after `dq-ui` changes；tokens/ui 变更后建议在 `dq-ui/packages/*` 执行 `npm run build`。

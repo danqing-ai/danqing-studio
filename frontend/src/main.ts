@@ -2,25 +2,33 @@ import { createApp } from 'vue';
 import { createPinia } from 'pinia';
 import { registerDqIcons } from '@danqing/dq-shell';
 import router from './router';
-import i18n, { $tt, $mn, $md, $mvn, $pn, sendShortcutHintText, applyTheme, type ThemeId } from './utils/i18n';
-import { getItem, DQ_STORAGE } from './utils/storage';
+import i18n, { $tt, $mn, $md, $mvn, $pn, sendShortcutHintText } from './utils/i18n';
 import { toast } from './utils/feedback';
 import App from './App.vue';
 import { installDanQingUi } from './plugins/dq-ui';
 import { installTauriMacosShell } from './utils/desktop';
+import { useThemeStore } from './stores/theme';
 import '@danqing/dq-tokens/dq-mac.css';
-import '@danqing/dq-tokens/dq-glass.css';
 import '@danqing/dq-tokens/dq-linear-dark.css';
 import '@danqing/dq-tokens/dq-china-red-dark.css';
 import '@danqing/dq-tokens/dq-shadcn-dark.css';
+import '@danqing/dq-tokens/dq-shadcn-light.css';
+import '@danqing/dq-tokens/dq-catppuccin.css';
+import '@danqing/dq-tokens/dq-tokyo-night.css';
+import '@danqing/dq-tokens/dq-minimal-light.css';
+import '@danqing/dq-tokens/dq-dracula.css';
+import '@danqing/dq-tokens/dq-nord-dark.css';
+import '@danqing/dq-tokens/dq-catppuccin-latte.css';
+import '@danqing/dq-tokens/dq-nord-light.css';
+import '@danqing/dq-tokens/dq-github-light.css';
+import '@danqing/dq-tokens/dq-glass.css';
 import '@danqing/dq-ui/style.css';
 import '@danqing/dq-shell/style.css';
 import './styles/theme.css';
 import '@danqing/dq-tokens/dq-tauri-macos.css';
 
-const savedTheme = getItem(DQ_STORAGE.THEME) as ThemeId | null;
-applyTheme(savedTheme || undefined);
-document.documentElement.classList.add('dq-mac-ui');
+// Default flash before Pinia init — macOS dark
+document.documentElement.classList.add('dq-mac', 'dark');
 installTauriMacosShell();
 
 const app = createApp(App);
@@ -39,6 +47,9 @@ app.use(createPinia());
 app.use(router);
 installDanQingUi(app);
 app.use(i18n);
+
+const themeStore = useThemeStore();
+themeStore.init();
 
 app.mount('#app');
 

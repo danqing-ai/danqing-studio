@@ -195,7 +195,7 @@ import GenTaskLogDialog from '@/components/studio/GenTaskLogDialog.vue';
 import TaskIdBadge from '@/components/studio/TaskIdBadge.vue';
 import { useTasksStore } from '@/stores/tasks';
 import { api } from '@/utils/api';
-import { $tt, applyTheme, PRODUCTIVITY_THEME_IDS, type ThemeId } from '@/utils/i18n';
+import { $tt, applyTheme, migrateThemeId } from '@/utils/i18n';
 import { getItem, DQ_STORAGE, setItem } from '@/utils/storage';
 import type { PageKey, SystemInfo, Task } from '@/types';
 import { appEvents } from '@/utils/appEvents';
@@ -347,9 +347,9 @@ onMounted(async () => {
 
   await loadSystemInfo();
 
-  const savedTheme = getItem(DQ_STORAGE.THEME);
-  if (savedTheme && PRODUCTIVITY_THEME_IDS.includes(savedTheme as ThemeId)) {
-    applyTheme(savedTheme as ThemeId);
+  const savedTheme = migrateThemeId(getItem(DQ_STORAGE.THEME));
+  if (savedTheme) {
+    applyTheme(savedTheme);
   }
 
   sysInfoInterval = setInterval(loadSystemInfo, 30000);

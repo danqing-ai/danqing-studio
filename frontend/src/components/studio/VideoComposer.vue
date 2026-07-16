@@ -861,7 +861,7 @@ function onKeydown(e: KeyboardEvent) {
   gap: 6px 10px;
   margin-top: 6px;
   padding: 6px 10px;
-  border-radius: var(--dq-radius-sm);
+  border-radius: var(--dq-radius-control-sm);
   background: var(--dq-color-fill-secondary, rgba(128, 128, 128, 0.08));
   font-size: var(--dq-font-size-caption, 12px);
   color: var(--dq-color-text-secondary);
