@@ -4141,6 +4141,170 @@ class PipelineProgressBridgeTests(unittest.TestCase):
         self.assertEqual(events[0].phase, "denoising")
 
 
+class WorkspaceMigrationTests(unittest.TestCase):
+    def test_migrate_workspace_rolls_back_on_failure(self) -> None:
+        import shutil
+        from unittest.mock import patch
+
+        from backend.utils.workspace import migrate_workspace_data
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            old_ws = root / "old"
+            new_ws = root / "new"
+            old_ws.mkdir()
+            new_ws.mkdir()
+            (old_ws / "config").mkdir()
+            (old_ws / "config" / "models_registry.json").write_text("{}", encoding="utf-8")
+            (old_ws / "db").mkdir()
+            (old_ws / "db" / "studio.db").write_bytes(b"sqlite")
+            (old_ws / "models").mkdir()
+            (old_ws / "models" / "weights.bin").write_bytes(b"x" * 8)
+
+            real_move = shutil.move
+
+            def _move_fail_large_models(src: str, dst: str) -> None:
+                if Path(src).name == "models":
+                    raise OSError("simulated disk full")
+                real_move(src, dst)
+
+            with patch("backend.utils.workspace.shutil.move", side_effect=_move_fail_large_models):
+                with self.assertRaises(OSError):
+                    migrate_workspace_data(old_ws, new_ws)
+
+            self.assertTrue((old_ws / "config" / "models_registry.json").is_file())
+            self.assertTrue((old_ws / "db" / "studio.db").is_file())
+            self.assertTrue((old_ws / "models" / "weights.bin").is_file())
+            self.assertFalse((new_ws / "config").exists())
+            self.assertFalse((new_ws / "db").exists())
+
+
+class AssetStoreBatchDeleteTests(unittest.TestCase):
+    def test_delete_batch_keeps_files_when_commit_fails(self) -> None:
+        from backend.persistence.asset_store import SQLiteAssetStore
+
+        class _ConnFailCommit:
+            def __init__(self, inner):  # noqa: ANN001
+                self._inner = inner
+
+            def execute(self, *args, **kwargs):  # noqa: ANN001
+                return self._inner.execute(*args, **kwargs)
+
+            def commit(self) -> None:
+                raise RuntimeError("simulated commit failure")
+
+            def rollback(self) -> None:
+                self._inner.rollback()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "studio.db"
+            assets = root / "assets"
+            store = SQLiteAssetStore(db, assets)
+            src = root / "in.png"
+            src.write_bytes(b"\x89PNG\r\n\x1a\n")
+            aid = store.create_from_file(
+                src,
+                kind="image",
+                mime_type="image/png",
+                source_task_id="tsk_test",
+            )
+            main = store.get_file_path(aid)
+            self.assertTrue(main.is_file())
+
+            real_conn = store._conn()
+            store._conn = lambda: _ConnFailCommit(real_conn)  # type: ignore[method-assign]
+            with self.assertRaises(RuntimeError):
+                store.delete_batch([aid])
+            self.assertTrue(main.is_file())
+            row = real_conn.execute(
+                "SELECT id FROM assets WHERE id = ?", (aid,)
+            ).fetchone()
+            self.assertIsNotNone(row)
+
+            store._conn = SQLiteAssetStore._conn.__get__(store, SQLiteAssetStore)  # type: ignore[method-assign]
+            store.delete_batch([aid])
+            self.assertFalse(main.exists())
+
+    def test_rebind_points_at_new_db(self) -> None:
+        from backend.persistence.asset_store import SQLiteAssetStore
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db_a = root / "a" / "studio.db"
+            assets_a = root / "a" / "assets"
+            db_b = root / "b" / "studio.db"
+            assets_b = root / "b" / "assets"
+            store = SQLiteAssetStore(db_a, assets_a)
+            src = root / "in.png"
+            src.write_bytes(b"x")
+            aid = store.create_from_file(
+                src,
+                kind="image",
+                mime_type="image/png",
+                source_task_id="tsk_test",
+            )
+            store.rebind(db_b, assets_b)
+            with self.assertRaises(FileNotFoundError):
+                store.get_file_path(aid)
+            db_b.parent.mkdir(parents=True, exist_ok=True)
+            store2 = SQLiteAssetStore(db_b, assets_b)
+            with store2._conn() as conn:
+                self.assertEqual(
+                    conn.execute("SELECT COUNT(*) FROM assets").fetchone()[0],
+                    0,
+                )
+
+
+class AssetGroupDeleteTests(unittest.TestCase):
+    def test_delete_group_with_members_does_not_deadlock(self) -> None:
+        from backend.persistence.asset_store import SQLiteAssetStore
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = SQLiteAssetStore(root / "studio.db", root / "assets")
+            src = root / "in.png"
+            src.write_bytes(b"x")
+            aid = store.create_from_file(
+                src,
+                kind="image",
+                mime_type="image/png",
+                source_task_id="tsk_test",
+            )
+            gid = "grp_deadlock"
+            store.ensure_group(gid, title="group", kind="image")
+            store.set_asset_group(aid, gid)
+
+            self.assertTrue(store.delete_group(gid, unlink_assets=False))
+            self.assertIsNone(store.get_group(gid))
+            with self.assertRaises(FileNotFoundError):
+                store.get_file_path(aid)
+
+
+class TaskSchedulerPaginationTests(unittest.TestCase):
+    def test_paginate_task_rows_fetches_beyond_first_page(self) -> None:
+        from backend.scheduler.task_scheduler import TaskScheduler
+
+        calls: list[tuple[int, int]] = []
+
+        def fake_list(limit: int, offset: int = 0, *, status=None):  # noqa: ANN001
+            calls.append((limit, offset))
+            if offset == 0:
+                return [{"id": f"t{i}"} for i in range(limit)]
+            if offset == 500:
+                return [{"id": "t_extra"}]
+            return []
+
+        rows = TaskScheduler._paginate_task_rows(
+            fake_list,
+            status="queued",
+            page_size=500,
+        )
+        self.assertEqual(len(rows), 501)
+        self.assertEqual(rows[-1]["id"], "t_extra")
+        self.assertEqual(calls, [(500, 0), (500, 500)])
+
+
 class BenchmarkMetadataTests(unittest.TestCase):
     def test_eval_prompt_pack_has_p1(self) -> None:
         from tests.benchmark.eval_cases import load_prompt_pack
@@ -8263,6 +8427,37 @@ class LtxExtendMaskTests(unittest.TestCase):
 
         with self.assertRaises(RuntimeError):
             validate_extend_window_frames(reference_sec=3, extend_sec=8, fps=24, max_frames=257)
+
+
+class PathContainmentTests(unittest.TestCase):
+    def test_resolve_path_under_rejects_traversal(self) -> None:
+        from backend.utils.path_utils import resolve_path_under
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            safe = base / "images" / "a.jpg"
+            safe.parent.mkdir(parents=True)
+            safe.write_bytes(b"x")
+            resolved = resolve_path_under(base, "images/a.jpg")
+            self.assertEqual(resolved, safe.resolve())
+            with self.assertRaises(ValueError):
+                resolve_path_under(base, "../../etc/passwd")
+            with self.assertRaises(ValueError):
+                resolve_path_under(base, "images/../../secret.txt")
+
+
+class LoraDatasetPathTests(unittest.TestCase):
+    def test_remove_dataset_image_rejects_traversal(self) -> None:
+        from backend.engine.training import dataset_store
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ds_id = dataset_store.create_dataset(root, name="test")["id"]
+            secret = root / "secret.txt"
+            secret.write_text("keep", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                dataset_store.remove_dataset_image(root, ds_id, "../../secret.txt")
+            self.assertTrue(secret.is_file())
 
 
 if __name__ == "__main__":
