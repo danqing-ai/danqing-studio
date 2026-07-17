@@ -4256,6 +4256,31 @@ class AssetStoreBatchDeleteTests(unittest.TestCase):
                 )
 
 
+class AssetGroupDeleteTests(unittest.TestCase):
+    def test_delete_group_with_members_does_not_deadlock(self) -> None:
+        from backend.persistence.asset_store import SQLiteAssetStore
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = SQLiteAssetStore(root / "studio.db", root / "assets")
+            src = root / "in.png"
+            src.write_bytes(b"x")
+            aid = store.create_from_file(
+                src,
+                kind="image",
+                mime_type="image/png",
+                source_task_id="tsk_test",
+            )
+            gid = "grp_deadlock"
+            store.ensure_group(gid, title="group", kind="image")
+            store.set_asset_group(aid, gid)
+
+            self.assertTrue(store.delete_group(gid, unlink_assets=False))
+            self.assertIsNone(store.get_group(gid))
+            with self.assertRaises(FileNotFoundError):
+                store.get_file_path(aid)
+
+
 class TaskSchedulerPaginationTests(unittest.TestCase):
     def test_paginate_task_rows_fetches_beyond_first_page(self) -> None:
         from backend.scheduler.task_scheduler import TaskScheduler
