@@ -12,7 +12,7 @@ from backend.engine.common.bundle.lora_mlx import read_lora_config
 from backend.engine.common.bundle.weights import load_safetensors
 from backend.engine.families.z_image.weights import remap_zimage_lora_keys
 from backend.engine.runtime._base import RuntimeContext
-from backend.engine.training.lora_layers import (
+from backend.engine.training.lora_layers_mlx import (
     FrozenAssistantLinear,
     LoRALinear,
     _dit_inner,

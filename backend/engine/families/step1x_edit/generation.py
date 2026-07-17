@@ -75,3 +75,11 @@ def validate_image_generation_params(*, entry: Any, config: Any, **_: Any) -> No
             f"Step1X-Edit variant {variant!r} is not supported. "
             "DanQing Studio ships Step1X-Edit v1.1 only (stepfun-ai/Step1X-Edit bundle)."
         )
+
+
+def resolve_step1x_output_path(work_dir: Path, model_key: str, seed: int) -> str:
+    from backend.engine.families.step1x_edit.generation_mlx import (
+        resolve_step1x_output_path as _resolve,
+    )
+
+    return _resolve(work_dir, model_key, seed)

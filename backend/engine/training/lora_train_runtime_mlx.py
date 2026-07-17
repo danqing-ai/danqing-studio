@@ -373,7 +373,7 @@ def save_training_checkpoint(
     rank: int,
     meta: dict[str, Any],
 ) -> None:
-    from backend.engine.training.lora_layers import collect_lora_safetensors
+    from backend.engine.training.lora_layers_mlx import collect_lora_safetensors
 
     weights = collect_lora_safetensors(train_module, rank=rank)
     weights.pop("lora_rank", None)
@@ -392,7 +392,7 @@ def load_training_checkpoint(
     *,
     rank: int,
 ) -> int:
-    from backend.engine.training.lora_layers import load_lora_into_train_module
+    from backend.engine.training.lora_layers_mlx import load_lora_into_train_module
 
     if not adapter_path.is_file():
         raise RuntimeError(f"Resume adapter not found: {adapter_path}")

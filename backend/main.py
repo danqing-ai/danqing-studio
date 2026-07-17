@@ -47,7 +47,7 @@ from backend.services.download_service import DownloadService
 from backend.scheduler.task_scheduler import TaskScheduler
 
 from backend.engine.llm import LLMService
-from backend.engine.llm.service import normalize_app_llm_settings, resolve_llm_model_id, resolve_vlm_model_id
+from backend.engine.llm.service_mlx import normalize_app_llm_settings, resolve_llm_model_id, resolve_vlm_model_id
 
 from backend.api.routes import (
     adapters, assets, audios, download, gallery, images, loras,

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 import backend.core.task_kinds as TK
-from backend.engine.common.long_video.t2i_provenance import build_shots_summary_with_provenance
+from backend.long_video.t2i_provenance import build_shots_summary_with_provenance
 
 if TYPE_CHECKING:
     from backend.persistence.long_video_activity_store import LongVideoActivityStore

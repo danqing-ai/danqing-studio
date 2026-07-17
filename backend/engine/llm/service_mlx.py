@@ -56,7 +56,7 @@ from backend.engine.llm.prompts.system import (
     VIDEO_FRAME_TO_PROMPT_INSTRUCTION,
 )
 from backend.engine.llm.think_parse import extract_final_llm_content
-from backend.engine.llm.vision import (
+from backend.engine.llm.vision_mlx import (
     analyze_image_file,
     describe_image_file,
     mlx_vlm_importable,

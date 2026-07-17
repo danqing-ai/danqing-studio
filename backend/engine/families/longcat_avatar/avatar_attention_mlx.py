@@ -18,11 +18,12 @@ from __future__ import annotations
 from typing import Optional
 
 import mlx.core as mx
+from backend.engine.common.ops.attention import scaled_dot_product_attention_bhsd_mx
 import mlx.nn as nn
 
-from backend.engine.families.longcat_avatar.dit_attention import Attention as _BaseAttention
-from backend.engine.families.longcat_avatar.dit_blocks import RMSNorm_FP32
-from backend.engine.families.longcat_avatar.dit_rope import RotaryPositionalEmbedding1D
+from backend.engine.families.longcat_avatar.dit_attention_mlx import Attention as _BaseAttention
+from backend.engine.families.longcat_avatar.dit_blocks_mlx import RMSNorm_FP32
+from backend.engine.families.longcat_avatar.dit_rope_mlx import RotaryPositionalEmbedding1D
 
 
 class Attention(_BaseAttention):
@@ -294,7 +295,7 @@ class SingleStreamAttention(nn.Module):
             encoder_k = encoder_k.reshape(B, self.num_heads, N_a, self.head_dim)
 
         # SDPA: attention over audio K/V
-        x_attn = mx.fast.scaled_dot_product_attention(q, encoder_k, encoder_v, scale=self.scale)
+        x_attn = scaled_dot_product_attention_bhsd_mx(mx, q, encoder_k, encoder_v, scale=self.scale)
         # [B*N_t, H, S, D] -> [B*N_t, S, H, D] -> [B*N_t, S, C]
         x_attn = x_attn.transpose(0, 2, 1, 3).reshape(B, N, C)
         x_attn = self.proj(x_attn)

@@ -4,10 +4,10 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from backend.engine.common.long_video.beat_budget import split_duration_parts
-from backend.engine.common.long_video.constants import MAX_CLIP_SEC, MIN_CLIP_SEC
-from backend.engine.common.long_video.shot_contract_validator import _protagonist_names
-from backend.engine.common.long_video.visibility import clamp_vis_progression, vis_label, vis_rank
+from backend.long_video.beat_budget import split_duration_parts
+from backend.long_video.constants import MAX_CLIP_SEC, MIN_CLIP_SEC
+from backend.long_video.shot_contract_validator import _protagonist_names
+from backend.long_video.visibility import clamp_vis_progression, vis_label, vis_rank
 
 
 def repair_shot_contracts(
@@ -82,7 +82,7 @@ def repair_shot_contracts(
 
 
 def _clone_subsegment_plan(sub: Any, **overrides: Any) -> Any:
-    from backend.engine.common.long_video.segment_plan_types import SubsegmentPlan
+    from backend.long_video.segment_plan_types import SubsegmentPlan
 
     data = {
         "role": sub.role,

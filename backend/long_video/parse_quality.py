@@ -7,8 +7,8 @@ from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from typing import Any, Literal
 
-from backend.engine.common.long_video.beat_budget import group_shots_by_beat
-from backend.engine.common.long_video.visibility import vis_rank
+from backend.long_video.beat_budget import group_shots_by_beat
+from backend.long_video.visibility import vis_rank
 
 _NAME_LOOK_RE = re.compile(r"([\u4e00-\u9fff]{2,8})（[^）\s]{1,24}）")
 _NAME_FALSE_POSITIVE = re.compile(r"镜头|相机|画面|推近|拉远|特写|远景|中景|固定|手持|缓慢")
@@ -258,7 +258,7 @@ def _beat_group_prompt_text(shots: list[dict[str, Any]], indices: list[int]) -> 
     return " ".join(parts)
 
 
-from backend.engine.common.long_video.prompt_overlap import prompt_token_set as _token_set
+from backend.long_video.prompt_overlap import prompt_token_set as _token_set
 
 
 def _roster_name_set(character_anchor: str, character_dtos: list[dict[str, Any]] | None) -> set[str]:
@@ -488,7 +488,7 @@ def validate_parse_quality(
         if not narrative.strip():
             continue
         group_prompt = _beat_group_prompt_text(shots, indices)
-        from backend.engine.common.long_video.prompt_overlap import prompt_narrative_coverage
+        from backend.long_video.prompt_overlap import prompt_narrative_coverage
 
         coverage = prompt_narrative_coverage(group_prompt, narrative)
         if coverage < 0.22:

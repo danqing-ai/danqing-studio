@@ -5,10 +5,10 @@ import torch.nn
 from einops import rearrange
 from torch import nn
 
-from .layers import MLP, TextProjection, TimestepEmbedder, apply_gate, attention
+from .layers_cuda import MLP, TextProjection, TimestepEmbedder, apply_gate, attention
 
 
-class RMSNorm(nn.Module):
+class Step1XRMSNorm(nn.Module):
     def __init__(
         self,
         dim: int,
@@ -18,7 +18,7 @@ class RMSNorm(nn.Module):
         dtype=None,
     ):
         """
-        Initialize the RMSNorm normalization layer.
+        Initialize the Step1XRMSNorm normalization layer.
 
         Args:
             dim (int): The dimension of the input tensor.
@@ -37,7 +37,7 @@ class RMSNorm(nn.Module):
 
     def _norm(self, x):
         """
-        Apply the RMSNorm normalization to the input tensor.
+        Apply the Step1XRMSNorm normalization to the input tensor.
 
         Args:
             x (torch.Tensor): The input tensor.
@@ -50,13 +50,13 @@ class RMSNorm(nn.Module):
 
     def forward(self, x):
         """
-        Forward pass through the RMSNorm layer.
+        Forward pass through the Step1XRMSNorm layer.
 
         Args:
             x (torch.Tensor): The input tensor.
 
         Returns:
-            torch.Tensor: The output tensor after applying RMSNorm.
+            torch.Tensor: The output tensor after applying Step1XRMSNorm.
 
         """
         output = self._norm(x.float()).type_as(x)
@@ -78,7 +78,7 @@ def get_norm_layer(norm_layer):
     if norm_layer == "layer":
         return nn.LayerNorm
     elif norm_layer == "rms":
-        return RMSNorm
+        return Step1XRMSNorm
     else:
         raise NotImplementedError(f"Norm layer {norm_layer} is not implemented")
 

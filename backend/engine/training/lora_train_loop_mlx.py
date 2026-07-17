@@ -15,8 +15,8 @@ import mlx.optimizers as optim
 
 from backend.core.contracts import ExecutionContext
 from backend.engine.training.training_log import training_log, training_progress
-from backend.engine.training.lora_layers import add_grad_trees, scale_grad_tree
-from backend.engine.training.lora_train_runtime import (
+from backend.engine.training.lora_layers_mlx import add_grad_trees, scale_grad_tree
+from backend.engine.training.lora_train_runtime_mlx import (
     LoraTrainRuntimeConfig,
     active_memory_gb,
     build_optimizer,

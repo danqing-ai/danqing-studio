@@ -9,8 +9,8 @@ from __future__ import annotations
 import re
 from typing import Any, Literal
 
-from backend.engine.common.long_video.keyframe_prompt_policy import should_merge_scene_prompt_into_t2i
-from backend.engine.common.long_video.prompt_overlap import prompt_token_coverage
+from backend.long_video.keyframe_prompt_policy import should_merge_scene_prompt_into_t2i
+from backend.long_video.prompt_overlap import prompt_token_coverage
 
 NARRATIVE_MERGE_COVERAGE_THRESHOLD = 0.38
 _TEXT_ALREADY_COVERED_THRESHOLD = 0.72

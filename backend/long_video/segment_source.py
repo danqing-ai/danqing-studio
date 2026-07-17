@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from backend.core.contracts import LongVideoShotSpec, VideoEditRequest
-from backend.engine.common.video.stitch import extract_last_frame_image
+from backend.engine.common.codecs.vae.video_stitch import extract_last_frame_image
 from backend.engine.group_utils import resolve_asset_group_id, resolve_group_id_from_asset
 
 LongVideoChainMode = Literal["keyframe_only", "last_frame", "reference_r2v"]

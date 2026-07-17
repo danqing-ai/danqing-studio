@@ -46,7 +46,7 @@ def apply_latent_refine_if_requested(
     if not getattr(family_config, "supports_latent_refine", False):
         raise RuntimeError(f"latent_refine is not supported for family={family!r}")
 
-    from backend.engine.common.mlx_only import require_mlx_backend
+    from backend.engine.runtime.mlx_guards import require_mlx_backend
 
     require_mlx_backend(pipeline.ctx, feature="latent_refine")
     if scheduler is None or config is None or runtime_contract is None or semantics is None:

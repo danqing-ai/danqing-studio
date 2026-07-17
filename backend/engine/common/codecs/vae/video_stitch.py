@@ -8,8 +8,8 @@ from pathlib import Path
 
 import numpy as np
 
-from backend.engine.common.long_video.plan import num_frames_for_duration_sec
-from backend.engine.families.ltx.pipeline_math import AUDIO_SAMPLE_RATE
+from backend.long_video.plan import num_frames_for_duration_sec
+from backend.engine.families.ltx.pipeline_math_mlx import AUDIO_SAMPLE_RATE
 from backend.utils.video_sr_ffmpeg import require_ffmpeg, require_ffprobe
 
 

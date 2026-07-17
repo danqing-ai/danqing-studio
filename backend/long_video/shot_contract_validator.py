@@ -5,9 +5,9 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from backend.engine.common.long_video.beat_budget import validate_beat_duration_sums
-from backend.engine.common.long_video.constants import MAX_CLIP_SEC, MIN_CLIP_SEC
-from backend.engine.common.long_video.visibility import vis_rank
+from backend.long_video.beat_budget import validate_beat_duration_sums
+from backend.long_video.constants import MAX_CLIP_SEC, MIN_CLIP_SEC
+from backend.long_video.visibility import vis_rank
 
 CharacterVisibility = Literal["invisible", "silhouette", "partial", "full_face"]
 
@@ -47,7 +47,7 @@ def _vis_rank(value: str | None) -> int:
 
 
 def _protagonist_names(character_anchor: str) -> list[str]:
-    from backend.engine.common.long_video.parse_quality import protagonist_names_from_anchor
+    from backend.long_video.parse_quality import protagonist_names_from_anchor
 
     names = protagonist_names_from_anchor(character_anchor)
     if names:
@@ -180,7 +180,7 @@ def validate_shot_contracts(
 
     # Opening hook (soft check): motion should add action beyond static scene line
     if shots:
-        from backend.engine.common.long_video.prompt_overlap import prompt_token_set
+        from backend.long_video.prompt_overlap import prompt_token_set
 
         first = shots[0]
         scene = str(first.get("scene_prompt") or first.get("start_visual_prompt") or "")

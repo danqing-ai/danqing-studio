@@ -1,3 +1,4 @@
+from backend.engine.common.ops.attention import scaled_dot_product_attention_bhsd_torch
 # Modified from Flux
 #
 # Copyright 2024 Black Forest Labs
@@ -120,8 +121,8 @@ def attention(
     if mode == "torch":
         if attn_mask is not None and attn_mask.dtype != torch.bool:
             attn_mask = attn_mask.to(q.dtype)
-        x = F.scaled_dot_product_attention(
-            q, k, v, attn_mask=attn_mask, dropout_p=drop_rate, is_causal=causal
+        x = scaled_dot_product_attention_bhsd_torch(
+            q, k, v, mask=attn_mask, dropout_p=drop_rate, is_causal=causal
         )
     elif mode == "flash":
         assert flash_attn_varlen_func is not None
@@ -398,7 +399,7 @@ def rope(pos, dim: int, theta: int):
 def attention_after_rope(q, k, v, pe, mode):
     q, k = apply_rope(q, k, pe)
 
-    from .attention import attention
+    from .attention_cuda import attention
 
     x = attention(q, k, v, mode)
     return x
@@ -439,7 +440,7 @@ def layernorm_and_scale_shift(
     return torch.nn.functional.layer_norm(x, (x.size(-1),)) * (scale + 1) + shift
 
 
-class SelfAttention(nn.Module):
+class Step1XSelfAttention(nn.Module):
     def __init__(self, dim: int, num_heads: int = 8, qkv_bias: bool = False):
         super().__init__()
         self.num_heads = num_heads
@@ -465,7 +466,7 @@ class ModulationOut:
     gate: Tensor
 
 
-class RMSNorm(torch.nn.Module):
+class Step1XRMSNorm(torch.nn.Module):
     def __init__(self, dim: int):
         super().__init__()
         self.scale = nn.Parameter(torch.ones(dim))
@@ -495,8 +496,8 @@ class RMSNorm(torch.nn.Module):
 class QKNorm(torch.nn.Module):
     def __init__(self, dim: int):
         super().__init__()
-        self.query_norm = RMSNorm(dim)
-        self.key_norm = RMSNorm(dim)
+        self.query_norm = Step1XRMSNorm(dim)
+        self.key_norm = Step1XRMSNorm(dim)
 
     def forward(self, q: Tensor, k: Tensor, v: Tensor) -> tuple[Tensor, Tensor]:
         q = self.query_norm(q)
@@ -533,7 +534,7 @@ class DoubleStreamBlock(nn.Module):
         self.hidden_size = hidden_size
         self.img_mod = Modulation(hidden_size, double=True)
         self.img_norm1 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-        self.img_attn = SelfAttention(
+        self.img_attn = Step1XSelfAttention(
             dim=hidden_size, num_heads=num_heads, qkv_bias=qkv_bias
         )
 
@@ -546,7 +547,7 @@ class DoubleStreamBlock(nn.Module):
 
         self.txt_mod = Modulation(hidden_size, double=True)
         self.txt_norm1 = nn.LayerNorm(hidden_size, elementwise_affine=False, eps=1e-6)
-        self.txt_attn = SelfAttention(
+        self.txt_attn = Step1XSelfAttention(
             dim=hidden_size, num_heads=num_heads, qkv_bias=qkv_bias
         )
 

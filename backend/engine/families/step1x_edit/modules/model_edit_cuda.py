@@ -4,12 +4,12 @@ from dataclasses import dataclass
 import numpy as np
 import torch
 
-from backend.engine.families.step1x_edit import custom_offloading_utils
+from backend.engine.families.step1x_edit import custom_offloading_utils_cuda
 
 from torch import Tensor, nn
 
 from .connector_edit import Qwen2Connector
-from .layers import DoubleStreamBlock, EmbedND, LastLayer, MLPEmbedder, SingleStreamBlock
+from .layers_cuda import DoubleStreamBlock, EmbedND, LastLayer, MLPEmbedder, SingleStreamBlock
 
 
 @dataclass

@@ -4,7 +4,7 @@ from typing import Optional
 import torch
 import torch.nn as nn
 
-from backend.engine.families.step1x_edit.device_utils import clean_memory_on_device
+from backend.engine.families.step1x_edit.device_utils_cuda import clean_memory_on_device
 
 
 def synchronize_device(device: torch.device):

@@ -4,7 +4,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from backend.engine.common.long_video.constants import MIN_CLIP_SEC
+from backend.long_video.constants import MIN_CLIP_SEC
 
 
 def split_duration_parts(total_sec: float, *, max_clip_sec: float) -> list[float]:

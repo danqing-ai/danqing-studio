@@ -1,6 +1,6 @@
 """Long-video planning helpers (shot-based segmented I2V + LTX extend re-exports)."""
 
-from backend.engine.common.long_video.plan import (
+from backend.long_video.plan import (
     LongVideoPlan,
     ShotPlan,
     build_long_video_plan,
@@ -10,7 +10,7 @@ from backend.engine.common.long_video.plan import (
     narrative_budget_for_target,
     num_frames_for_duration_sec,
 )
-from backend.engine.common.long_video.validate import (
+from backend.long_video.validate import (
     LongVideoValidationError,
     resolve_long_video_image_engine,
     validate_long_video_request,

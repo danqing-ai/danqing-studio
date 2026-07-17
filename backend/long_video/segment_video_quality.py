@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from backend.engine.common.long_video.parse_quality import (
+from backend.long_video.parse_quality import (
     ParseQualityIssue,
     _motion_core,
     _prompt_similarity,
@@ -54,7 +54,7 @@ def validate_segment_video_prompts(
     motion_core_similarity_threshold: float = 0.82,
 ) -> SegmentVideoValidationResult:
     """Check motion differentiation within beat groups for a video prompt map."""
-    from backend.engine.common.long_video.parse_quality import validate_parse_quality
+    from backend.long_video.parse_quality import validate_parse_quality
 
     shots = _shots_from_segment_video(segments, video_by_index)
     if not shots:

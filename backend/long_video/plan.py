@@ -5,7 +5,7 @@ import math
 import re
 from dataclasses import dataclass
 
-from backend.engine.common.long_video.constants import MAX_CLIP_SEC, MIN_CLIP_SEC
+from backend.long_video.constants import MAX_CLIP_SEC, MIN_CLIP_SEC
 
 # LTX extend plan lives in family module; re-export for orchestrator + storyboard.
 from backend.engine.families.ltx.long_video_plan import (  # noqa: F401
