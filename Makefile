@@ -18,10 +18,18 @@
 	windows-desktop-tauri windows-desktop-bundle release-windows-desktop \
 	release-windows-cuda-zip release-windows-cuda
 
-PYTHON := .venv/bin/python3
-BENCH_PY := tests/benchmark/venv/bin/python3
-BENCH_PIP := tests/benchmark/venv/bin/pip
-BENCH_BIN := tests/benchmark/venv/bin
+# Windows Git Bash / MSYS: use Scripts/python.exe so pack-windows-* works via make.
+ifeq ($(OS),Windows_NT)
+  PYTHON := .venv/Scripts/python.exe
+  BENCH_PY := tests/benchmark/venv/Scripts/python.exe
+  BENCH_PIP := tests/benchmark/venv/Scripts/pip.exe
+  BENCH_BIN := tests/benchmark/venv/Scripts
+else
+  PYTHON := .venv/bin/python3
+  BENCH_PY := tests/benchmark/venv/bin/python3
+  BENCH_PIP := tests/benchmark/venv/bin/pip
+  BENCH_BIN := tests/benchmark/venv/bin
+endif
 BENCH_OUT := tests/benchmark/outputs
 OUT_DIR := $(CURDIR)/out
 

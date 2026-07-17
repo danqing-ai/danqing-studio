@@ -10,6 +10,7 @@
     "frontendDist": "../loader"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",

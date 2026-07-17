@@ -44,6 +44,7 @@ make pack-macos-desktop
 `DANQING_PYINSTALLER_PROFILE`：`mlx`（macOS）或 `cuda`（Linux/Windows）。禁止在同一发布包中混装 MLX + CUDA。
 
 Windows 需在 **Windows 本机** 构建；产物为 `out/desktop/bundle/nsis/*-setup.exe`。
+CI（`.github/workflows/release.yml`）在打 `v*` tag 时并行构建三端：macOS `.dmg`、Linux CUDA `.tar.gz`、Windows NSIS `.exe`。
 
 ## 运行时环境变量（sidecar）
 

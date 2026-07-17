@@ -78,8 +78,20 @@ def build_windows() -> None:
 
     desktop = op.PROJECT_ROOT / "desktop"
     _run(["npm", "install"], cwd=desktop)
+    # Explicit -b nsis (same as DanQing-Teams): without a bundle type flag,
+    # tauri build may only compile the .exe and skip the NSIS installer tree.
     _run(
-        ["npm", "exec", "tauri", "build", "--", "--target", "x86_64-pc-windows-msvc"],
+        [
+            "npm",
+            "exec",
+            "tauri",
+            "build",
+            "--",
+            "--target",
+            "x86_64-pc-windows-msvc",
+            "-b",
+            "nsis",
+        ],
         cwd=desktop,
     )
 
