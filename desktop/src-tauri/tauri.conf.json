@@ -31,7 +31,13 @@
     "category": "DeveloperTool",
     "shortDescription": "DanQing Studio desktop",
     "longDescription": "Native shell for the DanQing Studio FastAPI server (REST).",
-    "icon": ["icons/icon.png"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
     "resources": ["danqing-api"]
   }
 }
