@@ -74,9 +74,43 @@ class TaskScheduler:
             await self._rebuild_queued_heap()
             self._worker = asyncio.create_task(self._worker_loop())
 
+    def rebind_task_store(self, db_path: Path) -> None:
+        """Point task store at migrated workspace DB."""
+        self._tasks.rebind(db_path)
+
+    async def rebuild_queued_heap_sync(self) -> None:
+        await self._rebuild_queued_heap()
+
+    @staticmethod
+    def _paginate_task_rows(
+        list_fn,
+        *,
+        status: str | None = None,
+        page_size: int = 500,
+    ) -> list[dict[str, Any]]:
+        """Load all matching tasks (``list_tasks`` is capped per page)."""
+        out: list[dict[str, Any]] = []
+        offset = 0
+        while True:
+            rows = list_fn(
+                limit=page_size,
+                offset=offset,
+                status=status,
+            )
+            if not rows:
+                break
+            out.extend(rows)
+            if len(rows) < page_size:
+                break
+            offset += page_size
+        return out
+
     async def _recover_orphaned_running(self) -> None:
         """On restart: mark previously orphaned running tasks as failed (context lost, unrecoverable)."""
-        rows = self._tasks.list_tasks(limit=500, offset=0, status=TaskStatus.RUNNING.value)
+        rows = self._paginate_task_rows(
+            self._tasks.list_tasks,
+            status=TaskStatus.RUNNING.value,
+        )
         for row in rows:
             tid = row["id"]
             self._tasks.mark_failed(tid, "Process restarted while task was running")
@@ -288,9 +322,8 @@ class TaskScheduler:
                     self._pq.get_nowait()
                 except asyncio.QueueEmpty:
                     break
-            rows = self._tasks.list_tasks(
-                limit=500,
-                offset=0,
+            rows = self._paginate_task_rows(
+                self._tasks.list_tasks,
                 status=TaskStatus.QUEUED.value,
             )
             rows = [r for r in rows if r["id"] not in self._in_flight]
